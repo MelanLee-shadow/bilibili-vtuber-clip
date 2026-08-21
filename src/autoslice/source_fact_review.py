@@ -54,6 +54,11 @@ from src.autoslice.manual_title_keep_authority import (
     read_regular_no_symlink,
     validate_manual_title_keep_authority,
 )
+from src.autoslice.qixi_source_fact_terminal_preservation import (
+    DECISION as QIXI_TERMINAL_TEXT_PRESERVATION_DECISION,
+    validate_terminal_preservation_source_fact_review,
+)
+from src.autoslice.source_fact_review_shape import source_fact_review_passes_shape
 from src.autoslice.surface_canon import (
     canonicalize_hard_meme_surfaces,
     hard_meme_surface_rules,
@@ -1220,36 +1225,12 @@ def review_and_repair_source_facts(
 
 
 def source_fact_review_passes(review: object) -> bool:
-    decision = review.get("decision") if isinstance(review, Mapping) else None
-    decision_shape_valid = (
-        decision in {"KEEP", "REPAIRED"}
-        or (
-            decision == MANUAL_TITLE_KEEP_PASS_DECISION
-            and isinstance(review.get("blocked_source_fact_review"), Mapping)
-            and isinstance(review.get("manual_title_keep_authority_consumption"), Mapping)
-            and review["manual_title_keep_authority_consumption"].get("status") == "CONSUMED"
-            and isinstance(review.get("recorded_dissent"), Mapping)
-            and review["recorded_dissent"].get("status") == "RECORDED_NON_BLOCKING"
-        )
-        or (
-            decision == DETERMINISTIC_TEXT_NARROWING_PASS_DECISION
-            and isinstance(review.get("blocked_source_fact_review"), Mapping)
-            and review["blocked_source_fact_review"].get("status") == "FAILED"
-            and isinstance(review.get("deterministic_text_surface_resolution"), Mapping)
-            and review["deterministic_text_surface_resolution"].get("status") == "VALID"
-            and review["deterministic_text_surface_resolution"].get("provider_call_required")
-            is False
-        )
-    )
-    return bool(
-        isinstance(review, Mapping)
-        and review.get("schema_version") == SCHEMA_VERSION
-        and review.get("status") == "PASS"
-        and decision_shape_valid
-        and isinstance(review.get("final_selection_hook"), str)
-        and bool(str(review.get("final_selection_hook")).strip())
-        and isinstance(review.get("final_title"), str)
-        and bool(str(review.get("final_title")).strip())
+    return source_fact_review_passes_shape(
+        review,
+        schema_version=SCHEMA_VERSION,
+        manual_title_keep_decision=MANUAL_TITLE_KEEP_PASS_DECISION,
+        deterministic_text_narrowing_decision=DETERMINISTIC_TEXT_NARROWING_PASS_DECISION,
+        terminal_text_preservation_decision=QIXI_TERMINAL_TEXT_PRESERVATION_DECISION,
     )
 
 
@@ -1809,6 +1790,7 @@ def validate_source_fact_review(
     candidate_id: str | None = None,
     final_reviewed_srt_path: Path | None = None,
     speaker_evidence: object = _SPEAKER_EVIDENCE_UNSET,
+    qixi_repo_root: Path | None = None,
 ) -> bool:
     """Recheck the persisted receipt without trusting selected top-level fields."""
 
@@ -1820,6 +1802,21 @@ def validate_source_fact_review(
         return False
     if _finalize_receipt(receipt).get("receipt_sha256") != declared_receipt_sha256:
         return False
+    if review.get("decision") == QIXI_TERMINAL_TEXT_PRESERVATION_DECISION:
+        if candidate_id is None or final_reviewed_srt_path is None:
+            return False
+        return validate_terminal_preservation_source_fact_review(
+            review,
+            repo_root=qixi_repo_root or _REPO_ROOT,
+            final_reviewed_srt_path=final_reviewed_srt_path,
+            final_transcript=final_transcript,
+            title=title,
+            selection_hook=selection_hook,
+            clip_context_prompt=clip_context_prompt,
+            selection_scorecard=selection_scorecard,
+            candidate_id=candidate_id,
+            speaker_evidence=speaker_evidence,
+        )
     if review.get("decision") == MANUAL_TITLE_KEEP_PASS_DECISION:
         return _validate_manual_title_keep_receipt(
             review,

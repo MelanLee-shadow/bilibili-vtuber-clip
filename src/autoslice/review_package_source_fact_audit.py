@@ -45,6 +45,7 @@ def audit_story_source_fact_receipt(
     story_contract: dict[str, Any],
     artifact_title: str,
     final_transcript: str,
+    qixi_repo_root: Path | None = None,
 ) -> tuple[SourceFactAuditIssue, ...]:
     issues: list[SourceFactAuditIssue] = []
     publish_staging = (
@@ -146,6 +147,7 @@ def audit_story_source_fact_receipt(
         candidate_id=str(story_contract.get("candidate_id") or ""),
         final_reviewed_srt_path=subtitle_path,
         speaker_evidence=rebuilt_speaker_evidence,
+        qixi_repo_root=qixi_repo_root,
     ):
         issues.append(
             SourceFactAuditIssue("SOURCE_FACT_REVIEW_INVALID", publish_path or record_path)

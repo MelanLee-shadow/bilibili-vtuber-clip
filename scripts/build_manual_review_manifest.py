@@ -345,6 +345,7 @@ def build_manual(
             publish_doc=publish_doc,
             subtitle_path=subtitle,
             speaker_evidence=speaker_evidence,
+            qixi_repo_root=qixi_repo_root,
         )
     else:
         # Song remains on its independent lyric/alignment evidence lane.

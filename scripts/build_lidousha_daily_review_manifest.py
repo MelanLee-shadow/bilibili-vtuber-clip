@@ -238,6 +238,7 @@ def _validate_source_fact_receipts(
     publish_doc: dict,
     subtitle_path: Path,
     speaker_evidence: object = _SPEAKER_EVIDENCE_UNSET,
+    qixi_repo_root: Path | None = None,
 ) -> str:
     """Require one immutable source-fact receipt on all publish surfaces."""
 
@@ -270,6 +271,8 @@ def _validate_source_fact_receipts(
     }
     if speaker_evidence is not _SPEAKER_EVIDENCE_UNSET:
         validation_kwargs["speaker_evidence"] = speaker_evidence
+    if qixi_repo_root is not None:
+        validation_kwargs["qixi_repo_root"] = qixi_repo_root
     if not validate_source_fact_review(receipts[0], **validation_kwargs):
         raise DailyManifestError("source-fact review receipt is invalid or stale")
     return str(receipts[0]["receipt_sha256"])
@@ -290,6 +293,7 @@ def _source_fact_manifest_fields(
     publish_doc: dict,
     subtitle_path: Path,
     speaker_evidence: object = _SPEAKER_EVIDENCE_UNSET,
+    qixi_repo_root: Path | None = None,
 ) -> dict[str, object]:
     """Talk uses the CPA fact gate; Song keeps its lyric-proof lane."""
 
@@ -302,6 +306,7 @@ def _source_fact_manifest_fields(
             publish_doc=publish_doc,
             subtitle_path=subtitle_path,
             speaker_evidence=speaker_evidence,
+            qixi_repo_root=qixi_repo_root,
         ),
     }
 
@@ -313,6 +318,7 @@ def _lane_manifest_contract_fields(
     publish_doc: dict,
     subtitle_path: Path,
     speaker_evidence: object = _SPEAKER_EVIDENCE_UNSET,
+    qixi_repo_root: Path | None = None,
 ) -> dict[str, object]:
     if lane == "song":
         return {}
@@ -324,6 +330,7 @@ def _lane_manifest_contract_fields(
             publish_doc=publish_doc,
             subtitle_path=subtitle_path,
             speaker_evidence=speaker_evidence,
+            qixi_repo_root=qixi_repo_root,
         ),
     }
 

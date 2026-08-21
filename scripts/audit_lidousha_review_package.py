@@ -1114,6 +1114,7 @@ def _audit_item_story_contract(
     story_contract_required: bool,
     is_song: bool,
     clip_context_path: Path | None = None,
+    qixi_repo_root: Path | None = None,
 ) -> None:
     """Audit all story/context/boundary bindings for one manifest item."""
     if story_contract_required and not record:
@@ -1235,6 +1236,7 @@ def _audit_item_story_contract(
             story_contract=story_contract,
             artifact_title=artifact_title,
             final_transcript=transcript,
+            qixi_repo_root=qixi_repo_root,
         ):
             _add_issue(
                 issues,
@@ -1950,6 +1952,7 @@ def audit_package(
             # epoch.
             story_contract_required=(story_contract_required and not is_song),
             is_song=is_song,
+            qixi_repo_root=qixi_repo_root,
         )
         _audit_finished_item_cover(
             root=root,

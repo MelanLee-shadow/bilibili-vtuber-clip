@@ -30,6 +30,13 @@ from src.autoslice.qixi_terminal_subtitle_projection import (
     build_terminal_chat,
     validate_projection_assets,
 )
+from src.autoslice.qixi_source_fact_terminal_preservation import (
+    QixiSourceFactTerminalPreservationError,
+    build_terminal_preservation_review,
+    validate_terminal_preservation_finalization_authority,
+    validate_terminal_preservation_finalization_binding,
+)
+from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.producer_text_finalization import verify_chat_authority_final_surfaces
 from src.autoslice.package_relocation_contract import (
     CHAT_PATH_POINTERS,
@@ -215,6 +222,57 @@ def validate_applied_receipt(
         expected_bytes = after[name]["bytes"] if name in generated_names else descriptor["bytes"]
         if path.stat().st_size != expected_bytes or _sha256(path) != expected_sha:
             raise QixiCorrectedPackageError(f"receipt materialized artifact drifts: {name}")
+    if sealed.get("finalization_mode") == "current_terminal_projection":
+        record_path = _contained_regular(root, artifacts["record"]["target"], label="receipt record")
+        publish_path = _contained_regular(root, artifacts["publish"]["target"], label="receipt publish")
+        subtitle_path = _contained_regular(root, artifacts["subtitle"]["target"], label="receipt subtitle")
+        record = _load_object(record_path, label="receipt record")
+        publish = _load_object(publish_path, label="receipt publish")
+        story = record.get("story_contract")
+        staging = record.get("publish_staging")
+        review = story.get("source_fact_review") if isinstance(story, Mapping) else None
+        if not (
+            isinstance(story, Mapping)
+            and isinstance(staging, Mapping)
+            and review == staging.get("source_fact_review") == publish.get("source_fact_review")
+        ):
+            raise QixiCorrectedPackageError("current terminal source-fact surfaces drift")
+        transcript = "\n".join(
+            cue.text.strip()
+            for cue in parse_srt_cues(subtitle_path.read_text(encoding="utf-8"))
+            if cue.text.strip()
+        )
+        speaker_evidence = {
+            "policy_ids": {
+                "absence": "speaker_mode_uniform_host/v1",
+                "alignment": "speaker_cue_subsegment_alignment/v1",
+                "text": "compact_ws/v1",
+                "timing": "half_open_integer_ms_exact/v1",
+            },
+            "reason": "speaker_mode_uniform_host",
+            "state": "AbsentAuthorized",
+        }
+        try:
+            source_fact_ok = validate_terminal_preservation_finalization_binding(
+                review=review,
+                finalization_receipt=value,
+                repo_root=repo_root,
+                subtitle_text=subtitle_path.read_text(encoding="utf-8"),
+                final_transcript=transcript,
+                title=str(publish.get("title") or ""),
+                selection_hook=str(story.get("selection_hook") or ""),
+                clip_context_prompt=str(story.get("clip_context_prompt") or ""),
+                selection_scorecard=story.get("selection_scorecard"),
+                speaker_evidence=speaker_evidence,
+                correction_sha256=sealed["release"]["correction"]["sha256"],
+                ass_repair_receipt_sha256=sealed["release"]["ass_repair_receipt"]["sha256"],
+                recovery_publication_authority=sealed["recovery_publication_authority"],
+                finalization_authority_sha256=sealed["authority_sha256"],
+            )
+        except (OSError, ValueError) as exc:
+            raise QixiCorrectedPackageError("current terminal source-fact preservation is unreadable") from exc
+        if not source_fact_ok:
+            raise QixiCorrectedPackageError("current terminal source-fact preservation drifts")
     return value
 
 
@@ -462,7 +520,11 @@ def _authority(value: object, *, repo_root: Path) -> dict[str, Any]:
     }
     current_mode = value.get("finalization_mode") == "current_terminal_projection"
     if current_mode:
-        required |= {"finalization_mode", "terminal_projection"}
+        required |= {
+            "finalization_mode",
+            "terminal_projection",
+            "source_fact_terminal_preservation",
+        }
     if set(value) != required:
         raise QixiCorrectedPackageError("finalization authority keys are invalid")
     authority = dict(value)
@@ -541,6 +603,13 @@ def _authority(value: object, *, repo_root: Path) -> dict[str, Any]:
             terminal_projection.get("authority_sha256"), label="terminal projection"
         ) != projection["authority_sha256"]:
             raise QixiCorrectedPackageError("terminal projection authority is invalid")
+        try:
+            validate_terminal_preservation_finalization_authority(
+                repo_root=repo_root,
+                authority_sha256=authority["authority_sha256"],
+            )
+        except QixiSourceFactTerminalPreservationError as exc:
+            raise QixiCorrectedPackageError(str(exc)) from exc
     package_relative = Path(normalized_roots["source_package_relative"])
     candidate_relative = Path(normalized_roots["source_candidate_relative"])
     try:
@@ -1417,6 +1486,42 @@ def _project_current_terminal_documents(
             "recovery_publication_authority": dict(publication),
         }
     )
+    story_contract = dict(record.get("story_contract") or {})
+    selection_hook = str(story_contract.get("selection_hook") or "")
+    clip_context_prompt = str(story_contract.get("clip_context_prompt") or "")
+    selection_scorecard = story_contract.get("selection_scorecard")
+    final_transcript = "\n".join(
+        cue.text.strip() for cue in parse_srt_cues(subtitle_text) if cue.text.strip()
+    )
+    uniform_speaker_evidence = {
+        "policy_ids": {
+            "absence": "speaker_mode_uniform_host/v1",
+            "alignment": "speaker_cue_subsegment_alignment/v1",
+            "text": "compact_ws/v1",
+            "timing": "half_open_integer_ms_exact/v1",
+        },
+        "reason": "speaker_mode_uniform_host",
+        "state": "AbsentAuthorized",
+    }
+    try:
+        source_fact_review = build_terminal_preservation_review(
+            repo_root=repo_root,
+            subtitle_text=subtitle_text,
+            final_transcript=final_transcript,
+            title=title,
+            selection_hook=selection_hook,
+            clip_context_prompt=clip_context_prompt,
+            selection_scorecard=selection_scorecard,
+            speaker_evidence=uniform_speaker_evidence,
+            correction_sha256=artifacts["correction"][1],
+            ass_repair_receipt_sha256=artifacts["ass_repair_receipt"][1],
+            recovery_publication_authority=publication,
+            finalization_authority_sha256=str(authority["authority_sha256"]),
+        )
+    except (QixiSourceFactTerminalPreservationError, ValueError) as exc:
+        raise QixiCorrectedPackageError("current terminal source-fact preservation failed") from exc
+    story_contract["source_fact_review"] = source_fact_review
+    record["story_contract"] = story_contract
     staging = dict(record.get("publish_staging") or {})
     generation = staging.get("cover_generation")
     if (
@@ -1449,6 +1554,7 @@ def _project_current_terminal_documents(
         "cover_path": str(_artifact_final_path(candidate_root, artifacts["cover"])),
         "cover_status": "AI_COVER_READY",
         "recovery_publication_authority": dict(publication),
+        "source_fact_review": source_fact_review,
     })
     record["publish_staging"] = staging
     if "cover_status" in record:
@@ -1461,6 +1567,7 @@ def _project_current_terminal_documents(
         "cover_path": str(_artifact_final_path(candidate_root, artifacts["cover"])),
         "cover_status": "AI_COVER_READY",
         "recovery_publication_authority": dict(publication),
+        "source_fact_review": source_fact_review,
     })
     chat.update({
         "final_status": "FINAL_ARTIFACTS_VERIFIED",

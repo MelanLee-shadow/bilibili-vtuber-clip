@@ -371,6 +371,16 @@
   `artifact_hashes` 用既有 candidate→package portable sync 将 candidate-root chat/clip 的 regular
   exact bytes 物化到包内；review manifest、canonical auditor 与 final-human 必须重读该 typed
   receipt 的 filename/SHA 和 sealed replay。该门只生成待审包，不授权上传或 same-BV 操作。
+- **七夕 terminal source-fact preservation 窄门**：仅在上述 typed Qixi finalization receipt
+  已重放通过时，才可消费同一 candidate 的仓库/部署封存
+  `qixi_source_fact_terminal_preservation` authority，生成
+  `OPERATOR_TERMINAL_TEXT_PRESERVATION` source-fact receipt。该 receipt 必须逐字投影到
+  record `story_contract`、`publish_staging` 与 publish；它只以 current terminal SRT、rendered
+  transcript、title/hook/context/scorecard、operator cue evidence、correction/ASS receipt 与
+  historical provider receipt 的原始诊断 bytes 重放文本面。不得重跑或重标 historical provider
+  pass，不得调用 provider/ASR/ffmpeg，也不得改变 media、SRT、ASS、边界、标题或封面。manual
+  builder、canonical auditor 和 final-human 均须重新读取并验证该 receipt；任一 sealed asset、
+  terminal text、文本面或 finalization binding 漂移即拒绝。
 - 已发布 same-BV 的字幕修复如显式使用 `--project-single-published-repair
   --preserve-published-cover`，只能消费候选专属、部署封存的
   `daily_same_bv_published_cover_carry_authority.v1`。该 sealed asset 只固定候选、哈希和

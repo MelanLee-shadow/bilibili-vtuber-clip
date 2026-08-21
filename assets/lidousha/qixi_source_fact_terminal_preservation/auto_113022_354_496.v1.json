@@ -1,0 +1,125 @@
+{
+  "schema_version": "qixi-source-fact-terminal-preservation-authority.v1",
+  "candidate_id": "auto_113022_354_496",
+  "terminal_projection": {
+    "relative_path": "assets/lidousha/qixi_terminal_subtitle_projection/auto_113022_354_496.terminal-projection.v1.json",
+    "authority_sha256": "sha256:999c48f12532e801af30af73f581710bf6da535aee47be40bff815d45ba5ecc7",
+    "terminal_srt_sha256": "sha256:0b712412cb2dcccb0c61dcadd0764cd37487d4c2ee4453e69824e029309052d9",
+    "terminal_transcript_sha256": "sha256:571c3c72dae1f5375a7006f10a4dda74c63fb10484f049618df7d3132b251636"
+  },
+  "release_bindings": {
+    "correction_sha256": "sha256:90acd9e60617d6c2872b37b2f9329f022644270c3ada6353595f0bf8d937c90c",
+    "ass_repair_receipt_sha256": "sha256:a923fdf1583ca68949a93c1abdd33546714a4bcc4577e4ba5037a79cc738f538",
+    "recovery_publication_authority_sha256": "sha256:94f80e01fa12a6ae6b298572d6445a0933f2feca9c857330b95531cfcebe5a07"
+  },
+  "surfaces": {
+    "title": "【李豆沙】李豆沙公布七夕安排，中午甜甜甜晚上苦苦苦，一套PUA直播要让kmx集体分号！",
+    "title_sha256": "sha256:0d45cc84281b6c13fa271b9ae97298bc8bb1dce95a36a138188e71dd40dabb82",
+    "selection_hook": "李豆沙公布七夕安排：中午唱甜到大家会觉得腻的甜歌，晚上再唱苦到所有人都必须分号分号的苦情歌，进行一套七夕PUA直播。",
+    "selection_hook_sha256": "sha256:c26941d34605c4bd947c8f77b7b66bd5951ff74b4283bc1a6d6b11279c5d0950",
+    "clip_context_prompt_sha256": "sha256:6da92662a972f723b7289d886a313433af338c080da0a8e5363db7fd8c196a54",
+    "selection_scorecard_sha256": "sha256:e15f617e7cbcdb87c63c5b775a80519d8e4b8c06a9471f3be2e6738552ccd433",
+    "speaker_evidence": {
+      "policy_ids": {
+        "absence": "speaker_mode_uniform_host/v1",
+        "alignment": "speaker_cue_subsegment_alignment/v1",
+        "text": "compact_ws/v1",
+        "timing": "half_open_integer_ms_exact/v1"
+      },
+      "reason": "speaker_mode_uniform_host",
+      "state": "AbsentAuthorized"
+    },
+    "speaker_evidence_sha256": "sha256:7ad0672052878d79d0ad5f24e41ee57a6a8c401596b8954beb078ca45b39c989"
+  },
+  "historical_provider_receipt": {
+    "decision": "REPAIRED",
+    "final_selection_hook": "李豆沙公布七夕安排：中午唱甜到大家会觉得腻的甜歌，晚上再唱苦到所有人都必须分号分号的苦情歌，进行一套七夕PUA直播。",
+    "final_title": "【李豆沙】李豆沙公布七夕安排，中午甜甜甜晚上苦苦苦，一套PUA直播要让kmx集体分号！",
+    "original_selection_hook": "李豆沙公布七夕安排：中午用甜歌把观众甜腻，晚上再用苦情歌唱到大家集体封号，完成一套七夕PUA。",
+    "original_title": "【李豆沙】李豆沙公布七夕安排，中午甜甜甜晚上苦苦苦，一套PUA直播要让kmx集体分号！",
+    "passes": [
+      {
+        "addressee_attribution": [],
+        "addressee_attribution_mode": "unverifiable_no_speaker_transcript",
+        "changed_surfaces": [
+          {
+            "after": "李豆沙公布七夕安排：中午唱甜到大家会觉得腻的甜歌，晚上再唱苦到所有人都必须分号分号的苦情歌，进行一套七夕PUA直播。",
+            "artifact": "selection_hook",
+            "before": "李豆沙公布七夕安排：中午用甜歌把观众甜腻，晚上再用苦情歌唱到大家集体封号，完成一套七夕PUA。",
+            "evidence": [
+              "我决定在七夕进行一套 PUA 直播",
+              "就是中午先来那种甜到大家会觉得腻的那种甜甜甜歌",
+              "然后晚上唱苦到\n就是所有人都必须分号分号的这种",
+              "danmaku @64732ms event=: 分号分号"
+            ],
+            "reason": "“封号”是无依据的同音释义替换；文字 authority 明确为“分号分号”。同时将“完成”改为来源中的计划模态“进行”，避免将拟定的七夕直播安排表述为已经完成的结果。"
+          }
+        ],
+        "clip_context_prompt_sha256": "sha256:6da92662a972f723b7289d886a313433af338c080da0a8e5363db7fd8c196a54",
+        "final_selection_hook": "李豆沙公布七夕安排：中午唱甜到大家会觉得腻的甜歌，晚上再唱苦到所有人都必须分号分号的苦情歌，进行一套七夕PUA直播。",
+        "final_title": "【李豆沙】李豆沙公布七夕安排，中午甜甜甜晚上苦苦苦，一套PUA直播要让kmx集体分号！",
+        "final_transcript_sha256": "sha256:3a7380672c26a4c0f4cdef6006abdf5df19cbcd5b1a694ff5d6ec4822744c9d4",
+        "reason_code": null,
+        "request_sha256": "sha256:042aa089fbb0782774cb6b9ecb2453e6533a50b6ccff64a24453df57b110f104",
+        "response_sha256": "sha256:0ee2d6a2777ca0d236cf8fbf335b9f3a58442be2894d571b44dcbc5a42c62fb4",
+        "review_pass": 1,
+        "schema_version": "lidousha-source-fact-review.v1",
+        "selection_hook_sha256": "sha256:f8d71e47198114deb619c37fe104b0c2c7e8f7dcf4d342bb5e857156dac3f20d",
+        "selection_scorecard_review": {"reason": "修复仅纠正“封号”的无依据同音释义并收紧计划模态，核心梗仍是李豆沙提出七夕先甜后苦的PUA式直播安排；原评分卡的personal_stance依据、反差设计、维度和证据方向均与修复后的钩子一致。", "status": "COMPATIBLE"},
+        "selection_scorecard_sha256": "sha256:e15f617e7cbcdb87c63c5b775a80519d8e4b8c06a9471f3be2e6738552ccd433",
+        "speaker_evidence_sha256": "sha256:7ad0672052878d79d0ad5f24e41ee57a6a8c401596b8954beb078ca45b39c989",
+        "speaker_transcript_sha256": null,
+        "status": "REPAIR",
+        "summary": "钩子将来源明确的“分号分号”误写成“封号”，且“完成”不如来源中的计划模态“进行”准确，故需修复；标题事实与模态均有来源支持，可保持不变。",
+        "supported_by": ["final_transcript", "structured_chat"],
+        "title_policy_mode": "automatic",
+        "title_policy_violations": [],
+        "title_sha256": "sha256:0d45cc84281b6c13fa271b9ae97298bc8bb1dce95a36a138188e71dd40dabb82"
+      },
+      {
+        "addressee_attribution": [],
+        "addressee_attribution_mode": "unverifiable_no_speaker_transcript",
+        "changed_surfaces": [],
+        "clip_context_prompt_sha256": "sha256:6da92662a972f723b7289d886a313433af338c080da0a8e5363db7fd8c196a54",
+        "final_selection_hook": "李豆沙公布七夕安排：中午唱甜到大家会觉得腻的甜歌，晚上再唱苦到所有人都必须分号分号的苦情歌，进行一套七夕PUA直播。",
+        "final_title": "【李豆沙】李豆沙公布七夕安排，中午甜甜甜晚上苦苦苦，一套PUA直播要让kmx集体分号！",
+        "final_transcript_sha256": "sha256:3a7380672c26a4c0f4cdef6006abdf5df19cbcd5b1a694ff5d6ec4822744c9d4",
+        "reason_code": null,
+        "request_sha256": "sha256:9b21d8d86c31d65cbb23dbaa03b59f2d22cc41c9efb1e6e955cc8bacdd7ab731",
+        "response_sha256": "sha256:1b161c6a7d195cf982b52e50da6e74a1276196e664bc52b80f3065222ca806af",
+        "review_pass": 2,
+        "schema_version": "lidousha-source-fact-review.v1",
+        "selection_hook_sha256": "sha256:c26941d34605c4bd947c8f77b7b66bd5951ff74b4283bc1a6d6b11279c5d0950",
+        "selection_scorecard_review": {"reason": "selection_hook未修改；原评分卡所述七夕先甜后苦、PUA式反差的核心梗与当前文案一致。", "status": "NOT_NEEDED"},
+        "selection_scorecard_sha256": "sha256:e15f617e7cbcdb87c63c5b775a80519d8e4b8c06a9471f3be2e6738552ccd433",
+        "speaker_evidence_sha256": "sha256:7ad0672052878d79d0ad5f24e41ee57a6a8c401596b8954beb078ca45b39c989",
+        "speaker_transcript_sha256": null,
+        "status": "KEEP",
+        "summary": "两份文案中的七夕安排、先甜后苦、甜到发腻、苦到集体分号及PUA直播均有同片文字证据支持；标题长度合规且无确定性策略违规。",
+        "supported_by": ["final_transcript", "structured_chat"],
+        "title_policy_mode": "automatic",
+        "title_policy_violations": [],
+        "title_sha256": "sha256:0d45cc84281b6c13fa271b9ae97298bc8bb1dce95a36a138188e71dd40dabb82"
+      }
+    ],
+    "provider_retries": [],
+    "receipt_sha256": "sha256:f633f31301302daad51e6565f09412901dc3ba62cb4237d1211431c2cc9c54ef",
+    "schema_version": "lidousha-source-fact-review.v1",
+    "speaker_evidence": {"policy_ids": {"absence": "speaker_mode_uniform_host/v1", "alignment": "speaker_cue_subsegment_alignment/v1", "text": "compact_ws/v1", "timing": "half_open_integer_ms_exact/v1"}, "reason": "speaker_mode_uniform_host", "state": "AbsentAuthorized"},
+    "speaker_evidence_sha256": "sha256:7ad0672052878d79d0ad5f24e41ee57a6a8c401596b8954beb078ca45b39c989",
+    "status": "PASS"
+  },
+  "direct_terminal_evidence": {
+    "cited_cues": [
+      {"cue": 15, "start_ms": 38340, "end_ms": 43740, "text": "我决定在七夕进行一套 PUA 直播"},
+      {"cue": 16, "start_ms": 43940, "end_ms": 50780, "text": "就是中午先来那种甜到大家会觉得腻的那种甜甜甜歌"},
+      {"cue": 18, "start_ms": 54400, "end_ms": 57760, "text": "然后晚上唱苦到"},
+      {"cue": 19, "start_ms": 57760, "end_ms": 62210, "text": "就是所有人都必须分号分号的这种"}
+    ],
+    "structured_chat_line": "danmaku @64732ms event=: 分号分号",
+    "balance_cue": {"cue": 21, "start_ms": 65690, "end_ms": 68090, "text": "非常 balance いいや"},
+    "ivan_balance_authority": "她说的是非常 balance iiya，应该是日式发音的，‘balance的非常好’的意思。结合整场直播知道她在说前面要甜，后面要苦，所以非常balance。",
+    "cue21_was_not_historical_direct_evidence": true
+  },
+  "authority_sha256": "sha256:89738326f618be348d7ca86916b28b228c27aabcebb2cc7d5abd36fa80fa590c"
+}

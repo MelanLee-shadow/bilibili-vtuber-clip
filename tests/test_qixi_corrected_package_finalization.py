@@ -10,12 +10,14 @@ import pytest
 from src.autoslice import qixi_corrected_package_finalization as finalization
 from src.autoslice import final_human_review
 from src.autoslice import qixi_terminal_subtitle_projection as terminal_projection
+from src.autoslice import qixi_source_fact_terminal_preservation as source_fact_preservation
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.package_relocation_contract import (
     PackageRelocationError,
     project_uniform_host_locators,
 )
 from src.autoslice.recovery_title_authority import build_recovery_publication_authorities
+from src.autoslice.review_package_source_fact_audit import audit_story_source_fact_receipt
 from src.autoslice.source_fact_review import review_and_repair_source_facts
 from scripts import build_manual_review_manifest as manual_review_manifest
 from scripts.build_manual_review_manifest import DailyManifestError, build_manual
@@ -165,6 +167,14 @@ def _write_current_lane_fixture(
     projection_source = json.loads(
         (Path.cwd() / finalization.TERMINAL_PROJECTION_RELATIVE_PATH).read_text()
     )
+    preservation_source = json.loads(
+        (
+            Path.cwd()
+            / "assets/lidousha/qixi_source_fact_terminal_preservation/"
+            "auto_113022_354_496.v1.json"
+        ).read_text()
+    )
+    source_fact_hook = preservation_source["surfaces"]["selection_hook"]
     preimage_manifest = Path(projection_source["superseded_preimage"]["manifest_path"])
     preimage = json.loads((Path.cwd() / preimage_manifest).read_text(encoding="utf-8"))
     inputs = [preimage_manifest, Path(preimage["pre_correction_srt"]["path"])]
@@ -260,7 +270,7 @@ def _write_current_lane_fixture(
         cue.text for cue in parse_srt_cues(terminal_bytes.decode("utf-8"))
     )
     source_fact = review_and_repair_source_facts(
-        selection_hook="七夕安排说明",
+        selection_hook=source_fact_hook,
         title=TITLE,
         final_transcript=terminal_transcript,
         clip_context_prompt="",
@@ -268,7 +278,7 @@ def _write_current_lane_fixture(
         final_reviewed_srt_path=package / "auto_113022_354_496.recut.srt",
         llm_call=lambda _prompt: json.dumps({
             "schema_version": "lidousha-source-fact-review.v1", "status": "KEEP",
-            "final_selection_hook": "七夕安排说明", "final_title": TITLE,
+            "final_selection_hook": source_fact_hook, "final_title": TITLE,
             "supported_by": ["final_transcript"], "changed_surfaces": [],
             "addressee_attribution": [],
             "selection_scorecard_review": {"status": "NOT_NEEDED", "reason": "fixture"},
@@ -276,7 +286,7 @@ def _write_current_lane_fixture(
         }, ensure_ascii=False),
     )
     story_contract = {
-        "candidate_id": CID, "selection_hook": "七夕安排说明",
+        "candidate_id": CID, "selection_hook": source_fact_hook,
         "clip_context_prompt": "", "selection_scorecard": None,
         "source_fact_review": source_fact,
     }
@@ -399,12 +409,42 @@ def _write_current_lane_fixture(
     authority_path = repo / finalization.AUTHORITY_RELATIVE_PATH
     authority_path.parent.mkdir(parents=True, exist_ok=True)
     authority_path.write_text(json.dumps(authority, ensure_ascii=False), encoding="utf-8")
+    preservation = copy.deepcopy(preservation_source)
+    preservation["terminal_projection"]["authority_sha256"] = projection["authority_sha256"]
+    preservation["release_bindings"]["correction_sha256"] = correction["sha256"]
+    preservation["release_bindings"]["ass_repair_receipt_sha256"] = repair["sha256"]
+    preservation["release_bindings"]["recovery_publication_authority_sha256"] = authority[
+        "recovery_publication_authority"
+    ]["authority_sha256"]
+    preservation["surfaces"]["clip_context_prompt_sha256"] = (
+        "sha256:" + hashlib.sha256(b"").hexdigest()
+    )
+    preservation["surfaces"]["selection_scorecard_sha256"] = finalization._canonical_sha(None)
+    preservation.pop("authority_sha256")
+    preservation["authority_sha256"] = finalization._canonical_sha(preservation)
+    preservation_path = (
+        repo
+        / "assets/lidousha/qixi_source_fact_terminal_preservation/"
+        "auto_113022_354_496.v1.json"
+    )
+    preservation_path.parent.mkdir(parents=True, exist_ok=True)
+    preservation_path.write_text(json.dumps(preservation, ensure_ascii=False), encoding="utf-8")
+    authority["source_fact_terminal_preservation"] = {
+        "relative_path": (
+            "assets/lidousha/qixi_source_fact_terminal_preservation/"
+            "auto_113022_354_496.v1.json"
+        ),
+        "authority_sha256": preservation["authority_sha256"],
+    }
+    authority.pop("authority_sha256")
+    authority["authority_sha256"] = finalization._canonical_sha(authority)
+    authority_path.write_text(json.dumps(authority, ensure_ascii=False), encoding="utf-8")
     for relative in (
         authority["recovery_publication_authority"]["registry_repo_path"],
         authority["recovery_publication_authority"]["source_public_verify_repo_path"],
     ):
         sealed_inputs.append(_copy_repo_input(repo, Path(relative)))
-    _seal_deployed_repo(repo, [*sealed_inputs, projection_path, authority_path])
+    _seal_deployed_repo(repo, [*sealed_inputs, projection_path, authority_path, preservation_path])
     return repo, release, root, tmp_path / "target"
 
 
@@ -1057,6 +1097,142 @@ def test_current_terminal_projection_finalizes_with_real_redelivery_and_chat_hel
         )
 
 
+def _terminal_source_fact_inputs(repo: Path, release: Path) -> dict[str, object]:
+    authority = json.loads(
+        (repo / finalization.AUTHORITY_RELATIVE_PATH).read_text(encoding="utf-8")
+    )
+    record = json.loads((release / f"{CID}.record.json").read_text(encoding="utf-8"))
+    story = record["story_contract"]
+    subtitle_text = (release / f"{CID}.recut.srt").read_text(encoding="utf-8")
+    transcript = "\n".join(cue.text.strip() for cue in parse_srt_cues(subtitle_text) if cue.text.strip())
+    return {
+        "repo_root": repo,
+        "subtitle_text": subtitle_text,
+        "final_transcript": transcript,
+        "title": TITLE,
+        "selection_hook": story["selection_hook"],
+        "clip_context_prompt": story["clip_context_prompt"],
+        "selection_scorecard": story["selection_scorecard"],
+        "speaker_evidence": {
+            "policy_ids": {
+                "absence": "speaker_mode_uniform_host/v1",
+                "alignment": "speaker_cue_subsegment_alignment/v1",
+                "text": "compact_ws/v1",
+                "timing": "half_open_integer_ms_exact/v1",
+            },
+            "reason": "speaker_mode_uniform_host",
+            "state": "AbsentAuthorized",
+        },
+        "correction_sha256": authority["release"]["correction"]["sha256"],
+        "ass_repair_receipt_sha256": authority["release"]["ass_repair_receipt"]["sha256"],
+        "recovery_publication_authority": authority["recovery_publication_authority"],
+        "finalization_authority_sha256": authority["authority_sha256"],
+    }
+
+
+def test_terminal_source_fact_preservation_replays_current_terminal_inputs(
+    tmp_path: Path,
+) -> None:
+    repo, release, _evidence, _target = _write_current_lane_fixture(tmp_path)
+    inputs = _terminal_source_fact_inputs(repo, release)
+    review = source_fact_preservation.build_terminal_preservation_review(**inputs)
+
+    assert review["decision"] == "OPERATOR_TERMINAL_TEXT_PRESERVATION"
+    assert review["historical_provider_receipt"]["receipt_sha256"] == (
+        "sha256:f633f31301302daad51e6565f09412901dc3ba62cb4237d1211431c2cc9c54ef"
+    )
+    assert review["historical_provider_receipt"]["passes"][0]["status"] == "REPAIR"
+    assert source_fact_preservation.validate_terminal_preservation_review(review, **inputs)
+    assert source_fact_preservation.validate_terminal_preservation_finalization_binding(
+        review=review,
+        finalization_receipt={
+            "candidate_id": CID,
+            "authority_sha256": inputs["finalization_authority_sha256"],
+        },
+        **inputs,
+    )
+    assert not source_fact_preservation.validate_terminal_preservation_finalization_binding(
+        review=review,
+        finalization_receipt={
+            "candidate_id": CID,
+            "authority_sha256": "sha256:be67f10883ec45d923e23cb38b6dabe00f72cc07cc84de5b526e608fa621f681",
+        },
+        **inputs,
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("final_transcript", "drift"),
+        ("title", "drift"),
+        ("selection_hook", "drift"),
+        ("clip_context_prompt", "drift"),
+        ("selection_scorecard", {"drift": True}),
+        ("correction_sha256", "sha256:" + "0" * 64),
+        ("ass_repair_receipt_sha256", "sha256:" + "0" * 64),
+        ("finalization_authority_sha256", "sha256:" + "0" * 64),
+        (
+            "finalization_authority_sha256",
+            "sha256:be67f10883ec45d923e23cb38b6dabe00f72cc07cc84de5b526e608fa621f681",
+        ),
+    ],
+)
+def test_terminal_source_fact_preservation_rejects_runtime_binding_drift(
+    tmp_path: Path, field: str, replacement: object
+) -> None:
+    repo, release, _evidence, _target = _write_current_lane_fixture(tmp_path)
+    inputs = _terminal_source_fact_inputs(repo, release)
+    review = source_fact_preservation.build_terminal_preservation_review(**inputs)
+    tampered = dict(inputs)
+    tampered[field] = replacement
+    assert not source_fact_preservation.validate_terminal_preservation_review(review, **tampered)
+
+
+@pytest.mark.parametrize("section", ["cited_cues", "historical_evidence"])
+def test_terminal_source_fact_preservation_rejects_resealed_cue_or_historical_evidence_drift(
+    tmp_path: Path, section: str
+) -> None:
+    repo, release, _evidence, _target = _write_current_lane_fixture(tmp_path)
+    authority_path = (
+        repo / "assets/lidousha/qixi_source_fact_terminal_preservation/"
+        "auto_113022_354_496.v1.json"
+    )
+    authority = json.loads(authority_path.read_text(encoding="utf-8"))
+    if section == "cited_cues":
+        authority["direct_terminal_evidence"]["cited_cues"][0]["text"] = "漂移"
+    else:
+        old = authority["historical_provider_receipt"]
+        old["passes"][0]["changed_surfaces"][0]["evidence"][0] = "漂移"
+        old.pop("receipt_sha256")
+        old["receipt_sha256"] = finalization._canonical_sha(old)
+    authority.pop("authority_sha256")
+    authority["authority_sha256"] = finalization._canonical_sha(authority)
+    authority_path.write_text(json.dumps(authority, ensure_ascii=False), encoding="utf-8")
+    _reseal_fixture_repo(repo)
+    inputs = _terminal_source_fact_inputs(repo, release)
+    with pytest.raises(source_fact_preservation.QixiSourceFactTerminalPreservationError):
+        source_fact_preservation.build_terminal_preservation_review(**inputs)
+
+
+def test_terminal_source_fact_preservation_rejects_unsealed_asset_bytes(
+    tmp_path: Path,
+) -> None:
+    repo, release, _evidence, _target = _write_current_lane_fixture(tmp_path)
+    authority_path = (
+        repo / "assets/lidousha/qixi_source_fact_terminal_preservation/"
+        "auto_113022_354_496.v1.json"
+    )
+    authority_path.write_text(
+        authority_path.read_text(encoding="utf-8") + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(source_fact_preservation.QixiSourceFactTerminalPreservationError):
+        source_fact_preservation.build_terminal_preservation_review(
+            **_terminal_source_fact_inputs(repo, release)
+        )
+
+
 @pytest.mark.parametrize(
     ("fixture_kwargs", "match"),
     (
@@ -1236,9 +1412,7 @@ def test_real_finalizer_receipt_wiring_through_manual_audit_and_final_human(
     tmp_path: Path,
 ) -> None:
     """Receipt wiring only; the deployed Qixi package separately faces all 23 audit gates."""
-    authority, _artifacts, release, evidence = _inputs(tmp_path)
-    repo = _sealed_test_repo(tmp_path, authority)
-    target = tmp_path / "materialized"
+    repo, release, evidence, target = _write_current_lane_fixture(tmp_path)
     receipt = finalization.finalize(
         repo_root=repo,
         release_root=release,
@@ -1291,6 +1465,65 @@ def test_real_finalizer_receipt_wiring_through_manual_audit_and_final_human(
     receipt["after_image_sha256"]["record"]["bytes"] += 1
     with pytest.raises(finalization.QixiCorrectedPackageError, match="hash drifts"):
         finalization.validate_applied_receipt(receipt, package_root=package, repo_root=repo)
+
+
+def test_terminal_source_fact_receipt_replays_through_canonical_audit_helper(
+    tmp_path: Path,
+) -> None:
+    """The narrow auditor helper replays the real sealed terminal receipt."""
+    repo, release, evidence, target = _write_current_lane_fixture(tmp_path)
+    finalization.finalize(
+        repo_root=repo,
+        release_root=release,
+        evidence_root=evidence,
+        target=target,
+        apply=True,
+    )
+    package = target / "replacement_recuts"
+    manifest = build_manual(
+        package,
+        operator="test-operator",
+        note="terminal source-fact receipt audit replay",
+        qixi_repo_root=repo,
+    )
+    item = manifest["items"][0]
+    record_path = package / item["record"]
+    publish_path = package / item["publish_json"]
+    subtitle_path = package / item["subtitle_srt"]
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    transcript = "\n".join(
+        cue.text.strip()
+        for cue in parse_srt_cues(subtitle_path.read_text(encoding="utf-8"))
+        if cue.text.strip()
+    )
+    assert audit_story_source_fact_receipt(
+        root=package,
+        manifest=manifest,
+        item=item,
+        subtitle_path=subtitle_path,
+        publish_path=publish_path,
+        record_path=record_path,
+        record=record,
+        story_contract=record["story_contract"],
+        artifact_title=TITLE,
+        final_transcript=transcript,
+        qixi_repo_root=repo,
+    ) == ()
+    tampered = copy.deepcopy(record)
+    tampered["story_contract"]["source_fact_review"]["decision"] = "KEEP"
+    assert [issue.code for issue in audit_story_source_fact_receipt(
+        root=package,
+        manifest=manifest,
+        item=item,
+        subtitle_path=subtitle_path,
+        publish_path=publish_path,
+        record_path=record_path,
+        record=tampered,
+        story_contract=tampered["story_contract"],
+        artifact_title=TITLE,
+        final_transcript=transcript,
+        qixi_repo_root=repo,
+    )] == ["SOURCE_FACT_REVIEW_BINDING_DRIFT"]
 
 
 def test_invalid_typed_receipt_rejects_before_candidate_evidence_sync(

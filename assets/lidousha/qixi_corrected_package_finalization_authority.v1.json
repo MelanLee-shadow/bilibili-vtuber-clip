@@ -68,5 +68,9 @@
     "relative_path": "assets/lidousha/qixi_terminal_subtitle_projection/auto_113022_354_496.terminal-projection.v1.json",
     "authority_sha256": "sha256:999c48f12532e801af30af73f581710bf6da535aee47be40bff815d45ba5ecc7"
   },
-  "authority_sha256": "sha256:be67f10883ec45d923e23cb38b6dabe00f72cc07cc84de5b526e608fa621f681"
+  "source_fact_terminal_preservation": {
+    "relative_path": "assets/lidousha/qixi_source_fact_terminal_preservation/auto_113022_354_496.v1.json",
+    "authority_sha256": "sha256:89738326f618be348d7ca86916b28b228c27aabcebb2cc7d5abd36fa80fa590c"
+  },
+  "authority_sha256": "sha256:5fe822a5d76962cca42f488167cd4b2ea070af4557876beae70ed3bac4daf05c"
 }
