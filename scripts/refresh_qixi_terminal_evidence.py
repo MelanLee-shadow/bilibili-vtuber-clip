@@ -30,6 +30,7 @@ from src.autoslice.qixi_terminal_evidence_refresh import (  # noqa: E402
     QixiTerminalEvidenceRefreshError,
     apply_projection,
     build_staged_refresh,
+    full_dry_run_failure_result,
     load_authority,
     validate_runtime,
 )
@@ -82,6 +83,15 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(outcome, ensure_ascii=False, sort_keys=True))
         return 0
     except QixiTerminalEvidenceRefreshError as exc:
+        if args.full_dry_run:
+            print(
+                json.dumps(
+                    full_dry_run_failure_result(exc),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            )
+            return 2
         print(f"QIXI_TERMINAL_EVIDENCE_REFRESH_BLOCKED: {exc}", file=sys.stderr)
         return 2
 

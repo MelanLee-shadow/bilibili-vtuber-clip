@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import nullcontext
 
 import pytest
 
+from scripts import refresh_qixi_terminal_evidence as refresh_cli
 from src.autoslice import qixi_terminal_evidence_refresh as refresh
 from src.autoslice.boundary_endpoint_binding import (
     bind_final_semantic_endpoint,
@@ -192,6 +194,198 @@ def test_refresh_uses_new_final_and_boundary_receipts(monkeypatch) -> None:
     assert seen["final"]["correction_audit"]["boundary_semantic_review"] == boundary
     assert result["chat_authority"]["final_text_srt_sha256"] == _sha(after)[7:]
     assert result["chat_authority"]["final_review_audit"] is fresh
+
+
+def test_final_review_failure_preserves_reason_and_exposes_only_sanitized_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    before = _srt(*[str(index) for index in range(1, 28)])
+    after = _srt("A", "2", "C", "4", "5", "F", *[str(index) for index in range(7, 27)], "AA")
+    old_chat = {
+        "final_text_srt_sha256": _sha(before)[7:],
+        "final_review_audit": {"old": "audit"},
+    }
+    private_provider_text = "prompt=do-not-render raw-response=cookie=not-a-cookie media=/private/final.mp4"
+    boundary = {
+        "status": "BLOCK",
+        "reason_codes": [
+            "BOUNDARY_NEXT_TOPIC_WITNESS_MISSING",
+            "NEXT_TOPIC_SEPARATED_NOT_PROVEN",
+            "TERMINAL_SOURCE_SEPARATION_WITNESS_BLOCK",
+        ],
+        "raw_provider_response": private_provider_text,
+    }
+    fresh = {
+        "schema_version": "final-review-audit.v2",
+        "reviewed_srt_sha256": _sha(after),
+        "status": "FLAGGED",
+        "release_gate": "BLOCK",
+        "reason_codes": [
+            "FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID",
+            private_provider_text,
+        ],
+        "boundary_semantic_review": boundary,
+        "discovery": {
+            "status": "COMPLETE",
+            "reason_codes": ["SUBTITLE_SPEAKER_SRT_CHAT_HASH_MISMATCH"],
+            "prompt": private_provider_text,
+        },
+        "findings": [
+            {
+                "reason_code": "SUBTITLE_SPEAKER_SRT_CHAT_HASH_MISMATCH",
+                "cue_index": 3,
+                "raw_response": private_provider_text,
+            },
+            {"reason_code": "FINAL_REVIEW_UNRESOLVED_FINDINGS", "cue_index": 5},
+            {"reason_code": "FINAL_REVIEW_UNRESOLVED_FINDINGS", "cue_index": 6},
+        ],
+        "validated_finding_count": 3,
+        "correction_mutation_authority": {
+            "schema_version": "subtitle-correction-mutation-audit.v1",
+            "status": "BLOCK",
+            "failures": [
+                {
+                    "reason_code": "CORRECTION_DISCOVERY_INCOMPLETE",
+                    "cue_index": 3,
+                    "provider_response": private_provider_text,
+                }
+            ],
+        },
+    }
+    monkeypatch.setattr(
+        refresh,
+        "exact_delivery_correction_audit",
+        lambda **_kwargs: {"boundary_semantic_review": boundary},
+    )
+    monkeypatch.setattr(refresh, "_run_exact_final_release_review", lambda **_kwargs: fresh)
+
+    with pytest.raises(refresh.QixiTerminalEvidenceRefreshError) as raised:
+        refresh.refresh_terminal_evidence(
+            before_srt=before,
+            final_srt=after,
+            correction=_correction(before, after),
+            old_chat_authority=old_chat,
+            selection_hook="hook",
+            selection_scorecard={},
+            structured_context="context",
+            clip_context={"context_sha256": "sha256:" + "e" * 64},
+            source_final_start_ms=0,
+            source_final_end_ms=27_900,
+            boundary_max_forward_ms=30_000,
+            adapters=object(),
+            authoritative_chat=(),
+            final_review_llm=lambda _prompt: '{"findings":[]}',
+            boundary_review_llm=lambda _prompt: '{"decision":"PASS"}',
+        )
+
+    error = raised.value
+    assert error.reason_code == "QIXI_TERMINAL_REFRESH_FINAL_REVIEW_BLOCKED"
+    assert error.underlying_reason_code == "FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID"
+    diagnostic = refresh.full_dry_run_failure_result(error)
+    assert diagnostic["predicate"] == {
+        "name": "final_review_contract",
+        "status": "FAIL",
+        "reason_code": "FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID",
+    }
+    assert (
+        diagnostic["final_review_reason_code"]
+        == "FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID"
+    )
+    assert diagnostic["reviewed_srt_sha256"] == _sha(after)
+    assert diagnostic["reported_reviewed_srt_sha256"] == _sha(after)
+    assert diagnostic["discovery"] == {
+        "status": "COMPLETE",
+        "finding_count": 3,
+        "reason_codes": ["SUBTITLE_SPEAKER_SRT_CHAT_HASH_MISMATCH"],
+    }
+    assert diagnostic["findings"] == {
+        "count": 3,
+        "validated_count": 3,
+        "reason_codes": [
+            "FINAL_REVIEW_UNRESOLVED_FINDINGS",
+            "SUBTITLE_SPEAKER_SRT_CHAT_HASH_MISMATCH",
+        ],
+        "cue_indices": [3, 5, 6],
+    }
+    assert diagnostic["correction_mutation_authority"] == {
+        "status": "BLOCK",
+        "failure_count": 1,
+        "reason_codes": ["CORRECTION_DISCOVERY_INCOMPLETE"],
+        "cue_indices": [3],
+    }
+    assert diagnostic["boundary"] == {
+        "status": "BLOCK",
+        "reason_codes": [
+            "BOUNDARY_NEXT_TOPIC_WITNESS_MISSING",
+            "NEXT_TOPIC_SEPARATED_NOT_PROVEN",
+            "TERMINAL_SOURCE_SEPARATION_WITNESS_BLOCK",
+        ],
+    }
+    assert diagnostic["terminal_write_predicates"] == [
+        {"name": "target_write", "status": "NOT_ATTEMPTED"},
+        {"name": "state_write", "status": "NOT_ATTEMPTED"},
+        {"name": "journal_write", "status": "NOT_ATTEMPTED"},
+        {"name": "terminal_private_stage", "status": "NOT_CREATED"},
+    ]
+    rendered = json.dumps(diagnostic, sort_keys=True)
+    assert private_provider_text not in rendered
+    assert "cookie=" not in rendered
+    assert "final.mp4" not in rendered
+
+
+def test_allowlist_drift_has_a_distinct_bounded_full_dry_run_predicate() -> None:
+    diagnostic = refresh.full_dry_run_failure_result(
+        refresh.QixiTerminalEvidenceRefreshError(
+            "QIXI_TERMINAL_REFRESH_RECORD_ALLOWLIST_DRIFT"
+        )
+    )
+    assert diagnostic["predicate"] == {
+        "name": "allowed_mutations",
+        "status": "FAIL",
+        "reason_code": "QIXI_TERMINAL_REFRESH_RECORD_ALLOWLIST_DRIFT",
+    }
+
+
+def test_cli_full_dry_run_prints_sanitized_failure_without_writes(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    audit = {
+        "status": "BLOCKED",
+        "release_gate": "BLOCK",
+        "reviewed_srt_sha256": "sha256:" + "a" * 64,
+        "discovery": {"status": "COMPLETE"},
+        "findings": [],
+        "validated_finding_count": 0,
+        "boundary_semantic_review": {"status": "BLOCK"},
+    }
+    failure = refresh.QixiTerminalEvidenceRefreshError(
+        "QIXI_TERMINAL_REFRESH_FINAL_REVIEW_BLOCKED",
+        underlying_reason_code="FINAL_REVIEW_RELEASE_GATE_BLOCKED",
+        diagnostic_result=refresh._final_review_failure_diagnostic(
+            final_audit=audit,
+            expected_srt_sha256="sha256:" + "b" * 64,
+            reason_code="FINAL_REVIEW_RELEASE_GATE_BLOCKED",
+        ),
+    )
+    monkeypatch.setattr(
+        refresh_cli, "load_authority", lambda _root: {"runtime_root": str(tmp_path)}
+    )
+    monkeypatch.setattr(refresh_cli, "validate_runtime", lambda _authority: {})
+    monkeypatch.setattr(
+        refresh_cli, "exclusive_runner_lock", lambda _root: nullcontext()
+    )
+    monkeypatch.setattr(
+        refresh_cli, "build_staged_refresh", lambda **_kwargs: (_ for _ in ()).throw(failure)
+    )
+    monkeypatch.setattr(
+        refresh_cli,
+        "apply_projection",
+        lambda **_kwargs: pytest.fail("failed full dry run must not apply a projection"),
+    )
+
+    assert refresh_cli.main(["--full-dry-run"]) == 2
+    assert json.loads(capsys.readouterr().out) == refresh.full_dry_run_failure_result(failure)
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_projection_dry_run_is_target_write_free(tmp_path) -> None:

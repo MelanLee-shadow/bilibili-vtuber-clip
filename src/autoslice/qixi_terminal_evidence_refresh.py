@@ -76,10 +76,217 @@ _LIVE_DELIVERY_AUTHORITY_KEYS = frozenset(
         "branding_intro", "record_sha256", "publish_sha256", "burned_video_sha256",
     }
 )
+_DIAGNOSTIC_REASON_RX = re.compile(r"^[A-Z][A-Z0-9_]{0,119}$")
+_DIAGNOSTIC_STATUS_RX = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+_DIAGNOSTIC_MAX_REASON_CODES = 32
 
 
 class QixiTerminalEvidenceRefreshError(ValueError):
     """The sealed correction cannot safely receive fresh terminal reviews."""
+
+    def __init__(
+        self,
+        reason_code: str,
+        *,
+        underlying_reason_code: str | None = None,
+        diagnostic_result: Mapping[str, object] | None = None,
+    ) -> None:
+        self.reason_code = reason_code
+        self.underlying_reason_code = underlying_reason_code
+        # This is populated only by the local, allowlisted diagnostic builder
+        # below.  In particular, no exception string or provider payload gets
+        # attached to an error which the CLI can render.
+        self.diagnostic_result = (
+            copy.deepcopy(dict(diagnostic_result))
+            if diagnostic_result is not None
+            else None
+        )
+        super().__init__(reason_code)
+
+
+def _diagnostic_token(value: object, *, fallback: str) -> str:
+    if isinstance(value, str) and _DIAGNOSTIC_STATUS_RX.fullmatch(value):
+        return value
+    return fallback
+
+
+def _diagnostic_reason_codes(value: object) -> list[str]:
+    """Return a bounded, text-free set of stable machine reason codes."""
+
+    if not isinstance(value, list):
+        return []
+    codes = {
+        code
+        for code in value[:_DIAGNOSTIC_MAX_REASON_CODES]
+        if isinstance(code, str) and _DIAGNOSTIC_REASON_RX.fullmatch(code)
+    }
+    return sorted(codes)[:_DIAGNOSTIC_MAX_REASON_CODES]
+
+
+def _diagnostic_finding_reason_codes(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    codes = {
+        str(row["reason_code"])
+        for row in value[:_DIAGNOSTIC_MAX_REASON_CODES]
+        if isinstance(row, Mapping)
+        and isinstance(row.get("reason_code"), str)
+        and _DIAGNOSTIC_REASON_RX.fullmatch(str(row["reason_code"]))
+    }
+    return sorted(codes)[:_DIAGNOSTIC_MAX_REASON_CODES]
+
+
+def _diagnostic_cue_indices(value: object) -> list[int]:
+    if not isinstance(value, list):
+        return []
+    indices = {
+        index
+        for row in value[:_DIAGNOSTIC_MAX_REASON_CODES]
+        if isinstance(row, Mapping)
+        for index in (row.get("cue_index", row.get("cue")),)
+        if isinstance(index, int) and not isinstance(index, bool) and 0 < index <= 1_000_000
+    }
+    return sorted(indices)[:_DIAGNOSTIC_MAX_REASON_CODES]
+
+
+def _diagnostic_sha256(value: object) -> str | None:
+    if isinstance(value, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", value):
+        return value
+    return None
+
+
+def _final_review_failure_diagnostic(
+    *,
+    final_audit: object,
+    expected_srt_sha256: str,
+    reason_code: str,
+) -> dict[str, object]:
+    """Produce a bounded observation, never an audit/provider transcript.
+
+    The audit is provider-adjacent and may contain prompts, excerpt text,
+    endpoints, or other private material.  This projection is deliberately
+    allowlisted to the machine predicates an operator needs to distinguish a
+    true unresolved finding from a closure-contract failure.
+    """
+
+    audit = dict(final_audit) if isinstance(final_audit, Mapping) else {}
+    discovery = audit.get("discovery")
+    discovery_map = dict(discovery) if isinstance(discovery, Mapping) else {}
+    boundary = audit.get("boundary_semantic_review")
+    boundary_map = dict(boundary) if isinstance(boundary, Mapping) else {}
+    findings = audit.get("findings")
+    finding_count = len(findings) if isinstance(findings, list) else None
+    mutation_authority = audit.get("correction_mutation_authority")
+    mutation_map = (
+        dict(mutation_authority) if isinstance(mutation_authority, Mapping) else {}
+    )
+    mutation_failures = mutation_map.get("failures")
+    mutation_failure_count = (
+        len(mutation_failures) if isinstance(mutation_failures, list) else None
+    )
+    validated_count = audit.get("validated_finding_count")
+    if isinstance(validated_count, bool) or not isinstance(validated_count, int):
+        validated_count = None
+
+    return {
+        "schema_version": "qixi-terminal-evidence-refresh-full-dry-run-diagnostic.v1",
+        "status": "FULL_DRY_RUN_BLOCKED",
+        "candidate_id": CANDIDATE_ID,
+        "recording_date": RECORDING_DATE,
+        "upload_enabled": False,
+        "predicate": {
+            "name": "final_review_contract",
+            "status": "FAIL",
+            "reason_code": _diagnostic_token(
+                reason_code, fallback="FINAL_REVIEW_REASON_CODE_INVALID"
+            ),
+        },
+        "final_review_reason_code": _diagnostic_token(
+            reason_code, fallback="FINAL_REVIEW_REASON_CODE_INVALID"
+        ),
+        # This is the hash calculated from the exact SRT passed to the final
+        # reviewer, not an untrusted value copied from its response.
+        "reviewed_srt_sha256": expected_srt_sha256,
+        "reported_reviewed_srt_sha256": _diagnostic_sha256(
+            audit.get("reviewed_srt_sha256")
+        ),
+        "final_review": {
+            "status": _diagnostic_token(audit.get("status"), fallback="UNAVAILABLE"),
+            "release_gate": _diagnostic_token(
+                audit.get("release_gate"), fallback="UNAVAILABLE"
+            ),
+            "reason_codes": _diagnostic_reason_codes(audit.get("reason_codes")),
+        },
+        "discovery": {
+            "status": _diagnostic_token(
+                discovery_map.get("status"), fallback="UNAVAILABLE"
+            ),
+            "finding_count": finding_count,
+            "reason_codes": _diagnostic_reason_codes(
+                discovery_map.get("reason_codes")
+            ),
+        },
+        "findings": {
+            "count": finding_count,
+            "validated_count": validated_count,
+            "reason_codes": _diagnostic_finding_reason_codes(findings),
+            "cue_indices": _diagnostic_cue_indices(findings),
+        },
+        "correction_mutation_authority": {
+            "status": _diagnostic_token(
+                mutation_map.get("status"), fallback="UNAVAILABLE"
+            ),
+            "failure_count": mutation_failure_count,
+            "reason_codes": _diagnostic_finding_reason_codes(mutation_failures),
+            "cue_indices": _diagnostic_cue_indices(mutation_failures),
+        },
+        "boundary": {
+            "status": _diagnostic_token(
+                boundary_map.get("status"), fallback="UNAVAILABLE"
+            ),
+            "reason_codes": _diagnostic_reason_codes(
+                boundary_map.get("reason_codes")
+            ),
+        },
+        "terminal_write_predicates": [
+            {"name": "target_write", "status": "NOT_ATTEMPTED"},
+            {"name": "state_write", "status": "NOT_ATTEMPTED"},
+            {"name": "journal_write", "status": "NOT_ATTEMPTED"},
+            {"name": "terminal_private_stage", "status": "NOT_CREATED"},
+        ],
+    }
+
+
+def full_dry_run_failure_result(
+    error: QixiTerminalEvidenceRefreshError,
+) -> dict[str, object]:
+    """Return the bounded CLI failure observation for a terminal dry run."""
+
+    if error.diagnostic_result is not None:
+        return copy.deepcopy(error.diagnostic_result)
+    predicate_name = "terminal_refresh"
+    if error.reason_code.endswith("_ALLOWLIST_DRIFT"):
+        predicate_name = "allowed_mutations"
+    return {
+        "schema_version": "qixi-terminal-evidence-refresh-full-dry-run-diagnostic.v1",
+        "status": "FULL_DRY_RUN_BLOCKED",
+        "candidate_id": CANDIDATE_ID,
+        "recording_date": RECORDING_DATE,
+        "upload_enabled": False,
+        "predicate": {
+            "name": predicate_name,
+            "status": "FAIL",
+            "reason_code": _diagnostic_token(
+                error.reason_code, fallback="QIXI_TERMINAL_REFRESH_FAILURE"
+            ),
+        },
+        "terminal_write_predicates": [
+            {"name": "target_write", "status": "NOT_ATTEMPTED"},
+            {"name": "state_write", "status": "NOT_ATTEMPTED"},
+            {"name": "journal_write", "status": "NOT_ATTEMPTED"},
+            {"name": "terminal_private_stage", "status": "NOT_CREATED"},
+        ],
+    }
 
 
 def _sha(text: str) -> str:
@@ -367,7 +574,13 @@ def refresh_terminal_evidence(
         validate_final_review_release(final_audit, expected_srt_sha256=_sha(final_srt))
     except FinalReviewContractError as exc:
         raise QixiTerminalEvidenceRefreshError(
-            "QIXI_TERMINAL_REFRESH_FINAL_REVIEW_BLOCKED"
+            "QIXI_TERMINAL_REFRESH_FINAL_REVIEW_BLOCKED",
+            underlying_reason_code=exc.reason_code,
+            diagnostic_result=_final_review_failure_diagnostic(
+                final_audit=final_audit,
+                expected_srt_sha256=_sha(final_srt),
+                reason_code=exc.reason_code,
+            ),
         ) from exc
 
     refreshed_chat = copy.deepcopy(old_chat)
