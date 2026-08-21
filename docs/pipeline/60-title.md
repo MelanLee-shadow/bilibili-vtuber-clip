@@ -38,6 +38,15 @@
   漂移都继续阻断，不能把这条门当成“人工标题永远正确”。fresh ASR 重建出的 clip-context
   只作为 diagnostic 另记 SHA；它不得替换、伪装或否决已经封存并绑定原 FAILED receipt 的裁决
   prompt。
+- `auto_123655_1613_1676` 的 operator exact title/source-fact projection 只可消费
+  `assets/lidousha/authorities/auto_123655_1613_1676.operator-exact-title-source-fact-authority.v1.json`。
+  它逐字绑定 Ivan 的 Claude JSONL 身份、line、时间和原话，及 exact title；并重放当前 SRT、
+  final-review、chat、boundary、source media、StoryContract/context/scorecard 与完整 FAILED
+  source-fact receipt。它只产生 `OPERATOR_EXACT_TITLE_WITH_RECORDED_SOURCE_FACT_DISSENT`：
+  CPA 已支持的 `final_selection_hook` 是唯一 final hook；Ivan 只裁定 exact title，
+  `provider_pass_claim=false`，完整 CPA FAILED/REPAIR 回执仍保留，绝不可写成 provider PASS。
+  此 authority 不授权字幕、媒体、边界、封面或上传；任一候选/标题/sidecar/hash 漂移都必须在
+  provider 或封面调用前阻断。
 - 已完整人审字幕但 source-fact provider 只返回不可用形状时，只有 deploy-sealed
   `deterministic-text-narrowing.v1` 才可把候选的旧人工 title/hook 收窄为封存的唯一新 surface。
   authority 必须保存原 FAILED attempt、逐字渲染计划、字幕/entity/uniform-host/source 区间与

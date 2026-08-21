@@ -50,6 +50,10 @@ from src.autoslice.addressee_attribution import (  # noqa: E402
 from src.autoslice.source_fact_review import (  # noqa: E402
     validate_source_fact_review,
 )
+from src.autoslice.operator_exact_title_source_fact_authority import (  # noqa: E402
+    PASS_DECISION as OPERATOR_EXACT_TITLE_PASS_DECISION,
+    validate_operator_exact_title_source_fact_receipt,
+)
 
 
 CHANNEL_PROFILE = load_channel_profile(ROOT)
@@ -274,7 +278,24 @@ def _validate_source_fact_receipts(
         validation_kwargs["speaker_evidence"] = speaker_evidence
     if qixi_repo_root is not None:
         validation_kwargs["qixi_repo_root"] = qixi_repo_root
-    if not validate_source_fact_review(receipts[0], **validation_kwargs):
+    receipt = receipts[0]
+    if isinstance(receipt, dict) and receipt.get("decision") == OPERATOR_EXACT_TITLE_PASS_DECISION:
+        if speaker_evidence is _SPEAKER_EVIDENCE_UNSET:
+            raise DailyManifestError("operator title source-fact receipt requires speaker evidence")
+        valid = validate_operator_exact_title_source_fact_receipt(
+            receipt,
+            record=record_doc,
+            speaker_evidence=speaker_evidence,
+            repo_root=qixi_repo_root or ROOT,
+            selection_hook=validation_kwargs["selection_hook"],
+            title=validation_kwargs["title"],
+            final_transcript=validation_kwargs["final_transcript"],
+            candidate_id=validation_kwargs["candidate_id"],
+            final_reviewed_srt_path=subtitle_path,
+        )
+    else:
+        valid = validate_source_fact_review(receipt, **validation_kwargs)
+    if not valid:
         raise DailyManifestError("source-fact review receipt is invalid or stale")
     return str(receipts[0]["receipt_sha256"])
 

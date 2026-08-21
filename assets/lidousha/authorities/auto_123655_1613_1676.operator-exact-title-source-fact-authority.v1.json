@@ -1,0 +1,128 @@
+{
+  "approved_title": {
+    "sha256": "sha256:cea356e9f268c8bf9a689f0d462609b5820ee1eaa064f0e5ef90bb887f77390e",
+    "value": "【李豆沙】熊猫头要一本正经的新增‘熊今饭’环节了"
+  },
+  "authority_sha256": "sha256:7fdf4e60fde9831f16caf5e89b825619571b306e3fa3468b61fc56071b9ec5ce",
+  "candidate_id": "auto_123655_1613_1676",
+  "failed_source_fact_review": {
+    "decision": "REPAIR_REQUIRES_TITLE_AUTHORITY",
+    "final_selection_hook": "小李一本正经新增“今天吃什么”环节并按周二推荐吃面，转头才发现当天是周一，还把记错归因于“一”和“二”撞号。",
+    "final_title": "【李豆沙】熊猫头要一本正经的新增‘熊今饭’环节了",
+    "original_selection_hook": "小李一本正经新增“今天吃什么”环节并按周二推荐吃面，转头才发现当天是周一，还把记错归因于“一”和“二”撞号。",
+    "original_title": "【李豆沙】熊猫头要一本正经的新增‘熊今饭’环节了",
+    "passes": [
+      {
+        "addressee_attribution": [],
+        "addressee_attribution_mode": "unverifiable_no_speaker_transcript",
+        "changed_surfaces": [
+          {
+            "after": "小李新增“今天吃什么”环节，先把当天当作周二推荐吃面，随后发现其实是周一，还用“撞号”给自己记错星期圆场。",
+            "artifact": "selection_hook",
+            "before": "小李一本正经新增“今天吃什么”环节并按周二推荐吃面，转头才发现当天是周一，还把记错归因于“一”和“二”撞号。",
+            "evidence": ["今天周二，晚上吃，吃面吧", "虽然不知道跟周二有什么关系", "以后我们都有一个\n今天吃什么环节\n小李会随机给出建议", "对，今天周一\n记错了，嗯，记错了", "周一原来是最猛的1啊\n怪不得小李不记得\n原来是撞号了呀"],
+            "reason": "字幕支持新增环节、误以为当天是周二、推荐吃面、确认实际为周一以及用“撞号”自我圆场，但没有证据表明发生撞号的是“一”和“二”；“一本正经”也缺少文字 authority 的直接支持。"
+          },
+          {
+            "after": "【李豆沙】新增“今天吃什么”环节，却把周一记成周二",
+            "artifact": "title",
+            "before": "【李豆沙】熊猫头要一本正经的新增‘熊今饭’环节了",
+            "evidence": ["以后我们都有一个\n今天吃什么环节", "今天周二，晚上吃，吃面吧", "对，今天周一\n记错了，嗯，记错了"],
+            "reason": "“熊今饭”没有出现在 source authority 中，也没有相邻证据支持该同音释义；“熊猫头”和“一本正经”同样缺少文字事实依据。修复后的标题保留频道前缀，并改用字幕明确支持的核心事件。"
+          }
+        ],
+        "clip_context_prompt_sha256": "sha256:e4199e0e2ff624c8451e0463462fc175968a42979a23867dad982027e9cd641a",
+        "final_selection_hook": "小李新增“今天吃什么”环节，先把当天当作周二推荐吃面，随后发现其实是周一，还用“撞号”给自己记错星期圆场。",
+        "final_title": "【李豆沙】新增“今天吃什么”环节，却把周一记成周二",
+        "final_transcript_sha256": "sha256:6b8c3270b58e90600304d87ffefdcad6845a885b0da2db4b1b53070af3f76fc7",
+        "reason_code": null,
+        "request_sha256": "sha256:8db62246fe78d70938c3b19fad9f2c0487dba3d63a042f9ef2c1b1be240243f7",
+        "response_sha256": "sha256:51769c52d457919f1fb3551dbccea31681ba4f6c4bc12747b52299afb6ffa807",
+        "review_pass": 1,
+        "schema_version": "lidousha-source-fact-review.v1",
+        "selection_hook_sha256": "sha256:aab1cc8fdcc96f2c1e42c8cad984b74c00929c0f324173a0a23de45e79a15791",
+        "selection_scorecard_review": {
+          "reason": "修复仅删除无依据的“一和二撞号”、同音造词及文字无法确认的姿态描述；核心梗仍是小李新增晚饭建议环节、记错星期并以“撞号”自我圆场，与原评分卡的 tier_basis、tier_reason、维度和证据 cue 一致。",
+          "status": "COMPATIBLE"
+        },
+        "selection_scorecard_sha256": "sha256:16a4efff974fa7b309307fc8c0aa32e7c4286c49eac5610f9aa30973f4f9560b",
+        "speaker_evidence_sha256": "sha256:7ad0672052878d79d0ad5f24e41ee57a6a8c401596b8954beb078ca45b39c989",
+        "speaker_transcript_sha256": null,
+        "status": "REPAIR",
+        "summary": "原钩子错误指定“一”和“二”发生撞号，原标题还包含无证据的“熊今饭”等表述，故修复为字幕明确支持的新增环节、周一记成周二及“撞号”圆场。",
+        "supported_by": ["final_transcript"],
+        "title_policy_mode": "baseline",
+        "title_policy_violations": [],
+        "title_sha256": "sha256:cea356e9f268c8bf9a689f0d462609b5820ee1eaa064f0e5ef90bb887f77390e"
+      }
+    ],
+    "provider_retries": [],
+    "reason_code": "SOURCE_FACT_TITLE_AUTHORITY_REQUIRED",
+    "receipt_sha256": "sha256:99326ca3eb53ab11db585ef2ff25df0a8f74b6356c60d8045210b12838b3de9f",
+    "schema_version": "lidousha-source-fact-review.v1",
+    "speaker_evidence": {
+      "policy_ids": {
+        "absence": "speaker_mode_uniform_host/v1",
+        "alignment": "speaker_cue_subsegment_alignment/v1",
+        "text": "compact_ws/v1",
+        "timing": "half_open_integer_ms_exact/v1"
+      },
+      "reason": "speaker_mode_uniform_host",
+      "state": "AbsentAuthorized"
+    },
+    "speaker_evidence_sha256": "sha256:7ad0672052878d79d0ad5f24e41ee57a6a8c401596b8954beb078ca45b39c989",
+    "status": "FAILED"
+  },
+  "operator_authorization": {
+    "conversation_id": "0df2296b-500a-4681-ab5e-6fb46dc39579",
+    "line": 947,
+    "quote": "小李一本正经新增“今天吃什么”环节并这个切片0:19说的是温柔唱歌。标题取为“熊猫头要一本正经的新增‘熊今饭’环节了”。",
+    "quote_sha256": "sha256:d06f141973ccf8ecc47abdb8c921d19873463fea81e1a5e3f236f19931f96463",
+    "source": "Claude JSONL",
+    "timestamp": "2026-08-19T00:08:52.249Z"
+  },
+  "recording_date": "2026-08-17",
+  "schema_version": "lidousha-operator-exact-title-source-fact-authority.v1",
+  "scope": {
+    "boundary_mutation": false,
+    "candidate_scoped": true,
+    "cover_mutation": false,
+    "media_mutation": false,
+    "provider_pass_claim": false,
+    "subtitle_mutation": false,
+    "title_source_fact_projection_only": true,
+    "upload_authorization": false
+  },
+  "source_binding": {
+    "boundary_audit_sha256": "sha256:084604a8f9a46ff9d40a17aa20ad1a1f2820a517d20805f9350f75a0eabf287f",
+    "chat_authority": {
+      "bytes": 358200,
+      "schema_version": "chat-authority-audit.v2",
+      "sha256": "sha256:5b5cc447a293ae20d30ce6e1d07b443d30e9ad0c36e85fe5d5d358c1fefe40f1",
+      "status": "APPLIED_AND_VERIFIED"
+    },
+    "clip_context_file_sha256": "sha256:542250f5ab58e565d7548b7b11a3009d9f2b3c78bff240e90e55b0dbe9f2d3a2",
+    "clip_context_prompt_sha256": "sha256:597c1c60b68b84a3a3af0cf3ef9163e089f4c249810bed38bcd7eed07be2aa95",
+    "final_review": {
+      "bytes": 183336,
+      "schema_version": "final-review-audit.v2",
+      "sha256": "sha256:b11fa14cb5ebb95e9c2e97d565b8d5f968fec59b59f69ad55579a6214d499342",
+      "status": "CLEAN"
+    },
+    "reviewed_srt": {
+      "bytes": 1462,
+      "sha256": "sha256:1642f35e51fb59b4ef2ae1d7de78a9038b51778325553c6acd7ec36e9e944db4"
+    },
+    "initial_selection_hook": "小李一本正经新增“今天吃什么”环节并按周二推荐吃面，转头才发现当天是周一，还把记错归因于“一”和“二”撞号。",
+    "initial_selection_hook_sha256": "sha256:aab1cc8fdcc96f2c1e42c8cad984b74c00929c0f324173a0a23de45e79a15791",
+    "resolved_selection_hook": "小李新增“今天吃什么”环节，先把当天当作周二推荐吃面，随后发现其实是周一，还用“撞号”给自己记错星期圆场。",
+    "resolved_selection_hook_sha256": "sha256:9b15fe896ed8252cb7f17ea1788b77e2dff729a23431b724a0ad2e38806c4dd6",
+    "selection_scorecard_sha256": "sha256:16a4efff974fa7b309307fc8c0aa32e7c4286c49eac5610f9aa30973f4f9560b",
+    "source_media": {
+      "basename": "22966160_20260817-12-36-55.mp4",
+      "end_ms": 1724190,
+      "sha256": "sha256:0c60ed662786cba515a01a555e3493df247a076df6f568aa323caeeab85346fd",
+      "start_ms": 1603660
+    }
+  }
+}

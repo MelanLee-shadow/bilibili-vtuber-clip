@@ -1399,8 +1399,6 @@ def authorize_manual_title_keep(
             "recorded_dissent": dissent,
         }
     )
-
-
 def authorize_deterministic_text_narrowing(
     consumption: Mapping[str, object],
 ) -> dict[str, object]:
