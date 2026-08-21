@@ -382,6 +382,7 @@ def project_uniform_host_locators(
     mappings: Sequence[tuple[str, str]],
     source_workspace_root: str,
     frozen_source_roots: Sequence[str] | None = None,
+    frozen_absolute_allowlist: Mapping[JsonPointer, str] | None = None,
 ) -> dict[str, Any]:
     """Project only contract-listed record/publish runtime locators.
 
@@ -397,6 +398,10 @@ def project_uniform_host_locators(
         raise PackageRelocationError("uniform-host projection kind is invalid")
     if len(mappings) != len(ROOT_ROLES):
         raise PackageRelocationError("uniform-host projection root mapping is invalid")
+    allowed_frozen = dict(frozen_absolute_allowlist or {})
+    for pointer, value in allowed_frozen.items():
+        if not _is_frozen_pointer(kind, pointer) or not isinstance(value, str) or not value.startswith("/"):
+            raise PackageRelocationError("uniform-host frozen absolute allow-list is invalid")
     frozen_roots = tuple(
         dict.fromkeys(
             (source_workspace_root.rstrip("/"),)
@@ -433,6 +438,7 @@ def project_uniform_host_locators(
                 pointer,
                 mappings[ROOT_ROLES.index(role)][1] + suffix,
             )
+    seen_frozen = set()
     for pointer, value in walk_strings(result):
         if not value.startswith("/"):
             continue
@@ -445,6 +451,13 @@ def project_uniform_host_locators(
             validate_path_root_role(value, kind=kind, pointer=pointer, mappings=mappings)
             continue
         if _is_frozen_pointer(kind, pointer):
+            if pointer in allowed_frozen:
+                if value != allowed_frozen[pointer]:
+                    raise PackageRelocationError(
+                        f"{kind}: frozen absolute allow-list value drifts at {pointer_text(pointer)}"
+                    )
+                seen_frozen.add(pointer)
+                continue
             if any(value == workspace or value.startswith(workspace + "/") for workspace in frozen_roots):
                 continue
             matched = match_root_role(value, mappings=mappings)
@@ -457,5 +470,7 @@ def project_uniform_host_locators(
             raise PackageRelocationError(
                 f"{kind}: non-frozen absolute path at {pointer_text(pointer)}"
             )
+    if seen_frozen != set(allowed_frozen):
+        raise PackageRelocationError("uniform-host frozen absolute allow-list pointer is missing")
     validate_document_root_roles(result, kind=kind, mappings=mappings)
     return result

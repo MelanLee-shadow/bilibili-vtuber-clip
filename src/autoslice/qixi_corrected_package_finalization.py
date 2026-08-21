@@ -1463,7 +1463,7 @@ def _project_current_terminal_documents(
     source_boundary = _load_object(artifacts["boundary_audit"][0], label="source boundary audit")
     source_flags = _load_object(artifacts["review_flags"][0], label="source review flags")
     try:
-        replayed_chat, current_boundary = build_terminal_audit_closure(
+        replayed_chat, current_boundary, frozen_chat_allowlist = build_terminal_audit_closure(
             repo_root=repo_root,
             source_chat=source_chat,
             source_chat_sha256=artifacts["chat_authority"][1],
@@ -1647,7 +1647,7 @@ def _project_current_terminal_documents(
     try:
         record = project_uniform_host_locators(record, kind="record", mappings=evidence_mappings, source_workspace_root=evidence_workspace_root, frozen_source_roots=(release_workspace_root,))
         publish = project_uniform_host_locators(publish, kind="publish", mappings=evidence_mappings, source_workspace_root=evidence_workspace_root, frozen_source_roots=(release_workspace_root,))
-        chat = project_uniform_host_locators(chat, kind="chat", mappings=evidence_mappings, source_workspace_root=evidence_workspace_root)
+        chat = project_uniform_host_locators(chat, kind="chat", mappings=evidence_mappings, source_workspace_root=evidence_workspace_root, frozen_absolute_allowlist=frozen_chat_allowlist)
     except PackageRelocationError as exc:
         raise QixiCorrectedPackageError(f"current terminal locator contract failed: {exc}") from exc
     if (

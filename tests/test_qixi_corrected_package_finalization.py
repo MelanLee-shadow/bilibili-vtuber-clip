@@ -11,6 +11,9 @@ from src.autoslice import qixi_corrected_package_finalization as finalization
 from src.autoslice import final_human_review
 from src.autoslice import qixi_terminal_subtitle_projection as terminal_projection
 from src.autoslice import qixi_source_fact_terminal_preservation as source_fact_preservation
+from src.autoslice.qixi_current_terminal_audit_closure import (
+    terminal_chat_frozen_provenance_allowlist,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.package_relocation_contract import (
     PackageRelocationError,
@@ -432,7 +435,17 @@ def _write_current_lane_fixture(
         },
         "frozen_boundary_owner_contract": frozen_chat["frozen_boundary_owner_contract"],
         "final_review_audit": historical_review,
-        "applied": [], "sender_repairs": [], "gift_repairs": [], "coreference_repairs": [],
+        "applied": [
+            {
+                "source": "/historical/2026-08-17/auto_113022_354_496/chat.xml",
+                "reconciliation": {"status": "HISTORICAL"},
+            }
+            for _ in range(5)
+        ],
+        "structured_chat_binding_audit": {
+            "pieces": [{"jsonl_path": "/historical/2026-08-17/auto_113022_354_496/chat.jsonl"}]
+        },
+        "sender_repairs": [], "gift_repairs": [], "coreference_repairs": [],
         "entity_repairs": [], "pending_text_overrides": [],
     }
     old_chat = _write(
@@ -1059,6 +1072,61 @@ def test_uniform_host_locator_rejects_role_crossing_and_preserves_frozen_chat() 
     with pytest.raises(PackageRelocationError, match="escapes source workspace"):
         project_uniform_host_locators(
             chat, kind="chat", mappings=mappings, source_workspace_root="/source"
+        )
+
+
+def test_current_terminal_frozen_chat_provenance_is_exact_and_nonextensible() -> None:
+    mappings = (
+        ("/source/package", "/target/package"),
+        ("/source/candidate", "/target/candidate"),
+        ("/source/repo", "/target/repo"),
+    )
+    chat = {
+        "applied": [
+            {
+                "source": "/historical/2026-08-17/auto_113022_354_496/chat.xml",
+                "reconciliation": {"status": "HISTORICAL"},
+            }
+            for _ in range(5)
+        ],
+        "structured_chat_binding_audit": {
+            "pieces": [{"jsonl_path": "/historical/2026-08-17/auto_113022_354_496/chat.jsonl"}]
+        },
+    }
+    allowlist = terminal_chat_frozen_provenance_allowlist(chat)
+    projected = project_uniform_host_locators(
+        chat,
+        kind="chat",
+        mappings=mappings,
+        source_workspace_root="/source",
+        frozen_absolute_allowlist=allowlist,
+    )
+    assert projected == chat
+    mismatched_stem = copy.deepcopy(chat)
+    mismatched_stem["structured_chat_binding_audit"]["pieces"][0]["jsonl_path"] = (
+        "/historical/2026-08-17/other.jsonl"
+    )
+    with pytest.raises(ValueError, match="provenance shape drifts"):
+        terminal_chat_frozen_provenance_allowlist(mismatched_stem)
+    wrong_value = copy.deepcopy(chat)
+    wrong_value["applied"][0]["source"] = "/historical/other.xml"
+    with pytest.raises(PackageRelocationError, match="allow-list value drifts"):
+        project_uniform_host_locators(
+            wrong_value,
+            kind="chat",
+            mappings=mappings,
+            source_workspace_root="/source",
+            frozen_absolute_allowlist=allowlist,
+        )
+    new_pointer = copy.deepcopy(chat)
+    new_pointer["applied"].append({"source": "/historical/extra.xml"})
+    with pytest.raises(PackageRelocationError, match="frozen path escapes source workspace"):
+        project_uniform_host_locators(
+            new_pointer,
+            kind="chat",
+            mappings=mappings,
+            source_workspace_root="/source",
+            frozen_absolute_allowlist=allowlist,
         )
 
 

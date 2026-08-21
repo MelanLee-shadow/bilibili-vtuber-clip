@@ -42,10 +42,54 @@ AUTHORITY_RELATIVE_PATH = Path(
 )
 SCHEMA = "qixi-current-terminal-audit-closure-authority.v1"
 _SHA = "sha256:"
+_TERMINAL_FROZEN_CHAT_POINTERS = tuple(
+    [("applied", str(index), "source") for index in range(5)]
+    + [("structured_chat_binding_audit", "pieces", "0", "jsonl_path")]
+)
 
 
 class QixiCurrentTerminalAuditClosureError(ValueError):
     """A terminal audit closure is incomplete, stale, or not replayable."""
+
+
+def terminal_chat_frozen_provenance_allowlist(
+    source_chat: Mapping[str, Any],
+) -> dict[tuple[str, ...], str]:
+    """Return the sole six sealed historical external chat locators.
+
+    These production-host locators are evidence, not runtime paths.  Their
+    source chat is hash-bound by the current-terminal closure; therefore the
+    copied after-image may retain only these exact pointer/value pairs.
+    """
+
+    values: dict[tuple[str, ...], str] = {}
+    for pointer in _TERMINAL_FROZEN_CHAT_POINTERS:
+        current: object = source_chat
+        for part in pointer:
+            if isinstance(current, Mapping):
+                current = current.get(part)
+            elif isinstance(current, list) and part.isdecimal():
+                index = int(part)
+                current = current[index] if index < len(current) else None
+            else:
+                current = None
+                break
+        if not isinstance(current, str) or not current.startswith("/"):
+            raise QixiCurrentTerminalAuditClosureError(
+                "Qixi terminal frozen chat provenance is missing"
+            )
+        values[pointer] = current
+    xml_values = [values[pointer] for pointer in _TERMINAL_FROZEN_CHAT_POINTERS[:5]]
+    jsonl_path = values[_TERMINAL_FROZEN_CHAT_POINTERS[-1]]
+    if (
+        len(set(xml_values)) != 1
+        or not xml_values[0].endswith(".xml")
+        or jsonl_path != xml_values[0][:-4] + ".jsonl"
+    ):
+        raise QixiCurrentTerminalAuditClosureError(
+            "Qixi terminal frozen chat provenance shape drifts"
+        )
+    return values
 
 
 def _canonical_sha(value: object) -> str:
@@ -230,7 +274,7 @@ def build_terminal_audit_closure(
     source_flags_sha256: str,
     record_boundary: Mapping[str, Any],
     subtitle_text: str,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[tuple[str, ...], str]]:
     """Return re-verifiable chat and boundary closures for the terminal SRT.
 
     This function intentionally does *not* validate final text owners itself:
@@ -291,7 +335,7 @@ def build_terminal_audit_closure(
     )
     chat = copy.deepcopy(dict(source_chat))
     chat["final_review_audit"] = final_review
-    return chat, current_boundary
+    return chat, current_boundary, terminal_chat_frozen_provenance_allowlist(source_chat)
 
 
 def rebind_terminal_story_transcript(
