@@ -1,0 +1,246 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+
+from src.autoslice.publication_readiness import (
+    CODE_DEFECT,
+    NEEDS_IVAN_TRUTH,
+    NEEDS_PROVIDER,
+    READY_TO_PREPARE,
+    READY_FOR_SERIAL_UPLOAD,
+    STATE_DRIFT,
+    build_readiness_graph,
+)
+
+
+def _sha(payload: bytes) -> str:
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _write(path: Path, payload: bytes) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
+    return _sha(payload)
+
+
+def _registry(*entries: dict[str, object]) -> dict[str, object]:
+    return {"schema_version": "publication-registry.v1", "entries": list(entries)}
+
+
+def _package(runtime: Path, date: str, candidate: str, *, source_fact: bool = True, qc: bool = True, nested_burn: bool = False) -> tuple[Path, Path]:
+    root = runtime / "out" / date / candidate / "replacement_recuts"
+    main, srt, ass, burn, cover = (root / f"{candidate}.recut.mp4", root / f"{candidate}.recut.srt", root / f"{candidate}.recut.ass", root / f"{candidate}.burn.mp4", root / "covers" / f"{candidate}.cover.png")
+    hashes = {"video_sha256": _write(main, b"video"), "subtitle_sha256": _write(srt, b"srt"), "ass_sha256": _write(ass, b"ass"), "burned_video_sha256": _write(burn, b"burn"), "cover_sha256": _write(cover, b"cover")}
+    publish = root / f"{candidate}.publish.json"
+    record = root / f"{candidate}.record.json"
+    record_doc = {"candidate_id": candidate, "recording_date": date, "media_path": str(main), "subtitle_path": str(srt), "subtitle_ass_path": str(ass), "burned_video_path": str(burn), "artifact_hashes": hashes, "story_contract": {"source_fact_review": {"status": "PASS"} if source_fact else {}}}
+    if nested_burn:
+        record_doc.pop("burned_video_path")
+        record_doc["burned_preview"] = {"burned_path": str(burn), "burned_sha256": hashes["burned_video_sha256"]}
+    record.write_text(json.dumps(record_doc))
+    title = f"【李豆沙】{candidate}"
+    publish.write_text(json.dumps({"candidate_id": candidate, "title": title, "artifact_hashes": hashes, "cover_generation": {"final_cover": str(cover), "final_cover_sha256": hashes["cover_sha256"]}}))
+    if qc:
+        (root / f"{candidate}.title-cover-joint-qc.json").write_text(json.dumps({"schema_version": "lidousha-title-cover-joint-qc.v1", "candidate_id": candidate, "title": title, "title_sha256": _sha(title.encode()), "cover_path": str(cover), "cover_sha256": hashes["cover_sha256"], "preferred_provider": "cpa", "selected_provider": "cpa", "witness": {"schema_version": "cpa-frame-witness.v1", "provider": "cpa", "model": "fixture", "status": "OBSERVED", "image_path": str(cover), "image_sha256": hashes["cover_sha256"]}, "verdict": {"lidousha_primary": True, "thumbnail_readable": True, "single_clear_hook": True, "text_overcrowded": False, "title_cover_aligned": True, "physical_text_line_count": 1, "unrelated_or_misleading_elements": [], "pass": True}, "status": "PASS", "pass": True}))
+    (root / f"{candidate}.review-manifest.json").write_text(json.dumps({"status": "PASS"}))
+    (root / f"{candidate}.package-audit.json").write_text(json.dumps({"status": "PASS"}))
+    return root, record
+
+
+def _runtime(tmp_path: Path) -> tuple[Path, Path]:
+    repo, runtime = tmp_path / "repo", tmp_path / "runtime"
+    (repo / "assets/lidousha").mkdir(parents=True)
+    (runtime / "state").mkdir(parents=True)
+    (runtime / "reports").mkdir()
+    (runtime / "reports/upload_ledger.jsonl").write_text("")
+    return repo, runtime
+
+
+def _rows(graph: dict[str, object]) -> dict[str, dict[str, object]]:
+    return {str(row["candidate_id"]): row for row in graph["rows"]}  # type: ignore[index]
+
+
+def test_production_shape_talk_song_hold_and_published_are_independent(tmp_path: Path) -> None:
+    repo, runtime = _runtime(tmp_path)
+    _package(runtime, "2026-08-20", "talk")
+    _package(runtime, "2026-08-20", "song")
+    (runtime / "state/2026-08-20.json").write_text(json.dumps({"picks": [{"candidate_id": "talk", "status": "review_ready", "rc": 0, "bundle_lifecycle": "CURRENT", "bundle_compliance": "COMPLIANT"}], "songs": [{"candidate_id": "song", "status": "review_ready", "rc": 0}]}))
+    graph = build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry({"candidate_id": "held", "recording_date": "2026-08-21", "status": "hold_pending_review"}, {"candidate_id": "public", "recording_date": "2026-08-18", "status": "published"}))
+    rows = _rows(graph)
+    assert rows["talk"]["category"] == READY_TO_PREPARE
+    assert rows["song"]["category"] == READY_TO_PREPARE
+    assert rows["held"]["category"] == NEEDS_IVAN_TRUTH
+    assert graph["excluded_published"] == [{"candidate_id": "public", "recording_date": "2026-08-18", "reason_code": "PUBLISHED_EXCLUDED"}]
+
+
+def test_missing_truth_provider_and_typed_code_use_real_fields(tmp_path: Path) -> None:
+    repo, runtime = _runtime(tmp_path)
+    _package(runtime, "2026-08-20", "provider", source_fact=False)
+    _package(runtime, "2026-08-20", "truth")
+    _package(runtime, "2026-08-20", "defect")
+    (runtime / "state/2026-08-20.json").write_text(json.dumps({"picks": [{"candidate_id": "provider", "status": "review_ready", "rc": 0}, {"candidate_id": "truth", "status": "review_ready", "rc": 0, "title_authority_error": "exact Ivan title required"}, {"candidate_id": "defect", "status": "review_ready", "rc": 0, "failure_stage": "runtime_code_defect"}]}))
+    rows = _rows(build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry()))
+    assert rows["provider"]["category"] == NEEDS_PROVIDER
+    assert rows["truth"]["category"] == NEEDS_IVAN_TRUTH
+    assert rows["defect"]["category"] == CODE_DEFECT
+
+
+def test_symlink_and_hash_drift_are_state_drift(tmp_path: Path) -> None:
+    repo, runtime = _runtime(tmp_path)
+    root, record = _package(runtime, "2026-08-20", "drift")
+    record_doc = json.loads(record.read_text())
+    Path(record_doc["subtitle_path"]).write_bytes(b"tampered")
+    (runtime / "state/2026-08-20.json").write_text(json.dumps({"picks": [{"candidate_id": "drift", "status": "review_ready", "rc": 0}]}))
+    rows = _rows(build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry()))
+    assert rows["drift"]["category"] == STATE_DRIFT
+    assert "PACKAGE_ARTIFACT_HASH_DRIFT" in rows["drift"]["reason_codes"]
+    target = root / "elsewhere"
+    target.write_bytes(b"x")
+    Path(record_doc["subtitle_path"]).unlink()
+    Path(record_doc["subtitle_path"]).symlink_to(target)
+    rows = _rows(build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry()))
+    assert rows["drift"]["category"] == STATE_DRIFT
+
+
+def test_nested_burn_and_real_joint_qc_are_accepted_but_escaped_paths_fail(tmp_path: Path) -> None:
+    repo, runtime = _runtime(tmp_path)
+    root, record = _package(runtime, "2026-08-20", "nested", nested_burn=True)
+    (runtime / "state/2026-08-20.json").write_text(json.dumps({"picks": [{"candidate_id": "nested", "status": "review_ready", "rc": 0}]}))
+    rows = _rows(build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry()))
+    assert rows["nested"]["category"] == READY_TO_PREPARE
+    escaped = tmp_path / "outside.srt"
+    escaped.write_bytes(b"srt")
+    document = json.loads(record.read_text())
+    document["subtitle_path"] = str(escaped)
+    record.write_text(json.dumps(document))
+    rows = _rows(build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry()))
+    assert rows["nested"]["category"] == STATE_DRIFT
+
+
+def test_parent_symlink_and_candidate_exception_are_local_drift(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo, runtime = _runtime(tmp_path)
+    root, _record = _package(runtime, "2026-08-20", "safe")
+    (runtime / "state/2026-08-20.json").write_text(json.dumps({"picks": [{"candidate_id": "safe", "status": "review_ready", "rc": 0}]}))
+    linked = runtime / "out" / "2026-08-20" / "linked"
+    linked.symlink_to(root)
+    state = json.loads((runtime / "state/2026-08-20.json").read_text())
+    state["picks"].append({"candidate_id": "linked", "status": "review_ready", "rc": 0})
+    (runtime / "state/2026-08-20.json").write_text(json.dumps(state))
+    rows = _rows(build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry()))
+    assert rows["linked"]["category"] == STATE_DRIFT
+    from src.autoslice import publication_readiness
+
+    original = publication_readiness._inspect_package
+    monkeypatch.setattr(
+        publication_readiness,
+        "_inspect_package",
+        lambda root, candidate, date: (_ for _ in ()).throw(RuntimeError("race"))
+        if candidate == "safe"
+        else original(root, candidate, date),
+    )
+    rows = _rows(build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry()))
+    assert rows["safe"]["category"] == STATE_DRIFT
+    assert "PACKAGE_INSPECTION_EXCEPTION" in rows["safe"]["reason_codes"]
+    assert rows["linked"]["category"] == STATE_DRIFT
+
+
+def test_serial_requires_conventional_manifest_attested_record_and_clean_ledger(tmp_path: Path) -> None:
+    repo, runtime = _runtime(tmp_path)
+    root, record = _package(runtime, "2026-08-20", "serial")
+    manifest = root / "serial.upload_manifest.json"
+    manifest.write_text("{}")
+    (runtime / "state/2026-08-20.json").write_text(json.dumps({"picks": [{"candidate_id": "serial", "status": "review_ready", "rc": 0}]}))
+    def loader(_path: Path, **_kwargs: object) -> tuple[dict | None, list[str]]:
+        return {"video": {"sha256": "sha256:video"}, "package_attestation": {"record": {"path": str(record)}}}, []
+    rows = _rows(build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry(), manifest_loader=loader, ledger_checker=lambda *_a: (None, None, [])))
+    assert rows["serial"]["category"] == READY_FOR_SERIAL_UPLOAD
+    rows = _rows(build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry(), manifest_loader=lambda *_a, **_k: ({"video": {"sha256": "sha256:video"}, "package_attestation": {"record": {"path": "wrong"}}}, []), ledger_checker=lambda *_a: (None, None, [])))
+    assert rows["serial"]["category"] == STATE_DRIFT
+    rows = _rows(build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry(), manifest_loader=lambda *_a, **_k: ({"candidate_id": "other", "recording_date": "2026-08-21", "video": {"sha256": "sha256:video"}, "package_attestation": {"record": {"path": str(record)}}}, []), ledger_checker=lambda *_a: (None, None, [])))
+    assert rows["serial"]["category"] == STATE_DRIFT
+    assert "UPLOAD_MANIFEST_IDENTITY_DRIFT" in rows["serial"]["reason_codes"]
+
+
+def test_serial_rejects_missing_local_audit_and_uploaded_registry_disagreement(tmp_path: Path) -> None:
+    repo, runtime = _runtime(tmp_path)
+    root, record = _package(runtime, "2026-08-20", "serial")
+    (root / "serial.upload_manifest.json").write_text("{}")
+    (root / "serial.package-audit.json").unlink()
+    (runtime / "state/2026-08-20.json").write_text(json.dumps({"picks": [{"candidate_id": "serial", "status": "review_ready", "rc": 0}]}))
+    def loader(*_args: object, **_kwargs: object) -> tuple[dict[str, object], list[str]]:
+        return {"video": {"sha256": "sha256:video"}, "package_attestation": {"record": {"path": str(record)}}}, []
+    rows = _rows(build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry(), manifest_loader=loader, ledger_checker=lambda *_a: (None, None, [])))
+    assert rows["serial"]["category"] == STATE_DRIFT
+    _write(root / "serial.package-audit.json", b'{"status":"PASS"}')
+    rows = _rows(build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry(), manifest_loader=loader, ledger_checker=lambda *_a: ("uploaded", {}, [])))
+    assert rows["serial"]["category"] == STATE_DRIFT
+    assert "UPLOAD_STATE_REGISTRY_DRIFT" in rows["serial"]["reason_codes"]
+
+
+def test_unresolved_ledger_blocks_only_serial_and_bad_state_does_not_hide_ready(tmp_path: Path) -> None:
+    repo, runtime = _runtime(tmp_path)
+    root, record = _package(runtime, "2026-08-20", "ready")
+    _package(runtime, "2026-08-20", "other")
+    (root / "ready.upload_manifest.json").write_text("{}")
+    (runtime / "state/2026-08-19.json").write_text("{bad")
+    (runtime / "state/2026-08-20.json").write_text(json.dumps({"picks": [{"candidate_id": "ready", "status": "review_ready", "rc": 0}, {"candidate_id": "other", "status": "review_ready", "rc": 0}], "songs": [{"candidate_id": "ready", "status": "review_ready", "rc": 0}]}))
+    def loader(_path: Path, **_kwargs: object) -> tuple[dict | None, list[str]]:
+        return {"video": {"sha256": "sha256:video"}, "package_attestation": {"record": {"path": str(record)}}}, []
+    graph = build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry(), manifest_loader=loader, ledger_checker=lambda *_a: ("unresolved", None, ["STARTED"]))
+    rows = _rows(graph)
+    assert rows["ready"]["category"] == READY_TO_PREPARE
+    assert "LEDGER_SERIAL_BLOCKED" in rows["ready"]["reason_codes"]
+    assert rows["other"]["category"] == READY_TO_PREPARE
+    assert {item["code"] for item in graph["graph_blockers"]} == {"STATE_FILE_INVALID", "STATE_CANDIDATE_DUPLICATE"}
+
+
+def test_invalid_registry_forbids_serial_but_keeps_local_prepare(tmp_path: Path) -> None:
+    repo, runtime = _runtime(tmp_path)
+    root, record = _package(runtime, "2026-08-20", "serial")
+    (root / "serial.upload_manifest.json").write_text("{}")
+    (runtime / "state/2026-08-20.json").write_text(json.dumps({"picks": [{"candidate_id": "serial", "status": "review_ready", "rc": 0}]}))
+    def loader(*_args: object, **_kwargs: object) -> tuple[dict[str, object], list[str]]:
+        return {"video": {"sha256": "sha256:video"}, "package_attestation": {"record": {"path": str(record)}}}, []
+    graph = build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: (_ for _ in ()).throw(ValueError("bad registry")), manifest_loader=loader, ledger_checker=lambda *_a: (None, None, []))
+    row = _rows(graph)["serial"]
+    assert row["category"] == READY_TO_PREPARE
+    assert "REGISTRY_SERIAL_BLOCKED" in row["reason_codes"]
+    assert {item["code"] for item in graph["graph_blockers"]} == {"PUBLICATION_REGISTRY_INVALID"}
+
+
+def test_manifest_and_ledger_exceptions_are_candidate_local(tmp_path: Path) -> None:
+    repo, runtime = _runtime(tmp_path)
+    roots = {candidate: _package(runtime, "2026-08-20", candidate) for candidate in ("good", "manifest-bad", "ledger-bad")}
+    for candidate, (root, _record) in roots.items():
+        (root / f"{candidate}.upload_manifest.json").write_text("{}")
+    (runtime / "state/2026-08-20.json").write_text(json.dumps({"picks": [{"candidate_id": candidate, "status": "review_ready", "rc": 0} for candidate in roots]}))
+    def loader(path: Path, **_kwargs: object) -> tuple[dict[str, object], list[str]]:
+        if "manifest-bad" in path.name:
+            raise RuntimeError("manifest race")
+        candidate = "ledger-bad" if "ledger-bad" in path.name else "good"
+        return {"candidate_id": candidate, "recording_date": "2026-08-20", "video": {"sha256": "sha256:" + candidate}, "package_attestation": {"record": {"path": str(roots[candidate][1])}}}, []
+    def checker(_ledger: Path, sha: str) -> tuple[str | None, dict | None, list[str]]:
+        if sha.endswith("ledger-bad"):
+            raise RuntimeError("ledger race")
+        return None, None, []
+    rows = _rows(build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry(), manifest_loader=loader, ledger_checker=checker))
+    assert rows["good"]["category"] == READY_FOR_SERIAL_UPLOAD
+    assert rows["manifest-bad"]["category"] == STATE_DRIFT
+    assert rows["ledger-bad"]["category"] == STATE_DRIFT
+    assert "PACKAGE_MANIFEST_OR_LEDGER_EXCEPTION" in rows["manifest-bad"]["reason_codes"]
+    assert "PACKAGE_MANIFEST_OR_LEDGER_EXCEPTION" in rows["ledger-bad"]["reason_codes"]
+
+
+def test_readiness_is_read_only_and_never_calls_provider_or_network(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo, runtime = _runtime(tmp_path)
+    _package(runtime, "2026-08-20", "safe")
+    state = runtime / "state/2026-08-20.json"
+    state.write_text(json.dumps({"picks": [{"candidate_id": "safe", "status": "review_ready", "rc": 0}]}))
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    monkeypatch.setattr("src.autoslice.publication_readiness.authorized_upload.load_and_verify", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("network/provider")))
+    build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry())
+    assert before == {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}

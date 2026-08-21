@@ -6,12 +6,15 @@ import hashlib
 import json
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
 from PIL import Image
 
 from src.autoslice import qixi_post_correction_public_surface as closure
+from src.autoslice import qixi_post_correction_modes as closure_modes
+from src.autoslice.repository_asset_authority import build_deployed_authority_manifest
 from src.autoslice import qixi_post_correction_projection_paths as projection_paths
 from src.autoslice import publish_staging
 from src.autoslice import source_fact_staging
@@ -39,6 +42,7 @@ from src.autoslice.review_package_portable_evidence import rebuild_package_speak
 from src.autoslice.review_package_source_fact_audit import audit_story_source_fact_receipt
 from src.autoslice.source_fact_review import review_and_repair_source_facts
 from scripts.build_lidousha_daily_review_manifest import _validate_source_fact_receipts
+from scripts import finalize_qixi_post_correction_public_surface as closure_cli
 from scripts.finalize_qixi_post_correction_public_surface import _parse_args
 
 
@@ -441,7 +445,7 @@ def _materialize_real_cover_generation(tmp_path: Path, story: dict[str, object])
 def test_dry_run_validates_exact_inputs_without_stage_residue(tmp_path: Path) -> None:
     repo, runtime, authority, paths = _fixture(tmp_path)
     result = closure.finalize(apply=False, repo_root=repo, runtime_root=runtime, authority=authority)
-    assert result["status"] == "DRY_RUN_PASS"
+    assert result["status"] == "PLAN_PASS"
     assert not list(paths["record"].parent.glob(".qixi-public-surface-stage-*"))
     assert paths["record"].read_bytes() == paths["delivery"].read_bytes()
 
@@ -466,11 +470,763 @@ def test_private_publish_path_never_opens_an_arbitrary_write_sink(tmp_path: Path
 
 
 def test_cli_defaults_to_dry_run_and_exposes_no_runtime_path_flags() -> None:
-    assert _parse_args([]).apply is False
-    assert _parse_args(["--dry-run"]).apply is False
-    assert _parse_args(["--apply"]).apply is True
+    assert _parse_args([]).mode is closure_modes.Mode.PLAN
+    assert _parse_args(["--dry-run"]).mode is closure_modes.Mode.PLAN
+    assert _parse_args(["--plan"]).mode is closure_modes.Mode.PLAN
+    assert _parse_args(["--diagnose"]).mode is closure_modes.Mode.DIAGNOSE
+    assert _parse_args(["--full-dry-run"]).mode is closure_modes.Mode.FULL_DRY_RUN
+    assert _parse_args(["--apply"]).mode is closure_modes.Mode.APPLY
     with pytest.raises(SystemExit):
         _parse_args(["--runtime-root", "/tmp/not-authorized"])
+
+
+def test_cli_full_dry_run_blocked_is_nonzero_but_diagnose_is_observational(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        closure_cli,
+        "run",
+        lambda mode, **_kwargs: {"status": "FULL_DRY_RUN_BLOCKED"}
+        if mode is closure_modes.Mode.FULL_DRY_RUN
+        else {"status": "DIAGNOSE_COMPLETE"},
+    )
+    assert closure_cli.main(["--full-dry-run"]) == 2
+    assert closure_cli.main(["--diagnose"]) == 0
+
+
+def test_after_image_matrix_has_fixed_ids_and_collects_independent_failures(
+    tmp_path: Path,
+) -> None:
+    repo, runtime, authority, paths = _fixture(tmp_path)
+    inputs = closure.validate_runtime(authority, repo_root=repo, runtime_root=runtime)
+    stage = Path(tempfile.mkdtemp(prefix="matrix-stage-", dir=paths["record"].parent))
+    try:
+        targets, _ = closure._build_after_image(
+            inputs,
+            stage_root=stage,
+            source_fact_llm_call=lambda _prompt: pytest.fail("provider must not run"),
+            stage_publish=_fake_stage,
+        )
+        before = closure_modes._safe_before(targets)
+        targets[paths["delivery"]] = b"{}"
+        fixed_targets = {paths["record"], paths["delivery"], paths["publish"], paths["state"]}
+        cover_target = next(path for path in targets if path not in fixed_targets)
+        targets[cover_target] = b"forged-cover"
+        matrix, _ = closure_modes.collect_matrix(
+            authority=authority,
+            repo_root=repo,
+            runtime_root=runtime,
+            before=before,
+            after=targets,
+        )
+    finally:
+        closure._remove_private_stage(stage)
+    predicates = matrix["predicates"]
+    assert [row["name"] for row in predicates] == list(closure_modes.MATRIX_PREDICATE_IDS)
+    by_name = {row["name"]: row for row in predicates}
+    assert by_name["record_delivery_media_closure"]["status"] == "FAIL"
+    assert by_name["cover_materialized_hashes"]["status"] == "FAIL"
+    assert by_name["state_exact_diff"]["status"] == "PASS"
+
+
+def test_after_image_matrix_marks_generation_dependents_not_evaluated(
+    tmp_path: Path,
+) -> None:
+    repo, runtime, authority, paths = _fixture(tmp_path)
+    inputs = closure.validate_runtime(authority, repo_root=repo, runtime_root=runtime)
+    stage = Path(tempfile.mkdtemp(prefix="matrix-stage-", dir=paths["record"].parent))
+    try:
+        targets, _ = closure._build_after_image(
+            inputs,
+            stage_root=stage,
+            source_fact_llm_call=lambda _prompt: pytest.fail("provider must not run"),
+            stage_publish=_fake_stage,
+        )
+        before = closure_modes._safe_before(targets)
+        record = json.loads(targets[paths["record"]])
+        publish = json.loads(targets[paths["publish"]])
+        record["publish_staging"]["cover_generation"] = None
+        publish["cover_generation"] = None
+        targets[paths["record"]] = closure._json_bytes(record)
+        targets[paths["delivery"]] = closure._json_bytes(record)
+        targets[paths["publish"]] = closure._json_bytes(publish)
+        matrix, _ = closure_modes.collect_matrix(
+            authority=authority,
+            repo_root=repo,
+            runtime_root=runtime,
+            before=before,
+            after=targets,
+        )
+    finally:
+        closure._remove_private_stage(stage)
+    by_name = {row["name"]: row for row in matrix["predicates"]}
+    assert [row["name"] for row in matrix["predicates"]] == list(
+        closure_modes.MATRIX_PREDICATE_IDS
+    )
+    assert by_name["cover_generation_shape"]["status"] == "FAIL"
+    for predicate_id in (
+        "cover_route",
+        "cover_rendered_text_pixels",
+        "cover_final_host_identity",
+        "cover_final_participant_identity",
+        "cover_punch_semantics",
+        "cover_materialized_hashes",
+        "cover_projection",
+        "publish_artifact_hashes",
+        "immutable_target_scope",
+    ):
+        assert by_name[predicate_id]["status"] == "NOT_EVALUATED"
+    assert by_name["source_fact_public_mirrors"]["status"] == "PASS"
+    assert by_name["manual_title_authority_mapping"]["status"] == "PASS"
+    assert by_name["state_exact_diff"]["status"] == "FAIL"
+
+
+def test_full_dry_run_stages_privately_and_never_writes_targets(tmp_path: Path) -> None:
+    repo, runtime, authority, paths = _fixture(tmp_path)
+    before = {name: path.read_bytes() for name, path in paths.items()}
+    result = closure_modes.run(
+        closure_modes.Mode.FULL_DRY_RUN,
+        repo_root=repo,
+        runtime_root=runtime,
+        authority=authority,
+        stage_publish=_fake_stage,
+        source_fact_llm_call=lambda _prompt: pytest.fail("provider must not run"),
+    )
+    assert result["status"] == "FULL_DRY_RUN_PASS"
+    assert result["formal_validation"] == "PASS"
+    assert [row["name"] for row in result["matrix"]["predicates"]] == list(
+        closure_modes.MATRIX_PREDICATE_IDS
+    )
+    assert all(path.read_bytes() == before[name] for name, path in paths.items())
+    assert not list(paths["record"].parent.glob(".qixi-public-surface-stage-*"))
+
+
+def test_full_dry_run_failure_writes_sanitized_receipt_and_cleans_stage(tmp_path: Path) -> None:
+    repo, runtime, authority, paths = _fixture(tmp_path)
+    before = {name: path.read_bytes() for name, path in paths.items()}
+
+    def stage_fails(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    result = closure_modes.run(
+        closure_modes.Mode.FULL_DRY_RUN,
+        repo_root=repo,
+        runtime_root=runtime,
+        authority=authority,
+        stage_publish=stage_fails,
+        source_fact_llm_call=lambda _prompt: pytest.fail("provider must not run"),
+        _test_deployed_seal={
+            "deployed_commit": "b" * 40,
+            "authority_file_sha256": "sha256:" + "c" * 64,
+            "deployed_manifest_sha256": "sha256:" + "d" * 64,
+            "deployed_manifest_file_sha256": "sha256:" + "e" * 64,
+        },
+    )
+    receipt = Path(str(result["diagnostic_receipt"]))
+    assert result["status"] == "FULL_DRY_RUN_BLOCKED"
+    assert result["formal_validation"] == "NOT_RUN"
+    assert receipt.is_file() and receipt.stat().st_mode & 0o777 == 0o600
+    data = json.loads(receipt.read_text())
+    assert data["schema_version"] == "qixi-public-surface-diagnostic.v2"
+    assert data["operation_mode"] == "FULL_DRY_RUN"
+    assert "prompt" not in receipt.read_text().lower()
+    assert all(path.read_bytes() == before[name] for name, path in paths.items())
+    assert not list(paths["record"].parent.glob(".qixi-public-surface-stage-*"))
+
+
+def test_runtime_failure_survives_an_unsafe_diagnostic_receipt_sink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, runtime, authority, paths = _fixture(tmp_path)
+    root = closure_modes.diagnostic_root(
+        candidate_root=paths["record"].parent.parent,
+        authority_sha256=authority["authority_sha256"],
+    )
+    (root / "foreign").symlink_to(root / "missing")
+    monkeypatch.setattr(
+        closure,
+        "validate_runtime",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            closure.QixiPostCorrectionPublicSurfaceError("runtime preflight rejected")
+        ),
+    )
+    result = closure_modes.run(
+        closure_modes.Mode.FULL_DRY_RUN,
+        repo_root=repo,
+        runtime_root=runtime,
+        authority=authority,
+        _test_deployed_seal={
+            "deployed_commit": "b" * 40,
+            "authority_file_sha256": "sha256:" + "c" * 64,
+            "deployed_manifest_sha256": "sha256:" + "d" * 64,
+            "deployed_manifest_file_sha256": "sha256:" + "e" * 64,
+        },
+    )
+    assert result["status"] == "FULL_DRY_RUN_BLOCKED"
+    assert result["formal_validation"] == "NOT_RUN"
+    assert result["diagnostic_receipt_status"] == "UNAVAILABLE"
+
+
+def test_diagnostic_receipt_identity_is_bound_to_operation_mode(tmp_path: Path) -> None:
+    repo, runtime_root, authority, _paths = _fixture(tmp_path)
+    matrix, runtime = closure_modes.collect_matrix(
+        authority=authority, repo_root=repo, runtime_root=runtime_root
+    )
+    assert runtime is not None
+    test_seal = {
+        "deployed_commit": "b" * 40,
+        "authority_file_sha256": "sha256:" + "c" * 64,
+        "deployed_manifest_sha256": "sha256:" + "d" * 64,
+        "deployed_manifest_file_sha256": "sha256:" + "e" * 64,
+    }
+    evidence = closure_modes._provider_evidence(
+        source_fact=closure_modes.ProviderAttemptStatus.NOT_ATTEMPTED,
+        cover=closure_modes.ProviderAttemptStatus.UNKNOWN,
+    )
+    full = closure_modes._failure_receipt(
+        closure, repo_root=repo, authority=authority, runtime=runtime, matrix=matrix,
+        stage_manifest=[], provider_evidence=evidence,
+        operation_mode=closure_modes.Mode.FULL_DRY_RUN, test_seal=test_seal,
+    )
+    apply = closure_modes._failure_receipt(
+        closure, repo_root=repo, authority=authority, runtime=runtime, matrix=matrix,
+        stage_manifest=[], provider_evidence=evidence,
+        operation_mode=closure_modes.Mode.APPLY, test_seal=test_seal,
+    )
+    assert full != apply
+    assert json.loads(full.read_text())["operation_mode"] == "FULL_DRY_RUN"
+    assert json.loads(apply.read_text())["operation_mode"] == "APPLY"
+
+
+def test_apply_constructs_default_source_fact_provider_only_when_stage_calls_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, runtime, authority, _paths = _fixture(tmp_path)
+    constructed: list[str] = []
+
+    def default_provider() -> object:
+        constructed.append("constructed")
+        return lambda prompt: "default:" + prompt
+
+    def fake_finalize(**kwargs: object) -> dict[str, object]:
+        assert constructed == []
+        callback = kwargs["source_fact_llm_call"]
+        return {"result": callback("sealed prompt")}  # type: ignore[operator]
+
+    monkeypatch.setattr(closure, "_default_source_fact_llm", default_provider)
+    monkeypatch.setattr(closure, "_finalize_legacy", fake_finalize)
+    result = closure_modes._run_apply(
+        closure, repo_root=repo, runtime_root=runtime, normalized=authority,
+        source_fact_llm_call=None, stage_publish=None, test_seal=None,
+    )
+    assert result == {"result": "default:sealed prompt"}
+    assert constructed == ["constructed"]
+
+
+def test_bad_deployed_seal_cannot_create_a_diagnostic_namespace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, runtime_root, authority, paths = _fixture(tmp_path)
+    matrix, runtime = closure_modes.collect_matrix(
+        authority=authority, repo_root=repo, runtime_root=runtime_root
+    )
+    assert runtime is not None
+    monkeypatch.setattr(
+        closure_modes,
+        "_deployed_seal",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("bad deployed seal")),
+    )
+    with pytest.raises(RuntimeError, match="bad deployed seal"):
+        closure_modes._failure_receipt(
+            closure, repo_root=repo, authority=authority, runtime=runtime, matrix=matrix,
+            stage_manifest=[],
+            provider_evidence=closure_modes._provider_evidence(
+                source_fact=closure_modes.ProviderAttemptStatus.NOT_ATTEMPTED,
+                cover=closure_modes.ProviderAttemptStatus.UNKNOWN,
+            ),
+            operation_mode=closure_modes.Mode.FULL_DRY_RUN,
+            test_seal=None,
+        )
+    assert not (paths["record"].parent.parent / "qixi_post_correction_diagnostics").exists()
+
+
+def test_stage_failure_survives_private_manifest_diagnostic_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, runtime, authority, _paths = _fixture(tmp_path)
+    monkeypatch.setattr(
+        closure_modes,
+        "_partial_stage_manifest",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("private inventory drift")),
+    )
+    result = closure_modes.run(
+        closure_modes.Mode.FULL_DRY_RUN,
+        repo_root=repo,
+        runtime_root=runtime,
+        authority=authority,
+        stage_publish=lambda *_args, **_kwargs: None,
+        _test_deployed_seal={
+            "deployed_commit": "b" * 40,
+            "authority_file_sha256": "sha256:" + "c" * 64,
+            "deployed_manifest_sha256": "sha256:" + "d" * 64,
+            "deployed_manifest_file_sha256": "sha256:" + "e" * 64,
+        },
+    )
+    assert result["status"] == "FULL_DRY_RUN_BLOCKED"
+    assert result["formal_validation"] == "NOT_RUN"
+    assert result["diagnostic_stage_manifest_status"] == "UNAVAILABLE"
+    receipt = json.loads(Path(str(result["diagnostic_receipt"])).read_text())
+    assert receipt["stage_manifest"] == []
+    assert receipt["stage_manifest_status"] == "UNAVAILABLE"
+
+
+def test_stage_manifest_failure_preserves_completed_formal_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, runtime, authority, _paths = _fixture(tmp_path)
+    monkeypatch.setattr(
+        closure_modes,
+        "_stage_manifest",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("manifest serialization drift")),
+    )
+    result = closure_modes.run(
+        closure_modes.Mode.FULL_DRY_RUN,
+        repo_root=repo,
+        runtime_root=runtime,
+        authority=authority,
+        stage_publish=_fake_stage,
+        source_fact_llm_call=lambda _prompt: pytest.fail("provider must not run"),
+        _test_deployed_seal={
+            "deployed_commit": "b" * 40,
+            "authority_file_sha256": "sha256:" + "c" * 64,
+            "deployed_manifest_sha256": "sha256:" + "d" * 64,
+            "deployed_manifest_file_sha256": "sha256:" + "e" * 64,
+        },
+    )
+    assert result["status"] == "FULL_DRY_RUN_BLOCKED"
+    assert result["formal_validation"] == "PASS"
+    assert result["diagnostic_stage_manifest_status"] == "UNAVAILABLE"
+    matrix = {row["name"]: row for row in result["matrix"]["predicates"]}
+    assert matrix["stage_build"]["status"] == "PASS"
+    assert matrix["formal_after_image"]["status"] == "PASS"
+    receipt = json.loads(Path(str(result["diagnostic_receipt"])).read_text())
+    assert receipt["stage_manifest_status"] == "UNAVAILABLE"
+
+
+def test_full_dry_run_cleanup_failure_blocks_a_formally_valid_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, runtime, authority, paths = _fixture(tmp_path)
+    monkeypatch.setattr(
+        closure,
+        "_remove_private_stage",
+        lambda _stage: (_ for _ in ()).throw(OSError("cleanup unavailable")),
+    )
+    result = closure_modes.run(
+        closure_modes.Mode.FULL_DRY_RUN,
+        repo_root=repo,
+        runtime_root=runtime,
+        authority=authority,
+        stage_publish=_fake_stage,
+        source_fact_llm_call=lambda _prompt: pytest.fail("provider must not run"),
+        _test_deployed_seal={
+            "deployed_commit": "b" * 40,
+            "authority_file_sha256": "sha256:" + "c" * 64,
+            "deployed_manifest_sha256": "sha256:" + "d" * 64,
+            "deployed_manifest_file_sha256": "sha256:" + "e" * 64,
+        },
+    )
+    assert result["status"] == "FULL_DRY_RUN_BLOCKED"
+    assert result["formal_validation"] == "PASS"
+    matrix = {row["name"]: row for row in result["matrix"]["predicates"]}
+    assert matrix["stage_cleanup"] == {
+        "name": "stage_cleanup", "status": "FAIL", "reason": "UNEXPECTED_EXCEPTION"
+    }
+    assert Path(str(result["diagnostic_receipt"])).is_file()
+    assert list(paths["record"].parent.glob(".qixi-public-surface-stage-*"))
+
+
+def test_full_dry_run_preserves_formal_failure_when_cleanup_also_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, runtime, authority, _paths = _fixture(tmp_path)
+    monkeypatch.setattr(
+        closure,
+        "_remove_private_stage",
+        lambda _stage: (_ for _ in ()).throw(OSError("cleanup unavailable")),
+    )
+    result = closure_modes.run(
+        closure_modes.Mode.FULL_DRY_RUN,
+        repo_root=repo,
+        runtime_root=runtime,
+        authority=authority,
+        stage_publish=lambda *_args, **_kwargs: None,
+        source_fact_llm_call=lambda _prompt: pytest.fail("provider must not run"),
+        _test_deployed_seal={
+            "deployed_commit": "b" * 40,
+            "authority_file_sha256": "sha256:" + "c" * 64,
+            "deployed_manifest_sha256": "sha256:" + "d" * 64,
+            "deployed_manifest_file_sha256": "sha256:" + "e" * 64,
+        },
+    )
+    assert result["status"] == "FULL_DRY_RUN_BLOCKED"
+    assert result["formal_validation"] == "NOT_RUN"
+    matrix = {row["name"]: row for row in result["matrix"]["predicates"]}
+    assert matrix["stage_build"]["status"] == "FAIL"
+    assert matrix["stage_cleanup"]["status"] == "FAIL"
+    assert Path(str(result["diagnostic_receipt"])).is_file()
+
+
+def test_full_dry_run_stage_observation_reports_multiple_raw_failures_before_first_gate(
+    tmp_path: Path,
+) -> None:
+    repo, runtime, authority, _paths = _fixture(tmp_path)
+
+    def multiple_stage_drifts(record: dict[str, object], **kwargs: object) -> dict[str, object]:
+        staged = _fake_stage(record, **kwargs)
+        staged["publish_staging"]["title"] = "wrong returned title"
+        staged["publish_staging"]["source_fact_review"] = {
+            **staged["publish_staging"]["source_fact_review"],
+            "diagnostic_drift": "returned",
+        }
+        staged["story_contract"]["source_fact_review"] = {
+            **staged["story_contract"]["source_fact_review"],
+            "diagnostic_drift": "story",
+        }
+        return staged
+
+    result = closure_modes.run(
+        closure_modes.Mode.FULL_DRY_RUN,
+        repo_root=repo,
+        runtime_root=runtime,
+        authority=authority,
+        stage_publish=multiple_stage_drifts,
+        source_fact_llm_call=lambda _prompt: pytest.fail("provider must not run"),
+        _test_deployed_seal={
+            "deployed_commit": "b" * 40,
+            "authority_file_sha256": "sha256:" + "c" * 64,
+            "deployed_manifest_sha256": "sha256:" + "d" * 64,
+            "deployed_manifest_file_sha256": "sha256:" + "e" * 64,
+        },
+    )
+    assert result["status"] == "FULL_DRY_RUN_BLOCKED"
+    assert result["formal_validation"] == "NOT_RUN"
+    by_name = {row["name"]: row for row in result["matrix"]["predicates"]}
+    assert by_name["stage_manual_title_consumed"]["status"] == "FAIL"
+    assert by_name["stage_raw_source_fact_mirrors"]["status"] == "FAIL"
+    assert by_name["stage_raw_story_source_fact_mirrors"]["status"] == "FAIL"
+    assert by_name["stage_raw_cover_generation_mirrors"]["status"] == "PASS"
+
+
+def test_provider_unavailable_is_not_recorded_as_an_attempt(tmp_path: Path) -> None:
+    repo, runtime, authority, _paths = _fixture(tmp_path)
+
+    def requires_source_provider(_record: dict[str, object], **kwargs: object) -> dict[str, object]:
+        source_call = kwargs["source_fact_llm_call"]
+        assert callable(source_call)
+        source_call("provider-required")
+        raise AssertionError("unreachable")
+
+    result = closure_modes.run(
+        closure_modes.Mode.FULL_DRY_RUN,
+        repo_root=repo,
+        runtime_root=runtime,
+        authority=authority,
+        stage_publish=requires_source_provider,
+        source_fact_llm_call=None,
+        _test_deployed_seal={
+            "deployed_commit": "b" * 40,
+            "authority_file_sha256": "sha256:" + "c" * 64,
+            "deployed_manifest_sha256": "sha256:" + "d" * 64,
+            "deployed_manifest_file_sha256": "sha256:" + "e" * 64,
+        },
+    )
+    receipt = json.loads(Path(str(result["diagnostic_receipt"])).read_text())
+    assert result["status"] == "FULL_DRY_RUN_BLOCKED"
+    assert receipt["provider_evidence"] == {
+        "source_fact": {"attempt_status": "NOT_ATTEMPTED", "receipt_sha256s": []},
+        "cover": {"attempt_status": "UNKNOWN", "receipt_sha256s": []},
+    }
+
+
+def test_provider_response_is_not_mislabeled_as_a_persisted_receipt(
+    tmp_path: Path,
+) -> None:
+    repo, runtime, authority, _paths = _fixture(tmp_path)
+
+    def calls_source_then_fails(_record: dict[str, object], **kwargs: object) -> dict[str, object]:
+        assert kwargs["source_fact_llm_call"]("provider payload") == "unsealed response"
+        raise closure.QixiPostCorrectionPublicSurfaceError("stage rejected after provider call")
+
+    result = closure_modes.run(
+        closure_modes.Mode.FULL_DRY_RUN,
+        repo_root=repo,
+        runtime_root=runtime,
+        authority=authority,
+        stage_publish=calls_source_then_fails,
+        source_fact_llm_call=lambda _prompt: "unsealed response",
+        _test_deployed_seal={
+            "deployed_commit": "b" * 40,
+            "authority_file_sha256": "sha256:" + "c" * 64,
+            "deployed_manifest_sha256": "sha256:" + "d" * 64,
+            "deployed_manifest_file_sha256": "sha256:" + "e" * 64,
+        },
+    )
+    receipt = json.loads(Path(str(result["diagnostic_receipt"])).read_text())
+    assert receipt["provider_evidence"] == {
+        "source_fact": {"attempt_status": "ATTEMPTED", "receipt_sha256s": []},
+        "cover": {"attempt_status": "UNKNOWN", "receipt_sha256s": []},
+    }
+
+
+def test_private_stage_manifest_hashes_untrusted_names_without_echoing_them(tmp_path: Path) -> None:
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    secret_name = "prompt=do-not-disclose-token-abc123.txt"
+    (stage / secret_name).write_bytes(b"private stage content")
+    manifest = closure_modes._partial_stage_manifest(closure, stage)
+    encoded = json.dumps(manifest, ensure_ascii=False)
+    assert secret_name not in encoded
+    assert "private stage content" not in encoded
+    assert manifest == [
+        {
+            "relative_role": "private_stage_artifact:0",
+            "relative_path_sha256": closure_modes.sha256_bytes(secret_name.encode("utf-8")),
+            "sha256": closure._file_sha256_from_bytes(b"private stage content"),
+            "bytes": len(b"private stage content"),
+        }
+    ]
+
+
+def test_partial_stage_manifest_rejects_symlink_or_snapshot_race_without_leaking_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    secret_name = "token-prompt-private.txt"
+    source = stage / secret_name
+    source.write_bytes(b"private bytes")
+    source.unlink()
+    source.symlink_to(stage / "missing")
+    with pytest.raises(RuntimeError, match="symlink"):
+        closure_modes._partial_stage_manifest(closure, stage)
+    source.unlink()
+    source.write_bytes(b"private bytes")
+    original_snapshot = closure_modes._stable_regular_snapshot
+
+    def replace_after_listing(path: Path) -> bytes:
+        source.unlink()
+        source.symlink_to(stage / "missing")
+        return original_snapshot(path)
+
+    monkeypatch.setattr(closure_modes, "_stable_regular_snapshot", replace_after_listing)
+    with pytest.raises(RuntimeError):
+        closure_modes._partial_stage_manifest(closure, stage)
+
+
+def test_safe_before_rejects_same_inode_mutation_during_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "target.json"
+    target.write_bytes(b"before")
+    original_read = closure_modes.os.read
+    mutated = False
+
+    def mutate_after_read(fd: int, amount: int) -> bytes:
+        nonlocal mutated
+        payload = original_read(fd, amount)
+        if payload and not mutated:
+            mutated = True
+            target.write_bytes(b"after!")
+        return payload
+
+    monkeypatch.setattr(closure_modes.os, "read", mutate_after_read)
+    with pytest.raises(RuntimeError, match="drifted"):
+        closure_modes._safe_before({target: b"after-image"})
+
+
+def test_apply_prejournal_after_image_failure_writes_complete_diagnostic_matrix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, runtime, authority, paths = _fixture(tmp_path)
+    before = {name: path.read_bytes() for name, path in paths.items()}
+    original_build = closure._build_after_image
+
+    def multi_fail_build(*args: object, **kwargs: object) -> tuple[dict[Path, bytes], dict[str, object]]:
+        targets, metadata = original_build(*args, **kwargs)
+        targets = dict(targets)
+        targets[paths["delivery"]] = b"{}"
+        fixed = {paths["record"], paths["delivery"], paths["publish"], paths["state"]}
+        cover_target = next(path for path in targets if path not in fixed)
+        targets[cover_target] = b"forged-cover"
+        return targets, metadata
+
+    monkeypatch.setattr(closure, "_build_after_image", multi_fail_build)
+    with pytest.raises(closure.QixiPostCorrectionPublicSurfaceError, match="record/delivery"):
+        closure_modes.run(
+            closure_modes.Mode.APPLY,
+            repo_root=repo,
+            runtime_root=runtime,
+            authority=authority,
+            stage_publish=_fake_stage,
+            source_fact_llm_call=lambda _prompt: pytest.fail("provider must not run"),
+            _test_deployed_seal={
+                "deployed_commit": "b" * 40,
+                "authority_file_sha256": "sha256:" + "c" * 64,
+                "deployed_manifest_sha256": "sha256:" + "d" * 64,
+                "deployed_manifest_file_sha256": "sha256:" + "e" * 64,
+            },
+        )
+    root = closure_modes.diagnostic_root(
+        candidate_root=paths["record"].parent.parent,
+        authority_sha256=authority["authority_sha256"],
+    )
+    receipt = next(root.glob("diagnostic-*.json"))
+    matrix = json.loads(receipt.read_text())["matrix"]
+    by_name = {row["name"]: row for row in matrix["predicates"]}
+    assert [row["name"] for row in matrix["predicates"]] == list(
+        closure_modes.MATRIX_PREDICATE_IDS
+    )
+    assert by_name["record_delivery_media_closure"]["status"] == "FAIL"
+    assert by_name["cover_materialized_hashes"]["status"] == "FAIL"
+    assert by_name["formal_prepare_preimages"]["status"] == "PASS"
+    assert by_name["formal_after_image"]["status"] == "FAIL"
+    assert all(path.read_bytes() == before[name] for name, path in paths.items())
+    assert not list(paths["record"].parent.glob("qixi_post_correction_public_surface/*/journal.json"))
+
+
+def test_apply_persists_no_diagnostic_if_callback_fails_and_preserves_gate_error(
+    tmp_path: Path,
+) -> None:
+    repo, runtime, authority, paths = _fixture(tmp_path)
+
+    def stage_fails(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    def receipt_write_fails(*_args: object) -> None:
+        raise OSError("diagnostic sink unavailable")
+
+    with pytest.raises(
+        closure.QixiPostCorrectionPublicSurfaceError,
+        match="staged publish is unavailable",
+    ):
+        closure._finalize_legacy(
+            apply=True,
+            repo_root=repo,
+            runtime_root=runtime,
+            authority=authority,
+            _stage_publish=stage_fails,
+            _prejournal_failure=receipt_write_fails,
+        )
+    assert not list(paths["record"].parent.glob("qixi_post_correction_public_surface/*/journal.json"))
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_apply_build_failure_reports_cleanup_without_masking_the_gate_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cleanup_fails: bool
+) -> None:
+    repo, runtime, authority, paths = _fixture(tmp_path)
+    before = {name: path.read_bytes() for name, path in paths.items()}
+    if cleanup_fails:
+        monkeypatch.setattr(
+            closure,
+            "_remove_private_stage",
+            lambda _stage: (_ for _ in ()).throw(OSError("cleanup unavailable")),
+        )
+    with pytest.raises(closure.QixiPostCorrectionPublicSurfaceError, match="staged publish is unavailable"):
+        closure_modes.run(
+            closure_modes.Mode.APPLY,
+            repo_root=repo,
+            runtime_root=runtime,
+            authority=authority,
+            stage_publish=lambda *_args, **_kwargs: None,
+            _test_deployed_seal={
+                "deployed_commit": "b" * 40,
+                "authority_file_sha256": "sha256:" + "c" * 64,
+                "deployed_manifest_sha256": "sha256:" + "d" * 64,
+                "deployed_manifest_file_sha256": "sha256:" + "e" * 64,
+            },
+        )
+    root = closure_modes.diagnostic_root(
+        candidate_root=paths["record"].parent.parent,
+        authority_sha256=authority["authority_sha256"],
+    )
+    receipts = list(root.glob("diagnostic-*.json"))
+    assert len(receipts) == 1
+    matrix = {row["name"]: row for row in json.loads(receipts[0].read_text())["matrix"]["predicates"]}
+    assert matrix["stage_build"]["status"] == "FAIL"
+    assert matrix["stage_cleanup"] == {
+        "name": "stage_cleanup",
+        "status": "FAIL" if cleanup_fails else "PASS",
+        "reason": "UNEXPECTED_EXCEPTION" if cleanup_fails else "SATISFIED",
+    }
+    assert all(path.read_bytes() == before[name] for name, path in paths.items())
+    assert not list(paths["record"].parent.glob("qixi_post_correction_public_surface/*/journal.json"))
+    assert bool(list(paths["record"].parent.glob(".qixi-public-surface-stage-*"))) is cleanup_fails
+
+
+def test_apply_stage_cleanup_does_not_mask_a_prepared_journal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, runtime, authority, _paths = _fixture(tmp_path)
+    monkeypatch.setattr(
+        closure,
+        "_remove_private_stage",
+        lambda _stage: (_ for _ in ()).throw(OSError("cleanup unavailable")),
+    )
+    result = closure._finalize_legacy(
+        apply=True,
+        repo_root=repo,
+        runtime_root=runtime,
+        authority=authority,
+        _stage_publish=_fake_stage,
+    )
+    assert result["status"] in {"APPLIED", "APPLIED_WITH_CLEANUP_RESIDUE"}
+    root = closure._journal_root_from_authority(authority)
+    assert json.loads((root / "journal.json").read_text())["status"] == "COMMITTED"
+
+
+def test_diagnostic_deployed_seal_keeps_internal_and_raw_authority_hashes_distinct(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "deployed"
+    asset = repo / closure.RELATIVE_AUTHORITY_PATH
+    asset.parent.mkdir(parents=True)
+    asset.write_bytes(b'{"authority_sha256":"sha256:' + b"1" * 64 + b'"}\n')
+    (repo / "DEPLOYED_COMMIT").write_text("a" * 40 + "\n")
+    manifest = build_deployed_authority_manifest(
+        repo_root=repo,
+        deployed_commit="a" * 40,
+        relative_paths=[closure.RELATIVE_AUTHORITY_PATH],
+    )
+    (repo / "DEPLOYED_AUTHORITY_MANIFEST.json").write_text(
+        json.dumps(manifest, sort_keys=True)
+    )
+    seal = closure_modes._deployed_seal(closure, repo_root=repo, test_seal=None)
+    assert seal["deployed_commit"] == "a" * 40
+    assert seal["authority_file_sha256"] != "sha256:" + "1" * 64
+    assert seal["deployed_manifest_sha256"] == manifest["manifest_sha256"]
+
+
+def test_diagnostic_manifest_snapshot_rejects_same_inode_same_length_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = tmp_path / "DEPLOYED_AUTHORITY_MANIFEST.json"
+    manifest.write_bytes(b"a" * 128)
+    original_read = closure_modes.os.read
+    mutated = False
+
+    def mutate_after_read(fd: int, size: int) -> bytes:
+        nonlocal mutated
+        value = original_read(fd, size)
+        if value and not mutated:
+            mutated = True
+            manifest.write_bytes(b"b" * 128)
+        return value
+
+    monkeypatch.setattr(closure_modes.os, "read", mutate_after_read)
+    with pytest.raises(RuntimeError, match="drifted during snapshot"):
+        closure_modes._stable_regular_snapshot(manifest)
 
 
 def test_apply_projects_identical_source_fact_and_rejects_foreign_drift(tmp_path: Path) -> None:

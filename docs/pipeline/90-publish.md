@@ -4,6 +4,16 @@
 `scripts/authorized_upload.py`；`.agent/skills/bilive-autoslice-publish/SKILL.md`
 只提供操作顺序，不得另立规则。
 
+## Readiness graph 不授权发布
+
+固定 no-arg 的 scripts/publication_readiness_graph.py 只能读 canonical registry/runtime
+state、authorized-upload manifest 与 ledger，输出观察分类和依赖；它不调用 provider、B 站或
+Creator，也不写 state/ledger/package。READY_TO_PREPARE 与 review_ready 都不是上传许可。
+只有 READY_FOR_SERIAL_UPLOAD 所列的已封存授权 manifest 经 load_and_verify、package audit、
+title-cover QC 和 ledger 无歧义重放后，才可被排入串行候选；仍须使用 manifest 中 Ivan 的
+逐字授权，绝不把 graph 当 authority。单批、单部署与完整 suite 是实际 preparation/deploy
+的准入规则，不是该观察分类自动授予的后续动作。
+
 ## 发布准入
 
 - 每条都需要 Ivan 明确授权；manifest 保存授权原话，工具不能替用户创造授权。

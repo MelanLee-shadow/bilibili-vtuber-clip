@@ -305,37 +305,85 @@ def validate_replayed_cover(
     package_root: Path,
     after: Mapping[Path, bytes],
 ) -> None:
+    """Fail closed over the same ordered cover gates used by diagnostics."""
+
+    for _predicate_id, check in replayed_cover_gate_callables(
+        generation, story=story, package_root=package_root, after=after
+    ):
+        check()
+
+
+def replayed_cover_gate_callables(
+    generation: object,
+    *,
+    story: Mapping[str, object],
+    package_root: Path,
+    after: Mapping[Path, bytes],
+) -> tuple[tuple[str, Callable[[], None]], ...]:
+    """Return the exact ordered cover gates for formal and observational use."""
+
     if not isinstance(generation, Mapping):
         raise QixiPostCorrectionPublicSurfaceError("journal cover generation is invalid")
-    if not (
-        validate_cover_route_decision(generation, allow_legacy_v1=False)
-        and validate_rendered_text_pixel_evidence(generation)
-        and validate_final_host_identity_verification(generation)
-    ):
-        raise QixiPostCorrectionPublicSurfaceError("journal cover route/pixel/identity evidence drifts")
-    route = generation.get("route_decision")
-    participants = route.get("required_participant_ids") if isinstance(route, Mapping) else None
-    if participants and not validate_final_participant_verification(generation):
-        raise QixiPostCorrectionPublicSurfaceError("journal cover participant evidence drifts")
-    art_direction = generation.get("art_direction")
-    if generation.get("cover_text_mode") == "punch" and not validate_cover_punch_semantic_review(
-        art_direction.get("cover_punch_semantic_review") if isinstance(art_direction, Mapping) else None,
-        rendered_lines=generation.get("rendered_lines") or [],
-        cover_text=str(generation.get("cover_text") or ""),
-        story_hook=str(story.get("selection_hook") or ""),
-    ):
-        raise QixiPostCorrectionPublicSurfaceError("journal cover punch semantic evidence drifts")
-    for path_key, sha_key in (
-        ("final_cover", "final_cover_sha256"),
-        ("pre_overlay_path", "pre_overlay_sha256"),
-        ("ai_background", "ai_background_sha256"),
-    ):
-        path, digest = generation.get(path_key), generation.get(sha_key)
-        if path is None and digest is None:
-            continue
-        candidate = Path(str(path))
-        if not candidate.is_relative_to(package_root) or candidate not in after or sha256_bytes(after[candidate]) != digest:
-            raise QixiPostCorrectionPublicSurfaceError("journal cover materialized hash binding drifts")
+
+    def route() -> None:
+        if not validate_cover_route_decision(generation, allow_legacy_v1=False):
+            raise QixiPostCorrectionPublicSurfaceError("journal cover route/pixel/identity evidence drifts")
+
+    def pixels() -> None:
+        if not validate_rendered_text_pixel_evidence(generation):
+            raise QixiPostCorrectionPublicSurfaceError("journal cover route/pixel/identity evidence drifts")
+
+    def host() -> None:
+        if not validate_final_host_identity_verification(generation):
+            raise QixiPostCorrectionPublicSurfaceError("journal cover route/pixel/identity evidence drifts")
+
+    def participant() -> None:
+        route_decision = generation.get("route_decision")
+        participants = (
+            route_decision.get("required_participant_ids")
+            if isinstance(route_decision, Mapping)
+            else None
+        )
+        if participants and not validate_final_participant_verification(generation):
+            raise QixiPostCorrectionPublicSurfaceError("journal cover participant evidence drifts")
+
+    def punch() -> None:
+        art_direction = generation.get("art_direction")
+        if generation.get("cover_text_mode") == "punch" and not validate_cover_punch_semantic_review(
+            art_direction.get("cover_punch_semantic_review") if isinstance(art_direction, Mapping) else None,
+            rendered_lines=generation.get("rendered_lines") or [],
+            cover_text=str(generation.get("cover_text") or ""),
+            story_hook=str(story.get("selection_hook") or ""),
+        ):
+            raise QixiPostCorrectionPublicSurfaceError("journal cover punch semantic evidence drifts")
+
+    def materialized() -> None:
+        for path_key, sha_key in (
+            ("final_cover", "final_cover_sha256"),
+            ("pre_overlay_path", "pre_overlay_sha256"),
+            ("ai_background", "ai_background_sha256"),
+        ):
+            path, digest = generation.get(path_key), generation.get(sha_key)
+            if path is None and digest is None:
+                continue
+            candidate = Path(str(path))
+            if (
+                not candidate.is_relative_to(package_root)
+                or candidate not in after
+                or sha256_bytes(after[candidate]) != digest
+            ):
+                raise QixiPostCorrectionPublicSurfaceError(
+                    "journal cover materialized hash binding drifts"
+                )
+
+    return (
+        ("cover_route", route),
+        ("cover_rendered_text_pixels", pixels),
+        ("cover_final_host_identity", host),
+        ("cover_final_participant_identity", participant),
+        ("cover_punch_semantics", punch),
+        ("cover_materialized_hashes", materialized),
+    )
 
 
 def validate_manual_title_projection(
@@ -520,33 +568,18 @@ def canonicalize_stage_public_surfaces(
 ) -> None:
     """Copy only one verified JSON-domain receipt and generation to both mirrors."""
 
+    for _predicate_id, check in stage_public_surface_gate_callables(staged, staged_publish):
+        check()
+
     staging = staged.get("publish_staging")
     story = staged.get("story_contract")
-    if not isinstance(staging, Mapping) or not isinstance(story, Mapping):
-        raise QixiPostCorrectionPublicSurfaceError("returned staged public surfaces are missing")
+    assert isinstance(staging, Mapping) and isinstance(story, Mapping)
     canonical_source_fact = json_domain_mapping(
         staged_publish.get("source_fact_review"), label="persisted staged source-fact receipt"
     )
     canonical_generation = json_domain_mapping(
         staged_publish.get("cover_generation"), label="persisted staged cover generation"
     )
-    if (
-        json_domain_mapping(
-            staging.get("source_fact_review"), label="returned staged source-fact receipt"
-        )
-        != canonical_source_fact
-        or json_domain_mapping(
-            story.get("source_fact_review"), label="returned staged StoryContract receipt"
-        )
-        != canonical_source_fact
-        or json_domain_mapping(
-            staging.get("cover_generation"), label="returned staged cover generation"
-        )
-        != canonical_generation
-    ):
-        raise QixiPostCorrectionPublicSurfaceError(
-            "canonical publish and returned public surfaces drift before projection"
-        )
     projected_staging = projected_record.get("publish_staging")
     projected_story = projected_record.get("story_contract")
     if not isinstance(projected_staging, dict) or not isinstance(projected_story, dict):
@@ -556,6 +589,53 @@ def canonicalize_stage_public_surfaces(
     projected_story["source_fact_review"] = copy.deepcopy(canonical_source_fact)
     projected_publish["source_fact_review"] = copy.deepcopy(canonical_source_fact)
     projected_publish["cover_generation"] = copy.deepcopy(canonical_generation)
+
+
+def stage_public_surface_gate_callables(
+    staged: Mapping[str, object], staged_publish: Mapping[str, object]
+) -> tuple[tuple[str, Callable[[], None]], ...]:
+    """Return the raw public-surface equivalence gates before projection."""
+
+    staging = staged.get("publish_staging")
+    story = staged.get("story_contract")
+
+    def canonical_receipt() -> dict[str, object]:
+        return json_domain_mapping(
+            staged_publish.get("source_fact_review"), label="persisted staged source-fact receipt"
+        )
+
+    def raw_staging_receipt() -> None:
+        if not isinstance(staging, Mapping) or json_domain_mapping(
+            staging.get("source_fact_review"), label="returned staged source-fact receipt"
+        ) != canonical_receipt():
+            raise QixiPostCorrectionPublicSurfaceError(
+                "canonical publish and returned public surfaces drift before projection"
+            )
+
+    def raw_story_receipt() -> None:
+        if not isinstance(story, Mapping) or json_domain_mapping(
+            story.get("source_fact_review"), label="returned staged StoryContract receipt"
+        ) != canonical_receipt():
+            raise QixiPostCorrectionPublicSurfaceError(
+                "canonical publish and returned public surfaces drift before projection"
+            )
+
+    def raw_generation() -> None:
+        canonical = json_domain_mapping(
+            staged_publish.get("cover_generation"), label="persisted staged cover generation"
+        )
+        if not isinstance(staging, Mapping) or json_domain_mapping(
+            staging.get("cover_generation"), label="returned staged cover generation"
+        ) != canonical:
+            raise QixiPostCorrectionPublicSurfaceError(
+                "canonical publish and returned public surfaces drift before projection"
+            )
+
+    return (
+        ("stage_raw_source_fact_mirrors", raw_staging_receipt),
+        ("stage_raw_story_source_fact_mirrors", raw_story_receipt),
+        ("stage_raw_cover_generation_mirrors", raw_generation),
+    )
 
 
 def materialized_public_targets(

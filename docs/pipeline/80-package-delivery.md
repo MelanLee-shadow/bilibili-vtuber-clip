@@ -2,6 +2,23 @@
 
 本文件是打包步骤的**分步权威**。入口：`src/autoslice/producer_package_finalization.py`。
 
+## Qixi public-surface 的固定模式与 readiness
+
+候选专属 Qixi closure 只接受固定 CLI mode：默认/--plan 是浅只读 preflight，--diagnose
+是无 provider 的观察，--full-dry-run 只在私有 stage 构造并重放 formal after-image；它可以在
+已有独立 provider authority 时调用 provider，CLI 名称本身不产生这项 authority。--apply
+才是持 runner lock 的 journal transaction。任何 mode 都没有 candidate、路径、标题、upload
+或 provider 自由参数；PLAN/DIAGNOSE 零写，FULL_DRY_RUN 绝不写 record/state/journal/upload。
+失败 dry-run 的 create-only 诊断 receipt 仅记录 hash/role/predicate matrix，且绑定 deployed
+seal 与 operation mode；它不是 release authority。
+
+scripts/publication_readiness_graph.py 输出所有 current unpublished state candidates 与 registry
+hold 行的只读观察图。它复用 registry、upload ledger、manifest replay 与当前 state 门；
+review_ready、CURRENT、COMPLIANT 只描述本地产物，绝不推出上传授权。图的
+READY_FOR_SERIAL_UPLOAD 必须已有通过 canonical replay 的授权 manifest、package/audit/title-cover
+QC bindings 及无歧义 ledger；其余分类只说明缺少 provider、人类 truth、状态修复或本地
+prepare 工作。一个被阻候选不得阻断其它候选。
+
 - talk 车道成品强制前置 manifest 在册片头（当前 Z1/Z2 按主片 SHA-256 稳定轮换，fail-closed，`branding_intro.py`，manifest `assets/lidousha/intro/branding_intro.v1.json`）；**歌切不带片头**。验收必须按 record 的 `intro_id` 对照 manifest 的 hash/时长，不得写死任一 variant 的时长。`AUTOSLICE_BRANDING_INTRO=off` 仅测试/应急。
 - 片头在最终烧录内拼接，下游 sha256 绑定 with-intro 字节；`.srt`/`.ass` sidecar 保持内容时间轴，偏移记 `burned_preview.branding_intro.intro_offset_ms`。
 - 已有 delivery 的字幕定点重烧不得按新 main SHA 重抽 rotation：`apply_subtitle_correction.py` 必须在写 SRT/record 前读取**独立且未污染**的 `--delivery-authority-record` 与 `--delivery-authority-publish`，验证 record→publish 文件 hash 及 record/publish/burn-preview 的旧 burned hash 三面一致，再把 record 的既有 intro `id/media SHA/rendered offset` pin 为单一成员；本轮 mutable `record_path` 绝不能充当这个 authority。缺 binding、未知 id、当前 roster/运行时 asset hash 漂移或重烧 offset 漂移一律拒绝。已发生部分覆盖、因而不存在可读旧 intro binding 的事故，只可定位到 `assets/lidousha/delivery_branding_recovery/<candidate>.v1.json` 的 deploy-sealed `delivery-branding-recovery-authority.v1`：它按该 candidate 的 review-manifest item 精确绑定旧 video/subtitle/record hash，并绑定 final-media freeze 的三个本轮不变量及污染 correction 的 before/after/new-burn chain；任意 repo 外、未登记或另一 candidate 的 JSON 都不是授权。它不是日常 override，和普通 authority 参数互斥，不能从当前污染 record 推导旧片头。所有重烧先在私有 staging 目录完成，intro/hash/offset 验证通过后才带 rollback 提交 video、SRT、ASS、record、receipt 和 delivery sidecars；post-render 失败不得改变原 package。现有 delivery 不支持 `--text-source/--text-override` 分支，必须在任何 sidecar 写入前 fail-closed。

@@ -30,7 +30,6 @@ from src.autoslice.repository_asset_authority import (
     require_repository_asset_authority,
 )
 from src.autoslice.story_contract import audit_story_artifact, build_story_contract
-from src.autoslice.source_fact_review import validate_source_fact_review
 from src.autoslice.review_package_portable_evidence import rebuild_package_speaker_evidence
 from src.autoslice.qixi_post_correction_projection_paths import (
     QixiPostCorrectionPublicSurfaceError,
@@ -42,7 +41,6 @@ from src.autoslice.qixi_post_correction_projection_paths import (
     clear_staged_file_owner as _clear_staged_file_owner,
     create_staged_file as _create_staged_file,
     json_bytes as _json_bytes,
-    package_cover_paths as _package_cover_paths,
     materialized_public_targets as _materialized_public_targets,
     prepare_stage_documents as _prepare_stage_documents,
     project_state_pick as _project_state_pick,
@@ -51,8 +49,9 @@ from src.autoslice.qixi_post_correction_projection_paths import (
     state_diff_is_exact as _state_diff_is_exact,
     sha256_bytes as _file_sha256_from_bytes,
     source_cues as _source_cues,
-    validate_manual_title_projection as _validate_manual_title_projection,
-    validate_replayed_cover as _validate_replayed_cover,
+    stage_public_surface_gate_callables as _stage_public_surface_gate_callables,
+    validate_manual_title_projection as _validate_manual_title_projection,  # noqa: F401
+    validate_replayed_cover as _validate_replayed_cover,  # noqa: F401
     validate_public_artifact_namespace_absent,
 )
 
@@ -862,6 +861,7 @@ def _build_after_image(
     stage_root: Path,
     source_fact_llm_call: LlmCall,
     stage_publish: Callable[..., dict[str, object] | None] = _stage_publish_draft,
+    observation: object | None = None,
 ) -> tuple[dict[Path, bytes], dict[str, object]]:
     package_root = inputs.artifact_paths["record"].parent
     public_artifacts = _public_artifact_root(package_root, inputs.authority)
@@ -902,26 +902,79 @@ def _build_after_image(
         private_publish_json_path=stage_artifacts / inputs.artifact_paths["publish"].name,
         enforce_final_host_identity=True,
     )
-    if not isinstance(staged, Mapping):
-        raise QixiPostCorrectionPublicSurfaceError("canonical publish stage did not return a record")
+    from src.autoslice.qixi_post_correction_stage_gates import (
+        StageBuildObservation,
+        formal_gate,
+    )
+
+    if observation is not None and not isinstance(observation, StageBuildObservation):
+        raise TypeError("Qixi stage observation type is invalid")
     stage_publish_path = stage_artifacts / inputs.artifact_paths["publish"].name
-    _require_regular(stage_publish_path, label="staged publish")
     try:
-        staged_publish = json.loads(stage_publish_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise QixiPostCorrectionPublicSurfaceError("staged publish is unreadable") from exc
-    if not isinstance(staged_publish, Mapping):
-        raise QixiPostCorrectionPublicSurfaceError("staged publish is malformed")
-    staging = staged.get("publish_staging")
-    if not isinstance(staging, Mapping) or staging.get("title") != PUBLIC_TITLE:
-        raise QixiPostCorrectionPublicSurfaceError("canonical stage did not consume the exact manual title")
-    if staging.get("upload_enabled") is not False or staged_publish.get("upload_enabled") is not False:
-        raise QixiPostCorrectionPublicSurfaceError("canonical stage enabled upload")
-    source_fact = staging.get("source_fact_review")
-    if not isinstance(source_fact, Mapping) or source_fact.get("status") != "PASS":
-        raise QixiPostCorrectionPublicSurfaceError("source-fact review did not pass; no title repair authority is implied")
-    if staged_publish.get("video_path") != str(stage_media):
-        raise QixiPostCorrectionPublicSurfaceError("staged publish media locator drifts")
+        _require_regular(stage_publish_path, label="staged publish")
+        parsed_publish = json.loads(stage_publish_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        parsed_publish = None
+    staged_publish = parsed_publish if isinstance(parsed_publish, Mapping) else None
+    staging = staged.get("publish_staging") if isinstance(staged, Mapping) else None
+    source_fact = staging.get("source_fact_review") if isinstance(staging, Mapping) else None
+
+    def returned_record() -> None:
+        if not isinstance(staged, Mapping):
+            raise QixiPostCorrectionPublicSurfaceError("canonical publish stage did not return a record")
+
+    def persisted_publish() -> None:
+        if staged_publish is None:
+            raise QixiPostCorrectionPublicSurfaceError("staged publish is unreadable")
+
+    def manual_title() -> None:
+        if not isinstance(staging, Mapping) or staging.get("title") != PUBLIC_TITLE:
+            raise QixiPostCorrectionPublicSurfaceError("canonical stage did not consume the exact manual title")
+
+    def upload_disabled() -> None:
+        if not isinstance(staging, Mapping) or staged_publish is None or (
+            staging.get("upload_enabled") is not False or staged_publish.get("upload_enabled") is not False
+        ):
+            raise QixiPostCorrectionPublicSurfaceError("canonical stage enabled upload")
+
+    def source_fact_pass() -> None:
+        if not isinstance(source_fact, Mapping) or source_fact.get("status") != "PASS":
+            raise QixiPostCorrectionPublicSurfaceError(
+                "source-fact review did not pass; no title repair authority is implied"
+            )
+
+    def media_locator() -> None:
+        if staged_publish is None or staged_publish.get("video_path") != str(stage_media):
+            raise QixiPostCorrectionPublicSurfaceError("staged publish media locator drifts")
+
+    stage_checks = (
+        ("stage_return_shape", returned_record),
+        ("stage_publish_json_shape", persisted_publish),
+        ("stage_manual_title_consumed", manual_title),
+        ("stage_upload_disabled", upload_disabled),
+        ("stage_source_fact_pass", source_fact_pass),
+        ("stage_media_locator", media_locator),
+    )
+    if observation is not None:
+        for predicate_id, check in stage_checks:
+            observation.evaluate(predicate_id, check, error_type=QixiPostCorrectionPublicSurfaceError)
+    if isinstance(staged, Mapping) and staged_publish is not None:
+        raw_stage_gates = _stage_public_surface_gate_callables(staged, staged_publish)
+        if observation is not None:
+            for predicate_id, check in raw_stage_gates:
+                observation.evaluate(
+                    predicate_id,
+                    check,
+                    error_type=QixiPostCorrectionPublicSurfaceError,
+                )
+    for predicate_id, check in stage_checks:
+        formal_gate(
+            None,
+            predicate_id,
+            check,
+            error_type=QixiPostCorrectionPublicSurfaceError,
+        )
+    assert isinstance(staged, Mapping) and staged_publish is not None and isinstance(staging, Mapping)
     staged_publish_for_projection = copy.deepcopy(dict(staged_publish))
     staged_publish_for_projection["video_path"] = str(inputs.artifact_paths["main"])
     all_stage_files = {
@@ -930,23 +983,74 @@ def _build_after_image(
         if path.is_file() and not path.is_symlink()
     }
     stage_publish_relative = stage_publish_path.relative_to(stage_artifacts).as_posix()
-    if stage_publish_relative not in all_stage_files:
-        raise QixiPostCorrectionPublicSurfaceError("staged publish escaped the private artifact manifest")
-    staged_for_projection, referenced = _prepare_stage_documents(
-        staged,
-        staged_publish_for_projection,
-        stage_artifacts=stage_artifacts,
-        stage_publish_path=stage_publish_path,
-        public_publish_path=inputs.artifact_paths["publish"],
+    raw_stage_gates = _stage_public_surface_gate_callables(staged, staged_publish)
+    for predicate_id, check in raw_stage_gates:
+        formal_gate(
+            None,
+            predicate_id,
+            check,
+            error_type=QixiPostCorrectionPublicSurfaceError,
+        )
+
+    prepared: tuple[dict[str, object], set[str]] | None = None
+
+    def locator_preparation() -> None:
+        nonlocal prepared
+        if stage_publish_relative not in all_stage_files:
+            raise QixiPostCorrectionPublicSurfaceError(
+                "staged publish escaped the private artifact manifest"
+            )
+        prepared = _prepare_stage_documents(
+            staged,
+            staged_publish_for_projection,
+            stage_artifacts=stage_artifacts,
+            stage_publish_path=stage_publish_path,
+            public_publish_path=inputs.artifact_paths["publish"],
+        )
+
+    formal_gate(
+        observation,
+        "stage_locator_projection",
+        locator_preparation,
+        error_type=QixiPostCorrectionPublicSurfaceError,
     )
+    assert prepared is not None
+    staged_for_projection, referenced = prepared
     _canonicalize_stage_public_surfaces(
         staged,
         staged_publish,
         projected_record=staged_for_projection,
         projected_publish=staged_publish_for_projection,
     )
-    if not referenced.issubset(all_stage_files):
-        raise QixiPostCorrectionPublicSurfaceError("staged public locator is not materialized")
+
+    def cover_generation_mirrors() -> None:
+        projected_staging = staged_for_projection.get("publish_staging")
+        if (
+            not isinstance(projected_staging, Mapping)
+            or projected_staging.get("cover_generation")
+            != staged_publish_for_projection.get("cover_generation")
+        ):
+            raise QixiPostCorrectionPublicSurfaceError(
+                "canonical publish and returned public surfaces drift before projection"
+            )
+
+    formal_gate(
+        observation,
+        "stage_projected_cover_generation_mirrors",
+        cover_generation_mirrors,
+        error_type=QixiPostCorrectionPublicSurfaceError,
+    )
+
+    def locator_manifest() -> None:
+        if not referenced.issubset(all_stage_files):
+            raise QixiPostCorrectionPublicSurfaceError("staged public locator is not materialized")
+
+    formal_gate(
+        observation,
+        "stage_materialized_locator_manifest",
+        locator_manifest,
+        error_type=QixiPostCorrectionPublicSurfaceError,
+    )
     rewritten_record = _replace_stage_locators(
         staged_for_projection,
         stage_artifacts=stage_artifacts,
@@ -966,32 +1070,78 @@ def _build_after_image(
     rewritten_record["human_text_correction_manifest_path"] = str(inputs.artifact_paths["correction"])
     _assert_no_stage_locator(rewritten_record, stage_root)
     _assert_no_stage_locator(rewritten_publish, stage_root)
-    if rewritten_record.get("story_contract", {}).get("source_fact_review") != rewritten_record.get("publish_staging", {}).get("source_fact_review") or rewritten_publish.get("source_fact_review") != rewritten_record.get("publish_staging", {}).get("source_fact_review"):
-        raise QixiPostCorrectionPublicSurfaceError("source-fact receipt is not identical across required mirrors")
-    state = _project_state_pick(
-        inputs.state,
-        pick_index=inputs.state_pick_index,
-        candidate_id=CANDIDATE_ID,
-        record=rewritten_record,
-        publish=rewritten_publish,
+    def source_fact_mirrors() -> None:
+        if (
+            rewritten_record.get("story_contract", {}).get("source_fact_review")
+            != rewritten_record.get("publish_staging", {}).get("source_fact_review")
+            or rewritten_publish.get("source_fact_review")
+            != rewritten_record.get("publish_staging", {}).get("source_fact_review")
+        ):
+            raise QixiPostCorrectionPublicSurfaceError(
+                "source-fact receipt is not identical across required mirrors"
+            )
+
+    formal_gate(
+        observation,
+        "stage_projected_source_fact_mirrors",
+        source_fact_mirrors,
+        error_type=QixiPostCorrectionPublicSurfaceError,
     )
-    if not _state_diff_is_exact(
-        inputs.state, state, pick_index=inputs.state_pick_index, candidate_id=CANDIDATE_ID
-    ):
-        raise QixiPostCorrectionPublicSurfaceError("state after-image exceeds the sealed candidate pick")
-    targets = _materialized_public_targets(
-        stage_artifacts=stage_artifacts,
-        namespace=public_artifacts,
-        relatives=referenced,
-        require_regular=lambda path: _require_regular(path, label="referenced staged artifact"),
+    state: dict[str, object] | None = None
+
+    def build_state_projection() -> None:
+        nonlocal state
+        state = _project_state_pick(
+            inputs.state,
+            pick_index=inputs.state_pick_index,
+            candidate_id=CANDIDATE_ID,
+            record=rewritten_record,
+            publish=rewritten_publish,
+        )
+        if not _state_diff_is_exact(
+            inputs.state, state, pick_index=inputs.state_pick_index, candidate_id=CANDIDATE_ID
+        ):
+            raise QixiPostCorrectionPublicSurfaceError(
+                "state after-image exceeds the sealed candidate pick"
+            )
+
+    formal_gate(
+        observation,
+        "stage_state_projection",
+        build_state_projection,
+        error_type=QixiPostCorrectionPublicSurfaceError,
     )
-    targets[inputs.artifact_paths["record"]] = _json_bytes(rewritten_record)
-    targets[inputs.artifact_paths["delivery_record"]] = _json_bytes(rewritten_record)
-    targets[inputs.artifact_paths["publish"]] = _json_bytes(rewritten_publish)
-    targets[inputs.state_path] = _json_bytes(state)
-    for immutable in ("main", "srt", "ass", "burn", "correction"):
-        if inputs.artifact_paths[immutable] in targets:
-            raise QixiPostCorrectionPublicSurfaceError(f"after-image attempts to rewrite immutable {immutable}")
+    assert state is not None
+
+    targets: dict[Path, bytes] = {}
+
+    def build_materialized_targets() -> None:
+        targets.update(
+            _materialized_public_targets(
+                stage_artifacts=stage_artifacts,
+                namespace=public_artifacts,
+                relatives=referenced,
+                require_regular=lambda path: _require_regular(
+                    path, label="referenced staged artifact"
+                ),
+            )
+        )
+        targets[inputs.artifact_paths["record"]] = _json_bytes(rewritten_record)
+        targets[inputs.artifact_paths["delivery_record"]] = _json_bytes(rewritten_record)
+        targets[inputs.artifact_paths["publish"]] = _json_bytes(rewritten_publish)
+        targets[inputs.state_path] = _json_bytes(state)
+        for immutable in ("main", "srt", "ass", "burn", "correction"):
+            if inputs.artifact_paths[immutable] in targets:
+                raise QixiPostCorrectionPublicSurfaceError(
+                    f"after-image attempts to rewrite immutable {immutable}"
+                )
+
+    formal_gate(
+        observation,
+        "stage_materialized_target_manifest",
+        build_materialized_targets,
+        error_type=QixiPostCorrectionPublicSurfaceError,
+    )
     metadata = {
         "title": PUBLIC_TITLE,
         "source_fact_receipt_sha256": _canonical_sha256(rewritten_record["publish_staging"]["source_fact_review"]),
@@ -1004,197 +1154,16 @@ def _build_after_image(
 def _validate_after_image(
     *, authority: Mapping[str, object], before: Mapping[Path, bytes | None], after: Mapping[Path, bytes]
 ) -> set[Path]:
-    """Replay the only permissible public closure from journal bytes."""
+    """Replay the shared ordered formal after-image predicates."""
 
-    artifacts = authority["artifacts"]
-    assert isinstance(artifacts, Mapping)
-    paths = {
-        role: Path(str(_descriptor(value, label=f"artifact {role}")["path"]))
-        for role, value in artifacts.items()
-    }
-    state_descriptor = _state_descriptor(authority["state_file"])
-    state_path = Path(str(state_descriptor["path"]))
-    fixed = {paths["record"], paths["delivery_record"], paths["publish"], state_path}
-    if not fixed.issubset(after) or any(path in after for path in (paths["main"], paths["srt"], paths["ass"], paths["burn"], paths["correction"])):
-        raise QixiPostCorrectionPublicSurfaceError("journal after-image target roles drift")
-    try:
-        record = json.loads(after[paths["record"]].decode("utf-8"))
-        delivery = json.loads(after[paths["delivery_record"]].decode("utf-8"))
-        publish = json.loads(after[paths["publish"]].decode("utf-8"))
-        before_record = json.loads((before[paths["record"]] or b"").decode("utf-8"))
-        before_state = json.loads((before[state_path] or b"").decode("utf-8"))
-        state = json.loads(after[state_path].decode("utf-8"))
-    except (UnicodeError, ValueError) as exc:
-        raise QixiPostCorrectionPublicSurfaceError("journal after-image JSON is invalid") from exc
-    if not all(isinstance(value, dict) for value in (record, delivery, publish, before_record, before_state, state)):
-        raise QixiPostCorrectionPublicSurfaceError("journal after-image document type drifts")
-    if (
-        record != delivery
-        or record.get("media_path") != str(paths["main"])
-        or record.get("subtitle_path") != str(paths["srt"])
-        or record.get("subtitle_ass_path") != str(paths["ass"])
-        or record.get("human_text_correction_manifest_path") != str(paths["correction"])
-        or record.get("human_text_correction_manifest_sha256") != artifacts["correction"]["sha256"]
-    ):
-        raise QixiPostCorrectionPublicSurfaceError("journal record/delivery media closure drifts")
-    hashes = record.get("artifact_hashes")
-    if not isinstance(hashes, Mapping) or any(
-        hashes.get(key) != artifacts[role]["sha256"]
-        for key, role in (
-            ("video_sha256", "main"),
-            ("subtitle_sha256", "srt"),
-            ("ass_sha256", "ass"),
-            ("burned_video_sha256", "burn"),
-        )
-    ):
-        raise QixiPostCorrectionPublicSurfaceError("journal final media binding drifts")
-    staging = record.get("publish_staging")
-    story = record.get("story_contract")
-    if not isinstance(staging, Mapping) or not isinstance(story, Mapping):
-        raise QixiPostCorrectionPublicSurfaceError("journal public staging closure is missing")
-    source_fact = staging.get("source_fact_review")
-    generation = staging.get("cover_generation")
-    if (
-        staging.get("title") != PUBLIC_TITLE
-        or publish.get("title") != PUBLIC_TITLE
-        or staging.get("upload_enabled") is not False
-        or not isinstance(source_fact, Mapping)
-        or source_fact.get("status") != "PASS"
-        or story.get("source_fact_review") != source_fact
-        or publish.get("source_fact_review") != source_fact
-        or publish.get("cover_generation") != generation
-        or publish.get("upload_enabled") is not False
-    ):
-        raise QixiPostCorrectionPublicSurfaceError("journal source-fact/title/cover mirrors drift")
-    _validate_manual_title_projection(
-        staging, publish, source_fact=source_fact, public_title=PUBLIC_TITLE
+    from src.autoslice.qixi_post_correction_after_image_gates import validate_after_image
+
+    return validate_after_image(
+        __import__(__name__, fromlist=["*"]),
+        authority=authority,
+        before=before,
+        after=after,
     )
-    before_hashes = before_record.get("artifact_hashes")
-    if not isinstance(before_hashes, Mapping):
-        raise QixiPostCorrectionPublicSurfaceError("journal predecessor artifact hashes are missing")
-    for key in set(before_hashes) | set(hashes):
-        if key != "cover_sha256" and before_hashes.get(key) != hashes.get(key):
-            raise QixiPostCorrectionPublicSurfaceError("journal immutable artifact hash drifts")
-    # Rebuild the two semantic public surfaces from sealed inputs.  No other
-    # record column is an allowed journal mutation.
-    for key in set(before_record) | set(record):
-        if key not in {"story_contract", "publish_staging", "artifact_hashes"} and before_record.get(key) != record.get(key):
-            raise QixiPostCorrectionPublicSurfaceError("journal record closure mutates an unrelated field")
-    hook = story.get("selection_hook") or (before_record.get("story_contract") or {}).get("selection_hook")
-    try:
-        expected_story = _story_contract_rebuilder(
-            before_record, srt_path=paths["srt"], clip_context_path=paths["clip_context"]
-        )(hook) if isinstance(hook, str) else None
-    except Exception as exc:
-        raise QixiPostCorrectionPublicSurfaceError("journal StoryContract input cannot replay") from exc
-    if isinstance(expected_story, dict):
-        expected_story["source_fact_review"] = source_fact
-    if not isinstance(hook, str) or story != expected_story:
-        raise QixiPostCorrectionPublicSurfaceError("journal StoryContract replay drifts")
-    package_root = paths["record"].parent
-    try:
-        speaker_evidence = rebuild_package_speaker_evidence(
-            root=package_root,
-            item={"subtitle_srt": paths["srt"].name},
-            record=before_record,
-            subtitle_path=paths["srt"],
-        )
-    except (OSError, ValueError) as exc:
-        raise QixiPostCorrectionPublicSurfaceError("journal uniform-host speaker evidence replay drifts") from exc
-    from src.autoslice.qixi_operator_exact_title_source_fact import validate_public_surface_receipt
-
-    if not validate_public_surface_receipt(
-        source_fact,
-        generic_validator=validate_source_fact_review,
-        selection_hook=hook, title=PUBLIC_TITLE,
-        final_transcript="\n".join(cue.text for cue in _source_cues(paths["srt"])),
-        clip_context_prompt=str(story.get("clip_context_prompt") or ""), selection_scorecard=story.get("selection_scorecard"),
-        final_reviewed_srt_path=paths["srt"],
-        record=record,
-        speaker_evidence=speaker_evidence,
-        repo_root=ROOT,
-    ):
-        raise QixiPostCorrectionPublicSurfaceError("journal source-fact receipt replay drifts")
-    _validate_replayed_cover(generation, story=story, package_root=paths["record"].parent, after=after)
-    cover_path = generation.get("final_cover")
-    cover_sha = generation.get("final_cover_sha256")
-    if (
-        not isinstance(cover_path, str)
-        or staging.get("cover_path") != cover_path
-        or publish.get("cover_path") != cover_path
-        or hashes.get("cover_sha256") != cover_sha
-        or Path(cover_path) not in after
-    ):
-        raise QixiPostCorrectionPublicSurfaceError("journal cover projection drifts")
-    allowed_publish_changes = {
-        "title",
-        "title_source",
-        "title_authority_status",
-        "recovery_publication_authority",
-        "title_authority_error",
-        "title_policy_violations",
-        "important_content_ips",
-        "title_story_audit",
-        "entity_projection_audit",
-        "cover_entity_projection_audit",
-        "source_fact_review",
-        "manual_title_repair_authority_consumption",
-        "manual_title_keep_authority_consumption",
-        "public_text_surface_authority_consumption",
-        "video_path",
-        "cover_text",
-        "cover_generation",
-        "cover_path",
-        "cover_status",
-        "reason_codes",
-        "artifact_hashes",
-        "upload_enabled",
-        "source_fact_scorecard_rescore_provenance",
-    }
-    before_publish = json.loads((before[paths["publish"]] or b"").decode("utf-8"))
-    if not isinstance(before_publish, dict) or any(
-        before_publish.get(key) != publish.get(key)
-        for key in set(before_publish) | set(publish)
-        if key not in allowed_publish_changes
-    ):
-        raise QixiPostCorrectionPublicSurfaceError("journal publish closure mutates an unrelated field")
-    before_publish_hashes = before_publish.get("artifact_hashes")
-    publish_hashes = publish.get("artifact_hashes")
-    if (before_publish_hashes is None) != (publish_hashes is None):
-        raise QixiPostCorrectionPublicSurfaceError("journal publish artifact hash projection drifts")
-    if isinstance(before_publish_hashes, Mapping) and isinstance(publish_hashes, Mapping):
-        for key in set(before_publish_hashes) | set(publish_hashes):
-            if key != "cover_sha256" and before_publish_hashes.get(key) != publish_hashes.get(key):
-                raise QixiPostCorrectionPublicSurfaceError("journal publish immutable artifact hash drifts")
-        if publish_hashes.get("cover_sha256") != cover_sha:
-            raise QixiPostCorrectionPublicSurfaceError("journal publish cover hash projection drifts")
-    before_picks = before_state.get("picks")
-    if not isinstance(before_picks, list):
-        raise QixiPostCorrectionPublicSurfaceError("journal state preimage is invalid")
-    indices = [index for index, pick in enumerate(before_picks) if isinstance(pick, Mapping) and pick.get("candidate_id") == CANDIDATE_ID]
-    if (
-        len(indices) != 1
-        or not _state_diff_is_exact(
-            before_state, state, pick_index=indices[0], candidate_id=CANDIDATE_ID
-        )
-        or state
-        != _project_state_pick(
-            before_state,
-            pick_index=indices[0],
-            candidate_id=CANDIDATE_ID,
-            record=record,
-            publish=publish,
-        )
-    ):
-        raise QixiPostCorrectionPublicSurfaceError("journal state closure drifts")
-    package_root = paths["record"].parent
-    referenced = _package_cover_paths(generation, package_root=package_root)
-    referenced.update(_package_cover_paths(staging.get("cover_path"), package_root=package_root))
-    referenced.update(_package_cover_paths(publish.get("cover_path"), package_root=package_root))
-    extras = set(after) - fixed
-    if not extras.issubset(referenced) or any(not _within(path, package_root) for path in extras):
-        raise QixiPostCorrectionPublicSurfaceError("journal cover sidecar inventory drifts")
-    return fixed | referenced
 
 
 def _journal_root(inputs: RuntimeInputs) -> Path:
@@ -1907,8 +1876,96 @@ def _commit_journal(root: Path, journal: dict[str, object], *, authority: Mappin
     _write_final_receipt(root, journal)
     _postcommit_replay(journal, authority=authority)
     return _cleanup_committed_backups_result(root, journal)
-
-
+def _finalize_legacy(
+    *,
+    apply: bool,
+    repo_root: Path = ROOT,
+    runtime_root: Path = Path("/opt/bilive/autoslice"),
+    source_fact_llm_call: LlmCall | None = None,
+    authority: Mapping[str, object] | None = None,
+    _stage_publish: Callable[..., dict[str, object] | None] = _stage_publish_draft,
+    _runner_lock_held: bool = False,
+    _stage_observation: object | None = None,
+    _prejournal_failure: Callable[[RuntimeInputs, Path, BaseException, Mapping[Path, bytes] | None, bool], None] | None = None,
+) -> dict[str, object]:
+    """Plan (zero-write) or apply this one sealed public-surface closure."""
+    loaded = dict(authority) if authority is not None else load_deployed_authority(repo_root)
+    normalized = validate_authority(loaded)
+    if runtime_root != Path(str(normalized["runtime_root"])):
+        raise QixiPostCorrectionPublicSurfaceError("runtime root differs from the sealed authority")
+    if apply:
+        if not _runner_lock_held:
+            with _exclusive_runner_lock(runtime_root):
+                return _finalize_legacy(
+                    apply=True, repo_root=repo_root, runtime_root=runtime_root,
+                    source_fact_llm_call=source_fact_llm_call, authority=normalized,
+                    _stage_publish=_stage_publish, _runner_lock_held=True,
+                    _stage_observation=_stage_observation,
+                    _prejournal_failure=_prejournal_failure,
+                )
+        _validate_repository_inputs(normalized, repo_root=repo_root)
+        journal_root = _journal_root_from_authority(normalized)
+        journal = _load_journal(journal_root, authority=normalized)
+        if journal is not None:
+            status = _commit_journal(journal_root, journal, authority=normalized)
+            return _finalize_result(status, journal_root, journal)
+    inputs = validate_runtime(normalized, repo_root=repo_root, runtime_root=runtime_root)
+    if not apply:
+        return {
+            "schema_version": "qixi-post-correction-public-surface-plan.v2",
+            "status": "PLAN_PASS",
+            "candidate_id": CANDIDATE_ID,
+            "recording_date": RECORDING_DATE,
+            "title": PUBLIC_TITLE,
+            "upload_enabled": False,
+        }
+    journal_root = _journal_root(inputs)
+    journal = _load_journal(journal_root, authority=inputs.authority)
+    if journal is None:
+        stage_root = Path(tempfile.mkdtemp(prefix=".qixi-public-surface-stage-", dir=inputs.artifact_paths["record"].parent))
+        targets: Mapping[Path, bytes] | None = None
+        cleanup_error: QixiPostCorrectionPublicSurfaceError | None = None
+        failure: BaseException | None = None
+        failure_traceback = None
+        try:
+            targets, metadata = _build_after_image(
+                inputs, stage_root=stage_root, source_fact_llm_call=source_fact_llm_call or _default_source_fact_llm(),
+                stage_publish=_stage_publish, observation=_stage_observation)
+            journal = _write_prepared_journal(
+                journal_root, inputs=inputs, targets=targets, metadata=metadata
+            )
+        except BaseException as exc:
+            failure = exc
+            failure_traceback = exc.__traceback__
+        finally:
+            try:
+                _remove_private_stage(stage_root)
+            except BaseException:
+                # Never obscure a gate error; a prepared journal is canonical.
+                cleanup_error = QixiPostCorrectionPublicSurfaceError("private stage cleanup failed before journal creation")
+        if journal is None:
+            journal = _load_journal(journal_root, authority=inputs.authority)
+        if failure is not None:
+            if journal is None and _prejournal_failure:
+                try:
+                    _prejournal_failure(inputs, stage_root, failure, targets, cleanup_error is not None)
+                except BaseException:
+                    pass
+            if journal is None:
+                raise failure.with_traceback(failure_traceback)
+        if cleanup_error is not None and journal is None:
+            if _prejournal_failure:
+                try:
+                    _prejournal_failure(inputs, stage_root, cleanup_error, targets, True)
+                except BaseException:
+                    pass
+            raise cleanup_error
+    status = _commit_journal(journal_root, journal, authority=inputs.authority)
+    return _finalize_result(status, journal_root, journal)
+def _finalize_result(status: str, journal_root: Path, journal: Mapping[str, object]) -> dict[str, object]:
+    return {"schema_version": "qixi-post-correction-public-surface-result.v1", "status": status,
+            "candidate_id": CANDIDATE_ID, "recording_date": RECORDING_DATE, "title": PUBLIC_TITLE,
+            "upload_enabled": False, "journal": str(journal_root / "journal.json"), "metadata": journal.get("metadata")}
 def finalize(
     *,
     apply: bool,
@@ -1919,78 +1976,23 @@ def finalize(
     _stage_publish: Callable[..., dict[str, object] | None] = _stage_publish_draft,
     _runner_lock_held: bool = False,
 ) -> dict[str, object]:
-    """Plan (zero-write) or apply this one sealed public-surface closure."""
-
-    loaded = dict(authority) if authority is not None else load_deployed_authority(repo_root)
-    normalized = validate_authority(loaded)
-    if runtime_root != Path(str(normalized["runtime_root"])):
-        raise QixiPostCorrectionPublicSurfaceError("runtime root differs from the sealed authority")
-    if apply:
-        if not _runner_lock_held:
-            with _exclusive_runner_lock(runtime_root):
-                return finalize(
-                    apply=True,
-                    repo_root=repo_root,
-                    runtime_root=runtime_root,
-                    source_fact_llm_call=source_fact_llm_call,
-                    authority=normalized,
-                    _stage_publish=_stage_publish,
-                    _runner_lock_held=True,
-                )
-        _validate_repository_inputs(normalized, repo_root=repo_root)
-        journal_root = _journal_root_from_authority(normalized)
-        journal = _load_journal(journal_root, authority=normalized)
-        if journal is not None:
-            status = _commit_journal(journal_root, journal, authority=normalized)
-            return {
-                "schema_version": "qixi-post-correction-public-surface-result.v1",
-                "status": status,
-                "candidate_id": CANDIDATE_ID,
-                "recording_date": RECORDING_DATE,
-                "title": PUBLIC_TITLE,
-                "upload_enabled": False,
-                "journal": str(journal_root / "journal.json"),
-                "metadata": journal.get("metadata"),
-            }
-    inputs = validate_runtime(normalized, repo_root=repo_root, runtime_root=runtime_root)
+    """Compatibility entry point; false is PLAN, true is the fixed APPLY mode."""
     if not apply:
-        return {
-            "schema_version": "qixi-post-correction-public-surface-plan.v1",
-            "status": "DRY_RUN_PASS",
-            "candidate_id": CANDIDATE_ID,
-            "recording_date": RECORDING_DATE,
-            "title": PUBLIC_TITLE,
-            "upload_enabled": False,
-        }
-    journal_root = _journal_root(inputs)
-    journal = _load_journal(journal_root, authority=inputs.authority)
-    if journal is None:
-        stage_root = Path(
-            tempfile.mkdtemp(
-                prefix=".qixi-public-surface-stage-",
-                dir=inputs.artifact_paths["record"].parent,
-            )
+        return _finalize_legacy(
+            apply=False,
+            repo_root=repo_root,
+            runtime_root=runtime_root,
+            source_fact_llm_call=source_fact_llm_call,
+            authority=authority,
+            _stage_publish=_stage_publish,
+            _runner_lock_held=_runner_lock_held,
         )
-        try:
-            targets, metadata = _build_after_image(
-                inputs,
-                stage_root=stage_root,
-                source_fact_llm_call=source_fact_llm_call or _default_source_fact_llm(),
-                stage_publish=_stage_publish,
-            )
-            journal = _write_prepared_journal(
-                journal_root, inputs=inputs, targets=targets, metadata=metadata
-            )
-        finally:
-            _remove_private_stage(stage_root)
-    status = _commit_journal(journal_root, journal, authority=inputs.authority)
-    return {
-        "schema_version": "qixi-post-correction-public-surface-result.v1",
-        "status": status,
-        "candidate_id": CANDIDATE_ID,
-        "recording_date": RECORDING_DATE,
-        "title": PUBLIC_TITLE,
-        "upload_enabled": False,
-        "journal": str(journal_root / "journal.json"),
-        "metadata": journal.get("metadata"),
-    }
+    from src.autoslice.qixi_post_correction_modes import Mode, run
+    return run(
+        Mode.APPLY,
+        repo_root=repo_root,
+        runtime_root=runtime_root,
+        source_fact_llm_call=source_fact_llm_call,
+        authority=authority,
+        stage_publish=_stage_publish,
+    )
