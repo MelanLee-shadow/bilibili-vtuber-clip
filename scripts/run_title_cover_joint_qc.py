@@ -171,9 +171,15 @@ def build_joint_qc_receipt(
         "你是李豆沙频道的标题+封面联合质检员。下图是最终封面,拟用标题是:\n"
         f"《{title}》\n"
         "请只输出一个 JSON 对象(不要 markdown 代码块,不要多余文字),字段与含义:\n"
-        '{"lidousha_primary": bool,"thumbnail_readable": bool,"single_clear_hook": bool,'
-        '"text_overcrowded": bool,"title_cover_aligned": bool,"physical_text_line_count": int,'
-        '"unrelated_or_misleading_elements": [],"reason": str,"pass": bool}'
+        '{"lidousha_primary": bool 封面主体是否是李豆沙(白发+头顶小熊猫耳的虚拟熊猫少女;熊猫耳长在头上不是头套/帽子;头顶墨镜或发饰是可选配饰,可有可无),'
+        '"thumbnail_readable": bool 缩略图尺寸下封面大字是否清晰可读,'
+        '"single_clear_hook": bool 封面文案是否构成一个清晰单一的钩子,'
+        '"text_overcrowded": bool 文字是否过度拥挤,'
+        '"title_cover_aligned": bool 标题与封面是否讲同一件事,'
+        '"physical_text_line_count": int 封面主文案的物理行数,'
+        '"unrelated_or_misleading_elements": [] 与内容无关或误导的元素列表(没有就空数组),'
+        '"reason": str 一句话理由,'
+        '"pass": bool 综合是否通过}\n如实判断,不要迎合。'
     )
     witness = image_probe(cover_path, question)
     verdict = None
