@@ -66,6 +66,20 @@ def track_state(path: Path, state: Mapping[str, object]) -> TrackedState:
     return TrackedState(path, state)
 
 
+def make_date_state_writer(
+    path_for_date: Callable[[str], Path],
+    *,
+    updated_at: Callable[[], str],
+    log: Callable[[str], None],
+) -> Callable[[str, dict], None]:
+    """Bind runner clock/path dependencies without duplicating a wrapper."""
+
+    def write(date: str, state: dict) -> None:
+        write_state(path_for_date(date), state, updated_at=updated_at(), log=log)
+
+    return write
+
+
 def _same(left: object, right: object) -> bool:
     if left is _MISSING or right is _MISSING:
         return left is right

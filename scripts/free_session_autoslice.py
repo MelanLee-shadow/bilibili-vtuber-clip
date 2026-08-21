@@ -840,6 +840,7 @@ from src.autoslice.candidate_selection import (  # noqa: E402
     prioritize, replace_scoped_pending_talk_items, scoped_pending_talk_items,
 )
 from src.autoslice import historical_failed_talk_scope, operator_processing_scope as operator_scope  # noqa: E402
+from src.autoslice import selected_source_fact_recovery_persistence  # noqa: E402
 from src.autoslice.exact_talk_recovery_scope import (
     suppress_exact_talk_recovery_song_work,
 )  # noqa: E402
@@ -1327,13 +1328,11 @@ def read_state(date: str) -> dict:
     return runner_state_writeback.track_state(state_path(date), _read_state_untracked(date))
 
 
-def write_state(date: str, state: dict) -> None:
-    runner_state_writeback.write_state(
-        state_path(date),
-        state,
-        updated_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-        log=log,
-    )
+write_state = runner_state_writeback.make_date_state_writer(
+    state_path,
+    updated_at=lambda: time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    log=log,
+)
 
 
 def write_alert(name: str, message: str) -> None:
@@ -1677,22 +1676,16 @@ def process_date(date: str) -> None:
         requeued_talks,
         requeued_songs,
         song_fingerprint_baseline_changed,
-    ) = historical_failed_talk_scope.maintain(date, state, automatic_maintenance=automatic_maintenance, candidate_ids=frozen_talk_candidate_ids)
-    if recovered_song_deliveries:
-        persist_state()
-        log(
-            f"{date}: recovered {recovered_song_deliveries} verified song delivery "
-            "package(s) without selector/ASR/LRC rerun"
-        )
-    if any((requeued_stale_talks, requeued_talks, requeued_songs)) or (song_fingerprint_baseline_changed):
-        persist_state()
-    if requeued_stale_talks or requeued_talks or requeued_songs:
-        log(
-            f"{date}: requeued {requeued_stale_talks} stale CURRENT talk package(s), "
-            f"{requeued_talks} recoverable talk failure(s), and "
-            f"{requeued_songs} recoverable song BLOCK(s) for song pipeline "
-            f"{song_pipeline_fingerprint()[:19]}…"
-        )
+    ) = selected_source_fact_recovery_persistence.maintain_and_persist(
+        date,
+        state,
+        automatic_maintenance=automatic_maintenance,
+        candidate_ids=frozen_talk_candidate_ids,
+        persist=persist_state,
+        readback=lambda: json.loads(state_path(date).read_text(encoding="utf-8")),
+        log=log,
+        song_pipeline_fingerprint=song_pipeline_fingerprint,
+    )
     has_new, has_pending, needs_cover = historical_failed_talk_scope.work_flags(date, state, automatic_maintenance=automatic_maintenance, candidate_ids=frozen_talk_candidate_ids)
     if not has_new and not has_pending and not needs_cover:
         terminal = _project_terminal_batch_state(state, mutate_songs=frozen_talk_candidate_ids is None)
