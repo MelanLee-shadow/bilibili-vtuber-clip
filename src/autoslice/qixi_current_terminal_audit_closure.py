@@ -248,7 +248,10 @@ def build_terminal_audit_closure(
         source_flags_sha256=source_flags_sha256,
         subtitle_text=subtitle_text,
     )
-    flags_audit = source_review_flags.get("final_review_audit")
+    # The sealed source review-flags artifact is the final-review audit itself,
+    # not a wrapper containing one.  Compare its complete historical object
+    # with the chat carry before deriving the terminal review.
+    flags_audit = source_review_flags
     chat_audit = source_chat.get("final_review_audit")
     if not isinstance(flags_audit, Mapping) or flags_audit != chat_audit:
         raise QixiCurrentTerminalAuditClosureError("Qixi source final-review evidence differs")

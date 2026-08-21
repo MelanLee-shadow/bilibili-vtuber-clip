@@ -443,7 +443,7 @@ def _write_current_lane_fixture(
         candidate, "boundary.json", json.dumps(boundary, ensure_ascii=False).encode(), role="candidate",
     )
     flags = _write(
-        candidate, "flags.json", json.dumps({"final_review_audit": historical_review}, ensure_ascii=False).encode(), role="candidate",
+        candidate, "flags.json", json.dumps(historical_review, ensure_ascii=False).encode(), role="candidate",
     )
 
     projection = copy.deepcopy(projection_source)
@@ -1240,6 +1240,44 @@ def test_current_terminal_audit_closure_refuses_rebound_source_evidence_drift(
     closure_path.write_text(json.dumps(closure, ensure_ascii=False), encoding="utf-8")
     authority_path = repo / finalization.AUTHORITY_RELATIVE_PATH
     authority = json.loads(authority_path.read_text(encoding="utf-8"))
+    authority["terminal_audit_closure"]["authority_sha256"] = closure["authority_sha256"]
+    authority.pop("authority_sha256")
+    authority["authority_sha256"] = finalization._canonical_sha(authority)
+    authority_path.write_text(json.dumps(authority, ensure_ascii=False), encoding="utf-8")
+    _reseal_fixture_repo(repo)
+
+    with pytest.raises(finalization.QixiCorrectedPackageError, match="audit closure failed"):
+        finalization.finalize(
+            repo_root=repo,
+            release_root=release,
+            evidence_root=evidence,
+            target=target,
+        )
+    assert not target.exists()
+
+
+def test_current_terminal_audit_closure_refuses_review_flags_wrapper(
+    tmp_path: Path,
+) -> None:
+    repo, release, evidence, target = _write_current_lane_fixture(tmp_path)
+    authority_path = repo / finalization.AUTHORITY_RELATIVE_PATH
+    authority = json.loads(authority_path.read_text(encoding="utf-8"))
+    flags_path = evidence / authority["evidence"]["review_flags"]["source"]
+    source_chat_path = evidence / authority["evidence"]["chat_authority"]["source"]
+    source_chat = json.loads(source_chat_path.read_text(encoding="utf-8"))
+    flags_path.write_text(
+        json.dumps({"final_review_audit": source_chat["final_review_audit"]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    flags_sha = _sha(flags_path)
+    authority["evidence"]["review_flags"]["sha256"] = flags_sha
+    authority["evidence"]["review_flags"]["bytes"] = flags_path.stat().st_size
+    closure_path = repo / finalization.TERMINAL_AUDIT_CLOSURE_RELATIVE_PATH
+    closure = json.loads(closure_path.read_text(encoding="utf-8"))
+    closure["source_evidence"]["review_flags_sha256"] = flags_sha
+    closure.pop("authority_sha256")
+    closure["authority_sha256"] = finalization._canonical_sha(closure)
+    closure_path.write_text(json.dumps(closure, ensure_ascii=False), encoding="utf-8")
     authority["terminal_audit_closure"]["authority_sha256"] = closure["authority_sha256"]
     authority.pop("authority_sha256")
     authority["authority_sha256"] = finalization._canonical_sha(authority)
