@@ -83,6 +83,7 @@ from .cover_punch_semantics import (
     PUNCH_LINE_MAX_EM,
     cover_text_requires_punch_for_thumbnail,
     talk_cover_thumbnail_gate_violations,
+    validate_cover_punch_semantic_review,
     validate_full_text_cover_contract,
 )
 from .llm_client import LlmCall, extract_json_object
@@ -1795,6 +1796,15 @@ def _stage_lidousha_ai_cover(
             or not isinstance(approved_punch_receipt, Mapping)
             or approved_punch_receipt.get("status") != "PASS"
             or tuple(approved_punch_receipt.get("final_punch") or ()) != approved_punch
+            or not validate_cover_punch_semantic_review(
+                approved_punch_receipt,
+                rendered_lines=list(approved_punch),
+                cover_text=cover_text,
+                story_hook=(
+                    str(story_contract.get("selection_hook") or "")
+                    if isinstance(story_contract, Mapping) else ""
+                ),
+            )
         ):
             return _blocked_ai_cover_result(
                 cover_generation, ["COVER_APPROVED_PUNCH_RECEIPT_INVALID"],
