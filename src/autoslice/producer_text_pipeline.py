@@ -943,9 +943,9 @@ def _run_exact_final_release_review(
     screen_read_probe: Callable[[int, int], Mapping[str, object]] | None = None,
     priority_raw_findings: Sequence[Mapping[str, Any]] = (),
     acoustic_discovery_audit: Mapping[str, object] | None = None,
+    final_review_llm: Callable[[str], str] | None = None, pronoun_audit_llm: Callable[[str], str] | None = None,
 ) -> dict[str, object]:
     """Review the exact post-authority bytes and issue a fail-closed receipt."""
-
     reviewed_srt_sha256 = "sha256:" + hashlib.sha256(srt_text.encode("utf-8")).hexdigest()
     boundary_semantic_review = correction_audit.get("boundary_semantic_review")
     correction_mutation_audit = audit_correction_mutation_authority(correction_audit)
@@ -986,14 +986,14 @@ def _run_exact_final_release_review(
             srt_text,
             policy_text=review_glossary,
             candidate_context_text=candidate_context_text,
-            llm_call=_build_pronoun_audit_llm_call(),
+            llm_call=pronoun_audit_llm or _build_pronoun_audit_llm_call(),
             extract_json=extract_json_object,
         )
         base["candidate_pronoun_consistency_audit"] = pronoun_audit
         priority_findings = [*pronoun_findings, *priority_raw_findings]
         findings = audit_final_subtitles(
             srt_text,
-            llm_call=_build_final_review_llm_call(),
+            llm_call=final_review_llm or _build_final_review_llm_call(),
             extract_json=extract_json_object,
             glossary_text=review_glossary,
             structured_context_text=_final_review_structured_context(
@@ -1052,7 +1052,7 @@ def _run_exact_final_release_review(
         ),
         timeline_offset_ms=timeline_offset_ms,
     )
-    exact_judge_llm_call = _build_final_review_llm_call()
+    exact_judge_llm_call = final_review_llm or _build_final_review_llm_call()
     acoustic_pending, acoustic_resolved = adjudicate_exact_release_findings(
         srt_text,
         authority_pending,

@@ -1,0 +1,31 @@
+{
+  "allowed_mutations": {
+    "chat": ["final_text_srt_sha256", "final_speaker_srt_sha256", "final_output_srt_sha256", "final_review_audit", "final_status"],
+    "publish": [],
+    "record": ["boundary_audit", "artifact_hashes"],
+    "state": []
+  },
+  "authority_sha256": "sha256:d1bad7a44db96535521e6473b199479134ea050e504b3b3e4ee5815c1d68163b",
+  "candidate_id": "auto_123655_771_844",
+  "correction": {
+    "after_srt_sha256": "sha256:a172c08564d57c72782e44e74583c17c3a95a241b798fcfe8df3fddda8b91617",
+    "before_srt_sha256": "sha256:c5dfb1d1645700df8acb35cedee2701c05fd55067dfeaf8dd5bda36cb38a4fc5",
+    "set_line_operations": ["1=你觉得自己有女友感吗", "3=感觉kmx比较多", "6=kmx当女儿或者网友", "27=妹感妈"]
+  },
+  "preimage": {
+    "ass": {"bytes": 2988, "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.final-sapphire72.ass", "sha256": "sha256:700fe00a5c212c6e54693069bcea84df61427c20a2c02f1cd070f1c7e011c755"},
+    "burn": {"bytes": 20165006, "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.burned-final-sapphire72.mp4", "sha256": "sha256:402f80580c1e21e83aaa8c8917d93d389c4c25f14b194d9015aa6c4390bd91ff"},
+    "chat": {"bytes": 211724, "mode": 384, "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/auto_123655_771_844.chat-authority.json", "sha256": "sha256:d76518a1e4e9db60072941d62ce2a40710612ffdc9eed4ad58d566e7613182a1"},
+    "correction": {"bytes": 2580, "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.human-text-correction.json", "sha256": "sha256:90de28c3ec0a01baa36a84fbcebc197322c8cf9817dcebb2799a41e7107cb4e0"},
+    "delivery_record": {"bytes": 108416, "mode": 420, "path": "/opt/bilive/autoslice/repo/lidousha/2026-08-17/弹幕追问小李有没有女友感，她却把彼此.record.json", "sha256": "sha256:3ca8e11f39791ed8d8235f71b347599f5c5b93f8bc4a6d9621530cbe1da3b535"},
+    "publish": {"bytes": 51481, "mode": 420, "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.publish.json", "sha256": "sha256:76c42e6aef3cf0c899e02505ec84112ec268da5c38043e04a3479dfbb1059545"},
+    "record": {"bytes": 108416, "mode": 420, "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.record.json", "sha256": "sha256:3ca8e11f39791ed8d8235f71b347599f5c5b93f8bc4a6d9621530cbe1da3b535"},
+    "srt": {"bytes": 1888, "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.srt", "sha256": "sha256:a172c08564d57c72782e44e74583c17c3a95a241b798fcfe8df3fddda8b91617"},
+    "state": {"bytes": 765067, "mode": 420, "path": "/opt/bilive/autoslice/state/2026-08-17.json", "sha256": "sha256:7aef93f54dedf591a76f4af81d12978fd482a74e0e8b651c7a33d93dd01d1fd1"}
+  },
+  "recording_date": "2026-08-17",
+  "repository_preimage": {"bytes": 1896, "path": "assets/lidousha/sealed_subtitle_corrections/auto_123655_771_844.pipeline-diagnostic.srt", "sha256": "sha256:c5dfb1d1645700df8acb35cedee2701c05fd55067dfeaf8dd5bda36cb38a4fc5"},
+  "runtime_root": "/opt/bilive/autoslice",
+  "schema_version": "qixi-terminal-evidence-refresh-authority.v1",
+  "upload_enabled": false
+}

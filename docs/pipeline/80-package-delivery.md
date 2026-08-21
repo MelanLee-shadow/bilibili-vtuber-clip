@@ -431,6 +431,13 @@ prepare 工作。一个被阻候选不得阻断其它候选。
   transcript。不得把旧 review 的 `CLEAN/PASS` 字段直接搬运、重跑 provider/ASR/ffmpeg，或更改
   media、SRT、ASS、封面、title、source boundary；任一历史 audit、owner、terminal grid 或
   final SRT 漂移均拒绝。
+- **女友感 terminal-evidence refresh 窄门**：`scripts/refresh_qixi_terminal_evidence.py`
+  固定只处理 `auto_123655_771_844`。它先重放 sealed `c5df→a172` 四条人类字幕修复、当前
+  SRT/ASS/burn/chat/record/publish/state preimage，随后才在 private stage 调用既有 final-review
+  与 final-delivery boundary provider，产出新的 hash-bound receipt。`--full-dry-run` 不写正式
+  target；`--apply` 只以 CAS journal 投影 chat、record/delivery、publish/state 的 final evidence
+  mirrors。不得重标旧 receipt，亦不得改变字幕、timing、媒体、标题或封面；任一未列 cue、grid、
+  artifact 或 preimage 漂移均拒绝，且不授权上传。
 - 已发布 same-BV 的字幕修复如显式使用 `--project-single-published-repair
   --preserve-published-cover`，只能消费候选专属、部署封存的
   `daily_same_bv_published_cover_carry_authority.v1`。该 sealed asset 只固定候选、哈希和

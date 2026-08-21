@@ -3741,6 +3741,44 @@ def test_story_contract_package_rejects_subtitle_drift_and_unresolved_nancho_ali
     manifest["items"][0]["title"] = "【李豆沙】南町当面追问最最最最喜欢"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
 
+    # Terminal-evidence refresh regression: the three final package surfaces
+    # are independently bound.  A stale chat/final-review/boundary carry must
+    # expose all three failures together, while the exact current receipts
+    # return the same production-shaped package to a clean audit.
+    current_chat = chat_authority.read_text(encoding="utf-8")
+    stale_chat = json.loads(current_chat)
+    stale_chat["final_text_srt_sha256"] = "0" * 64
+    stale_chat["final_speaker_srt_sha256"] = "0" * 64
+    stale_chat["final_review_audit"]["reviewed_srt_sha256"] = "sha256:" + "0" * 64
+    stale_boundary = stale_chat["final_review_audit"]["boundary_semantic_review"]
+    stale_boundary["cue_grid_sha256"] = "sha256:" + "0" * 64
+    stale_boundary["final_endpoint_binding"]["final_cue_grid_sha256"] = "sha256:" + "0" * 64
+    stale_boundary["final_endpoint_binding"]["semantic_cue_grid_sha256"] = "sha256:" + "0" * 64
+    chat_authority.write_text(json.dumps(stale_chat, ensure_ascii=False), encoding="utf-8")
+    stale_record = json.loads(valid_record)
+    stale_record["artifact_hashes"]["chat_authority_audit_sha256"] = (
+        "sha256:" + hashlib.sha256(chat_authority.read_bytes()).hexdigest()
+    )
+    stale_record["story_contract"]["boundary_semantic_review"] = stale_boundary
+    stale_record["boundary_audit"]["final_delivery_boundary_semantic_review"] = stale_boundary
+    record.write_text(json.dumps(stale_record, ensure_ascii=False), encoding="utf-8")
+    stale_terminal_result = audit_package(root)
+    stale_terminal_codes = {issue["code"] for issue in stale_terminal_result["issues"]}
+    assert {
+        "SUBTITLE_SPEAKER_SRT_CHAT_HASH_MISMATCH",
+        "FINAL_REVIEW_SRT_BINDING_MISMATCH",
+        "BOUNDARY_FINAL_DELIVERY_CUE_GRID_MISMATCH",
+    } <= stale_terminal_codes
+    chat_authority.write_text(current_chat, encoding="utf-8")
+    record.write_text(valid_record, encoding="utf-8")
+    refreshed_terminal_result = audit_package(root)
+    refreshed_terminal_codes = {issue["code"] for issue in refreshed_terminal_result["issues"]}
+    assert not {
+        "SUBTITLE_SPEAKER_SRT_CHAT_HASH_MISMATCH",
+        "FINAL_REVIEW_SRT_BINDING_MISMATCH",
+        "BOUNDARY_FINAL_DELIVERY_CUE_GRID_MISMATCH",
+    } & refreshed_terminal_codes
+
     srt.write_text(
         "1\n00:00:00,000 --> 00:00:04,000\n大恩老师说非常亚撒西\n",
         encoding="utf-8",
