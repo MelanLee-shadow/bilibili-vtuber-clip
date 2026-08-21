@@ -3075,6 +3075,11 @@ def test_committed_cover_binding_recovers_after_state_write_crash_without_regene
                 "bundle_compliance": "COVER_REQUIRED",
             }
         )
+    persistent_old_state["summary"] = {
+        "unrelated_summary_key": {"preserve": True},
+        "cover_status": "BLOCKED_AI_COVER_REQUIRED",
+        "cover_path": "/stale/cover.png",
+    }
     runner._bind_repaired_cover(
         fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
     )
@@ -3084,6 +3089,18 @@ def test_committed_cover_binding_recovers_after_state_write_crash_without_regene
         fx["date"], persistent_old_state, fx["mp4"], fx["cover"]
     )
     assert persistent_old_state["cover_integrity_status"] == "VALID_BOUND_RECOVERED"
+    assert persistent_old_state["summary"]["unrelated_summary_key"] == {"preserve": True}
+    assert persistent_old_state["summary"] == {
+        "unrelated_summary_key": {"preserve": True},
+        "cover_status": "REPAIRED_AI_COVER",
+        "cover_path": str(fx["cover"]),
+        "cover_sha256": persistent_old_state["cover_sha256"],
+        "cover_binding_path": persistent_old_state["cover_binding_path"],
+        "cover_binding_sha256": persistent_old_state["cover_binding_sha256"],
+    }
+    assert runner._cover_binding_valid(
+        fx["date"], persistent_old_state, fx["mp4"], fx["cover"]
+    )
     assert not cover_repair_needed(fx["date"], persistent_old_state)
     if song:
         assert runner._matches_sha256(
@@ -3094,6 +3111,156 @@ def test_committed_cover_binding_recovers_after_state_write_crash_without_regene
         assert persistent_old_state["status"] == "review_ready"
         assert persistent_old_state["bundle_lifecycle"] == "CURRENT"
         assert persistent_old_state["bundle_compliance"] == "COMPLIANT"
+    recovered = json.loads(json.dumps(persistent_old_state))
+    assert not runner._recover_committed_cover_binding(
+        fx["date"], persistent_old_state, fx["mp4"], fx["cover"]
+    )
+    assert persistent_old_state == recovered
+
+
+@pytest.mark.parametrize("tamper", ["binding", "documents", "generation"])
+def test_committed_cover_recovery_rejects_tampered_bytes_without_state_mutation(
+    tmp_path, monkeypatch, tamper
+):
+    fx = _cover_binding_fixture(tmp_path, monkeypatch)
+    persistent_old_state = json.loads(json.dumps(fx["rec"]))
+    persistent_old_state["summary"] = {
+        "unrelated_summary_key": "preserve",
+        "cover_status": "BLOCKED_AI_COVER_REQUIRED",
+    }
+    runner._bind_repaired_cover(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
+    )
+    if tamper == "binding":
+        path = Path(fx["rec"]["cover_binding_path"])
+        value = json.loads(path.read_text(encoding="utf-8"))
+        value["title"] = "篡改的 binding 标题"
+    elif tamper == "documents":
+        path = fx["publish_path"]
+        value = json.loads(path.read_text(encoding="utf-8"))
+        value["cover_path"] = str(fx["cover"].with_name("tampered.cover.png"))
+    else:
+        path = fx["generation_path"]
+        value = json.loads(path.read_text(encoding="utf-8"))
+        value["title"] = "篡改的 generation 标题"
+    path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+
+    before = json.loads(json.dumps(persistent_old_state))
+    assert not runner._recover_committed_cover_binding(
+        fx["date"], persistent_old_state, fx["mp4"], fx["cover"]
+    )
+    assert persistent_old_state == before
+
+
+def test_cover_maintenance_reacquires_live_tracked_record_after_provider_prewrite(
+    tmp_path, monkeypatch
+):
+    from src.autoslice import cover_maintenance
+
+    date = "2026-08-11"
+    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:" + "a" * 64)
+    monkeypatch.setattr(runner, "cover_ref_for", lambda _date, _cid: None)
+    monkeypatch.setattr(runner, "child_env_for_date", lambda _date: {})
+    monkeypatch.setattr(runner, "profile_tool", lambda _name: tmp_path / "tool.py")
+    monkeypatch.setattr(runner, "log", lambda _message: None)
+    monkeypatch.setattr(cover_maintenance, "cover_maintenance_block_reason", lambda *_a, **_kw: None)
+    monkeypatch.setattr(runner, "_roll_forward_prepared_cover_transactions", lambda *_a: False)
+    monkeypatch.setattr(runner, "_recover_committed_cover_binding", lambda *_a: False)
+    monkeypatch.setattr(runner, "_refresh_cover_repair_budget", lambda *_a: None)
+    monkeypatch.setattr(runner, "cover_repair_needed", lambda _date, rec: not rec.get("bound"))
+    monkeypatch.setattr(runner, "_cover_repair_eligible", lambda _rec: True)
+    monkeypatch.setattr(runner, "_cover_authority_preflight", lambda *_a: None)
+    (runner.BASE / "logs").mkdir(parents=True)
+    mp4 = tmp_path / "clip.mp4"
+    cover = tmp_path / "clip.cover.png"
+    mp4.write_bytes(b"video")
+    monkeypatch.setattr(runner, "delivered_paths", lambda _date, _rec: (mp4, cover))
+    records = [
+        {
+            "candidate_id": candidate_id,
+            "status": "review_ready",
+            "title": f"【李豆沙】tracked writeback {candidate_id}",
+            "cover_status": "BLOCKED_AI_COVER_REQUIRED",
+        }
+        for candidate_id in ("auto_live_a", "auto_live_b")
+    ]
+    runner.write_state(date, {"picks": records, "songs": []})
+    state = runner.read_state(date)
+    stale_records = list(state["picks"])
+
+    class Completed:
+        returncode = 0
+
+    provider_calls = []
+
+    def fake_provider(command, **_kwargs):
+        provider_calls.append(command[command.index("--candidate-id") + 1])
+        output = Path(command[command.index("--out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"generated")
+        return Completed()
+
+    monkeypatch.setattr(cover_maintenance.subprocess, "run", fake_provider)
+
+    def bind_live(_date, rec, _mp4, _cover, generated_cover):
+        assert generated_cover.is_file()
+        assert rec is next(
+            row for row in state["picks"] if row["candidate_id"] == rec["candidate_id"]
+        )
+        rec.update({"bound": True, "cover_status": "REPAIRED_AI_COVER"})
+
+    monkeypatch.setattr(runner, "_bind_repaired_cover", bind_live)
+    runner.repair_covers(date, state)
+
+    live = {record["candidate_id"]: record for record in state["picks"]}
+    assert provider_calls == ["auto_live_a", "auto_live_b"]
+    assert all(stale is not live[stale["candidate_id"]] for stale in stale_records)
+    assert all(stale.get("bound") is None for stale in stale_records)
+    assert all(record["bound"] is True for record in live.values())
+    assert all(record["cover_repair_attempts"] == 1 for record in live.values())
+    assert all(record["bound"] is True for record in runner.read_state(date)["picks"])
+
+
+def test_valid_committed_cover_binding_resume_never_calls_provider(tmp_path, monkeypatch):
+    from src.autoslice import cover_maintenance
+
+    fx = _cover_binding_fixture(tmp_path, monkeypatch)
+    stale_prebind = json.loads(json.dumps(fx["rec"]))
+    stale_prebind["summary"] = {
+        "unrelated_summary_key": "preserve",
+        "cover_status": "BLOCKED_AI_COVER_REQUIRED",
+        "cover_path": "/stale/cover.png",
+    }
+    runner._bind_repaired_cover(
+        fx["date"], fx["rec"], fx["mp4"], fx["cover"], fx["generated_cover"]
+    )
+    # The filesystem binding and all three active docs have committed, but a
+    # crash left state at its pre-bind BLOCKED projection.
+    runner.write_state(fx["date"], {"picks": [stale_prebind], "songs": []})
+    state = runner.read_state(fx["date"])
+    monkeypatch.setattr(cover_maintenance, "cover_maintenance_block_reason", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        runner, "delivered_paths", lambda _date, _rec: (fx["mp4"], fx["cover"])
+    )
+
+    def forbidden_provider(*_args, **_kwargs):
+        raise AssertionError("valid committed binding must not call the provider")
+
+    monkeypatch.setattr(cover_maintenance.subprocess, "run", forbidden_provider)
+    runner.repair_covers(fx["date"], state)
+    assert runner._cover_binding_valid(
+        fx["date"], state["picks"][0], fx["mp4"], fx["cover"]
+    )
+    assert state["picks"][0]["summary"] == {
+        "unrelated_summary_key": "preserve",
+        "cover_status": "REPAIRED_AI_COVER",
+        "cover_path": str(fx["cover"]),
+        "cover_sha256": state["picks"][0]["cover_sha256"],
+        "cover_binding_path": state["picks"][0]["cover_binding_path"],
+        "cover_binding_sha256": state["picks"][0]["cover_binding_sha256"],
+    }
 
 
 def test_cover_repair_needed_for_delivered_song(tmp_path, monkeypatch):

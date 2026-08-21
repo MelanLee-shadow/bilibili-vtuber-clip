@@ -1916,6 +1916,16 @@ def _recover_committed_cover_binding(date: str, rec: dict, mp4: Path, cover: Pat
                     sidecar_hashes["active_record"] = str(
                         active_record.get("sha256") or ""
                     )
+            if isinstance(tentative.get("summary"), dict):
+                tentative["summary"].update(
+                    {
+                        "cover_status": "REPAIRED_AI_COVER",
+                        "cover_path": str(cover),
+                        "cover_sha256": tentative["cover_sha256"],
+                        "cover_binding_path": tentative["cover_binding_path"],
+                        "cover_binding_sha256": tentative["cover_binding_sha256"],
+                    }
+                )
             if not _cover_binding_valid(date, tentative, mp4, cover):
                 continue
         except (OSError, ValueError, _runner.SongDeliveryError):
@@ -1923,16 +1933,6 @@ def _recover_committed_cover_binding(date: str, rec: dict, mp4: Path, cover: Pat
         tentative["cover_repair_recovered_at"] = time.strftime(
             "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
         )
-        if isinstance(tentative.get("summary"), dict):
-            tentative["summary"].update(
-                {
-                    "cover_status": "REPAIRED_AI_COVER",
-                    "cover_path": str(cover),
-                    "cover_sha256": tentative["cover_sha256"],
-                    "cover_binding_path": tentative["cover_binding_path"],
-                    "cover_binding_sha256": tentative["cover_binding_sha256"],
-                }
-            )
         rec.clear()
         rec.update(tentative)
         return True

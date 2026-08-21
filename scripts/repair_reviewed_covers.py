@@ -1057,6 +1057,7 @@ def run(plan_path: Path) -> dict[str, Any]:
         state_changed = True
     if state_changed:
         write_state(date, state)
+        records = _record_map(state)
 
     _assert_ledger(plan)
     if not _selected_bindings_valid(date, records, repair_ids):
@@ -1070,6 +1071,7 @@ def run(plan_path: Path) -> dict[str, Any]:
                 if isinstance(row.get("expected_cover_text"), str)
             },
         )
+        records = _record_map(state)
     if not _selected_bindings_valid(date, records, repair_ids):
         failed = {
             candidate_id: records[candidate_id].get("cover_status")
