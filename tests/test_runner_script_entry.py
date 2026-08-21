@@ -221,9 +221,10 @@ def test_deploy_adapter_repair_exception_is_changed_bytes_only_and_preinstall():
     child_gate_before_install = external.index(
         "adapter_identity_rebind_hash_child_absent", repair_call
     )
-    install = external.index(
-        'install_atomic \\\n    "$new_adapter_source"', child_gate_before_install
+    strict_external_install = external.index(
+        'if [ "$external_payload_unchanged" -eq 0 ]; then', repair_call
     )
+    install = external.index('"$new_adapter_source"', child_gate_before_install)
     post_install_gate = external.index(
         'adapter_restart_environment_safe "$new_adapter_sha"', install
     )
@@ -241,6 +242,7 @@ def test_deploy_adapter_repair_exception_is_changed_bytes_only_and_preinstall():
         < clean_or_repair
         < clean_call
         < repair_call
+        < strict_external_install
         < child_gate_before_install
         < install
         < post_install_gate
@@ -361,6 +363,299 @@ def test_deploy_clean_adapter_status_rejects_any_error(tmp_path):
     )
     rejected = _run_embedded_status_validator("PY_CLEAN_ADAPTER_IDLE", tmp_path, dirty)
     assert rejected.returncode != 0
+
+
+def test_deploy_unchanged_external_route_preserves_a_live_adapter(tmp_path):
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    external = source.split("<<'REMOTE_EXTERNAL_INSTALL'\n", 1)[1].split(
+        "\nREMOTE_EXTERNAL_INSTALL", 1
+    )[0]
+    outer_rollback = source.split("<<'REMOTE_ROLLBACK'\n", 1)[1].split(
+        "\nREMOTE_ROLLBACK", 1
+    )[0]
+    cron_start = external.index("watchdog_cron=")
+    cron_end = external.index("external_payload_exact() {")
+    cron_definitions = external[cron_start:cron_end]
+    names = (
+        "adapter_status_clean_healthy",
+        "adapter_environment_healthy",
+        "external_payload_exact",
+        "external_payload_unchanged_safe",
+    )
+    function_definitions = "\n".join(
+        _embedded_shell_function(external, name) for name in names
+    )
+    route_start = external.index('test -f "$backup/external/recorder_adapter.present"')
+    # Include the final fast-route closure, not merely the selection gate.
+    route = external[route_start:]
+
+    root = tmp_path / "root"
+    repo = root / "repo"
+    backup = root / "backup"
+    recording = root / "recording"
+    cloud_root = root / "cloud-root"
+    cloud = cloud_root / "123云盘/live-streaming"
+    watchdog = root / "free_mount_watchdog.sh"
+    sentinel = root / "upload_fatal_sentinel.sh"
+    uploader = root / "do_upload.sh"
+    cloud.mkdir(parents=True)
+    recording.mkdir()
+    entries = (
+        ("watchdog", repo / "scripts/free_mount_watchdog.sh", watchdog, 0o755, 0o755),
+        ("upload_sentinel", repo / "scripts/clouddrive_upload_fatal_sentinel.sh", sentinel, 0o755, 0o755),
+        ("uploader", repo / "scripts/free_do_upload.sh", uploader, 0o755, 0o700),
+        (
+            "recorder_adapter",
+            repo / "ops/recording/bililive_recorder_adapter.py",
+            recording / "bililive_recorder_adapter.py",
+            0o755,
+            0o755,
+        ),
+    )
+    originals: dict[Path, tuple[bytes, int]] = {}
+    for label, staged, target, staged_mode, target_mode in entries:
+        payload = f"{label} committed payload\n".encode()
+        staged.parent.mkdir(parents=True, exist_ok=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        staged.write_bytes(payload)
+        target.write_bytes(payload)
+        staged.chmod(staged_mode)
+        target.chmod(target_mode)
+        originals[target] = (payload, target_mode)
+        preimage = backup / f"external/{label}.file"
+        preimage.parent.mkdir(parents=True, exist_ok=True)
+        preimage.write_bytes(payload)
+        preimage.chmod(target_mode)
+        (backup / f"external/{label}.present").touch()
+    now = time.time()
+    (recording / "status.json").write_text(
+        json.dumps(
+            {
+                "generated_at_epoch": now,
+                "service_reachable": True,
+                "streaming": True,
+                "recording": True,
+                "finalizing": False,
+                "error": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+    expected_sha = hashlib.sha256(originals[recording / "bililive_recorder_adapter.py"][0]).hexdigest()
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "findmnt").write_text(
+        "#!/bin/sh\n"
+        'case "$*" in *"-o TARGET") printf "%s\\n" "$TEST_CLOUD_ROOT";; '
+        '*"-o FSTYPE") printf "%s\\n" fuseblk;; *"-o SOURCE") printf "%s\\n" CloudFS;; esac\n',
+        encoding="utf-8",
+    )
+    (fake_bin / "timeout").write_text("#!/bin/sh\nshift\nexec \"$@\"\n", encoding="utf-8")
+    (fake_bin / "sha256sum").write_text(
+        "#!/bin/sh\nexec /usr/bin/shasum -a 256 \"$@\"\n", encoding="utf-8"
+    )
+    (fake_bin / "stat").write_text(
+        "#!/bin/sh\n"
+        'test "$1" = -c && test "$2" = %a || exit 2\n'
+        'exec /usr/bin/stat -f %Lp "$3"\n',
+        encoding="utf-8",
+    )
+    (fake_bin / "crontab").write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = -l ]; then\n'
+        '  printf "read\\n" >> "$CRONTAB_READ_LOG"\n'
+        '  reads=$(wc -l < "$CRONTAB_READ_LOG")\n'
+        '  if [ "$reads" -eq 1 ] && [ -n "${CRON_DRIFT_TARGET:-}" ]; then\n'
+        '    printf "%s\\n" "post-selection payload drift" > "$CRON_DRIFT_TARGET"\n'
+        '    chmod 755 "$CRON_DRIFT_TARGET"\n'
+        '  fi\n'
+        '  case "${CRONTAB_MODE:-exact}" in\n'
+        '    missing) exit 0;;\n'
+        '    duplicate) printf "%s\\n%s\\n" "$CRONTAB_CONTENT" "$CRONTAB_CONTENT";;\n'
+        '    stale) printf "%s\\n" "$CRONTAB_CONTENT"; printf "%s\\n" "* * * * * /opt/bilive/autoslice/free_mount_watchdog.sh";;\n'
+        '    post-stale) if [ "$reads" -gt 1 ]; then printf "%s\\n" "* * * * * /opt/bilive/autoslice/free_mount_watchdog.sh"; else printf "%s\\n" "$CRONTAB_CONTENT"; fi;;\n'
+        '    *) printf "%s\\n" "$CRONTAB_CONTENT";;\n'
+        '  esac\n'
+        '  exit 0\n'
+        'fi\n'
+        'printf write >> "$CRONTAB_WRITE_LOG"\n'
+        'exit 0\n',
+        encoding="utf-8",
+    )
+    (fake_bin / "docker").write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = inspect ]; then\n'
+        '  format=$3; name=$4\n'
+        '  case "$format" in\n'
+        '    *".State.Status"*) printf "%s\\n" running;;\n'
+        '    *".State.Health"*) printf "%s\\n" "${DOCKER_HEALTH:-healthy}";;\n'
+        '    *".Config.Cmd"*) printf "%s\\n" "python3|/state/bililive_recorder_adapter.py";;\n'
+        '    *".Mounts"*) printf "%s\\n" "$TEST_RECORDING|bind|true";;\n'
+        '  esac\n'
+        '  exit 0\n'
+        'fi\n'
+        'if [ "$1" = exec ]; then\n'
+        '  container=$2; shift 2\n'
+        '  case "$1" in\n'
+        '    stat) printf "%s\\n" fuseblk;;\n'
+        '    timeout) exit 0;;\n'
+        '    sha256sum) if [ "$container" = bililive_adapter ]; then\n'
+        '      if [ -n "${DOCKER_ADAPTER_SHA:-}" ]; then printf "%s  /state/bililive_recorder_adapter.py\\n" "$DOCKER_ADAPTER_SHA";\n'
+        '      else /usr/bin/shasum -a 256 "$TEST_RECORDING/bililive_recorder_adapter.py"; fi\n'
+        '    else exit 1; fi;;\n'
+        '  esac\n'
+        '  exit 0\n'
+        'fi\n'
+        'if [ "$1" = restart ]; then printf restart >> "$RESTART_LOG"; exit 0; fi\n'
+        'exit 1\n',
+        encoding="utf-8",
+    )
+    for command in fake_bin.iterdir():
+        command.chmod(0o755)
+
+    replacements = (
+        ("/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming", "$TEST_CLOUD"),
+        ("/root/clouddrive2/CloudNAS/CloudDrive", "$TEST_CLOUD_ROOT"),
+        ("/opt/bilive/autoslice/repo", "$TEST_REPO"),
+        ("/opt/bilive/autoslice/free_mount_watchdog.sh", "$TEST_WATCHDOG"),
+        ("/opt/bilive/autoslice/upload_fatal_sentinel.sh", "$TEST_SENTINEL"),
+        ("/opt/bilive/app/tmp_manual_upload/do_upload.sh", "$TEST_UPLOADER"),
+        ("/opt/bilive/recording", "$TEST_RECORDING"),
+    )
+    for before, after in replacements:
+        function_definitions = function_definitions.replace(before, after)
+        route = route.replace(before, after)
+    function_definitions = function_definitions.replace(
+        "= '$TEST_RECORDING|bind|true'", '= "$TEST_RECORDING|bind|true"'
+    )
+    route = route.replace("= '$TEST_RECORDING|bind|true'", '= "$TEST_RECORDING|bind|true"')
+    functions = cron_definitions + "\n" + function_definitions
+    harness = (
+        "set -euo pipefail\n"
+        + functions
+        + "\nbackup=$TEST_BACKUP\n"
+        + "new_adapter_source=$TEST_REPO/ops/recording/bililive_recorder_adapter.py\n"
+        + "host_adapter_path=$TEST_RECORDING/bililive_recorder_adapter.py\n"
+        + "default_crontab=$(printf '%s\\n' \"$watchdog_cron\" \"$upload_fatal_cron\" \"$streamer_registry_cron\" \"$psplive_roster_cron\" \"$timely_terms_cron\" \"$community_names_cron\" \"$topic_entity_cron\" \"$streamer_dynamics_cron\")\n"
+        + 'export CRONTAB_CONTENT="${TEST_CRONTAB_CONTENT-$default_crontab}"\n'
+        + "adapter_restart_safe() { printf strict >> \"$STRICT_LOG\"; return 1; }\n"
+        + "adapter_connection_stub_bootstrap_safe() { printf strict >> \"$STRICT_LOG\"; return 1; }\n"
+        + "adapter_repair_restart_safe() { printf strict >> \"$STRICT_LOG\"; return 1; }\n"
+        + route
+    )
+
+    def run(**extra: str) -> subprocess.CompletedProcess[str]:
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "PATH": f"{fake_bin}:{environment['PATH']}",
+                "TEST_REPO": str(repo),
+                "TEST_BACKUP": str(backup),
+                "TEST_RECORDING": str(recording),
+                "TEST_CLOUD": str(cloud),
+                "TEST_CLOUD_ROOT": str(cloud_root),
+                "TEST_WATCHDOG": str(watchdog),
+                "TEST_SENTINEL": str(sentinel),
+                "TEST_UPLOADER": str(uploader),
+                "EXPECTED_SHA": expected_sha,
+                "RESTART_LOG": str(tmp_path / "restart.log"),
+                "CRONTAB_READ_LOG": str(tmp_path / "crontab.read.log"),
+                "CRONTAB_WRITE_LOG": str(tmp_path / "crontab.write.log"),
+                "STRICT_LOG": str(tmp_path / "strict.log"),
+            }
+        )
+        environment.update(extra)
+        return subprocess.run(
+            ["/bin/bash", "-c", harness], capture_output=True, text=True, check=False, env=environment
+        )
+
+    before = {path: (path.stat().st_ino, path.stat().st_mtime_ns) for path in originals}
+    accepted = run()
+    assert accepted.returncode == 0, accepted.stderr
+    assert before == {path: (path.stat().st_ino, path.stat().st_mtime_ns) for path in originals}
+    assert not (tmp_path / "restart.log").exists()
+    assert (tmp_path / "crontab.read.log").read_text(encoding="utf-8") == "read\nread\n"
+    assert not (tmp_path / "crontab.write.log").exists()
+
+    for _label, _staged, target, _staged_mode, target_mode in entries:
+        payload, _ = originals[target]
+        target.write_bytes(b"external drift\n")
+        target.chmod(target_mode)
+        assert run().returncode != 0
+        target.write_bytes(payload)
+        target.chmod(target_mode)
+    adapter_target = recording / "bililive_recorder_adapter.py"
+    adapter_target.chmod(0o700)
+    assert adapter_target.stat().st_mode & 0o777 == 0o700
+    mode_rejected = run()
+    assert mode_rejected.returncode != 0, mode_rejected.stderr
+    adapter_target.chmod(0o755)
+    adapter_target.unlink()
+    adapter_target.symlink_to(repo / "ops/recording/bililive_recorder_adapter.py")
+    assert run().returncode != 0
+    adapter_target.unlink()
+    adapter_target.write_bytes(originals[adapter_target][0])
+    adapter_target.chmod(0o755)
+    assert run(DOCKER_ADAPTER_SHA="0" * 64).returncode != 0
+    assert run(DOCKER_HEALTH="unhealthy").returncode != 0
+
+    for mode in ("missing", "duplicate", "stale"):
+        (tmp_path / "crontab.read.log").unlink(missing_ok=True)
+        rejected = run(CRONTAB_MODE=mode)
+        assert rejected.returncode != 0
+        assert (tmp_path / "strict.log").exists()
+        (tmp_path / "strict.log").unlink()
+    (tmp_path / "crontab.read.log").unlink(missing_ok=True)
+    assert run(CRONTAB_MODE="post-stale").returncode != 0
+    (tmp_path / "crontab.read.log").unlink(missing_ok=True)
+    assert run(CRON_DRIFT_TARGET=str(watchdog)).returncode != 0
+    watchdog.write_bytes(originals[watchdog][0])
+    watchdog.chmod(0o755)
+
+    status_path = recording / "status.json"
+    for update in (
+        {"error": "unexpected"},
+        {"service_reachable": False},
+        {"generated_at_epoch": now - 91},
+        {"streaming": 1},
+    ):
+        payload = json.loads(status_path.read_text(encoding="utf-8"))
+        payload.update(update)
+        status_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert run().returncode != 0
+    status_path.write_text(
+        json.dumps(
+            {
+                "generated_at_epoch": time.time(),
+                "service_reachable": True,
+                "streaming": True,
+                "recording": True,
+                "finalizing": False,
+                "error": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    marker = outer_rollback.index("external_mutation_started=0")
+    assert marker < outer_rollback.index("restore_file watchdog")
+    assert 'if [ "$external_mutation_started" -eq 1 ]; then\n    restore_file watchdog' in outer_rollback
+    assert 'if [ "$external_mutation_started" -eq 1 ] && [ -f "$backup/external/crontab.present" ]' in outer_rollback
+    assert 'if [ "$external_mutation_started" -eq 1 ] && [ -f "$backup/external/recorder_adapter.restart-required" ]' in outer_rollback
+    assert 'if [ "$external_payload_unchanged" -eq 0 ]; then\n    printf' in external
+    assert external.index("watchdog_cron=") < external.index("external_payload_exact() {")
+    assert "managed_crontab_exact()" in external
+    assert 'if [ "$external_payload_unchanged" -eq 0 ]; then\nexisting_crontab=' in external
+    assert 'if [ "$external_payload_unchanged" -eq 1 ]; then\n    # Close the read-only fast-route interval' in external
+    switch = source.split("<<'REMOTE_SWITCH'\n", 1)[1].split("\nREMOTE_SWITCH", 1)[0]
+    switch_rollback = _embedded_shell_function(switch, "rollback")
+    # The repository switch happens before REMOTE_EXTERNAL_INSTALL.  Its
+    # rollback must not replay a preimage over a concurrently-live recorder.
+    assert "External targets,\n    # cron, and recorder state" in switch_rollback
+    assert "restore_file watchdog" not in switch_rollback
+    assert "restore_connection_stub_bootstrap_preimage" not in switch_rollback
+    assert "crontab \"$backup/external/crontab.file\"" not in switch_rollback
 
 
 def test_deploy_adapter_repair_status_accepts_only_exact_idle_defect(tmp_path):
@@ -629,7 +924,8 @@ def test_bootstrap_rollback_marker_is_the_only_state_restore_authority(tmp_path)
     rollback = source.split("<<'REMOTE_ROLLBACK'\n", 1)[1].split("\nREMOTE_ROLLBACK", 1)[0]
     restore_start = rollback.index("restore_connection_stub_bootstrap_preimage() {")
     restore_end = rollback.index(
-        "\nrestore_connection_stub_bootstrap_preimage\nrestore_adapter_atomic", restore_start
+        '\nif [ "$external_mutation_started" -eq 1 ]; then\n    restore_connection_stub_bootstrap_preimage',
+        restore_start,
     )
     restore = rollback[restore_start:restore_end]
     recording = tmp_path / "recording"
@@ -1108,7 +1404,10 @@ def test_exact_pre_marker_guard_recovery_is_heartbeat_tolerant_and_fail_closed(t
 
     rollback = source.split("<<'REMOTE_ROLLBACK'\n", 1)[1].split("\nREMOTE_ROLLBACK", 1)[0]
     verifier_start = rollback.index("connection_stub_bootstrap_pre_marker_safe() {")
-    verifier_end = rollback.index('\nif [ -f "$backup/external/crontab.present" ]', verifier_start)
+    verifier_end = rollback.index(
+        '\nif [ "$external_mutation_started" -eq 1 ] && [ -f "$backup/external/crontab.present" ]',
+        verifier_start,
+    )
     outer_verifier = rollback[verifier_start:verifier_end]
 
     def build(

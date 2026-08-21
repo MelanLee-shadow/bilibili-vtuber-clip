@@ -7,10 +7,15 @@
 - adapter 状态/账本：`free:/opt/bilive/recording/`；
 - 自动切片部署：`free:/opt/bilive/autoslice/repo`（现查 `DEPLOYED_COMMIT`）；
 - 原始录播：`free:/root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming/22966160/`。
+- `oci3`（`rec-a1`）是正在 cutover 的同 room 并行 BililiveRecorder+adapter 录播迁移目标；
+  它有 `~/vtuber-slice` dev/test workcopy，但没有 free 生产 authority
+  `/opt/bilive/autoslice/repo/DEPLOYED_COMMIT`。其 `DISABLED` 与录制状态须按该主机现场读取；
+  dev/test workcopy 不是 production authority，也不是 free deploy 的 payload、rollback 或 idle gate
+  authority。
 
-## 唯一录制后端
+## free 主机录制栈
 
-- 生产唯一录制器是官方 BililiveRecorder/录播姬
+- free 上的该录制栈仅使用官方 BililiveRecorder/录播姬
   `ghcr.io/bililiverecorder/bililiverecorder:2.18.0`，部署锁定镜像 digest。
   `bilive_record` 仅保留为旧脚本的工具容器，里面不得启动 `blrec`。
   旧 `/etc/cron.d/bilive-live-watchdog` 必须不存在；否则它会绕过 compose，
@@ -222,7 +227,17 @@
   CloudFS host/container mount 都为绿时才能重启 `bililive_adapter`；安装后的任一
   deploy 失败必须原子恢复 preimage 并在同样安全门下重启，无法证明时保留
   `DISABLED` 与 deploy guard。
-- adapter 外部字节未变化时，部署前状态必须 fresh、idle、
+- 若 watchdog、upload sentinel、uploader 与 adapter 四个 external payload 都与已切换 repo、各自
+  backup preimage 的 regular/non-symlink、字节及安装 mode 完全相等，部署走 no-external-change
+  路径：只读重验 adapter host/container SHA、容器 running/healthy、command/bind mount 与 host/container
+  CloudFS，并要求 status fresh、`service_reachable=true`、`error=null`，且
+  `streaming`/`recording`/`finalizing` 都是 bool。八条 managed cron command family 也必须各恰一条且整行
+  精确等于 canonical；缺失、重复、stale 或 legacy 行均退回 strict。该路径只可 `crontab -l`，不调用
+  `install_atomic`、`crontab -` 或重启 adapter，因此 live recording 可继续；结束前必须重跑同一只读 closure，
+  否则 TOCTOU 漂移失败。rollback 只在 strict 路径先写入的 mutation marker 存在时才回写 external 文件或
+  crontab。任一 payload、mode、type、link、backup、cron 或健康/status 条件漂移，必定退回下述 strict 路径，
+  不能以 repo-only flag 绕过。oci3 的并行录制也不构成 free adapter 变更、mode drift 或 health failure 的旁路。
+- strict 路径在 adapter 外部字节未变化时，部署前状态必须 fresh、idle、
   `service_reachable=true` 且 `error=null`。只有待安装 adapter 字节确实变化时，才允许
   用单一修复例外越过旧 adapter 自己制造的错误：旧状态仍须 fresh/idle，且必须精确为
   `service_reachable=false`，且 `error` 为前缀 `source disposition drift:`，或精确等于

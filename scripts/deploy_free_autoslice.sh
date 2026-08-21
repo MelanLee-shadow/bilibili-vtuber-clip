@@ -604,9 +604,19 @@ restore_file() {
         return 1
     fi
 }
-restore_file watchdog /opt/bilive/autoslice/free_mount_watchdog.sh
-restore_file upload_sentinel /opt/bilive/autoslice/upload_fatal_sentinel.sh
-restore_file uploader /opt/bilive/app/tmp_manual_upload/do_upload.sh
+external_mutation_started=0
+if [ -e "$backup/external/external-mutation-started" ]; then
+    test -f "$backup/external/external-mutation-started"
+    test ! -L "$backup/external/external-mutation-started"
+    test "$(stat -c '%a' "$backup/external/external-mutation-started")" = 600
+    test "$(cat "$backup/external/external-mutation-started")" = external-mutation-started.v1
+    external_mutation_started=1
+fi
+if [ "$external_mutation_started" -eq 1 ]; then
+    restore_file watchdog /opt/bilive/autoslice/free_mount_watchdog.sh
+    restore_file upload_sentinel /opt/bilive/autoslice/upload_fatal_sentinel.sh
+    restore_file uploader /opt/bilive/app/tmp_manual_upload/do_upload.sh
+fi
 connection_stub_bootstrap_restored=0
 restore_connection_stub_bootstrap_preimage() {
     marker=$backup/external/connection_stub_bootstrap.marker
@@ -695,7 +705,9 @@ PY_BOOTSTRAP_ROLLBACK_MARKER
     done
     connection_stub_bootstrap_restored=1
 }
-restore_connection_stub_bootstrap_preimage
+if [ "$external_mutation_started" -eq 1 ]; then
+    restore_connection_stub_bootstrap_preimage
+fi
 restore_adapter_atomic() {
     destination=/opt/bilive/recording/bililive_recorder_adapter.py
     tmp=$destination.rollback.$$
@@ -926,7 +938,9 @@ PY_ROLLBACK_FRESH
     done
     return 1
 }
-restore_adapter_atomic
+if [ "$external_mutation_started" -eq 1 ]; then
+    restore_adapter_atomic
+fi
 connection_stub_bootstrap_pre_marker_safe() {
     marker=$backup/external/connection_stub_bootstrap.marker
     state_preimage=$backup/external/connection_stub_bootstrap_preimage/adapter-state.json
@@ -1023,17 +1037,17 @@ assert isinstance(errors, list) and len(errors) == len(expected_paths)
 assert {entry.get("source") for entry in errors if isinstance(entry, dict)} == expected_sources
 PY_ROLLBACK_PREMARKER
 }
-if [ -f "$backup/external/crontab.present" ]; then
+if [ "$external_mutation_started" -eq 1 ] && [ -f "$backup/external/crontab.present" ]; then
     crontab "$backup/external/crontab.file"
     crontab -l | cmp -s - "$backup/external/crontab.file"
-elif [ -f "$backup/external/crontab.absent" ]; then
+elif [ "$external_mutation_started" -eq 1 ] && [ -f "$backup/external/crontab.absent" ]; then
     crontab -r 2>/dev/null || true
     ! crontab -l >/dev/null 2>&1
-else
+elif [ "$external_mutation_started" -eq 1 ]; then
     echo "missing crontab rollback marker" >&2
     exit 1
 fi
-if [ -f "$backup/external/recorder_adapter.restart-required" ]; then
+if [ "$external_mutation_started" -eq 1 ] && [ -f "$backup/external/recorder_adapter.restart-required" ]; then
     test -f "$backup/external/recorder_adapter.file"
     cmp -s "$backup/external/recorder_adapter.file" /opt/bilive/recording/bililive_recorder_adapter.py
     old_adapter_sha=$(sha256sum "$backup/external/recorder_adapter.file" | awk '{print $1}')
@@ -1673,17 +1687,9 @@ rollback() {
         "$repo/DEPLOYED_AUTHORITY_MANIFEST.json"
 cp "$backup/DEPLOYED_COMMIT.old" "$repo/DEPLOYED_COMMIT"
 cmp -s "$backup/DEPLOYED_COMMIT.old" "$repo/DEPLOYED_COMMIT"
-    restore_file watchdog /opt/bilive/autoslice/free_mount_watchdog.sh
-    restore_file upload_sentinel /opt/bilive/autoslice/upload_fatal_sentinel.sh
-    restore_file uploader /opt/bilive/app/tmp_manual_upload/do_upload.sh
-    restore_connection_stub_bootstrap_preimage
-    if [ -f "$backup/external/crontab.present" ]; then
-        crontab "$backup/external/crontab.file"
-    elif [ -f "$backup/external/crontab.absent" ]; then
-        crontab -r 2>/dev/null || true
-    else
-        return 1
-    fi
+    # This transaction only switches the repository tree.  External targets,
+    # cron, and recorder state are first mutable in REMOTE_EXTERNAL_INSTALL;
+    # they must therefore remain untouched when this earlier switch fails.
 }
 trap 'rc=$?; trap - ERR; rollback; exit "$rc"' ERR
 trap 'trap - ERR HUP INT TERM; rollback; exit 130' INT
@@ -1731,18 +1737,6 @@ install_atomic() {
     test "$(stat -c '%a' "$destination")" = "$mode"
     test "$(sha256sum "$source" | awk '{print $1}')" = "$(sha256sum "$destination" | awk '{print $1}')"
 }
-install_atomic \
-    /opt/bilive/autoslice/repo/scripts/free_mount_watchdog.sh \
-    /opt/bilive/autoslice/free_mount_watchdog.sh \
-    755
-install_atomic \
-    /opt/bilive/autoslice/repo/scripts/clouddrive_upload_fatal_sentinel.sh \
-    /opt/bilive/autoslice/upload_fatal_sentinel.sh \
-    755
-install_atomic \
-    /opt/bilive/autoslice/repo/scripts/free_do_upload.sh \
-    /opt/bilive/app/tmp_manual_upload/do_upload.sh \
-    700
 adapter_status_clean_idle() {
     python3 - /opt/bilive/recording/status.json <<'PY_CLEAN_ADAPTER_IDLE'
 import json
@@ -1758,6 +1752,23 @@ assert payload.get("recording") is False
 assert payload.get("finalizing") is False
 assert payload.get("error") is None
 PY_CLEAN_ADAPTER_IDLE
+}
+adapter_status_clean_healthy() {
+    test -f /opt/bilive/recording/status.json || return 1
+    test ! -L /opt/bilive/recording/status.json || return 1
+    python3 - /opt/bilive/recording/status.json <<'PY_CLEAN_ADAPTER_HEALTHY'
+import json
+import sys
+import time
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+age = time.time() - float(payload["generated_at_epoch"])
+assert 0 <= age <= 90
+assert payload.get("service_reachable") is True
+assert payload.get("error") is None
+for field in ("streaming", "recording", "finalizing"):
+    assert type(payload.get(field)) is bool
+PY_CLEAN_ADAPTER_HEALTHY
 }
 adapter_status_supported_repair_idle() {
     python3 - /opt/bilive/recording/status.json <<'PY_SUPPORTED_ADAPTER_REPAIR_IDLE'
@@ -1789,7 +1800,7 @@ adapter_identity_rebind_hash_child_absent() {
     ! printf '%s\n' "$container_processes" \
         | grep -F -- '--identity-rebind-hash-child' >/dev/null
 }
-adapter_restart_environment_safe() {
+adapter_environment_healthy() {
     expected_adapter_sha=$1
     test "$(findmnt -T /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -n -o TARGET)" = "/root/clouddrive2/CloudNAS/CloudDrive" || return 1
     case "$(findmnt -T /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -n -o FSTYPE)" in fuse*) ;; *) return 1 ;; esac
@@ -1797,6 +1808,7 @@ adapter_restart_environment_safe() {
     timeout 15 find /root/clouddrive2/CloudNAS/CloudDrive/123云盘/live-streaming -mindepth 1 -maxdepth 1 -print -quit >/dev/null || return 1
     test "$(docker inspect -f '{{.State.Status}}' bililive_recorder)" = running || return 1
     test "$(docker inspect -f '{{.State.Status}}' bililive_adapter)" = running || return 1
+    test "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' bililive_adapter)" = healthy || return 1
     test "$(docker inspect -f '{{index .Config.Cmd 0}}|{{index .Config.Cmd 1}}' bililive_adapter)" = 'python3|/state/bililive_recorder_adapter.py' || return 1
     test "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Source}}|{{.Type}}|{{.RW}}{{end}}{{end}}' bililive_adapter)" = '/opt/bilive/recording|bind|true' || return 1
     case "$(docker exec bililive_recorder stat -f -c %T /rec/Videos)" in fuse*) ;; *) return 1 ;; esac
@@ -1804,6 +1816,9 @@ adapter_restart_environment_safe() {
     docker exec bililive_adapter timeout 15 find /adapter/Videos -mindepth 1 -maxdepth 1 -print -quit >/dev/null || return 1
     test "$(sha256sum /opt/bilive/recording/bililive_recorder_adapter.py | awk '{print $1}')" = "$expected_adapter_sha" || return 1
     test "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py | awk '{print $1}')" = "$expected_adapter_sha" || return 1
+}
+adapter_restart_environment_safe() {
+    adapter_environment_healthy "$1" || return 1
     docker exec -i bililive_adapter python3 - <<'PY_LIVE_IDLE' || return 1
 from pathlib import Path
 import sys
@@ -2141,6 +2156,66 @@ PY_FRESH
 }
 new_adapter_source=/opt/bilive/autoslice/repo/ops/recording/bililive_recorder_adapter.py
 host_adapter_path=/opt/bilive/recording/bililive_recorder_adapter.py
+watchdog_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/watchdog.lock /opt/bilive/autoslice/free_mount_watchdog.sh >> /opt/bilive/autoslice/logs/watchdog.log 2>&1'
+upload_fatal_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/upload-fatal-sentinel.lock /opt/bilive/autoslice/upload_fatal_sentinel.sh >> /opt/bilive/autoslice/logs/upload-fatal-sentinel.log 2>&1'
+timely_terms_cron='17 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/timely-terms.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_timely_terms.py --cache-dir /opt/bilive/autoslice/cache/timely-term-crawler --write /opt/bilive/autoslice/state/timely_terms.json'\'' >> /opt/bilive/autoslice/logs/timely-terms.log 2>&1'
+streamer_registry_cron='7 6 * * 0 /usr/bin/flock -n /opt/bilive/autoslice/streamer-registry.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_streamer_registry.py --cache-dir /opt/bilive/autoslice/cache/streamer-registry-crawler --write /opt/bilive/autoslice/state/streamer_registry.json'\'' >> /opt/bilive/autoslice/logs/streamer-registry.log 2>&1'
+psplive_roster_cron='12 6 * * 0 /usr/bin/flock -n /opt/bilive/autoslice/psplive-roster.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_psplive_roster.py --cache-dir /opt/bilive/autoslice/cache/psplive-roster-crawler --write /opt/bilive/autoslice/state/psplive_roster.json'\'' >> /opt/bilive/autoslice/logs/psplive-roster.log 2>&1'
+community_names_cron='27 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/community-names.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && set -a && source /opt/bilive/autoslice/cpa.env && set +a && python3 scripts/crawl_community_names.py --registry /opt/bilive/autoslice/state/streamer_registry.json --cache-dir /opt/bilive/autoslice/cache/community-name-crawler --state /opt/bilive/autoslice/state/community_name_state.json --write /opt/bilive/autoslice/state/community_names.json'\'' >> /opt/bilive/autoslice/logs/community-names.log 2>&1'
+topic_entity_cron='37 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/topic-entity.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_topic_entity_graph.py --timely-terms /opt/bilive/autoslice/state/timely_terms.json --cache-dir /opt/bilive/autoslice/cache/topic-entity-crawler --write /opt/bilive/autoslice/state/topic_entity_graph.json'\'' >> /opt/bilive/autoslice/logs/topic-entity.log 2>&1'
+streamer_dynamics_cron='47 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/streamer-dynamics.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_streamer_dynamics.py --cache-dir /opt/bilive/autoslice/cache/streamer-dynamics-crawler --write /opt/bilive/autoslice/state/streamer_dynamics.json'\'' >> /opt/bilive/autoslice/logs/streamer-dynamics.log 2>&1'
+managed_crontab_exact() {
+    existing_crontab=$(crontab -l) || return 1
+    for entry in \
+        "free_mount_watchdog.sh:$watchdog_cron" \
+        "upload_fatal_sentinel.sh:$upload_fatal_cron" \
+        "scripts/crawl_timely_terms.py:$timely_terms_cron" \
+        "scripts/crawl_streamer_registry.py:$streamer_registry_cron" \
+        "scripts/crawl_psplive_roster.py:$psplive_roster_cron" \
+        "scripts/crawl_community_names.py:$community_names_cron" \
+        "scripts/crawl_topic_entity_graph.py:$topic_entity_cron" \
+        "scripts/crawl_streamer_dynamics.py:$streamer_dynamics_cron"; do
+        family=${entry%%:*}
+        canonical=${entry#*:}
+        test "$(printf '%s\n' "$existing_crontab" | grep -Fc -- "$family")" -eq 1 || return 1
+        printf '%s\n' "$existing_crontab" | grep -Fxq -- "$canonical" || return 1
+    done
+}
+external_payload_exact() {
+    label=$1
+    source=$2
+    destination=$3
+    source_mode=$4
+    destination_mode=$5
+    test ! -e "$backup/external/$label.absent" || return 1
+    test ! -L "$backup/external/$label.absent" || return 1
+    for path in "$source" "$destination" "$backup/external/$label.present" "$backup/external/$label.file"; do
+        test -f "$path" || return 1
+        test ! -L "$path" || return 1
+    done
+    test "$(stat -c '%a' "$source")" = "$source_mode" || return 1
+    test "$(stat -c '%a' "$destination")" = "$destination_mode" || return 1
+    test "$(stat -c '%a' "$backup/external/$label.file")" = "$destination_mode" || return 1
+    cmp -s "$source" "$destination" || return 1
+    cmp -s "$backup/external/$label.file" "$destination" || return 1
+}
+external_payload_unchanged_safe() {
+    expected_adapter_sha=$1
+    external_payload_exact watchdog \
+        /opt/bilive/autoslice/repo/scripts/free_mount_watchdog.sh \
+        /opt/bilive/autoslice/free_mount_watchdog.sh 755 755 || return 1
+    external_payload_exact upload_sentinel \
+        /opt/bilive/autoslice/repo/scripts/clouddrive_upload_fatal_sentinel.sh \
+        /opt/bilive/autoslice/upload_fatal_sentinel.sh 755 755 || return 1
+    external_payload_exact uploader \
+        /opt/bilive/autoslice/repo/scripts/free_do_upload.sh \
+        /opt/bilive/app/tmp_manual_upload/do_upload.sh 755 700 || return 1
+    external_payload_exact recorder_adapter \
+        "$new_adapter_source" "$host_adapter_path" 755 755 || return 1
+    adapter_status_clean_healthy || return 1
+    adapter_environment_healthy "$expected_adapter_sha" || return 1
+    managed_crontab_exact
+}
 test -f "$backup/external/recorder_adapter.present"
 test -f "$backup/external/recorder_adapter.file"
 test -f "$new_adapter_source"
@@ -2156,7 +2231,12 @@ old_adapter_sha=$(sha256sum "$host_adapter_path" | awk '{print $1}')
 new_adapter_sha=$(sha256sum "$new_adapter_source" | awk '{print $1}')
 connection_stub_bootstrap=0
 test "$old_adapter_sha" = "$(sha256sum "$backup/external/recorder_adapter.file" | awk '{print $1}')"
-if [ "$adapter_content_changed" -eq 0 ]; then
+external_payload_unchanged=0
+if external_payload_unchanged_safe "$old_adapter_sha"; then
+    # All four external targets already equal their committed payloads and the
+    # captured preimage.  Do not touch files, cron, or the live adapter.
+    external_payload_unchanged=1
+elif [ "$adapter_content_changed" -eq 0 ]; then
     adapter_restart_safe "$old_adapter_sha"
 elif adapter_restart_safe "$old_adapter_sha"; then
     :
@@ -2165,14 +2245,30 @@ elif adapter_connection_stub_bootstrap_safe "$old_adapter_sha" "$new_adapter_sha
 else
     adapter_repair_restart_safe "$old_adapter_sha"
 fi
-adapter_identity_rebind_hash_child_absent
-install_atomic \
-    "$new_adapter_source" \
-    "$host_adapter_path" \
-    755
-test "$new_adapter_sha" = "$(sha256sum "$host_adapter_path" | awk '{print $1}')"
-test "$new_adapter_sha" = "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py | awk '{print $1}')"
-if [ "$adapter_content_changed" -eq 1 ]; then
+if [ "$external_payload_unchanged" -eq 0 ]; then
+    printf '%s\n' external-mutation-started.v1 > "$backup/external/external-mutation-started"
+    chmod 600 "$backup/external/external-mutation-started"
+    install_atomic \
+        /opt/bilive/autoslice/repo/scripts/free_mount_watchdog.sh \
+        /opt/bilive/autoslice/free_mount_watchdog.sh \
+        755
+    install_atomic \
+        /opt/bilive/autoslice/repo/scripts/clouddrive_upload_fatal_sentinel.sh \
+        /opt/bilive/autoslice/upload_fatal_sentinel.sh \
+        755
+    install_atomic \
+        /opt/bilive/autoslice/repo/scripts/free_do_upload.sh \
+        /opt/bilive/app/tmp_manual_upload/do_upload.sh \
+        700
+    adapter_identity_rebind_hash_child_absent
+    install_atomic \
+        "$new_adapter_source" \
+        "$host_adapter_path" \
+        755
+    test "$new_adapter_sha" = "$(sha256sum "$host_adapter_path" | awk '{print $1}')"
+    test "$new_adapter_sha" = "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py | awk '{print $1}')"
+fi
+if [ "$external_payload_unchanged" -eq 0 ] && [ "$adapter_content_changed" -eq 1 ]; then
     # Close the install-to-restart race with a second direct idle query. This
     # also imports the new bytes in a disposable process before the daemon is
     # restarted; failure here rolls the file back while the old daemon remains.
@@ -2188,17 +2284,10 @@ if [ "$adapter_content_changed" -eq 1 ]; then
     if [ "$connection_stub_bootstrap" -eq 1 ]; then
         adapter_connection_stub_bootstrap_postcondition
     fi
-else
+elif [ "$external_payload_unchanged" -eq 0 ]; then
     test "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' bililive_adapter)" = healthy
 fi
-watchdog_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/watchdog.lock /opt/bilive/autoslice/free_mount_watchdog.sh >> /opt/bilive/autoslice/logs/watchdog.log 2>&1'
-upload_fatal_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/upload-fatal-sentinel.lock /opt/bilive/autoslice/upload_fatal_sentinel.sh >> /opt/bilive/autoslice/logs/upload-fatal-sentinel.log 2>&1'
-timely_terms_cron='17 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/timely-terms.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_timely_terms.py --cache-dir /opt/bilive/autoslice/cache/timely-term-crawler --write /opt/bilive/autoslice/state/timely_terms.json'\'' >> /opt/bilive/autoslice/logs/timely-terms.log 2>&1'
-streamer_registry_cron='7 6 * * 0 /usr/bin/flock -n /opt/bilive/autoslice/streamer-registry.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_streamer_registry.py --cache-dir /opt/bilive/autoslice/cache/streamer-registry-crawler --write /opt/bilive/autoslice/state/streamer_registry.json'\'' >> /opt/bilive/autoslice/logs/streamer-registry.log 2>&1'
-psplive_roster_cron='12 6 * * 0 /usr/bin/flock -n /opt/bilive/autoslice/psplive-roster.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_psplive_roster.py --cache-dir /opt/bilive/autoslice/cache/psplive-roster-crawler --write /opt/bilive/autoslice/state/psplive_roster.json'\'' >> /opt/bilive/autoslice/logs/psplive-roster.log 2>&1'
-community_names_cron='27 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/community-names.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && set -a && source /opt/bilive/autoslice/cpa.env && set +a && python3 scripts/crawl_community_names.py --registry /opt/bilive/autoslice/state/streamer_registry.json --cache-dir /opt/bilive/autoslice/cache/community-name-crawler --state /opt/bilive/autoslice/state/community_name_state.json --write /opt/bilive/autoslice/state/community_names.json'\'' >> /opt/bilive/autoslice/logs/community-names.log 2>&1'
-topic_entity_cron='37 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/topic-entity.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_topic_entity_graph.py --timely-terms /opt/bilive/autoslice/state/timely_terms.json --cache-dir /opt/bilive/autoslice/cache/topic-entity-crawler --write /opt/bilive/autoslice/state/topic_entity_graph.json'\'' >> /opt/bilive/autoslice/logs/topic-entity.log 2>&1'
-streamer_dynamics_cron='47 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/streamer-dynamics.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_streamer_dynamics.py --cache-dir /opt/bilive/autoslice/cache/streamer-dynamics-crawler --write /opt/bilive/autoslice/state/streamer_dynamics.json'\'' >> /opt/bilive/autoslice/logs/streamer-dynamics.log 2>&1'
+if [ "$external_payload_unchanged" -eq 0 ]; then
 existing_crontab=$(crontab -l 2>/dev/null || true)
 {
     printf '%s\n' "$existing_crontab" \
@@ -2235,6 +2324,12 @@ crontab -l | grep -Fxq "$topic_entity_cron"
 test "$(crontab -l | grep -Fxc "$topic_entity_cron")" -eq 1
 crontab -l | grep -Fxq "$streamer_dynamics_cron"
 test "$(crontab -l | grep -Fxc "$streamer_dynamics_cron")" -eq 1
+fi
+if [ "$external_payload_unchanged" -eq 1 ]; then
+    # Close the read-only fast-route interval: success is valid only while the
+    # same payload, cron, adapter and status closure remains true.
+    external_payload_unchanged_safe "$old_adapter_sha"
+fi
 REMOTE_EXTERNAL_INSTALL
 
 # verify: the deployed runner is byte-identical to the committed one
