@@ -29,6 +29,7 @@ RECORDING_DATE = "2026-08-17"
 SCHEMA_VERSION = "qixi-operator-exact-title-source-fact-authority.v1"
 CONSUMPTION_SCHEMA_VERSION = "qixi-operator-exact-title-source-fact-consumption.v1"
 DECISION = "QIXI_OPERATOR_EXACT_TITLE_WITH_HISTORICAL_PROVIDER_PASS"
+AUTHORITY_STATUS = "RESOLVED_QIXI_OPERATOR_EXACT_TITLE_HISTORICAL_PASS"
 ASSET_PATH = Path(
     "assets/lidousha/authorities/auto_123655_771_844.qixi-operator-exact-title-source-fact-authority.v1.json"
 )

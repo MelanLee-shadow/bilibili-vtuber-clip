@@ -347,16 +347,28 @@ def validate_manual_title_projection(
 ) -> None:
     """Replay every manual-title field across record/publish mirrors."""
 
+    # This lane has one sealed operator-title successor.  Import lazily so the
+    # generic projection helper never creates a module-level authority cycle.
+    from src.autoslice.qixi_operator_exact_title_source_fact import (
+        AUTHORITY_STATUS as qixi_authority_status,
+        DECISION as qixi_decision,
+    )
+
     if not isinstance(staging, Mapping) or not isinstance(publish, Mapping):
         raise QixiPostCorrectionPublicSurfaceError("journal manual title projection is missing")
     mirror_keys = set(staging) - {"status", "publish_json_path"}
     if any(key not in publish or publish.get(key) != staging.get(key) for key in mirror_keys):
         raise QixiPostCorrectionPublicSurfaceError("journal manual title projection mirror drifts")
+    expected_authority_status = (
+        qixi_authority_status
+        if source_fact.get("decision") == qixi_decision
+        else "RESOLVED_MANUAL"
+    )
     if (
         staging.get("status") != "STAGED"
         or staging.get("title") != public_title
         or staging.get("title_source") != "ivan_manual_override"
-        or staging.get("title_authority_status") != "RESOLVED_MANUAL"
+        or staging.get("title_authority_status") != expected_authority_status
         or staging.get("title_authority_error") is not None
         or staging.get("title_policy_violations") != []
         or staging.get("source_fact_review") != source_fact

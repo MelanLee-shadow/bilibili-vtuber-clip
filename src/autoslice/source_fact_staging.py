@@ -29,6 +29,7 @@ from src.autoslice.operator_exact_title_source_fact_authority import (
     load_operator_exact_title_source_fact_authority,
 )
 from src.autoslice.qixi_operator_exact_title_source_fact import (
+    AUTHORITY_STATUS as QIXI_OPERATOR_EXACT_TITLE_AUTHORITY_STATUS,
     QixiOperatorExactTitleSourceFactError,
     authorize as authorize_qixi_operator_exact_title,
     consume_authority as consume_qixi_operator_exact_title_authority,
@@ -184,7 +185,7 @@ def resolve_initial_source_fact_review(
                 review=authorize_qixi_operator_exact_title(consumption),
                 violation=None,
                 authority_error=None,
-                authority_status="RESOLVED_QIXI_OPERATOR_EXACT_TITLE_HISTORICAL_PASS",
+                authority_status=QIXI_OPERATOR_EXACT_TITLE_AUTHORITY_STATUS,
                 manual_title_keep_consumption=None,
             )
         if operator_title_authority is not None:

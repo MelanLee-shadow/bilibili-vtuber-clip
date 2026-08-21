@@ -12,6 +12,7 @@ import pytest
 
 import src.autoslice.qixi_operator_exact_title_source_fact as authority_module
 import src.autoslice.publish_staging as publish_staging
+import src.autoslice.qixi_post_correction_projection_paths as projection_paths
 import src.autoslice.source_fact_staging as source_fact_staging
 from src.autoslice import qixi_post_correction_public_surface as public_surface
 from src.autoslice.jingting_chunker import parse_srt_cues
@@ -874,8 +875,84 @@ def test_qixi_actual_stage_projects_one_json_domain_cover_generation(
         assert staging["cover_generation"] == publish["cover_generation"]
         assert staging["cover_generation"]["rendered_lines"] == ["女友感"]
         assert staging["cover_generation"]["cover_punch"] == ["女友感"]
+        before = {
+            path: path.read_bytes()
+            for path in (paths["record"], paths["delivery"], paths["publish"], paths["state"])
+        }
+        public_surface._validate_after_image(
+            authority=public_authority, before=before, after=targets
+        )
+        forged_record = copy.deepcopy(record)
+        forged_publish = copy.deepcopy(publish)
+        for receipt in (
+            forged_record["story_contract"]["source_fact_review"],
+            forged_record["publish_staging"]["source_fact_review"],
+            forged_publish["source_fact_review"],
+        ):
+            receipt["final_title"] = "forged title"
+        forged_after = dict(targets)
+        forged_after[paths["record"]] = public_surface._json_bytes(forged_record)
+        forged_after[paths["delivery"]] = public_surface._json_bytes(forged_record)
+        forged_after[paths["publish"]] = public_surface._json_bytes(forged_publish)
+        with pytest.raises(
+            public_surface.QixiPostCorrectionPublicSurfaceError,
+            match="source-fact receipt replay drifts",
+        ):
+            public_surface._validate_after_image(
+                authority=public_authority, before=before, after=forged_after
+            )
     finally:
         public_surface._remove_private_stage(stage_root)
+
+
+@pytest.mark.parametrize(
+    ("decision", "authority_status", "mutation"),
+    (
+        (
+            authority_module.DECISION,
+            authority_module.AUTHORITY_STATUS,
+            None,
+        ),
+        (authority_module.DECISION, "RESOLVED_MANUAL", "status"),
+        ("KEEP", authority_module.AUTHORITY_STATUS, "decision"),
+        (authority_module.DECISION, "RESOLVED_UNKNOWN", "status"),
+        (authority_module.DECISION, authority_module.AUTHORITY_STATUS, "title"),
+        (authority_module.DECISION, authority_module.AUTHORITY_STATUS, "consumption"),
+    ),
+)
+def test_qixi_manual_projection_maps_only_the_sealed_decision_status(
+    decision: str, authority_status: str, mutation: str | None
+) -> None:
+    source_fact = {"decision": decision}
+    staging: dict[str, object] = {
+        "status": "STAGED",
+        "title": TITLE,
+        "title_source": "ivan_manual_override",
+        "title_authority_status": authority_status,
+        "title_authority_error": None,
+        "title_policy_violations": [],
+        "source_fact_review": source_fact,
+        "manual_title_repair_authority_consumption": None,
+        "public_text_surface_authority_consumption": None,
+        "title_story_audit": {"status": "PASS"},
+        "entity_projection_audit": None,
+        "cover_entity_projection_audit": None,
+        "upload_enabled": False,
+    }
+    if mutation == "title":
+        staging["title"] = "forged title"
+    elif mutation == "consumption":
+        staging["public_text_surface_authority_consumption"] = {"forged": True}
+    publish = {key: copy.deepcopy(value) for key, value in staging.items() if key != "status"}
+    if mutation is None:
+        projection_paths.validate_manual_title_projection(
+            staging, publish, source_fact=source_fact, public_title=TITLE
+        )
+    else:
+        with pytest.raises(public_surface.QixiPostCorrectionPublicSurfaceError):
+            projection_paths.validate_manual_title_projection(
+                staging, publish, source_fact=source_fact, public_title=TITLE
+            )
 
 
 def test_two_phase_postcommit_successor_replays_daily_and_package(
@@ -925,10 +1002,22 @@ def test_two_phase_postcommit_successor_replays_daily_and_package(
             )
         )
         story["source_fact_review"] = review
-        staging.update({"title": TITLE, "source_fact_review": review})
+        staging.update(
+            {
+                "title": TITLE,
+                "title_authority_status": authority_module.AUTHORITY_STATUS,
+                "source_fact_review": review,
+            }
+        )
         publish_path = Path(str(kwargs["private_publish_json_path"]))
         staged_publish = json.loads(publish_path.read_text(encoding="utf-8"))
-        staged_publish.update({"title": TITLE, "source_fact_review": review})
+        staged_publish.update(
+            {
+                "title": TITLE,
+                "title_authority_status": authority_module.AUTHORITY_STATUS,
+                "source_fact_review": review,
+            }
+        )
         publish_path.write_bytes(public_surface._json_bytes(staged_publish))
         return staged
 
