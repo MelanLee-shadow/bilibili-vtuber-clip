@@ -900,6 +900,7 @@ def _build_after_image(
         selection_hook=selection_hook,
         private_artifact_root=stage_artifacts,
         private_publish_json_path=stage_artifacts / inputs.artifact_paths["publish"].name,
+        enforce_final_host_identity=True,
     )
     if not isinstance(staged, Mapping):
         raise QixiPostCorrectionPublicSurfaceError("canonical publish stage did not return a record")

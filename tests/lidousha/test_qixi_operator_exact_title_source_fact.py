@@ -832,10 +832,20 @@ def test_qixi_actual_stage_projects_one_json_domain_cover_generation(
     monkeypatch.setattr(
         source_fact_staging, "load_operator_exact_title_source_fact_authority", lambda _cid: None
     )
+    cover_kwargs: list[dict[str, object]] = []
 
     def tuple_cover(
         _record: object, *, private_artifact_root: Path, **_kwargs: object
     ) -> dict[str, object]:
+        cover_kwargs.append(
+            {
+                key: _kwargs.get(key)
+                for key in (
+                    "enforce_final_host_identity",
+                    "final_host_identity_verifier",
+                )
+            }
+        )
         cover = private_artifact_root / "covers" / "canonical.cover.png"
         cover.parent.mkdir(parents=True, exist_ok=True)
         cover.write_bytes(b"canonical-cover")
@@ -871,6 +881,12 @@ def test_qixi_actual_stage_projects_one_json_domain_cover_generation(
         record = json.loads(targets[paths["record"]].decode("utf-8"))
         publish = json.loads(targets[paths["publish"]].decode("utf-8"))
         staging = record["publish_staging"]
+        assert cover_kwargs == [
+            {
+                "enforce_final_host_identity": True,
+                "final_host_identity_verifier": publish_staging.verify_lidousha_final_host_identity,
+            }
+        ]
         assert staging["source_fact_review"] == publish["source_fact_review"]
         assert staging["cover_generation"] == publish["cover_generation"]
         assert staging["cover_generation"]["rendered_lines"] == ["女友感"]
@@ -903,6 +919,184 @@ def test_qixi_actual_stage_projects_one_json_domain_cover_generation(
             )
     finally:
         public_surface._remove_private_stage(stage_root)
+
+
+def test_qixi_actual_stage_replays_full_host_identity_cover_witness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, public_authority, authority, paths, _record = _canonical_public_qixi_fixture(tmp_path)
+    monkeypatch.setattr(authority_module, "load_authority", lambda *_args, **_kwargs: authority)
+    monkeypatch.setattr(
+        source_fact_staging, "load_qixi_operator_exact_title_authority", lambda _cid: authority
+    )
+    monkeypatch.setattr(source_fact_staging, "load_manual_title_keep_authority", lambda _cid: None)
+    monkeypatch.setattr(
+        source_fact_staging, "load_deterministic_text_surface_authority", lambda _cid: None
+    )
+    monkeypatch.setattr(
+        source_fact_staging, "load_operator_exact_title_source_fact_authority", lambda _cid: None
+    )
+    observed: list[dict[str, object]] = []
+
+    def covered_stage(
+        record: object, *, private_artifact_root: Path, **kwargs: object
+    ) -> dict[str, object]:
+        assert isinstance(record, dict)
+        observed.append(
+            {
+                key: kwargs.get(key)
+                for key in (
+                    "enforce_final_host_identity",
+                    "final_host_identity_verifier",
+                )
+            }
+        )
+        generation, _ = public_surface_tests._materialize_real_cover_generation(
+            private_artifact_root, record["story_contract"]
+        )
+        return {
+            "status": "AI_COVER_READY",
+            "cover_path": str(generation["final_cover"]),
+            "cover_sha256": generation["final_cover_sha256"],
+            "cover_generation": generation,
+            "reason_codes": [],
+        }
+
+    monkeypatch.setattr(publish_staging, "_stage_lidousha_ai_cover", covered_stage)
+    inputs = public_surface.validate_runtime(
+        public_authority,
+        repo_root=repo,
+        runtime_root=Path(str(public_authority["runtime_root"])),
+    )
+    stage_root = Path(tempfile.mkdtemp(prefix="stage-", dir=paths["record"].parent))
+    try:
+        targets, _metadata = public_surface._build_after_image(
+            inputs,
+            stage_root=stage_root,
+            source_fact_llm_call=lambda _prompt: pytest.fail("provider called"),
+        )
+        record = json.loads(targets[paths["record"]].decode("utf-8"))
+        generation = record["publish_staging"]["cover_generation"]
+        assert observed == [
+            {
+                "enforce_final_host_identity": True,
+                "final_host_identity_verifier": publish_staging.verify_lidousha_final_host_identity,
+            }
+        ]
+        assert projection_paths.validate_cover_route_decision(
+            generation, allow_legacy_v1=False
+        )
+        assert projection_paths.validate_rendered_text_pixel_evidence(generation)
+        assert projection_paths.validate_final_host_identity_verification(generation)
+        projection_paths.validate_replayed_cover(
+            generation,
+            story=record["story_contract"],
+            package_root=paths["record"].parent,
+            after=targets,
+        )
+    finally:
+        public_surface._remove_private_stage(stage_root)
+
+
+def test_qixi_actual_stage_rejects_cover_without_final_host_identity_witness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, public_authority, authority, paths, _record = _canonical_public_qixi_fixture(tmp_path)
+    monkeypatch.setattr(authority_module, "load_authority", lambda *_args, **_kwargs: authority)
+    monkeypatch.setattr(
+        source_fact_staging, "load_qixi_operator_exact_title_authority", lambda _cid: authority
+    )
+    monkeypatch.setattr(source_fact_staging, "load_manual_title_keep_authority", lambda _cid: None)
+    monkeypatch.setattr(
+        source_fact_staging, "load_deterministic_text_surface_authority", lambda _cid: None
+    )
+    monkeypatch.setattr(
+        source_fact_staging, "load_operator_exact_title_source_fact_authority", lambda _cid: None
+    )
+
+    def uncovered_stage(
+        record: object, *, private_artifact_root: Path, **kwargs: object
+    ) -> dict[str, object]:
+        assert isinstance(record, dict)
+        assert kwargs["enforce_final_host_identity"] is True
+        generation, _ = public_surface_tests._materialize_real_cover_generation(
+            private_artifact_root, record["story_contract"]
+        )
+        generation.pop("final_host_identity_verification")
+        return {
+            "status": "AI_COVER_READY",
+            "cover_path": str(generation["final_cover"]),
+            "cover_sha256": generation["final_cover_sha256"],
+            "cover_generation": generation,
+            "reason_codes": [],
+        }
+
+    monkeypatch.setattr(publish_staging, "_stage_lidousha_ai_cover", uncovered_stage)
+    inputs = public_surface.validate_runtime(
+        public_authority,
+        repo_root=repo,
+        runtime_root=Path(str(public_authority["runtime_root"])),
+    )
+    stage_root = Path(tempfile.mkdtemp(prefix="stage-", dir=paths["record"].parent))
+    try:
+        targets, _metadata = public_surface._build_after_image(
+            inputs,
+            stage_root=stage_root,
+            source_fact_llm_call=lambda _prompt: pytest.fail("provider called"),
+        )
+        before = {
+            path: path.read_bytes()
+            for path in (paths["record"], paths["delivery"], paths["publish"], paths["state"])
+        }
+        with pytest.raises(
+            public_surface.QixiPostCorrectionPublicSurfaceError,
+            match="cover route/pixel/identity evidence drifts",
+        ):
+            public_surface._validate_after_image(
+                authority=public_authority, before=before, after=targets
+            )
+    finally:
+        public_surface._remove_private_stage(stage_root)
+
+
+@pytest.mark.parametrize(
+    "forge",
+    (
+        lambda generation, _after: generation["route_decision"].update(
+            {"selected_treatment": "forged"}
+        ),
+        lambda generation, _after: generation["rendered_text_pixels"].update(
+            {"final_cover_sha256": "sha256:" + "0" * 64}
+        ),
+        lambda generation, _after: generation["final_host_identity_verification"].update(
+            {"final_cover_sha256": "sha256:" + "0" * 64}
+        ),
+        lambda generation, _after: generation.update(
+            {"final_cover": "/outside/sealed-package/final-cover.png"}
+        ),
+    ),
+)
+def test_qixi_replayed_cover_rejects_forged_route_pixel_identity_or_locator(
+    tmp_path: Path, forge: object
+) -> None:
+    _repo, _public_authority, _authority, paths, record = _canonical_public_qixi_fixture(tmp_path)
+    story = public_surface._story_contract_rebuilder(
+        record,
+        srt_path=paths["srt"],
+        clip_context_path=Path(str(record["clip_context_path"])),
+    )(str(record["story_contract"]["selection_hook"]))
+    generation, after = public_surface_tests._materialize_real_cover_generation(
+        paths["record"].parent / "real-cover", story
+    )
+    assert callable(forge)
+    forge(generation, after)
+    with pytest.raises(public_surface.QixiPostCorrectionPublicSurfaceError):
+        projection_paths.validate_replayed_cover(
+            generation,
+            story=story,
+            package_root=paths["record"].parent,
+            after=after,
+        )
 
 
 @pytest.mark.parametrize(

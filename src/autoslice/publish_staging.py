@@ -405,11 +405,9 @@ def _stage_publish_draft(
     story_contract_rebuilder: (Callable[[str], dict[str, object]] | None) = None,
     private_artifact_root: Path | None = None,
     private_publish_json_path: Path | None = None,
+    enforce_final_host_identity: bool = False,
 ) -> dict[str, object] | None:
-    """Mirror production local_prepare: AI title + cover + publish.json draft.
-    Always writes ``upload_enabled: false`` — publishing stays behind the
-    AUTO_UPLOAD manifest/hash gate and is out of scope for the shadow lane.
-    """
+    """Mirror local_prepare while always keeping upload disabled."""
     if not materialized_recut or materialized_recut.get("status") != "MATERIALIZED":
         return materialized_recut
     record = dict(materialized_recut)
@@ -848,6 +846,8 @@ def _stage_publish_draft(
             "full_text_cover_contract": full_text_cover_contract,
             "diversity_slot": cover_diversity_slot,
         }
+        if enforce_final_host_identity:
+            cover_kwargs.update(enforce_final_host_identity=True, final_host_identity_verifier=verify_lidousha_final_host_identity)
         cover_result = stage_cover_with_private_root(stage_cover or _stage_lidousha_ai_cover, record, private_artifact_root=private_artifact_root, kwargs=cover_kwargs)
     cover_result, cover_entity_projection_audit = enforce_candidate_cover_projection(
         candidate_id=candidate_id,
