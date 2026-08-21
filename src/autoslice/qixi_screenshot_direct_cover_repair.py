@@ -316,6 +316,50 @@ def require_repaired_punch(value: object) -> tuple[str, ...]:
     return lines
 
 
+def run_canonical_full_dry(
+    *, authority: Mapping[str, object], stage_root_parent: Path, runtime: Mapping[str, bytes],
+    review_punch: object, stage_cover: object, joint_qc: object,
+) -> dict[str, object]:
+    """Execute the fixed review→screenshot→QC gates before storing success.
+
+    Adapters are injected so the CLI has one canonical route while tests never
+    contact a provider.  The stage adapter must already enforce forced
+    screenshot_direct, route/pixel/host/participant gates and return its
+    verified generation plus private cover bytes.
+    """
+    normalized = validate_authority(authority)
+    if not callable(review_punch) or not callable(stage_cover) or not callable(joint_qc):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_CANONICAL_ADAPTER_INVALID")
+    record = json.loads(runtime["record"])
+    story = record.get("story_contract") if isinstance(record, Mapping) else None
+    staging = record.get("publish_staging") if isinstance(record, Mapping) else None
+    if not isinstance(story, Mapping) or not isinstance(staging, Mapping):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_RUNTIME_DRIFT")
+    title = normalized["title"]["value"]
+    cover_text = staging.get("cover_text")
+    semantic = review_punch(
+        title=title, story=story, cover_text=cover_text, candidates=PUNCH_CANDIDATES
+    )
+    if not isinstance(semantic, Mapping) or semantic.get("status") != "PASS":
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PUNCH_SEMANTIC_BLOCKED")
+    punch = require_repaired_punch(semantic.get("final_punch"))
+    def stage(root: Path) -> Mapping[str, object]:
+        output = stage_cover(
+            root=root, runtime=runtime, approved_punch=punch, semantic_receipt=semantic,
+            cover_mode_override="screenshot", require_screenshot_direct=True,
+        )
+        if not isinstance(output, Mapping) or output.get("generation", {}).get("method") != "screenshot_direct" or output.get("generation", {}).get("image_generation_used") is not False:
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_SCREENSHOT_GATE_BLOCKED")
+        cover_path = output.get("cover_path")
+        if not isinstance(cover_path, Path):
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_SCREENSHOT_GATE_BLOCKED")
+        qc = joint_qc(cover_path=cover_path, title=title, candidate_id=CANDIDATE_ID, logical_cover_path=output.get("logical_cover_path"))
+        if not isinstance(qc, Mapping) or qc.get("status") != "PASS" or qc.get("pass") is not True:
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_JOINT_QC_BLOCKED")
+        return {**output, "qc_bytes": _json_bytes(dict(qc))}
+    return run_private_preflight(authority=normalized, stage_root_parent=stage_root_parent, stage=stage)
+
+
 def build_preflight_manifest(
     *, authority: Mapping[str, object], cover_bytes: bytes, qc_bytes: bytes,
     generation: Mapping[str, object], logical_cover_path: str,
