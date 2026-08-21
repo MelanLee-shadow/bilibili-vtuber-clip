@@ -615,6 +615,72 @@ def test_projection_uses_subtree_allowlist_and_preserves_absent_mirrors() -> Non
     )
 
 
+def test_terminal_authority_declares_no_publish_or_state_story_mirror() -> None:
+    authority = json.loads((refresh.ROOT / refresh.AUTHORITY_PATH).read_text(encoding="utf-8"))
+    claimed = authority.pop("authority_sha256")
+    assert authority["allowed_mutations"]["publish"] == []
+    assert authority["allowed_mutations"]["state"] == []
+    assert claimed == "sha256:4298f33bf342507a0b5e234ebaf1d2a63ca38dab8895cb10e011cca25de94f42"
+    assert refresh._canonical_sha(authority) == claimed
+
+
+def test_committed_empty_mirror_scopes_require_bytes_and_no_injection() -> None:
+    story = {"boundary_semantic_review": {"status": "PASS"}}
+    publish = {}
+    state = {"picks": [{"candidate_id": refresh.CANDIDATE_ID, "title": "unchanged"}]}
+    before_publish = json.dumps(publish, sort_keys=True).encode()
+    before_state = json.dumps(state, sort_keys=True).encode()
+    kwargs = {
+        "allowed_mutations": {"publish": [], "state": []},
+        "before_publish": before_publish,
+        "after_publish": before_publish,
+        "before_state": before_state,
+        "after_state": before_state,
+        "current_publish": publish,
+        "current_state": state,
+        "story": story,
+    }
+    refresh._verify_committed_optional_mirrors(**kwargs)
+
+    injected_publish = {"story_contract": story}
+    with pytest.raises(refresh.QixiTerminalEvidenceRefreshError, match="COMMITTED_CONTEXT_DRIFT"):
+        refresh._verify_committed_optional_mirrors(
+            **{**kwargs, "after_publish": json.dumps(injected_publish, sort_keys=True).encode(),
+               "current_publish": injected_publish}
+        )
+    injected_state = {
+        "picks": [{"candidate_id": refresh.CANDIDATE_ID, "story_contract": story}]
+    }
+    with pytest.raises(refresh.QixiTerminalEvidenceRefreshError, match="COMMITTED_CONTEXT_DRIFT"):
+        refresh._verify_committed_optional_mirrors(
+            **{**kwargs, "after_state": json.dumps(injected_state, sort_keys=True).encode(),
+               "current_state": injected_state}
+        )
+    with pytest.raises(refresh.QixiTerminalEvidenceRefreshError, match="COMMITTED_CONTEXT_DRIFT"):
+        refresh._verify_committed_optional_mirrors(
+            **{**kwargs, "after_publish": b"{ }"}
+        )
+
+
+def test_committed_publish_mirror_requires_declared_existing_scope() -> None:
+    story = {"boundary_semantic_review": {"status": "PASS"}}
+    before_publish = json.dumps({"story_contract": story}, sort_keys=True).encode()
+    state = {"picks": [{"candidate_id": refresh.CANDIDATE_ID}]}
+    state_bytes = json.dumps(state, sort_keys=True).encode()
+    refresh._verify_committed_optional_mirrors(
+        allowed_mutations={
+            "publish": ["/story_contract/boundary_semantic_review"], "state": [],
+        },
+        before_publish=before_publish,
+        after_publish=before_publish,
+        before_state=state_bytes,
+        after_state=state_bytes,
+        current_publish={"story_contract": story},
+        current_state=state,
+        story=story,
+    )
+
+
 def test_cli_full_dry_run_prints_sanitized_failure_without_writes(
     tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -2,11 +2,11 @@
   "allowed_mutations": {
     "chat": ["/final_output_srt_sha256", "/final_review_audit", "/final_speaker_srt_sha256", "/final_status", "/final_text_srt_sha256"],
     "delivery_record": ["/artifact_hashes/chat_authority_audit_sha256", "/boundary_audit/final_delivery_boundary_semantic_review", "/story_contract/boundary_semantic_review"],
-    "publish": ["/story_contract/boundary_semantic_review"],
+    "publish": [],
     "record": ["/artifact_hashes/chat_authority_audit_sha256", "/boundary_audit/final_delivery_boundary_semantic_review", "/story_contract/boundary_semantic_review"],
     "state": []
   },
-  "authority_sha256": "sha256:5c6df6c79f38e9caa05e0c7772ad50c10fedbe3b9cf224ec3f27fad5c99e0687",
+  "authority_sha256": "sha256:4298f33bf342507a0b5e234ebaf1d2a63ca38dab8895cb10e011cca25de94f42",
   "candidate_id": "auto_123655_771_844",
   "correction": {
     "after_srt_sha256": "sha256:a172c08564d57c72782e44e74583c17c3a95a241b798fcfe8df3fddda8b91617",

@@ -987,6 +987,84 @@ def _changed_within_allowlisted_subtrees(
     )
 
 
+_PUBLISH_STORY_BOUNDARY_ROOT = "/story_contract/boundary_semantic_review"
+
+
+def _candidate_state_story_contracts(state: Mapping[str, object]) -> list[object]:
+    """Return only this candidate's state-story mirrors, never a loose row match."""
+
+    contracts: list[object] = []
+    for collection in ("picks", "talk", "talks", "pending_talk"):
+        rows = state.get(collection)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if isinstance(row, Mapping) and row.get("candidate_id") == CANDIDATE_ID:
+                if "story_contract" in row:
+                    contracts.append(row["story_contract"])
+    return contracts
+
+
+def _verify_committed_optional_mirrors(
+    *,
+    allowed_mutations: Mapping[str, object],
+    before_publish: bytes,
+    after_publish: bytes,
+    before_state: bytes,
+    after_state: bytes,
+    current_publish: Mapping[str, object],
+    current_state: Mapping[str, object],
+    story: Mapping[str, object],
+) -> None:
+    """Apply the sealed mirror scope to a committed journal projection.
+
+    A missing mirror is not an invitation to manufacture one.  In particular,
+    the live Qixi publish/state inputs have no StoryContract mirror and their
+    empty authority scopes require both byte and decoded-document immutability.
+    """
+
+    allowed = _require_mapping(allowed_mutations, "ALLOWLIST")
+    publish_roots = allowed.get("publish")
+    state_roots = allowed.get("state")
+    if (
+        not isinstance(publish_roots, list)
+        or not isinstance(state_roots, list)
+        or any(not isinstance(root, str) for root in [*publish_roots, *state_roots])
+    ):
+        raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_ALLOWLIST_INVALID")
+    before_publish_document = _json_document(before_publish, "COMMITTED_BEFORE_PUBLISH")
+    before_state_document = _json_document(before_state, "COMMITTED_BEFORE_STATE")
+    if not publish_roots:
+        if (
+            before_publish != after_publish
+            or before_publish_document != current_publish
+            or "story_contract" in before_publish_document
+            or "story_contract" in current_publish
+        ):
+            raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_COMMITTED_CONTEXT_DRIFT")
+    else:
+        before_story = before_publish_document.get("story_contract")
+        current_story = current_publish.get("story_contract")
+        if (
+            _PUBLISH_STORY_BOUNDARY_ROOT in publish_roots
+            and isinstance(before_story, Mapping)
+        ):
+            if current_story != story:
+                raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_COMMITTED_CONTEXT_DRIFT")
+        elif current_story != before_story or (
+            not isinstance(before_story, Mapping) and isinstance(current_story, Mapping)
+        ):
+            raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_COMMITTED_CONTEXT_DRIFT")
+    if not state_roots:
+        if (
+            before_state != after_state
+            or before_state_document != current_state
+            or _candidate_state_story_contracts(before_state_document)
+            or _candidate_state_story_contracts(current_state)
+        ):
+            raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_COMMITTED_CONTEXT_DRIFT")
+
+
 def _json_bytes(value: Mapping[str, object]) -> bytes:
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode()
 
@@ -1582,6 +1660,7 @@ def validate_committed_refresh(*, repo_root: Path = ROOT) -> None:
     current_record = _json_document(after["record"], "COMMITTED_RECORD")
     current_delivery = _json_document(after["delivery_record"], "COMMITTED_DELIVERY")
     current_publish = _json_document(after["publish"], "COMMITTED_PUBLISH")
+    current_state = _json_document(after["state"], "COMMITTED_STATE")
     if current_record != current_delivery:
         raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_RECORD_MIRROR_DRIFT")
     final_srt = _read_regular(Path(str(_require_mapping(authority["preimage"], "PREIMAGE")["srt"]["path"]))).decode("utf-8")
@@ -1603,9 +1682,18 @@ def validate_committed_refresh(*, repo_root: Path = ROOT) -> None:
         story.get("boundary_semantic_review") != boundary
         or record_boundary.get("final_delivery_boundary_semantic_review") != boundary
         or hashes.get("chat_authority_audit_sha256") != "sha256:" + hashlib.sha256(after["chat"]).hexdigest()
-        or current_publish.get("story_contract") != story
     ):
         raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_COMMITTED_CONTEXT_DRIFT")
+    _verify_committed_optional_mirrors(
+        allowed_mutations=_require_mapping(authority["allowed_mutations"], "ALLOWLIST"),
+        before_publish=before["publish"],
+        after_publish=after["publish"],
+        before_state=before["state"],
+        after_state=after["state"],
+        current_publish=current_publish,
+        current_state=current_state,
+        story=story,
+    )
 
 
 def build_staged_refresh(
