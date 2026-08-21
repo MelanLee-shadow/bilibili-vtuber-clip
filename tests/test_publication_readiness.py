@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -243,4 +246,24 @@ def test_readiness_is_read_only_and_never_calls_provider_or_network(tmp_path: Pa
     before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
     monkeypatch.setattr("src.autoslice.publication_readiness.authorized_upload.load_and_verify", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("network/provider")))
     build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry())
+    assert before == {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+
+
+def test_fixed_cli_bootstraps_from_non_repo_cwd_without_runtime_writes(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    (runtime / "state").mkdir(parents=True)
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    script = Path(__file__).resolve().parents[1] / "scripts/publication_readiness_graph.py"
+    result = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=tmp_path,
+        env={**os.environ, "AUTOSLICE_BASE": str(runtime), "PYTHONDONTWRITEBYTECODE": "1"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    graph = json.loads(result.stdout)
+    assert graph["schema_version"] == "publication-readiness-graph.v1"
+    assert all(row["dependencies"] == ["publication_registry"] for row in graph["rows"])
     assert before == {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}

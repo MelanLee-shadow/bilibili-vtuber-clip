@@ -5,16 +5,20 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from src.autoslice.publication_readiness import build_readiness_graph
 
 
 def main() -> int:
-    repo_root = Path(__file__).resolve().parents[1]
     runtime_root = Path(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice"))
     print(json.dumps(
-        build_readiness_graph(repository_root=repo_root, runtime_root=runtime_root),
+        build_readiness_graph(repository_root=ROOT, runtime_root=runtime_root),
         ensure_ascii=False, sort_keys=True,
     ))
     return 0
