@@ -1638,6 +1638,8 @@ def _stage_lidousha_ai_cover(
     full_text_cover_contract: Mapping[str, object] | None = None,
     diversity_slot: int | None = None,
     private_artifact_root: Path | None = None,
+    cover_mode_override: str | None = None,
+    require_screenshot_direct: bool = False,
 ) -> dict[str, object]:
     cover_generation: dict[str, object] = {
         "workflow": LIDOUSHA_COVER_WORKFLOW,
@@ -1663,7 +1665,15 @@ def _stage_lidousha_ai_cover(
     # AUTOSLICE_COVER_MODE = auto（默认，按名场面强度路由）| screenshot（强制直出）
     # | polish（强制截图+CPA 轻微调）| cpa（强制全图重绘，旧行为）。
     # 凭据门只对强制 cpa 模式前置；其余路线推迟到真正要调 CPA 时再卡。
-    cover_mode = os.environ.get("AUTOSLICE_COVER_MODE", "").strip().lower() or "auto"
+    # Fixed repair lanes must never rely on mutable process environment to
+    # select their treatment.  The ordinary pipeline retains its environment
+    # behaviour; the only stricter caller passes the explicit screenshot
+    # override together with ``require_screenshot_direct`` below.
+    cover_mode = (
+        cover_mode_override
+        if cover_mode_override is not None
+        else os.environ.get("AUTOSLICE_COVER_MODE", "").strip().lower()
+    ) or "auto"
     if cover_mode not in ("auto", "screenshot", "polish", "cpa"):
         cover_mode = "auto"
     cover_generation["cover_mode"] = cover_mode
@@ -1912,6 +1922,11 @@ def _stage_lidousha_ai_cover(
         )
         result = _enforce_final_talk_cover_thumbnail_gate(result)
         if "SCREENSHOT_ROUTE_MATERIALIZATION_FAILED" not in (result.get("reason_codes") or []):
+            return result
+        if require_screenshot_direct:
+            # A candidate-specific screenshot repair cannot use the generic
+            # fallback: a failed direct composition is evidence for a human
+            # or provider review, never authorization to call images.edit.
             return result
         screenshot_receipt = cover_generation.get("screenshot_direct")
         demotion_detail = f"demoted from {treatment}: " + str(
