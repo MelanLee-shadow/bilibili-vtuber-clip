@@ -79,6 +79,9 @@
   baseline 依现有 contract 重放，但不可再触发 operator full-ownership 快路径。重新物化或需要
   快路径的资产必须使用带独立 pipeline/diff/decision artifacts 的 v2 pin；不得把旧自由文本 pin
   原地补标为人工裁定。
+- provider 盲听的原始回包只能作为诊断证据，不能变成 Ivan 真值。若同一封存音频与无诱导
+  prompt 的结果不收敛，必须写 `DELEGATED_PROVIDER_REVIEW_UNRESOLVED` blocking evidence，
+  禁止物化 baseline、快路径或烧录，直到 Ivan 给出新的精确文本授权。
 - governed late source truth 是唯一允许在 expected-value choke point 之后覆盖词面的 lane，
   并且只接受
   `decision_authority=IVAN_OPERATOR_TRUTH` 的 `VERIFIED_ACTIVE` 行；除可重算的

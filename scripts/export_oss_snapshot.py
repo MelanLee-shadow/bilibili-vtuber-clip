@@ -1595,7 +1595,7 @@ _COMMENT_DATE_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     # 「维护者 2026-07-14 定、2026-07-19 重申」→「维护者」
     (re.compile(rf"维护者 {_DATE}(?:[ \t]*[/、,，][ \t]*{_DATE})*"), "维护者"),
     # 「(first: 2026-07-26 BV…)」「(first real run, 2026-07-06)」「(2026-07-25 measured: …)」
-    (re.compile(rf"[（(][ \t]*first[^）)]*[）)][:：]?"), ""),
+    (re.compile(r"[（(][ \t]*first[^）)]*[）)][:：]?"), ""),
     # 「（2026-07-25 两场次实损)」「(2026-07-04 教训)」等叙事括注
     (
         re.compile(
