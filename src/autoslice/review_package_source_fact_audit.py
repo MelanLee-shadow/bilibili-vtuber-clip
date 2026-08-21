@@ -148,6 +148,7 @@ def audit_story_source_fact_receipt(
         final_reviewed_srt_path=subtitle_path,
         speaker_evidence=rebuilt_speaker_evidence,
         qixi_repo_root=qixi_repo_root,
+        story_contract=story_contract,
     ):
         issues.append(
             SourceFactAuditIssue("SOURCE_FACT_REVIEW_INVALID", publish_path or record_path)

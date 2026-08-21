@@ -1,0 +1,84 @@
+{
+  "schema_version": "candidate-public-text-source-fact-refresh-authority.v1",
+  "candidate_id": "auto_173005_934_1166",
+  "recording_date": "2026-08-11",
+  "historical_provider_receipt": {
+    "receipt_sha256": "sha256:840c6d2a0a7a5378f1b0130f4fe5348fe0fa11ff894f6ce4a466af8ef4c02083",
+    "original_title": "【李豆沙】本想看“CP误解向”，小李越看《梦限大》越上头，最终判定薇欧拉对阿拉蕾就是铁暗恋",
+    "final_title": "【李豆沙】本想看“CP误解向”，小李越看《梦限大》越上头，最终判定薇欧拉对阿拉蕾就是铁暗恋",
+    "original_selection_hook": "本想看“CP误解向”，李豆沙却越看越上头，最终当庭宣判薇欧拉对阿拉蕾就是铁暗恋。",
+    "final_selection_hook": "本想看“CP误解向”，李豆沙却越看越上头，最终认定薇欧拉对阿拉蕾就是铁暗恋。",
+    "status": "PASS",
+    "decision": "REPAIRED"
+  },
+  "public_text_authority": {
+    "relative_path": "assets/lidousha/candidate_public_text_surface_authorities/auto_173005_934_1166.public-text-surface-authority.v1.json",
+    "authority_sha256": "sha256:001c8aab4581db7a6875f293ea2a597fcdf633bffdb5b097d6fbc8edeb1bc192"
+  },
+  "runtime_bindings": {
+    "selection_hook": "本想看“CP误解向”，李豆沙却越看越上头，最终认定薇欧拉对阿拉蕾就是铁暗恋。",
+    "selection_hook_sha256": "sha256:fb8fd5bfd72262733b61c502e1e0796fa2a76f1e3b3032ed8977bfae2730f75b",
+    "title": "【李豆沙】经小李判断，薇欧拉对阿拉蕾就是铁暗恋！",
+    "title_sha256": "sha256:62e5d330a29cb3beed28fc8934a16b9e5d324db58daf831dcca4d4d39de95ab9",
+    "final_reviewed_srt_sha256": "sha256:1a668a899257407685c91629cc254918a594663af8b55cccb0932db16d0aa5d1",
+    "final_transcript_sha256": "sha256:ca396e868841a612ebb7b2ff277e117964efe4e95231941f01bad9ad4a134d5f",
+    "clip_context_prompt_sha256": "sha256:51db6fc28e96e399a925a68a0bc0d219fb896751feba608dcfb12948ca38e7a6",
+    "selection_scorecard_sha256": "sha256:64310ab1abd11c3e75f373631673280b10651ebc434295981bc0a35f4a68690e",
+    "speaker_evidence_sha256": "sha256:7ad0672052878d79d0ad5f24e41ee57a6a8c401596b8954beb078ca45b39c989",
+    "entity_context_sha256": "sha256:7f905d3cba236e238ac9ea99ec971bdd0601616b7d548618bc0915185b4dd43a",
+    "story_contract_sha256": "sha256:d465a06cc1e0ec8a8dd3d325639689a20ddd5ef4b6ff4f715c95a40e739863ef"
+  },
+  "scope": {
+    "candidate_scoped": true,
+    "provider_call_required": false,
+    "subtitle_text_mutation_authorized": false,
+    "speaker_label_mutation_authorized": false,
+    "upload_authorized": false
+  },
+  "preimages": {
+    "state_record_canonical_sha256": "sha256:9c712111a12183b6d664fe55a87c62be5e401f6da7c4e6acf181e4f918d20043",
+    "state_file": {
+      "path": "/opt/bilive/autoslice/state/2026-08-11.json",
+      "sha256": "sha256:f6c2af20879f47fb287f798ef2862ea34234c321544a848f3545956dc899eda1",
+      "bytes": 416317,
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "post_mode": 420,
+      "type": "regular"
+    },
+    "documents": [
+      {
+        "path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/replacement_recuts/auto_173005_934_1166.record.json",
+        "sha256": "sha256:0ce47d7129c2b920d4cdaefc814cf58cc7eca6d2481e651af060c94f5dc99e6f",
+        "bytes": 118043,
+        "uid": 0,
+        "gid": 0,
+        "mode": 384,
+        "post_mode": 384,
+        "type": "regular"
+      },
+      {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-08-11/本想看“CP误解向”，李豆沙却越看越.record.json",
+        "sha256": "sha256:0ce47d7129c2b920d4cdaefc814cf58cc7eca6d2481e651af060c94f5dc99e6f",
+        "bytes": 118043,
+        "uid": 0,
+        "gid": 0,
+        "mode": 384,
+        "post_mode": 384,
+        "type": "regular"
+      },
+      {
+        "path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/replacement_recuts/auto_173005_934_1166.recut.publish.json",
+        "sha256": "sha256:b019d927606c71d6b701a0cf44b7c45d7661f0da98b7c3beea167d6ff7df0572",
+        "bytes": 63182,
+        "uid": 0,
+        "gid": 0,
+        "mode": 384,
+        "post_mode": 384,
+        "type": "regular"
+      }
+    ]
+  },
+  "authority_sha256": "sha256:940df85848a0e6675aca760b51c7086962974c09132b9555a307c87c505c618f"
+}

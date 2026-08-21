@@ -268,6 +268,7 @@ def _validate_source_fact_receipts(
         "selection_scorecard": story_contract.get("selection_scorecard"),
         "candidate_id": str(story_contract.get("candidate_id") or ""),
         "final_reviewed_srt_path": subtitle_path,
+        "story_contract": story_contract,
     }
     if speaker_evidence is not _SPEAKER_EVIDENCE_UNSET:
         validation_kwargs["speaker_evidence"] = speaker_evidence

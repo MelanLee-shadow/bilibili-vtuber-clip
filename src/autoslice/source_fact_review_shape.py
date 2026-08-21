@@ -12,6 +12,7 @@ def source_fact_review_passes_shape(
     manual_title_keep_decision: str,
     deterministic_text_narrowing_decision: str,
     terminal_text_preservation_decision: str,
+    candidate_public_text_refresh_decision: str = "CANDIDATE_PUBLIC_TEXT_SOURCE_FACT_REFRESH",
 ) -> bool:
     """Accept only one of the closed PASS receipt shapes."""
 
@@ -43,6 +44,12 @@ def source_fact_review_passes_shape(
             and isinstance(review.get("historical_provider_receipt"), Mapping)
             and isinstance(review.get("terminal_text_preservation"), Mapping)
             and review["terminal_text_preservation"].get("status") == "VALID"
+        )
+        or (
+            decision == candidate_public_text_refresh_decision
+            and isinstance(review.get("historical_provider_receipt"), Mapping)
+            and isinstance(review.get("candidate_public_text_source_fact_refresh"), Mapping)
+            and review["candidate_public_text_source_fact_refresh"].get("status") == "VALID"
         )
     )
     return bool(

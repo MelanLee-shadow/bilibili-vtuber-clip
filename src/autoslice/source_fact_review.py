@@ -33,6 +33,9 @@ from src.autoslice.candidate_public_text_surface_authority import (
     build_public_text_source_fact_context,
     load_candidate_public_text_surface_authority,
 )
+from src.autoslice.candidate_source_fact_refresh import (
+    validate_candidate_public_text_source_fact_refresh_from_source_fact,
+)
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.deterministic_text_surface_resolution import (
     CANDIDATE_ID as DETERMINISTIC_TEXT_NARROWING_CANDIDATE_ID,
@@ -64,8 +67,6 @@ from src.autoslice.surface_canon import (
     hard_meme_surface_rules,
 )
 from src.autoslice.title_policy import publish_title_policy_violations
-
-
 SCHEMA_VERSION = "lidousha-source-fact-review.v1"
 RESCORE_CANDIDATE_SCHEMA_VERSION = "source-fact-rescore-candidate.v1"
 ENTITY_CONTEXT_SCHEMA_VERSION = "source-fact-entity-context.v1"
@@ -87,8 +88,6 @@ _CANDIDATE_RECUT_SUFFIX_RX = re.compile(r"r\d+$")
 _SHA256_VALUE_RX = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _SPEAKER_EVIDENCE_UNSET = object()
 DETERMINISTIC_TEXT_NARROWING_PASS_DECISION = "DETERMINISTIC_TEXT_NARROWING"
-
-
 @dataclass(frozen=True, slots=True)
 class _ResolvedEntityContext:
     """Runtime projection plus its relocation-safe receipt representation."""
@@ -1791,6 +1790,7 @@ def validate_source_fact_review(
     final_reviewed_srt_path: Path | None = None,
     speaker_evidence: object = _SPEAKER_EVIDENCE_UNSET,
     qixi_repo_root: Path | None = None,
+    story_contract: Mapping[str, object] | None = None,
 ) -> bool:
     """Recheck the persisted receipt without trusting selected top-level fields."""
 
@@ -1816,6 +1816,10 @@ def validate_source_fact_review(
             selection_scorecard=selection_scorecard,
             candidate_id=candidate_id,
             speaker_evidence=speaker_evidence,
+        )
+    if review.get("decision") == "CANDIDATE_PUBLIC_TEXT_SOURCE_FACT_REFRESH":
+        return validate_candidate_public_text_source_fact_refresh_from_source_fact(
+            review, repo_root=qixi_repo_root or _REPO_ROOT, validation=locals()
         )
     if review.get("decision") == MANUAL_TITLE_KEEP_PASS_DECISION:
         return _validate_manual_title_keep_receipt(
