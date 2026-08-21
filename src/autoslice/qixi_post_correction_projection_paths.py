@@ -43,6 +43,44 @@ def sha256_bytes(payload: bytes) -> str:
     return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
+def canonical_sha256(value: object) -> str:
+    return "sha256:" + hashlib.sha256(
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+
+
+def json_bytes(value: object) -> bytes:
+    return (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
+
+
+def json_domain_mapping(value: object, *, label: str) -> dict[str, object]:
+    """Freeze one staged JSON object exactly as its persisted draft represents it."""
+
+    if not isinstance(value, Mapping):
+        raise QixiPostCorrectionPublicSurfaceError(f"{label} is not a JSON object")
+    try:
+        parsed = json.loads(
+            json.dumps(
+                value,
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+    except (TypeError, ValueError) as exc:
+        raise QixiPostCorrectionPublicSurfaceError(
+            f"{label} cannot enter the staged JSON domain"
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise QixiPostCorrectionPublicSurfaceError(f"{label} JSON domain drifts")
+    return parsed
+
+
 def source_cues(srt_path: Path) -> list[SourceCue]:
     return [
         SourceCue(
@@ -459,6 +497,53 @@ def prepare_stage_documents(
     return record, stage_relative_locators(record, stage_artifacts=stage_artifacts) | stage_relative_locators(
         staged_publish, stage_artifacts=stage_artifacts
     )
+
+
+def canonicalize_stage_public_surfaces(
+    staged: Mapping[str, object],
+    staged_publish: Mapping[str, object],
+    *,
+    projected_record: dict[str, object],
+    projected_publish: dict[str, object],
+) -> None:
+    """Copy only one verified JSON-domain receipt and generation to both mirrors."""
+
+    staging = staged.get("publish_staging")
+    story = staged.get("story_contract")
+    if not isinstance(staging, Mapping) or not isinstance(story, Mapping):
+        raise QixiPostCorrectionPublicSurfaceError("returned staged public surfaces are missing")
+    canonical_source_fact = json_domain_mapping(
+        staged_publish.get("source_fact_review"), label="persisted staged source-fact receipt"
+    )
+    canonical_generation = json_domain_mapping(
+        staged_publish.get("cover_generation"), label="persisted staged cover generation"
+    )
+    if (
+        json_domain_mapping(
+            staging.get("source_fact_review"), label="returned staged source-fact receipt"
+        )
+        != canonical_source_fact
+        or json_domain_mapping(
+            story.get("source_fact_review"), label="returned staged StoryContract receipt"
+        )
+        != canonical_source_fact
+        or json_domain_mapping(
+            staging.get("cover_generation"), label="returned staged cover generation"
+        )
+        != canonical_generation
+    ):
+        raise QixiPostCorrectionPublicSurfaceError(
+            "canonical publish and returned public surfaces drift before projection"
+        )
+    projected_staging = projected_record.get("publish_staging")
+    projected_story = projected_record.get("story_contract")
+    if not isinstance(projected_staging, dict) or not isinstance(projected_story, dict):
+        raise QixiPostCorrectionPublicSurfaceError("staged public projection documents drift")
+    projected_staging["source_fact_review"] = copy.deepcopy(canonical_source_fact)
+    projected_staging["cover_generation"] = copy.deepcopy(canonical_generation)
+    projected_story["source_fact_review"] = copy.deepcopy(canonical_source_fact)
+    projected_publish["source_fact_review"] = copy.deepcopy(canonical_source_fact)
+    projected_publish["cover_generation"] = copy.deepcopy(canonical_generation)
 
 
 def materialized_public_targets(

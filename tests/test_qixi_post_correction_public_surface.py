@@ -506,7 +506,10 @@ def test_real_publish_stage_replays_manual_title_public_fields(tmp_path: Path, m
             "final_cover_sha256": _sha(cover.read_bytes()),
             "cover_text_mode": "punch",
             "cover_text": "女友感",
-            "rendered_lines": ["女友感"],
+            # Cover builders legitimately retain tuple receipts in memory;
+            # the staged publish file is the canonical JSON-domain form.
+            "rendered_lines": ("女友感",),
+            "cover_punch": ("女友感",),
             "art_direction": {"cover_punch_semantic_review": {}},
         }
         return {
@@ -562,6 +565,46 @@ def test_real_publish_stage_replays_manual_title_public_fields(tmp_path: Path, m
     assert staging["title_authority_error"] is None
     assert staging["title_policy_violations"] == []
     assert staging["title_story_audit"]["status"] == "PASS"
+    assert staging["cover_generation"] == publish["cover_generation"]
+    assert staging["cover_generation"]["rendered_lines"] == ["女友感"]
+    assert staging["cover_generation"]["cover_punch"] == ["女友感"]
+
+
+@pytest.mark.parametrize("drift", ("locator", "hash", "route", "semantic"))
+def test_projection_rejects_returned_cover_generation_drift_before_targets(
+    tmp_path: Path, drift: str
+) -> None:
+    repo, runtime, authority, paths = _fixture(tmp_path)
+
+    def raw_generation_drift(record: dict[str, object], **kwargs: object) -> dict[str, object]:
+        staged = _fake_stage(record, **kwargs)
+        generation = staged["publish_staging"]["cover_generation"]
+        assert isinstance(generation, dict)
+        if drift == "locator":
+            generation["final_cover"] = "/unsealed/foreign-cover.png"
+        elif drift == "hash":
+            generation["final_cover_sha256"] = "sha256:" + "f" * 64
+        elif drift == "route":
+            generation["route_decision"] = {"status": "DRIFTED"}
+        else:
+            generation["cover_text"] = "fabricated semantic claim"
+        return staged
+
+    before = {
+        key: paths[key].read_bytes() for key in ("record", "delivery", "publish", "state")
+    }
+    with pytest.raises(
+        closure.QixiPostCorrectionPublicSurfaceError,
+        match="canonical publish and returned public surfaces drift before projection",
+    ):
+        closure.finalize(
+            apply=True,
+            repo_root=repo,
+            runtime_root=runtime,
+            authority=authority,
+            _stage_publish=raw_generation_drift,
+        )
+    assert {key: paths[key].read_bytes() for key in before} == before
 
 
 @pytest.mark.parametrize("cover_mode", ("screenshot", "cpa"))

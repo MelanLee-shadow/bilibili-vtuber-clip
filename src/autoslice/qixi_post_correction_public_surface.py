@@ -36,9 +36,12 @@ from src.autoslice.qixi_post_correction_projection_paths import (
     QixiPostCorrectionPublicSurfaceError,
     adopt_staged_file as _adopt_staged_file,
     assert_no_stage_locator as _assert_no_stage_locator,
+    canonical_sha256 as _canonical_sha256,
+    canonicalize_stage_public_surfaces as _canonicalize_stage_public_surfaces,
     copy_sealed_stage_file as _copy_sealed_stage_file,
     clear_staged_file_owner as _clear_staged_file_owner,
     create_staged_file as _create_staged_file,
+    json_bytes as _json_bytes,
     package_cover_paths as _package_cover_paths,
     materialized_public_targets as _materialized_public_targets,
     prepare_stage_documents as _prepare_stage_documents,
@@ -148,26 +151,12 @@ _SOURCE_FACT_PREIMAGE_FIELDS = frozenset(
 _SEALED_BEFORE_FIELDS = frozenset({"record", "delivery_record", "publish", "state"})
 
 
-def _canonical_sha256(value: object) -> str:
-    return "sha256:" + hashlib.sha256(
-        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
-            "utf-8"
-        )
-    ).hexdigest()
-
-
 def _file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return "sha256:" + digest.hexdigest()
-
-
-def _json_bytes(value: object) -> bytes:
-    return (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
-        "utf-8"
-    )
 
 
 def _b64(payload: bytes | None) -> str | None:
@@ -948,6 +937,12 @@ def _build_after_image(
         stage_artifacts=stage_artifacts,
         stage_publish_path=stage_publish_path,
         public_publish_path=inputs.artifact_paths["publish"],
+    )
+    _canonicalize_stage_public_surfaces(
+        staged,
+        staged_publish,
+        projected_record=staged_for_projection,
+        projected_publish=staged_publish_for_projection,
     )
     if not referenced.issubset(all_stage_files):
         raise QixiPostCorrectionPublicSurfaceError("staged public locator is not materialized")

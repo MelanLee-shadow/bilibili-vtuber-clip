@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 import src.autoslice.qixi_operator_exact_title_source_fact as authority_module
+import src.autoslice.publish_staging as publish_staging
 import src.autoslice.source_fact_staging as source_fact_staging
 from src.autoslice import qixi_post_correction_public_surface as public_surface
 from src.autoslice.jingting_chunker import parse_srt_cues
@@ -812,6 +813,69 @@ def test_actual_canonical_preprovider_story_contract_resolves_without_provider(
     )
     assert result.review is not None
     assert result.review["decision"] == authority_module.DECISION
+
+
+def test_qixi_actual_stage_projects_one_json_domain_cover_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    public_surface_tests._synthetic_cover_validators.__wrapped__(monkeypatch)
+    repo, public_authority, authority, paths, _record = _canonical_public_qixi_fixture(tmp_path)
+    monkeypatch.setattr(authority_module, "load_authority", lambda *_args, **_kwargs: authority)
+    monkeypatch.setattr(
+        source_fact_staging, "load_qixi_operator_exact_title_authority", lambda _cid: authority
+    )
+    monkeypatch.setattr(source_fact_staging, "load_manual_title_keep_authority", lambda _cid: None)
+    monkeypatch.setattr(
+        source_fact_staging, "load_deterministic_text_surface_authority", lambda _cid: None
+    )
+    monkeypatch.setattr(
+        source_fact_staging, "load_operator_exact_title_source_fact_authority", lambda _cid: None
+    )
+
+    def tuple_cover(
+        _record: object, *, private_artifact_root: Path, **_kwargs: object
+    ) -> dict[str, object]:
+        cover = private_artifact_root / "covers" / "canonical.cover.png"
+        cover.parent.mkdir(parents=True, exist_ok=True)
+        cover.write_bytes(b"canonical-cover")
+        generation = {
+            "final_cover": str(cover),
+            "final_cover_sha256": bytes_sha256(cover.read_bytes()),
+            "cover_text_mode": "punch",
+            "cover_text": "女友感",
+            "rendered_lines": ("女友感",),
+            "cover_punch": ("女友感",),
+            "art_direction": {"cover_punch_semantic_review": {}},
+        }
+        return {
+            "status": "AI_COVER_READY",
+            "cover_path": str(cover),
+            "cover_sha256": generation["final_cover_sha256"],
+            "cover_generation": generation,
+            "reason_codes": [],
+        }
+
+    monkeypatch.setattr(publish_staging, "_stage_lidousha_ai_cover", tuple_cover)
+    inputs = public_surface.validate_runtime(
+        public_authority, repo_root=repo, runtime_root=Path(str(public_authority["runtime_root"]))
+    )
+    stage_root = Path(tempfile.mkdtemp(prefix="stage-", dir=paths["record"].parent))
+    try:
+        targets, _metadata = public_surface._build_after_image(
+            inputs,
+            stage_root=stage_root,
+            source_fact_llm_call=lambda _prompt: pytest.fail("provider called"),
+            stage_publish=publish_staging._stage_publish_draft,
+        )
+        record = json.loads(targets[paths["record"]].decode("utf-8"))
+        publish = json.loads(targets[paths["publish"]].decode("utf-8"))
+        staging = record["publish_staging"]
+        assert staging["source_fact_review"] == publish["source_fact_review"]
+        assert staging["cover_generation"] == publish["cover_generation"]
+        assert staging["cover_generation"]["rendered_lines"] == ["女友感"]
+        assert staging["cover_generation"]["cover_punch"] == ["女友感"]
+    finally:
+        public_surface._remove_private_stage(stage_root)
 
 
 def test_two_phase_postcommit_successor_replays_daily_and_package(
