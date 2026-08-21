@@ -256,8 +256,11 @@ def _fake_stage(record: dict[str, object], **kwargs: object) -> dict[str, object
     root = Path(str(kwargs["private_artifact_root"]))
     publish_path = Path(str(kwargs["private_publish_json_path"]))
     cover = root / "covers" / "new.cover.png"
+    background = root / "covers_ai_original" / "new.background.png"
     cover.parent.mkdir(parents=True, exist_ok=True)
+    background.parent.mkdir(parents=True, exist_ok=True)
     cover.write_bytes(b"new-cover")
+    background.write_bytes(b"new-background")
     story = closure._story_contract_rebuilder(
         record,
         srt_path=Path(str(record["subtitle_path"])),
@@ -273,6 +276,8 @@ def _fake_stage(record: dict[str, object], **kwargs: object) -> dict[str, object
     generation = {
         "final_cover": str(cover),
         "final_cover_sha256": _sha(cover.read_bytes()),
+        "ai_background": str(background),
+        "ai_background_sha256": _sha(background.read_bytes()),
         "cover_text_mode": "punch",
         "cover_text": "女友感",
         "rendered_lines": ["女友感"],
@@ -281,6 +286,7 @@ def _fake_stage(record: dict[str, object], **kwargs: object) -> dict[str, object
     staged = copy.deepcopy(record)
     hashes = dict(staged["artifact_hashes"])
     hashes["cover_sha256"] = generation["final_cover_sha256"]
+    hashes["ai_background_sha256"] = generation["ai_background_sha256"]
     staged["artifact_hashes"] = hashes
     story["source_fact_review"] = receipt
     staged["story_contract"] = story
@@ -1255,11 +1261,16 @@ def test_real_publish_stage_replays_manual_title_public_fields(tmp_path: Path, m
         _record: object, *, private_artifact_root: Path, **_kwargs: object
     ) -> dict[str, object]:
         cover = private_artifact_root / "covers" / "canonical.cover.png"
+        background = private_artifact_root / "covers_ai_original" / "canonical.background.png"
         cover.parent.mkdir(parents=True, exist_ok=True)
+        background.parent.mkdir(parents=True, exist_ok=True)
         cover.write_bytes(b"canonical-cover")
+        background.write_bytes(b"canonical-background")
         generation = {
             "final_cover": str(cover),
             "final_cover_sha256": _sha(cover.read_bytes()),
+            "ai_background": str(background),
+            "ai_background_sha256": _sha(background.read_bytes()),
             "cover_text_mode": "punch",
             "cover_text": "女友感",
             # Cover builders legitimately retain tuple receipts in memory;
@@ -1272,6 +1283,7 @@ def test_real_publish_stage_replays_manual_title_public_fields(tmp_path: Path, m
             "status": "AI_COVER_READY",
             "cover_path": str(cover),
             "cover_sha256": generation["final_cover_sha256"],
+            "ai_background_sha256": generation["ai_background_sha256"],
             "cover_generation": generation,
             "reason_codes": [],
         }

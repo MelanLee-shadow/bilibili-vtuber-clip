@@ -17,6 +17,7 @@ from src.autoslice.qixi_post_correction_projection_paths import (
     package_cover_paths,
     replayed_cover_gate_callables,
 )
+from src.autoslice.qixi_post_correction_diagnostics import sha256_bytes
 from src.autoslice.review_package_portable_evidence import rebuild_package_speaker_evidence
 from src.autoslice.source_fact_review import validate_source_fact_review
 
@@ -112,6 +113,50 @@ def _cover_gate_map(
 
 def _error(closure: Any, message: str) -> None:
     raise closure.QixiPostCorrectionPublicSurfaceError(message)
+
+
+def _generation_owned_hashes(
+    closure: Any,
+    *,
+    generation: object,
+    after: Mapping[Path, bytes],
+) -> dict[str, str]:
+    """Return the only mutable record artifact hashes owned by a new cover."""
+
+    if not isinstance(generation, Mapping):
+        _error(closure, "journal cover generation is invalid")
+    owned: dict[str, str] = {}
+    for artifact_hash_key, generation_hash_key, path_key in (
+        ("cover_sha256", "final_cover_sha256", "final_cover"),
+        ("ai_background_sha256", "ai_background_sha256", "ai_background"),
+    ):
+        digest, raw_path = generation.get(generation_hash_key), generation.get(path_key)
+        if not isinstance(digest, str) or not isinstance(raw_path, str):
+            _error(closure, "journal cover-owned artifact hash binding drifts")
+        path = Path(raw_path)
+        if path not in after or sha256_bytes(after[path]) != digest:
+            _error(closure, "journal cover-owned artifact hash binding drifts")
+        owned[artifact_hash_key] = digest
+    return owned
+
+
+def _expected_public_artifact_hashes(
+    closure: Any,
+    *,
+    context: AfterImageContext,
+    generation: object,
+) -> dict[str, str]:
+    """Project the sealed record hash map through the canonical cover stage."""
+
+    before_hashes = context.before_record.get("artifact_hashes")
+    record_hashes = context.record.get("artifact_hashes")
+    if not isinstance(before_hashes, Mapping) or not isinstance(record_hashes, Mapping):
+        _error(closure, "journal predecessor artifact hashes are missing")
+    expected = {str(key): str(value) for key, value in before_hashes.items()}
+    expected.update(_generation_owned_hashes(closure, generation=generation, after=context.after))
+    if dict(record_hashes) != expected:
+        _error(closure, "journal immutable artifact hash drifts")
+    return expected
 
 
 def build_context(
@@ -261,15 +306,9 @@ def gate_callables(closure: Any, context: AfterImageContext) -> tuple[AfterImage
         )
 
     def immutable_record_hashes() -> None:
-        before_hashes = before_record.get("artifact_hashes")
-        if not isinstance(before_hashes, Mapping) or not isinstance(hashes, Mapping):
-            _error(closure, "journal predecessor artifact hashes are missing")
-        if any(
-            before_hashes.get(key) != hashes.get(key)
-            for key in set(before_hashes) | set(hashes)
-            if key != "cover_sha256"
-        ):
-            _error(closure, "journal immutable artifact hash drifts")
+        _expected_public_artifact_hashes(
+            closure, context=context, generation=generation
+        )
 
     def record_mutation_scope() -> None:
         if any(
@@ -372,19 +411,12 @@ def gate_callables(closure: Any, context: AfterImageContext) -> tuple[AfterImage
             _error(closure, "journal publish closure mutates an unrelated field")
 
     def publish_hashes() -> None:
-        before_hashes = before_publish.get("artifact_hashes")
         publish_hashes = publish.get("artifact_hashes")
-        if (before_hashes is None) != (publish_hashes is None):
+        expected = _expected_public_artifact_hashes(
+            closure, context=context, generation=generation
+        )
+        if not isinstance(publish_hashes, Mapping) or dict(publish_hashes) != expected:
             _error(closure, "journal publish artifact hash projection drifts")
-        if isinstance(before_hashes, Mapping) and isinstance(publish_hashes, Mapping):
-            if any(
-                before_hashes.get(key) != publish_hashes.get(key)
-                for key in set(before_hashes) | set(publish_hashes)
-                if key != "cover_sha256"
-            ) or publish_hashes.get("cover_sha256") != (
-                generation.get("final_cover_sha256") if isinstance(generation, Mapping) else None
-            ):
-                _error(closure, "journal publish cover hash projection drifts")
 
     def state_exact_diff() -> None:
         picks = before_state.get("picks")

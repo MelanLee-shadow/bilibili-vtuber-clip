@@ -850,11 +850,16 @@ def test_qixi_actual_stage_projects_one_json_domain_cover_generation(
             }
         )
         cover = private_artifact_root / "covers" / "canonical.cover.png"
+        background = private_artifact_root / "covers_ai_original" / "canonical.background.png"
         cover.parent.mkdir(parents=True, exist_ok=True)
+        background.parent.mkdir(parents=True, exist_ok=True)
         cover.write_bytes(b"canonical-cover")
+        background.write_bytes(b"canonical-background")
         generation = {
             "final_cover": str(cover),
             "final_cover_sha256": bytes_sha256(cover.read_bytes()),
+            "ai_background": str(background),
+            "ai_background_sha256": bytes_sha256(background.read_bytes()),
             "cover_text_mode": "punch",
             "cover_text": "女友感",
             "rendered_lines": ("女友感",),
@@ -865,6 +870,7 @@ def test_qixi_actual_stage_projects_one_json_domain_cover_generation(
             "status": "AI_COVER_READY",
             "cover_path": str(cover),
             "cover_sha256": generation["final_cover_sha256"],
+            "ai_background_sha256": generation["ai_background_sha256"],
             "cover_generation": generation,
             "reason_codes": [],
         }
@@ -899,6 +905,14 @@ def test_qixi_actual_stage_projects_one_json_domain_cover_generation(
         assert staging["cover_generation"] == publish["cover_generation"]
         assert staging["cover_generation"]["rendered_lines"] == ["女友感"]
         assert staging["cover_generation"]["cover_punch"] == ["女友感"]
+        assert Path(str(staging["cover_generation"]["final_cover"])) in targets
+        assert Path(str(staging["cover_generation"]["ai_background"])) in targets
+        assert bytes_sha256(
+            targets[Path(str(staging["cover_generation"]["final_cover"]))]
+        ) == staging["cover_generation"]["final_cover_sha256"]
+        assert bytes_sha256(
+            targets[Path(str(staging["cover_generation"]["ai_background"]))]
+        ) == staging["cover_generation"]["ai_background_sha256"]
         before = {
             path: path.read_bytes()
             for path in (paths["record"], paths["delivery"], paths["publish"], paths["state"])
@@ -906,6 +920,74 @@ def test_qixi_actual_stage_projects_one_json_domain_cover_generation(
         public_surface._validate_after_image(
             authority=public_authority, before=before, after=targets
         )
+
+        def after_documents(
+            candidate_record: dict[str, object], candidate_publish: dict[str, object]
+        ) -> dict[Path, bytes]:
+            candidate_after = dict(targets)
+            payload = public_surface._json_bytes(candidate_record)
+            candidate_after[paths["record"]] = payload
+            candidate_after[paths["delivery"]] = payload
+            candidate_after[paths["publish"]] = public_surface._json_bytes(
+                candidate_publish
+            )
+            return candidate_after
+
+        changed_media_record = copy.deepcopy(record)
+        changed_media_publish = copy.deepcopy(publish)
+        for document in (changed_media_record, changed_media_publish):
+            document["artifact_hashes"]["video_sha256"] = "sha256:" + "0" * 64
+        with pytest.raises(
+            public_surface.QixiPostCorrectionPublicSurfaceError,
+            match="final media binding drifts",
+        ):
+            public_surface._validate_after_image(
+                authority=public_authority,
+                before=before,
+                after=after_documents(changed_media_record, changed_media_publish),
+            )
+
+        unbound_background_record = copy.deepcopy(record)
+        unbound_background_publish = copy.deepcopy(publish)
+        for document in (unbound_background_record, unbound_background_publish):
+            document["artifact_hashes"]["ai_background_sha256"] = "sha256:" + "0" * 64
+        unbound_background_publish["cover_generation"]["ai_background_sha256"] = (
+            "sha256:" + "0" * 64
+        )
+        unbound_background_record["publish_staging"]["cover_generation"][
+            "ai_background_sha256"
+        ] = "sha256:" + "0" * 64
+        with pytest.raises(
+            public_surface.QixiPostCorrectionPublicSurfaceError,
+            match="cover-owned artifact hash binding drifts",
+        ):
+            public_surface._validate_after_image(
+                authority=public_authority,
+                before=before,
+                after=after_documents(
+                    unbound_background_record, unbound_background_publish
+                ),
+            )
+
+        for mutation in ("missing", "extra"):
+            projected_record = copy.deepcopy(record)
+            projected_publish = copy.deepcopy(publish)
+            if mutation == "missing":
+                projected_publish["artifact_hashes"].pop("cover_sha256")
+            else:
+                projected_publish["artifact_hashes"]["unrelated_sha256"] = (
+                    "sha256:" + "0" * 64
+                )
+            with pytest.raises(
+                public_surface.QixiPostCorrectionPublicSurfaceError,
+                match="publish artifact hash projection drifts",
+            ):
+                public_surface._validate_after_image(
+                    authority=public_authority,
+                    before=before,
+                    after=after_documents(projected_record, projected_publish),
+                )
+
         forged_record = copy.deepcopy(record)
         forged_publish = copy.deepcopy(publish)
         for receipt in (
@@ -997,6 +1079,7 @@ def test_qixi_actual_stage_replays_full_host_identity_cover_witness(
             "status": "AI_COVER_READY",
             "cover_path": str(generation["final_cover"]),
             "cover_sha256": generation["final_cover_sha256"],
+            "ai_background_sha256": generation["ai_background_sha256"],
             "cover_generation": generation,
             "reason_codes": [],
         }
@@ -1066,6 +1149,7 @@ def test_qixi_actual_stage_rejects_cover_without_final_host_identity_witness(
             "status": "AI_COVER_READY",
             "cover_path": str(generation["final_cover"]),
             "cover_sha256": generation["final_cover_sha256"],
+            "ai_background_sha256": generation["ai_background_sha256"],
             "cover_generation": generation,
             "reason_codes": [],
         }
