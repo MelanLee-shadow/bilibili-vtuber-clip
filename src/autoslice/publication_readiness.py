@@ -273,7 +273,23 @@ def _inspect_package(root: Path | None, candidate_id: str, date: str) -> tuple[s
         source_fact = contract.get("source_fact_review") if isinstance(contract, Mapping) else None
     if not isinstance(source_fact, Mapping) or source_fact.get("status") != "PASS":
         reasons.add("SOURCE_FACT_PROVIDER_MISSING")
-    qc = _one_file(root, ("*title*cover*qc*.json", "*joint*qc*.json"))
+    qc_candidates: set[Path] = set()
+    for pattern in ("*title*cover*qc*.json", "*joint*qc*.json"):
+        for path in root.rglob(pattern):
+            try:
+                _safe_path(path, root)
+            except (OSError, ValueError):
+                continue
+            qc_candidates.add(path)
+    current_qcs: list[Path] = []
+    for candidate_qc in qc_candidates:
+        try:
+            candidate_doc = _load_json(candidate_qc, root)
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        if _valid_joint_qc(candidate_doc, candidate_id=candidate_id, title=publish.get("title"), cover=cover, cover_sha256=actual_cover if cover is not None else None, root=root):
+            current_qcs.append(candidate_qc)
+    qc = current_qcs[0] if len(current_qcs) == 1 else None
     if qc is None:
         reasons.add("COVER_QC_MISSING")
     else:
