@@ -16,6 +16,7 @@ import src.autoslice.publish_staging as publish_staging
 import src.autoslice.qixi_post_correction_projection_paths as projection_paths
 import src.autoslice.source_fact_staging as source_fact_staging
 from src.autoslice import qixi_post_correction_public_surface as public_surface
+from src.autoslice import qixi_post_correction_public_artifact_recovery as basename_recovery
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.cover_punch_semantics import cover_text_requires_punch_for_thumbnail
 from scripts.build_lidousha_daily_review_manifest import (
@@ -1272,8 +1273,9 @@ def test_qixi_manual_projection_maps_only_the_sealed_decision_status(
             )
 
 
+@pytest.mark.parametrize("recover_basename", [False, True])
 def test_two_phase_postcommit_successor_replays_daily_and_package(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recover_basename: bool
 ) -> None:
     """A real canonical public journal proves the postcommit successor."""
 
@@ -1341,6 +1343,12 @@ def test_two_phase_postcommit_successor_replays_daily_and_package(
     inputs = public_surface.validate_runtime(
         public_authority, repo_root=repo, runtime_root=Path(str(public_authority["runtime_root"]))
     )
+    if recover_basename:
+        monkeypatch.setattr(
+            public_surface,
+            "_public_artifact_root",
+            projection_paths.legacy_public_artifact_root,
+        )
     stage_root = Path(tempfile.mkdtemp(prefix="stage-", dir=paths["record"].parent))
     try:
         targets, metadata = public_surface._build_after_image(
@@ -1374,6 +1382,10 @@ def test_two_phase_postcommit_successor_replays_daily_and_package(
         public_surface._commit_journal(journal_root, journal, authority=public_authority)
         == "APPLIED"
     )
+    if recover_basename:
+        assert basename_recovery.recover(
+            apply=True, repo_root=repo, authority=public_authority
+        )["status"] == "RECOVERY_COMMITTED"
 
     record_after = json.loads(paths["record"].read_text(encoding="utf-8"))
     publish_after = json.loads(paths["publish"].read_text(encoding="utf-8"))
@@ -1400,6 +1412,38 @@ def test_two_phase_postcommit_successor_replays_daily_and_package(
         rebuilt_speaker_evidence=speaker,
         qixi_repo_root=repo,
     )
+
+    if recover_basename:
+        migration_root = basename_recovery._recovery_root(public_authority)
+        migration_journal = migration_root / "journal.json"
+        migration_receipt = migration_root / "final-receipt.json"
+        valid_migration_journal = migration_journal.read_bytes()
+        valid_migration_receipt = migration_receipt.read_bytes()
+        migration_receipt.unlink()
+        with pytest.raises(DailyManifestError):
+            _validate_source_fact_receipts(
+                record_doc=record_after,
+                publish_doc=publish_after,
+                subtitle_path=paths["srt"],
+                speaker_evidence=speaker,
+                qixi_repo_root=repo,
+            )
+        migration_receipt.write_bytes(valid_migration_receipt)
+        tampered_migration = json.loads(valid_migration_journal)
+        tampered_migration["path_mapping"] = {}
+        tampered_migration["journal_sha256"] = basename_recovery._journal_digest(
+            tampered_migration
+        )
+        migration_journal.write_bytes(public_surface._json_bytes(tampered_migration))
+        with pytest.raises(DailyManifestError):
+            _validate_source_fact_receipts(
+                record_doc=record_after,
+                publish_doc=publish_after,
+                subtitle_path=paths["srt"],
+                speaker_evidence=speaker,
+                qixi_repo_root=repo,
+            )
+        migration_journal.write_bytes(valid_migration_journal)
 
     journal_path = journal_root / "journal.json"
     receipt_path = journal_root / "final-receipt.json"

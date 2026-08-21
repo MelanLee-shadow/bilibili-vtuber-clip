@@ -323,7 +323,94 @@ def _validate_journal(value: object, *, authority: Mapping[str, object]) -> dict
         before, after = _unb64(entry["before_bytes_b64"], label="before"), _unb64(entry["after_bytes_b64"], label="after")
         if after is None or entry["after_sha256"] != _digest(after) or (before is None) != (entry["before_sha256"] is None):
             raise _error("basename recovery journal bytes drift")
+    _validate_successor_shape(value, authority=authority, source=source)
     return value
+
+
+def _validate_successor_shape(
+    journal: Mapping[str, object], *, authority: Mapping[str, object], source: Mapping[str, object]
+) -> None:
+    """Prove the recovery is precisely source-after bytes plus locator mapping.
+
+    The original public journal is no longer live after a valid recovery, so
+    this derives the allowed successor bytes from its frozen after-image rather
+    than treating the recovery journal as self-authorizing.
+    """
+
+    artifacts = authority["artifacts"]
+    assert isinstance(artifacts, Mapping)
+    package_root = Path(str(artifacts["record"]["path"])).parent
+    legacy_namespace = legacy_public_artifact_root(package_root, authority)
+    successor_namespace = public_artifact_root(package_root, authority)
+    mapping: dict[str, str] = {}
+    source_sidecars: dict[Path, tuple[bytes, int]] = {}
+    source_documents: dict[str, tuple[Path, bytes, int]] = {}
+    raw_source_entries = source.get("entries")
+    if not isinstance(raw_source_entries, list):
+        raise _error("basename recovery source journal inventory drifts")
+    for raw in raw_source_entries:
+        assert isinstance(raw, Mapping)
+        role, target = str(raw["role"]), Path(str(raw["target"]))
+        after = _unb64(raw["after_bytes_b64"], label="source journal after")
+        mode = raw["after_mode"]
+        if after is None or isinstance(mode, bool) or not isinstance(mode, int):
+            raise _error("basename recovery source journal bytes drift")
+        if role == "cover_artifact":
+            relative = _decode_legacy_relative(target, legacy_namespace=legacy_namespace)
+            successor = public_artifact_path(successor_namespace, relative)
+            mapping[str(target)] = str(successor)
+            source_sidecars[successor] = (after, mode)
+        elif role in {"record", "delivery_record", "publish", "state"}:
+            source_documents[role] = (target, after, mode)
+    if set(source_documents) != {"record", "delivery_record", "publish", "state"}:
+        raise _error("basename recovery source journal inventory drifts")
+    if dict(journal["path_mapping"]) != mapping:
+        raise _error("basename recovery mapping drifts")
+    record = json.loads(source_documents["record"][1])
+    delivery = json.loads(source_documents["delivery_record"][1])
+    publish = json.loads(source_documents["publish"][1])
+    state = json.loads(source_documents["state"][1])
+    if not all(isinstance(value, dict) for value in (record, delivery, publish, state)) or record != delivery:
+        raise _error("basename recovery source JSON drifts")
+    expected_documents = {
+        "record": surface._json_bytes(_replace_exact(record, mapping)),
+        "delivery_record": surface._json_bytes(_replace_exact(record, mapping)),
+        "publish": surface._json_bytes(_replace_exact(publish, mapping)),
+        "state": surface._json_bytes(_replace_exact(state, mapping)),
+    }
+    expected: dict[Path, tuple[bytes, bytes | None, int]] = {
+        source_documents[role][0]: (expected_documents[role], source_documents[role][1], source_documents[role][2])
+        for role in expected_documents
+    }
+    expected.update({path: (payload, None, mode) for path, (payload, mode) in source_sidecars.items()})
+    actual: dict[Path, Mapping[str, object]] = {
+        Path(str(entry["target"])): entry for entry in journal["entries"] if isinstance(entry, Mapping)
+    }
+    if set(actual) != set(expected):
+        raise _error("basename recovery target inventory drifts")
+    for target, (after, before, mode) in expected.items():
+        entry = actual[target]
+        if (
+            _unb64(entry["after_bytes_b64"], label="after") != after
+            or _unb64(entry["before_bytes_b64"], label="before") != before
+            or entry["after_mode"] != mode
+        ):
+            raise _error("basename recovery successor projection drifts")
+
+
+def validate_committed_successor(authority: Mapping[str, object]) -> None:
+    """Public, read-only replay of the only allowed basename-recovery successor."""
+
+    normalized = surface.validate_authority(authority)
+    root = _recovery_root(normalized)
+    journal = _load_existing(root, authority=normalized)
+    if journal is None or journal.get("status") != "COMMITTED":
+        raise _error("basename recovery committed journal is missing")
+    receipt_path = root / "final-receipt.json"
+    surface._require_regular(receipt_path, label="basename recovery receipt")
+    if receipt_path.read_bytes() != surface._json_bytes(_receipt(journal)):
+        raise _error("basename recovery receipt drifts")
+    _postcommit_replay(journal, authority=normalized)
 
 
 def _write_journal(root: Path, journal: dict[str, object], *, create: bool) -> None:

@@ -617,7 +617,17 @@ def _validate_committed_public_successor(repo_root: Path, document: Mapping[str,
             raise ValueError("committed public-surface journal is missing")
         if not (root / "final-receipt.json").is_file():
             raise ValueError("committed public-surface final receipt is missing")
-        public_surface._postcommit_replay(journal, authority=public_document)
+        try:
+            public_surface._postcommit_replay(journal, authority=public_document)
+        except public_surface.QixiPostCorrectionPublicSurfaceError:
+            # The original journal remains the exact predecessor proof.  Its
+            # after-image may only cease being live when the fixed basename
+            # recovery has committed a fully replayable successor chain.
+            from src.autoslice.qixi_post_correction_public_artifact_recovery import (
+                validate_committed_successor,
+            )
+
+            validate_committed_successor(public_document)
     except (
         OSError,
         ValueError,
