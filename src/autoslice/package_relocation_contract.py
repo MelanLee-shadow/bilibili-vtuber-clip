@@ -39,6 +39,7 @@ RECORD_PATH_POINTERS: frozenset[JsonPointer] = frozenset(
     {
         ("media_path",),
         ("subtitle_path",),
+        ("human_text_correction_manifest_path",),
         ("chat_authority_audit_path",),
         ("clip_context_path",),
         ("redelivery_baseline_audit_path",),

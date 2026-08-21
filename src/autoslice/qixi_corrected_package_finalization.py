@@ -1487,6 +1487,16 @@ def _project_current_terminal_documents(
         chat = project_uniform_host_locators(chat, kind="chat", mappings=evidence_mappings, source_workspace_root=evidence_workspace_root)
     except PackageRelocationError as exc:
         raise QixiCorrectedPackageError(f"current terminal locator contract failed: {exc}") from exc
+    if (
+        record.get("human_text_correction_manifest_path")
+        != str(_artifact_final_path(candidate_root, artifacts["correction"]))
+        or _normal_sha(
+            record.get("human_text_correction_manifest_sha256"),
+            label="current correction record locator",
+        )
+        != artifacts["correction"][1]
+    ):
+        raise QixiCorrectedPackageError("current correction record locator drifts")
     if not verify_chat_authority_final_surfaces(
         chat,
         final_text_srt=subtitle_text,

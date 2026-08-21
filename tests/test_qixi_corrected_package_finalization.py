@@ -149,6 +149,8 @@ def _write_current_lane_fixture(
     record_candidate_id: object = _MISSING,
     publish_candidate_id: object = CID,
     correction_candidate_id: object = CID,
+    correction_locator_name: str = "correction.json",
+    correction_locator_sha256: object = _MISSING,
 ) -> tuple[Path, Path, Path, Path]:
     """A real-helper fixture for the current 54-cue terminal projection lane.
 
@@ -278,12 +280,33 @@ def _write_current_lane_fixture(
         "clip_context_prompt": "", "selection_scorecard": None,
         "source_fact_review": source_fact,
     }
+    correction_payload = {
+        "schema_version": "human-subtitle-correction.v2",
+        "upload_enabled": False, "before_srt_sha256": "562bdb4536cb9989864f7f6e51f8eb79da42fcfa06f14ae8c612e0680fa4109e",
+        "after_srt_sha256": subtitle["sha256"].removeprefix("sha256:"),
+        "burned_media_sha256": video["sha256"].removeprefix("sha256:"),
+        "replace_operations": [], "set_line_operations": ["21=非常 balance いいや"],
+        "delivery_branding_authority": {"branding_intro": {
+            "intro_id": "z2", "intro_media_sha256": "sha256:" + "a" * 64,
+            "intro_offset_ms": 6183, "status": "PREPENDED",
+        }},
+    }
+    if correction_candidate_id is not _MISSING:
+        correction_payload["candidate_id"] = correction_candidate_id
+    correction = _write(package, "correction.json", json.dumps(correction_payload).encode())
+    correction_locator_sha = (
+        correction["sha256"]
+        if correction_locator_sha256 is _MISSING
+        else correction_locator_sha256
+    )
     record = {
         "schema_version": "delivery-record.v1",
         "classification": "talk", "status": "MATERIALIZED",
         "duration_ms": 142210, "speaker_mode": "uniform_host",
         "boundary_audit": boundary, "burned_preview": burned,
         "story_contract": story_contract,
+        "human_text_correction_manifest_path": str(package / correction_locator_name),
+        "human_text_correction_manifest_sha256": correction_locator_sha,
         "artifact_hashes": {**stale_hashes, "ass_sha256": ass["sha256"], "burned_video_sha256": video["sha256"], "subtitle_sha256": subtitle["sha256"] , "publish_draft_sha256": "sha256:" + "e" * 64},
         "publish_staging": {
             "title": TITLE, "cover_status": "AI_COVER_READY", "cover_generation": cover_generation,
@@ -306,20 +329,6 @@ def _write_current_lane_fixture(
         publish["candidate_id"] = publish_candidate_id
     publish_descriptor = _write(package, "auto_113022_354_496.publish.json", json.dumps(publish).encode())
     publish_descriptor["target"] = f"{CID}.publish.json"
-    correction_payload = {
-        "schema_version": "human-subtitle-correction.v2",
-        "upload_enabled": False, "before_srt_sha256": "562bdb4536cb9989864f7f6e51f8eb79da42fcfa06f14ae8c612e0680fa4109e",
-        "after_srt_sha256": subtitle["sha256"].removeprefix("sha256:"),
-        "burned_media_sha256": video["sha256"].removeprefix("sha256:"),
-        "replace_operations": [], "set_line_operations": ["21=非常 balance いいや"],
-        "delivery_branding_authority": {"branding_intro": {
-            "intro_id": "z2", "intro_media_sha256": "sha256:" + "a" * 64,
-            "intro_offset_ms": 6183, "status": "PREPENDED",
-        }},
-    }
-    if correction_candidate_id is not _MISSING:
-        correction_payload["candidate_id"] = correction_candidate_id
-    correction = _write(package, "correction.json", json.dumps(correction_payload).encode())
     repair_payload = {
         "schema_version": "qixi-delivery-record-ass-binding-recovery.v1", "mode": "APPLIED",
         "candidate_id": CID, "allowed_json_pointers": ["/artifact_hashes/ass_sha256", "/subtitle_ass_path"],
@@ -845,6 +854,7 @@ def test_uniform_host_locator_projection_reuses_contract_and_rejects_unknown_pat
     record = {
         "media_path": "/source/package/main.mp4",
         "subtitle_path": "/source/package/final.srt",
+        "human_text_correction_manifest_path": "/source/package/correction.json",
         "burned_preview": {
             "path": "/source/package/burned.mp4",
             "ass_path": "/source/package/final.ass",
@@ -855,6 +865,7 @@ def test_uniform_host_locator_projection_reuses_contract_and_rejects_unknown_pat
         record, kind="record", mappings=mappings, source_workspace_root="/source"
     )
     assert projected["media_path"] == "/target/package/main.mp4"
+    assert projected["human_text_correction_manifest_path"] == "/target/package/correction.json"
     assert projected["burned_preview"]["command"] == record["burned_preview"]["command"]
     record["unexpected"] = "/source/package/not-a-locator"
     with pytest.raises(PackageRelocationError, match="unknown external-host path"):
@@ -960,9 +971,13 @@ def test_current_terminal_projection_finalizes_with_real_redelivery_and_chat_hel
         "generated_redelivery_baseline_sha256"
     ]
     chat = json.loads((target / "auto_113022_354_496.chat-authority.json").read_text())
+    record = json.loads((package / f"{CID}.record.json").read_text())
     assert chat["redelivery_subtitle_baseline_audit"]["status"] == "ALREADY_SATISFIED"
     assert chat["final_required_decision_count"] == 54
     assert chat["final_text_srt_path"] == str(package / f"{CID}.srt")
+    assert record["human_text_correction_manifest_path"] == str(
+        package / receipt["artifacts"]["correction"]["target"]
+    )
     manual = build_manual(
         package,
         operator="fixture",
@@ -1061,6 +1076,34 @@ def test_current_terminal_projection_rejects_any_unbound_identity_before_target_
     )
 
     with pytest.raises(finalization.QixiCorrectedPackageError, match=match):
+        finalization.finalize(
+            repo_root=repo,
+            release_root=release,
+            evidence_root=evidence,
+            target=target,
+        )
+
+    assert not target.exists()
+
+
+@pytest.mark.parametrize(
+    "fixture_kwargs",
+    (
+        {"correction_locator_name": "not-materialized.json"},
+        {"correction_locator_sha256": "sha256:" + "0" * 64},
+    ),
+)
+def test_current_terminal_projection_rejects_unbound_correction_locator_before_target_write(
+    tmp_path: Path, fixture_kwargs: dict[str, object],
+) -> None:
+    repo, release, evidence, target = _write_current_lane_fixture(
+        tmp_path, **fixture_kwargs
+    )
+
+    with pytest.raises(
+        finalization.QixiCorrectedPackageError,
+        match="current correction record locator drifts",
+    ):
         finalization.finalize(
             repo_root=repo,
             release_root=release,
