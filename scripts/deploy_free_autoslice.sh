@@ -2211,7 +2211,7 @@ external_payload_unchanged_safe() {
         /opt/bilive/autoslice/repo/scripts/free_do_upload.sh \
         /opt/bilive/app/tmp_manual_upload/do_upload.sh 755 700 || return 1
     external_payload_exact recorder_adapter \
-        "$new_adapter_source" "$host_adapter_path" 755 755 || return 1
+        "$new_adapter_source" "$host_adapter_path" 644 755 || return 1
     adapter_status_clean_healthy || return 1
     adapter_environment_healthy "$expected_adapter_sha" || return 1
     managed_crontab_exact

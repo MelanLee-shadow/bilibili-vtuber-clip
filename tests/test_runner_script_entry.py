@@ -408,7 +408,7 @@ def test_deploy_unchanged_external_route_preserves_a_live_adapter(tmp_path):
             "recorder_adapter",
             repo / "ops/recording/bililive_recorder_adapter.py",
             recording / "bililive_recorder_adapter.py",
-            0o755,
+            0o644,
             0o755,
         ),
     )
@@ -597,6 +597,11 @@ def test_deploy_unchanged_external_route_preserves_a_live_adapter(tmp_path):
     adapter_target.unlink()
     adapter_target.write_bytes(originals[adapter_target][0])
     adapter_target.chmod(0o755)
+    adapter_source = repo / "ops/recording/bililive_recorder_adapter.py"
+    for source_mode in (0o755, 0o600):
+        adapter_source.chmod(source_mode)
+        assert run().returncode != 0
+    adapter_source.chmod(0o644)
     assert run(DOCKER_ADAPTER_SHA="0" * 64).returncode != 0
     assert run(DOCKER_HEALTH="unhealthy").returncode != 0
 
@@ -645,6 +650,7 @@ def test_deploy_unchanged_external_route_preserves_a_live_adapter(tmp_path):
     assert 'if [ "$external_mutation_started" -eq 1 ] && [ -f "$backup/external/recorder_adapter.restart-required" ]' in outer_rollback
     assert 'if [ "$external_payload_unchanged" -eq 0 ]; then\n    printf' in external
     assert external.index("watchdog_cron=") < external.index("external_payload_exact() {")
+    assert '"$new_adapter_source" "$host_adapter_path" 644 755' in external
     assert "managed_crontab_exact()" in external
     assert 'if [ "$external_payload_unchanged" -eq 0 ]; then\nexisting_crontab=' in external
     assert 'if [ "$external_payload_unchanged" -eq 1 ]; then\n    # Close the read-only fast-route interval' in external
