@@ -1322,12 +1322,22 @@ def _project_current_terminal_documents(
     publish = _load_object(artifacts["publish"][0], label="stale current publish")
     correction = _load_object(artifacts["correction"][0], label="current correction")
     drift = authority["source_drift"]
+    # The deployed current-terminal record is a legacy delivery-record.v1
+    # shape: its sealed primary/mirror bytes predate a top-level candidate_id.
+    # Do not infer that identity from a filename or other mutable field.  The
+    # exception is confined to this lane and is only useful alongside the
+    # existing sealed primary/mirror descriptors and the independently-bound
+    # publish/correction identities checked below.
+    legacy_record_identity = (
+        authority.get("finalization_mode") == "current_terminal_projection"
+        and "candidate_id" not in record
+    )
     if (
         artifacts["record"][1] != drift["source_record_sha256"]
         or artifacts["record_mirror"][1] != drift["source_record_mirror_sha256"]
         or artifacts["record"][1] != artifacts["record_mirror"][1]
         or record != mirror
-        or record.get("candidate_id") != candidate_id
+        or (record.get("candidate_id") != candidate_id and not legacy_record_identity)
         or publish.get("candidate_id") != candidate_id
         or publish.get("title") != title
     ):

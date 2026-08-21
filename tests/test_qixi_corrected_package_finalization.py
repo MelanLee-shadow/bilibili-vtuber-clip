@@ -24,6 +24,7 @@ from scripts.audit_lidousha_review_package import _audit_manual_corrected_same_b
 
 CID = "auto_113022_354_496"
 TITLE = "【李豆沙】李豆沙公布七夕安排，中午甜甜甜晚上苦苦苦，一套PUA直播要让kmx集体分号！"
+_MISSING = object()
 
 
 def _sha(path: Path) -> str:
@@ -142,7 +143,13 @@ def _copy_repo_input(repo: Path, relative: Path) -> Path:
     return destination
 
 
-def _write_current_lane_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
+def _write_current_lane_fixture(
+    tmp_path: Path,
+    *,
+    record_candidate_id: object = _MISSING,
+    publish_candidate_id: object = CID,
+    correction_candidate_id: object = CID,
+) -> tuple[Path, Path, Path, Path]:
     """A real-helper fixture for the current 54-cue terminal projection lane.
 
     It seals a tiny deployed repository, but uses the real 62-cue reviewed
@@ -272,7 +279,7 @@ def _write_current_lane_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]
         "source_fact_review": source_fact,
     }
     record = {
-        "schema_version": "delivery-record.v1", "candidate_id": CID,
+        "schema_version": "delivery-record.v1",
         "classification": "talk", "status": "MATERIALIZED",
         "duration_ms": 142210, "speaker_mode": "uniform_host",
         "boundary_audit": boundary, "burned_preview": burned,
@@ -283,20 +290,24 @@ def _write_current_lane_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]
             "source_fact_review": source_fact,
         },
     }
+    if record_candidate_id is not _MISSING:
+        record["candidate_id"] = record_candidate_id
     record_bytes = json.dumps(record, ensure_ascii=False, sort_keys=True).encode()
     record_descriptor = _write(package, "auto_113022_354_496.record.json", record_bytes)
     mirror_descriptor = _write(package, "auto_113022_354_496.mirror-record.json", record_bytes)
     record_descriptor["target"] = f"{CID}.record.json"
     mirror_descriptor["target"] = f"diagnostic/{CID}.record.mirror.json"
     publish = {
-        "schema_version": "shadow-publish-draft.v1", "candidate_id": CID,
+        "schema_version": "shadow-publish-draft.v1",
         "title": TITLE, "upload_enabled": False,
         "artifact_hashes": stale_hashes, "source_fact_review": source_fact,
     }
+    if publish_candidate_id is not _MISSING:
+        publish["candidate_id"] = publish_candidate_id
     publish_descriptor = _write(package, "auto_113022_354_496.publish.json", json.dumps(publish).encode())
     publish_descriptor["target"] = f"{CID}.publish.json"
     correction_payload = {
-        "schema_version": "human-subtitle-correction.v2", "candidate_id": CID,
+        "schema_version": "human-subtitle-correction.v2",
         "upload_enabled": False, "before_srt_sha256": "562bdb4536cb9989864f7f6e51f8eb79da42fcfa06f14ae8c612e0680fa4109e",
         "after_srt_sha256": subtitle["sha256"].removeprefix("sha256:"),
         "burned_media_sha256": video["sha256"].removeprefix("sha256:"),
@@ -306,6 +317,8 @@ def _write_current_lane_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]
             "intro_offset_ms": 6183, "status": "PREPENDED",
         }},
     }
+    if correction_candidate_id is not _MISSING:
+        correction_payload["candidate_id"] = correction_candidate_id
     correction = _write(package, "correction.json", json.dumps(correction_payload).encode())
     repair_payload = {
         "schema_version": "qixi-delivery-record-ass-binding-recovery.v1", "mode": "APPLIED",
@@ -916,6 +929,10 @@ def test_planned_locator_closure_rejects_unmaterialized_target_basename(
 def test_current_terminal_projection_finalizes_with_real_redelivery_and_chat_helpers(
     tmp_path: Path,
 ) -> None:
+    # The real sealed current-terminal delivery record intentionally has no
+    # top-level candidate_id.  Its identity remains hash-bound through its
+    # sealed primary/mirror descriptors, while publish and correction remain
+    # explicit candidate authorities.
     repo, release, evidence, target = _write_current_lane_fixture(tmp_path)
 
     plan = finalization.finalize(
@@ -1023,6 +1040,35 @@ def test_current_terminal_projection_finalizes_with_real_redelivery_and_chat_hel
             package_root=package,
             qixi_repo_root=repo,
         )
+
+
+@pytest.mark.parametrize(
+    ("fixture_kwargs", "match"),
+    (
+        ({"record_candidate_id": "wrong-candidate"}, "current record/publish sources drift"),
+        ({"record_candidate_id": None}, "current record/publish sources drift"),
+        ({"publish_candidate_id": _MISSING}, "current record/publish sources drift"),
+        ({"publish_candidate_id": "wrong-candidate"}, "current record/publish sources drift"),
+        ({"correction_candidate_id": _MISSING}, "current correction release bindings drift"),
+        ({"correction_candidate_id": "wrong-candidate"}, "current correction release bindings drift"),
+    ),
+)
+def test_current_terminal_projection_rejects_any_unbound_identity_before_target_write(
+    tmp_path: Path, fixture_kwargs: dict[str, object], match: str,
+) -> None:
+    repo, release, evidence, target = _write_current_lane_fixture(
+        tmp_path, **fixture_kwargs
+    )
+
+    with pytest.raises(finalization.QixiCorrectedPackageError, match=match):
+        finalization.finalize(
+            repo_root=repo,
+            release_root=release,
+            evidence_root=evidence,
+            target=target,
+        )
+
+    assert not target.exists()
 
 
 def test_terminal_projection_rejects_superseded_preimage_drift_before_target_write(
