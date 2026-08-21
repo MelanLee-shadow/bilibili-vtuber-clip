@@ -36,6 +36,13 @@ from src.autoslice.qixi_source_fact_terminal_preservation import (
     validate_terminal_preservation_finalization_authority,
     validate_terminal_preservation_finalization_binding,
 )
+from src.autoslice.qixi_current_terminal_audit_closure import (
+    AUTHORITY_RELATIVE_PATH as TERMINAL_AUDIT_CLOSURE_RELATIVE_PATH,
+    QixiCurrentTerminalAuditClosureError,
+    build_terminal_audit_closure,
+    load_terminal_audit_closure,
+    rebind_terminal_story_transcript,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.producer_text_finalization import verify_chat_authority_final_surfaces
 from src.autoslice.package_relocation_contract import (
@@ -524,6 +531,7 @@ def _authority(value: object, *, repo_root: Path) -> dict[str, Any]:
             "finalization_mode",
             "terminal_projection",
             "source_fact_terminal_preservation",
+            "terminal_audit_closure",
         }
     if set(value) != required:
         raise QixiCorrectedPackageError("finalization authority keys are invalid")
@@ -610,6 +618,21 @@ def _authority(value: object, *, repo_root: Path) -> dict[str, Any]:
             )
         except QixiSourceFactTerminalPreservationError as exc:
             raise QixiCorrectedPackageError(str(exc)) from exc
+        closure = authority.get("terminal_audit_closure")
+        if not isinstance(closure, Mapping) or set(closure) != {
+            "relative_path", "authority_sha256"
+        } or _safe_relative(
+            closure.get("relative_path"), label="terminal audit closure"
+        ) != TERMINAL_AUDIT_CLOSURE_RELATIVE_PATH:
+            raise QixiCorrectedPackageError("terminal audit closure authority is invalid")
+        try:
+            replayed_closure = load_terminal_audit_closure(repo_root)
+        except QixiCurrentTerminalAuditClosureError as exc:
+            raise QixiCorrectedPackageError(str(exc)) from exc
+        if _normal_sha(
+            closure.get("authority_sha256"), label="terminal audit closure"
+        ) != replayed_closure["authority_sha256"]:
+            raise QixiCorrectedPackageError("terminal audit closure authority is invalid")
     package_relative = Path(normalized_roots["source_package_relative"])
     candidate_relative = Path(normalized_roots["source_candidate_relative"])
     try:
@@ -1328,7 +1351,6 @@ def _validate_current_ass_repair(
     *, authority: Mapping[str, Any], artifacts: Mapping[str, tuple[Path, str, int, str, str]], record: Mapping[str, object]
 ) -> None:
     """Bind the repaired current record to its applied, sealed-runtime receipt."""
-
     receipt = _load_object(artifacts["ass_repair_receipt"][0], label="ASS repair receipt")
     drift = authority["source_drift"]
     if (
@@ -1381,7 +1403,6 @@ def _project_current_terminal_documents(
     repo_root: Path,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Materialize current Z2 sources plus a real terminal text/chat closure."""
-
     candidate_id = str(authority["candidate_id"])
     title = str(authority["title"])
     publication = authority["recovery_publication_authority"]
@@ -1438,6 +1459,31 @@ def _project_current_terminal_documents(
         record_sha256=artifacts["record"][1],
         subtitle_text=subtitle_text,
     )
+    source_chat = _load_object(artifacts["chat_authority"][0], label="source chat authority")
+    source_boundary = _load_object(artifacts["boundary_audit"][0], label="source boundary audit")
+    source_flags = _load_object(artifacts["review_flags"][0], label="source review flags")
+    try:
+        replayed_chat, current_boundary = build_terminal_audit_closure(
+            repo_root=repo_root,
+            source_chat=source_chat,
+            source_chat_sha256=artifacts["chat_authority"][1],
+            source_boundary=source_boundary,
+            source_boundary_sha256=artifacts["boundary_audit"][1],
+            source_review_flags=source_flags,
+            source_flags_sha256=artifacts["review_flags"][1],
+            record_boundary=record.get("boundary_audit")
+            if isinstance(record.get("boundary_audit"), Mapping)
+            else {},
+            subtitle_text=subtitle_text,
+        )
+    except QixiCurrentTerminalAuditClosureError as exc:
+        raise QixiCorrectedPackageError("current terminal audit closure failed") from exc
+    # The source chat provides only already-reviewed decision and boundary
+    # ownership evidence.  The terminal projection owns the fresh text/burn
+    # surfaces and its deterministic baseline audit; preserve neither old
+    # delivery locators nor old baseline receipts.
+    replayed_chat["redelivery_subtitle_baseline_audit"] = redelivery_audit
+    chat = replayed_chat
     record_hashes = record.get("artifact_hashes")
     publish_hashes = publish.get("artifact_hashes")
     if not isinstance(record_hashes, Mapping) or not isinstance(publish_hashes, Mapping) or (
@@ -1484,15 +1530,25 @@ def _project_current_terminal_documents(
             "artifact_hashes": hashes,
             "burned_preview": burned_preview,
             "recovery_publication_authority": dict(publication),
+            "boundary_audit": current_boundary,
         }
     )
     story_contract = dict(record.get("story_contract") or {})
+    story_contract["boundary_semantic_review"] = copy.deepcopy(
+        current_boundary["final_delivery_boundary_semantic_review"]
+    )
     selection_hook = str(story_contract.get("selection_hook") or "")
     clip_context_prompt = str(story_contract.get("clip_context_prompt") or "")
     selection_scorecard = story_contract.get("selection_scorecard")
     final_transcript = "\n".join(
         cue.text.strip() for cue in parse_srt_cues(subtitle_text) if cue.text.strip()
     )
+    try:
+        story_contract = rebind_terminal_story_transcript(
+            story_contract, final_transcript=final_transcript
+        )
+    except QixiCurrentTerminalAuditClosureError as exc:
+        raise QixiCorrectedPackageError("current terminal story transcript closure failed") from exc
     uniform_speaker_evidence = {
         "policy_ids": {
             "absence": "speaker_mode_uniform_host/v1",

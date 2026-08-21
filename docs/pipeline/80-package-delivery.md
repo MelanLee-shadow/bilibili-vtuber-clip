@@ -381,6 +381,16 @@
   pass，不得调用 provider/ASR/ffmpeg，也不得改变 media、SRT、ASS、边界、标题或封面。manual
   builder、canonical auditor 和 final-human 均须重新读取并验证该 receipt；任一 sealed asset、
   terminal text、文本面或 finalization binding 漂移即拒绝。
+- **七夕 current-terminal audit closure**：同一 finalizer 还必须消费由 finalization authority
+  单向绑定的 `qixi_current_terminal_audit_closure` asset。它只允许把已经通过的历史
+  `final-review-audit.v2` 的 reviewed-SRT、delivery cue-grid 与 endpoint 用 sealed 54-cue
+  terminal projection 重算；历史 source-truth、frozen boundary owner、source boundary、review
+  flags 仍须逐字哈希绑定，并由既有 final-surface verifier 重放最终 owner receipt。record 的
+  `final_delivery_boundary_semantic_review`、StoryContract boundary review 与 chat final-review
+  必须是该同一派生产物；story transcript 和唯一 subtitle input audit 必须同步为 terminal
+  transcript。不得把旧 review 的 `CLEAN/PASS` 字段直接搬运、重跑 provider/ASR/ffmpeg，或更改
+  media、SRT、ASS、封面、title、source boundary；任一历史 audit、owner、terminal grid 或
+  final SRT 漂移均拒绝。
 - 已发布 same-BV 的字幕修复如显式使用 `--project-single-published-repair
   --preserve-published-cover`，只能消费候选专属、部署封存的
   `daily_same_bv_published_cover_carry_authority.v1`。该 sealed asset 只固定候选、哈希和

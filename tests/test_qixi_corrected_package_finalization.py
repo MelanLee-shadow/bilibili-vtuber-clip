@@ -16,12 +16,16 @@ from src.autoslice.package_relocation_contract import (
     PackageRelocationError,
     project_uniform_host_locators,
 )
+from src.autoslice.producer_boundary_owner_contract import (
+    freeze_required_boundary_owner_contract,
+)
 from src.autoslice.recovery_title_authority import build_recovery_publication_authorities
 from src.autoslice.review_package_source_fact_audit import audit_story_source_fact_receipt
 from src.autoslice.source_fact_review import review_and_repair_source_facts
 from scripts import build_manual_review_manifest as manual_review_manifest
 from scripts.build_manual_review_manifest import DailyManifestError, build_manual
 from scripts.audit_lidousha_review_package import _audit_manual_corrected_same_bv_receipt
+from scripts.audit_lidousha_review_package import audit_package
 
 
 CID = "auto_113022_354_496"
@@ -237,7 +241,27 @@ def _write_current_lane_fixture(
         "final_snapped_end_ms": 141990,
         "closure_text_sha256": "sha256:cb29695e99232cabdedea7977afad522361cf55294c2830ba1aa4bb08a5c54cf",
     }
-    boundary = {"final_delivery_boundary_semantic_review": {"final_endpoint_binding": endpoint}}
+    source_grid = "sha256:" + "a" * 64
+    source_semantic = {
+        "schema_version": "talk-boundary-semantic-review.v1", "status": "PASS",
+        "review_scope": "source_full_window", "candidate_id": CID,
+        "request_sha256": "sha256:" + "b" * 64,
+        "cue_grid_sha256": source_grid,
+        "recommended_end_cue_index": 54, "recommended_end_ms": 141990,
+        "final_endpoint_binding": {
+            "schema_version": "talk-boundary-final-endpoint-binding.v1", "status": "PASS",
+            "semantic_request_sha256": "sha256:" + "b" * 64,
+            "semantic_cue_grid_sha256": source_grid, "final_cue_grid_sha256": source_grid,
+            "recommended_end_cue_index": 54, "recommended_end_ms": 141990,
+            **endpoint, "reason_codes": [],
+        },
+    }
+    boundary = {
+        "boundary_semantic_review": source_semantic,
+        "final_delivery_boundary_semantic_review": {"final_endpoint_binding": endpoint},
+        "required_boundary_owner_verification": {"status": "PASS", "failures": []},
+        "delivery_coverage_verification": {"status": "PASS", "failure": None},
+    }
     cover_generation = {
         "final_cover": str(package / "cover.png"), "final_cover_sha256": cover["sha256"],
         "pre_overlay_path": str(package / "pre.png"), "pre_overlay_sha256": pre["sha256"],
@@ -289,6 +313,12 @@ def _write_current_lane_fixture(
         "candidate_id": CID, "selection_hook": source_fact_hook,
         "clip_context_prompt": "", "selection_scorecard": None,
         "source_fact_review": source_fact,
+        "transcript_sha256": "sha256:3a7380672c26a4c0f4cdef6006abdf5df19cbcd5b1a694ff5d6ec4822744c9d4",
+        "input_audits": [{
+            "schema_version": "story-artifact-audit.v1", "status": "PASS",
+            "artifact_kind": "subtitle",
+            "text_sha256": "sha256:3a7380672c26a4c0f4cdef6006abdf5df19cbcd5b1a694ff5d6ec4822744c9d4",
+        }],
     }
     correction_payload = {
         "schema_version": "human-subtitle-correction.v2",
@@ -349,6 +379,72 @@ def _write_current_lane_fixture(
         },
     }
     repair = _write(package, "ass-repair.json", json.dumps(repair_payload).encode())
+
+    frozen_chat: dict = {}
+    freeze_required_boundary_owner_contract(
+        spec={
+            "candidate_id": CID, "semantic_start_ms": 0, "semantic_end_ms": 142210,
+            "pieces": [{"start_ms": 0, "end_ms": 142210}],
+            "boundary_repair_extend_cap_ms": 30_000,
+        },
+        durations=[142210],
+        chat_authority_audit=frozen_chat,
+        required_boundary_owners=[],
+    )
+    historical_boundary = {
+        "schema_version": "talk-boundary-semantic-review.v1", "status": "PASS",
+        "review_scope": "final_delivery", "request_sha256": "sha256:" + "c" * 64,
+        "cue_grid_sha256": source_grid, "recommended_end_cue_index": 54,
+        "recommended_end_ms": 141990,
+        "source_separation_witness": {
+            "schema_version": "talk-boundary-source-separation-witness.v1", "status": "PASS",
+            "source_review_sha256": "sha256:" + "d" * 64,
+            "source_request_sha256": "sha256:" + "e" * 64,
+            "source_cue_grid_sha256": "sha256:" + "f" * 64,
+            "source_final_start_ms": 0, "source_final_end_ms": 142210, "reason_codes": [],
+        },
+        "final_endpoint_binding": {
+            "schema_version": "talk-boundary-final-endpoint-binding.v1", "status": "PASS",
+            "semantic_request_sha256": "sha256:" + "c" * 64,
+            "semantic_cue_grid_sha256": source_grid, "final_cue_grid_sha256": source_grid,
+            "recommended_end_cue_index": 54, "recommended_end_ms": 141990,
+            **endpoint, "reason_codes": [],
+        },
+    }
+    historical_review = {
+        "schema_version": "final-review-audit.v2", "status": "CLEAN", "release_gate": "PASS",
+        "reviewed_srt_sha256": "sha256:6d31db628be8bd06371b9a3ef2598baab7a0e57d6aa8b5974942128561087abf",
+        "discovery": {"status": "COMPLETE"},
+        "correction_mutation_authority": {
+            "schema_version": "subtitle-correction-mutation-audit.v1", "status": "PASS",
+            "applied_count": 0, "validated_mutation_count": 0, "failures": [],
+        },
+        "findings": [], "validated_finding_count": 0,
+        "boundary_semantic_review": historical_boundary,
+    }
+    old_chat_payload = {
+        "schema_version": "chat-authority-audit.v2", "status": "APPLIED_AND_VERIFIED",
+        "source_subtitle_truth_audit": {
+            "schema_version": "source-subtitle-truth-audit.v1", "status": "NO_RELEVANT_INTERVAL",
+            "ledger_path": "subtitle_truth_ledger.v1.json",
+            "ledger_sha256": _sha(Path.cwd() / "assets/lidousha/subtitle_truth_ledger.v1.json"),
+            "applied": [], "satisfied": [], "failures": [],
+        },
+        "frozen_boundary_owner_contract": frozen_chat["frozen_boundary_owner_contract"],
+        "final_review_audit": historical_review,
+        "applied": [], "sender_repairs": [], "gift_repairs": [], "coreference_repairs": [],
+        "entity_repairs": [], "pending_text_overrides": [],
+    }
+    old_chat = _write(
+        candidate, "auto_113022_354_496.chat-authority.json",
+        json.dumps(old_chat_payload, ensure_ascii=False).encode(), role="candidate",
+    )
+    boundary_artifact = _write(
+        candidate, "boundary.json", json.dumps(boundary, ensure_ascii=False).encode(), role="candidate",
+    )
+    flags = _write(
+        candidate, "flags.json", json.dumps({"final_review_audit": historical_review}, ensure_ascii=False).encode(), role="candidate",
+    )
 
     projection = copy.deepcopy(projection_source)
     preimage_manifest_path = repo / projection["superseded_preimage"]["manifest_path"]
@@ -436,6 +532,28 @@ def _write_current_lane_fixture(
         ),
         "authority_sha256": preservation["authority_sha256"],
     }
+    closure_source = {
+        "schema_version": "qixi-current-terminal-audit-closure-authority.v1",
+        "candidate_id": CID, "status": "SEALED_TERMINAL_REBIND",
+        "terminal_projection": {
+            "relative_path": finalization.TERMINAL_PROJECTION_RELATIVE_PATH.as_posix(),
+            "authority_sha256": projection["authority_sha256"], "terminal_srt_sha256": subtitle["sha256"],
+        },
+        "historical_reviewed_srt_sha256": historical_review["reviewed_srt_sha256"],
+        "source_evidence": {
+            "chat_authority_sha256": old_chat["sha256"],
+            "boundary_audit_sha256": boundary_artifact["sha256"],
+            "review_flags_sha256": flags["sha256"],
+        },
+    }
+    closure_source["authority_sha256"] = finalization._canonical_sha(closure_source)
+    closure_path = repo / finalization.TERMINAL_AUDIT_CLOSURE_RELATIVE_PATH
+    closure_path.parent.mkdir(parents=True, exist_ok=True)
+    closure_path.write_text(json.dumps(closure_source, ensure_ascii=False), encoding="utf-8")
+    authority["terminal_audit_closure"] = {
+        "relative_path": finalization.TERMINAL_AUDIT_CLOSURE_RELATIVE_PATH.as_posix(),
+        "authority_sha256": closure_source["authority_sha256"],
+    }
     authority.pop("authority_sha256")
     authority["authority_sha256"] = finalization._canonical_sha(authority)
     authority_path.write_text(json.dumps(authority, ensure_ascii=False), encoding="utf-8")
@@ -444,7 +562,7 @@ def _write_current_lane_fixture(
         authority["recovery_publication_authority"]["source_public_verify_repo_path"],
     ):
         sealed_inputs.append(_copy_repo_input(repo, Path(relative)))
-    _seal_deployed_repo(repo, [*sealed_inputs, projection_path, authority_path, preservation_path])
+    _seal_deployed_repo(repo, [*sealed_inputs, projection_path, authority_path, preservation_path, closure_path])
     return repo, release, root, tmp_path / "target"
 
 
@@ -1027,6 +1145,19 @@ def test_current_terminal_projection_finalizes_with_real_redelivery_and_chat_hel
     assert manual["items"][0]["manual_corrected_same_bv_receipt"] == (
         finalization.RECEIPT_FILENAME
     )
+    (package / "review_manifest.json").write_text(
+        json.dumps(manual, ensure_ascii=False), encoding="utf-8"
+    )
+    resolved = {
+        "SOURCE_TRUTH_AUDIT_MISSING_OR_INVALID",
+        "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID",
+        "REQUIRED_BOUNDARY_OWNER_ATTESTATION_MISSING",
+        "FINAL_REVIEW_AUDIT_MISSING_OR_INVALID",
+        "STORY_CONTRACT_SUBTITLE_HASH_DRIFT",
+        "BOUNDARY_FINAL_REVIEW_BINDING_DRIFT",
+        "BOUNDARY_FINAL_DELIVERY_CUE_GRID_MISMATCH",
+    }
+    assert not ({issue["code"] for issue in audit_package(package)["issues"]} & resolved)
     issues: list[dict] = []
     _audit_manual_corrected_same_bv_receipt(
         root=package,
@@ -1095,6 +1226,34 @@ def test_current_terminal_projection_finalizes_with_real_redelivery_and_chat_hel
             package_root=package,
             qixi_repo_root=repo,
         )
+
+
+def test_current_terminal_audit_closure_refuses_rebound_source_evidence_drift(
+    tmp_path: Path,
+) -> None:
+    repo, release, evidence, target = _write_current_lane_fixture(tmp_path)
+    closure_path = repo / finalization.TERMINAL_AUDIT_CLOSURE_RELATIVE_PATH
+    closure = json.loads(closure_path.read_text(encoding="utf-8"))
+    closure["source_evidence"]["review_flags_sha256"] = "sha256:" + "0" * 64
+    closure.pop("authority_sha256")
+    closure["authority_sha256"] = finalization._canonical_sha(closure)
+    closure_path.write_text(json.dumps(closure, ensure_ascii=False), encoding="utf-8")
+    authority_path = repo / finalization.AUTHORITY_RELATIVE_PATH
+    authority = json.loads(authority_path.read_text(encoding="utf-8"))
+    authority["terminal_audit_closure"]["authority_sha256"] = closure["authority_sha256"]
+    authority.pop("authority_sha256")
+    authority["authority_sha256"] = finalization._canonical_sha(authority)
+    authority_path.write_text(json.dumps(authority, ensure_ascii=False), encoding="utf-8")
+    _reseal_fixture_repo(repo)
+
+    with pytest.raises(finalization.QixiCorrectedPackageError, match="audit closure failed"):
+        finalization.finalize(
+            repo_root=repo,
+            release_root=release,
+            evidence_root=evidence,
+            target=target,
+        )
+    assert not target.exists()
 
 
 def _terminal_source_fact_inputs(repo: Path, release: Path) -> dict[str, object]:
