@@ -178,8 +178,12 @@ def test_default_profile_jingting_prompt_matches_authoritative_glossary_fingerpr
     #   entity_confusables 只追加分支独有的 3 组（奶龙家族/动捕彩排话题簇/星汐新C），
     #   **跳过分支里的南町组**——主线那组是严格超集（8/8 已加 南天/大白老师），
     #   套用旧版会把两条裁定回退掉。
+    # 2026-08-21：候选 `auto_123655_771_844` 的 cue27 按 Ivan 逐字裁定补入
+    #   「妹感妈」。该 glossary 条目明确仅限该 cue 的抗回归，**不是**把其它
+    #   候选/上下文的「妹感吗」全局替换；仍会进入默认 AGY prompt，故在此审计
+    #   并更新指纹。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "385b34c789b155aead207a1deefae3fb8ea59e52cfa6530917a9c45ff9ff8737"
+        "d920cfef40e13149151eef77e499c572fd724509bfae6011091a45879a71c182"
     )
 
 
