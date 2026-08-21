@@ -24,6 +24,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from src.autoslice.qixi_terminal_subtitle_projection import (
+    TERMINAL_PROJECTION_RELATIVE_PATH,
+    TerminalProjectionError,
+    build_terminal_chat,
+    validate_projection_assets,
+)
 from src.autoslice.producer_text_finalization import verify_chat_authority_final_surfaces
 from src.autoslice.package_relocation_contract import (
     CHAT_PATH_POINTERS,
@@ -45,7 +51,9 @@ RECEIPT_SCHEMA = "qixi-corrected-package-finalization-receipt.v1"
 RECEIPT_FILENAME = "qixi-corrected-package-finalization.json"
 AUTHORITY_RELATIVE_PATH = Path("assets/lidousha/qixi_corrected_package_finalization_authority.v1.json")
 _SHA_LEN = 64
-_NON_MATERIALIZED = frozenset({"source_record", "source_publish"})
+# ``record_mirror`` is a sealed read-only consistency input in the current
+# terminal-projection lane.  It is deliberately not a second package artifact.
+_NON_MATERIALIZED = frozenset({"source_record", "source_publish", "record_mirror"})
 _BRANDING_SUMMARY_KEYS = frozenset(
     {"intro_id", "intro_media_sha256", "intro_offset_ms", "status"}
 )
@@ -85,7 +93,7 @@ def validate_applied_receipt(
         "authority_sha256", "artifacts", "manual_corrected_same_bv", "after_image_sha256",
         "generated_record_sha256", "generated_publish_sha256", "generated_chat_authority_sha256",
     }
-    if set(value) != required or value.get("schema_version") != RECEIPT_SCHEMA or value.get("mode") != "APPLIED":
+    if value.get("schema_version") != RECEIPT_SCHEMA or value.get("mode") != "APPLIED":
         raise QixiCorrectedPackageError("finalization receipt schema/mode is invalid")
     if package_root.is_symlink() or not package_root.is_dir():
         raise QixiCorrectedPackageError("finalization receipt package root is unsafe")
@@ -110,6 +118,12 @@ def validate_applied_receipt(
         _load_object(repo_root / AUTHORITY_RELATIVE_PATH, label="sealed finalization authority"),
         repo_root=repo_root,
     )
+    generated_names = {"record", "publish", "chat_authority"}
+    if sealed.get("finalization_mode") == "current_terminal_projection":
+        generated_names.add("redelivery_baseline")
+        required.add("generated_redelivery_baseline_sha256")
+    if set(value) != required:
+        raise QixiCorrectedPackageError("finalization receipt schema/mode is invalid")
     authority_path = repo_root / AUTHORITY_RELATIVE_PATH
     try:
         require_repository_asset_authority(
@@ -151,13 +165,15 @@ def validate_applied_receipt(
         or inner.get("recovery_publication_authority") != sealed["recovery_publication_authority"]
     ):
         raise QixiCorrectedPackageError("finalization receipt same-BV binding is invalid")
-    if set(after) != {"record", "publish", "chat_authority"}:
+    if set(after) != generated_names:
         raise QixiCorrectedPackageError("finalization receipt after-image keys drift")
     expected_files = {
         "record": "generated_record_sha256",
         "publish": "generated_publish_sha256",
         "chat_authority": "generated_chat_authority_sha256",
     }
+    if "redelivery_baseline" in generated_names:
+        expected_files["redelivery_baseline"] = "generated_redelivery_baseline_sha256"
     for name, receipt_key in expected_files.items():
         descriptor = artifacts.get(name)
         if not isinstance(descriptor, Mapping):
@@ -193,10 +209,10 @@ def validate_applied_receipt(
         path = _contained_regular(base, descriptor["target"], label=f"receipt {name}")
         expected_sha = (
             _normal_sha(after[name]["sha256"], label=f"after {name}")
-            if name in {"record", "publish", "chat_authority"}
+            if name in generated_names
             else _normal_sha(descriptor["sha256"], label=f"artifact {name}")
         )
-        expected_bytes = after[name]["bytes"] if name in {"record", "publish", "chat_authority"} else descriptor["bytes"]
+        expected_bytes = after[name]["bytes"] if name in generated_names else descriptor["bytes"]
         if path.stat().st_size != expected_bytes or _sha256(path) != expected_sha:
             raise QixiCorrectedPackageError(f"receipt materialized artifact drifts: {name}")
     return value
@@ -340,6 +356,20 @@ def _assert_context_authority_unchanged(context: _ExecutionContext) -> None:
         ) from exc
     if current_repository_authority != context.repository_authority:
         raise QixiCorrectedPackageError("finalization authority epoch changed after planning")
+    if context.authority.get("finalization_mode") == "current_terminal_projection":
+        try:
+            projection = validate_projection_assets(context.repo_root)
+        except TerminalProjectionError as exc:
+            raise QixiCorrectedPackageError(
+                "terminal projection assets changed after planning"
+            ) from exc
+        terminal = context.authority.get("terminal_projection")
+        if not isinstance(terminal, Mapping) or _normal_sha(
+            terminal.get("authority_sha256"), label="terminal projection"
+        ) != projection["authority_sha256"]:
+            raise QixiCorrectedPackageError(
+                "terminal projection authority changed after planning"
+            )
 
 
 def _safe_relative(value: object, *, label: str) -> Path:
@@ -378,6 +408,28 @@ def _source_root(root: Path, *, label: str) -> Path:
     return root.resolve(strict=True)
 
 
+def _build_terminal_projection_chat(
+    *,
+    repo_root: Path,
+    correction: Mapping[str, object],
+    correction_sha256: str,
+    record: Mapping[str, object],
+    record_sha256: str,
+    subtitle_text: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    try:
+        return build_terminal_chat(
+            repo_root=repo_root,
+            correction=correction,
+            correction_sha256=correction_sha256,
+            record=record,
+            record_sha256=record_sha256,
+            subtitle_text=subtitle_text,
+        )
+    except TerminalProjectionError as exc:
+        raise QixiCorrectedPackageError(str(exc)) from exc
+
+
 def _artifact(
     root: Path, value: object, *, label: str
 ) -> tuple[Path, str, int, str, str]:
@@ -408,6 +460,9 @@ def _authority(value: object, *, repo_root: Path) -> dict[str, Any]:
         "release", "evidence", "source_drift", "authority_sha256",
         "roots",
     }
+    current_mode = value.get("finalization_mode") == "current_terminal_projection"
+    if current_mode:
+        required |= {"finalization_mode", "terminal_projection"}
     if set(value) != required:
         raise QixiCorrectedPackageError("finalization authority keys are invalid")
     authority = dict(value)
@@ -434,7 +489,7 @@ def _authority(value: object, *, repo_root: Path) -> dict[str, Any]:
         if not isinstance(items, Mapping) or not items:
             raise QixiCorrectedPackageError(f"{group} artifacts are missing")
     drift = authority.get("source_drift")
-    if not isinstance(drift, Mapping) or set(drift) != {
+    legacy_drift = {
         "source_publish_burned_video_sha256",
         "source_publish_subtitle_sha256",
         "source_record_ass_sha256",
@@ -442,7 +497,18 @@ def _authority(value: object, *, repo_root: Path) -> dict[str, Any]:
         "source_cover_generation_sha256",
         "r2_publish_burned_video_sha256",
         "r2_publish_subtitle_sha256",
-    }:
+    }
+    current_drift = {
+        "source_publish_burned_video_sha256",
+        "source_publish_subtitle_sha256",
+        "source_record_ass_sha256",
+        "source_burned_preview_sha256",
+        "source_cover_generation_sha256",
+        "source_record_sha256",
+        "source_record_mirror_sha256",
+        "ass_repair_receipt_sha256",
+    }
+    if not isinstance(drift, Mapping) or set(drift) != (current_drift if current_mode else legacy_drift):
         raise QixiCorrectedPackageError("source_drift schema is invalid")
     for key, raw in drift.items():
         drift[key] = _normal_sha(raw, label=key)
@@ -457,6 +523,24 @@ def _authority(value: object, *, repo_root: Path) -> dict[str, Any]:
         relative = _safe_relative(raw, label=key)
         normalized_roots[key] = relative.as_posix()
     authority["roots"] = normalized_roots
+    if current_mode:
+        if authority.get("finalization_mode") != "current_terminal_projection":
+            raise QixiCorrectedPackageError("finalization mode is invalid")
+        terminal_projection = authority.get("terminal_projection")
+        if not isinstance(terminal_projection, Mapping) or set(terminal_projection) != {
+            "relative_path", "authority_sha256"
+        } or _safe_relative(
+            terminal_projection.get("relative_path"), label="terminal projection"
+        ) != TERMINAL_PROJECTION_RELATIVE_PATH:
+            raise QixiCorrectedPackageError("terminal projection authority is invalid")
+        try:
+            projection = validate_projection_assets(repo_root)
+        except TerminalProjectionError as exc:
+            raise QixiCorrectedPackageError(str(exc)) from exc
+        if _normal_sha(
+            terminal_projection.get("authority_sha256"), label="terminal projection"
+        ) != projection["authority_sha256"]:
+            raise QixiCorrectedPackageError("terminal projection authority is invalid")
     package_relative = Path(normalized_roots["source_package_relative"])
     candidate_relative = Path(normalized_roots["source_candidate_relative"])
     try:
@@ -655,6 +739,14 @@ def _verify_cross_surface(
         "cover_host_witness", "cover_source_composition", "boundary_audit",
         "review_flags", "source_record", "source_publish",
     }
+    if authority.get("finalization_mode") == "current_terminal_projection":
+        mandatory = {
+            "video", "main", "subtitle", "ass", "correction", "record", "record_mirror",
+            "publish", "chat_authority", "clip_context", "redelivery_baseline", "ass_repair_receipt",
+            "cover", "cover_pre_overlay", "cover_title_mask", "cover_route_background",
+            "cover_reference", "cover_host_witness", "cover_source_composition", "boundary_audit",
+            "review_flags",
+        }
     if not mandatory.issubset(selected):
         raise QixiCorrectedPackageError("finalization authority lacks a mandatory artifact")
     # The semantic evidence may come from a different path, but must describe
@@ -879,7 +971,20 @@ def _project_documents(
     release_workspace_root: str,
     evidence_mappings: tuple[tuple[str, str], ...],
     evidence_workspace_root: str,
+    repo_root: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    repo_root = (repo_root or Path(__file__).resolve().parents[2]).resolve(strict=True)
+    if authority.get("finalization_mode") == "current_terminal_projection":
+        return _project_current_terminal_documents(
+            authority=authority,
+            artifacts=artifacts,
+            candidate_root=candidate_root,
+            release_mappings=release_mappings,
+            release_workspace_root=release_workspace_root,
+            evidence_mappings=evidence_mappings,
+            evidence_workspace_root=evidence_workspace_root,
+            repo_root=repo_root,
+        )
     candidate_id = str(authority["candidate_id"])
     title = str(authority["title"])
     publication = authority["recovery_publication_authority"]
@@ -1150,6 +1255,239 @@ def _project_documents(
     return record, publish, chat
 
 
+def _validate_current_ass_repair(
+    *, authority: Mapping[str, Any], artifacts: Mapping[str, tuple[Path, str, int, str, str]], record: Mapping[str, object]
+) -> None:
+    """Bind the repaired current record to its applied, sealed-runtime receipt."""
+
+    receipt = _load_object(artifacts["ass_repair_receipt"][0], label="ASS repair receipt")
+    drift = authority["source_drift"]
+    if (
+        _sha256(artifacts["ass_repair_receipt"][0]) != drift["ass_repair_receipt_sha256"]
+        or receipt.get("schema_version") != "qixi-delivery-record-ass-binding-recovery.v1"
+        or receipt.get("mode") != "APPLIED"
+        or receipt.get("candidate_id") != authority["candidate_id"]
+        or receipt.get("allowed_json_pointers") != ["/artifact_hashes/ass_sha256", "/subtitle_ass_path"]
+    ):
+        raise QixiCorrectedPackageError("current ASS repair receipt is invalid")
+    postimage = receipt.get("postimage")
+    evidence = receipt.get("evidence_descriptors")
+    evidence_rows = {
+        name: evidence.get(name) if isinstance(evidence, Mapping) else None
+        for name in ("ass", "subtitle", "burned", "correction")
+    }
+    if (
+        not isinstance(postimage, Mapping)
+        or not isinstance(evidence, Mapping)
+        or not all(isinstance(row, Mapping) for row in evidence_rows.values())
+        or (
+            _normal_sha(postimage.get("sha256"), label="ASS repair postimage")
+            != artifacts["record"][1]
+            or postimage.get("bytes") != artifacts["record"][2]
+            or _normal_sha(evidence_rows["ass"].get("sha256"), label="ASS repair evidence")
+            != artifacts["ass"][1]
+            or _normal_sha(evidence_rows["subtitle"].get("sha256"), label="ASS repair evidence")
+            != artifacts["subtitle"][1]
+            or _normal_sha(evidence_rows["burned"].get("sha256"), label="ASS repair evidence")
+            != artifacts["video"][1]
+            or _normal_sha(evidence_rows["correction"].get("sha256"), label="ASS repair evidence")
+            != artifacts["correction"][1]
+        )
+    ):
+        raise QixiCorrectedPackageError("current ASS repair receipt evidence drifts")
+    hashes = record.get("artifact_hashes")
+    if not isinstance(hashes, Mapping) or _normal_sha(hashes.get("ass_sha256"), label="current record ASS") != artifacts["ass"][1]:
+        raise QixiCorrectedPackageError("current ASS repair record binding drifts")
+
+
+def _project_current_terminal_documents(
+    *,
+    authority: Mapping[str, Any],
+    artifacts: Mapping[str, tuple[Path, str, int, str, str]],
+    candidate_root: Path,
+    release_mappings: tuple[tuple[str, str], ...],
+    release_workspace_root: str,
+    evidence_mappings: tuple[tuple[str, str], ...],
+    evidence_workspace_root: str,
+    repo_root: Path,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Materialize current Z2 sources plus a real terminal text/chat closure."""
+
+    candidate_id = str(authority["candidate_id"])
+    title = str(authority["title"])
+    publication = authority["recovery_publication_authority"]
+    assert isinstance(publication, Mapping)
+    record = _load_object(artifacts["record"][0], label="current record")
+    mirror = _load_object(artifacts["record_mirror"][0], label="current record mirror")
+    publish = _load_object(artifacts["publish"][0], label="stale current publish")
+    correction = _load_object(artifacts["correction"][0], label="current correction")
+    drift = authority["source_drift"]
+    if (
+        artifacts["record"][1] != drift["source_record_sha256"]
+        or artifacts["record_mirror"][1] != drift["source_record_mirror_sha256"]
+        or artifacts["record"][1] != artifacts["record_mirror"][1]
+        or record != mirror
+        or record.get("candidate_id") != candidate_id
+        or publish.get("candidate_id") != candidate_id
+        or publish.get("title") != title
+    ):
+        raise QixiCorrectedPackageError("current record/publish sources drift")
+    _validate_current_ass_repair(authority=authority, artifacts=artifacts, record=record)
+    subtitle_text = artifacts["subtitle"][0].read_text(encoding="utf-8")
+    if (
+        correction.get("candidate_id") != candidate_id
+        or correction.get("upload_enabled") is not False
+        or _normal_sha(correction.get("after_srt_sha256"), label="current correction subtitle")
+        != artifacts["subtitle"][1]
+        or _normal_sha(correction.get("burned_media_sha256"), label="current correction burn")
+        != artifacts["video"][1]
+    ):
+        raise QixiCorrectedPackageError("current correction release bindings drift")
+    stale_publish_hashes = publish.get("artifact_hashes")
+    if not isinstance(stale_publish_hashes, Mapping) or (
+        _normal_sha(stale_publish_hashes.get("burned_video_sha256"), label="current stale publish burn")
+        != drift["source_publish_burned_video_sha256"]
+        or _normal_sha(stale_publish_hashes.get("subtitle_sha256"), label="current stale publish subtitle")
+        != drift["source_publish_subtitle_sha256"]
+    ):
+        raise QixiCorrectedPackageError("current stale publish binding drifts")
+    chat, redelivery_audit = _build_terminal_projection_chat(
+        repo_root=repo_root,
+        correction=correction,
+        correction_sha256=artifacts["correction"][1],
+        record=record,
+        record_sha256=artifacts["record"][1],
+        subtitle_text=subtitle_text,
+    )
+    record_hashes = record.get("artifact_hashes")
+    publish_hashes = publish.get("artifact_hashes")
+    if not isinstance(record_hashes, Mapping) or not isinstance(publish_hashes, Mapping) or (
+        set(record_hashes) != set(publish_hashes) | {"publish_draft_sha256"}
+    ):
+        raise QixiCorrectedPackageError("current record/publish hash closure is invalid")
+    generated_redelivery_sha = "sha256:" + hashlib.sha256(_json_bytes(redelivery_audit)).hexdigest()
+    hashes = dict(publish_hashes)
+    hashes.update(
+        {
+            "burned_video_sha256": artifacts["video"][1],
+            "video_sha256": artifacts["main"][1],
+            "subtitle_sha256": artifacts["subtitle"][1],
+            "ass_sha256": artifacts["ass"][1],
+            "clip_context_file_sha256": artifacts["clip_context"][1],
+            "redelivery_baseline_audit_sha256": generated_redelivery_sha,
+            "cover_sha256": artifacts["cover"][1],
+            "cover_reference_sha256": artifacts["cover_reference"][1],
+            "ai_background_sha256": artifacts["cover_route_background"][1],
+        }
+    )
+    source_burned = record.get("burned_preview")
+    if not isinstance(source_burned, Mapping) or _canonical_sha(source_burned) != drift["source_burned_preview_sha256"]:
+        raise QixiCorrectedPackageError("current Z2 burned-preview drifts")
+    branding = correction.get("delivery_branding_authority")
+    if not isinstance(branding, Mapping):
+        raise QixiCorrectedPackageError("current correction branding is invalid")
+    _validate_source_burned_branding_summary(
+        source_burned=source_burned, correction_branding=branding.get("branding_intro")
+    )
+    burned_preview = dict(source_burned)
+    burned_preview["path"] = str(_artifact_final_path(candidate_root, artifacts["video"]))
+    burned_preview["ass_path"] = str(_artifact_final_path(candidate_root, artifacts["ass"]))
+    record = dict(record)
+    record.update(
+        {
+            "media_path": str(_artifact_final_path(candidate_root, artifacts["main"])),
+            "subtitle_path": str(_artifact_final_path(candidate_root, artifacts["subtitle"])),
+            "subtitle_ass_path": str(_artifact_final_path(candidate_root, artifacts["ass"])),
+            "chat_authority_audit_path": str(_artifact_final_path(candidate_root, artifacts["chat_authority"])),
+            "clip_context_path": str(_artifact_final_path(candidate_root, artifacts["clip_context"])),
+            "redelivery_baseline_audit_path": str(_artifact_final_path(candidate_root, artifacts["redelivery_baseline"])),
+            "redelivery_baseline": redelivery_audit,
+            "artifact_hashes": hashes,
+            "burned_preview": burned_preview,
+            "recovery_publication_authority": dict(publication),
+        }
+    )
+    staging = dict(record.get("publish_staging") or {})
+    generation = staging.get("cover_generation")
+    if (
+        not isinstance(generation, Mapping)
+        or staging.get("title") != title
+        or staging.get("cover_status") != "AI_COVER_READY"
+        or _canonical_sha(generation) != drift["source_cover_generation_sha256"]
+        or _normal_sha(generation.get("final_cover_sha256"), label="current source cover")
+        != artifacts["cover"][1]
+    ):
+        raise QixiCorrectedPackageError("current record cover/title staging is invalid")
+    portable_cover = copy.deepcopy(dict(generation))
+    for key, name in {
+        "final_cover": "cover", "pre_overlay_path": "cover_pre_overlay",
+        "ai_background": "cover_route_background", "reference_image": "cover_reference",
+    }.items():
+        if key in portable_cover:
+            portable_cover[key] = str(_artifact_final_path(candidate_root, artifacts[name]))
+    pixels = portable_cover.get("rendered_text_pixels")
+    if isinstance(pixels, Mapping):
+        pixels = dict(pixels)
+        if "mask_path" in pixels:
+            pixels["mask_path"] = str(_artifact_final_path(candidate_root, artifacts["cover_title_mask"]))
+        if "pre_overlay_path" in pixels:
+            pixels["pre_overlay_path"] = str(_artifact_final_path(candidate_root, artifacts["cover_pre_overlay"]))
+        portable_cover["rendered_text_pixels"] = pixels
+    staging.update({
+        "publish_json_path": str(_artifact_final_path(candidate_root, artifacts["publish"])),
+        "cover_generation": portable_cover,
+        "cover_path": str(_artifact_final_path(candidate_root, artifacts["cover"])),
+        "cover_status": "AI_COVER_READY",
+        "recovery_publication_authority": dict(publication),
+    })
+    record["publish_staging"] = staging
+    if "cover_status" in record:
+        record["cover_status"] = "AI_COVER_READY"
+    publish = dict(publish)
+    publish.update({
+        "video_path": str(_artifact_final_path(candidate_root, artifacts["main"])),
+        "artifact_hashes": dict(hashes),
+        "cover_generation": portable_cover,
+        "cover_path": str(_artifact_final_path(candidate_root, artifacts["cover"])),
+        "cover_status": "AI_COVER_READY",
+        "recovery_publication_authority": dict(publication),
+    })
+    chat.update({
+        "final_status": "FINAL_ARTIFACTS_VERIFIED",
+        "final_text_srt_path": str(_artifact_final_path(candidate_root, artifacts["subtitle"])),
+        "final_text_srt_sha256": artifacts["subtitle"][1].removeprefix("sha256:"),
+        "final_speaker_srt_path": str(_artifact_final_path(candidate_root, artifacts["subtitle"])),
+        "final_speaker_srt_sha256": artifacts["subtitle"][1].removeprefix("sha256:"),
+        # The current delivery is a uniform-host lane: text and speaker SRT
+        # are the same sealed terminal projection, with no separate speaker
+        # ASS surface to counterfeit or carry forward.
+        "speaker_ass_path": None,
+        "speaker_ass_sha256": None,
+        "speaker_manifest_sha256": None,
+        "burn_binding": {
+            "burned_media_path": str(_artifact_final_path(candidate_root, artifacts["video"])),
+            "burned_media_sha256": artifacts["video"][1].removeprefix("sha256:"),
+            "ass_path": str(_artifact_final_path(candidate_root, artifacts["ass"])),
+            "ass_sha256": artifacts["ass"][1].removeprefix("sha256:"),
+        },
+    })
+    try:
+        record = project_uniform_host_locators(record, kind="record", mappings=evidence_mappings, source_workspace_root=evidence_workspace_root, frozen_source_roots=(release_workspace_root,))
+        publish = project_uniform_host_locators(publish, kind="publish", mappings=evidence_mappings, source_workspace_root=evidence_workspace_root, frozen_source_roots=(release_workspace_root,))
+        chat = project_uniform_host_locators(chat, kind="chat", mappings=evidence_mappings, source_workspace_root=evidence_workspace_root)
+    except PackageRelocationError as exc:
+        raise QixiCorrectedPackageError(f"current terminal locator contract failed: {exc}") from exc
+    if not verify_chat_authority_final_surfaces(
+        chat,
+        final_text_srt=subtitle_text,
+        final_speaker_srt=subtitle_text,
+        delivery_start_ms=0,
+        delivery_end_ms=int(record["duration_ms"]),
+    ):
+        raise QixiCorrectedPackageError("current terminal chat does not verify final release surfaces")
+    return record, publish, chat
+
+
 def _after_image(
     *,
     authority: Mapping[str, Any],
@@ -1159,6 +1497,7 @@ def _after_image(
     release_workspace_root: str,
     evidence_mappings: tuple[tuple[str, str], ...],
     evidence_workspace_root: str,
+    repo_root: Path,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, dict[str, Any]]]:
     """Construct the complete derived closure without touching a target."""
 
@@ -1170,6 +1509,7 @@ def _after_image(
         release_workspace_root=release_workspace_root,
         evidence_mappings=evidence_mappings,
         evidence_workspace_root=evidence_workspace_root,
+        repo_root=repo_root,
     )
     _assert_planned_locator_closure(
         record=record,
@@ -1178,6 +1518,22 @@ def _after_image(
         artifacts=artifacts,
         candidate_root=candidate_root,
     )
+    after: dict[str, dict[str, Any]] = {}
+    if authority.get("finalization_mode") == "current_terminal_projection":
+        redelivery = chat.get("redelivery_subtitle_baseline_audit")
+        if not isinstance(redelivery, Mapping):
+            raise QixiCorrectedPackageError("current terminal chat lacks generated redelivery audit")
+        redelivery_bytes = _json_bytes(dict(redelivery))
+        redelivery_sha = "sha256:" + hashlib.sha256(redelivery_bytes).hexdigest()
+        for document in (record, publish):
+            hashes = dict(document["artifact_hashes"])
+            if hashes.get("redelivery_baseline_audit_sha256") != redelivery_sha:
+                raise QixiCorrectedPackageError("current terminal redelivery hash closure drifts")
+            document["artifact_hashes"] = hashes
+        after["redelivery_baseline"] = {
+            "sha256": redelivery_sha,
+            "bytes": len(redelivery_bytes),
+        }
     chat_sha = "sha256:" + hashlib.sha256(_json_bytes(chat)).hexdigest()
     for document in (record, publish):
         hashes = dict(document["artifact_hashes"])
@@ -1187,14 +1543,15 @@ def _after_image(
     record_hashes = dict(record["artifact_hashes"])
     record_hashes["publish_draft_sha256"] = publish_sha
     record["artifact_hashes"] = record_hashes
-    return record, publish, chat, {
+    after.update({
         "record": {
             "sha256": "sha256:" + hashlib.sha256(_json_bytes(record)).hexdigest(),
             "bytes": len(_json_bytes(record)),
         },
         "publish": {"sha256": publish_sha, "bytes": len(_json_bytes(publish))},
         "chat_authority": {"sha256": chat_sha, "bytes": len(_json_bytes(chat))},
-    }
+    })
+    return record, publish, chat, after
 
 
 def _prepare_execution_context(
@@ -1243,6 +1600,7 @@ def _prepare_execution_context(
         release_workspace_root=_release_workspace,
         evidence_mappings=_evidence_mappings,
         evidence_workspace_root=_evidence_workspace,
+        repo_root=repo_root,
     )
     plan = {
         "schema_version": RECEIPT_SCHEMA,
@@ -1356,6 +1714,7 @@ def finalize(
             release_workspace_root=release_workspace_root,
             evidence_mappings=evidence_mappings,
             evidence_workspace_root=evidence_workspace_root,
+            repo_root=context.repo_root,
         )
         if after_hashes != plan.get("after_image_sha256"):
             raise QixiCorrectedPackageError("source bytes changed after dry-run planning")
@@ -1363,6 +1722,25 @@ def finalize(
         # inside our fresh staging directory.
         # Persist in dependency order: chat is complete before its hash enters
         # record; publish is complete before record binds its final hash.
+        if authority.get("finalization_mode") == "current_terminal_projection":
+            redelivery = chat.get("redelivery_subtitle_baseline_audit")
+            if not isinstance(redelivery, Mapping):
+                raise QixiCorrectedPackageError(
+                    "current terminal chat lacks generated redelivery audit"
+                )
+            redelivery_path = _target_path(
+                stage,
+                str(Path("replacement_recuts") / artifacts["redelivery_baseline"][3]),
+                owned=owned,
+            )
+            _assert_owned_tree(stage, owned)
+            _unlink_owned(redelivery_path, owned)
+            _write_json_new(redelivery_path, dict(redelivery), owned=owned)
+            _assert_owned_tree(stage, owned)
+            if _sha256(redelivery_path) != after_hashes["redelivery_baseline"]["sha256"]:
+                raise QixiCorrectedPackageError(
+                    "materialized redelivery after-image drifted"
+                )
         chat_path = _target_path(stage, artifacts["chat_authority"][3], owned=owned)
         _assert_owned_tree(stage, owned)
         _unlink_owned(chat_path, owned)
@@ -1401,6 +1779,8 @@ def finalize(
         receipt["generated_chat_authority_sha256"] = _sha256(
             chat_path
         )
+        if authority.get("finalization_mode") == "current_terminal_projection":
+            receipt["generated_redelivery_baseline_sha256"] = _sha256(redelivery_path)
         receipt_path = _target_path(
             stage,
             "replacement_recuts/qixi-corrected-package-finalization.json",

@@ -1,0 +1,554 @@
+{
+  "schema_version": "lidousha-final-media-review-contracts.v1",
+  "authority": "Ivan 2026-07-22/23, 2026-07-28, 2026-07-29, 2026-07-30, 2026-08-09, and 2026-08-20 explicit correction, same-BV repair authorization, and final-review instructions, normalized into exact final-video review points; timestamps are deliberately broad windows around the reported point so the reviewer must inspect the surrounding audio, subtitle, callback, and boundary context.",
+  "contracts": [
+    {
+      "candidate_id": "auto_193450_3573_3665",
+      "subtitle_review_points": [
+        {
+          "point_id": "jieganmei-qinqin-qin",
+          "final_video_start_ms": 28000,
+          "final_video_end_ms": 39000,
+          "expectation": "姐感妹、秦秦、秦必须结合画面角色名和后文解释正确落字。"
+        },
+        {
+          "point_id": "jiegan-callback",
+          "final_video_start_ms": 76000,
+          "final_video_end_ms": 84000,
+          "expectation": "后文调侃必须回指为“姐感的妹妹”，不得脱离整片语境另造词。"
+        },
+        {
+          "point_id": "male-question",
+          "final_video_start_ms": 83000,
+          "final_video_end_ms": 90000,
+          "expectation": "必须听写为“男的咋了？”。"
+        },
+        {
+          "point_id": "not-familiar-punchline",
+          "final_video_start_ms": 89000,
+          "final_video_end_ms": 98000,
+          "expectation": "包袱必须完整到“这个直播间就是不熟啊”，且结尾不断在话中间。"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_193450_672_945",
+      "subtitle_review_points": [
+        {
+          "point_id": "no-wocao-partial-silence",
+          "final_video_start_ms": 10000,
+          "final_video_end_ms": 18000,
+          "expectation": "前半段无声、后半段有真实语音，但整段从未说“我草”；只删除幻听，不得吞掉后半真实话。"
+        },
+        {
+          "point_id": "nancho-nightin-first",
+          "final_video_start_ms": 43000,
+          "final_video_end_ms": 53000,
+          "expectation": "必须是“最最最最喜欢的南町nightin”，不得写成南町复读或 nighting。"
+        },
+        {
+          "point_id": "dan-yasashii-huishen",
+          "final_video_start_ms": 74000,
+          "final_video_end_ms": 98000,
+          "expectation": "大N、非常亚撒西、亚撒西、毁神须按同片前后文和专名记忆稳定落字。"
+        },
+        {
+          "point_id": "nancho-nightin-second",
+          "final_video_start_ms": 102000,
+          "final_video_end_ms": 112000,
+          "expectation": "第二次仍是“最最最最喜欢的南町nightin”。"
+        },
+        {
+          "point_id": "silent-hallucinated-l-question",
+          "final_video_start_ms": 107000,
+          "final_video_end_ms": 119000,
+          "expectation": "南町nightin 后的整条 L 问句没有说话，必须完全删除，不得保留“这个L是李豆沙/李乐莎的L吗”。"
+        },
+        {
+          "point_id": "ling-li-li-li-series",
+          "final_video_start_ms": 116000,
+          "final_video_end_ms": 140000,
+          "expectation": "人名串必须依次保留病院坂灵的灵、礼墨的礼、李豆沙的李、花礼的礼，并正确写“李太多了”“这个李有点太多了”。"
+        },
+        {
+          "point_id": "gonggong-youshishi",
+          "final_video_start_ms": 132000,
+          "final_video_end_ms": 144000,
+          "expectation": "专名式说法必须是“公公又式式啊”。"
+        },
+        {
+          "point_id": "dangran-bushi",
+          "final_video_start_ms": 150000,
+          "final_video_end_ms": 160000,
+          "expectation": "必须完整保留“当然不是啦”，不得吞掉“当然”。"
+        },
+        {
+          "point_id": "single-closing-book-mark",
+          "final_video_start_ms": 160000,
+          "final_video_end_ms": 173000,
+          "expectation": "书名号只能成对正确出现，不得产生两个右书名号。"
+        },
+        {
+          "point_id": "no-cross-cue-hhb-repeat",
+          "final_video_start_ms": 194000,
+          "final_video_end_ms": 213000,
+          "expectation": "上一句末尾的 hhb 不得被复制到下一句，也不得在下一句再误听一遍。"
+        },
+        {
+          "point_id": "bingyuansaka-ling-position",
+          "final_video_start_ms": 222000,
+          "final_video_end_ms": 244000,
+          "expectation": "必须是“首发是病院坂灵”“那个时候你是什么”，保留讨论 CP 前后位的完整语义。"
+        },
+        {
+          "point_id": "unfinished-di",
+          "final_video_start_ms": 256000,
+          "final_video_end_ms": 271000,
+          "expectation": "必须是“跟他们说要跟第”，即“第一次”的未说完开头，不得写成弟弟的弟。"
+        },
+        {
+          "point_id": "limo-sumi",
+          "final_video_start_ms": 268000,
+          "final_video_end_ms": 280000,
+          "expectation": "必须正确保留昵称专名“礼墨Sumi”。"
+        },
+        {
+          "point_id": "no-fingerprint-hallucination",
+          "final_video_start_ms": 276000,
+          "final_video_end_ms": 285000,
+          "expectation": "末段没有说“指纹”，必须删除幻听并保证结尾语义完整。"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_193450_1863_2056",
+      "subtitle_review_points": [
+        {
+          "point_id": "not-yet-time",
+          "final_video_start_ms": 11000,
+          "final_video_end_ms": 20000,
+          "expectation": "必须是“现在还没到时间”，不得写成与语境无关的“还没落实”。"
+        },
+        {
+          "point_id": "thank-you-vegetables",
+          "final_video_start_ms": 61000,
+          "final_video_end_ms": 72000,
+          "expectation": "SC 后必须正确回指为“谢谢你的素菜”。"
+        },
+        {
+          "point_id": "no-lidousha-position",
+          "final_video_start_ms": 108000,
+          "final_video_end_ms": 120000,
+          "expectation": "必须是“没有李豆沙的位置”，不得把专名缩成小李。"
+        },
+        {
+          "point_id": "xiaodeba-idiolect",
+          "final_video_start_ms": 126000,
+          "final_video_end_ms": 137000,
+          "expectation": "李豆沙口癖必须按语境写为“晓得吧”。"
+        },
+        {
+          "point_id": "bullied-by-dan",
+          "final_video_start_ms": 141000,
+          "final_video_end_ms": 151000,
+          "expectation": "必须是“被大N霸凌”。"
+        },
+        {
+          "point_id": "bully-dan-question",
+          "final_video_start_ms": 148000,
+          "final_video_end_ms": 158000,
+          "expectation": "必须是“霸凌大N吗”，不得误听为“饿了吗”。"
+        },
+        {
+          "point_id": "doctor-lutis",
+          "final_video_start_ms": 158000,
+          "final_video_end_ms": 171000,
+          "expectation": "昵称必须是指露蒂斯的“露医生”。"
+        },
+        {
+          "point_id": "evil-gecko-guard-thanks",
+          "final_video_start_ms": 98000,
+          "final_video_end_ms": 112000,
+          "expectation": "片内较早的舰长感谢必须正确写出南町昵称“邪恶守宫”。"
+        },
+        {
+          "point_id": "cue-911-topic-separation",
+          "final_video_start_ms": 188000,
+          "final_video_end_ms": 199000,
+          "expectation": "必须在火锅故事闭环“就是刚认识暂时不太熟啊”后结束；不得带入后续拿烟头烫人的下一条SC，也不能断在半句话中。"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_193450_1573_1672",
+      "subtitle_review_points": [
+        {
+          "point_id": "big-chair-setup",
+          "final_video_start_ms": 6000,
+          "final_video_end_ms": 38000,
+          "expectation": "大椅子让座、南町缩在角落的起因必须完整；“然后我就坐这一个”须与实际椅子语境及音频一致。"
+        },
+        {
+          "point_id": "lidousha-bullying-reversal",
+          "final_video_start_ms": 35000,
+          "final_video_end_ms": 76000,
+          "expectation": "必须保留“其实被李豆沙霸凌”的关系反转，不得把双人身份或施受方写反。"
+        },
+        {
+          "point_id": "fake-cry",
+          "final_video_start_ms": 72000,
+          "final_video_end_ms": 105700,
+          "expectation": "“我真的很有型啊”及假哭包袱必须与前文椅子/霸凌关系连贯。"
+        },
+        {
+          "point_id": "complete-ending",
+          "final_video_start_ms": 99000,
+          "final_video_end_ms": 105700,
+          "expectation": "结尾必须完整收束在“假哭”，不能断在话中间，也不得带入随后感谢钢镚和修鼠标的新 SC 话题。"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_193450_1475_1543",
+      "subtitle_review_points": [
+        {
+          "point_id": "brainflick-instruction",
+          "final_video_start_ms": 5000,
+          "final_video_end_ms": 22000,
+          "expectation": "弹幕让左边的人弹右边一个脑瓜崩的指令必须完整清楚。"
+        },
+        {
+          "point_id": "mirrored-left-right",
+          "final_video_start_ms": 18000,
+          "final_video_end_ms": 50000,
+          "expectation": "两人关于镜像左右的争论必须保留正确指代与来回。"
+        },
+        {
+          "point_id": "kmx-resolution",
+          "final_video_start_ms": 46000,
+          "final_video_end_ms": 67000,
+          "expectation": "kmx 算明白左右后的解决必须完整。"
+        },
+        {
+          "point_id": "final-laughter",
+          "final_video_start_ms": 63000,
+          "final_video_end_ms": 74000,
+          "expectation": "最终笑声和包袱必须完整结束，不能断在句中。"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_193129_850_940",
+      "subtitle_review_points": [
+        {
+          "point_id": "opening-nonsemantic-vocalization-blank",
+          "final_video_start_ms": 10000,
+          "final_video_end_ms": 18000,
+          "expectation": "0:13 附近只有无实际语义的怪叫，烧录画面必须保持字幕空白，不得把游戏说明或其他相邻文本投影到该声槽。"
+        },
+        {
+          "point_id": "ta-yifu-yifu-context",
+          "final_video_start_ms": 55000,
+          "final_video_end_ms": 64000,
+          "expectation": "必须是“让我打他，他一副，一副”，保留“他一副……的样子”的语境搭配，不得写成“欺负欺负”。"
+        },
+        {
+          "point_id": "kmx-qifu-ren-complete",
+          "final_video_start_ms": 79000,
+          "final_video_end_ms": 88000,
+          "expectation": "必须完整保留“kmx为什么欺负我？kmx欺负人”，末句不得误写或收敛成“我”。"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_183122_1209_1410",
+      "subtitle_review_points": [
+        {
+          "point_id": "anwan-raw-beans-setup",
+          "final_video_start_ms": 7000,
+          "final_video_end_ms": 31000,
+          "expectation": "开头必须完整交代安晚也吃了生豆角以及李豆沙对此震惊，不得把安晚或生豆角写成无关近音词。"
+        },
+        {
+          "point_id": "limo-first-repeat",
+          "final_video_start_ms": 31000,
+          "final_video_end_ms": 43000,
+          "expectation": "0:36 附近连续两次点名都必须写成专名“礼墨”，不得残留“林墨”“李默”或其他近音字。"
+        },
+        {
+          "point_id": "hint-limo-team-unity",
+          "final_video_start_ms": 39000,
+          "final_video_end_ms": 57000,
+          "expectation": "必须完整保留下播暗示礼墨、三人组要团结并有默契的关系包袱，不能漏掉行动对象或把三人关系写反。"
+        },
+        {
+          "point_id": "limo-microphone-later",
+          "final_video_start_ms": 96000,
+          "final_video_end_ms": 107000,
+          "expectation": "后段麦克风弹幕仍须正确写成“礼墨的麦”，用于确认同一专名在整片所有位置一致。"
+        },
+        {
+          "point_id": "bean-story-tail-separation",
+          "final_video_start_ms": 105000,
+          "final_video_end_ms": 115000,
+          "expectation": "结尾必须在豆角复盘和麦克风插话后自然落到“喝口水”，不得截断最后一句或带入后续工作疲惫话题。"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_162016_20_319",
+      "subtitle_review_points": [
+        {
+          "point_id": "kiss-room-question-setup",
+          "final_video_start_ms": 5000,
+          "final_video_end_ms": 67000,
+          "expectation": "必须完整交代被关进必须与一位同事接吻才能离开的房间、接吻方式和李豆沙宁愿不出来的起因，不得从半句起片或把问答双方写反。"
+        },
+        {
+          "point_id": "all-female-colleagues-wordplay",
+          "final_video_start_ms": 150000,
+          "final_video_end_ms": 207000,
+          "expectation": "必须保留李豆沙选择所有女同事以及随后把“女同事”拆成“女同的同事/女同”的完整双关升级，不得误写成无关人名或截掉解释。"
+        },
+        {
+          "point_id": "limo-ship-name-and-position",
+          "final_video_start_ms": 211000,
+          "final_video_end_ms": 271000,
+          "expectation": "人物名“礼墨”、CP名“礼豆沙”、反向CP简称“李墨”和站位“礼1”必须各按本句语境落字；不得把四个语义槽机械统一，且“李墨”的墨必须与礼墨同字。"
+        },
+        {
+          "point_id": "zero-point-six-and-niece-punchline",
+          "final_video_start_ms": 269000,
+          "final_video_end_ms": 292000,
+          "expectation": "必须完整保留李豆沙相对礼墨自称0.6以及突然大喊“我是侄女啊”的连续包袱；0.6不得丢小数点，“侄女”不得回退成“直女”。"
+        },
+        {
+          "point_id": "pink-girl-confession-close",
+          "final_video_start_ms": 287000,
+          "final_video_end_ms": 305000,
+          "expectation": "粉色小姐姐表示更希望与李豆沙同处房间、李豆沙被吓到又被调侃高兴的收尾必须完整，不得残留无意义怪词或带入随后抽黑帽子的新话题。"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_183122_607_723",
+      "subtitle_review_points": [
+        {
+          "point_id": "colleague-home-dual-screen-setup",
+          "final_video_start_ms": 6000,
+          "final_video_end_ms": 35000,
+          "expectation": "开头必须完整交代李豆沙用惯同事家的豪华双屏、难以回到破笔记本，并说明自己住处隔音差；不得从半句起片或把因果关系写反。"
+        },
+        {
+          "point_id": "limo-first-home-reference",
+          "final_video_start_ms": 44000,
+          "final_video_end_ms": 53000,
+          "expectation": "第一次说明来同事家开播时必须写成专名“礼墨家”，不得残留“林墨”“李墨”或其他近音字。"
+        },
+        {
+          "point_id": "gift-names-and-light-signs",
+          "final_video_start_ms": 53000,
+          "final_video_end_ms": 68000,
+          "expectation": "利普、暖白、卢西克里等送礼用户名必须与结构化弹幕一致，礼物统一写为“粉丝团灯牌”，不得被 glossary 误替换成普通词。"
+        },
+        {
+          "point_id": "limo-second-home-reference",
+          "final_video_start_ms": 73000,
+          "final_video_end_ms": 83000,
+          "expectation": "第二次说以后只去同事家时仍必须写成“礼墨家”，并保留后接怪叫和谢礼的真实顺序。"
+        },
+        {
+          "point_id": "colleague-collection-wordplay",
+          "final_video_start_ms": 87000,
+          "final_video_end_ms": 105000,
+          "expectation": "必须完整保留“朋友收集梦想生活online版”与“同事收集梦想生活线下版”的对照包袱，不得把 lds、online 或同事关系改成无关近音。"
+        },
+        {
+          "point_id": "complete-colleague-trouble-ending",
+          "final_video_start_ms": 105000,
+          "final_video_end_ms": 121700,
+          "expectation": "结尾必须完整落到占用并调整同事电脑设置、很麻烦同事的闭环；不得截断最后一句或带入随后谢礼的新话题。"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_192000_909_1014",
+      "subtitle_review_points": [
+        {
+          "point_id": "gift-canon-no-unique-acoustic-truth",
+          "final_video_start_ms": 5500,
+          "final_video_end_ms": 11000,
+          "expectation": "开场送礼感谢必须使用操作员裁定的高概率礼物真值“粉丝团灯牌”；不得把 AGY 声学猜测伪装成人耳唯一真值，也不得回退成钢镚等其他礼物。"
+        },
+        {
+          "point_id": "model-production-sentence-repair",
+          "final_video_start_ms": 25000,
+          "final_video_end_ms": 44000,
+          "expectation": "模型制作经验的说明必须连贯为“说之前制作模型的时候”“就是制作这个机体”“面部的时候没有什么经验”，不得残留重复拼接或病句。"
+        },
+        {
+          "point_id": "gift-and-video-question-context",
+          "final_video_start_ms": 49000,
+          "final_video_end_ms": 67000,
+          "expectation": "送礼感谢与随后 SC 问句必须按真实顺序保留；“今天看视频吗？有个想推荐的”及“因为直播时间比较短”不得丢失问号、主语或因果。"
+        },
+        {
+          "point_id": "white-dragon-refusal-payoff",
+          "final_video_start_ms": 73000,
+          "final_video_end_ms": 88000,
+          "expectation": "必须完整保留观众建议给新3D做白色奶龙表情、李豆沙连续拒绝并说明不会花钱的核心包袱，不能把对象或拒绝理由截碎。"
+        },
+        {
+          "point_id": "white-dragon-horror-ending",
+          "final_video_start_ms": 96000,
+          "final_video_end_ms": 112500,
+          "expectation": "结尾必须完整收束在旧模型表情看久了很恐怖、表情怪怪的，不得断在半句中，也不得带入随后加载失败和下一条 SC 话题。"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_195000_1493_1579",
+      "subtitle_review_points": [
+        {
+          "point_id": "shadouli-team-name",
+          "final_video_start_ms": 0,
+          "final_video_end_ms": 59000,
+          "expectation": "整片前59秒所有指向该粉丝队的称呼都必须写成玩梗专名“沙豆李”，不得残留声学近音“下斗里”或把队名误写成普通短语“杀队友”；随后发0/2支持李豆沙的对照关系也必须完整。"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_142942_496_618",
+      "subtitle_review_points": [
+        {
+          "point_id": "japanese-native-script-whole-clip",
+          "final_video_start_ms": 0,
+          "final_video_end_ms": 136000,
+          "expectation": "整片中能确认是李豆沙所说的日语普通词、自称和短句必须使用假名或惯用日文原形；ぼく、おれ、あたし、おら、わたくし等不得与 boku、ore、atashi、ora、watakushi 等罗马音混用，真正英语 identity 保持不变。"
+        },
+        {
+          "point_id": "ora-watakushi-complete-ending",
+          "final_video_start_ms": 122000,
+          "final_video_end_ms": 136000,
+          "expectation": "结尾必须依次保留“おら翻译成老子吗”“わたくし翻译的话就是大小姐”“大小姐说了”，不得把假名改回罗马音、漏掉末句或在话中截断。"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_225056_1013_1116",
+      "subtitle_review_points": [
+        {
+          "point_id": "jiuyuanling-danmu-name-first",
+          "final_video_start_ms": 14000,
+          "final_video_end_ms": 19000,
+          "expectation": "弹幕点名必须写舰长专名“久远澪老师”，不得误听为“就问你老实说”。"
+        },
+        {
+          "point_id": "jiuyuanling-danmu-name-second",
+          "final_video_start_ms": 19000,
+          "final_video_end_ms": 25000,
+          "expectation": "第二次仍是“久远澪老师，侄女会看李豆沙”，与第一次同名同形。"
+        },
+        {
+          "point_id": "platon-boarding-thanks",
+          "final_video_start_ms": 59500,
+          "final_video_end_ms": 64500,
+          "expectation": "上舰感谢必须是“柏拉图老板”（101 人舰长榜唯一近音专名），不得写“不糊涂”。"
+        },
+        {
+          "point_id": "zaizang-not-weizhuang",
+          "final_video_start_ms": 94500,
+          "final_video_end_ms": 99500,
+          "expectation": "必须是“试图以此栽赃给李豆沙”，不得写“伪装成李豆沙”。"
+        },
+        {
+          "point_id": "ending-closure",
+          "final_video_start_ms": 104000,
+          "final_video_end_ms": 109920,
+          "expectation": "结尾按 exact_source_pin(1117320ms) 完整收束，不断在话中，不带入后续新话题。"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_230125_960_1072",
+      "subtitle_review_points": [
+        {
+          "point_id": "lovecode-song-name-opening",
+          "final_video_start_ms": 6200,
+          "final_video_end_ms": 9000,
+          "expectation": "片头后首次歌名必须渲染为「ラブコード」，不得残留 LoveLive! 或把歌曲误当成 franchise。"
+        },
+        {
+          "point_id": "lovecode-song-name-prelude",
+          "final_video_start_ms": 18500,
+          "final_video_end_ms": 23000,
+          "expectation": "说到前奏的第二处歌名必须同形为「ラブコード」，且与语音和后文连贯。"
+        },
+        {
+          "point_id": "lovecode-song-name-after",
+          "final_video_start_ms": 78500,
+          "final_video_end_ms": 83000,
+          "expectation": "说到歌曲后面和大家合跳的第三处歌名必须为「ラブコード」，整片三处一致。"
+        },
+        {
+          "point_id": "lovecode-ending-closure",
+          "final_video_start_ms": 104500,
+          "final_video_end_ms": 118500,
+          "expectation": "结尾必须完整收束「因为已经爱上，所以才会有再一次」的解释与包袱，不断在话中、不带入下一话题。"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_200130_1323_1603",
+      "subtitle_review_points": [
+        {
+          "point_id": "yueqi-cue104",
+          "final_video_start_ms": 193000,
+          "final_video_end_ms": 198000,
+          "expectation": "Ivan 手标动作注记必须完整烧录:该窗字幕须为「我是，我是这样的 你起什么哄啊(跃起)」,(跃起) 逐字可见;画面不得出现 [李豆沙]/[连线] 标签字面。"
+        },
+        {
+          "point_id": "yueqi-cue128-merged",
+          "final_video_start_ms": 230000,
+          "final_video_end_ms": 236000,
+          "expectation": "合并窗(原 128+129)字幕须为「我是李豆的什么 你不许再说话(跃起)」,(跃起) 逐字可见且时间轴与机器原时轴一致;画面不得出现标签字面。"
+        },
+        {
+          "point_id": "machine-note-strip",
+          "final_video_start_ms": 0,
+          "final_video_end_ms": 286389,
+          "expectation": "全片除 Ivan 手标 (跃起)×2 外不得出现任何其它圆括号注记(「(无可辨别人声)」「(无可分辨人声)」类机器注记必须剥离);159 cue 全程说话人只走颜色样式,无标签字面。"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_113022_354_496",
+      "subtitle_review_points": [
+        {
+          "point_id": "qixi-tomorrow-night-lara-title",
+          "final_video_start_ms": 14000,
+          "final_video_end_ms": 21000,
+          "expectation": "片头后该窗字幕必须为“明天晚上和大家看《再见菈菈》”，与人声一致；不得以未获 Ivan 裁定的其他标题替代。"
+        },
+        {
+          "point_id": "qixi-balance-iiya",
+          "final_video_start_ms": 71873,
+          "final_video_end_ms": 74273,
+          "expectation": "该窗字幕必须为“非常 balance いいや”；不得回退为 pipeline 的“非常按这个巴拉四义呀”，不得把诊断 Gemini 回包或未裁定的末尾粒子冒充 Ivan 发布真值。"
+        },
+        {
+          "point_id": "qixi-sweet-or-bitter-ending",
+          "final_video_start_ms": 137000,
+          "final_video_end_ms": 148400,
+          "expectation": "片尾必须完整停在“甜或者苦都可以哦”并在自然停顿收束；不得重新带入已裁掉的2:39段、后续话题或任何半句。"
+        },
+        {
+          "point_id": "qixi-full-release-text-stability",
+          "final_video_start_ms": 6183,
+          "final_video_end_ms": 148400,
+          "expectation": "除本轮 Ivan 明确裁定与已绑定既有裁定外，全片最终烧录字幕必须与当前受管发布词面逐 cue 保持一致；不得因本次定点修复改写其他人名、标题、句序、时间或边界。"
+        }
+      ]
+    }
+  ]
+}

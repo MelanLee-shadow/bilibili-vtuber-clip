@@ -159,7 +159,7 @@ TEMPLATE_DIRS = (
     "assets/lidousha/reviewed_exact_source_intervals/",
     "assets/lidousha/reviewed_speaker_delivery_bindings/",
     "assets/lidousha/reviewed_speaker_truth/",
-    "assets/lidousha/speaker_automatic_baselines/",
+    "assets/lidousha/speaker_automatic_baselines/", "assets/lidousha/qixi_terminal_subtitle_projection/",
 )
 
 # ---------------------------------------------------------------------------
