@@ -195,6 +195,109 @@ def validate_legacy_cover_inputs(
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_GENERATION_DRIFT")
 
 
+def snapshot_fixed_runtime(authority: Mapping[str, object], *, repo_root: Path = ROOT) -> dict[str, bytes]:
+    """Read the terminal successor first, then every mutable cover preimage."""
+
+    normalized = validate_authority(authority)
+    try:
+        from src.autoslice import qixi_terminal_evidence_refresh as terminal
+
+        terminal_authority = terminal.load_authority(repo_root)
+        binding = normalized["terminal_refresh_authority"]
+        assert isinstance(binding, Mapping)
+        if terminal_authority["authority_sha256"] != binding["authority_sha256"]:
+            raise ValueError("terminal authority mismatch")
+        terminal.validate_committed_refresh(repo_root=repo_root)
+        runtime = terminal.validate_runtime(terminal_authority)
+        legacy = normalized["legacy_cover"]
+        assert isinstance(legacy, Mapping)
+        cover = stable_regular_snapshot(Path(str(legacy["final_cover"]["path"])), label="cover repair legacy cover")
+        qc = stable_regular_snapshot(Path(str(legacy["failed_joint_qc"]["path"])), label="cover repair legacy qc")
+        if cover is None or qc is None:
+            raise ValueError("legacy input absent")
+        record = json.loads(runtime["record"])
+        generation = record.get("cover_generation") if isinstance(record, Mapping) else None
+        if not isinstance(generation, Mapping):
+            raise ValueError("cover generation absent")
+        validate_legacy_cover_inputs(normalized, generation=generation, old_cover=cover.payload, old_qc=qc.payload)
+        runtime["cover"] = cover.payload
+        runtime["qc"] = qc.payload
+        return runtime
+    except (OSError, ValueError, QixiTransactionCoreError, json.JSONDecodeError) as exc:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_RUNTIME_DRIFT") from exc
+
+
+def build_cover_projection(
+    *, authority: Mapping[str, object], runtime: Mapping[str, bytes],
+    cover_bytes: bytes, qc_bytes: bytes, generation: Mapping[str, object],
+) -> dict[Path, bytes]:
+    """Patch only cover fields into terminal-validated JSON preimages."""
+
+    normalized = validate_authority(authority)
+    if _sha256_bytes(cover_bytes) != generation.get("final_cover_sha256"):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PREFLIGHT_COVER_DRIFT")
+    try:
+        record = json.loads(runtime["record"])
+        delivery = json.loads(runtime["delivery_record"])
+        publish = json.loads(runtime["publish"])
+        state = json.loads(runtime["state"])
+    except (KeyError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PROJECTION_INVALID") from exc
+    if not all(isinstance(value, dict) for value in (record, delivery, publish, state)) or record != delivery:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_RECORD_MIRROR_DRIFT")
+    cover_sha = _sha256_bytes(cover_bytes)
+    for document in (record, delivery):
+        document["cover_generation"] = dict(generation)
+        staging = document.get("publish_staging")
+        if isinstance(staging, dict):
+            staging["cover_generation"] = dict(generation)
+        hashes = document.get("artifact_hashes")
+        if isinstance(hashes, dict):
+            hashes["cover_sha256"] = cover_sha
+    publish["cover_generation"] = dict(generation)
+    publish["cover_path"] = str(normalized["legacy_cover"]["final_cover"]["path"])
+    qc_target = Path(str(normalized["legacy_cover"]["failed_joint_qc"]["path"])).with_name(
+        f"{CANDIDATE_ID}.qixi-cover-repair-{str(normalized['authority_sha256'])[7:23]}.title-cover-joint-qc.json"
+    )
+    publish["title_cover_joint_qc"] = json.loads(qc_bytes)
+    publish["title_cover_joint_qc"]["cover_path"] = str(normalized["legacy_cover"]["final_cover"]["path"])
+    hashes = publish.get("artifact_hashes")
+    if isinstance(hashes, dict):
+        hashes["cover_sha256"] = cover_sha
+    rows = state.get("picks")
+    matches = [row for row in rows if isinstance(row, dict) and row.get("candidate_id") == CANDIDATE_ID] if isinstance(rows, list) else []
+    if len(matches) != 1:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_STATE_CANDIDATE_DRIFT")
+    matches[0].update({"cover_path": str(normalized["legacy_cover"]["final_cover"]["path"]), "cover_generation": dict(generation), "cover_sha256": cover_sha})
+    for value in (record, delivery, publish, state):
+        _assert_no_stage_locator(value)
+    terminal_paths = {role: Path(str(json.loads(runtime[role]).get("_unused", ""))) for role in ()}
+    del terminal_paths
+    # The caller obtains these exact paths from the terminal authority, not from a provider response.
+    terminal = json.loads((ROOT / str(normalized["terminal_refresh_authority"]["relative_path"])).read_text())
+    preimage = terminal["preimage"]
+    targets = {
+        Path(str(preimage["record"]["path"])): _json_bytes(record),
+        Path(str(preimage["delivery_record"]["path"])): _json_bytes(delivery),
+        Path(str(preimage["publish"]["path"])): _json_bytes(publish),
+        Path(str(preimage["state"]["path"])): _json_bytes(state),
+        Path(str(normalized["legacy_cover"]["final_cover"]["path"])): cover_bytes,
+        qc_target: qc_bytes,
+    }
+    return targets
+
+
+def _assert_no_stage_locator(value: object) -> None:
+    if isinstance(value, Mapping):
+        for child in value.values():
+            _assert_no_stage_locator(child)
+    elif isinstance(value, list):
+        for child in value:
+            _assert_no_stage_locator(child)
+    elif isinstance(value, str) and ".qixi-screenshot-cover-stage-" in value:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_STAGE_LOCATOR_DRIFT")
+
+
 def require_repaired_punch(value: object) -> tuple[str, ...]:
     """Prevent a caller from turning a bounded candidate pool into free text."""
 
@@ -518,14 +621,12 @@ def apply_preflight_targets(
                     snapshot = stable_regular_snapshot(target, label="cover repair preimage")
                 except QixiTransactionCoreError as exc:
                     raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_TARGET_UNSAFE") from exc
-                if snapshot is None:
-                    raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_TARGET_MISSING")
                 entries.append({
-                    "target": str(target), "before_bytes_b64": base64.b64encode(snapshot.payload).decode(),
-                    "before_sha256": snapshot.sha256, "before_mode": snapshot.mode,
-                    "before_device": snapshot.device, "before_inode": snapshot.inode,
+                    "target": str(target), "before_bytes_b64": (base64.b64encode(snapshot.payload).decode() if snapshot else None),
+                    "before_sha256": (snapshot.sha256 if snapshot else None), "before_mode": (snapshot.mode if snapshot else None),
+                    "before_device": (snapshot.device if snapshot else None), "before_inode": (snapshot.inode if snapshot else None),
                     "after_bytes_b64": base64.b64encode(payload).decode(),
-                    "after_sha256": _sha256_bytes(payload), "after_mode": snapshot.mode,
+                    "after_sha256": _sha256_bytes(payload), "after_mode": (snapshot.mode if snapshot else 0o600),
                     "staged_name": f".{target.name}.qixi-cover-{index}.tmp",
                     "staged_device": None, "staged_inode": None,
                     "installed_device": None, "installed_inode": None, "phase": "PREPARED",
@@ -619,7 +720,8 @@ def _rollback_journal(root: Path, journal: dict[str, object]) -> None:
         if current is None or current.payload != after or (current.device, current.inode) != (entry["installed_device"], entry["installed_inode"]):
             raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_ROLLBACK_OWNERSHIP_DRIFT")
         restored = restore_owned_inode(current, before=journal_before_snapshot(entry, target=target), label="cover repair rollback")
-        if restored is None or restored.payload != base64.b64decode(str(entry["before_bytes_b64"]), validate=True):
+        before_payload = entry["before_bytes_b64"]
+        if (before_payload is None and restored is not None) or (before_payload is not None and (restored is None or restored.payload != base64.b64decode(str(before_payload), validate=True))):
             raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_ROLLBACK_DRIFT")
         entry["phase"] = "PREPARED"
     journal["status"] = "ROLLED_BACK"
