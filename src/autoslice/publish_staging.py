@@ -1640,6 +1640,8 @@ def _stage_lidousha_ai_cover(
     private_artifact_root: Path | None = None,
     cover_mode_override: str | None = None,
     require_screenshot_direct: bool = False,
+    approved_punch: tuple[str, ...] | None = None,
+    approved_punch_receipt: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     cover_generation: dict[str, object] = {
         "workflow": LIDOUSHA_COVER_WORKFLOW,
@@ -1787,6 +1789,22 @@ def _stage_lidousha_ai_cover(
             else ""
         ),
     )
+    if approved_punch is not None:
+        if (
+            not punch_allowed
+            or not isinstance(approved_punch_receipt, Mapping)
+            or approved_punch_receipt.get("status") != "PASS"
+            or tuple(approved_punch_receipt.get("final_punch") or ()) != approved_punch
+        ):
+            return _blocked_ai_cover_result(
+                cover_generation, ["COVER_APPROVED_PUNCH_RECEIPT_INVALID"],
+                "fixed cover repair requires its canonical approved-punch receipt",
+            )
+        art_direction = dataclasses_replace(
+            art_direction,
+            cover_punch=approved_punch,
+            cover_punch_semantic_review=dict(approved_punch_receipt),
+        )
 
     # 路由：语义/人物证据先行，几何只决定已经验真人物的构图处理。
     treatment, route = _build_lidousha_cover_route(
