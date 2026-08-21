@@ -1,0 +1,52 @@
+{
+  "schema_version": "lidousha-candidate-public-text-surface-authority.v1",
+  "algorithm_id": "exact-candidate-manual-title-resolution.v1",
+  "candidate_binding": {
+    "candidate_id": "auto_173005_934_1166",
+    "recording_date": "2026-08-11",
+    "clip_context_sha256": "sha256:02711dd5045481c2a85ff5c06203b394c23fa65692c8155f551eadba691a4127",
+    "selected_interval": {
+      "absolute_start_ms": 934600,
+      "absolute_end_ms": 1166210
+    },
+    "clip_context_source_pieces": [
+      {
+        "recording_basename": "22966160_20260811-17-30-05.mp4",
+        "source_media_sha256": "sha256:870599654e3f3804f36d37ebb2cf798733720759fbc18d6ef79860dc47b35af5",
+        "start_ms": 924600,
+        "end_ms": 1214210
+      }
+    ],
+    "story_contract_sha256": "sha256:d465a06cc1e0ec8a8dd3d325639689a20ddd5ef4b6ff4f715c95a40e739863ef",
+    "clip_context_prompt_sha256": "sha256:51db6fc28e96e399a925a68a0bc0d219fb896751feba608dcfb12948ca38e7a6"
+  },
+  "input_surface_binding": {
+    "selection_hook": "本想看“CP误解向”，李豆沙却越看越上头，最终认定薇欧拉对阿拉蕾就是铁暗恋。",
+    "selection_hook_sha256": "sha256:fb8fd5bfd72262733b61c502e1e0796fa2a76f1e3b3032ed8977bfae2730f75b",
+    "superseded_title": "【李豆沙】本想看“CP误解向”，小李越看《梦限大》越上头，最终判定薇欧拉对阿拉蕾就是铁暗恋",
+    "superseded_title_sha256": "sha256:56a7af08fd02956cec31c547de055fc6fd35d10f05710bf6c14e280571f75226"
+  },
+  "resolved_surfaces": {
+    "selection_hook": "本想看“CP误解向”，李豆沙却越看越上头，最终认定薇欧拉对阿拉蕾就是铁暗恋。",
+    "selection_hook_sha256": "sha256:fb8fd5bfd72262733b61c502e1e0796fa2a76f1e3b3032ed8977bfae2730f75b",
+    "title": "【李豆沙】经小李判断，薇欧拉对阿拉蕾就是铁暗恋！",
+    "title_sha256": "sha256:62e5d330a29cb3beed28fc8934a16b9e5d324db58daf831dcca4d4d39de95ab9"
+  },
+  "scope": {
+    "artifact_kinds": [
+      "selection_hook",
+      "title",
+      "cover",
+      "publication"
+    ],
+    "subtitle_text_mutation_authorized": false,
+    "speaker_label_mutation_authorized": false,
+    "upload_authorized": false,
+    "registry_hold_released": false
+  },
+  "user_authorization": {
+    "quote": "这条切片标题改为“经小李判断，薇欧拉对阿拉蕾就是铁暗恋！”我记得之前应该明确说过上头这种词汇没有任何信息量，不能放在标题里，你再看看之前那些说的起标题和绘制封面的skill怎么搞的？其他没有问题。",
+    "timestamp": "2026-08-19T00:08:52.249Z"
+  },
+  "authority_sha256": "sha256:001c8aab4581db7a6875f293ea2a597fcdf633bffdb5b097d6fbc8edeb1bc192"
+}

@@ -284,7 +284,7 @@ def audit_candidate_public_text_surfaces(
         )
     staging_receipt = publish_staging.get("public_text_surface_authority_consumption")
     publish_receipt = publish.get("public_text_surface_authority_consumption")
-    expected_source = "deterministic_candidate_public_surface_resolution+ivan_exact_substitution"
+    expected_source = authority.title_source
     if not (
         staging_receipt == publish_receipt == expected
         and publish_staging.get("title_source") == publish.get("title_source") == expected_source

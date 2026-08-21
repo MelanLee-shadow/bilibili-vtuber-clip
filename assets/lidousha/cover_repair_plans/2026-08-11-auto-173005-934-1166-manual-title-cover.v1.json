@@ -1,0 +1,75 @@
+{
+  "schema_version": "reviewed-cover-repair-plan.v1",
+  "date": "2026-08-11",
+  "authority": "Ivan original-user line 947 (2026-08-19T00:08:52.249Z) exactly replaces only this candidate's public title; the plan preserves frozen video, SRT, StoryContract and boundary bytes while the existing CPA cpa_redraw cover-only lane regenerates a new cover.",
+  "upload_enabled": false,
+  "upload_ledger": {
+    "path": "/opt/bilive/autoslice/reports/upload_ledger.jsonl",
+    "sha256": "e0d7f35f721ebc50509397cff608c7ef68761aae526e4627a94fef4fb7b5c818"
+  },
+  "repair_candidates": [
+    {
+      "candidate_id": "auto_173005_934_1166",
+      "expected_state_record_sha256": "909719b524f3310f5453f461da6e54d14aa16ba1ea83b7f3b042ff7616b0cde9"
+    }
+  ],
+  "invalidations": [
+    {
+      "candidate_id": "auto_173005_934_1166",
+      "expected_title": "【李豆沙】本想看“CP误解向”，小李越看《梦限大》越上头，最终判定薇欧拉对阿拉蕾就是铁暗恋",
+      "title": "【李豆沙】经小李判断，薇欧拉对阿拉蕾就是铁暗恋！",
+      "expected_cover_text": "薇欧拉对阿拉蕾\n就是铁暗恋！",
+      "require_rendered_text_exact": true,
+      "cover_diversity_slot": 0,
+      "media": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-08-11/本想看“CP误解向”，李豆沙却越看越.mp4",
+        "sha256": "1bdb0e3278d291ef850299b9b7bde8011241c6ac5ad48faef4d274d69286de81"
+      },
+      "cover": {
+        "path": "/opt/bilive/autoslice/repo/lidousha/2026-08-11/本想看“CP误解向”，李豆沙却越看越.cover.png",
+        "sha256": "dca0787bb138ac5ded39e717bf3982ffaf0e4ace8d2760776c779fbbd92db3fa"
+      },
+      "documents": [
+        {
+          "path": "/opt/bilive/autoslice/repo/lidousha/2026-08-11/本想看“CP误解向”，李豆沙却越看越.record.json",
+          "sha256": "8fc97c5fc57b9603859fe09d74ce148fc4ec86cbdab3b3deefd4052c54191900"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/replacement_recuts/auto_173005_934_1166.record.json",
+          "sha256": "8fc97c5fc57b9603859fe09d74ce148fc4ec86cbdab3b3deefd4052c54191900"
+        },
+        {
+          "path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/replacement_recuts/auto_173005_934_1166.recut.publish.json",
+          "sha256": "f8b5e9a401f8d145c052c30832cf8d08baa20165960c55aa47ea6c84a67b319e"
+        }
+      ]
+    }
+  ],
+  "title_repair_authorities": [
+    {
+      "candidate_id": "auto_173005_934_1166",
+      "authority_path": "assets/lidousha/candidate_public_text_surface_authorities/auto_173005_934_1166.public-text-surface-authority.v1.json",
+      "authority_file_sha256": "sha256:6923213d456233ae72541ec3a9bc68aed7425d9f574c83437e6f0ca7d05b2746",
+      "authority_sha256": "sha256:001c8aab4581db7a6875f293ea2a597fcdf633bffdb5b097d6fbc8edeb1bc192",
+      "expected_title": "【李豆沙】本想看“CP误解向”，小李越看《梦限大》越上头，最终判定薇欧拉对阿拉蕾就是铁暗恋",
+      "title": "【李豆沙】经小李判断，薇欧拉对阿拉蕾就是铁暗恋！",
+      "story_contract_sha256": "sha256:d465a06cc1e0ec8a8dd3d325639689a20ddd5ef4b6ff4f715c95a40e739863ef",
+      "subtitle": {
+        "path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/replacement_recuts/auto_173005_934_1166.recut.srt",
+        "sha256": "sha256:1a668a899257407685c91629cc254918a594663af8b55cccb0932db16d0aa5d1"
+      },
+      "boundary_audit_sha256": "sha256:810c6904916434fcae51ba3f61c8a05952d550259053512ad0859ad7ea22bfdf"
+    }
+  ],
+  "cover_route_authorities": [
+    {
+      "candidate_id": "auto_173005_934_1166",
+      "source_reference_path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/replacement_recuts/cover_refs/auto_173005_934_1166.cover-ref.png",
+      "source_reference_sha256": "sha256:a47ff5dd5b48756acad97996f2fd572eed819a657c606f067296f05c8be44e79",
+      "source_composition_witness_sha256": "sha256:0a56ee40f44dd694b44470b578fea5ef8133533486beadc6cd386230acecd3ce",
+      "selected_treatment": "cpa_redraw",
+      "screenshot_direct_rejected": true,
+      "screenshot_polish_rejected": true
+    }
+  ]
+}

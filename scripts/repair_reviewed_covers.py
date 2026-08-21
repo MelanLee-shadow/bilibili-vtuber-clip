@@ -49,6 +49,12 @@ from scripts.run_auto_review_shadow_pipeline import _lidousha_cover_text  # noqa
 from src.autoslice.publication_registry import (  # noqa: E402
     cover_maintenance_block_reason,
 )
+from src.autoslice.candidate_public_text_surface_authority import (  # noqa: E402
+    CandidatePublicTextSurfaceAuthority,
+    CandidatePublicTextSurfaceAuthorityError,
+    consume_candidate_public_text_surface_authority,
+    load_candidate_public_text_surface_authority,
+)
 
 
 PLAN_SCHEMA = "reviewed-cover-repair-plan.v1"
@@ -56,6 +62,27 @@ TRANSACTION_SCHEMA = "reviewed-cover-invalidation-transaction.v1"
 SAFE_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,96}")
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 SHA_RE = re.compile(r"(?:sha256:)?([0-9a-f]{64})")
+_TITLE_REPAIR_AUTHORITY_FIELDS = {
+    "candidate_id",
+    "authority_path",
+    "authority_file_sha256",
+    "authority_sha256",
+    "expected_title",
+    "title",
+    "story_contract_sha256",
+    "subtitle",
+    "boundary_audit_sha256",
+}
+_SUBTITLE_BINDING_FIELDS = {"path", "sha256"}
+_COVER_ROUTE_AUTHORITY_FIELDS = {
+    "candidate_id",
+    "source_reference_path",
+    "source_reference_sha256",
+    "source_composition_witness_sha256",
+    "selected_treatment",
+    "screenshot_direct_rejected",
+    "screenshot_polish_rejected",
+}
 
 
 class ReviewedCoverRepairError(RuntimeError):
@@ -190,11 +217,328 @@ def load_plan(path: Path) -> tuple[dict[str, Any], str]:
             if not isinstance(document, dict) or not isinstance(document.get("path"), str):
                 raise ReviewedCoverRepairError("invalid active document entry")
             _normalized_sha256(document.get("sha256"))
+    changed_titles = {
+        str(row["candidate_id"])
+        for row in invalidations
+        if row.get("expected_title") != row.get("title")
+    }
+    title_authorities = plan.get("title_repair_authorities")
+    if changed_titles:
+        if not isinstance(title_authorities, list) or len(title_authorities) != len(changed_titles):
+            raise ReviewedCoverRepairError(
+                "manual title repair requires one exact public-text authority per changed title"
+            )
+        seen_title_authorities: set[str] = set()
+        for entry in title_authorities:
+            if not isinstance(entry, dict) or set(entry) != _TITLE_REPAIR_AUTHORITY_FIELDS:
+                raise ReviewedCoverRepairError("title repair authority schema is invalid")
+            candidate_id = str(entry.get("candidate_id") or "")
+            if candidate_id not in changed_titles or candidate_id in seen_title_authorities:
+                raise ReviewedCoverRepairError("title repair authority candidate set is invalid")
+            seen_title_authorities.add(candidate_id)
+            if not all(
+                isinstance(entry.get(key), str) and entry.get(key)
+                for key in (
+                    "authority_path",
+                    "authority_file_sha256",
+                    "authority_sha256",
+                    "expected_title",
+                    "title",
+                    "story_contract_sha256",
+                    "boundary_audit_sha256",
+                )
+            ):
+                raise ReviewedCoverRepairError("title repair authority binding is incomplete")
+            for key in (
+                "authority_file_sha256",
+                "authority_sha256",
+                "story_contract_sha256",
+                "boundary_audit_sha256",
+            ):
+                _normalized_sha256(entry.get(key))
+            subtitle = entry.get("subtitle")
+            if not isinstance(subtitle, dict) or set(subtitle) != _SUBTITLE_BINDING_FIELDS:
+                raise ReviewedCoverRepairError("title repair subtitle binding is invalid")
+            if not isinstance(subtitle.get("path"), str) or not subtitle.get("path"):
+                raise ReviewedCoverRepairError("title repair subtitle path is invalid")
+            _normalized_sha256(subtitle.get("sha256"))
+            invalidation = next(
+                row for row in invalidations if str(row["candidate_id"]) == candidate_id
+            )
+            if (
+                entry["expected_title"] != invalidation["expected_title"]
+                or entry["title"] != invalidation["title"]
+            ):
+                raise ReviewedCoverRepairError("title repair authority title does not match invalidation")
+        if seen_title_authorities != changed_titles:
+            raise ReviewedCoverRepairError("title repair authority set is incomplete")
+        route_authorities = plan.get("cover_route_authorities")
+        if not isinstance(route_authorities, list) or len(route_authorities) != len(changed_titles):
+            raise ReviewedCoverRepairError(
+                "manual title repair requires one frozen cover route comparison per changed title"
+            )
+        seen_routes: set[str] = set()
+        for entry in route_authorities:
+            if not isinstance(entry, dict) or set(entry) != _COVER_ROUTE_AUTHORITY_FIELDS:
+                raise ReviewedCoverRepairError("cover route authority schema is invalid")
+            candidate_id = str(entry.get("candidate_id") or "")
+            if candidate_id not in changed_titles or candidate_id in seen_routes:
+                raise ReviewedCoverRepairError("cover route authority candidate set is invalid")
+            seen_routes.add(candidate_id)
+            if not all(
+                isinstance(entry.get(key), str) and entry.get(key)
+                for key in (
+                    "source_reference_path",
+                    "source_reference_sha256",
+                    "source_composition_witness_sha256",
+                    "selected_treatment",
+                )
+            ) or entry.get("selected_treatment") != "cpa_redraw":
+                raise ReviewedCoverRepairError("cover route authority is incomplete or not a CPA redraw")
+            _normalized_sha256(entry.get("source_reference_sha256"))
+            _normalized_sha256(entry.get("source_composition_witness_sha256"))
+            if entry.get("screenshot_direct_rejected") is not True or entry.get("screenshot_polish_rejected") is not True:
+                raise ReviewedCoverRepairError("cover route authority must reject both screenshot routes")
+        if seen_routes != changed_titles:
+            raise ReviewedCoverRepairError("cover route authority set is incomplete")
+    elif title_authorities is not None:
+        raise ReviewedCoverRepairError("unchanged title plan may not carry title repair authority")
     ledger = plan.get("upload_ledger")
     if not isinstance(ledger, dict) or Path(str(ledger.get("path") or "")) != BASE / "reports/upload_ledger.jsonl":
         raise ReviewedCoverRepairError("plan must bind the production upload ledger")
     _normalized_sha256(ledger.get("sha256"))
     return plan, _sha256_bytes(raw)
+
+
+def _canonical_json_sha256(value: object) -> str:
+    return "sha256:" + _sha256_bytes(
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    )
+
+
+def _document_story_contract(document: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    direct = document.get("story_contract")
+    if isinstance(direct, Mapping):
+        return direct
+    staging = document.get("publish_staging")
+    nested = staging.get("story_contract") if isinstance(staging, Mapping) else None
+    return nested if isinstance(nested, Mapping) else None
+
+
+def _validate_title_repair_authorities(
+    *,
+    plan: Mapping[str, Any],
+    date: str,
+    records: Mapping[str, dict[str, Any]],
+    active_titles: Mapping[str, str],
+    phase: str,
+) -> dict[str, dict[str, Any]]:
+    """Bind a changed public title to the sealed manual-title authority.
+
+    This is intentionally before every transaction/state write and re-run
+    after cover generation.  It pins the old title plus final video/SRT/story
+    and boundary facts, while the only mutable output is a newly verified
+    cover and the title projections that carry the same authority.
+    """
+
+    if phase not in {"pre", "post"}:
+        raise ReviewedCoverRepairError("title repair authority validation phase is invalid")
+    projections: dict[str, dict[str, Any]] = {}
+    for entry in plan.get("title_repair_authorities") or []:
+        candidate_id = str(entry["candidate_id"])
+        record = records[candidate_id]
+        title = active_titles.get(candidate_id)
+        expected_state_title = entry["expected_title"] if phase == "pre" else entry["title"]
+        if title != expected_state_title:
+            raise ReviewedCoverRepairError(f"{candidate_id} title drifted outside repair authority")
+        expected_relative = (
+            Path("assets/lidousha/candidate_public_text_surface_authorities")
+            / f"{candidate_id}.public-text-surface-authority.v1.json"
+        )
+        if Path(str(entry["authority_path"])) != expected_relative:
+            raise ReviewedCoverRepairError(f"{candidate_id} title authority path is non-canonical")
+        authority_path = ROOT / expected_relative
+        if authority_path.is_symlink() or not authority_path.is_file():
+            raise ReviewedCoverRepairError(f"{candidate_id} title authority file is unavailable")
+        if "sha256:" + _sha256_file(authority_path) != "sha256:" + _normalized_sha256(
+            entry["authority_file_sha256"]
+        ):
+            raise ReviewedCoverRepairError(f"{candidate_id} title authority file drifted")
+        try:
+            authority = load_candidate_public_text_surface_authority(candidate_id, root=ROOT)
+        except CandidatePublicTextSurfaceAuthorityError as exc:
+            raise ReviewedCoverRepairError(
+                f"{candidate_id} title authority is not sealed/valid: {exc}"
+            ) from exc
+        if authority is None or not authority.is_manual_title_resolution:
+            raise ReviewedCoverRepairError(f"{candidate_id} title authority is not manual-title scoped")
+        if not (
+            authority.authority_sha256 == "sha256:" + _normalized_sha256(entry["authority_sha256"])
+            and authority.superseded_title == entry["expected_title"]
+            and authority.resolved_title == entry["title"]
+        ):
+            raise ReviewedCoverRepairError(f"{candidate_id} title authority content drifted")
+        authority.require_artifact_text(artifact_kind="title", text=str(entry["title"]))
+        paths = delivered_paths(date, record)
+        if paths is None:
+            raise ReviewedCoverRepairError(f"{candidate_id} lacks frozen media for title repair")
+        mp4, _cover = paths
+        documents = _active_cover_documents(
+            date=date,
+            candidate_id=candidate_id,
+            title=str(title),
+            mp4=mp4,
+            media_sha256="sha256:" + _sha256_file(mp4),
+        )
+        if len(documents) != 3:
+            raise ReviewedCoverRepairError(
+                f"{candidate_id} must retain exactly three active publish documents"
+            )
+        contracts = [
+            contract
+            for _path, document in documents
+            if (contract := _document_story_contract(document)) is not None
+        ]
+        if not contracts or any(_canonical_json_sha256(contract) != entry["story_contract_sha256"] for contract in contracts):
+            raise ReviewedCoverRepairError(f"{candidate_id} story contract drifted")
+        if authority.story_contract_sha256 != entry["story_contract_sha256"]:
+            raise ReviewedCoverRepairError(f"{candidate_id} title authority story binding drifted")
+        # Consume the sealed authority against the exact StoryContract already
+        # carried by the active documents.  This is a projection, not a title
+        # or source-fact reconstruction: the bytes below are written verbatim
+        # into all three publish views by the invalidation transaction.
+        try:
+            consumption = consume_candidate_public_text_surface_authority(
+                authority,
+                candidate_id=candidate_id,
+                selection_hook=str(contracts[0].get("selection_hook") or ""),
+                story_contract=contracts[0],
+            )
+        except CandidatePublicTextSurfaceAuthorityError as exc:
+            raise ReviewedCoverRepairError(
+                f"{candidate_id} title authority consumption is invalid: {exc}"
+            ) from exc
+        expected_title = str(entry["title"])
+        expected_source = authority.title_source
+        for _path, document in documents:
+            view = document if document.get("schema_version") == "shadow-publish-draft.v1" else document.get("publish_staging")
+            if not isinstance(view, Mapping):
+                raise ReviewedCoverRepairError(f"{candidate_id} active document publish view is missing")
+            if view.get("title") != expected_state_title:
+                raise ReviewedCoverRepairError(f"{candidate_id} active document title drifted")
+            if phase == "post" and not (
+                view.get("title") == expected_title
+                and view.get("title_source") == expected_source
+                and view.get("title_authority_status")
+                == "RESOLVED_PUBLIC_TEXT_SURFACE_AUTHORITY"
+                and view.get("title_authority_error") is None
+                and view.get("public_text_surface_authority_consumption") == consumption
+                and view.get("upload_enabled") is False
+            ):
+                raise ReviewedCoverRepairError(
+                    f"{candidate_id} active document public-text authority projection drifted"
+                )
+        subtitle = entry["subtitle"]
+        matched_subtitles = 0
+        for _path, document in documents:
+            subtitle_path = document.get("subtitle_path")
+            hashes = document.get("artifact_hashes")
+            boundary = document.get("boundary_audit")
+            if subtitle_path is None and boundary is None:
+                continue
+            if not isinstance(subtitle_path, str) or not isinstance(hashes, Mapping):
+                raise ReviewedCoverRepairError(f"{candidate_id} immutable subtitle binding is missing")
+            path = Path(subtitle_path)
+            if (
+                path.is_symlink()
+                or not path.is_file()
+                or path.resolve(strict=True) != Path(str(subtitle["path"])).resolve(strict=True)
+                or "sha256:" + _sha256_file(path)
+                != "sha256:" + _normalized_sha256(subtitle["sha256"])
+                or hashes.get("subtitle_sha256")
+                != "sha256:" + _normalized_sha256(subtitle["sha256"])
+                or not isinstance(boundary, Mapping)
+                or _canonical_json_sha256(boundary)
+                != "sha256:" + _normalized_sha256(entry["boundary_audit_sha256"])
+            ):
+                raise ReviewedCoverRepairError(f"{candidate_id} subtitle/boundary authority drifted")
+            matched_subtitles += 1
+        if matched_subtitles < 2:
+            raise ReviewedCoverRepairError(f"{candidate_id} active record mirrors lack immutable subtitle proof")
+        projections[candidate_id] = {
+            "authority": authority,
+            "story_contract": contracts[0],
+            "consumption": consumption,
+            "title_source": expected_source,
+        }
+    return projections
+
+
+def _validate_cover_route_authorities(
+    *,
+    plan: Mapping[str, Any],
+    date: str,
+    records: Mapping[str, dict[str, Any]],
+) -> None:
+    """Prove that the replacement keeps the approved CPA redraw route.
+
+    The old source image remains evidence only.  It is checked before
+    invalidation so a title repair cannot silently recast a screenshot-safe
+    package as an image-generation spend; this candidate's source witness
+    specifically rejects both screenshot options.
+    """
+
+    for entry in plan.get("cover_route_authorities") or []:
+        candidate_id = str(entry["candidate_id"])
+        record = records[candidate_id]
+        paths = delivered_paths(date, record)
+        if paths is None:
+            raise ReviewedCoverRepairError(f"{candidate_id} lacks frozen media for route comparison")
+        mp4, _cover = paths
+        documents = _active_cover_documents(
+            date=date,
+            candidate_id=candidate_id,
+            title=str(record.get("title") or ""),
+            mp4=mp4,
+            media_sha256="sha256:" + _sha256_file(mp4),
+        )
+        generations = [
+            (document.get("publish_staging") or {}).get("cover_generation")
+            for _path, document in documents
+            if isinstance(document.get("publish_staging"), Mapping)
+        ]
+        if len(generations) != len(documents) or any(not isinstance(value, Mapping) for value in generations):
+            raise ReviewedCoverRepairError(f"{candidate_id} route comparison evidence is missing")
+        generation = dict(generations[0])
+        if any(value != generation for value in generations[1:]):
+            raise ReviewedCoverRepairError(f"{candidate_id} active cover route evidence drifted")
+        decision = generation.get("route_decision")
+        composition = generation.get("source_composition_verification")
+        alternatives = decision.get("alternatives") if isinstance(decision, Mapping) else None
+        rejected = {
+            str(item.get("treatment"))
+            for item in alternatives or []
+            if isinstance(item, Mapping) and item.get("status") == "REJECTED"
+        }
+        reference = Path(str(entry["source_reference_path"]))
+        if (
+            reference.is_symlink()
+            or not reference.is_file()
+            or "sha256:" + _sha256_file(reference)
+            != "sha256:" + _normalized_sha256(entry["source_reference_sha256"])
+            or not isinstance(decision, Mapping)
+            or decision.get("selected_treatment") != entry["selected_treatment"]
+            or {"screenshot_direct", "screenshot_polish"} - rejected
+            or not isinstance(composition, Mapping)
+            or composition.get("reference_path") != str(reference)
+            or composition.get("reference_sha256")
+            != "sha256:" + _normalized_sha256(entry["source_reference_sha256"])
+            or composition.get("witness_receipt_sha256")
+            != "sha256:" + _normalized_sha256(entry["source_composition_witness_sha256"])
+            or decision.get("source_composition_witness_sha256")
+            != "sha256:" + _normalized_sha256(entry["source_composition_witness_sha256"])
+        ):
+            raise ReviewedCoverRepairError(f"{candidate_id} cover route comparison drifted")
 
 
 def _plan_binding(record: Mapping[str, Any], plan_sha256: str) -> Mapping[str, Any] | None:
@@ -213,6 +557,8 @@ def _invalidate_document(
     *,
     title: str,
     cover_text: str | None = None,
+    public_text_consumption: Mapping[str, Any] | None = None,
+    title_source: str | None = None,
 ) -> dict[str, Any]:
     updated = copy.deepcopy(dict(document))
     hashes = updated.get("artifact_hashes")
@@ -236,8 +582,12 @@ def _invalidate_document(
         view.update(
             {
                 "title": title,
-                "title_source": "job_title",
-                "title_authority_status": "RESOLVED_MANUAL",
+                "title_source": title_source or "job_title",
+                "title_authority_status": (
+                    "RESOLVED_PUBLIC_TEXT_SURFACE_AUTHORITY"
+                    if public_text_consumption is not None
+                    else "RESOLVED_MANUAL"
+                ),
                 "title_authority_error": None,
                 "title_policy_violations": [],
                 "cover_text": cover_text,
@@ -246,6 +596,12 @@ def _invalidate_document(
                 "upload_enabled": False,
             }
         )
+        if public_text_consumption is None:
+            view.pop("public_text_surface_authority_consumption", None)
+        else:
+            view["public_text_surface_authority_consumption"] = copy.deepcopy(
+                dict(public_text_consumption)
+            )
         view.pop("cover_path", None)
         view.pop("cover_generation", None)
         view.pop("cover_repair_binding", None)
@@ -256,6 +612,7 @@ def _validated_invalidation_documents(
     date: str,
     row: Mapping[str, Any],
     record: Mapping[str, Any],
+    title_projections: Mapping[str, Mapping[str, Any]],
 ) -> list[tuple[Path, bytes]]:
     candidate_id = str(row["candidate_id"])
     if record.get("title") != row.get("expected_title"):
@@ -291,9 +648,49 @@ def _validated_invalidation_documents(
     if set(actual) != set(expected):
         raise ReviewedCoverRepairError(f"{candidate_id} active document set drifted")
     intended: list[tuple[Path, bytes]] = []
+    projection = title_projections.get(candidate_id)
     for path, document in actual.items():
         if path.is_symlink() or _sha256_file(path) != expected[path]:
             raise ReviewedCoverRepairError(f"{candidate_id} active document hash drifted: {path}")
+        consumption: Mapping[str, Any] | None = None
+        title_source: str | None = None
+        if projection is not None:
+            authority = projection.get("authority")
+            canonical_contract = projection.get("story_contract")
+            document_contract = _document_story_contract(document)
+            if not isinstance(authority, CandidatePublicTextSurfaceAuthority) or not isinstance(
+                canonical_contract, Mapping
+            ):
+                raise ReviewedCoverRepairError(
+                    f"{candidate_id} title authority projection is incomplete"
+                )
+            if document_contract is not None and (
+                _canonical_json_sha256(document_contract)
+                != _canonical_json_sha256(canonical_contract)
+            ):
+                raise ReviewedCoverRepairError(
+                    f"{candidate_id} document story contract drifted during transaction"
+                )
+            # The publish-only view has no local StoryContract by design.  It
+            # receives the same receipt recomputed from the exact, already
+            # validated active contract rather than a hand-copied value.
+            contract = document_contract or canonical_contract
+            try:
+                consumption = consume_candidate_public_text_surface_authority(
+                    authority,
+                    candidate_id=candidate_id,
+                    selection_hook=str(contract.get("selection_hook") or ""),
+                    story_contract=contract,
+                )
+            except CandidatePublicTextSurfaceAuthorityError as exc:
+                raise ReviewedCoverRepairError(
+                    f"{candidate_id} title authority consumption drifted during transaction: {exc}"
+                ) from exc
+            if consumption != projection.get("consumption"):
+                raise ReviewedCoverRepairError(
+                    f"{candidate_id} canonical title authority receipt drifted during transaction"
+                )
+            title_source = authority.title_source
         intended.append(
             (
                 path,
@@ -306,6 +703,8 @@ def _validated_invalidation_documents(
                             if isinstance(row.get("expected_cover_text"), str)
                             else None
                         ),
+                        public_text_consumption=consumption,
+                        title_source=title_source,
                     )
                 ),
             )
@@ -321,6 +720,7 @@ def _prepare_transaction(
     records: Mapping[str, dict[str, Any]],
     transaction_path: Path,
     code_fingerprint: str,
+    title_projections: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
     entries: list[dict[str, Any]] = []
     intended_root = transaction_path.parent / "intended"
@@ -329,7 +729,12 @@ def _prepare_transaction(
         if _plan_binding(records[candidate_id], plan_sha256) is not None:
             raise ReviewedCoverRepairError("bound state exists without its invalidation journal")
         for index, (target, payload) in enumerate(
-            _validated_invalidation_documents(str(plan["date"]), row, records[candidate_id])
+            _validated_invalidation_documents(
+                str(plan["date"]),
+                row,
+                records[candidate_id],
+                title_projections,
+            )
         ):
             blob = intended_root / f"{candidate_id}-{index:02d}.bin"
             _atomic_write_bytes_file(blob, payload)
@@ -558,6 +963,23 @@ def run(plan_path: Path) -> dict[str, Any]:
             != _normalized_sha256(row["expected_state_record_sha256"])
         ):
             raise ReviewedCoverRepairError(f"{candidate_id} state authority drifted")
+    state_is_bound = all(
+        _plan_binding(records[candidate_id], plan_sha256) is not None
+        for candidate_id in repair_ids
+    )
+    title_projections = _validate_title_repair_authorities(
+        plan=plan,
+        date=date,
+        records=records,
+        active_titles={candidate_id: str(records[candidate_id].get("title") or "") for candidate_id in records},
+        phase="post" if state_is_bound else "pre",
+    )
+    if not state_is_bound:
+        _validate_cover_route_authorities(
+            plan=plan,
+            date=date,
+            records=records,
+        )
 
     code_fingerprint = pipeline_fingerprint()
     transaction_root = BASE / "out" / date / "reviewed_cover_repairs" / plan_sha256[:16]
@@ -573,10 +995,6 @@ def run(plan_path: Path) -> dict[str, Any]:
         transaction_path.exists() and not transaction_path.is_file()
     ):
         raise ReviewedCoverRepairError("reviewed cover transaction journal path is invalid")
-    state_is_bound = all(
-        _plan_binding(records[candidate_id], plan_sha256) is not None
-        for candidate_id in repair_ids
-    )
     if transaction_path.is_file():
         journal = _read_json(transaction_path, label="reviewed cover invalidation journal")
     else:
@@ -587,6 +1005,7 @@ def run(plan_path: Path) -> dict[str, Any]:
             records=records,
             transaction_path=transaction_path,
             code_fingerprint=code_fingerprint,
+            title_projections=title_projections,
         )
     journal = _commit_transaction(
         journal_path=transaction_path,
@@ -651,6 +1070,13 @@ def run(plan_path: Path) -> dict[str, Any]:
         }
         raise ReviewedCoverRepairError(f"selected cover repair did not finish: {failed}")
     _verify_expected_cover_text(plan, records)
+    _validate_title_repair_authorities(
+        plan=plan,
+        date=date,
+        records=records,
+        active_titles={candidate_id: str(records[candidate_id].get("title") or "") for candidate_id in records},
+        phase="post",
+    )
     _assert_ledger(plan)
 
     finalized_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

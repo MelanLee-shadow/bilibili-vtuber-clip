@@ -3,12 +3,15 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 import scripts.free_session_autoslice as runner
+import scripts.repair_reviewed_covers as reviewed_covers
 import src.autoslice.candidate_public_text_surface_authority as public_text_authority
+import src.autoslice.review_package_title_audit as title_audit
 from src.autoslice import publish_staging, source_fact_staging
 from src.autoslice.candidate_public_text_surface_authority import (
     ALGORITHM_ID,
@@ -37,6 +40,7 @@ from src.autoslice.story_contract import build_story_contract
 
 
 CID = "auto_210739_1142_1436"
+MANUAL_TITLE_CID = "auto_173005_934_1166"
 SOURCE_SHA = "sha256:8069353813e0cd12624b1cdcdd419356527098b353e08f71fa4bb64f5f6046c4"
 CONTEXT_SHA = "sha256:8c1b85367bfba92302fdcd12aa1400811f34651ad9573f67208f6399a4dc474d"
 OLD_HOOK = (
@@ -210,6 +214,27 @@ def test_real_authority_is_exact_public_only_and_does_not_claim_cue19() -> None:
         authority.require_artifact_text(artifact_kind="publication", text="【李豆沙】南町")
     with pytest.raises(CandidatePublicTextSurfaceAuthorityError, match="OUT_OF_SCOPE"):
         authority.require_artifact_text(artifact_kind="subtitle", text="南天\n大白老师")
+
+
+def test_manual_title_authority_is_exact_and_never_becomes_subtitle_or_upload_authority() -> None:
+    authority = load_candidate_public_text_surface_authority(MANUAL_TITLE_CID)
+    assert authority is not None
+    assert authority.is_manual_title_resolution
+    assert authority.title_source == (
+        "deterministic_candidate_manual_title_resolution+ivan_exact_title"
+    )
+    assert authority.resolved_selection_hook == authority.input_selection_hook
+    assert authority.resolved_title == "【李豆沙】经小李判断，薇欧拉对阿拉蕾就是铁暗恋！"
+    assert authority.user_authorization == {
+        "quote": "这条切片标题改为“经小李判断，薇欧拉对阿拉蕾就是铁暗恋！”我记得之前应该明确说过上头这种词汇没有任何信息量，不能放在标题里，你再看看之前那些说的起标题和绘制封面的skill怎么搞的？其他没有问题。",
+        "timestamp": "2026-08-19T00:08:52.249Z",
+    }
+    authority.require_artifact_text(artifact_kind="title", text=authority.resolved_title)
+    authority.require_artifact_text(artifact_kind="cover", text="薇欧拉对阿拉蕾\n就是铁暗恋！")
+    with pytest.raises(CandidatePublicTextSurfaceAuthorityError, match="FORBIDDEN_ENTITY_SURFACE"):
+        authority.require_artifact_text(artifact_kind="publication", text=authority.superseded_title)
+    with pytest.raises(CandidatePublicTextSurfaceAuthorityError, match="OUT_OF_SCOPE"):
+        authority.require_artifact_text(artifact_kind="subtitle", text="铁暗恋")
 
 
 def test_consumption_binds_original_prompt_source_and_exact_selected_interval() -> None:
@@ -880,6 +905,139 @@ def test_current_package_audit_rebuilds_consumption_title_cover_and_no_upload(
         publish_staging=staging,
     )
     assert [issue.code for issue in issues] == ["CANDIDATE_PUBLIC_TEXT_CONSUMPTION_DRIFT"]
+
+
+def test_manual_title_cover_repair_projects_canonical_consumption_to_all_active_views(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cover transaction must stage the same sealed receipt in every view."""
+
+    sealed = load_candidate_public_text_surface_authority(MANUAL_TITLE_CID)
+    assert sealed is not None and sealed.is_manual_title_resolution
+    prompt = "manual title repair test prompt"
+    contract = {
+        "candidate_id": MANUAL_TITLE_CID,
+        "selection_hook": sealed.input_selection_hook,
+        "source_media_sha256s": sorted(
+            {str(piece["source_media_sha256"]) for piece in sealed.source_pieces}
+        ),
+        "clip_context_binding": {"context_sha256": sealed.clip_context_sha256},
+        "clip_context_prompt": prompt,
+    }
+    authority = replace(
+        sealed,
+        story_contract_sha256=_sha256_json(contract),
+        clip_context_prompt_sha256="sha256:"
+        + hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+    )
+    receipt = consume_candidate_public_text_surface_authority(
+        authority,
+        candidate_id=MANUAL_TITLE_CID,
+        selection_hook=str(contract["selection_hook"]),
+        story_contract=contract,
+    )
+    old_title = authority.superseded_title
+    final_title = authority.resolved_title
+    cover_lines = ["薇欧拉对阿拉蕾", "就是铁暗恋！"]
+
+    def active_document(*, shadow: bool) -> dict[str, object]:
+        view: dict[str, object] = {
+            "title": old_title,
+            "title_source": "job_title",
+            "upload_enabled": False,
+            "reason_codes": [],
+        }
+        document: dict[str, object] = {
+            "schema_version": "shadow-publish-draft.v1" if shadow else "delivery-record.v1",
+            "candidate_id": MANUAL_TITLE_CID,
+            "artifact_hashes": {"burned_video_sha256": "sha256:" + "1" * 64},
+        }
+        if shadow:
+            document.update(view)
+        else:
+            document["story_contract"] = contract
+            document["publish_staging"] = view
+        return document
+
+    delivery, source_record, publish = (
+        reviewed_covers._invalidate_document(
+            active_document(shadow=shadow),
+            title=final_title,
+            cover_text="\n".join(cover_lines),
+            public_text_consumption=receipt,
+            title_source=authority.title_source,
+        )
+        for shadow in (False, False, True)
+    )
+    for document in (delivery, source_record, publish):
+        view = document if document["schema_version"] == "shadow-publish-draft.v1" else document["publish_staging"]
+        assert view["title"] == final_title
+        assert view["title_source"] == authority.title_source
+        assert view["public_text_surface_authority_consumption"] == receipt
+        view["cover_generation"] = {"rendered_lines": cover_lines}
+
+    publish_path = tmp_path / "candidate.publish.json"
+    publish_path.write_text(json.dumps(publish, ensure_ascii=False), encoding="utf-8")
+    staging = source_record["publish_staging"]
+    monkeypatch.setattr(
+        title_audit,
+        "load_candidate_public_text_surface_authority",
+        lambda candidate_id: authority if candidate_id == MANUAL_TITLE_CID else None,
+    )
+    assert (
+        audit_candidate_public_text_surfaces(
+            candidate_id=MANUAL_TITLE_CID,
+            item_title=final_title,
+            publish_path=publish_path,
+            record_path=tmp_path / "candidate.record.json",
+            record=source_record,
+            publish_staging=staging,
+        )
+        == ()
+    )
+
+    def audit_with(staging_view: dict[str, object], publish_view: dict[str, object], title: str):
+        publish_path.write_text(json.dumps(publish_view, ensure_ascii=False), encoding="utf-8")
+        return audit_candidate_public_text_surfaces(
+            candidate_id=MANUAL_TITLE_CID,
+            item_title=title,
+            publish_path=publish_path,
+            record_path=tmp_path / "candidate.record.json",
+            record={"story_contract": contract, "publish_staging": staging_view},
+            publish_staging=staging_view,
+        )
+
+    missing_staging = json.loads(json.dumps(staging))
+    missing_publish = json.loads(json.dumps(publish))
+    missing_staging.pop("public_text_surface_authority_consumption")
+    missing_publish.pop("public_text_surface_authority_consumption")
+    assert [issue.code for issue in audit_with(missing_staging, missing_publish, final_title)] == [
+        "CANDIDATE_PUBLIC_TEXT_CONSUMPTION_DRIFT"
+    ]
+
+    tampered_staging = json.loads(json.dumps(staging))
+    tampered_publish = json.loads(json.dumps(publish))
+    tampered_staging["public_text_surface_authority_consumption"]["resolved_title"] = old_title
+    tampered_publish["public_text_surface_authority_consumption"]["resolved_title"] = old_title
+    assert [issue.code for issue in audit_with(tampered_staging, tampered_publish, final_title)] == [
+        "CANDIDATE_PUBLIC_TEXT_CONSUMPTION_DRIFT"
+    ]
+
+    wrong_source_staging = json.loads(json.dumps(staging))
+    wrong_source_publish = json.loads(json.dumps(publish))
+    wrong_source_staging["title_source"] = "job_title"
+    wrong_source_publish["title_source"] = "job_title"
+    assert [issue.code for issue in audit_with(wrong_source_staging, wrong_source_publish, final_title)] == [
+        "CANDIDATE_PUBLIC_TEXT_CONSUMPTION_DRIFT"
+    ]
+
+    old_staging = json.loads(json.dumps(staging))
+    old_publish = json.loads(json.dumps(publish))
+    old_staging["title"] = old_title
+    old_publish["title"] = old_title
+    assert [issue.code for issue in audit_with(old_staging, old_publish, old_title)] == [
+        "CANDIDATE_PUBLIC_TEXT_SURFACE_INVALID"
+    ]
 
 
 def test_withheld_staging_calls_providers_without_consuming_or_leaking_authority(

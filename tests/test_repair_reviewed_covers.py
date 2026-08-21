@@ -22,6 +22,7 @@ def test_invalidate_document_preserves_media_authority_and_resolves_manual_title
         "cover_path": "/delivery/old.cover.png",
         "cover_generation": {"title": f"{CHANNEL_PROFILE.talk_title_prefix}错误标题"},
         "cover_repair_binding": {"path": "/old.binding.json"},
+        "public_text_surface_authority_consumption": {"stale": True},
         "artifact_hashes": {
             "burned_video_sha256": "sha256:" + "1" * 64,
             "subtitle_sha256": "sha256:" + "2" * 64,
@@ -47,6 +48,7 @@ def test_invalidate_document_preserves_media_authority_and_resolves_manual_title
     assert "cover_path" not in updated
     assert "cover_generation" not in updated
     assert "cover_repair_binding" not in updated
+    assert "public_text_surface_authority_consumption" not in updated
     assert "cover_sha256" not in updated["artifact_hashes"]
     assert updated["artifact_hashes"]["burned_video_sha256"] == original["artifact_hashes"]["burned_video_sha256"]
     assert updated["artifact_hashes"]["subtitle_sha256"] == original["artifact_hashes"]["subtitle_sha256"]
@@ -67,6 +69,24 @@ def test_invalidate_document_accepts_hash_bound_short_cover_copy():
 
     assert updated["title"] == f"{CHANNEL_PROFILE.talk_title_prefix}完整归档标题保留上下文"
     assert updated["cover_text"] == "短梗字\n保留问号？"
+
+
+def test_manual_title_repair_plan_requires_the_sealed_public_text_authority() -> None:
+    plan_path = (
+        Path(__file__).resolve().parents[1]
+        / "assets/lidousha/cover_repair_plans/2026-08-11-auto-173005-934-1166-manual-title-cover.v1.json"
+    )
+    plan, _sha = reviewed.load_plan(plan_path)
+    authority = plan["title_repair_authorities"][0]
+    assert authority["candidate_id"] == "auto_173005_934_1166"
+    assert authority["title"] == "【李豆沙】经小李判断，薇欧拉对阿拉蕾就是铁暗恋！"
+    assert authority["subtitle"]["sha256"] == (
+        "sha256:1a668a899257407685c91629cc254918a594663af8b55cccb0932db16d0aa5d1"
+    )
+    route = plan["cover_route_authorities"][0]
+    assert route["selected_treatment"] == "cpa_redraw"
+    assert route["screenshot_direct_rejected"] is True
+    assert route["screenshot_polish_rejected"] is True
 
 
 def test_invalidate_state_record_persists_reviewed_cover_diversity_slot():
