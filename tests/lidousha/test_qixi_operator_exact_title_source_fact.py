@@ -13,6 +13,7 @@ import pytest
 import src.autoslice.qixi_operator_exact_title_source_fact as authority_module
 import src.autoslice.source_fact_staging as source_fact_staging
 from src.autoslice import qixi_post_correction_public_surface as public_surface
+from src.autoslice.jingting_chunker import parse_srt_cues
 from scripts.build_lidousha_daily_review_manifest import (
     DailyManifestError,
     _validate_source_fact_receipts,
@@ -170,6 +171,9 @@ def _runtime(tmp_path: Path) -> tuple[Authority, dict[str, object]]:
         },
         "publish_staging": {"source_fact_review": receipt},
     }
+    preprovider_contract = copy.deepcopy(record["story_contract"])
+    preprovider_contract.pop("source_fact_review")
+    source["preprovider_story_contract_sha256"] = canonical_sha256(preprovider_contract)
     runtime_root = tmp_path / "runtime"
     record_root = runtime_root / "records"
     record_root.mkdir(parents=True)
@@ -221,6 +225,7 @@ def _runtime(tmp_path: Path) -> tuple[Authority, dict[str, object]]:
         "speaker": speaker,
         "transcript": transcript,
         "historical_transcript": historical_transcript,
+        "preprovider_contract": preprovider_contract,
     }
 
 
@@ -258,6 +263,9 @@ def test_live_asset_binds_exact_operator_title_and_historical_pass() -> None:
     )
     assert document["source_binding"]["final_transcript_sha256"] == (
         "sha256:5a8cc4a8f8a663fc1e257f161d55d460753d202fdb1979696eec85ccae15c268"
+    )
+    assert document["source_binding"]["preprovider_story_contract_sha256"] == (
+        "sha256:c02f0d38bef3585eeb5811cb7d387a82d48c3385a647072240445426fc86234d"
     )
     assert document["historical_provider_pass"]["final_transcript_sha256"] == (
         "sha256:0bd8115110cd691fc2fd0480cb160cd8cd0cbb5ae1b548b00f164f5c3d55a367"
@@ -318,6 +326,83 @@ def test_current_corrected_transcript_is_independent_from_historical_provider_pa
     _rehash(historical_drift)
     with pytest.raises(QixiOperatorExactTitleSourceFactError):
         validate_authority_document(historical_drift)
+
+
+def _preprovider_record(runtime: dict[str, object]) -> dict[str, object]:
+    record = copy.deepcopy(runtime["record"])
+    contract = copy.deepcopy(runtime["preprovider_contract"])
+    assert isinstance(record, dict) and isinstance(contract, dict)
+    record["story_contract"] = contract
+    return record
+
+
+@pytest.mark.parametrize("drift", ["input_audits", "transcript", "cover", "semantic"])
+def test_preprovider_receipt_absence_is_bound_to_one_canonical_contract(
+    tmp_path: Path, drift: str
+) -> None:
+    authority, runtime = _runtime(tmp_path)
+    preprovider_record = _preprovider_record(runtime)
+    story = preprovider_record["story_contract"]
+    assert isinstance(story, dict)
+    kwargs = {
+        "candidate_id": CANDIDATE_ID,
+        "title": TITLE,
+        "selection_hook": str(story["selection_hook"]),
+        "final_transcript": str(runtime["transcript"]),
+        "final_reviewed_srt_path": Path(str(runtime["srt_path"])),
+        "record": preprovider_record,
+        "speaker_evidence": runtime["speaker"],
+    }
+    assert consume_authority(
+        authority, allow_preprovider_receipt_absent=True, **kwargs
+    )["status"] == "CONSUMED"
+    with pytest.raises(QixiOperatorExactTitleSourceFactError):
+        consume_authority(authority, **kwargs)
+    with pytest.raises(QixiOperatorExactTitleSourceFactError):
+        consume_authority(
+            authority,
+            allow_preprovider_receipt_absent=True,
+            projected_receipt={},
+            **kwargs,
+        )
+
+    if drift == "input_audits":
+        story["input_audits"] = [{"drift": True}]
+    elif drift == "transcript":
+        story["transcript"] = "drift"
+    elif drift == "cover":
+        story["cover_output_audits"] = {"drift": True}
+    else:
+        story["source_media_sha256s"] = ["sha256:" + "f" * 64]
+    with pytest.raises(QixiOperatorExactTitleSourceFactError):
+        consume_authority(authority, allow_preprovider_receipt_absent=True, **kwargs)
+
+
+def test_preprovider_receipt_absence_rejects_wrong_bound_hash(tmp_path: Path) -> None:
+    authority, runtime = _runtime(tmp_path)
+    document = copy.deepcopy(authority.document)
+    source = document["source_binding"]
+    assert isinstance(source, dict)
+    source["preprovider_story_contract_sha256"] = "sha256:" + "f" * 64
+    _rehash(document)
+    wrong_bound = Authority(
+        validate_authority_document(document), ASSET_PATH, bytes_sha256(b"synthetic")
+    )
+    record = _preprovider_record(runtime)
+    story = record["story_contract"]
+    assert isinstance(story, dict)
+    with pytest.raises(QixiOperatorExactTitleSourceFactError):
+        consume_authority(
+            wrong_bound,
+            candidate_id=CANDIDATE_ID,
+            title=TITLE,
+            selection_hook=str(story["selection_hook"]),
+            final_transcript=str(runtime["transcript"]),
+            final_reviewed_srt_path=Path(str(runtime["srt_path"])),
+            record=record,
+            speaker_evidence=runtime["speaker"],
+            allow_preprovider_receipt_absent=True,
+        )
 
 
 @pytest.mark.parametrize("drift", ["chat_before", "correction_after"])
@@ -631,6 +716,7 @@ def _canonical_public_qixi_fixture(
             "selection_scorecard_sha256": canonical_sha256(initial_story["selection_scorecard"]),
             "clip_context_prompt_sha256": text_sha256(str(initial_story["clip_context_prompt"])),
             "final_transcript_sha256": text_sha256("current post-human-correction transcript"),
+            "preprovider_story_contract_sha256": canonical_sha256(initial_story),
             "speaker_evidence": public_surface_tests._UNIFORM_HOST_EVIDENCE,
             "speaker_evidence_sha256": canonical_sha256(
                 public_surface_tests._UNIFORM_HOST_EVIDENCE
@@ -680,6 +766,52 @@ def _canonical_public_qixi_fixture(
         validate_authority_document(document), ASSET_PATH, bytes_sha256(b"synthetic")
     )
     return repo, public_authority, authority, paths, record
+
+
+def test_actual_canonical_preprovider_story_contract_resolves_without_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _repo, _public_authority, authority, paths, record = _canonical_public_qixi_fixture(tmp_path)
+    source = authority.document["source_binding"]
+    assert isinstance(source, dict)
+    hook = str(record["story_contract"]["selection_hook"])
+    canonical_story = public_surface._story_contract_rebuilder(
+        record,
+        srt_path=paths["srt"],
+        clip_context_path=Path(str(record["clip_context_path"])),
+    )(hook)
+    assert canonical_story.get("source_fact_review") is None
+    assert canonical_story.get("cover_output_audits") is None
+    assert canonical_sha256(canonical_story) == source["preprovider_story_contract_sha256"]
+
+    preprovider_record = copy.deepcopy(record)
+    preprovider_record["story_contract"] = canonical_story
+    monkeypatch.setattr(
+        source_fact_staging, "load_qixi_operator_exact_title_authority", lambda _cid: authority
+    )
+    monkeypatch.setattr(source_fact_staging, "load_manual_title_keep_authority", lambda _cid: None)
+    monkeypatch.setattr(
+        source_fact_staging, "load_deterministic_text_surface_authority", lambda _cid: None
+    )
+    monkeypatch.setattr(
+        source_fact_staging, "load_operator_exact_title_source_fact_authority", lambda _cid: None
+    )
+    result = source_fact_staging.resolve_initial_source_fact_review(
+        candidate_id=CANDIDATE_ID,
+        title_source="ivan_manual_override",
+        title=TITLE,
+        selection_hook=hook,
+        story_contract=canonical_story,
+        record=preprovider_record,
+        cues=parse_srt_cues(paths["srt"].read_text(encoding="utf-8")),
+        source_fact_llm_call=lambda _: pytest.fail("provider called"),
+        recovery_publication_authority=None,
+        title_authority_status="RESOLVED_MANUAL",
+        title_llm_enabled=False,
+        prior_authority_error=None,
+    )
+    assert result.review is not None
+    assert result.review["decision"] == authority_module.DECISION
 
 
 def test_two_phase_postcommit_successor_replays_daily_and_package(

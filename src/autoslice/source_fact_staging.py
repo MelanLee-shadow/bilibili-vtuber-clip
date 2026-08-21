@@ -178,6 +178,7 @@ def resolve_initial_source_fact_review(
                 final_reviewed_srt_path=final_srt,
                 record=record,
                 speaker_evidence=speaker_evidence.speaker_evidence,
+                allow_preprovider_receipt_absent=True,
             )
             return InitialSourceFactResolution(
                 review=authorize_qixi_operator_exact_title(consumption),

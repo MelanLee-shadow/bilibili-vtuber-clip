@@ -274,6 +274,7 @@ def validate_authority_document(value: object) -> dict[str, object]:
             "selection_scorecard_sha256",
             "clip_context_prompt_sha256",
             "final_transcript_sha256",
+            "preprovider_story_contract_sha256",
             "speaker_evidence",
             "speaker_evidence_sha256",
             "reviewed_srt",
@@ -291,6 +292,7 @@ def validate_authority_document(value: object) -> dict[str, object]:
         "selection_scorecard_sha256",
         "clip_context_prompt_sha256",
         "final_transcript_sha256",
+        "preprovider_story_contract_sha256",
         "speaker_evidence_sha256",
         "boundary_audit_sha256",
     ):
@@ -417,6 +419,7 @@ def consume_authority(
     speaker_evidence: object,
     projected_receipt: Mapping[str, object] | None = None,
     verify_sealed_before: bool = True,
+    allow_preprovider_receipt_absent: bool = False,
 ) -> dict[str, object]:
     """Recheck the sealed preimage before any provider or cover can run."""
 
@@ -501,6 +504,14 @@ def consume_authority(
     if projected_receipt is not None:
         expected_runtime_receipts += (projected_receipt,)
     contract = record.get("story_contract")
+    preprovider_receipt_absent = (
+        allow_preprovider_receipt_absent
+        and verify_sealed_before
+        and projected_receipt is None
+        and isinstance(contract, Mapping)
+        and contract.get("source_fact_review") is None
+        and canonical_sha256(contract) == binding["preprovider_story_contract_sha256"]
+    )
     if (
         not isinstance(contract, Mapping)
         or contract.get("candidate_id") != candidate_id
@@ -513,7 +524,10 @@ def consume_authority(
         or f"source_pieces: {_source_piece_prompt(binding['source_piece'])}"
         not in str(contract.get("clip_context_prompt") or "")
         or canonical_sha256(record.get("boundary_audit")) != binding["boundary_audit_sha256"]
-        or contract.get("source_fact_review") not in expected_runtime_receipts
+        or (
+            contract.get("source_fact_review") not in expected_runtime_receipts
+            and not preprovider_receipt_absent
+        )
     ):
         raise QixiOperatorExactTitleSourceFactError(
             "QIXI_OPERATOR_TITLE_RUNTIME_STORY_CONTRACT_DRIFT"
