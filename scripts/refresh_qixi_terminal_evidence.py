@@ -25,6 +25,7 @@ from scripts.produce_slice_package import (  # noqa: E402
     profile_asset_file,
 )
 from src.autoslice.producer_text_pipeline import TextPipelineAdapters  # noqa: E402
+from src.autoslice.qixi_transaction_core import exclusive_runner_lock  # noqa: E402
 from src.autoslice.qixi_terminal_evidence_refresh import (  # noqa: E402
     QixiTerminalEvidenceRefreshError,
     apply_projection,
@@ -68,12 +69,16 @@ def main(argv: list[str] | None = None) -> int:
         if args.plan or not (args.full_dry_run or args.apply):
             print(json.dumps({"status": "PLAN_PASS", "upload_enabled": False}, sort_keys=True))
             return 0
-        staged, _result = build_staged_refresh(
-            repo_root=ROOT, authority=authority, runtime=runtime, adapters=_adapters()
-        )
-        outcome = apply_projection(
-            authority=authority, before=runtime, after=staged, apply=args.apply
-        )
+        with exclusive_runner_lock(Path(str(authority["runtime_root"]))):
+            # Re-read the exact preimage under the same lock before a provider
+            # can spend work, closing the plan→provider TOCTOU window.
+            runtime = validate_runtime(authority)
+            staged, _result = build_staged_refresh(
+                repo_root=ROOT, authority=authority, runtime=runtime, adapters=_adapters()
+            )
+            outcome = apply_projection(
+                authority=authority, before=runtime, after=staged, apply=args.apply
+            )
         print(json.dumps(outcome, ensure_ascii=False, sort_keys=True))
         return 0
     except QixiTerminalEvidenceRefreshError as exc:

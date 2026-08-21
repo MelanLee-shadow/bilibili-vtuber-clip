@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 
 import pytest
 
@@ -92,7 +93,7 @@ def test_refresh_uses_new_final_and_boundary_receipts(monkeypatch) -> None:
         selection_hook="hook",
         selection_scorecard={},
         structured_context="context",
-        clip_context={},
+        clip_context={"context_sha256": "sha256:" + "e" * 64},
         source_final_start_ms=0,
         source_final_end_ms=27_900,
         boundary_max_forward_ms=30_000,
@@ -158,8 +159,7 @@ def test_projection_apply_is_cas_and_create_only(tmp_path) -> None:
     result = refresh.apply_projection(authority=authority, before=before, after=after, apply=True)
     assert result["status"] == "COMMITTED"
     assert {role: path.read_bytes() for role, path in paths.items()} == after
-    with pytest.raises(refresh.QixiTerminalEvidenceRefreshError, match="TARGET_DRIFT"):
-        refresh.apply_projection(authority=authority, before=before, after=after, apply=True)
+    assert refresh.apply_projection(authority=authority, before=before, after=after, apply=True)["status"] == "ALREADY_COMMITTED"
 
 
 def test_projection_rolls_back_prior_targets_on_install_failure(tmp_path, monkeypatch) -> None:
@@ -191,6 +191,124 @@ def test_projection_rolls_back_prior_targets_on_install_failure(tmp_path, monkey
     with pytest.raises(refresh.QixiTerminalEvidenceRefreshError, match="injected"):
         refresh.apply_projection(authority=authority, before=before, after=after, apply=True)
     assert {role: path.read_bytes() for role, path in paths.items()} == before
+
+
+def test_projection_adopts_owned_stage_after_checkpoint_crash(tmp_path, monkeypatch) -> None:
+    paths, before = {}, {}
+    for role in ("chat", "record", "delivery_record", "publish", "state"):
+        path = tmp_path / f"{role}.json"
+        payload = f"before-{role}".encode()
+        path.write_bytes(payload)
+        paths[role], before[role] = path, payload
+    authority = {
+        "authority_sha256": "sha256:" + "d" * 64,
+        "preimage": {role: {"path": str(path), "sha256": "sha256:" + hashlib.sha256(before[role]).hexdigest(), "bytes": len(before[role]), "mode": 0o644} for role, path in paths.items()},
+    }
+    after = {role: f"after-{role}".encode() for role in before}
+    original = refresh._checkpoint
+    calls = 0
+    def crash_after_stage(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise KeyboardInterrupt("crash after staged owner")
+        return original(*args, **kwargs)
+    monkeypatch.setattr(refresh, "_checkpoint", crash_after_stage)
+    with pytest.raises(KeyboardInterrupt, match="staged owner"):
+        refresh.apply_projection(authority=authority, before=before, after=after, apply=True)
+    monkeypatch.setattr(refresh, "_checkpoint", original)
+    assert refresh.apply_projection(authority=authority, before=before, after=after, apply=True)["status"] == "COMMITTED"
+    assert {role: path.read_bytes() for role, path in paths.items()} == after
+
+
+def test_projection_recovers_crash_after_rename_before_install_checkpoint(tmp_path, monkeypatch) -> None:
+    paths, before = {}, {}
+    for role in ("chat", "record", "delivery_record", "publish", "state"):
+        path = tmp_path / f"{role}.json"
+        payload = f"before-{role}".encode()
+        path.write_bytes(payload)
+        paths[role], before[role] = path, payload
+    authority = {"authority_sha256": "sha256:" + "f" * 64, "preimage": {
+        role: {"path": str(path), "sha256": "sha256:" + hashlib.sha256(before[role]).hexdigest(), "bytes": len(before[role]), "mode": 0o644}
+        for role, path in paths.items()
+    }}
+    after = {role: f"after-{role}".encode() for role in before}
+    original = refresh._checkpoint
+
+    def crash_after_rename(*args, **kwargs):
+        if kwargs.get("phase") == "INSTALLED":
+            raise KeyboardInterrupt("crash after rename")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(refresh, "_checkpoint", crash_after_rename)
+    with pytest.raises(KeyboardInterrupt, match="after rename"):
+        refresh.apply_projection(authority=authority, before=before, after=after, apply=True)
+    assert paths["chat"].read_bytes() == after["chat"]
+    monkeypatch.setattr(refresh, "_checkpoint", original)
+    assert refresh.apply_projection(authority=authority, before=before, after=after, apply=True)["status"] == "COMMITTED"
+    assert {role: path.read_bytes() for role, path in paths.items()} == after
+
+
+def test_projection_failure_persists_recovery_journal(tmp_path, monkeypatch) -> None:
+    paths, before = {}, {}
+    for role in ("chat", "record", "delivery_record", "publish", "state"):
+        path = tmp_path / f"{role}.json"
+        payload = f"before-{role}".encode()
+        path.write_bytes(payload)
+        paths[role], before[role] = path, payload
+    authority = {"authority_sha256": "sha256:" + "e" * 64, "preimage": {
+        role: {"path": str(path), "sha256": "sha256:" + hashlib.sha256(before[role]).hexdigest(), "bytes": len(before[role]), "mode": 0o644}
+        for role, path in paths.items()
+    }}
+    monkeypatch.setattr(refresh, "create_staged_inode", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("stage fail")))
+    with pytest.raises(RuntimeError, match="stage fail"):
+        refresh.apply_projection(authority=authority, before=before, after={role: b"after" for role in before}, apply=True)
+    root = refresh._refresh_root(authority)
+    assert __import__("json").loads((root / "journal.json").read_text())["status"] == "ROLLED_BACK"
+
+
+def test_projection_retains_rollback_required_when_reverse_rollback_fails(tmp_path, monkeypatch) -> None:
+    paths, before = {}, {}
+    for role in ("chat", "record", "delivery_record", "publish", "state"):
+        path = tmp_path / f"{role}.json"
+        payload = f"before-{role}".encode()
+        path.write_bytes(payload)
+        paths[role], before[role] = path, payload
+    authority = {"authority_sha256": "sha256:" + "9" * 64, "preimage": {
+        role: {"path": str(path), "sha256": "sha256:" + hashlib.sha256(before[role]).hexdigest(), "bytes": len(before[role]), "mode": 0o644}
+        for role, path in paths.items()
+    }}
+    monkeypatch.setattr(refresh, "create_staged_inode", lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("stage fail")))
+    monkeypatch.setattr(refresh, "_rollback_entries", lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("rollback fail")))
+    with pytest.raises(RuntimeError, match="stage fail"):
+        refresh.apply_projection(authority=authority, before=before, after={role: b"after" for role in before}, apply=True)
+    journal = json.loads((refresh._refresh_root(authority) / "journal.json").read_text())
+    assert journal["status"] == "ROLLBACK_REQUIRED"
+
+
+@pytest.mark.parametrize("tamper", ["journal", "receipt", "after"])
+def test_committed_projection_replay_rejects_tampered_receipt_journal_or_after_bytes(tmp_path, tamper) -> None:
+    paths, before = {}, {}
+    for role in ("chat", "record", "delivery_record", "publish", "state"):
+        path = tmp_path / f"{role}.json"
+        payload = f"before-{role}".encode()
+        path.write_bytes(payload)
+        paths[role], before[role] = path, payload
+    authority = {"authority_sha256": "sha256:" + "8" * 64, "preimage": {
+        role: {"path": str(path), "sha256": "sha256:" + hashlib.sha256(before[role]).hexdigest(), "bytes": len(before[role]), "mode": 0o644}
+        for role, path in paths.items()
+    }}
+    after = {role: f"after-{role}".encode() for role in before}
+    refresh.apply_projection(authority=authority, before=before, after=after, apply=True)
+    root = refresh._refresh_root(authority)
+    if tamper == "journal":
+        (root / "journal.json").write_bytes(b"{}")
+    elif tamper == "receipt":
+        (root / "receipt.json").write_bytes(b"{}")
+    else:
+        paths["chat"].write_bytes(b"tampered")
+    with pytest.raises(refresh.QixiTerminalEvidenceRefreshError, match="QIXI_TERMINAL_REFRESH"):
+        refresh.apply_projection(authority=authority, before=before, after=after, apply=True)
 
 
 def test_refreshed_boundary_receipt_matches_the_exact_final_grid(tmp_path) -> None:

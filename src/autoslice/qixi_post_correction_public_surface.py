@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import copy
 import base64
-import fcntl
 import hashlib
 import json
 import os
@@ -53,6 +52,17 @@ from src.autoslice.qixi_post_correction_projection_paths import (
     validate_manual_title_projection as _validate_manual_title_projection,  # noqa: F401
     validate_replayed_cover as _validate_replayed_cover,  # noqa: F401
     validate_public_artifact_namespace_absent,
+)
+from src.autoslice.qixi_transaction_core import (
+    QixiTransactionCoreError,
+    InstallCallbacks as _CoreInstallCallbacks,
+    exclusive_runner_lock as _core_runner_lock,
+    install_checkpointed_inode as _core_install_checkpointed_inode,
+    journal_after_snapshot as _core_journal_after_snapshot,
+    journal_before_snapshot as _core_journal_before_snapshot,
+    journal_installed_snapshot as _core_journal_installed_snapshot,
+    restore_owned_inode as _core_restore_owned_inode,
+    stable_regular_snapshot as _core_stable_regular_snapshot,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -717,42 +727,23 @@ def _preimage_snapshot(
     path: Path, *, label: str
 ) -> tuple[bytes | None, str | None, int | None, int | None, int | None]:
     """Read one target only if its identity remains stable across the read."""
-
     try:
-        first = os.lstat(path)
-    except FileNotFoundError:
+        snapshot = _core_stable_regular_snapshot(path, label=label)
+    except QixiTransactionCoreError as exc:
+        raise QixiPostCorrectionPublicSurfaceError(str(exc)) from exc
+    if snapshot is None:
         return None, None, None, None, None
-    except OSError as exc:
-        raise QixiPostCorrectionPublicSurfaceError(f"{label} cannot be inspected: {path}") from exc
-    if not stat.S_ISREG(first.st_mode) or stat.S_ISLNK(first.st_mode):
-        raise QixiPostCorrectionPublicSurfaceError(f"{label} is not a regular file: {path}")
-    _require_regular(path, label=label)
-    try:
-        payload = path.read_bytes()
-        second = os.lstat(path)
-    except OSError as exc:
-        raise QixiPostCorrectionPublicSurfaceError(f"{label} cannot be read: {path}") from exc
-    if (
-        not stat.S_ISREG(second.st_mode)
-        or stat.S_ISLNK(second.st_mode)
-        or (first.st_dev, first.st_ino, first.st_mode) != (second.st_dev, second.st_ino, second.st_mode)
-    ):
-        raise QixiPostCorrectionPublicSurfaceError(f"{label} inode drifted during read: {path}")
-    return (
-        payload,
-        "sha256:" + hashlib.sha256(payload).hexdigest(),
-        stat.S_IMODE(second.st_mode),
-        second.st_dev,
-        second.st_ino,
-    )
+    return snapshot.payload, snapshot.sha256, snapshot.mode, snapshot.device, snapshot.inode
 
 
 def _snapshot_installed(path: Path, *, sha256: str, mode: int) -> InstalledSnapshot:
-    _require_regular(path, label="installed transaction target")
-    info = os.lstat(path)
-    if stat.S_IMODE(info.st_mode) != mode or _file_sha256(path) != sha256:
+    try:
+        snapshot = _core_stable_regular_snapshot(path, label="installed transaction target")
+    except QixiTransactionCoreError as exc:
+        raise QixiPostCorrectionPublicSurfaceError(str(exc)) from exc
+    if snapshot is None or snapshot.mode != mode or snapshot.sha256 != sha256:
         raise QixiPostCorrectionPublicSurfaceError("transaction write verification failed")
-    return InstalledSnapshot(path, info.st_dev, info.st_ino, sha256, mode)
+    return InstalledSnapshot(path, snapshot.device, snapshot.inode, sha256, mode)
 
 
 def _require_safe_target_parent(path: Path) -> None:
@@ -770,29 +761,12 @@ def _require_safe_target_parent(path: Path) -> None:
 @contextmanager
 def _exclusive_runner_lock(runtime_root: Path):
     """Own the runner's day-state lock through provider staging and commit."""
-
-    lock = runtime_root / "runner.lock"
-    _require_safe_target_parent(lock)
-    descriptor = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
     try:
-        opened = os.fstat(descriptor)
-        observed = os.lstat(lock)
-        if (
-            not stat.S_ISREG(observed.st_mode)
-            or stat.S_ISLNK(observed.st_mode)
-            or (observed.st_dev, observed.st_ino) != (opened.st_dev, opened.st_ino)
-        ):
-            raise QixiPostCorrectionPublicSurfaceError("runner.lock identity is unsafe")
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise QixiPostCorrectionPublicSurfaceError("runner.lock is busy") from exc
-        yield
-    finally:
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
-        finally:
-            os.close(descriptor)
+        with _core_runner_lock(runtime_root):
+            yield
+    except ValueError as exc:
+        message = "runner.lock is busy" if str(exc) == "runner lock busy" else str(exc)
+        raise QixiPostCorrectionPublicSurfaceError(message) from exc
 
 
 def _within(path: Path, root: Path) -> bool:
@@ -1756,10 +1730,17 @@ def _rollback_owned(root: Path, journal: dict[str, object], *, authority: Mappin
             finally:
                 os.close(directory_fd)
         else:
-            restored = _atomic_replace(target, before)
-            if _current_regular_sha256(target, label="rolled-back transaction target") != entry["before_sha256"]:
+            try:
+                restored_core = _core_restore_owned_inode(
+                    _core_journal_installed_snapshot(entry, target=target),
+                    before=_core_journal_before_snapshot(entry, target=target),
+                    label="rolled-back transaction target",
+                )
+            except QixiTransactionCoreError as exc:
+                raise QixiPostCorrectionPublicSurfaceError(str(exc)) from exc
+            if restored_core is None or restored_core.sha256 != entry["before_sha256"]:
                 raise QixiPostCorrectionPublicSurfaceError("rollback target bytes verification failed")
-            restored_device, restored_inode = restored.device, restored.inode
+            restored_device, restored_inode = restored_core.device, restored_core.inode
         _checkpoint_entry(
             root,
             journal,
@@ -1836,38 +1817,55 @@ def _commit_journal(root: Path, journal: dict[str, object], *, authority: Mappin
                 mode=staged.mode,
             )
             target_info = os.lstat(target) if os.path.lexists(target) else None
-            if target_info is not None and (target_info.st_dev, target_info.st_ino) == (staged.device, staged.inode):
-                # Crash after rename: target is the checkpointed staged inode.
-                _verify_staged_snapshot(InstalledSnapshot(target, staged.device, staged.inode, staged.sha256, staged.mode))
-            else:
+            if target_info is None or (target_info.st_dev, target_info.st_ino) != (staged.device, staged.inode):
+                # Preserve the lane's typed staged-artifact rejection before
+                # handing a verified inode to the generic CAS installer.
                 _verify_staged_inode(entry)
-                _verify_entry_preimage(entry, label="transaction install")
-                os.replace(staged.path, target)
-                directory_fd = os.open(target.parent, os.O_RDONLY)
-                try:
-                    os.fsync(directory_fd)
-                finally:
-                    os.close(directory_fd)
-            installed = _snapshot_installed(target, sha256=str(entry["after_sha256"]), mode=int(entry["after_mode"]))
-            _checkpoint_entry(
-                root,
-                journal,
-                index,
-                phase="INSTALLED",
-                installed_device=installed.device,
-                installed_inode=installed.inode,
-            )
+            try:
+                installed_core = _core_install_checkpointed_inode(
+                    _core_journal_after_snapshot(entry, staged_path=_entry_staged_path(entry)),
+                    target=target,
+                    expected_before=_core_journal_before_snapshot(entry, target=target),
+                    callbacks=_CoreInstallCallbacks(
+                        checkpoint_installed=lambda snapshot: _checkpoint_entry(
+                            root,
+                            journal,
+                            index,
+                            phase="INSTALLED",
+                            installed_device=snapshot.device,
+                            installed_inode=snapshot.inode,
+                        ),
+                        verify_installed=lambda _snapshot: _verify_installed(journal["entries"][index]),
+                    ),
+                    label="transaction install",
+                )
+            except QixiTransactionCoreError as exc:
+                raise QixiPostCorrectionPublicSurfaceError(str(exc)) from exc
+            # The core handles both normal CAS install and a crash after
+            # rename.  Keep the lane's staged-owner marker verification before
+            # it is removed, so a foreign temp can never enter the core.
+            if (installed_core.device, installed_core.inode) != (staged.device, staged.inode):
+                raise QixiPostCorrectionPublicSurfaceError("transaction installed inode ownership drifted")
+            if installed_core.sha256 != staged.sha256 or installed_core.mode != staged.mode:
+                raise QixiPostCorrectionPublicSurfaceError("transaction installed bytes drifted")
+            if _entry_staged_path(entry).exists():
+                _verify_staged_inode(entry)
+                raise QixiPostCorrectionPublicSurfaceError("transaction staged inode remains after install")
             _verify_backup(root, journal["entries"][index])
             _verify_installed(journal["entries"][index])
         _validate_journal(journal, authority=authority)
         _postcommit_replay(journal, authority=authority)
-    except Exception:
-        # Rollback is deliberately best effort only for journal-proven inodes;
-        # a failed rollback remains a fail-closed recovery journal.
+    except Exception as failure:
+        # The durable journal remains the recovery authority.  Never erase a
+        # rollback failure: a caller must inspect/resume that journal instead
+        # of assuming that a partially installed public surface was restored.
         try:
             _rollback_owned(root, journal, authority=authority)
-        except BaseException:
-            pass
+        except BaseException as rollback_error:
+            failure.add_note(
+                "post-correction rollback failed; recovery journal is retained: "
+                + type(rollback_error).__name__
+            )
         raise
     journal["status"] = "COMMITTED"
     _write_journal(root, journal)

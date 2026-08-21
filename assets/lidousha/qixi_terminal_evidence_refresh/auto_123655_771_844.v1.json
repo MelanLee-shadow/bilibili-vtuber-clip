@@ -1,11 +1,12 @@
 {
   "allowed_mutations": {
-    "chat": ["final_text_srt_sha256", "final_speaker_srt_sha256", "final_output_srt_sha256", "final_review_audit", "final_status"],
-    "publish": [],
-    "record": ["boundary_audit", "artifact_hashes"],
+    "chat": ["/final_output_srt_sha256", "/final_review_audit", "/final_speaker_srt_sha256", "/final_status", "/final_text_srt_sha256"],
+    "delivery_record": ["/artifact_hashes/chat_authority_audit_sha256", "/boundary_audit/final_delivery_boundary_semantic_review", "/story_contract/boundary_semantic_review"],
+    "publish": ["/story_contract/boundary_semantic_review"],
+    "record": ["/artifact_hashes/chat_authority_audit_sha256", "/boundary_audit/final_delivery_boundary_semantic_review", "/story_contract/boundary_semantic_review"],
     "state": []
   },
-  "authority_sha256": "sha256:d1bad7a44db96535521e6473b199479134ea050e504b3b3e4ee5815c1d68163b",
+  "authority_sha256": "sha256:5c6df6c79f38e9caa05e0c7772ad50c10fedbe3b9cf224ec3f27fad5c99e0687",
   "candidate_id": "auto_123655_771_844",
   "correction": {
     "after_srt_sha256": "sha256:a172c08564d57c72782e44e74583c17c3a95a241b798fcfe8df3fddda8b91617",
@@ -16,12 +17,17 @@
     "ass": {"bytes": 2988, "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.final-sapphire72.ass", "sha256": "sha256:700fe00a5c212c6e54693069bcea84df61427c20a2c02f1cd070f1c7e011c755"},
     "burn": {"bytes": 20165006, "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.burned-final-sapphire72.mp4", "sha256": "sha256:402f80580c1e21e83aaa8c8917d93d389c4c25f14b194d9015aa6c4390bd91ff"},
     "chat": {"bytes": 211724, "mode": 384, "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/auto_123655_771_844.chat-authority.json", "sha256": "sha256:d76518a1e4e9db60072941d62ce2a40710612ffdc9eed4ad58d566e7613182a1"},
+    "clip_context": {"bytes": 40963, "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/auto_123655_771_844.clip-context.json", "sha256": "sha256:de3aeea57576aeb357ffe5eb7c532bb0cf2be3341767e3f4124d71a6dac26b4c"},
     "correction": {"bytes": 2580, "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.human-text-correction.json", "sha256": "sha256:90de28c3ec0a01baa36a84fbcebc197322c8cf9817dcebb2799a41e7107cb4e0"},
     "delivery_record": {"bytes": 108416, "mode": 420, "path": "/opt/bilive/autoslice/repo/lidousha/2026-08-17/弹幕追问小李有没有女友感，她却把彼此.record.json", "sha256": "sha256:3ca8e11f39791ed8d8235f71b347599f5c5b93f8bc4a6d9621530cbe1da3b535"},
     "publish": {"bytes": 51481, "mode": 420, "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.publish.json", "sha256": "sha256:76c42e6aef3cf0c899e02505ec84112ec268da5c38043e04a3479dfbb1059545"},
     "record": {"bytes": 108416, "mode": 420, "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.record.json", "sha256": "sha256:3ca8e11f39791ed8d8235f71b347599f5c5b93f8bc4a6d9621530cbe1da3b535"},
     "srt": {"bytes": 1888, "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.srt", "sha256": "sha256:a172c08564d57c72782e44e74583c17c3a95a241b798fcfe8df3fddda8b91617"},
     "state": {"bytes": 765067, "mode": 420, "path": "/opt/bilive/autoslice/state/2026-08-17.json", "sha256": "sha256:7aef93f54dedf591a76f4af81d12978fd482a74e0e8b651c7a33d93dd01d1fd1"}
+  },
+  "predecessor_recovery": {
+    "journal": {"bytes": 11792752, "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/qixi_post_correction_public_artifact_basename_recovery/05f22cc273d05019/journal.json", "sha256": "sha256:c52aa92dac09048069374d8c4a52465f123e772c214b5005b01c7281023fb560"},
+    "receipt": {"bytes": 674, "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/qixi_post_correction_public_artifact_basename_recovery/05f22cc273d05019/final-receipt.json", "sha256": "sha256:16f782fbc9670109af530bd84ecb7072a162f08ff4aba95e8088aded6a5d436e"}
   },
   "recording_date": "2026-08-17",
   "repository_preimage": {"bytes": 1896, "path": "assets/lidousha/sealed_subtitle_corrections/auto_123655_771_844.pipeline-diagnostic.srt", "sha256": "sha256:c5dfb1d1645700df8acb35cedee2701c05fd55067dfeaf8dd5bda36cb38a4fc5"},

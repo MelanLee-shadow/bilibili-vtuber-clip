@@ -1414,6 +1414,46 @@ def test_two_phase_postcommit_successor_replays_daily_and_package(
     )
 
     if recover_basename:
+        from src.autoslice import qixi_terminal_evidence_refresh as terminal_refresh
+
+        # A terminal authority is a strict third successor: merely placing it
+        # in the repository changes the replay obligation, so a broken
+        # terminal receipt cannot be masked by an otherwise valid basename
+        # recovery chain.
+        terminal_asset = repo / terminal_refresh.AUTHORITY_PATH
+        terminal_asset.parent.mkdir(parents=True, exist_ok=True)
+        terminal_asset.write_text("{}", encoding="utf-8")
+        calls: list[Path] = []
+        monkeypatch.setattr(
+            terminal_refresh,
+            "validate_committed_refresh",
+            lambda *, repo_root: calls.append(repo_root),
+        )
+        assert (
+            _validate_source_fact_receipts(
+                record_doc=record_after,
+                publish_doc=publish_after,
+                subtitle_path=paths["srt"],
+                speaker_evidence=speaker,
+                qixi_repo_root=repo,
+            )
+            == receipt["receipt_sha256"]
+        )
+        assert calls == [repo]
+        monkeypatch.setattr(
+            terminal_refresh,
+            "validate_committed_refresh",
+            lambda **_kwargs: (_ for _ in ()).throw(ValueError("terminal drift")),
+        )
+        with pytest.raises(DailyManifestError, match="invalid or stale"):
+            _validate_source_fact_receipts(
+                record_doc=record_after,
+                publish_doc=publish_after,
+                subtitle_path=paths["srt"],
+                speaker_evidence=speaker,
+                qixi_repo_root=repo,
+            )
+        terminal_asset.unlink()
         migration_root = basename_recovery._recovery_root(public_authority)
         migration_journal = migration_root / "journal.json"
         migration_receipt = migration_root / "final-receipt.json"

@@ -628,6 +628,15 @@ def _validate_committed_public_successor(repo_root: Path, document: Mapping[str,
             )
 
             validate_committed_successor(public_document)
+            # The terminal refresh is optional but, once its committed
+            # authority exists in this repository, it is the only permitted
+            # third successor.  It cannot excuse a broken original→basename
+            # replay (checked above), and its own replay must prove every
+            # current after-image before source-fact acceptance proceeds.
+            from src.autoslice import qixi_terminal_evidence_refresh as terminal_refresh
+
+            if (repo_root / terminal_refresh.AUTHORITY_PATH).is_file():
+                terminal_refresh.validate_committed_refresh(repo_root=repo_root)
     except (
         OSError,
         ValueError,
