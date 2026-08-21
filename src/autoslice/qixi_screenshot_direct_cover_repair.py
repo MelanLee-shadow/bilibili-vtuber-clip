@@ -247,13 +247,20 @@ def build_cover_projection(
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_RECORD_MIRROR_DRIFT")
     cover_sha = _sha256_bytes(cover_bytes)
     for document in (record, delivery):
-        document["cover_generation"] = dict(generation)
         staging = document.get("publish_staging")
-        if isinstance(staging, dict):
-            staging["cover_generation"] = dict(generation)
-        hashes = document.get("artifact_hashes")
-        if isinstance(hashes, dict):
-            hashes["cover_sha256"] = cover_sha
+        if not isinstance(staging, dict):
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PUBLISH_STAGING_DRIFT")
+        for key in ("cover_path", "cover_status", "cover_text"):
+            if key not in staging:
+                raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PUBLISH_STAGING_DRIFT")
+        prior_generation = staging.get("cover_generation")
+        if not isinstance(prior_generation, Mapping):
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PUBLISH_STAGING_DRIFT")
+        if prior_generation.get("ai_background") != generation.get("ai_background") or prior_generation.get("ai_background_sha256") != generation.get("ai_background_sha256"):
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_AI_BACKGROUND_DRIFT")
+        staging["cover_generation"] = dict(generation)
+        staging["cover_path"] = str(normalized["legacy_cover"]["final_cover"]["path"])
+        staging["cover_status"] = "AI_COVER_READY"
     publish["cover_generation"] = dict(generation)
     publish["cover_path"] = str(normalized["legacy_cover"]["final_cover"]["path"])
     qc_target = Path(str(normalized["legacy_cover"]["failed_joint_qc"]["path"])).with_name(
