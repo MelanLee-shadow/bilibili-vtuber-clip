@@ -145,6 +145,41 @@ def test_private_preflight_writes_no_official_target_and_cleans_stage(tmp_path) 
     assert (store / result["manifest"]["preflight_sha256"][7:] / "cover.png").read_bytes() == b"new-cover"
 
 
+def test_production_punch_fails_closed_without_credentials_before_provider(tmp_path) -> None:
+    env = tmp_path / "cpa.env"
+    env.write_text("CPA_BASE_URL=https://example.invalid\n", encoding="utf-8")
+    called = False
+
+    def factory(_config):
+        nonlocal called
+        called = True
+        raise AssertionError("provider factory must not run")
+
+    with pytest.raises(repair.QixiScreenshotDirectCoverRepairError, match="CREDENTIALS_MISSING"):
+        repair._production_review_punch(
+            story_hook="小李和宿敌关系梗", cover_text="小李有女友感吗？宿敌是否有点亲密了",
+            llm_factory=factory, env_path=env,
+        )
+    assert called is False
+
+
+def test_production_joint_qc_binds_fixed_title_candidate_and_logical_path(tmp_path) -> None:
+    cover = tmp_path / "stage.png"
+    cover.write_bytes(b"cover")
+    seen = {}
+
+    def probe(path, prompt):
+        seen["path"], seen["prompt"] = path, prompt
+        return {"status": "OBSERVED", "answer": '{"lidousha_primary":true,"thumbnail_readable":true,"single_clear_hook":true,"text_overcrowded":false,"title_cover_aligned":true,"physical_text_line_count":1,"unrelated_or_misleading_elements":[],"pass":true}'}
+
+    receipt = repair._production_joint_qc(
+        cover_path=cover, logical_cover_path="/runtime/final.cover.png", image_probe=probe
+    )
+    assert receipt["candidate_id"] == repair.CANDIDATE_ID
+    assert receipt["cover_path"] == "/runtime/final.cover.png"
+    assert "女友感" in seen["prompt"]
+
+
 def test_apply_preflight_targets_is_cas_replayable_without_provider(tmp_path) -> None:
     authority = _authority(_generation(), b"old-cover", b"old-qc")
     authority["runtime_root"] = str(tmp_path)

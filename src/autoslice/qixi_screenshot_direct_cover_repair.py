@@ -20,6 +20,11 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from src.autoslice.repository_asset_authority import require_repository_asset_authority
+from src.autoslice.cover_punch_semantics import (
+    review_cover_punch_semantics,
+    validate_cover_punch_semantic_review,
+)
+from src.autoslice.llm_client import LlmConfig, build_llm_call
 from src.autoslice.qixi_transaction_core import (
     InstallCallbacks,
     QixiTransactionCoreError,
@@ -314,6 +319,75 @@ def require_repaired_punch(value: object) -> tuple[str, ...]:
     if any(not isinstance(line, str) or line not in PUNCH_CANDIDATES for line in lines):
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PUNCH_OUTSIDE_POOL")
     return lines
+
+
+def _cpa_env(path: Path = Path("/opt/bilive/autoslice/cpa.env")) -> dict[str, str]:
+    """Read only the two credential presence values; never expose them."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_CPA_ENV_UNAVAILABLE") from exc
+    values: dict[str, str] = {}
+    for line in lines:
+        line = line.strip().removeprefix("export ")
+        if "=" in line:
+            key, value = line.split("=", 1)
+            if key.strip() in {"CPA_BASE_URL", "CPA_API_KEY"}:
+                values[key.strip()] = value.strip().strip('"').strip("'")
+    if not values.get("CPA_BASE_URL") or not values.get("CPA_API_KEY"):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_CPA_CREDENTIALS_MISSING")
+    return values
+
+
+def _production_review_punch(
+    *, story_hook: str, cover_text: str, llm_factory=build_llm_call,
+    env_path: Path = Path("/opt/bilive/autoslice/cpa.env"),
+) -> tuple[tuple[str, ...], dict[str, object]]:
+    """Run the canonical CPA semantic punch gate for this fixed candidate."""
+    _cpa_env(env_path)  # Presence gate only; secrets never enter a result/prompt.
+    if not story_hook or not cover_text:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PUNCH_INPUT_INVALID")
+    try:
+        llm = llm_factory(LlmConfig(
+            transport="command",
+            command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-luna gpt-5.5' medium",
+            timeout_seconds=180.0,
+        ))
+        lines, receipt = review_cover_punch_semantics(
+            title="【李豆沙】小李有女友感吗？宿敌是否有点亲密了",
+            cover_text=cover_text,
+            story_hook=story_hook,
+            punch=PUNCH_CANDIDATES,
+            llm_call=llm,
+        )
+    except Exception as exc:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PUNCH_PROVIDER_FAILED") from exc
+    lines = require_repaired_punch(lines)
+    if not validate_cover_punch_semantic_review(
+        receipt, rendered_lines=list(lines), cover_text=cover_text, story_hook=story_hook
+    ):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PUNCH_REVIEW_INVALID")
+    return lines, receipt
+
+
+def _production_joint_qc(
+    *, cover_path: Path, logical_cover_path: str, image_probe,
+):
+    """Build a PASS-only canonical QC receipt for the exact staged bytes."""
+    from scripts.run_title_cover_joint_qc import build_joint_qc_receipt
+    try:
+        receipt = build_joint_qc_receipt(
+            cover_path=cover_path,
+            title="【李豆沙】小李有女友感吗？宿敌是否有点亲密了",
+            candidate_id=CANDIDATE_ID,
+            image_probe=image_probe,
+            logical_cover_path=logical_cover_path,
+        )
+    except Exception as exc:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_JOINT_QC_PROVIDER_FAILED") from exc
+    if not isinstance(receipt, Mapping) or receipt.get("status") != "PASS" or receipt.get("pass") is not True:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_JOINT_QC_INVALID")
+    return dict(receipt)
 
 
 def run_canonical_full_dry(
