@@ -54,6 +54,10 @@ from src.autoslice.operator_exact_title_source_fact_authority import (  # noqa: 
     PASS_DECISION as OPERATOR_EXACT_TITLE_PASS_DECISION,
     validate_operator_exact_title_source_fact_receipt,
 )
+from src.autoslice.qixi_operator_exact_title_source_fact import (  # noqa: E402
+    DECISION as QIXI_OPERATOR_EXACT_TITLE_DECISION,
+    validate_receipt as validate_qixi_operator_exact_title_receipt,
+)
 
 
 CHANNEL_PROFILE = load_channel_profile(ROOT)
@@ -283,6 +287,20 @@ def _validate_source_fact_receipts(
         if speaker_evidence is _SPEAKER_EVIDENCE_UNSET:
             raise DailyManifestError("operator title source-fact receipt requires speaker evidence")
         valid = validate_operator_exact_title_source_fact_receipt(
+            receipt,
+            record=record_doc,
+            speaker_evidence=speaker_evidence,
+            repo_root=qixi_repo_root or ROOT,
+            selection_hook=validation_kwargs["selection_hook"],
+            title=validation_kwargs["title"],
+            final_transcript=validation_kwargs["final_transcript"],
+            candidate_id=validation_kwargs["candidate_id"],
+            final_reviewed_srt_path=subtitle_path,
+        )
+    elif isinstance(receipt, dict) and receipt.get("decision") == QIXI_OPERATOR_EXACT_TITLE_DECISION:
+        if speaker_evidence is _SPEAKER_EVIDENCE_UNSET:
+            raise DailyManifestError("Qixi operator title source-fact receipt requires speaker evidence")
+        valid = validate_qixi_operator_exact_title_receipt(
             receipt,
             record=record_doc,
             speaker_evidence=speaker_evidence,

@@ -17,6 +17,10 @@ from .operator_exact_title_source_fact_authority import (
     PASS_DECISION as OPERATOR_EXACT_TITLE_PASS_DECISION,
     validate_operator_exact_title_source_fact_receipt,
 )
+from .qixi_operator_exact_title_source_fact import (
+    DECISION as QIXI_OPERATOR_EXACT_TITLE_DECISION,
+    validate_receipt as validate_qixi_operator_exact_title_receipt,
+)
 from .source_fact_review import validate_source_fact_review
 
 
@@ -57,6 +61,14 @@ def _source_fact_receipt_valid(
     }
     if isinstance(receipt, dict) and receipt.get("decision") == OPERATOR_EXACT_TITLE_PASS_DECISION:
         return validate_operator_exact_title_source_fact_receipt(
+            receipt,
+            record=record,
+            speaker_evidence=rebuilt_speaker_evidence,
+            repo_root=qixi_repo_root or Path(__file__).resolve().parents[2],
+            **common,
+        )
+    if isinstance(receipt, dict) and receipt.get("decision") == QIXI_OPERATOR_EXACT_TITLE_DECISION:
+        return validate_qixi_operator_exact_title_receipt(
             receipt,
             record=record,
             speaker_evidence=rebuilt_speaker_evidence,

@@ -1105,17 +1105,18 @@ def _validate_after_image(
         )
     except (OSError, ValueError) as exc:
         raise QixiPostCorrectionPublicSurfaceError("journal uniform-host speaker evidence replay drifts") from exc
-    if not validate_source_fact_review(
+    from src.autoslice.qixi_operator_exact_title_source_fact import validate_public_surface_receipt
+
+    if not validate_public_surface_receipt(
         source_fact,
-        selection_hook=hook,
-        title=PUBLIC_TITLE,
+        generic_validator=validate_source_fact_review,
+        selection_hook=hook, title=PUBLIC_TITLE,
         final_transcript="\n".join(cue.text for cue in _source_cues(paths["srt"])),
-        clip_context_prompt=str(story.get("clip_context_prompt") or ""),
-        selection_scorecard=story.get("selection_scorecard"),
-        candidate_id=CANDIDATE_ID,
+        clip_context_prompt=str(story.get("clip_context_prompt") or ""), selection_scorecard=story.get("selection_scorecard"),
         final_reviewed_srt_path=paths["srt"],
+        record=record,
         speaker_evidence=speaker_evidence,
-        story_contract=story,
+        repo_root=ROOT,
     ):
         raise QixiPostCorrectionPublicSurfaceError("journal source-fact receipt replay drifts")
     _validate_replayed_cover(generation, story=story, package_root=paths["record"].parent, after=after)

@@ -1,0 +1,130 @@
+{
+  "approved_title": {
+    "sha256": "sha256:da31a09ec4473efc1579b48aeb9169c32be054735e87ef83042f265492ea784d",
+    "value": "【李豆沙】小李有女友感吗？宿敌是否有点亲密了"
+  },
+  "authority_sha256": "sha256:00123114a252a64615a10c47ff19b8de3a73d8ab569f1a8d207b387f1d0e8e0c",
+  "candidate_id": "auto_123655_771_844",
+  "historical_provider_pass": {
+    "receipt": {
+      "decision": "KEEP",
+      "final_selection_hook": "弹幕追问小李有没有女友感，她却把彼此关系一路分成女儿、妈妈、主人、朋友、赛博桌宠和宿敌，最后总结直播间向来各论各的。",
+      "final_title": "【李豆沙】弹幕追问有没有女友感，李豆沙把kmx一路分成女儿妈妈主人朋友赛博桌宠和宿敌，最后各论各的",
+      "original_selection_hook": "弹幕追问小李有没有女友感，她却把彼此关系一路分成女儿、妈妈、主人、朋友、赛博桌宠和宿敌，最后总结直播间向来各论各的。",
+      "original_title": "【李豆沙】弹幕追问有没有女友感，李豆沙把kmx一路分成女儿妈妈主人朋友赛博桌宠和宿敌，最后各论各的",
+      "passes": [{"addressee_attribution": [{"actual_addressee": "未标注", "actual_speaker": "未标注", "assertion": "弹幕追问小李有没有女友感", "evidence": [], "reason": "本片没有可信的说话人标签转写，无法核验该追问的说话人与受话人归属。", "verdict": "UNVERIFIABLE"}], "addressee_attribution_mode": "unverifiable_no_speaker_transcript", "changed_surfaces": [], "clip_context_prompt_sha256": "sha256:063ca89386122e687aaaa03afd886525783bd2af3fd30f1179bf6b262f5ebda7", "final_selection_hook": "弹幕追问小李有没有女友感，她却把彼此关系一路分成女儿、妈妈、主人、朋友、赛博桌宠和宿敌，最后总结直播间向来各论各的。", "final_title": "【李豆沙】弹幕追问有没有女友感，李豆沙把kmx一路分成女儿妈妈主人朋友赛博桌宠和宿敌，最后各论各的", "final_transcript_sha256": "sha256:0bd8115110cd691fc2fd0480cb160cd8cd0cbb5ae1b548b00f164f5c3d55a367", "reason_code": null, "request_sha256": "sha256:8ccfa5e4f5d558aa696f384400f8d3c5c692a8861dee1f651557312ce2dea8aa", "response_sha256": "sha256:db7e12088d3820e80e7926e403aa33f98b1d77e038a41c738093705b04f07f1f", "review_pass": 1, "schema_version": "lidousha-source-fact-review.v1", "selection_hook_sha256": "sha256:2a06d384f069ddfea802abb3c208392460b500dfbc534258295319c5e7624221", "selection_scorecard_review": {"reason": "selection_hook 未修改，原 selection_scorecard 无需复核兼容性。", "status": "NOT_NEEDED"}, "selection_scorecard_sha256": "sha256:25ad6c631cb70e83c4997c79491064440c79a00a09877e807749236b7f02647d", "speaker_evidence_sha256": "sha256:7ad0672052878d79d0ad5f24e41ee57a6a8c401596b8954beb078ca45b39c989", "speaker_transcript_sha256": null, "status": "KEEP", "summary": "两份文案中的关系标签链、女友感追问及“各论各的”收束均有最终字幕或同片结构化弹幕支持；标题长度符合12–49字符要求，未发现事实模态、对象或因果升级。", "supported_by": ["final_transcript", "structured_chat"], "title_policy_mode": "automatic", "title_policy_violations": [], "title_sha256": "sha256:971a7a5f0ef0d8baf00aa7d48f73a01bc7c4da16e5fa9e278edd0c9faf0baed6"}],
+      "provider_retries": [],
+      "receipt_sha256": "sha256:098902bc2219bc33993bc17c7593103949c1aa5187b6fc608fac83ddd2d0dd26",
+      "schema_version": "lidousha-source-fact-review.v1",
+      "speaker_evidence": {"policy_ids": {"absence": "speaker_mode_uniform_host/v1", "alignment": "speaker_cue_subsegment_alignment/v1", "text": "compact_ws/v1", "timing": "half_open_integer_ms_exact/v1"}, "reason": "speaker_mode_uniform_host", "state": "AbsentAuthorized"},
+      "speaker_evidence_sha256": "sha256:7ad0672052878d79d0ad5f24e41ee57a6a8c401596b8954beb078ca45b39c989",
+      "status": "PASS"
+    },
+    "clip_context_prompt_sha256": "sha256:063ca89386122e687aaaa03afd886525783bd2af3fd30f1179bf6b262f5ebda7",
+    "final_transcript_sha256": "sha256:0bd8115110cd691fc2fd0480cb160cd8cd0cbb5ae1b548b00f164f5c3d55a367",
+    "historical_title": "【李豆沙】弹幕追问有没有女友感，李豆沙把kmx一路分成女儿妈妈主人朋友赛博桌宠和宿敌，最后各论各的",
+    "receipt_sha256": "sha256:098902bc2219bc33993bc17c7593103949c1aa5187b6fc608fac83ddd2d0dd26",
+    "selection_hook": "弹幕追问小李有没有女友感，她却把彼此关系一路分成女儿、妈妈、主人、朋友、赛博桌宠和宿敌，最后总结直播间向来各论各的。",
+    "selection_scorecard_sha256": "sha256:25ad6c631cb70e83c4997c79491064440c79a00a09877e807749236b7f02647d",
+    "speaker_evidence": {
+      "policy_ids": {
+        "absence": "speaker_mode_uniform_host/v1",
+        "alignment": "speaker_cue_subsegment_alignment/v1",
+        "text": "compact_ws/v1",
+        "timing": "half_open_integer_ms_exact/v1"
+      },
+      "reason": "speaker_mode_uniform_host",
+      "state": "AbsentAuthorized"
+    },
+    "speaker_evidence_sha256": "sha256:7ad0672052878d79d0ad5f24e41ee57a6a8c401596b8954beb078ca45b39c989"
+  },
+  "operator_authorization": {
+    "conversation_id": "0df2296b-500a-4681-ab5e-6fb46dc39579",
+    "line": 947,
+    "quote": "弹幕追问小李有没有女友感，她却把彼此这个切片，0:08说的是“你觉得自己有女友感吗”。0:13说的是“感觉kmx比较多”，0:18说的是“感觉kmx比较多把”，这里语言都不通了，为什么没有专名修复？0:21说的是\"kmx当女儿或者网友\"，0:41说的是“其实是主人”，这呼应了我之前教过的，排比句式。都是其实是开头。1:05说的是“妹感妈”，这里但听内容确实可能听成吗，但是如果持续了解李豆沙的直播，并且持续做过切片就知道这里是妹感妈，或许可以把这个加入专名？标题取为“小李有女友感吗？宿敌是否有点亲密了”。",
+    "quote_sha256": "sha256:ca01d908018d73d508d6cce1ddbaa3a6d668668048b8eab155fa2dea8d5df4e2",
+    "source": "Claude JSONL",
+    "timestamp": "2026-08-19T00:08:52.249Z"
+  },
+  "recording_date": "2026-08-17",
+  "schema_version": "qixi-operator-exact-title-source-fact-authority.v1",
+  "scope": {
+    "boundary_mutation": false,
+    "candidate_scoped": true,
+    "cover_mutation": false,
+    "media_mutation": false,
+    "provider_pass_claim": false,
+    "subtitle_mutation": false,
+    "title_source_fact_projection_only": true,
+    "upload_authorization": false
+  },
+  "sealed_before": {
+    "delivery_record": {
+      "bytes": 95340,
+      "path": "/opt/bilive/autoslice/repo/lidousha/2026-08-17/弹幕追问小李有没有女友感，她却把彼此.record.json",
+      "sha256": "sha256:38abe2c473bf80d151a098462d9104bf4c9a161e2e88f160882bd0d69b0e3b2b"
+    },
+    "publish": {
+      "bytes": 44769,
+      "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.publish.json",
+      "sha256": "sha256:a1ab69880ac86e0ba3ccf55957a7acadf0c981bc281c3d803a40e420ead55d94"
+    },
+    "record": {
+      "bytes": 95340,
+      "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.record.json",
+      "sha256": "sha256:38abe2c473bf80d151a098462d9104bf4c9a161e2e88f160882bd0d69b0e3b2b"
+    },
+    "state": {
+      "bytes": 753792,
+      "mode": 420,
+      "path": "/opt/bilive/autoslice/state/2026-08-17.json",
+      "sha256": "sha256:159f8f8ba0d9734f3ceee69968c3febf4916ae7d8d02c708f7b15a58d6b173bc"
+    }
+  },
+  "source_binding": {
+    "boundary_audit_sha256": "sha256:563eb48e1ca6e3881203abaf843de1af5627b571e1b4e4d4560c9a0ef2363f3c",
+    "chat_authority": {
+      "bytes": 211724,
+      "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/auto_123655_771_844.chat-authority.json",
+      "sha256": "sha256:d76518a1e4e9db60072941d62ce2a40710612ffdc9eed4ad58d566e7613182a1"
+    },
+    "clip_context": {
+      "bytes": 40963,
+      "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/auto_123655_771_844.clip-context.json",
+      "sha256": "sha256:de3aeea57576aeb357ffe5eb7c532bb0cf2be3341767e3f4124d71a6dac26b4c"
+    },
+    "clip_context_prompt_sha256": "sha256:063ca89386122e687aaaa03afd886525783bd2af3fd30f1179bf6b262f5ebda7",
+    "correction": {
+      "bytes": 2580,
+      "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.human-text-correction.json",
+      "sha256": "sha256:90de28c3ec0a01baa36a84fbcebc197322c8cf9817dcebb2799a41e7107cb4e0"
+    },
+    "final_transcript_sha256": "sha256:0bd8115110cd691fc2fd0480cb160cd8cd0cbb5ae1b548b00f164f5c3d55a367",
+    "public_surface_authority": {"authority_sha256": "sha256:05f22cc273d050196ef7bb49471f1c1527998ffff0bafb8f059e1f233bfe6941", "bytes": 5873, "relative_path": "assets/lidousha/qixi_post_correction_public_surface/auto_123655_771_844.v1.json", "sha256": "sha256:d1cb43728faa867262af4e9c6f91c142d32c4a2c31ade5f6e0495969dd056bef"},
+    "reviewed_srt": {
+      "bytes": 1888,
+      "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.srt",
+      "sha256": "sha256:a172c08564d57c72782e44e74583c17c3a95a241b798fcfe8df3fddda8b91617"
+    },
+    "selection_hook": "弹幕追问小李有没有女友感，她却把彼此关系一路分成女儿、妈妈、主人、朋友、赛博桌宠和宿敌，最后总结直播间向来各论各的。",
+    "selection_hook_sha256": "sha256:2a06d384f069ddfea802abb3c208392460b500dfbc534258295319c5e7624221",
+    "selection_scorecard_sha256": "sha256:25ad6c631cb70e83c4997c79491064440c79a00a09877e807749236b7f02647d",
+    "source_piece": {
+      "basename": "22966160_20260817-12-36-55.mp4",
+      "end_ms": 892480,
+      "sha256": "sha256:0c60ed662786cba515a01a555e3493df247a076df6f568aa323caeeab85346fd",
+      "start_ms": 761810
+    },
+    "speaker_evidence": {
+      "policy_ids": {
+        "absence": "speaker_mode_uniform_host/v1",
+        "alignment": "speaker_cue_subsegment_alignment/v1",
+        "text": "compact_ws/v1",
+        "timing": "half_open_integer_ms_exact/v1"
+      },
+      "reason": "speaker_mode_uniform_host",
+      "state": "AbsentAuthorized"
+    },
+    "speaker_evidence_sha256": "sha256:7ad0672052878d79d0ad5f24e41ee57a6a8c401596b8954beb078ca45b39c989"
+  }
+}

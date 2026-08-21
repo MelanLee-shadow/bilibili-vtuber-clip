@@ -28,6 +28,12 @@ from src.autoslice.operator_exact_title_source_fact_authority import (
     consume_operator_exact_title_source_fact_authority,
     load_operator_exact_title_source_fact_authority,
 )
+from src.autoslice.qixi_operator_exact_title_source_fact import (
+    QixiOperatorExactTitleSourceFactError,
+    authorize as authorize_qixi_operator_exact_title,
+    consume_authority as consume_qixi_operator_exact_title_authority,
+    load_authority as load_qixi_operator_exact_title_authority,
+)
 from src.autoslice.speaker_guess import SPEAKER_GUESS_STATUS
 from src.autoslice.source_fact_review import (
     authorize_deterministic_text_narrowing,
@@ -128,11 +134,20 @@ def resolve_initial_source_fact_review(
             reason="OPERATOR_EXACT_TITLE_SOURCE_FACT_AUTHORITY_INVALID",
             detail=exc,
         )
+    try:
+        qixi_operator_title_authority = load_qixi_operator_exact_title_authority(candidate_id)
+    except (QixiOperatorExactTitleSourceFactError, OSError, ValueError) as exc:
+        return _blocked(
+            violation="qixi_operator_exact_title_source_fact_authority_invalid",
+            reason="QIXI_OPERATOR_EXACT_TITLE_SOURCE_FACT_AUTHORITY_INVALID",
+            detail=exc,
+        )
     if (
         source_fact_llm_call is None
         and keep_authority is None
         and deterministic_authority is None
         and operator_title_authority is None
+        and qixi_operator_title_authority is None
     ):
         return InitialSourceFactResolution(
             review=None,
@@ -149,6 +164,28 @@ def resolve_initial_source_fact_review(
     subtitle_value = record.get("subtitle_path")
     final_srt = Path(str(subtitle_value)) if subtitle_value else None
     try:
+        if qixi_operator_title_authority is not None:
+            if title_source != "ivan_manual_override" or final_srt is None:
+                raise QixiOperatorExactTitleSourceFactError(
+                    "QIXI_OPERATOR_TITLE_RUNTIME_TITLE_MODE_INVALID"
+                )
+            consumption = consume_qixi_operator_exact_title_authority(
+                qixi_operator_title_authority,
+                candidate_id=candidate_id,
+                title=title,
+                selection_hook=selection_hook,
+                final_transcript=final_transcript,
+                final_reviewed_srt_path=final_srt,
+                record=record,
+                speaker_evidence=speaker_evidence.speaker_evidence,
+            )
+            return InitialSourceFactResolution(
+                review=authorize_qixi_operator_exact_title(consumption),
+                violation=None,
+                authority_error=None,
+                authority_status="RESOLVED_QIXI_OPERATOR_EXACT_TITLE_HISTORICAL_PASS",
+                manual_title_keep_consumption=None,
+            )
         if operator_title_authority is not None:
             if title_source != "ivan_manual_override" or final_srt is None:
                 raise OperatorExactTitleSourceFactAuthorityError(
@@ -239,6 +276,12 @@ def resolve_initial_source_fact_review(
                 authority_status=title_authority_status,
                 manual_title_keep_consumption=consumption,
             )
+    except QixiOperatorExactTitleSourceFactError as exc:
+        return _blocked(
+            violation="qixi_operator_exact_title_source_fact_authority_invalid",
+            reason="QIXI_OPERATOR_EXACT_TITLE_SOURCE_FACT_AUTHORITY_INVALID",
+            detail=exc,
+        )
     except OperatorExactTitleSourceFactAuthorityError as exc:
         return _blocked(
             violation="operator_exact_title_source_fact_authority_invalid",

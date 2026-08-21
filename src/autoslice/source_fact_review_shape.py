@@ -13,6 +13,9 @@ def source_fact_review_passes_shape(
     deterministic_text_narrowing_decision: str,
     terminal_text_preservation_decision: str,
     operator_exact_title_decision: str = "OPERATOR_EXACT_TITLE_WITH_RECORDED_SOURCE_FACT_DISSENT",
+    qixi_operator_exact_title_decision: str = (
+        "QIXI_OPERATOR_EXACT_TITLE_WITH_HISTORICAL_PROVIDER_PASS"
+    ),
     candidate_public_text_refresh_decision: str = "CANDIDATE_PUBLIC_TEXT_SOURCE_FACT_REFRESH",
 ) -> bool:
     """Accept only one of the closed PASS receipt shapes."""
@@ -53,6 +56,21 @@ def source_fact_review_passes_shape(
             is False
             and isinstance(review.get("recorded_source_fact_dissent"), Mapping)
             and review["recorded_source_fact_dissent"].get("status") == "FAILED"
+        )
+        or (
+            decision == qixi_operator_exact_title_decision
+            and isinstance(
+                review.get("operator_exact_title_source_fact_authority_consumption"),
+                Mapping,
+            )
+            and review["operator_exact_title_source_fact_authority_consumption"].get("status")
+            == "CONSUMED"
+            and review["operator_exact_title_source_fact_authority_consumption"].get(
+                "provider_pass_claim"
+            )
+            is False
+            and isinstance(review.get("historical_provider_pass"), Mapping)
+            and review["historical_provider_pass"].get("status") == "PASS"
         )
         or (
             decision == terminal_text_preservation_decision
