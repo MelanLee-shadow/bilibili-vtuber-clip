@@ -61,6 +61,16 @@
       "candidate_id": "auto_223750_578_734",
       "title": "莉娅求小李“就算你是狼也放过我”，结伴后小李突然连声道歉",
       "authority": "Ivan-2026-08-11：机器建议标题不错，但专名必须为莉娅；人工真值修完后快车道发布"
+    },
+    {
+      "candidate_id": "auto_123655_771_844",
+      "title": "小李有女友感吗？宿敌是否有点亲密了",
+      "authority": "Ivan-2026-08-19 direct instruction in Claude JSONL line 947: 标题取为“小李有女友感吗？宿敌是否有点亲密了”"
+    },
+    {
+      "candidate_id": "auto_123655_1613_1676",
+      "title": "熊猫头要一本正经的新增‘熊今饭’环节了",
+      "authority": "Ivan-2026-08-19 direct instruction in Claude JSONL line 947"
     }
   ],
   "entries": [

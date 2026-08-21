@@ -1,0 +1,56 @@
+{
+  "schema_version": "sealed-subtitle-correction-authority.v1",
+  "candidate_id": "auto_123655_771_844",
+  "recording_date": "2026-08-17",
+  "authority": "Ivan 2026-08-19 direct correction in Claude JSONL line 947: 0:08 你觉得自己有女友感吗；0:13/0:18 感觉kmx比较多；0:21 kmx当女儿或者网友；0:41 其实是主人；1:05 妹感妈；标题取为“小李有女友感吗？宿敌是否有点亲密了”。The repair lane is selected by the existing TARGETED_REPAIR_PLUS_SYSTEMIC_FIX planner; this asset fixes only its four explicit wrong cues and independently asserts two already-correct cues.",
+  "artifacts": {
+    "record": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.record.json", "sha256": "sha256:c6efc6483777a3a4b29a08611bebc7d0e28c9af8f19d281cf148d4c71fe614ea", "bytes": 94856, "mode": "0644", "uid": 0, "gid": 0},
+    "publish": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.publish.json", "sha256": "sha256:a1ab69880ac86e0ba3ccf55957a7acadf0c981bc281c3d803a40e420ead55d94", "bytes": 44769, "mode": "0644", "uid": 0, "gid": 0},
+    "main": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.mp4", "sha256": "sha256:9d1309ab974ab43e4da270d3898e2a5e977d09bf0ee5cfda504025a0845c530d", "bytes": 18490443, "mode": "0644", "uid": 0, "gid": 0},
+    "srt": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.srt", "sha256": "sha256:c5dfb1d1645700df8acb35cedee2701c05fd55067dfeaf8dd5bda36cb38a4fc5", "bytes": 1896, "mode": "0600", "uid": 0, "gid": 0},
+    "ass": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.final-sapphire72.ass", "sha256": "sha256:2f4597c04b36d5f009e96b665ed8686745fac21c6a4c074e75068664d1728069", "bytes": 2995, "mode": "0644", "uid": 0, "gid": 0},
+    "burn": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.burned-final-sapphire72.mp4", "sha256": "sha256:4744e04a4e76f4b108e49e48b43009b7a43d197a09b1d80f3587c9d007eaecd2", "bytes": 20166291, "mode": "0644", "uid": 0, "gid": 0},
+    "cover": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/covers/auto_123655_771_844.screenshot-title.cover.png", "sha256": "sha256:c6365ed150629f1e9c8cf3870db5d0fa1ed55a90986ce1afb3db61b06b6ac869", "bytes": 1199770, "mode": "0644", "uid": 0, "gid": 0},
+    "chat": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/auto_123655_771_844.chat-authority.json", "sha256": "sha256:d76518a1e4e9db60072941d62ce2a40710612ffdc9eed4ad58d566e7613182a1", "bytes": 211724, "mode": "0600", "uid": 0, "gid": 0},
+    "timing": {"path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.recut.timing_qa.json", "sha256": "sha256:9407538798e41e4b646a2a8fee74199659c3184455f1bcb33c11fdc940470551", "bytes": 2301, "mode": "0644", "uid": 0, "gid": 0}
+  },
+  "delivery": {
+    "video": {"path": "/opt/bilive/autoslice/repo/lidousha/2026-08-17/弹幕追问小李有没有女友感，她却把彼此.mp4", "sha256": "sha256:4744e04a4e76f4b108e49e48b43009b7a43d197a09b1d80f3587c9d007eaecd2", "bytes": 20166291, "mode": "0644", "uid": 0, "gid": 0},
+    "subtitle": {"path": "/opt/bilive/autoslice/repo/lidousha/2026-08-17/弹幕追问小李有没有女友感，她却把彼此.srt", "sha256": "sha256:c5dfb1d1645700df8acb35cedee2701c05fd55067dfeaf8dd5bda36cb38a4fc5", "bytes": 1896, "mode": "0600", "uid": 0, "gid": 0},
+    "record": {"path": "/opt/bilive/autoslice/repo/lidousha/2026-08-17/弹幕追问小李有没有女友感，她却把彼此.record.json", "sha256": "sha256:c6efc6483777a3a4b29a08611bebc7d0e28c9af8f19d281cf148d4c71fe614ea", "bytes": 94856, "mode": "0644", "uid": 0, "gid": 0},
+    "speaker_sidecars": {
+      "srt": {"path": "/opt/bilive/autoslice/repo/lidousha/2026-08-17/弹幕追问小李有没有女友感，她却把彼此.speaker.srt", "sha256": "sha256:287b28f7a2b972c3900d1185a273c6f752bcae0674e343a42e7d54aadc6d07c3", "bytes": 2320, "mode": "0600", "uid": 0, "gid": 0},
+      "ass": {"path": "/opt/bilive/autoslice/repo/lidousha/2026-08-17/弹幕追问小李有没有女友感，她却把彼此.speaker.ass", "sha256": "sha256:6ec286501c8980f1b1a2cad322af0794185d2d41a118dfbdd904a6fca2b82112", "bytes": 3002, "mode": "0600", "uid": 0, "gid": 0},
+      "manifest": {"path": "/opt/bilive/autoslice/repo/lidousha/2026-08-17/弹幕追问小李有没有女友感，她却把彼此.speaker.json", "sha256": "sha256:c6d73504d1612da42571be0189010e151903dfe5e475ee7502313339d66d5538", "bytes": 20434, "mode": "0600", "uid": 0, "gid": 0}
+    },
+    "correction_receipts": {
+      "primary_path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.human-text-correction.json",
+      "delivery_path": "/opt/bilive/autoslice/repo/lidousha/2026-08-17/弹幕追问小李有没有女友感，她却把彼此.human-text-correction.json"
+    },
+    "branding_intro": {"status": "PREPENDED", "intro_id": "huozi-lidousha-kmx-baobao-guankou-z2-v1", "intro_media_sha256": "sha256:d37f4c358cc5d2515bca5a6fbc54bb5a10d7d2b8a36008777842def3d502ac29", "intro_offset_ms": 6200}
+  },
+  "diagnostic": {
+    "pipeline_srt": {"path": "assets/lidousha/sealed_subtitle_corrections/auto_123655_771_844.pipeline-diagnostic.srt", "sha256": "sha256:c5dfb1d1645700df8acb35cedee2701c05fd55067dfeaf8dd5bda36cb38a4fc5", "bytes": 1896},
+    "decision_receipt": {"path": "assets/lidousha/sealed_subtitle_corrections/auto_123655_771_844.diagnostic-diff.v1.json", "sha256": "sha256:f981b7a99bb0ea0ac2412f2f2a9330d1cc4c28374f5490e5a532ec4ab0d84cf2", "bytes": 8762},
+    "operator_full_ownership": false
+  },
+  "correction": {
+    "cue_count": 33,
+    "source_srt_sha256": "sha256:c5dfb1d1645700df8acb35cedee2701c05fd55067dfeaf8dd5bda36cb38a4fc5",
+    "output_srt_sha256": "sha256:a172c08564d57c72782e44e74583c17c3a95a241b798fcfe8df3fddda8b91617",
+    "replacements": [
+      {"cue_index": 1, "start": "00:00:00,250", "end": "00:00:02,270", "before": "你觉得最有女友感吗", "after": "你觉得自己有女友感吗"},
+      {"cue_index": 3, "start": "00:00:05,250", "end": "00:00:06,990", "before": "感觉挺kmx比较多", "after": "感觉kmx比较多"},
+      {"cue_index": 6, "start": "00:00:12,330", "end": "00:00:15,470", "before": "Q 为什么当女儿或者网友", "after": "kmx当女儿或者网友"},
+      {"cue_index": 27, "start": "00:00:58,910", "end": "00:01:00,070", "before": "妹感吗", "after": "妹感妈"}
+    ],
+    "assertions": [
+      {"cue_index": 5, "start": "00:00:10,030", "end": "00:00:12,330", "text": "感觉kmx比较多吧"},
+      {"cue_index": 14, "start": "00:00:34,540", "end": "00:00:35,360", "text": "其实是主人"}
+    ],
+    "other_cues_immutable": true
+  },
+  "manual_title": "小李有女友感吗？宿敌是否有点亲密了",
+  "upload": false,
+  "authority_sha256": "sha256:69fa1225b80741a68fbe836b36d654c691ba073505a81acb6dea33a6e1d549c1"
+}

@@ -1252,7 +1252,25 @@ def _parse_args(argv=None):
     return p.parse_args(argv)
 
 
-def main(argv=None) -> int:
+def _should_regenerate_upload_tags(sealed_transaction_context: object | None) -> bool:
+    """Only ordinary correction invocations may request tag-generation work."""
+
+    return sealed_transaction_context is None
+
+
+def main(
+    argv=None,
+    *,
+    _sealed_transaction_context: object | None = None,
+) -> int:
+    """Run a correction transaction.
+
+    ``_sealed_transaction_context`` is deliberately private and accepted only
+    from a candidate-sealed runner.  It is revalidated against the deployed
+    authority after normal CLI parsing and before any staging path is created;
+    raw branding mappings are never injectable through this seam or any public
+    command-line flag.
+    """
     args = _parse_args(argv)
 
     recut_dir = args.out_base / "out" / args.date / args.cid / "replacement_recuts"
@@ -1261,18 +1279,56 @@ def main(argv=None) -> int:
     srt_path = Path(str(record["subtitle_path"]))
     srt = srt_path.read_text(encoding="utf-8")
 
-    try:
-        branding_intro, delivery_branding_authority = _prepare_correction_branding(
-            delivery=args.delivery,
-            working_record_path=record_path,
-            candidate_id=args.cid,
-            authority_record_path=args.delivery_authority_record,
-            authority_publish_path=args.delivery_authority_publish,
-            recovery_authority_path=args.recovery_branding_authority,
+    if _sealed_transaction_context is None:
+        try:
+            branding_intro, delivery_branding_authority = _prepare_correction_branding(
+                delivery=args.delivery,
+                working_record_path=record_path,
+                candidate_id=args.cid,
+                authority_record_path=args.delivery_authority_record,
+                authority_publish_path=args.delivery_authority_publish,
+                recovery_authority_path=args.recovery_branding_authority,
+            )
+        except (
+            BrandingIntroError,
+            DeliveryBrandingAuthorityError,
+            DeliveryCopyError,
+        ) as exc:
+            print(f"DELIVERY_BRANDING_PREFLIGHT_FAILED: {exc}", file=sys.stderr)
+            return 1
+    else:
+        if any(
+            value is not None
+            for value in (
+                args.delivery_authority_record,
+                args.delivery_authority_publish,
+                args.recovery_branding_authority,
+            )
+        ):
+            print(
+                "prepared delivery authority cannot be mixed with CLI authority inputs",
+                file=sys.stderr,
+            )
+            return 2
+        from src.autoslice.sealed_subtitle_correction import (
+            SealedSubtitleCorrectionTransactionContext,
         )
-    except (BrandingIntroError, DeliveryBrandingAuthorityError, DeliveryCopyError) as exc:
-        print(f"DELIVERY_BRANDING_PREFLIGHT_FAILED: {exc}", file=sys.stderr)
-        return 1
+
+        if not isinstance(
+            _sealed_transaction_context, SealedSubtitleCorrectionTransactionContext
+        ):
+            print("invalid sealed subtitle correction context", file=sys.stderr)
+            return 2
+        try:
+            branding_intro, delivery_branding_authority = (
+                _sealed_transaction_context.prepare_for_transaction(
+                    args=args,
+                    working_record_path=record_path,
+                )
+            )
+        except (BrandingIntroError, DeliveryBrandingAuthorityError, ValueError) as exc:
+            print(f"SEALED_DELIVERY_BRANDING_PREFLIGHT_FAILED: {exc}", file=sys.stderr)
+            return 1
 
     before = srt
     if (args.text_source is None) != (args.text_override is None):
@@ -1447,8 +1503,16 @@ def main(argv=None) -> int:
             "burned_preview": final_burned_value,
         })
         staging_title = str(((record.get("publish_staging") or {}).get("title")) or "")
-        if staging_title:
+        if staging_title and _should_regenerate_upload_tags(_sealed_transaction_context):
             updated["upload_tags"] = generate_upload_tags(staging_title, staged_srt, timeout=180.0)
+        if _sealed_transaction_context is not None:
+            try:
+                _sealed_transaction_context.validate_record_delta(
+                    before=record, after=updated
+                )
+            except ValueError as exc:
+                print(f"SEALED_RECORD_DELTA_PREFLIGHT_FAILED: {exc}", file=sys.stderr)
+                return 1
         staged_record = staging_dir / record_path.name
         staged_record.write_text(json.dumps(updated, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         replacements = [

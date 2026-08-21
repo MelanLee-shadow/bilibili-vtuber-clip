@@ -122,6 +122,12 @@ def test_ivan_titles_are_exact_and_survive_recut_suffix(
     assert title_policy.manual_title_override(candidate_id) == expected
 
 
+def test_line947_panda_title_preserves_the_operator_quote_glyphs():
+    assert title_policy.manual_title_override("auto_123655_1613_1676") == (
+        "熊猫头要一本正经的新增‘熊今饭’环节了"
+    )
+
+
 def test_publish_title_policy_applies_one_envelope_to_manual_and_auto_titles():
     body = "最包容异性恋的直播间，看到男角色只能说出一句不熟"
     canonical = title_policy.canonicalize_publish_title(body, lane="talk")
