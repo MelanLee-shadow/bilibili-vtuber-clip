@@ -350,8 +350,8 @@ def _production_review_punch(
     try:
         llm = llm_factory(LlmConfig(
             transport="command",
-            command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-luna gpt-5.5' medium",
-            timeout_seconds=180.0,
+            command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-luna gpt-5.5 gpt-5.4' medium",
+            timeout_seconds=600.0,
         ))
         lines, receipt = review_cover_punch_semantics(
             title="【李豆沙】小李有女友感吗？宿敌是否有点亲密了",
@@ -388,6 +388,53 @@ def _production_joint_qc(
     if not isinstance(receipt, Mapping) or receipt.get("status") != "PASS" or receipt.get("pass") is not True:
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_JOINT_QC_INVALID")
     return dict(receipt)
+
+
+def _production_stage_cover(
+    *, root: Path, runtime: Mapping[str, bytes], approved_punch: tuple[str, ...],
+    semantic_receipt: Mapping[str, object], cover_mode_override: str,
+    require_screenshot_direct: bool,
+) -> dict[str, object]:
+    """Run the canonical screenshot stage only inside the private root."""
+    from src.autoslice.publish_staging import _stage_lidousha_ai_cover
+
+    try:
+        record = json.loads(runtime["record"])
+        story = record["story_contract"]
+        media_path = Path(str(record["media_path"]))
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_STAGE_INPUT_INVALID") from exc
+    if not isinstance(story, Mapping):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_STAGE_INPUT_INVALID")
+    def image_edit_trap(**_kwargs: object) -> dict[str, object]:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_IMAGE_EDIT_FORBIDDEN")
+    result = _stage_lidousha_ai_cover(
+        record, media_path=media_path, candidate_id=CANDIDATE_ID,
+        title="【李豆沙】小李有女友感吗？宿敌是否有点亲密了",
+        cover_text=str(record.get("publish_staging", {}).get("cover_text") or ""),
+        run_ffmpeg=True, private_artifact_root=root, punch_allowed=True,
+        cover_mode_override=cover_mode_override,
+        require_screenshot_direct=require_screenshot_direct,
+        approved_punch=approved_punch, approved_punch_receipt=semantic_receipt,
+        image_edit=image_edit_trap,
+    )
+    if not isinstance(result, Mapping) or result.get("status") != "AI_COVER_READY":
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_SCREENSHOT_GATE_BLOCKED")
+    generation = result.get("cover_generation")
+    cover_path = result.get("cover_path")
+    if (
+        not isinstance(generation, Mapping) or not isinstance(cover_path, str)
+        or generation.get("method") != "screenshot_direct"
+        or generation.get("image_generation_used") is not False
+        or generation.get("image_generation_attempted") is not False
+        or generation.get("route_decision", {}).get("actual_treatment") != "screenshot_direct"
+    ):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_SCREENSHOT_GATE_BLOCKED")
+    staged = Path(cover_path)
+    if not staged.resolve(strict=True).is_relative_to(root.resolve(strict=True)):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_STAGE_ESCAPE")
+    return {"generation": dict(generation), "cover_path": staged,
+            "logical_cover_path": str(staged), "logical_qc_path": str(root / "joint-qc.json")}
 
 
 def run_canonical_full_dry(
