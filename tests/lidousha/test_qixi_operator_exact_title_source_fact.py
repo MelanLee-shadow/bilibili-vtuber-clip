@@ -56,11 +56,16 @@ def _runtime(tmp_path: Path) -> tuple[Authority, dict[str, object]]:
     assert isinstance(source, dict) and isinstance(historical, dict) and isinstance(sealed, dict)
     hook = str(source["selection_hook"])
     speaker = source["speaker_evidence"]
-    transcript = "final reviewed transcript"
+    transcript = "current post-human-correction transcript"
+    historical_transcript = "historical provider-pass transcript"
+    historical_srt_sha256 = bytes_sha256(b"historical provider-pass SRT\n")
     scorecard = {"schema_version": "lidousha-selection-scorecard.v1", "status": "VALID"}
     boundary = {"schema_version": "boundary-audit.v1", "verdict": "ok_sentence_boundary_cut"}
     srt_path = tmp_path / "recut.srt"
-    srt_payload = b"1\n00:00:00,000 --> 00:00:01,000\nfinal reviewed transcript\n"
+    srt_payload = (
+        b"1\n00:00:00,000 --> 00:00:01,000\n"
+        b"current post-human-correction transcript\n"
+    )
     srt_path.write_bytes(srt_payload)
     source["reviewed_srt"] = {
         "path": str(srt_path),
@@ -79,6 +84,7 @@ def _runtime(tmp_path: Path) -> tuple[Authority, dict[str, object]]:
         {
             "schema_version": "human-subtitle-correction.v2",
             "candidate_id": CANDIDATE_ID,
+            "before_srt_sha256": historical_srt_sha256[7:],
             "after_srt_sha256": bytes_sha256(srt_payload)[7:],
         },
         sort_keys=True,
@@ -110,7 +116,7 @@ def _runtime(tmp_path: Path) -> tuple[Authority, dict[str, object]]:
         {
             "schema_version": "chat-authority-audit.v2",
             "status": "APPLIED_AND_VERIFIED",
-            "final_text_srt_sha256": bytes_sha256(srt_payload)[7:],
+            "final_text_srt_sha256": historical_srt_sha256[7:],
         },
         sort_keys=True,
     ).encode()
@@ -122,7 +128,7 @@ def _runtime(tmp_path: Path) -> tuple[Authority, dict[str, object]]:
     }
     historical.update(
         {
-            "final_transcript_sha256": text_sha256(transcript),
+            "final_transcript_sha256": text_sha256(historical_transcript),
             "clip_context_prompt_sha256": text_sha256(prompt),
             "selection_scorecard_sha256": canonical_sha256(scorecard),
             "speaker_evidence": speaker,
@@ -214,6 +220,7 @@ def _runtime(tmp_path: Path) -> tuple[Authority, dict[str, object]]:
         "srt_path": srt_path,
         "speaker": speaker,
         "transcript": transcript,
+        "historical_transcript": historical_transcript,
     }
 
 
@@ -249,6 +256,16 @@ def test_live_asset_binds_exact_operator_title_and_historical_pass() -> None:
         document["source_binding"]["correction"]["sha256"]
         == "sha256:90de28c3ec0a01baa36a84fbcebc197322c8cf9817dcebb2799a41e7107cb4e0"
     )
+    assert document["source_binding"]["final_transcript_sha256"] == (
+        "sha256:5a8cc4a8f8a663fc1e257f161d55d460753d202fdb1979696eec85ccae15c268"
+    )
+    assert document["historical_provider_pass"]["final_transcript_sha256"] == (
+        "sha256:0bd8115110cd691fc2fd0480cb160cd8cd0cbb5ae1b548b00f164f5c3d55a367"
+    )
+    assert (
+        document["source_binding"]["final_transcript_sha256"]
+        != document["historical_provider_pass"]["final_transcript_sha256"]
+    )
     assert (
         document["sealed_before"]["record"]["sha256"]
         == document["sealed_before"]["delivery_record"]["sha256"]
@@ -257,6 +274,82 @@ def test_live_asset_binds_exact_operator_title_and_historical_pass() -> None:
         "sha256:159f8f8ba0d9734f3ceee69968c3febf4916ae7d8d02c708f7b15a58d6b173bc"
     )
     assert document["scope"]["provider_pass_claim"] is False
+
+
+def test_current_corrected_transcript_is_independent_from_historical_provider_pass(
+    tmp_path: Path,
+) -> None:
+    authority, runtime = _runtime(tmp_path)
+    source = authority.document["source_binding"]
+    historical = authority.document["historical_provider_pass"]
+    assert isinstance(source, dict) and isinstance(historical, dict)
+    assert source["final_transcript_sha256"] != historical["final_transcript_sha256"]
+    assert _consume(authority, runtime)["status"] == "CONSUMED"
+
+    record = runtime["record"]
+    assert isinstance(record, dict)
+    with pytest.raises(QixiOperatorExactTitleSourceFactError):
+        consume_authority(
+            authority,
+            candidate_id=CANDIDATE_ID,
+            title=TITLE,
+            selection_hook=str(record["story_contract"]["selection_hook"]),
+            final_transcript=str(runtime["historical_transcript"]),
+            final_reviewed_srt_path=Path(str(runtime["srt_path"])),
+            record=record,
+            speaker_evidence=runtime["speaker"],
+        )
+
+    current_drift = copy.deepcopy(authority.document)
+    current_source = current_drift["source_binding"]
+    assert isinstance(current_source, dict)
+    current_source["final_transcript_sha256"] = text_sha256("different current transcript")
+    _rehash(current_drift)
+    drifted_current = Authority(
+        validate_authority_document(current_drift), ASSET_PATH, bytes_sha256(b"synthetic")
+    )
+    with pytest.raises(QixiOperatorExactTitleSourceFactError):
+        _consume(drifted_current, runtime)
+
+    historical_drift = copy.deepcopy(authority.document)
+    drifted_historical = historical_drift["historical_provider_pass"]
+    assert isinstance(drifted_historical, dict)
+    drifted_historical["final_transcript_sha256"] = text_sha256("different historical transcript")
+    _rehash(historical_drift)
+    with pytest.raises(QixiOperatorExactTitleSourceFactError):
+        validate_authority_document(historical_drift)
+
+
+@pytest.mark.parametrize("drift", ["chat_before", "correction_after"])
+def test_human_correction_chains_historical_chat_to_current_srt(
+    tmp_path: Path, drift: str
+) -> None:
+    authority, runtime = _runtime(tmp_path)
+    source = authority.document["source_binding"]
+    assert isinstance(source, dict)
+    correction = json.loads(Path(str(source["correction"]["path"])).read_text(encoding="utf-8"))
+    if drift == "chat_before":
+        correction["before_srt_sha256"] = "f" * 64
+    else:
+        correction["after_srt_sha256"] = "e" * 64
+    correction_payload = json.dumps(correction, sort_keys=True).encode()
+    correction_path = tmp_path / f"{drift}.correction.json"
+    correction_path.write_bytes(correction_payload)
+
+    drifted_document = copy.deepcopy(authority.document)
+    drifted_source = drifted_document["source_binding"]
+    assert isinstance(drifted_source, dict)
+    drifted_source["correction"] = {
+        "path": str(correction_path),
+        "bytes": len(correction_payload),
+        "sha256": bytes_sha256(correction_payload),
+    }
+    _rehash(drifted_document)
+    drifted_authority = Authority(
+        validate_authority_document(drifted_document), ASSET_PATH, bytes_sha256(b"synthetic")
+    )
+    with pytest.raises(QixiOperatorExactTitleSourceFactError):
+        _consume(drifted_authority, runtime)
 
 
 @pytest.mark.parametrize(
@@ -424,7 +517,15 @@ def _canonical_public_qixi_fixture(
     repo, _runtime_root, public_authority, paths = public_surface_tests._fixture(tmp_path)
     artifacts = public_authority["artifacts"]
     assert isinstance(artifacts, dict)
+    paths["srt"].write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\ncurrent post-human-correction transcript\n",
+        encoding="utf-8",
+    )
+    historical_srt_sha256 = bytes_sha256(b"historical provider-pass SRT\n")
     record = json.loads(paths["record"].read_text(encoding="utf-8"))
+    hashes = record["artifact_hashes"]
+    assert isinstance(hashes, dict)
+    hashes["subtitle_sha256"] = _public_descriptor(paths["srt"])["sha256"]
     initial_story = public_surface._story_contract_rebuilder(
         record,
         srt_path=paths["srt"],
@@ -441,7 +542,7 @@ def _canonical_public_qixi_fixture(
         "passes": [
             {
                 "status": "KEEP",
-                "final_transcript_sha256": text_sha256("女友感"),
+                "final_transcript_sha256": text_sha256("historical provider-pass transcript"),
                 "clip_context_prompt_sha256": text_sha256(
                     str(initial_story["clip_context_prompt"])
                 ),
@@ -464,6 +565,9 @@ def _canonical_public_qixi_fixture(
     paths["record"].write_bytes(public_surface._json_bytes(record))
     paths["delivery"].write_bytes(paths["record"].read_bytes())
     publish = json.loads(paths["publish"].read_text(encoding="utf-8"))
+    publish_hashes = publish["artifact_hashes"]
+    assert isinstance(publish_hashes, dict)
+    publish_hashes["subtitle_sha256"] = _public_descriptor(paths["srt"])["sha256"]
     publish.update({"title": "old title", "source_fact_review": historic})
     paths["publish"].write_bytes(public_surface._json_bytes(publish))
     state = json.loads(paths["state"].read_text(encoding="utf-8"))
@@ -475,6 +579,7 @@ def _canonical_public_qixi_fixture(
             {
                 "schema_version": "human-subtitle-correction.v2",
                 "candidate_id": CANDIDATE_ID,
+                "before_srt_sha256": historical_srt_sha256[7:],
                 "after_srt_sha256": _public_descriptor(paths["srt"])["sha256"][7:],
             }
         )
@@ -488,7 +593,7 @@ def _canonical_public_qixi_fixture(
             {
                 "schema_version": "chat-authority-audit.v2",
                 "status": "APPLIED_AND_VERIFIED",
-                "final_text_srt_sha256": _public_descriptor(paths["srt"])["sha256"][7:],
+                "final_text_srt_sha256": historical_srt_sha256[7:],
             }
         )
     )
@@ -525,7 +630,7 @@ def _canonical_public_qixi_fixture(
             "selection_hook_sha256": text_sha256(str(initial_story["selection_hook"])),
             "selection_scorecard_sha256": canonical_sha256(initial_story["selection_scorecard"]),
             "clip_context_prompt_sha256": text_sha256(str(initial_story["clip_context_prompt"])),
-            "final_transcript_sha256": text_sha256("女友感"),
+            "final_transcript_sha256": text_sha256("current post-human-correction transcript"),
             "speaker_evidence": public_surface_tests._UNIFORM_HOST_EVIDENCE,
             "speaker_evidence_sha256": canonical_sha256(
                 public_surface_tests._UNIFORM_HOST_EVIDENCE
@@ -555,7 +660,7 @@ def _canonical_public_qixi_fixture(
             "receipt_sha256": historic["receipt_sha256"],
             "historical_title": historic["final_title"],
             "selection_hook": initial_story["selection_hook"],
-            "final_transcript_sha256": source["final_transcript_sha256"],
+            "final_transcript_sha256": historic["passes"][0]["final_transcript_sha256"],
             "clip_context_prompt_sha256": source["clip_context_prompt_sha256"],
             "selection_scorecard_sha256": source["selection_scorecard_sha256"],
             "speaker_evidence": source["speaker_evidence"],
@@ -592,7 +697,7 @@ def test_two_phase_postcommit_successor_replays_daily_and_package(
     assert isinstance(source, dict) and isinstance(historical, dict)
     speaker = source["speaker_evidence"]
     hook = str(source["selection_hook"])
-    transcript = "女友感"
+    transcript = "current post-human-correction transcript"
     consumption = consume_authority(
         authority,
         candidate_id=CANDIDATE_ID,

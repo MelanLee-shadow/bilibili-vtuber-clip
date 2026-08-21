@@ -80,6 +80,12 @@ def _sha(value: object, label: str) -> str:
     return value
 
 
+def _bare_sha(value: object, label: str) -> str:
+    if not isinstance(value, str):
+        raise QixiOperatorExactTitleSourceFactError(f"QIXI_OPERATOR_TITLE_{label}_HASH_INVALID")
+    return _sha(f"sha256:{value}", label)[7:]
+
+
 def _regular_bytes(path: Path) -> bytes:
     cursor = Path(path.anchor)
     try:
@@ -440,6 +446,9 @@ def consume_authority(
     context = _json_payload(_check_file(binding["clip_context"], label="CONTEXT"), label="CONTEXT")
     chat = _json_payload(_check_file(binding["chat_authority"], label="CHAT"), label="CHAT")
     reviewed_srt = binding["reviewed_srt"]
+    correction_before_srt_sha256 = _bare_sha(
+        correction.get("before_srt_sha256"), "CORRECTION_BEFORE_SRT"
+    )
     if (
         correction.get("schema_version") != "human-subtitle-correction.v2"
         or correction.get("candidate_id") != candidate_id
@@ -449,7 +458,7 @@ def consume_authority(
         or context.get("selection_hook") != selection_hook
         or chat.get("schema_version") != "chat-authority-audit.v2"
         or chat.get("status") != "APPLIED_AND_VERIFIED"
-        or chat.get("final_text_srt_sha256") != str(reviewed_srt["sha256"])[7:]
+        or chat.get("final_text_srt_sha256") != correction_before_srt_sha256
     ):
         raise QixiOperatorExactTitleSourceFactError("QIXI_OPERATOR_TITLE_RUNTIME_SIDECAR_DRIFT")
     historical_receipt = _receipt_is_historical_pass(historical["receipt"], historical)

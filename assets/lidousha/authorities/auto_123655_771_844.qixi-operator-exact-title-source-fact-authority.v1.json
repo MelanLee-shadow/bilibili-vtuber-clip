@@ -3,7 +3,7 @@
     "sha256": "sha256:da31a09ec4473efc1579b48aeb9169c32be054735e87ef83042f265492ea784d",
     "value": "【李豆沙】小李有女友感吗？宿敌是否有点亲密了"
   },
-  "authority_sha256": "sha256:00123114a252a64615a10c47ff19b8de3a73d8ab569f1a8d207b387f1d0e8e0c",
+  "authority_sha256": "sha256:2c9f7048e7480bd9cc92aa39b12dbe479d484758b30093f1d5788ef077bc4f37",
   "candidate_id": "auto_123655_771_844",
   "historical_provider_pass": {
     "receipt": {
@@ -99,7 +99,7 @@
       "path": "/opt/bilive/autoslice/out/2026-08-17/auto_123655_771_844/replacement_recuts/auto_123655_771_844.human-text-correction.json",
       "sha256": "sha256:90de28c3ec0a01baa36a84fbcebc197322c8cf9817dcebb2799a41e7107cb4e0"
     },
-    "final_transcript_sha256": "sha256:0bd8115110cd691fc2fd0480cb160cd8cd0cbb5ae1b548b00f164f5c3d55a367",
+    "final_transcript_sha256": "sha256:5a8cc4a8f8a663fc1e257f161d55d460753d202fdb1979696eec85ccae15c268",
     "public_surface_authority": {"authority_sha256": "sha256:05f22cc273d050196ef7bb49471f1c1527998ffff0bafb8f059e1f233bfe6941", "bytes": 5873, "relative_path": "assets/lidousha/qixi_post_correction_public_surface/auto_123655_771_844.v1.json", "sha256": "sha256:d1cb43728faa867262af4e9c6f91c142d32c4a2c31ade5f6e0495969dd056bef"},
     "reviewed_srt": {
       "bytes": 1888,
