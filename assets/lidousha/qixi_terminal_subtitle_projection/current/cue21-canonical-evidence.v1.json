@@ -1,0 +1,28 @@
+{
+  "schema_version": "qixi-cue21-canonical-provider-evidence.v1",
+  "status": "UNRESOLVED_NO_RELEASE_TEXT",
+  "source_recording": {
+    "basename": "22966160_20260817-11-30-22.mp4",
+    "sha256": "212eb59bee50dda1601a3f30e3c7b9a307715058fb472646ddcfa200615c6a97",
+    "bytes": 1168095423,
+    "absolute_context_start_ms": 415110,
+    "absolute_context_end_ms": 427510,
+    "target_start_ms": 420110,
+    "target_end_ms": 422510
+  },
+  "extraction": {
+    "command": "ffmpeg -ss 415.110 -to 427.510 -i SOURCE -vn -ac 1 -ar 16000 -c:a pcm_s16le -f wav OUTPUT",
+    "ffmpeg_version": "7.1.5-0+deb13u1",
+    "context_wav": {"path": "context_415110_427510.wav", "sha256": "d046726cac4ff33652adedd796c9597d437c9e0f4019506f066f6a64f1c12d97", "bytes": 397284},
+    "target_wav": {"path": "target_420110_422510.wav", "sha256": "b130184ce456ae1f9c3f0a8803c0ec976e0f221acb6db7623b10389610d5388b", "bytes": 77284},
+    "target_mp3": {"path": "target_420110_422510.mp3", "sha256": "0fd46073604ff9ee5bf93e279faecf1e132e2875345be3447a30605089852369", "bytes": 20626}
+  },
+  "prompt": "这是一次独立的盲听。请只根据所附音频转写，不要搜索、不要使用外部知识，也不要按任何可能的作品名或候选词猜测。音频来自原录像 415.110–427.510 秒；目标语句是其中 5.000–7.400 秒。请给出逐字目标语句，并同时给出前后完整语境。只输出 JSON：context_transcript, target_transcript, uncertainties, confidence_0_to_1。",
+  "prompt_sha256": "563cd7aee250644906448bd8028eed575c611439aa4dd00a6bb1e06d54f138dd",
+  "provider_requests": {"policy": "ONE_REQUEST_PER_MODEL_NO_RETRY", "models": ["gemini-3.7-flash", "gemini-3.6-flash"]},
+  "raw_responses": [
+    {"model": "gemini-3.7-flash", "path": "gemini-3.7-flash.raw.json", "sha256": "3b4f3dae088f43f19380e53baabf4f64d351e4ce592d3531cf8404a44ad56875", "bytes": 3582, "target_transcript": "非常按这个白兰氏意义啊", "confidence_0_to_1": 0.85},
+    {"model": "gemini-3.6-flash", "path": "gemini-3.6-flash.raw.json", "sha256": "b0a36abd6e16d9fba6e138ac4cc7d41e98f30c7a7190c8b1434619c0d68003c5", "bytes": 3740, "target_transcript": "非常这个balance意痒", "confidence_0_to_1": 0.85}
+  ],
+  "release_decision": "NO_INTERSECTION; IVAN_EXACT_TEXT_REQUIRED"
+}

@@ -357,8 +357,11 @@
   准入，也不得把 package audit、pending-human manifest 或任意旧版/手写 receipt 当成授权。
 - **七夕人工 Z2 corrected package 窄门**：只可运行
   `scripts/finalize_qixi_corrected_package.py`，固定消费部署/仓库封存的
-  `qixi_corrected_package_finalization_authority.v1` 所列 release Z2 bytes 与 r2 fresh
-  evidence；它不调用 ffmpeg、选片、标题或封面 provider。默认仅 dry-run，`--apply` 只在新的
+  `qixi_corrected_package_finalization_authority.v1` 所列 current release bytes、ASS-repair
+  receipt 与 sealed terminal subtitle projection；后者只以 current 62-cue operator-reviewed truth
+  为发布 authority，并把 superseded 54-cue preimage bytes 仅用于重放当前 correction，绝不把它
+  当作历史 baseline authority；随后经既有 redelivery/chat final-surface helpers 验证。它不调用
+  ffmpeg、ASR/provider、选片、标题或封面 provider。默认仅 dry-run，`--apply` 只在新的
   create-only candidate root 写入 `replacement_recuts`，并在最终 JSON/hash 闭包后写
   `qixi-corrected-package-finalization.json`。任何 source/evidence/target symlink、重叠、旧
   publish 漂移、未知 locator 或 receipt replay 不通过都拒绝。manual builder 必须先按 record

@@ -1,0 +1,17 @@
+{
+  "schema_version": "qixi-superseded-terminal-preimage.v1",
+  "status": "SUPERSEDED_TEXT_PREIMAGE_ONLY",
+  "not_release_authority": true,
+  "candidate_id": "auto_113022_354_496",
+  "pre_correction_srt": {
+    "path": "assets/lidousha/qixi_terminal_subtitle_projection/history/auto_113022_354_496.pre-correction-terminal.srt",
+    "sha256": "sha256:562bdb4536cb9989864f7f6e51f8eb79da42fcfa06f14ae8c612e0680fa4109e",
+    "bytes": 3412,
+    "cue_count": 54
+  },
+  "superseded_by": {
+    "current_truth_srt_sha256": "sha256:bbf7340eea7bf7f308a60a2375342cf92999a2fcc4e8f82a5466d5c716c09f9f",
+    "terminal_srt_sha256": "sha256:0b712412cb2dcccb0c61dcadd0764cd37487d4c2ee4453e69824e029309052d9",
+    "correction_sha256": "sha256:90acd9e60617d6c2872b37b2f9329f022644270c3ada6353595f0bf8d937c90c"
+  }
+}

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts import export_oss_snapshot as oss_export
 from scripts.export_oss_snapshot import build_template_assets
 from src.autoslice.source_truth_governance import validate_ledger_governance
 
@@ -70,3 +71,31 @@ def test_gift_names_ship_in_full(skeleton_root):
 def test_no_maintainer_name_leaks_into_skeletons(skeleton_root):
     for path in skeleton_root.rglob("*.json"):
         assert "Ivan" not in path.read_text(encoding="utf-8"), path.name
+
+
+def test_qixi_terminal_projection_is_stripped_but_keeps_its_template_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    relative = (
+        "assets/lidousha/qixi_terminal_subtitle_projection/"
+        "current/operator-truth.json"
+    )
+    source = tmp_path / "private"
+    secret = source / relative
+    secret.parent.mkdir(parents=True)
+    secret.write_text('{"operator_quote":"private"}', encoding="utf-8")
+    emote_index = source / "assets/lidousha/emote_library.v1.json"
+    emote_index.parent.mkdir(parents=True, exist_ok=True)
+    emote_index.write_text('{"emotes":[]}', encoding="utf-8")
+
+    monkeypatch.setattr(oss_export, "REPO", source)
+    monkeypatch.setattr(oss_export, "PATCHES", ())
+    monkeypatch.setattr(oss_export, "tracked_files", lambda: [relative])
+    monkeypatch.setattr(oss_export, "build_template_assets", lambda _root: 0)
+    output = tmp_path / "oss"
+    monkeypatch.setattr(oss_export.sys, "argv", ["export", str(output)])
+
+    assert oss_export.classify(relative) == "strip_templated_dir"
+    assert oss_export.main() == 0
+    assert not (output / relative).exists()
+    assert (output / "assets/lidousha/qixi_terminal_subtitle_projection/README.md").is_file()

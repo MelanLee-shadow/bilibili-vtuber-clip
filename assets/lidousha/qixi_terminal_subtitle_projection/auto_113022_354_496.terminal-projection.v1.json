@@ -1,0 +1,61 @@
+{
+  "authority_sha256": "sha256:999c48f12532e801af30af73f581710bf6da535aee47be40bff815d45ba5ecc7",
+  "candidate_id": "auto_113022_354_496",
+  "current_correction": {
+    "after_srt_sha256": "sha256:0b712412cb2dcccb0c61dcadd0764cd37487d4c2ee4453e69824e029309052d9",
+    "before_srt_sha256": "sha256:562bdb4536cb9989864f7f6e51f8eb79da42fcfa06f14ae8c612e0680fa4109e",
+    "replace_operations": [],
+    "schema_version": "human-subtitle-correction.v2",
+    "set_line_operations": [
+      "21=非常 balance いいや"
+    ],
+    "sha256": "sha256:90acd9e60617d6c2872b37b2f9329f022644270c3ada6353595f0bf8d937c90c"
+  },
+  "current_truth": {
+    "cue21_evidence_path": "assets/lidousha/qixi_terminal_subtitle_projection/current/cue21-canonical-evidence.v1.json",
+    "cue21_evidence_sha256": "sha256:e726acbd2ee70c8e628fb7852edd843042954cfcd9265e8ea73fde925b49ad9d",
+    "cue_count": 62,
+    "final_contract_path": "assets/lidousha/qixi_terminal_subtitle_projection/current/final-media-review-contracts.v1.json",
+    "final_contract_sha256": "sha256:3db9b5a69723c8acf3cf156bc5a342aeebb02a5afcfee6a566ff2be90d382ca9",
+    "operator_decision_ledger_path": "assets/lidousha/qixi_terminal_subtitle_projection/current/auto_113022_354_496.operator-decisions.v1.json",
+    "operator_decision_ledger_sha256": "sha256:5735ac34377231868b82284110a8a63d2c16de89a90986f65aaf5b6aaac8aac4",
+    "operator_delivery_receipt_path": "assets/lidousha/qixi_terminal_subtitle_projection/current/operator-reviewed-subtitle-baseline-delivery.v1.json",
+    "operator_delivery_receipt_sha256": "sha256:365d6a66006200063ff8ffc4edde06c38d9e9e5b8f3a7fb9a256a8d4107f331f",
+    "operator_truth_diff_path": "assets/lidousha/qixi_terminal_subtitle_projection/current/auto_113022_354_496.operator-truth-diff.v1.json",
+    "operator_truth_diff_sha256": "sha256:0cd172dab4519ad1b1d52359f351e2e52f79d64f9cb733d4be48376a8356df33",
+    "pipeline_diagnostic_path": "assets/lidousha/qixi_terminal_subtitle_projection/current/auto_113022_354_496.pipeline-diagnostic.srt",
+    "pipeline_diagnostic_sha256": "sha256:80921974f929ebe8c6c9a4897bddfeb2acb907938a19b7ddf3f3fc0f09fc0843",
+    "registry_path": "assets/lidousha/qixi_terminal_subtitle_projection/current/auto_113022_354_496.subtitle-baseline.v1.json",
+    "registry_sha256": "sha256:425a2e1e02620e2330cac7b288367889cd3743c1890b54b87a07974e40418fc3",
+    "srt_path": "assets/lidousha/qixi_terminal_subtitle_projection/current/auto_113022_354_496.reviewed.srt",
+    "srt_sha256": "sha256:bbf7340eea7bf7f308a60a2375342cf92999a2fcc4e8f82a5466d5c716c09f9f"
+  },
+  "superseded_preimage": {
+    "manifest_path": "assets/lidousha/qixi_terminal_subtitle_projection/history/auto_113022_354_496.pre-correction-terminal.v1.json",
+    "manifest_sha256": "sha256:b813c6860e2c9f9071e5d4d8d47761753e655c73e0c5ccb06a0cf3e2b2f5379f"
+  },
+  "schema_version": "qixi-reviewed-terminal-subtitle-projection.v1",
+  "source_recording": {
+    "absolute_start_ms": 354420,
+    "basename": "22966160_20260817-11-30-22.mp4",
+    "reviewed_absolute_end_ms": 512310,
+    "sha256": "sha256:212eb59bee50dda1601a3f30e3c7b9a307715058fb472646ddcfa200615c6a97",
+    "terminal_absolute_end_ms": 496630
+  },
+  "status": "READY",
+  "terminal_boundary": {
+    "boundary_audit_canonical_sha256": "sha256:63c09c935e66dbeaaf2b0577dcd18be2dd0a8e6638f00fd21fb7cffd85080739",
+    "final_closure_cue_index": 54,
+    "final_closure_end_ms": 141990,
+    "final_closure_text_sha256": "sha256:cb29695e99232cabdedea7977afad522361cf55294c2830ba1aa4bb08a5c54cf",
+    "final_end_ms": 142210,
+    "final_start_ms": 0,
+    "record_sha256": "sha256:52fe53393e559e2a85e9b8c8153e46f2a7257249b2664c5e8f23de4da1449615"
+  },
+  "terminal_srt": {
+    "bytes": 3406,
+    "cue_count": 54,
+    "path": "assets/lidousha/qixi_terminal_subtitle_projection/auto_113022_354_496.terminal.srt",
+    "sha256": "sha256:0b712412cb2dcccb0c61dcadd0764cd37487d4c2ee4453e69824e029309052d9"
+  }
+}

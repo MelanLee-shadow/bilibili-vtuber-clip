@@ -1,0 +1,48 @@
+{
+  "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
+  "candidate_id": "auto_113022_354_496",
+  "schema_version": "subtitle-redelivery-baseline.v2",
+  "mode": "preserve_text_outside_source_truth",
+  "exact_interval_replay": true,
+  "path": "auto_113022_354_496.reviewed.srt",
+  "sha256": "bbf7340eea7bf7f308a60a2375342cf92999a2fcc4e8f82a5466d5c716c09f9f",
+  "authority": "Ivan exhaustive subtitle authority aggregates distinct cue scopes: original exact correction “2:39说的是播的有点压抑了。” with unchanged-outside-scope ruling “我指出了所有的问题就表示其他的地方没有问题，不应该动”；fresh cue21 exact authority “她说的是非常 balance iiya，应该是日式发音的，‘balance的非常好’的意思。结合整场直播知道她在说前面要甜，后面要苦，所以非常balance。” Root release normalization for cue21: “非常 balance いいや”。",
+  "source_recording_basename": "22966160_20260817-11-30-22.mp4",
+  "source_sha256": "212eb59bee50dda1601a3f30e3c7b9a307715058fb472646ddcfa200615c6a97",
+  "absolute_source_start_ms": 354420,
+  "absolute_source_end_ms": 512310,
+  "operator_text_full_ownership": {
+    "schema_version": "operator-reviewed-text-full-ownership-pin.v2",
+    "baseline_sha256": "bbf7340eea7bf7f308a60a2375342cf92999a2fcc4e8f82a5466d5c716c09f9f",
+    "pipeline_srt_sha256": "80921974f929ebe8c6c9a4897bddfeb2acb907938a19b7ddf3f3fc0f09fc0843",
+    "decision_ledger_sha256": "5735ac34377231868b82284110a8a63d2c16de89a90986f65aaf5b6aaac8aac4",
+    "diagnostic_diff_sha256": "0cd172dab4519ad1b1d52359f351e2e52f79d64f9cb733d4be48376a8356df33",
+    "operator_authority": {
+      "kind": "IVAN_OPERATOR",
+      "evidence_ref": "Ivan exhaustive subtitle authority aggregates distinct cue scopes: original exact correction “2:39说的是播的有点压抑了。” with unchanged-outside-scope ruling “我指出了所有的问题就表示其他的地方没有问题，不应该动”；fresh cue21 exact authority “她说的是非常 balance iiya，应该是日式发音的，‘balance的非常好’的意思。结合整场直播知道她在说前面要甜，后面要苦，所以非常balance。” Root release normalization for cue21: “非常 balance いいや”。"
+    },
+    "cue_count": 62,
+    "changed_cue_count": 3,
+    "operator_exact_text_cue_count": 3,
+    "operator_unchanged_freeze_cue_count": 59,
+    "speaker_authority": "NOT_CLAIMED_TEXT_ONLY"
+  },
+  "operator_truth_lanes": {
+    "schema_version": "operator-reviewed-subtitle-truth-lanes.v1",
+    "release_truth": {
+      "srt_sha256": "bbf7340eea7bf7f308a60a2375342cf92999a2fcc4e8f82a5466d5c716c09f9f"
+    },
+    "pipeline_diagnostic": {
+      "sha256": "80921974f929ebe8c6c9a4897bddfeb2acb907938a19b7ddf3f3fc0f09fc0843",
+      "path": "auto_113022_354_496.pipeline-diagnostic.srt"
+    },
+    "decision_ledger": {
+      "sha256": "5735ac34377231868b82284110a8a63d2c16de89a90986f65aaf5b6aaac8aac4",
+      "path": "auto_113022_354_496.operator-decisions.v1.json"
+    },
+    "diff_receipt": {
+      "sha256": "0cd172dab4519ad1b1d52359f351e2e52f79d64f9cb733d4be48376a8356df33",
+      "path": "auto_113022_354_496.operator-truth-diff.v1.json"
+    }
+  }
+}

@@ -1,5 +1,6 @@
 {
   "schema_version": "qixi-corrected-package-finalization-authority.v1",
+  "finalization_mode": "current_terminal_projection",
   "candidate_id": "auto_113022_354_496",
   "title": "【李豆沙】李豆沙公布七夕安排，中午甜甜甜晚上苦苦苦，一套PUA直播要让kmx集体分号！",
   "recovery_publication_authority": {
@@ -28,42 +29,44 @@
     "source_package_relative": "out/2026-08-17/auto_113022_354_496/replacement_recuts"
   },
   "release": {
-    "video": {"source": "auto_113022_354_496.recut.burned-final-sapphire72.mp4", "sha256": "sha256:0d21a8fe9aa4e9d6345e624415012bfcaed1486b5f48b85c6b760ed0aa45aae8", "bytes": 78450780, "target": "auto_113022_354_496.mp4", "target_role": "package"},
+    "video": {"source": "auto_113022_354_496.recut.burned-final-sapphire72.mp4", "sha256": "sha256:8539f49ecba77d12c69b51e3177f12e67d9ae39debebc762a997757e54cc488a", "bytes": 78452463, "target": "auto_113022_354_496.mp4", "target_role": "package"},
     "main": {"source": "auto_113022_354_496.recut.mp4", "sha256": "sha256:82a1e28278b2f630e97b2541e0d1ee8b0596d9f4090a1d242967cb603c7b7683", "bytes": 77312949, "target": "auto_113022_354_496.recut.mp4", "target_role": "package"},
-    "subtitle": {"source": "auto_113022_354_496.recut.srt", "sha256": "sha256:562bdb4536cb9989864f7f6e51f8eb79da42fcfa06f14ae8c612e0680fa4109e", "bytes": 3412, "target": "auto_113022_354_496.srt", "target_role": "package"},
-    "ass": {"source": "auto_113022_354_496.recut.final-sapphire72.ass", "sha256": "sha256:2d288bac310ace6b6a1a05994393d0edd4b350811147d1b40d0c10a56730b283", "bytes": 4846, "target": "auto_113022_354_496.final-sapphire72.ass", "target_role": "package"},
-    "correction": {"source": "auto_113022_354_496.human-text-correction.json", "sha256": "sha256:c74288f61034fd3ef3059208ac9002243c5166a76900a1c1ff22cf8b9f37411e", "bytes": 3233, "target": "auto_113022_354_496.human-text-correction.json", "target_role": "package"},
-    "cover": {"source": "auto_113022_354_496.recut.burned-final-sapphire72.cover.png", "sha256": "sha256:8cacaafc502a31474f93e6472c945f8527dee23b5fdb39df27d672ee08f4d4e0", "bytes": 1349090, "target": "auto_113022_354_496.cover.png", "target_role": "package"},
-    "source_record": {"source": "auto_113022_354_496.record.json", "sha256": "sha256:7c74bd9cd034cacd3d93cdd40a30f7feb23b046da437cb75361d94bd9dc60fdf", "bytes": 158579, "target": "diagnostic/source.record.json", "target_role": "package"},
-    "source_publish": {"source": "auto_113022_354_496.recut.publish.json", "sha256": "sha256:ed1f3b8bba7323f8157d47fdd6890766dbc79b95992a86fe7ffb8b105efcc35e", "bytes": 48799, "target": "diagnostic/source.publish.json", "target_role": "package"}
+    "subtitle": {"source": "auto_113022_354_496.recut.srt", "sha256": "sha256:0b712412cb2dcccb0c61dcadd0764cd37487d4c2ee4453e69824e029309052d9", "bytes": 3406, "target": "auto_113022_354_496.srt", "target_role": "package"},
+    "ass": {"source": "auto_113022_354_496.recut.final-sapphire72.ass", "sha256": "sha256:7755dbca6d9348bf1a50b7f2ae0b009e4c84ccd8f697db1ace5e33be605db4a2", "bytes": 4838, "target": "auto_113022_354_496.final-sapphire72.ass", "target_role": "package"},
+    "correction": {"source": "auto_113022_354_496.human-text-correction.json", "sha256": "sha256:90acd9e60617d6c2872b37b2f9329f022644270c3ada6353595f0bf8d937c90c", "bytes": 3558, "target": "auto_113022_354_496.human-text-correction.json", "target_role": "package"},
+    "record": {"source": "auto_113022_354_496.record.json", "sha256": "sha256:52fe53393e559e2a85e9b8c8153e46f2a7257249b2664c5e8f23de4da1449615", "bytes": 158699, "target": "auto_113022_354_496.record.json", "target_role": "package"},
+    "record_mirror": {"source": "auto_113022_354_496.recut.burned-final-sapphire72.record.json", "sha256": "sha256:52fe53393e559e2a85e9b8c8153e46f2a7257249b2664c5e8f23de4da1449615", "bytes": 158699, "target": "diagnostic/auto_113022_354_496.record.mirror.json", "target_role": "package"},
+    "publish": {"source": "auto_113022_354_496.recut.publish.json", "sha256": "sha256:ed1f3b8bba7323f8157d47fdd6890766dbc79b95992a86fe7ffb8b105efcc35e", "bytes": 48799, "target": "auto_113022_354_496.publish.json", "target_role": "package"},
+    "redelivery_baseline": {"source": "auto_113022_354_496.redelivery-baseline.json", "sha256": "sha256:9e019fedd1e432bb971ab7d9bab37c50dfb609dbc2b09903f98c3e4586e16955", "bytes": 51213, "target": "auto_113022_354_496.redelivery-baseline.json", "target_role": "package"},
+    "ass_repair_receipt": {"source": "auto_113022_354_496.record-ass-binding-recovery.v1.json", "sha256": "sha256:a923fdf1583ca68949a93c1abdd33546714a4bcc4577e4ba5037a79cc738f538", "bytes": 3441, "target": "evidence/auto_113022_354_496.record-ass-binding-recovery.v1.json", "target_role": "package"},
+    "cover": {"source": "covers/auto_113022_354_496.screenshot-title.cover.png", "sha256": "sha256:8cacaafc502a31474f93e6472c945f8527dee23b5fdb39df27d672ee08f4d4e0", "bytes": 1349090, "target": "auto_113022_354_496.cover.png", "target_role": "package"},
+    "cover_pre_overlay": {"source": "covers/auto_113022_354_496.screenshot-title.cover.pre-overlay.png", "sha256": "sha256:5e875c2b49fed7c248f40fb7431ff6243cd56d3d27b1b77d73f6fa1882232d99", "bytes": 1347580, "target": "auto_113022_354_496.cover.pre-overlay.png", "target_role": "package"},
+    "cover_title_mask": {"source": "covers/auto_113022_354_496.screenshot-title.cover.title-mask.png", "sha256": "sha256:bf1ba6e1e49092343cc73e169d7f88ccb798939e25ba4f2af80c6eae16c1077b", "bytes": 34568, "target": "auto_113022_354_496.cover.title-mask.png", "target_role": "package"},
+    "cover_route_background": {"source": "covers_ai_original/auto_113022_354_496.screenshot-poster.png", "sha256": "sha256:5e875c2b49fed7c248f40fb7431ff6243cd56d3d27b1b77d73f6fa1882232d99", "bytes": 1347580, "target": "auto_113022_354_496.cover.route-background.png", "target_role": "package"},
+    "cover_reference": {"source": "cover_refs/auto_113022_354_496.cover-ref.png", "sha256": "sha256:901e14fbe5c77ac513d9a3106bedeec88c5c57656119be64b19d1a3458c9fa18", "bytes": 2213394, "target": "evidence/cover-reference.png", "target_role": "package"},
+    "cover_host_witness": {"source": "covers/auto_113022_354_496.screenshot-title.cover.host-identity-witness.png", "sha256": "sha256:5249c287fea31ebe6b1641cab7d62f4631ff1dddf598750fa9da35d394cdf5b2", "bytes": 938924, "target": "evidence/cover-host-witness.png", "target_role": "package"},
+    "cover_source_composition": {"source": "evidence/auto_113022_354_496.cover-source-composition-verification.json", "sha256": "sha256:c59995c688b5edf023997cac574f8d2b70bf6c0717deb2edc116088fddf44838", "bytes": 4150, "target": "evidence/cover-source-composition.json", "target_role": "package"}
   },
   "evidence": {
-    "subtitle": {"source": "out/2026-08-17/auto_113022_354_496/replacement_recuts/auto_113022_354_496.recut.srt", "sha256": "sha256:562bdb4536cb9989864f7f6e51f8eb79da42fcfa06f14ae8c612e0680fa4109e", "bytes": 3412, "target": "auto_113022_354_496.srt", "target_role": "package"},
-    "main": {"source": "out/2026-08-17/auto_113022_354_496/replacement_recuts/auto_113022_354_496.recut.mp4", "sha256": "sha256:82a1e28278b2f630e97b2541e0d1ee8b0596d9f4090a1d242967cb603c7b7683", "bytes": 77312949, "target": "auto_113022_354_496.recut.mp4", "target_role": "package"},
-    "ass": {"source": "out/2026-08-17/auto_113022_354_496/replacement_recuts/auto_113022_354_496.recut.final-sapphire72.ass", "sha256": "sha256:2d288bac310ace6b6a1a05994393d0edd4b350811147d1b40d0c10a56730b283", "bytes": 4846, "target": "auto_113022_354_496.final-sapphire72.ass", "target_role": "package"},
-    "cover": {"source": "out/2026-08-17/auto_113022_354_496/replacement_recuts/covers/auto_113022_354_496.published-carry.cover.png", "sha256": "sha256:8cacaafc502a31474f93e6472c945f8527dee23b5fdb39df27d672ee08f4d4e0", "bytes": 1349090, "target": "auto_113022_354_496.cover.png", "target_role": "package"},
-    "record": {"source": "out/2026-08-17/auto_113022_354_496/replacement_recuts/auto_113022_354_496.record.json", "sha256": "sha256:a3757573b64ecd1f7c8a19e33d3a5fa1c58698824fde08e5f9aac0e3bf526caa", "bytes": 160336, "target": "auto_113022_354_496.record.json", "target_role": "package"},
-    "publish": {"source": "out/2026-08-17/auto_113022_354_496/replacement_recuts/auto_113022_354_496.recut.publish.json", "sha256": "sha256:769ebe008ff38f336ab435f0575ea0787c95e636f07b8fe8ce97efff5fd0c9ed", "bytes": 52269, "target": "auto_113022_354_496.publish.json", "target_role": "package"},
-    "chat_authority": {"source": "out/2026-08-17/auto_113022_354_496/auto_113022_354_496.chat-authority.json", "sha256": "sha256:08a283ebb3288618169e8525e39ec71ebd2e164be71abb603529b703a03f62d2", "bytes": 199224, "target": "auto_113022_354_496.chat-authority.json", "target_role": "candidate"},
-    "clip_context": {"source": "out/2026-08-17/auto_113022_354_496/auto_113022_354_496.clip-context.json", "sha256": "sha256:c1feec450985b8ec695b00f5d62453eab9f1147ab6001d0e414f5236e98f6fc2", "bytes": 60515, "target": "auto_113022_354_496.clip-context.json", "target_role": "candidate"},
-    "redelivery_baseline": {"source": "out/2026-08-17/auto_113022_354_496/replacement_recuts/auto_113022_354_496.redelivery-baseline.json", "sha256": "sha256:e5252d9a7f708b8807509a4154b68fe3a46c311f1df0614323c9ccca5d4dca1c", "bytes": 51485, "target": "auto_113022_354_496.redelivery-baseline.json", "target_role": "package"},
-    "boundary_audit": {"source": "out/2026-08-17/auto_113022_354_496/auto_113022_354_496.boundary_audit.json", "sha256": "sha256:c50ade768cec6288c53039e93ecbaebf413d32fc75d26135cd4f47f9aff7e5db", "bytes": 7021, "target": "auto_113022_354_496.boundary-audit.json", "target_role": "candidate"},
-    "review_flags": {"source": "out/2026-08-17/auto_113022_354_496/auto_113022_354_496.review-flags.json", "sha256": "sha256:ccf60a07b57fd470a443e6ba7fa74aa623ab534316c2a30dca28e0022ee83646", "bytes": 89314, "target": "auto_113022_354_496.review-flags.json", "target_role": "candidate"},
-    "cover_pre_overlay": {"source": "out/2026-08-17/auto_113022_354_496/replacement_recuts/published-cover-carry/pre-overlay.png", "sha256": "sha256:5e875c2b49fed7c248f40fb7431ff6243cd56d3d27b1b77d73f6fa1882232d99", "bytes": 1347580, "target": "auto_113022_354_496.cover.pre-overlay.png", "target_role": "package"},
-    "cover_title_mask": {"source": "out/2026-08-17/auto_113022_354_496/replacement_recuts/published-cover-carry/title-mask.png", "sha256": "sha256:bf1ba6e1e49092343cc73e169d7f88ccb798939e25ba4f2af80c6eae16c1077b", "bytes": 34568, "target": "auto_113022_354_496.cover.title-mask.png", "target_role": "package"},
-    "cover_route_background": {"source": "out/2026-08-17/auto_113022_354_496/replacement_recuts/published-cover-carry/route-background.png", "sha256": "sha256:5e875c2b49fed7c248f40fb7431ff6243cd56d3d27b1b77d73f6fa1882232d99", "bytes": 1347580, "target": "auto_113022_354_496.cover.route-background.png", "target_role": "package"},
-    "cover_reference": {"source": "out/2026-08-17/auto_113022_354_496/replacement_recuts/published-cover-carry/reference.png", "sha256": "sha256:901e14fbe5c77ac513d9a3106bedeec88c5c57656119be64b19d1a3458c9fa18", "bytes": 2213394, "target": "evidence/cover-reference.png", "target_role": "package"},
-    "cover_host_witness": {"source": "out/2026-08-17/auto_113022_354_496/replacement_recuts/published-cover-carry/host-witness.png", "sha256": "sha256:5249c287fea31ebe6b1641cab7d62f4631ff1dddf598750fa9da35d394cdf5b2", "bytes": 938924, "target": "evidence/cover-host-witness.png", "target_role": "package"},
-    "cover_source_composition": {"source": "out/2026-08-17/auto_113022_354_496/replacement_recuts/published-cover-carry/source-composition.json", "sha256": "sha256:c59995c688b5edf023997cac574f8d2b70bf6c0717deb2edc116088fddf44838", "bytes": 4150, "target": "evidence/cover-source-composition.json", "target_role": "package"}
+    "record": {"source": "out/2026-08-17/auto_113022_354_496/replacement_recuts/auto_113022_354_496.record.json", "sha256": "sha256:52fe53393e559e2a85e9b8c8153e46f2a7257249b2664c5e8f23de4da1449615", "bytes": 158699, "target": "auto_113022_354_496.record.json", "target_role": "package"},
+    "chat_authority": {"source": "out/2026-08-17/auto_113022_354_496/auto_113022_354_496.chat-authority.json", "sha256": "sha256:aa277c52dc39c6d3f842b5cc5aac473d5548a15207582103e06abaef176b3eaa", "bytes": 181135, "target": "auto_113022_354_496.chat-authority.json", "target_role": "candidate"},
+    "clip_context": {"source": "out/2026-08-17/auto_113022_354_496/auto_113022_354_496.clip-context.json", "sha256": "sha256:4b17efff1528a13788175539e83d6fdcb9c75f9288826427db2b190664953187", "bytes": 67353, "target": "auto_113022_354_496.clip-context.json", "target_role": "candidate"},
+    "boundary_audit": {"source": "out/2026-08-17/auto_113022_354_496/auto_113022_354_496.boundary_audit.json", "sha256": "sha256:d186396e1a13e33d6bfd2b6f3ad6bcbb2f2a541e533e1adefcf22fb818b6a928", "bytes": 6807, "target": "auto_113022_354_496.boundary-audit.json", "target_role": "candidate"},
+    "review_flags": {"source": "out/2026-08-17/auto_113022_354_496/auto_113022_354_496.review-flags.json", "sha256": "sha256:046761e2a391531661c035b66887f2165c5f4c798045140c3a8c567a6a834a82", "bytes": 54353, "target": "auto_113022_354_496.review-flags.json", "target_role": "candidate"}
   },
   "source_drift": {
     "source_publish_burned_video_sha256": "sha256:e758a9003a2a7732b69fe7aef6f0af05b8405161790f305d6a025ae9e5cded8b",
     "source_publish_subtitle_sha256": "sha256:6d31db628be8bd06371b9a3ef2598baab7a0e57d6aa8b5974942128561087abf",
-    "source_record_ass_sha256": "sha256:4888ef233595489e11d175dda25dc310d244a76458334993ad579e3f3e558842",
-    "source_burned_preview_sha256": "sha256:6add4161fb14f0269f355374e1882d9ab51c1f8a3061508b6670c56347e3bdba",
+    "source_record_ass_sha256": "sha256:7755dbca6d9348bf1a50b7f2ae0b009e4c84ccd8f697db1ace5e33be605db4a2",
+    "source_burned_preview_sha256": "sha256:468169470cf362b9569cf7618ddacf13782822d74cff6c67d2b0e9c93d0a0038",
     "source_cover_generation_sha256": "sha256:d41aff172110dfc06805ffddc59dbe919eb7ec106211f9a86e8475b7a6342a1a",
-    "r2_publish_burned_video_sha256": "sha256:75378075ed7a4d244102a91840addb2698ef775c13b3e70d6e2a448942851b0e",
-    "r2_publish_subtitle_sha256": "sha256:562bdb4536cb9989864f7f6e51f8eb79da42fcfa06f14ae8c612e0680fa4109e"
+    "source_record_sha256": "sha256:52fe53393e559e2a85e9b8c8153e46f2a7257249b2664c5e8f23de4da1449615",
+    "source_record_mirror_sha256": "sha256:52fe53393e559e2a85e9b8c8153e46f2a7257249b2664c5e8f23de4da1449615",
+    "ass_repair_receipt_sha256": "sha256:a923fdf1583ca68949a93c1abdd33546714a4bcc4577e4ba5037a79cc738f538"
   },
-  "authority_sha256": "sha256:dd5a4830e9dbe7c89fe25003c3f7bffb44885a47370affa55e3e1391f85fe9a4"
+  "terminal_projection": {
+    "relative_path": "assets/lidousha/qixi_terminal_subtitle_projection/auto_113022_354_496.terminal-projection.v1.json",
+    "authority_sha256": "sha256:999c48f12532e801af30af73f581710bf6da535aee47be40bff815d45ba5ecc7"
+  },
+  "authority_sha256": "sha256:be67f10883ec45d923e23cb38b6dabe00f72cc07cc84de5b526e608fa621f681"
 }

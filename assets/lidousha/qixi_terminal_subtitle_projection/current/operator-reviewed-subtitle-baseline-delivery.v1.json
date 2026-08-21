@@ -1,0 +1,657 @@
+{
+  "schema_version": "operator-reviewed-subtitle-baseline-delivery.v1",
+  "candidate_id": "auto_113022_354_496",
+  "authority": "Ivan exhaustive subtitle authority aggregates distinct cue scopes: original exact correction “2:39说的是播的有点压抑了。” with unchanged-outside-scope ruling “我指出了所有的问题就表示其他的地方没有问题，不应该动”；fresh cue21 exact authority “她说的是非常 balance iiya，应该是日式发音的，‘balance的非常好’的意思。结合整场直播知道她在说前面要甜，后面要苦，所以非常balance。” Root release normalization for cue21: “非常 balance いいや”。",
+  "operator_authority": {
+    "kind": "IVAN_OPERATOR",
+    "evidence_ref": "Ivan exhaustive subtitle authority aggregates distinct cue scopes: original exact correction “2:39说的是播的有点压抑了。” with unchanged-outside-scope ruling “我指出了所有的问题就表示其他的地方没有问题，不应该动”；fresh cue21 exact authority “她说的是非常 balance iiya，应该是日式发音的，‘balance的非常好’的意思。结合整场直播知道她在说前面要甜，后面要苦，所以非常balance。” Root release normalization for cue21: “非常 balance いいや”。"
+  },
+  "source_srt": {
+    "path": "/Users/ivan/Project/.worktrees/qixi_truth_rebind_impl/assets/lidousha/reviewed_subtitle_baselines/auto_113022_354_496.pipeline-diagnostic.srt",
+    "sha256": "80921974f929ebe8c6c9a4897bddfeb2acb907938a19b7ddf3f3fc0f09fc0843"
+  },
+  "reviewed_srt": {
+    "path": "/Users/ivan/Project/.worktrees/qixi_truth_rebind_impl/assets/lidousha/reviewed_subtitle_baselines/auto_113022_354_496.reviewed.srt",
+    "sha256": "bbf7340eea7bf7f308a60a2375342cf92999a2fcc4e8f82a5466d5c716c09f9f"
+  },
+  "baseline_sha256": "bbf7340eea7bf7f308a60a2375342cf92999a2fcc4e8f82a5466d5c716c09f9f",
+  "source_recording": {
+    "basename": "22966160_20260817-11-30-22.mp4",
+    "sha256": "212eb59bee50dda1601a3f30e3c7b9a307715058fb472646ddcfa200615c6a97",
+    "absolute_start_ms": 354420,
+    "absolute_end_ms": 512310
+  },
+  "cue_count": 62,
+  "changed_cue_count": 3,
+  "changed_cues": [
+    {
+      "cue": 21,
+      "start_ms": 65690,
+      "end_ms": 68090,
+      "absolute_source_start_ms": 420110,
+      "absolute_source_end_ms": 422510,
+      "before": "非常按这个巴拉四义呀",
+      "after": "非常 balance いいや"
+    },
+    {
+      "cue": 59,
+      "start_ms": 150180,
+      "end_ms": 152660,
+      "absolute_source_start_ms": 504600,
+      "absolute_source_end_ms": 507080,
+      "before": "这两天这两天温柔播播的",
+      "after": "这两天这两天温柔播"
+    },
+    {
+      "cue": 60,
+      "start_ms": 152660,
+      "end_ms": 153560,
+      "absolute_source_start_ms": 507080,
+      "absolute_source_end_ms": 507980,
+      "before": "得有点哑",
+      "after": "播的有点压抑了"
+    }
+  ],
+  "truth_lanes": {
+    "schema_version": "operator-reviewed-subtitle-truth-lanes.v1",
+    "release_truth": {
+      "srt_sha256": "bbf7340eea7bf7f308a60a2375342cf92999a2fcc4e8f82a5466d5c716c09f9f"
+    },
+    "pipeline_diagnostic": {
+      "sha256": "80921974f929ebe8c6c9a4897bddfeb2acb907938a19b7ddf3f3fc0f09fc0843"
+    },
+    "decision_ledger": {
+      "sha256": "5735ac34377231868b82284110a8a63d2c16de89a90986f65aaf5b6aaac8aac4"
+    },
+    "diff_receipt": {
+      "sha256": "0cd172dab4519ad1b1d52359f351e2e52f79d64f9cb733d4be48376a8356df33"
+    }
+  },
+  "diagnostic_diff": {
+    "schema_version": "operator-reviewed-subtitle-truth-diff.v1",
+    "candidate_id": "auto_113022_354_496",
+    "pipeline_srt_sha256": "80921974f929ebe8c6c9a4897bddfeb2acb907938a19b7ddf3f3fc0f09fc0843",
+    "release_truth_srt_sha256": "bbf7340eea7bf7f308a60a2375342cf92999a2fcc4e8f82a5466d5c716c09f9f",
+    "decision_ledger_sha256": "5735ac34377231868b82284110a8a63d2c16de89a90986f65aaf5b6aaac8aac4",
+    "cue_count": 62,
+    "changed_cue_count": 3,
+    "rows": [
+      {
+        "cue": 1,
+        "source_index": "1",
+        "start_ms": 250,
+        "end_ms": 3080,
+        "pipeline_text": "昨天我说今天播两播",
+        "release_truth_text": "昨天我说今天播两播",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 2,
+        "source_index": "2",
+        "start_ms": 3080,
+        "end_ms": 5820,
+        "pipeline_text": "但是事实证明还是没有办法播两播",
+        "release_truth_text": "但是事实证明还是没有办法播两播",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 3,
+        "source_index": "3",
+        "start_ms": 5820,
+        "end_ms": 9120,
+        "pipeline_text": "然后我就说一下这三天的直播安排是",
+        "release_truth_text": "然后我就说一下这三天的直播安排是",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 4,
+        "source_index": "4",
+        "start_ms": 9120,
+        "end_ms": 10170,
+        "pipeline_text": "今天午播",
+        "release_truth_text": "今天午播",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 5,
+        "source_index": "5",
+        "start_ms": 10170,
+        "end_ms": 12530,
+        "pipeline_text": "明天晚上和大家看《再见菈菈》",
+        "release_truth_text": "明天晚上和大家看《再见菈菈》",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 6,
+        "source_index": "6",
+        "start_ms": 12530,
+        "end_ms": 14460,
+        "pipeline_text": "然后后天是七夕",
+        "release_truth_text": "然后后天是七夕",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 7,
+        "source_index": "7",
+        "start_ms": 14460,
+        "end_ms": 15760,
+        "pipeline_text": "我想了很久",
+        "release_truth_text": "我想了很久",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 8,
+        "source_index": "8",
+        "start_ms": 15760,
+        "end_ms": 18330,
+        "pipeline_text": "七夕该整点什么特殊直播",
+        "release_truth_text": "七夕该整点什么特殊直播",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 9,
+        "source_index": "9",
+        "start_ms": 18330,
+        "end_ms": 21890,
+        "pipeline_text": "我也想说要不七夕播两播好了",
+        "release_truth_text": "我也想说要不七夕播两播好了",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 10,
+        "source_index": "10",
+        "start_ms": 22010,
+        "end_ms": 26040,
+        "pipeline_text": "因为我呃，周四周四的事情有点多",
+        "release_truth_text": "因为我呃，周四周四的事情有点多",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 11,
+        "source_index": "11",
+        "start_ms": 26040,
+        "end_ms": 29040,
+        "pipeline_text": "周四我不确定我是不是一定能播",
+        "release_truth_text": "周四我不确定我是不是一定能播",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 12,
+        "source_index": "12",
+        "start_ms": 29080,
+        "end_ms": 31520,
+        "pipeline_text": "我周三就是七夕那天",
+        "release_truth_text": "我周三就是七夕那天",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 13,
+        "source_index": "13",
+        "start_ms": 31520,
+        "end_ms": 35210,
+        "pipeline_text": "我准备中午唱甜甜甜",
+        "release_truth_text": "我准备中午唱甜甜甜",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 14,
+        "source_index": "14",
+        "start_ms": 35370,
+        "end_ms": 37690,
+        "pipeline_text": "晚上唱苦苦苦",
+        "release_truth_text": "晚上唱苦苦苦",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 15,
+        "source_index": "15",
+        "start_ms": 38340,
+        "end_ms": 43740,
+        "pipeline_text": "我决定在七夕进行一套 PUA 直播",
+        "release_truth_text": "我决定在七夕进行一套 PUA 直播",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 16,
+        "source_index": "16",
+        "start_ms": 43940,
+        "end_ms": 50780,
+        "pipeline_text": "就是中午先来那种甜到大家会觉得腻的那种甜甜甜歌",
+        "release_truth_text": "就是中午先来那种甜到大家会觉得腻的那种甜甜甜歌",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 17,
+        "source_index": "17",
+        "start_ms": 51050,
+        "end_ms": 53330,
+        "pipeline_text": "还有冰火会",
+        "release_truth_text": "还有冰火会",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 18,
+        "source_index": "18",
+        "start_ms": 54400,
+        "end_ms": 57760,
+        "pipeline_text": "然后晚上唱苦到",
+        "release_truth_text": "然后晚上唱苦到",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 19,
+        "source_index": "19",
+        "start_ms": 57760,
+        "end_ms": 62210,
+        "pipeline_text": "就是所有人都必须分号分号的这种",
+        "release_truth_text": "就是所有人都必须分号分号的这种",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 20,
+        "source_index": "20",
+        "start_ms": 62770,
+        "end_ms": 64610,
+        "pipeline_text": "七夕直播怎么样",
+        "release_truth_text": "七夕直播怎么样",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 21,
+        "source_index": "21",
+        "start_ms": 65690,
+        "end_ms": 68090,
+        "pipeline_text": "非常按这个巴拉四义呀",
+        "release_truth_text": "非常 balance いいや",
+        "disposition": "OPERATOR_EXACT_TEXT",
+        "decision_authority": {
+          "kind": "IVAN_OPERATOR",
+          "evidence_ref": "Fresh Ivan exact authority: “她说的是非常 balance iiya，应该是日式发音的，‘balance的非常好’的意思。结合整场直播知道她在说前面要甜，后面要苦，所以非常balance。” Root release normalization: “非常 balance いいや”。"
+        },
+        "diagnostic_evidence": {
+          "path": "auto_113022_354_496.cue21_evidence/canonical-evidence.v1.json",
+          "sha256": "e726acbd2ee70c8e628fb7852edd843042954cfcd9265e8ea73fde925b49ad9d",
+          "reason": "Retained canonical provider evidence is diagnostic only; fresh Ivan exact text controls release."
+        }
+      },
+      {
+        "cue": 22,
+        "source_index": "22",
+        "start_ms": 69440,
+        "end_ms": 71000,
+        "pipeline_text": "我还没开始唱",
+        "release_truth_text": "我还没开始唱",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 23,
+        "source_index": "23",
+        "start_ms": 71000,
+        "end_ms": 72360,
+        "pipeline_text": "怎么就苦已结冰",
+        "release_truth_text": "怎么就苦已结冰",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 24,
+        "source_index": "24",
+        "start_ms": 72360,
+        "end_ms": 73600,
+        "pipeline_text": "别结冰好吗",
+        "release_truth_text": "别结冰好吗",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 25,
+        "source_index": "25",
+        "start_ms": 73600,
+        "end_ms": 75400,
+        "pipeline_text": "先甜再苦呢",
+        "release_truth_text": "先甜再苦呢",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 26,
+        "source_index": "26",
+        "start_ms": 75560,
+        "end_ms": 77280,
+        "pipeline_text": "先搞搞起来",
+        "release_truth_text": "先搞搞起来",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 27,
+        "source_index": "27",
+        "start_ms": 77280,
+        "end_ms": 78560,
+        "pipeline_text": "然后再结冰",
+        "release_truth_text": "然后再结冰",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 28,
+        "source_index": "28",
+        "start_ms": 78990,
+        "end_ms": 82350,
+        "pipeline_text": "你不能，你不能直接就结冰了",
+        "release_truth_text": "你不能，你不能直接就结冰了",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 29,
+        "source_index": "29",
+        "start_ms": 82350,
+        "end_ms": 84350,
+        "pipeline_text": "这不符合这个顺序",
+        "release_truth_text": "这不符合这个顺序",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 30,
+        "source_index": "30",
+        "start_ms": 84930,
+        "end_ms": 86830,
+        "pipeline_text": "依旧情人节唱苦情歌",
+        "release_truth_text": "依旧情人节唱苦情歌",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 31,
+        "source_index": "31",
+        "start_ms": 86830,
+        "end_ms": 88290,
+        "pipeline_text": "我本来还在想",
+        "release_truth_text": "我本来还在想",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 32,
+        "source_index": "32",
+        "start_ms": 88530,
+        "end_ms": 89730,
+        "pipeline_text": "我本来还在想",
+        "release_truth_text": "我本来还在想",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 33,
+        "source_index": "33",
+        "start_ms": 89730,
+        "end_ms": 90970,
+        "pipeline_text": "唱完甜甜甜之后",
+        "release_truth_text": "唱完甜甜甜之后",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 34,
+        "source_index": "34",
+        "start_ms": 90970,
+        "end_ms": 93770,
+        "pipeline_text": "要不要继续工作音一下",
+        "release_truth_text": "要不要继续工作音一下",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 35,
+        "source_index": "35",
+        "start_ms": 94070,
+        "end_ms": 95370,
+        "pipeline_text": "要不要继续",
+        "release_truth_text": "要不要继续",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 36,
+        "source_index": "36",
+        "start_ms": 95370,
+        "end_ms": 97440,
+        "pipeline_text": "就是工作音",
+        "release_truth_text": "就是工作音",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 37,
+        "source_index": "37",
+        "start_ms": 97440,
+        "end_ms": 100200,
+        "pipeline_text": "但是我周三下午可能要去运动一下",
+        "release_truth_text": "但是我周三下午可能要去运动一下",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 38,
+        "source_index": "38",
+        "start_ms": 100200,
+        "end_ms": 102460,
+        "pipeline_text": "所以看看周三的情况",
+        "release_truth_text": "所以看看周三的情况",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 39,
+        "source_index": "39",
+        "start_ms": 102460,
+        "end_ms": 104680,
+        "pipeline_text": "反正周三就会多播播",
+        "release_truth_text": "反正周三就会多播播",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 40,
+        "source_index": "40",
+        "start_ms": 105700,
+        "end_ms": 110260,
+        "pipeline_text": "我们直播间的情人节习惯是写作业来着",
+        "release_truth_text": "我们直播间的情人节习惯是写作业来着",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 41,
+        "source_index": "41",
+        "start_ms": 110260,
+        "end_ms": 112820,
+        "pipeline_text": "嗯，你只听中午场怎么说",
+        "release_truth_text": "嗯，你只听中午场怎么说",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 42,
+        "source_index": "42",
+        "start_ms": 112820,
+        "end_ms": 114900,
+        "pipeline_text": "你这是有选择性的听",
+        "release_truth_text": "你这是有选择性的听",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 43,
+        "source_index": "43",
+        "start_ms": 115680,
+        "end_ms": 117360,
+        "pipeline_text": "你不能有选择性听",
+        "release_truth_text": "你不能有选择性听",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 44,
+        "source_index": "44",
+        "start_ms": 117360,
+        "end_ms": 121320,
+        "pipeline_text": "你得多听，甜甜甜和苦苦苦都得听",
+        "release_truth_text": "你得多听，甜甜甜和苦苦苦都得听",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 45,
+        "source_index": "45",
+        "start_ms": 121630,
+        "end_ms": 125010,
+        "pipeline_text": "然后我也整理了一些，嗯",
+        "release_truth_text": "然后我也整理了一些，嗯",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 46,
+        "source_index": "46",
+        "start_ms": 125010,
+        "end_ms": 126630,
+        "pipeline_text": "整理了一些那个",
+        "release_truth_text": "整理了一些那个",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 47,
+        "source_index": "47",
+        "start_ms": 127230,
+        "end_ms": 128230,
+        "pipeline_text": "呃",
+        "release_truth_text": "呃",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 48,
+        "source_index": "48",
+        "start_ms": 128460,
+        "end_ms": 130020,
+        "pipeline_text": "新也不算新的吧",
+        "release_truth_text": "新也不算新的吧",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 49,
+        "source_index": "49",
+        "start_ms": 130020,
+        "end_ms": 132420,
+        "pipeline_text": "哇反正不常见到的苦情歌",
+        "release_truth_text": "哇反正不常见到的苦情歌",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 50,
+        "source_index": "50",
+        "start_ms": 132460,
+        "end_ms": 134870,
+        "pipeline_text": "大家之后也可以给我推一点",
+        "release_truth_text": "大家之后也可以给我推一点",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 51,
+        "source_index": "51",
+        "start_ms": 134870,
+        "end_ms": 135590,
+        "pipeline_text": "你觉得特别甜",
+        "release_truth_text": "你觉得特别甜",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 52,
+        "source_index": "52",
+        "start_ms": 135590,
+        "end_ms": 136810,
+        "pipeline_text": "或者你觉得特别苦的",
+        "release_truth_text": "或者你觉得特别苦的",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 53,
+        "source_index": "53",
+        "start_ms": 136810,
+        "end_ms": 139910,
+        "pipeline_text": "或者你觉得特别想在小李那边听到的",
+        "release_truth_text": "或者你觉得特别想在小李那边听到的",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 54,
+        "source_index": "54",
+        "start_ms": 139990,
+        "end_ms": 141990,
+        "pipeline_text": "甜或者苦都可以哦",
+        "release_truth_text": "甜或者苦都可以哦",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 55,
+        "source_index": "55",
+        "start_ms": 142310,
+        "end_ms": 145980,
+        "pipeline_text": "然后今天就是太久没有唱歌了",
+        "release_truth_text": "然后今天就是太久没有唱歌了",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 56,
+        "source_index": "56",
+        "start_ms": 145980,
+        "end_ms": 146840,
+        "pipeline_text": "也没有很久",
+        "release_truth_text": "也没有很久",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 57,
+        "source_index": "57",
+        "start_ms": 146840,
+        "end_ms": 149180,
+        "pipeline_text": "但太久没有唱懂我意思吧",
+        "release_truth_text": "但太久没有唱懂我意思吧",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 58,
+        "source_index": "58",
+        "start_ms": 149180,
+        "end_ms": 150180,
+        "pipeline_text": "有点压抑了",
+        "release_truth_text": "有点压抑了",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 59,
+        "source_index": "59",
+        "start_ms": 150180,
+        "end_ms": 152660,
+        "pipeline_text": "这两天这两天温柔播播的",
+        "release_truth_text": "这两天这两天温柔播",
+        "disposition": "OPERATOR_EXACT_TEXT",
+        "decision_authority": {
+          "kind": "IVAN_OPERATOR",
+          "evidence_ref": "Ivan original exact correction: “2:39说的是播的有点压抑了。” Exhaustive unchanged-outside-scope ruling: “我指出了所有的问题就表示其他的地方没有问题，不应该动”。"
+        }
+      },
+      {
+        "cue": 60,
+        "source_index": "60",
+        "start_ms": 152660,
+        "end_ms": 153560,
+        "pipeline_text": "得有点哑",
+        "release_truth_text": "播的有点压抑了",
+        "disposition": "OPERATOR_EXACT_TEXT",
+        "decision_authority": {
+          "kind": "IVAN_OPERATOR",
+          "evidence_ref": "Ivan original exact correction: “2:39说的是播的有点压抑了。” Exhaustive unchanged-outside-scope ruling: “我指出了所有的问题就表示其他的地方没有问题，不应该动”。"
+        }
+      },
+      {
+        "cue": 61,
+        "source_index": "61",
+        "start_ms": 153560,
+        "end_ms": 155820,
+        "pipeline_text": "今天必须得大唱一下",
+        "release_truth_text": "今天必须得大唱一下",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      },
+      {
+        "cue": 62,
+        "source_index": "62",
+        "start_ms": 156050,
+        "end_ms": 157890,
+        "pipeline_text": "大唱特唱一下",
+        "release_truth_text": "大唱特唱一下",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      }
+    ]
+  },
+  "speaker_authority": "NOT_CLAIMED_TEXT_ONLY"
+}
