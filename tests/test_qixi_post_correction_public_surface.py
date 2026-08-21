@@ -14,6 +14,7 @@ from PIL import Image
 from src.autoslice import qixi_post_correction_public_surface as closure
 from src.autoslice import qixi_post_correction_projection_paths as projection_paths
 from src.autoslice import publish_staging
+from src.autoslice import source_fact_staging
 from src.autoslice.cover_host_identity_gate import (
     AUTHORITY as HOST_IDENTITY_AUTHORITY,
     SCHEMA_VERSION as HOST_IDENTITY_SCHEMA_VERSION,
@@ -492,6 +493,7 @@ def test_apply_projects_identical_source_fact_and_rejects_foreign_drift(tmp_path
 
 def test_real_publish_stage_replays_manual_title_public_fields(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo, runtime, authority, paths = _fixture(tmp_path)
+    provider_calls: list[str] = []
 
     def canonical_cover(
         _record: object, *, private_artifact_root: Path, **_kwargs: object
@@ -530,14 +532,26 @@ def test_real_publish_stage_replays_manual_title_public_fields(tmp_path: Path, m
         ensure_ascii=False,
     )
     monkeypatch.setattr(publish_staging, "_stage_lidousha_ai_cover", canonical_cover)
+    # This is deliberately a generic provider-path fixture.  Its synthetic
+    # predecessor is not the candidate-sealed Qixi authority preimage, so it
+    # must opt out explicitly rather than weakening that production loader.
+    monkeypatch.setattr(
+        source_fact_staging, "load_qixi_operator_exact_title_authority", lambda _candidate_id: None
+    )
+
+    def source_fact_provider(_prompt: str) -> str:
+        provider_calls.append("called")
+        return source_fact_response
+
     assert closure.finalize(
         apply=True,
         repo_root=repo,
         runtime_root=runtime,
         authority=authority,
         _stage_publish=publish_staging._stage_publish_draft,
-        source_fact_llm_call=lambda _prompt: source_fact_response,
+        source_fact_llm_call=source_fact_provider,
     )["status"] == "APPLIED"
+    assert provider_calls == ["called"]
     record = json.loads(paths["record"].read_text())
     publish = json.loads(paths["publish"].read_text())
     staging = record["publish_staging"]
