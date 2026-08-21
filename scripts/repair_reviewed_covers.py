@@ -55,6 +55,10 @@ from src.autoslice.candidate_public_text_surface_authority import (  # noqa: E40
     consume_candidate_public_text_surface_authority,
     load_candidate_public_text_surface_authority,
 )
+from src.autoslice.reviewed_cover_committed_recovery_authority import (  # noqa: E402
+    ReviewedCoverCommittedRecoveryAuthorityError,
+    validate_committed_recovery,
+)
 
 
 PLAN_SCHEMA = "reviewed-cover-repair-plan.v1"
@@ -783,16 +787,42 @@ def _commit_transaction(
     plan_sha256: str,
     code_fingerprint: str,
     state_is_bound: bool,
+    records: Mapping[str, Mapping[str, Any]] | None = None,
+    plan_path: Path | None = None,
 ) -> dict[str, Any]:
+    fingerprint_matches = journal.get("code_fingerprint") == code_fingerprint
     if (
         journal.get("schema_version") != TRANSACTION_SCHEMA
         or journal.get("date") != plan.get("date")
         or journal.get("plan_sha256") != plan_sha256
-        or journal.get("code_fingerprint") != code_fingerprint
         or journal.get("upload_enabled") is not False
         or journal.get("status") not in {"PREPARED", "COMMITTED", "FINALIZED"}
     ):
         raise ReviewedCoverRepairError("reviewed cover invalidation journal drifted")
+    if not fingerprint_matches:
+        if (
+            journal.get("status") != "COMMITTED"
+            or not state_is_bound
+            or records is None
+            or plan_path is None
+        ):
+            raise ReviewedCoverRepairError("reviewed cover invalidation journal drifted")
+        try:
+            validate_committed_recovery(
+                repo_root=ROOT,
+                runtime_root=BASE,
+                plan_path=plan_path,
+                plan_sha256=plan_sha256,
+                journal_path=journal_path,
+                journal=journal,
+                records=records,
+                state_is_bound=state_is_bound,
+                code_fingerprint=code_fingerprint,
+            )
+        except (OSError, ReviewedCoverCommittedRecoveryAuthorityError) as exc:
+            raise ReviewedCoverRepairError(
+                "reviewed cover committed recovery authority rejected"
+            ) from exc
     expected_targets = {
         Path(str(entry["path"])).resolve(strict=True)
         for row in plan["invalidations"]
@@ -1029,6 +1059,8 @@ def run(plan_path: Path) -> dict[str, Any]:
         plan_sha256=plan_sha256,
         code_fingerprint=code_fingerprint,
         state_is_bound=state_is_bound,
+        records={candidate_id: records[candidate_id] for candidate_id in repair_ids},
+        plan_path=plan_path,
     )
 
     invalidation_rows = {str(row["candidate_id"]): row for row in plan["invalidations"]}

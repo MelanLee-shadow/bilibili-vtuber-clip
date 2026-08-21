@@ -307,6 +307,32 @@ def test_invalidation_transaction_rejects_blob_drift_and_target_escape(tmp_path,
         )
 
 
+def test_committed_fingerprint_recovery_is_validator_gated_and_write_free(tmp_path, monkeypatch):
+    plan, journal, journal_path, target, _blob = _transaction_fixture(tmp_path, monkeypatch)
+    journal["status"] = "COMMITTED"
+    observed = []
+
+    def allow_only_exact_recovery(**kwargs):
+        observed.append(kwargs)
+
+    monkeypatch.setattr(reviewed, "validate_committed_recovery", allow_only_exact_recovery)
+    result = reviewed._commit_transaction(
+        journal_path=journal_path,
+        journal=journal,
+        plan=plan,
+        plan_sha256="a" * 64,
+        code_fingerprint="sha256:" + "c" * 64,
+        state_is_bound=True,
+        records={"auto_test": {"candidate_id": "auto_test"}},
+        plan_path=tmp_path / "plan.json",
+    )
+
+    assert result is journal
+    assert target.read_bytes() == b"old\n"
+    assert len(observed) == 1
+    assert observed[0]["records"] == {"auto_test": {"candidate_id": "auto_test"}}
+
+
 @pytest.mark.parametrize(
     "name",
     [

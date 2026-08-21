@@ -1,0 +1,146 @@
+{
+  "schema_version": "reviewed-cover-committed-recovery-authority.v1",
+  "candidate": {
+    "candidate_id": "auto_173005_934_1166",
+    "recording_date": "2026-08-11",
+    "title": "【李豆沙】经小李判断，薇欧拉对阿拉蕾就是铁暗恋！"
+  },
+  "plan": {
+    "repo_relative_path": "assets/lidousha/cover_repair_plans/2026-08-11-auto-173005-934-1166-manual-title-cover.v1.json",
+    "file_sha256": "sha256:2547fdb3f8c97b95321f9997f3d8cc4a5d91c3cdc33c828d40bbdb409a9ff58e",
+    "plan_sha256": "2547fdb3f8c97b95321f9997f3d8cc4a5d91c3cdc33c828d40bbdb409a9ff58e"
+  },
+  "invalidation_journal": {
+    "absolute_path": "/opt/bilive/autoslice/out/2026-08-11/reviewed_cover_repairs/2547fdb3f8c97b95/invalidation-transaction.json",
+    "runtime_relative_path": "out/2026-08-11/reviewed_cover_repairs/2547fdb3f8c97b95/invalidation-transaction.json",
+    "sha256": "sha256:fe542037fb13e2cfa6d98eca04ffdce2631f28c2950261fb805fe902f6ad9ae1",
+    "schema_version": "reviewed-cover-invalidation-transaction.v1",
+    "status": "COMMITTED",
+    "old_code_fingerprint": "sha256:79b565acb3dd9b54f374b7894d279bb9162f06c1b46fff49410d0c92ab7e9249"
+  },
+  "state_preimage": {
+    "canonical_sha256": "sha256:c0bbc191d1d66301adb5f18d31dfa32c11b5d20fb5006a7fa30a5550f4cbce7f"
+  },
+  "successor_code_fingerprint": "sha256:eebb4de9aaed2e8ad207047107ebf06a5c9c6536089699660bfe27b8884878f8",
+  "successor": {
+    "transaction": {
+      "absolute_path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/cover_repair/generations/79b565acb3dd-01-1787290678968725676/cover-transaction.json",
+      "runtime_relative_path": "out/2026-08-11/auto_173005_934_1166/cover_repair/generations/79b565acb3dd-01-1787290678968725676/cover-transaction.json",
+      "sha256": "sha256:4df39a8e2bd62baf6af4833fa00af3dd22016bdcd846e7686a58b5a814acee76"
+    },
+    "generation_manifest": {
+      "absolute_path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/cover_repair/generations/79b565acb3dd-01-1787290678968725676/final.cover.cover_generation.json",
+      "runtime_relative_path": "out/2026-08-11/auto_173005_934_1166/cover_repair/generations/79b565acb3dd-01-1787290678968725676/final.cover.cover_generation.json",
+      "sha256": "sha256:c7c3a7e45db3641099023f445d1e26e61bca01294315a7ace28c181a169d3762"
+    },
+    "binding": {
+      "absolute_path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/cover_repair/generations/79b565acb3dd-01-1787290678968725676/final.cover.cover-binding.json",
+      "runtime_relative_path": "out/2026-08-11/auto_173005_934_1166/cover_repair/generations/79b565acb3dd-01-1787290678968725676/final.cover.cover-binding.json",
+      "sha256": "sha256:6fd7e42d9652b2f6769b2815bb0ca9241bbe0891a5b03b98542aca9750a965ad"
+    },
+    "generated_final_cover": {
+      "absolute_path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/cover_repair/generations/79b565acb3dd-01-1787290678968725676/final.cover.png",
+      "runtime_relative_path": "out/2026-08-11/auto_173005_934_1166/cover_repair/generations/79b565acb3dd-01-1787290678968725676/final.cover.png",
+      "sha256": "sha256:9a3636c47b6bfe808dfdd24cd9486788b6101e9260e1cdf8d98a3886942b980f"
+    },
+    "delivery_cover": {
+      "absolute_path": "/opt/bilive/autoslice/repo/lidousha/2026-08-11/本想看“CP误解向”，李豆沙却越看越.cover.png",
+      "runtime_relative_path": "repo/lidousha/2026-08-11/本想看“CP误解向”，李豆沙却越看越.cover.png",
+      "sha256": "sha256:9a3636c47b6bfe808dfdd24cd9486788b6101e9260e1cdf8d98a3886942b980f"
+    },
+    "delivery_publish": {
+      "absolute_path": "/opt/bilive/autoslice/repo/lidousha/2026-08-11/本想看“CP误解向”，李豆沙却越看越.publish.json",
+      "runtime_relative_path": "repo/lidousha/2026-08-11/本想看“CP误解向”，李豆沙却越看越.publish.json",
+      "sha256": "sha256:b019d927606c71d6b701a0cf44b7c45d7661f0da98b7c3beea167d6ff7df0572"
+    },
+    "transaction_entries": [
+      {
+        "role": "delivery_cover",
+        "target_absolute_path": "/opt/bilive/autoslice/repo/lidousha/2026-08-11/本想看“CP误解向”，李豆沙却越看越.cover.png",
+        "target_runtime_relative_path": "repo/lidousha/2026-08-11/本想看“CP误解向”，李豆沙却越看越.cover.png",
+        "intended_blob_absolute_path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/cover_repair/generations/79b565acb3dd-01-1787290678968725676/transaction/intended/000.bin",
+        "intended_blob_runtime_relative_path": "out/2026-08-11/auto_173005_934_1166/cover_repair/generations/79b565acb3dd-01-1787290678968725676/transaction/intended/000.bin",
+        "intended_sha256": "sha256:9a3636c47b6bfe808dfdd24cd9486788b6101e9260e1cdf8d98a3886942b980f"
+      },
+      {
+        "role": "binding",
+        "target_absolute_path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/cover_repair/generations/79b565acb3dd-01-1787290678968725676/final.cover.cover-binding.json",
+        "target_runtime_relative_path": "out/2026-08-11/auto_173005_934_1166/cover_repair/generations/79b565acb3dd-01-1787290678968725676/final.cover.cover-binding.json",
+        "intended_blob_absolute_path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/cover_repair/generations/79b565acb3dd-01-1787290678968725676/transaction/intended/001.bin",
+        "intended_blob_runtime_relative_path": "out/2026-08-11/auto_173005_934_1166/cover_repair/generations/79b565acb3dd-01-1787290678968725676/transaction/intended/001.bin",
+        "intended_sha256": "sha256:6fd7e42d9652b2f6769b2815bb0ca9241bbe0891a5b03b98542aca9750a965ad"
+      },
+      {
+        "role": "delivery_publish",
+        "target_absolute_path": "/opt/bilive/autoslice/repo/lidousha/2026-08-11/本想看“CP误解向”，李豆沙却越看越.publish.json",
+        "target_runtime_relative_path": "repo/lidousha/2026-08-11/本想看“CP误解向”，李豆沙却越看越.publish.json",
+        "intended_blob_absolute_path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/cover_repair/generations/79b565acb3dd-01-1787290678968725676/transaction/intended/002.bin",
+        "intended_blob_runtime_relative_path": "out/2026-08-11/auto_173005_934_1166/cover_repair/generations/79b565acb3dd-01-1787290678968725676/transaction/intended/002.bin",
+        "intended_sha256": "sha256:b019d927606c71d6b701a0cf44b7c45d7661f0da98b7c3beea167d6ff7df0572"
+      },
+      {
+        "role": "delivery_record",
+        "target_absolute_path": "/opt/bilive/autoslice/repo/lidousha/2026-08-11/本想看“CP误解向”，李豆沙却越看越.record.json",
+        "target_runtime_relative_path": "repo/lidousha/2026-08-11/本想看“CP误解向”，李豆沙却越看越.record.json",
+        "intended_blob_absolute_path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/cover_repair/generations/79b565acb3dd-01-1787290678968725676/transaction/intended/003.bin",
+        "intended_blob_runtime_relative_path": "out/2026-08-11/auto_173005_934_1166/cover_repair/generations/79b565acb3dd-01-1787290678968725676/transaction/intended/003.bin",
+        "intended_sha256": "sha256:0ce47d7129c2b920d4cdaefc814cf58cc7eca6d2481e651af060c94f5dc99e6f"
+      },
+      {
+        "role": "source_record",
+        "target_absolute_path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/replacement_recuts/auto_173005_934_1166.record.json",
+        "target_runtime_relative_path": "out/2026-08-11/auto_173005_934_1166/replacement_recuts/auto_173005_934_1166.record.json",
+        "intended_blob_absolute_path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/cover_repair/generations/79b565acb3dd-01-1787290678968725676/transaction/intended/004.bin",
+        "intended_blob_runtime_relative_path": "out/2026-08-11/auto_173005_934_1166/cover_repair/generations/79b565acb3dd-01-1787290678968725676/transaction/intended/004.bin",
+        "intended_sha256": "sha256:0ce47d7129c2b920d4cdaefc814cf58cc7eca6d2481e651af060c94f5dc99e6f"
+      },
+      {
+        "role": "source_publish",
+        "target_absolute_path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/replacement_recuts/auto_173005_934_1166.recut.publish.json",
+        "target_runtime_relative_path": "out/2026-08-11/auto_173005_934_1166/replacement_recuts/auto_173005_934_1166.recut.publish.json",
+        "intended_blob_absolute_path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/cover_repair/generations/79b565acb3dd-01-1787290678968725676/transaction/intended/005.bin",
+        "intended_blob_runtime_relative_path": "out/2026-08-11/auto_173005_934_1166/cover_repair/generations/79b565acb3dd-01-1787290678968725676/transaction/intended/005.bin",
+        "intended_sha256": "sha256:b019d927606c71d6b701a0cf44b7c45d7661f0da98b7c3beea167d6ff7df0572"
+      }
+    ]
+  },
+  "active_documents": [
+    {
+      "absolute_path": "/opt/bilive/autoslice/repo/lidousha/2026-08-11/本想看“CP误解向”，李豆沙却越看越.record.json",
+      "runtime_relative_path": "repo/lidousha/2026-08-11/本想看“CP误解向”，李豆沙却越看越.record.json",
+      "sha256": "sha256:0ce47d7129c2b920d4cdaefc814cf58cc7eca6d2481e651af060c94f5dc99e6f",
+      "title": "【李豆沙】经小李判断，薇欧拉对阿拉蕾就是铁暗恋！"
+    },
+    {
+      "absolute_path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/replacement_recuts/auto_173005_934_1166.record.json",
+      "runtime_relative_path": "out/2026-08-11/auto_173005_934_1166/replacement_recuts/auto_173005_934_1166.record.json",
+      "sha256": "sha256:0ce47d7129c2b920d4cdaefc814cf58cc7eca6d2481e651af060c94f5dc99e6f",
+      "title": "【李豆沙】经小李判断，薇欧拉对阿拉蕾就是铁暗恋！"
+    },
+    {
+      "absolute_path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/replacement_recuts/auto_173005_934_1166.recut.publish.json",
+      "runtime_relative_path": "out/2026-08-11/auto_173005_934_1166/replacement_recuts/auto_173005_934_1166.recut.publish.json",
+      "sha256": "sha256:b019d927606c71d6b701a0cf44b7c45d7661f0da98b7c3beea167d6ff7df0572",
+      "title": "【李豆沙】经小李判断，薇欧拉对阿拉蕾就是铁暗恋！"
+    }
+  ],
+  "immutable": {
+    "video": {
+      "absolute_path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/replacement_recuts/auto_173005_934_1166.recut.mp4",
+      "runtime_relative_path": "out/2026-08-11/auto_173005_934_1166/replacement_recuts/auto_173005_934_1166.recut.mp4",
+      "sha256": "sha256:3ac98248a8fa3d3d3a02ea3a7e6045d68a7b5c29c1aa9af340ad5604e3158c08"
+    },
+    "subtitle": {
+      "absolute_path": "/opt/bilive/autoslice/out/2026-08-11/auto_173005_934_1166/replacement_recuts/auto_173005_934_1166.recut.srt",
+      "runtime_relative_path": "out/2026-08-11/auto_173005_934_1166/replacement_recuts/auto_173005_934_1166.recut.srt",
+      "sha256": "sha256:1a668a899257407685c91629cc254918a594663af8b55cccb0932db16d0aa5d1"
+    },
+    "ass": {
+      "absolute_path": null,
+      "sha256": null
+    },
+    "boundary_audit_sha256": "sha256:810c6904916434fcae51ba3f61c8a05952d550259053512ad0859ad7ea22bfdf",
+    "story_contract_sha256": "sha256:d465a06cc1e0ec8a8dd3d325639689a20ddd5ef4b6ff4f715c95a40e739863ef"
+  },
+  "authority_sha256": "sha256:90e5bd42b81c7c70d4dd23706cc4db938cd1184e8cb7e310996526817cba4ee6"
+}
