@@ -1,0 +1,25 @@
+{
+  "schema_version": "candidate-manual-title-source-fact-successor.v1",
+  "candidate_id": "auto_173005_934_1166",
+  "recording_date": "2026-08-11",
+  "public_text_authority": {
+    "relative_path": "assets/lidousha/candidate_public_text_surface_authorities/auto_173005_934_1166.public-text-surface-authority.v1.json",
+    "authority_sha256": "sha256:001c8aab4581db7a6875f293ea2a597fcdf633bffdb5b097d6fbc8edeb1bc192"
+  },
+  "source_fact_refresh_authority": {
+    "relative_path": "assets/lidousha/candidate_source_fact_refresh_authorities/auto_173005_934_1166.v1.json",
+    "authority_sha256": "sha256:940df85848a0e6675aca760b51c7086962974c09132b9555a307c87c505c618f"
+  },
+  "predecessor": {
+    "story_contract_sha256": "sha256:d465a06cc1e0ec8a8dd3d325639689a20ddd5ef4b6ff4f715c95a40e739863ef",
+    "historical_provider_receipt_sha256": "sha256:840c6d2a0a7a5378f1b0130f4fe5348fe0fa11ff894f6ce4a466af8ef4c02083"
+  },
+  "successor": {
+    "story_contract_sha256": "sha256:40556530460502238105924764cbdbbf0516d3b7f4a04c7e2c361b2f3a6e2df6",
+    "source_fact_review_sha256": "sha256:c5ec3a3d68411c0db786dc6006bb765cf15227736a6842f3f89dba7c95e3dfb8"
+  },
+  "allowed_json_pointers": [
+    "/source_fact_review"
+  ],
+  "authority_sha256": "sha256:65d0b44906270dc11501595ce0aff13c0eba4f46e8bd9a2cc56dfc9c954c6054"
+}

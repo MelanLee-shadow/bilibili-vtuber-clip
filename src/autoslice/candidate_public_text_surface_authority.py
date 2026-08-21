@@ -19,6 +19,10 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.manual_title_source_fact_successor import (
+    ManualTitleSourceFactSuccessorError,
+    accepts_manual_title_source_fact_successor,
+)
 from src.autoslice.repository_asset_authority import (
     RepositoryAssetAuthorityError,
     repository_authority_expects_asset,
@@ -586,6 +590,21 @@ def consume_candidate_public_text_surface_authority(
     source_hashes = [str(piece["source_media_sha256"]) for piece in authority.source_pieces]
     if authority.is_manual_title_resolution:
         prompt = str(story_contract.get("clip_context_prompt") or "")
+        current_story_sha = _sha256_json(dict(story_contract))
+        try:
+            successor_accepted = (
+                current_story_sha != authority.story_contract_sha256
+                and accepts_manual_title_source_fact_successor(
+                    repo_root=ROOT,
+                    candidate_id=candidate_id,
+                    public_text_authority_sha256=authority.authority_sha256,
+                    story_contract=story_contract,
+                )
+            )
+        except ManualTitleSourceFactSuccessorError as exc:
+            raise CandidatePublicTextSurfaceAuthorityError(
+                "PUBLIC_TEXT_MANUAL_TITLE_SUCCESSOR_INVALID"
+            ) from exc
         if not (
             candidate_id == authority.candidate_id
             and story_contract.get("candidate_id") == candidate_id
@@ -594,7 +613,7 @@ def consume_candidate_public_text_surface_authority(
             and story_contract.get("source_media_sha256s") == sorted(set(source_hashes))
             and isinstance(binding, Mapping)
             and binding.get("context_sha256") == authority.clip_context_sha256
-            and authority.story_contract_sha256 == _sha256_json(dict(story_contract))
+            and (authority.story_contract_sha256 == current_story_sha or successor_accepted)
             and authority.clip_context_prompt_sha256 == _sha256_text(prompt)
         ):
             raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_RUNTIME_BINDING_MISMATCH")

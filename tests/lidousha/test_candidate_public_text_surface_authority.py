@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import subprocess
@@ -11,6 +12,7 @@ import pytest
 import scripts.free_session_autoslice as runner
 import scripts.repair_reviewed_covers as reviewed_covers
 import src.autoslice.candidate_public_text_surface_authority as public_text_authority
+import src.autoslice.manual_title_source_fact_successor as title_successor
 import src.autoslice.review_package_title_audit as title_audit
 from src.autoslice import publish_staging, source_fact_staging
 from src.autoslice.candidate_public_text_surface_authority import (
@@ -76,6 +78,11 @@ def _allow_precommit_public_text_authority(monkeypatch: pytest.MonkeyPatch) -> N
     )
     monkeypatch.setattr(
         public_text_authority,
+        "require_repository_asset_authority",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        title_successor,
         "require_repository_asset_authority",
         lambda **_kwargs: None,
     )
@@ -235,6 +242,24 @@ def test_manual_title_authority_is_exact_and_never_becomes_subtitle_or_upload_au
         authority.require_artifact_text(artifact_kind="publication", text=authority.superseded_title)
     with pytest.raises(CandidatePublicTextSurfaceAuthorityError, match="OUT_OF_SCOPE"):
         authority.require_artifact_text(artifact_kind="subtitle", text="铁暗恋")
+
+
+def test_real_manual_title_successor_asset_is_exactly_sealed_to_the_refresh_chain() -> None:
+    binding = title_successor._load_successor_authority(repo_root=Path(__file__).resolve().parents[2])
+    assert binding["public_text_authority"]["authority_sha256"] == (
+        "sha256:001c8aab4581db7a6875f293ea2a597fcdf633bffdb5b097d6fbc8edeb1bc192"
+    )
+    assert binding["source_fact_refresh_authority"]["authority_sha256"] == (
+        "sha256:940df85848a0e6675aca760b51c7086962974c09132b9555a307c87c505c618f"
+    )
+    assert binding["predecessor"]["story_contract_sha256"] == (
+        "sha256:d465a06cc1e0ec8a8dd3d325639689a20ddd5ef4b6ff4f715c95a40e739863ef"
+    )
+    assert binding["successor"] == {
+        "story_contract_sha256": "sha256:40556530460502238105924764cbdbbf0516d3b7f4a04c7e2c361b2f3a6e2df6",
+        "source_fact_review_sha256": "sha256:c5ec3a3d68411c0db786dc6006bb765cf15227736a6842f3f89dba7c95e3dfb8",
+    }
+    assert binding["allowed_json_pointers"] == ["/source_fact_review"]
 
 
 def test_consumption_binds_original_prompt_source_and_exact_selected_interval() -> None:
@@ -1038,6 +1063,270 @@ def test_manual_title_cover_repair_projects_canonical_consumption_to_all_active_
     assert [issue.code for issue in audit_with(old_staging, old_publish, old_title)] == [
         "CANDIDATE_PUBLIC_TEXT_SURFACE_INVALID"
     ]
+
+
+def _self_hashed_receipt(value: dict[str, object]) -> dict[str, object]:
+    result = copy.deepcopy(value)
+    result.pop("receipt_sha256", None)
+    result["receipt_sha256"] = _sha256_json(result)
+    return result
+
+
+def _manual_successor_shape() -> tuple[dict[str, object], dict[str, object], dict[str, object], dict[str, object]]:
+    """A frozen receipt-only successor shape; no provider or title rewrite."""
+
+    authority = load_candidate_public_text_surface_authority(MANUAL_TITLE_CID)
+    assert authority is not None
+    historical = _self_hashed_receipt(
+        {
+            "schema_version": "lidousha-source-fact-review.v1",
+            "status": "PASS",
+            "decision": "REPAIRED",
+            "original_title": authority.superseded_title,
+            "final_title": authority.superseded_title,
+            "original_selection_hook": authority.input_selection_hook,
+            "final_selection_hook": authority.input_selection_hook,
+        }
+    )
+    predecessor = {
+        "candidate_id": MANUAL_TITLE_CID,
+        "selection_hook": authority.input_selection_hook,
+        "source_media_sha256s": sorted(
+            {str(piece["source_media_sha256"]) for piece in authority.source_pieces}
+        ),
+        "clip_context_binding": {"context_sha256": authority.clip_context_sha256},
+        "clip_context_prompt": "successor test prompt",
+        "source_fact_review": historical,
+    }
+    refresh = _self_hashed_receipt(
+        {
+            "schema_version": "lidousha-source-fact-review.v1",
+            "status": "PASS",
+            "decision": "CANDIDATE_PUBLIC_TEXT_SOURCE_FACT_REFRESH",
+            "original_title": historical["original_title"],
+            "final_title": authority.resolved_title,
+            "original_selection_hook": historical["original_selection_hook"],
+            "final_selection_hook": authority.input_selection_hook,
+            "historical_provider_receipt": historical,
+            "candidate_public_text_source_fact_refresh": {
+                "schema_version": "candidate-public-text-source-fact-refresh-consumption.v1",
+                "status": "VALID",
+                "candidate_id": MANUAL_TITLE_CID,
+                "authority_sha256": "sha256:" + "9" * 64,
+            },
+        }
+    )
+    successor = copy.deepcopy(predecessor)
+    successor["source_fact_review"] = refresh
+    refresh_binding = {
+        "receipt_sha256": historical["receipt_sha256"],
+        "original_title": historical["original_title"],
+        "final_title": historical["final_title"],
+        "original_selection_hook": historical["original_selection_hook"],
+        "final_selection_hook": historical["final_selection_hook"],
+        "status": historical["status"],
+        "decision": historical["decision"],
+    }
+    successor_authority = {
+        "schema_version": title_successor.SCHEMA_VERSION,
+        "candidate_id": MANUAL_TITLE_CID,
+        "recording_date": "2026-08-11",
+        "public_text_authority": {
+            "relative_path": "assets/lidousha/candidate_public_text_surface_authorities/auto_173005_934_1166.public-text-surface-authority.v1.json",
+            "authority_sha256": authority.authority_sha256,
+        },
+        "source_fact_refresh_authority": {
+            "relative_path": "assets/lidousha/candidate_source_fact_refresh_authorities/auto_173005_934_1166.v1.json",
+            "authority_sha256": "sha256:" + "9" * 64,
+        },
+        "predecessor": {
+            "story_contract_sha256": _sha256_json(predecessor),
+            "historical_provider_receipt_sha256": historical["receipt_sha256"],
+        },
+        "successor": {
+            "story_contract_sha256": _sha256_json(successor),
+            "source_fact_review_sha256": refresh["receipt_sha256"],
+        },
+        "allowed_json_pointers": ["/source_fact_review"],
+        "authority_sha256": "sha256:" + "8" * 64,
+    }
+    return predecessor, successor, refresh_binding, successor_authority
+
+
+def test_manual_title_source_fact_successor_is_receipt_only_and_keeps_consumption_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    predecessor, successor, refresh_binding, binding = _manual_successor_shape()
+    authority = load_candidate_public_text_surface_authority(MANUAL_TITLE_CID)
+    assert authority is not None
+    monkeypatch.setattr(title_successor, "_load_successor_authority", lambda **_k: binding)
+    monkeypatch.setattr(
+        title_successor,
+        "_validate_refresh_asset",
+        lambda **_k: {"historical_provider_receipt": refresh_binding},
+    )
+    assert title_successor.accepts_manual_title_source_fact_successor(
+        repo_root=Path("/sealed"),
+        candidate_id=MANUAL_TITLE_CID,
+        public_text_authority_sha256=authority.authority_sha256,
+        story_contract=successor,
+    )
+
+    legacy = replace(
+        authority,
+        story_contract_sha256=_sha256_json(predecessor),
+        clip_context_prompt_sha256="sha256:"
+        + hashlib.sha256(str(predecessor["clip_context_prompt"]).encode()).hexdigest(),
+    )
+    expected = consume_candidate_public_text_surface_authority(
+        legacy,
+        candidate_id=MANUAL_TITLE_CID,
+        selection_hook=legacy.input_selection_hook,
+        story_contract=predecessor,
+    )
+    monkeypatch.setattr(
+        public_text_authority,
+        "accepts_manual_title_source_fact_successor",
+        lambda **_k: True,
+    )
+    assert consume_candidate_public_text_surface_authority(
+        legacy,
+        candidate_id=MANUAL_TITLE_CID,
+        selection_hook=legacy.input_selection_hook,
+        story_contract=successor,
+    ) == expected
+
+    for mutation in ("authority", "receipt", "historical", "extra", "missing_review"):
+        tampered = copy.deepcopy(successor)
+        if mutation == "authority":
+            tampered["source_fact_review"]["candidate_public_text_source_fact_refresh"]["authority_sha256"] = "sha256:" + "0" * 64
+        elif mutation == "receipt":
+            tampered["source_fact_review"]["final_title"] = "篡改标题"
+        elif mutation == "historical":
+            tampered["source_fact_review"]["historical_provider_receipt"]["final_title"] = "篡改历史"
+            tampered["source_fact_review"]["historical_provider_receipt"] = _self_hashed_receipt(tampered["source_fact_review"]["historical_provider_receipt"])
+        elif mutation == "extra":
+            tampered["unapproved"] = True
+        else:
+            tampered.pop("source_fact_review")
+        if mutation in {"authority", "receipt", "historical"}:
+            tampered["source_fact_review"] = _self_hashed_receipt(tampered["source_fact_review"])
+        with pytest.raises(title_successor.ManualTitleSourceFactSuccessorError):
+            title_successor.accepts_manual_title_source_fact_successor(
+                repo_root=Path("/sealed"),
+                candidate_id=MANUAL_TITLE_CID,
+                public_text_authority_sha256=authority.authority_sha256,
+                story_contract=tampered,
+            )
+    assert not title_successor.accepts_manual_title_source_fact_successor(
+        repo_root=Path("/sealed"),
+        candidate_id="auto_210739_1142_1436",
+        public_text_authority_sha256=authority.authority_sha256,
+        story_contract=successor,
+    )
+
+
+def test_manual_title_consume_and_package_audit_run_the_full_successor_validator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    predecessor, successor, refresh_binding, binding = _manual_successor_shape()
+    authority = load_candidate_public_text_surface_authority(MANUAL_TITLE_CID)
+    assert authority is not None
+    legacy = replace(
+        authority,
+        story_contract_sha256=_sha256_json(predecessor),
+        clip_context_prompt_sha256="sha256:"
+        + hashlib.sha256(str(predecessor["clip_context_prompt"]).encode()).hexdigest(),
+    )
+    expected = consume_candidate_public_text_surface_authority(
+        legacy,
+        candidate_id=MANUAL_TITLE_CID,
+        selection_hook=legacy.input_selection_hook,
+        story_contract=predecessor,
+    )
+
+    refresh = {
+        "schema_version": "candidate-public-text-source-fact-refresh-authority.v1",
+        "candidate_id": MANUAL_TITLE_CID,
+        "recording_date": "2026-08-11",
+        "historical_provider_receipt": refresh_binding,
+        "public_text_authority": {
+            "relative_path": binding["public_text_authority"]["relative_path"],
+            "authority_sha256": legacy.authority_sha256,
+        },
+        "runtime_bindings": {"story_contract_sha256": _sha256_json(predecessor)},
+        "scope": {
+            "candidate_scoped": True,
+            "provider_call_required": False,
+            "subtitle_text_mutation_authorized": False,
+            "speaker_label_mutation_authorized": False,
+            "upload_authorized": False,
+        },
+    }
+    refresh["authority_sha256"] = _sha256_json(refresh)
+    binding["source_fact_refresh_authority"]["authority_sha256"] = refresh["authority_sha256"]
+    successor["source_fact_review"]["candidate_public_text_source_fact_refresh"]["authority_sha256"] = refresh["authority_sha256"]
+    successor["source_fact_review"] = _self_hashed_receipt(successor["source_fact_review"])
+    binding["successor"] = {
+        "story_contract_sha256": _sha256_json(successor),
+        "source_fact_review_sha256": successor["source_fact_review"]["receipt_sha256"],
+    }
+    binding["authority_sha256"] = _sha256_json({
+        key: value for key, value in binding.items() if key != "authority_sha256"
+    })
+    refresh_path = tmp_path / title_successor._REFRESH_RELATIVE
+    successor_path = tmp_path / title_successor.RELATIVE_PATH
+    refresh_path.parent.mkdir(parents=True)
+    successor_path.parent.mkdir(parents=True)
+    refresh_path.write_text(json.dumps(refresh, ensure_ascii=False), encoding="utf-8")
+    successor_path.write_text(json.dumps(binding, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(public_text_authority, "ROOT", tmp_path)
+
+    actual = consume_candidate_public_text_surface_authority(
+        legacy,
+        candidate_id=MANUAL_TITLE_CID,
+        selection_hook=legacy.input_selection_hook,
+        story_contract=successor,
+    )
+    assert actual == expected
+
+    cover = {"rendered_lines": ["薇欧拉对阿拉蕾", "就是铁暗恋！"]}
+    staging = {
+        "title": legacy.resolved_title,
+        "title_source": legacy.title_source,
+        "upload_enabled": False,
+        "cover_generation": cover,
+        "public_text_surface_authority_consumption": expected,
+    }
+    publish = copy.deepcopy(staging)
+    delivery = {
+        "schema_version": "delivery-record.v1",
+        "candidate_id": MANUAL_TITLE_CID,
+        "story_contract": copy.deepcopy(successor),
+        "publish_staging": copy.deepcopy(staging),
+    }
+    source_record = {
+        "schema_version": "delivery-record.v1",
+        "candidate_id": MANUAL_TITLE_CID,
+        "story_contract": copy.deepcopy(successor),
+        "publish_staging": copy.deepcopy(staging),
+    }
+    assert [
+        delivery["publish_staging"]["public_text_surface_authority_consumption"],
+        source_record["publish_staging"]["public_text_surface_authority_consumption"],
+        publish["public_text_surface_authority_consumption"],
+    ] == [expected, expected, expected]
+    publish_path = tmp_path / "current.publish.json"
+    publish_path.write_text(json.dumps(publish, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(title_audit, "load_candidate_public_text_surface_authority", lambda _cid: legacy)
+    assert audit_candidate_public_text_surfaces(
+        candidate_id=MANUAL_TITLE_CID,
+        item_title=legacy.resolved_title,
+        publish_path=publish_path,
+        record_path=tmp_path / "current.record.json",
+        record=source_record,
+        publish_staging=source_record["publish_staging"],
+    ) == ()
 
 
 def test_withheld_staging_calls_providers_without_consuming_or_leaking_authority(
