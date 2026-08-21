@@ -269,6 +269,8 @@ def test_process_date_v6_rejects_same_candidate_disk_wins_conflict(
         return 0, 0, 1, 0, False
 
     base = _install_runner_fixture(monkeypatch, tmp_path, maintain=maintain)
+    messages: list[str] = []
+    monkeypatch.setattr(runner, "log", messages.append)
 
     with pytest.raises(
         SelectedSourceFactRecoveryPersistenceError,
@@ -287,6 +289,7 @@ def test_process_date_v6_rejects_same_candidate_disk_wins_conflict(
     assert next(
         row for row in persisted["picks"] if row["candidate_id"] == TARGET
     )["foreign_writer_marker"] == "disk-wins"
+    assert any("RUNNER_STATE_WRITEBACK_CONFLICT" in message for message in messages)
 
 
 def test_process_date_v6_tracked_state_detachment_and_crash_reentry_are_idempotent(

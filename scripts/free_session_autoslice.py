@@ -1331,7 +1331,7 @@ def read_state(date: str) -> dict:
 write_state = runner_state_writeback.make_date_state_writer(
     state_path,
     updated_at=lambda: time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-    log=log,
+    log=lambda message: log(message),
 )
 
 
