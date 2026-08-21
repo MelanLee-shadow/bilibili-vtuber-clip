@@ -33,6 +33,43 @@ OLD_FP = "sha256:" + "1" * 64
 NEW_FP = "sha256:" + "2" * 64
 
 
+@pytest.mark.parametrize(
+    ("recording_date", "candidate_id"),
+    (
+        ("2026-08-17", "auto_123655_1613_1676"),
+        ("2026-08-13", "auto_203011_328_389"),
+    ),
+)
+def test_committed_whole_clip_rerun_holds_are_unique_held_current_bindings(
+    monkeypatch: pytest.MonkeyPatch, recording_date: str, candidate_id: str
+):
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.setattr(runner, "REPO_ROOT", repo_root)
+    monkeypatch.setattr(
+        held.publication_registry,
+        "DEFAULT_REGISTRY_PATH",
+        repo_root / "assets" / "lidousha" / "publication_registry.v1.json",
+    )
+    monkeypatch.setattr(
+        held,
+        "require_repository_asset_authority",
+        lambda **_k: RepositoryAssetAuthority(
+            mode="GIT_HEAD",
+            commit="a" * 40,
+            relative_path="assets/lidousha/publication_registry.v1.json",
+            file_sha256="sha256:" + "b" * 64,
+        ),
+    )
+
+    binding = held._committed_hold_binding(
+        date=recording_date, candidate_id=candidate_id
+    )
+
+    assert binding["recording_date"] == recording_date
+    assert binding["candidate_id"] == candidate_id
+    assert binding["status"] == "hold_pending_review"
+
+
 def _grant() -> dict:
     return {
         "schema_version": HELD_CURRENT_RERENDER_GRANT_SCHEMA,

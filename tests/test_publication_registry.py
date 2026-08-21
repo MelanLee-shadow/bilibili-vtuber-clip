@@ -234,6 +234,52 @@ def test_committed_registry_loads_and_lists_the_incident():
     assert rows["auto_225056_814_887"]["bvid"] == "BV1FBGw6uE6i"
 
 
+@pytest.mark.parametrize(
+    ("recording_date", "candidate_id", "candidate_markers"),
+    (
+        (
+            "2026-08-17",
+            "auto_123655_1613_1676",
+            (
+                "0:19「温柔唱歌」",
+                "exact title「熊猫头要一本正经的新增‘熊今饭’环节了」",
+            ),
+        ),
+        (
+            "2026-08-13",
+            "auto_203011_328_389",
+            (
+                "0:14「小豆老公；； 不是你老公」",
+                "1:04 是回应弹幕「小豆好吵（」，不是念出该弹幕",
+                "current title wrongly treats 小李 and 李豆沙 as two people; redo title/cover.",
+            ),
+        ),
+    ),
+)
+def test_committed_whole_clip_rerun_holds_uniquely_block_upload_and_cover_maintenance(
+    recording_date, candidate_id, candidate_markers
+):
+    registry = load_publication_registry()
+    rows = [
+        row
+        for row in registry["entries"]
+        if row["recording_date"] == recording_date
+        and row["candidate_id"] == candidate_id
+    ]
+    assert len(rows) == 1
+    assert rows[0]["status"] == "hold_pending_review"
+    assert "Ivan direct Claude JSONL line 947" in rows[0]["note"]
+    assert all(marker in rows[0]["note"] for marker in candidate_markers)
+    assert "WHOLE_CLIP_RERUN_AND_REVIEW" in rows[0]["note"]
+    assert "final-human" not in rows[0]["note"]
+    assert upload_block_reason(
+        candidate_id, recording_date=recording_date, registry=registry
+    )
+    assert cover_maintenance_block_reason(
+        candidate_id, recording_date=recording_date, registry=registry
+    )
+
+
 def test_manifest_gate_reads_attested_record(tmp_path):
     record = tmp_path / "auto_193129_850_940.record.json"
     record.write_text(

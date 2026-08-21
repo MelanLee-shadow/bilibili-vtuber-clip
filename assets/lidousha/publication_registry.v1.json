@@ -380,6 +380,18 @@
     "title": "【李豆沙】莉娅求小李“就算你是狼也放过我”，结伴后小李突然连声道歉"
    },
    "note": "2026-08-12T04:54:47Z 快车道 speaker 版重切上传（upload ledger line 228，manifest sha256 b89e35cb…，reconciliation VERIFIED_PUBLIC，2026-08-18 公开面 fresh 复核 code=0/state=0）。2026-08-19 补录：该行此前只存在于 runtime overlay，committed 登记漏行，本次提升为持久授权事实；后续修复只允许 authorized_upload.py repair-* 的原 BV 修复链。"
+  },
+  {
+   "candidate_id": "auto_123655_1613_1676",
+   "recording_date": "2026-08-17",
+   "status": "hold_pending_review",
+   "note": "Ivan direct Claude JSONL line 947 candidate fact: 0:19「温柔唱歌」；exact title「熊猫头要一本正经的新增‘熊今饭’环节了」。Temporary no-upload guard while required WHOLE_CLIP_RERUN_AND_REVIEW runs. Ivan direct Claude JSONL line 947 blanket condition: 「以上我说的所有内容修复后都可以走快车道上传，优先级顺序是我说时效性强的优先上传（=七夕），然后按顺序走快车道上传」。Release only after fixes and that explicit fastlane condition, never before current package audit, title/cover joint QC, authorized manifest verify/upload, and public reconciliation."
+  },
+  {
+   "candidate_id": "auto_203011_328_389",
+   "recording_date": "2026-08-13",
+   "status": "hold_pending_review",
+   "note": "Ivan direct Claude JSONL line 947 candidate fact: 0:14「小豆老公；； 不是你老公」；1:04 是回应弹幕「小豆好吵（」，不是念出该弹幕；current title wrongly treats 小李 and 李豆沙 as two people; redo title/cover. Temporary no-upload guard while required WHOLE_CLIP_RERUN_AND_REVIEW runs. Ivan direct Claude JSONL line 947 blanket condition: 「以上我说的所有内容修复后都可以走快车道上传，优先级顺序是我说时效性强的优先上传（=七夕），然后按顺序走快车道上传」。Release only after fixes and that explicit fastlane condition, never before current package audit, title/cover joint QC, authorized manifest verify/upload, and public reconciliation."
   }
  ]
 }
