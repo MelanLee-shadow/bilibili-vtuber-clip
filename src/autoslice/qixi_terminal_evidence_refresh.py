@@ -14,6 +14,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import stat
 import tempfile
 from pathlib import Path
@@ -56,6 +57,24 @@ _JOURNAL_ROLES = ("chat", "record", "delivery_record", "publish", "state")
 _ENTRY_PHASES = frozenset({"PREPARED", "INSTALLING", "INSTALLED"})
 _JOURNAL_STATUSES = frozenset(
     {"PREPARED", "ROLLBACK_REQUIRED", "ROLLED_BACK", "COMMITTED"}
+)
+_LIVE_CORRECTION_KEYS = frozenset(
+    {
+        "schema_version", "stage_order", "corrected_at", "candidate_id",
+        "before_srt_sha256", "after_srt_sha256", "replace_operations", "set_line_operations",
+        "refresh_only", "text_source", "text_source_sha256", "text_override",
+        "text_override_sha256", "text_override_manifest", "text_override_manifest_sha256",
+        "text_override_decision_output", "text_override_decision_output_sha256",
+        "text_override_output", "text_override_output_sha256", "timing_source",
+        "timing_source_sha256", "speaker_mode", "speaker_manifest", "speaker_manifest_sha256",
+        "burned_media", "burned_media_sha256", "delivery_branding_authority", "upload_enabled",
+    }
+)
+_LIVE_DELIVERY_AUTHORITY_KEYS = frozenset(
+    {
+        "schema_version", "authority_path", "authority_sha256", "authority_repository_seal",
+        "branding_intro", "record_sha256", "publish_sha256", "burned_video_sha256",
+    }
 )
 
 
@@ -145,6 +164,97 @@ def _require_mapping(value: object, label: str) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise QixiTerminalEvidenceRefreshError(f"QIXI_TERMINAL_REFRESH_{label}_INVALID")
     return dict(value)
+
+
+def _bare_sha256(value: object, *, label: str) -> str:
+    """Accept the runtime correction's one documented SHA spelling only."""
+
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+        raise QixiTerminalEvidenceRefreshError(f"QIXI_TERMINAL_REFRESH_{label}_INVALID")
+    return "sha256:" + value
+
+
+def _normalize_live_correction(
+    correction: Mapping[str, object], *, authority_correction: Mapping[str, object],
+    before_srt: str, final_srt: str, authority_preimage: Mapping[str, object],
+) -> dict[str, object]:
+    """Bind the sealed live v2 document before projecting its internal hashes.
+
+    The deployed human-correction document deliberately writes its SRT and
+    burned-media digests as bare lowercase hex.  This boundary is therefore
+    intentionally one-way: it accepts that exact runtime schema and returns
+    only the prefixed internal digest form used by the review primitives.
+    """
+
+    live = _require_mapping(correction, "LIVE_CORRECTION")
+    if set(live) != _LIVE_CORRECTION_KEYS:
+        raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_CORRECTION_SCHEMA_INVALID")
+    if (
+        live.get("schema_version") != "human-subtitle-correction.v2"
+        or live.get("stage_order") != "human_text_then_speaker_then_burn"
+        or live.get("candidate_id") != CANDIDATE_ID
+        or live.get("upload_enabled") is not False
+        or live.get("refresh_only") is not False
+        or live.get("replace_operations") != []
+        or live.get("speaker_mode") != "uniform_host"
+        or not isinstance(live.get("corrected_at"), str)
+        or not live["corrected_at"]
+    ):
+        raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_CORRECTION_SCHEMA_INVALID")
+    nullable = (
+        "text_source", "text_source_sha256", "text_override", "text_override_sha256",
+        "text_override_manifest", "text_override_manifest_sha256", "text_override_decision_output",
+        "text_override_decision_output_sha256", "text_override_output", "text_override_output_sha256",
+        "timing_source", "timing_source_sha256", "speaker_manifest", "speaker_manifest_sha256",
+    )
+    if any(live[key] is not None for key in nullable):
+        raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_CORRECTION_SCHEMA_INVALID")
+    delivery = _require_mapping(live.get("delivery_branding_authority"), "LIVE_DELIVERY_AUTHORITY")
+    repository_seal = _require_mapping(
+        delivery.get("authority_repository_seal"), "LIVE_DELIVERY_REPOSITORY_SEAL"
+    )
+    branding = _require_mapping(delivery.get("branding_intro"), "LIVE_BRANDING")
+    if (
+        set(delivery) != _LIVE_DELIVERY_AUTHORITY_KEYS
+        or delivery.get("schema_version") != "sealed-subtitle-correction-delivery-authority.v1"
+        or not isinstance(delivery.get("authority_path"), str)
+        or not isinstance(delivery.get("authority_sha256"), str)
+        or set(repository_seal) != {"mode", "deployed_commit", "relative_path", "sha256"}
+        or repository_seal.get("mode") != "DEPLOYED_MANIFEST"
+        or not isinstance(repository_seal.get("deployed_commit"), str)
+        or re.fullmatch(r"[0-9a-f]{40}", str(repository_seal.get("deployed_commit"))) is None
+        or not isinstance(repository_seal.get("relative_path"), str)
+        or not isinstance(repository_seal.get("sha256"), str)
+        or set(branding) != {"intro_id", "intro_media_sha256", "intro_offset_ms", "status"}
+        or not isinstance(branding.get("intro_id"), str)
+        or not isinstance(branding.get("intro_media_sha256"), str)
+        or isinstance(branding.get("intro_offset_ms"), bool)
+        or not isinstance(branding.get("intro_offset_ms"), int)
+        or branding.get("status") != "PREPENDED"
+        or any(not isinstance(delivery.get(key), str) for key in ("record_sha256", "publish_sha256", "burned_video_sha256"))
+    ):
+        raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_CORRECTION_SCHEMA_INVALID")
+    expected_before, expected_after = _sha(before_srt), _sha(final_srt)
+    authority = _require_mapping(authority_correction, "AUTHORITY_CORRECTION")
+    if (
+        authority.get("before_srt_sha256") != expected_before
+        or authority.get("after_srt_sha256") != expected_after
+        or authority.get("set_line_operations") != live.get("set_line_operations")
+        or _bare_sha256(live.get("before_srt_sha256"), label="CORRECTION_BEFORE_SHA") != expected_before
+        or _bare_sha256(live.get("after_srt_sha256"), label="CORRECTION_AFTER_SHA") != expected_after
+    ):
+        raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_CORRECTION_HASH_DRIFT")
+    burn = _require_mapping(authority_preimage.get("burn"), "BURN")
+    if (
+        live.get("burned_media") != burn.get("path")
+        or _bare_sha256(live.get("burned_media_sha256"), label="CORRECTION_BURN_SHA") != burn.get("sha256")
+    ):
+        raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_CORRECTION_BURN_DRIFT")
+    return {
+        "before_srt_sha256": expected_before,
+        "after_srt_sha256": expected_after,
+        "set_line_operations": list(live["set_line_operations"]),
+    }
 
 
 def _assert_text_and_grid_immutable(
@@ -1024,10 +1134,17 @@ def build_staged_refresh(
     start, end = boundary.get("final_start_ms"), boundary.get("final_end_ms")
     if not isinstance(start, int) or not isinstance(end, int) or not start < end:
         raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_BOUNDARY_RANGE_INVALID")
+    correction = _normalize_live_correction(
+        _json_document(runtime["correction"], "CORRECTION"),
+        authority_correction=_require_mapping(authority["correction"], "AUTHORITY_CORRECTION"),
+        before_srt=before_srt,
+        final_srt=final_srt,
+        authority_preimage=_require_mapping(authority["preimage"], "PREIMAGE"),
+    )
     result = refresh_terminal_evidence(
         before_srt=before_srt,
         final_srt=final_srt,
-        correction=_json_document(runtime["correction"], "CORRECTION"),
+        correction=correction,
         old_chat_authority=chat,
         selection_hook=str(story.get("selection_hook") or ""),
         selection_scorecard=story.get("selection_scorecard"),

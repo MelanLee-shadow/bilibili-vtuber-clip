@@ -34,6 +34,92 @@ def _correction(before: str, after: str) -> dict[str, object]:
     }
 
 
+def _live_correction(before: str, after: str) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+    operations = ["1=A", "3=C", "6=F", "27=AA"]
+    burn = {"path": "/runtime/final.mp4", "sha256": "sha256:" + "b" * 64}
+    live = {
+        "schema_version": "human-subtitle-correction.v2",
+        "stage_order": "human_text_then_speaker_then_burn",
+        "corrected_at": "2026-08-21T10:38:16.502731+00:00",
+        "candidate_id": refresh.CANDIDATE_ID,
+        "before_srt_sha256": _sha(before)[7:],
+        "after_srt_sha256": _sha(after)[7:],
+        "replace_operations": [],
+        "set_line_operations": operations,
+        "refresh_only": False,
+        "text_source": None,
+        "text_source_sha256": None,
+        "text_override": None,
+        "text_override_sha256": None,
+        "text_override_manifest": None,
+        "text_override_manifest_sha256": None,
+        "text_override_decision_output": None,
+        "text_override_decision_output_sha256": None,
+        "text_override_output": None,
+        "text_override_output_sha256": None,
+        "timing_source": None,
+        "timing_source_sha256": None,
+        "speaker_mode": "uniform_host",
+        "speaker_manifest": None,
+        "speaker_manifest_sha256": None,
+        "burned_media": burn["path"],
+        "burned_media_sha256": burn["sha256"][7:],
+        "delivery_branding_authority": {
+            "schema_version": "sealed-subtitle-correction-delivery-authority.v1",
+            "authority_path": "/repo/authority.json",
+            "authority_sha256": "sha256:" + "c" * 64,
+            "authority_repository_seal": {
+                "mode": "DEPLOYED_MANIFEST", "deployed_commit": "d" * 40,
+                "relative_path": "assets/authority.json", "sha256": "sha256:" + "e" * 64,
+            },
+            "branding_intro": {
+                "intro_id": "intro", "intro_media_sha256": "sha256:" + "f" * 64,
+                "intro_offset_ms": 6200, "status": "PREPENDED",
+            },
+            "record_sha256": "sha256:" + "1" * 64,
+            "publish_sha256": "sha256:" + "2" * 64,
+            "burned_video_sha256": "sha256:" + "3" * 64,
+        },
+        "upload_enabled": False,
+    }
+    authority = {
+        "before_srt_sha256": _sha(before), "after_srt_sha256": _sha(after),
+        "set_line_operations": operations,
+    }
+    return live, authority, {"burn": burn}
+
+
+def test_live_correction_bare_hex_normalizes_only_after_full_live_schema_binding() -> None:
+    before = _srt(*[str(index) for index in range(1, 28)])
+    after = _srt("A", "2", "C", "4", "5", "F", *[str(index) for index in range(7, 27)], "AA")
+    live, authority, preimage = _live_correction(before, after)
+    assert refresh._normalize_live_correction(
+        live, authority_correction=authority, before_srt=before, final_srt=after,
+        authority_preimage=preimage,
+    ) == _correction(before, after)
+
+
+@pytest.mark.parametrize(
+    "mutate, expected",
+    [
+        (lambda value: value.__setitem__("before_srt_sha256", "sha256:" + str(value["before_srt_sha256"])), "CORRECTION_BEFORE_SHA_INVALID"),
+        (lambda value: value.__setitem__("after_srt_sha256", "0" * 64), "CORRECTION_HASH_DRIFT"),
+        (lambda value: value.__setitem__("replace_operations", ["1=A"]), "CORRECTION_SCHEMA_INVALID"),
+        (lambda value: value.__setitem__("set_line_operations", ["1=A", "3=C", "6=F", "27=AA", "7=drift"]), "CORRECTION_HASH_DRIFT"),
+    ],
+)
+def test_live_correction_rejects_prefix_confusion_hash_or_unlisted_operations(mutate, expected) -> None:
+    before = _srt(*[str(index) for index in range(1, 28)])
+    after = _srt("A", "2", "C", "4", "5", "F", *[str(index) for index in range(7, 27)], "AA")
+    live, authority, preimage = _live_correction(before, after)
+    mutate(live)
+    with pytest.raises(refresh.QixiTerminalEvidenceRefreshError, match=expected):
+        refresh._normalize_live_correction(
+            live, authority_correction=authority, before_srt=before, final_srt=after,
+            authority_preimage=preimage,
+        )
+
+
 def test_refresh_rejects_unlisted_text_and_timing_drift() -> None:
     before = _srt(*[str(index) for index in range(1, 28)])
     after = _srt("A", "2", "C", "4", "5", "F", *[str(index) for index in range(7, 27)], "AA")
