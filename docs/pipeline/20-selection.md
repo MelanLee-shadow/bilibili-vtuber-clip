@@ -56,6 +56,27 @@
 
 ## 候选状态与人工点选
 
+### 关闭直播后的历史日一次性运行
+
+历史日不能用 `AUTOSLICE_IGNORE_LIVE_HOLD`、移走 `DISABLED` 或直接调用
+`process_date()` 绕过 tick。唯一例外是已部署的
+`scripts/renew_operator_processing_scope.py` 与
+`scripts/authorize_historical_autoslice_once.py`：两者默认 dry-run，前者只可把
+现有严格 `operator-processing-scope-grant.v2` 的 `grant_id` 与有界
+`expires_at` 以 raw-state CAS 续期，后者只可在 `DISABLED` **仍存在**、adapter
+clean-idle、direct recorder idle、完整且仅含目标日期的录制 inventory、deployed
+commit/authority、state 与 scope 全部重验后创建一次性 receipt。receipt 仅绑定哈希和
+JSON-pointer diff，不保存 Ivan 原话。
+
+实际启动仍是普通 runner：
+`free_session_autoslice.py --once --historical-authority <receipt>`。该 flag 只能
+与 `--once` 连用，外层持 `tick.lock`，再由普通 runner 的短
+`RunnerCommitLease` 跑既有 gates；cron 无此 flag，因此全局 `DISABLED` 不会被自动
+激活。receipt 在 provider 前耐久地推进到 `STARTED`，任何 crash 留下的 STARTED、过期、
+nonce 重用、source/state/deploy/adapter 漂移均拒绝重放；成功或失败只写 terminal receipt。
+它不授予上传（v2 scope 结构中也没有 `upload_allowed`），不改变 upload.lock 或任何
+发布 gate。
+
 - `picks`、`pending_talk`、`talk_backlog`、拒绝记录必须互斥投影；一个 candidate
   只能处于 `CURRENT`、`PENDING`、`PENDING_COVER`、`FAILURE`、`MISSING` 或
   `OUTSIDE_EXACT_CONTRACT` 之一。已经成为 `CURRENT + COMPLIANT` 成品或终态拒绝的

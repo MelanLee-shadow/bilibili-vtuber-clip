@@ -146,6 +146,12 @@ from src.autoslice.runner_pipeline_fingerprints import (
     song_pipeline_fingerprint as _song_pipeline_fingerprint,
 )
 from src.autoslice.qixi_transaction_core import exclusive_runner_commit
+from src.autoslice.historical_fastlane_authority import (
+    HistoricalFastlaneAuthorityError,
+    exclusive_tick as historical_exclusive_tick,
+    finish_historical_run,
+    load_and_start_historical_run,
+)
 from src.autoslice.live_gate import format_live_basis, live_signal_divergence
 from src.autoslice.selection_scorecard import (
     SelectionCalibrationPolicyError,
@@ -1767,7 +1773,7 @@ def write_heartbeat(body: str) -> None:
     _write_heartbeat(BASE, body)
 
 
-def _live_hold_active(live: bool | None) -> bool:
+def _live_hold_active(live: bool | None, *, historical_authority: bool = False) -> bool:
     """直播期间冻结处理（True/未知都冻结，fail-safe；src.autoslice.live_gate）。"""
 
     return live_gate.live_hold_active(
@@ -1775,12 +1781,18 @@ def _live_hold_active(live: bool | None) -> bool:
         rec_root=REC_ROOT,
         list_dates=list_dates,
         log=log,
-        ignore_hold=os.environ.get("AUTOSLICE_IGNORE_LIVE_HOLD", "") == "1",
+        # The pre-existing isolated-eval switch remains confined to its own
+        # BASE.  Production historical work does not depend on it: only a
+        # validated explicit authority can set ``historical_authority``.
+        ignore_hold=(
+            historical_authority
+            or os.environ.get("AUTOSLICE_IGNORE_LIVE_HOLD", "") == "1"
+        ),
     )
 
 
-def tick() -> int:
-    if (BASE / "DISABLED").exists():
+def tick(*, historical_date: str | None = None) -> int:
+    if (BASE / "DISABLED").exists() and historical_date is None:
         log("DISABLED flag present — runner paused")
         return 0
     if not cjk_font_present():
@@ -1797,7 +1809,7 @@ def tick() -> int:
         return 0
     live = recorder_live_status()
     basis = live_determination_basis(live)
-    if _live_hold_active(live):
+    if _live_hold_active(live, historical_authority=historical_date is not None):
         report = live_gate.live_hold_report(
             live,
             basis,
@@ -1812,7 +1824,7 @@ def tick() -> int:
         return 0
     checked = []
     deferred: list[str] = []
-    dates = list_dates()
+    dates = [historical_date] if historical_date is not None else list_dates()
     for index, date in enumerate(dates):
         # 2026-08-09: a marathon tick read `live` once at 09:40 and was still
         # producing at 11:40 — 37 minutes into a stream that began at 11:03.
@@ -1847,12 +1859,41 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="end-to-end smoke: recall+produce ONE talk candidate from this segment into the smoke area",
     )
+    parser.add_argument(
+        "--historical-authority",
+        type=Path,
+        help="sealed one-time historical authority; only legal with --once while DISABLED remains present",
+    )
     args = parser.parse_args(argv)
     BASE.mkdir(parents=True, exist_ok=True)
     # Inject CPA credentials into OUR process too: the semantic-recall llm_call
     # runs llm_via_cpa.sh from this process (not via child_env()), and without
     # this the recall lane silently degrades to the deterministic fallback.
     os.environ.update(load_env_file(CPA_ENV))
+    if args.historical_authority and not args.once:
+        parser.error("--historical-authority requires --once")
+    if args.historical_authority and (args.preclaim or args.smoke_segment):
+        parser.error("--historical-authority cannot combine with preclaim or smoke")
+    if args.historical_authority:
+        try:
+            # The manual path holds the outer tick lock throughout the normal
+            # tick.  STARTED is durable before any process_date/provider work;
+            # an interrupted STARTED receipt is intentionally unreplayable.
+            with historical_exclusive_tick(BASE):
+                started = load_and_start_historical_run(
+                    authority_path=args.historical_authority, runtime_root=BASE,
+                    recording_root=REC_ROOT, adapter_status_path=RECORDER_STATUS_PATH, room_id=ROOM,
+                )
+                try:
+                    result = tick(historical_date=str(started["recording_date"]))
+                except BaseException:
+                    finish_historical_run(authority_path=args.historical_authority, runtime_root=BASE, failed=True)
+                    raise
+                finish_historical_run(authority_path=args.historical_authority, runtime_root=BASE, failed=result != 0)
+                return result
+        except HistoricalFastlaneAuthorityError as exc:
+            log(f"historical authority refused: {exc}")
+            return 2
     if args.preclaim:
         for date in args.preclaim:
             write_state(
