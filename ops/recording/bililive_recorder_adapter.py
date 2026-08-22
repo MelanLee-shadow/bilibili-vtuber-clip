@@ -48,6 +48,9 @@ SOURCE_DISPOSITION_STATUS = "IGNORED_CONNECTION_STUB"
 SOURCE_DISPOSITION_REASON = "RECORDER_CONNECTION_STUB_NO_DECODABLE_VIDEO"
 SOURCE_DISPOSITION_REBIND_SCHEMA_VERSION = "recording-source-fuse-identity-rebind.v1"
 SOURCE_DISPOSITION_REBIND_POLICY = "FUSE_REMOUNT_DEVICE_INODE_REBIND"
+SOURCE_DISPOSITION_REUSED_PORTABLE_REBIND_POLICY = (
+    "FUSE_REMOUNT_REUSED_PORTABLE_IDENTITY_REBIND"
+)
 SOURCE_DISPOSITION_TIMESTAMP_REBIND_SCHEMA_VERSION = (
     "recording-source-fuse-timestamp-rebind.v1"
 )
@@ -311,6 +314,46 @@ def _portable_mount_identity(identity: Any) -> dict[str, Any] | None:
     }
 
 
+def _same_portable_mount_replaced(current: Any, previous: Any) -> bool:
+    """Recognize a namespace-local FUSE remount without promoting mount_id.
+
+    ``mount_id`` cannot identify a mount across namespaces, so it never joins
+    the portable identity.  A changed local id is only an additional witness
+    that a *new* receipt may be earned after the existing stable-field and
+    full-byte checks; it is never enough to accept a changed source by itself.
+    """
+
+    current_id = current.get("mount_id") if isinstance(current, dict) else None
+    previous_id = previous.get("mount_id") if isinstance(previous, dict) else None
+    return bool(
+        _portable_mount_identity(current) == _portable_mount_identity(previous)
+        and isinstance(current_id, int)
+        and not isinstance(current_id, bool)
+        and current_id > 0
+        and isinstance(previous_id, int)
+        and not isinstance(previous_id, bool)
+        and previous_id > 0
+        and current_id != previous_id
+    )
+
+
+def _all_roles_reindexed_within_replaced_mount(changes: dict[str, list[str]]) -> bool:
+    """Require the whole persisted evidence set to move together.
+
+    A lone inode change could be a renamed or substituted file.  The
+    same-portable path is reserved for CloudFS rebuilding the complete
+    directory view after a witnessed namespace-local remount.
+    """
+
+    return bool(
+        set(changes) == set(_DISPOSITION_FILE_ROLES)
+        and all(
+            "inode" in fields and set(fields).issubset({"device", "inode"})
+            for fields in changes.values()
+        )
+    )
+
+
 def _shared_fuse_mount_identity(paths: Iterable[Path]) -> dict[str, Any] | None:
     identities = [_mount_identity_for_path(path) for path in paths]
     if not identities or not all(_is_fuse_mount(identity) for identity in identities):
@@ -443,6 +486,10 @@ def _validate_disposition_rebind_chain(
             receipt.get("schema_version") == SOURCE_DISPOSITION_REBIND_SCHEMA_VERSION
             and receipt.get("policy") == SOURCE_DISPOSITION_REBIND_POLICY
         )
+        is_reused_portable_rebind = (
+            receipt.get("schema_version") == SOURCE_DISPOSITION_REBIND_SCHEMA_VERSION
+            and receipt.get("policy") == SOURCE_DISPOSITION_REUSED_PORTABLE_REBIND_POLICY
+        )
         is_timestamp_rebind = (
             receipt.get("schema_version") == SOURCE_DISPOSITION_TIMESTAMP_REBIND_SCHEMA_VERSION
             and receipt.get("policy") == SOURCE_DISPOSITION_TIMESTAMP_REBIND_POLICY
@@ -450,7 +497,11 @@ def _validate_disposition_rebind_chain(
         expected_fields = base_receipt_fields | (
             {"changed_fields"} if is_timestamp_rebind else set()
         )
-        if (not is_identity_rebind and not is_timestamp_rebind) or set(receipt) != expected_fields:
+        if (
+            not is_identity_rebind
+            and not is_reused_portable_rebind
+            and not is_timestamp_rebind
+        ) or set(receipt) != expected_fields:
             raise AdapterError("source disposition identity rebind receipt is malformed")
         integrity = receipt.get("canonical_integrity")
         unsigned = {key: value for key, value in receipt.items() if key != "canonical_integrity"}
@@ -504,6 +555,15 @@ def _validate_disposition_rebind_chain(
                 )
             ):
                 raise AdapterError("source disposition identity rebind binding drifted")
+        elif is_reused_portable_rebind:
+            if (
+                receipt.get("legacy_promotion") != _identity_rebind_legacy_contract()
+                or previous_receipt_sha256 is None
+                or previous_mount is None
+                or not _all_roles_reindexed_within_replaced_mount(changes)
+                or not _same_portable_mount_replaced(receipt.get("current_mount"), previous_mount)
+            ):
+                raise AdapterError("source disposition reused-portable rebind binding drifted")
         else:
             assert is_timestamp_rebind
             if (
@@ -600,9 +660,14 @@ def _prepare_disposition_identity_validation(
     current_mount = current_mount or _shared_fuse_mount_identity(paths.values())
     if current_mount is None:
         raise AdapterError("source disposition device/inode drifted outside one shared FUSE mount")
+    same_portable_mount_replaced = bool(
+        has_receipts
+        and _same_portable_mount_replaced(current_mount, previous_mount)
+        and _all_roles_reindexed_within_replaced_mount(changes)
+    )
     if has_receipts and _portable_mount_identity(current_mount) == _portable_mount_identity(
         previous_mount
-    ):
+    ) and not same_portable_mount_replaced:
         raise AdapterError("source disposition identity drifted within one FUSE mount epoch")
     if not isinstance(identity_rebinds, list):
         raise AdapterError("source disposition FUSE rebind lacks a durable receipt ledger")
@@ -614,7 +679,11 @@ def _prepare_disposition_identity_validation(
         "current_mount": current_mount,
         "changed_fields": changes,
         "rebind_schema_version": SOURCE_DISPOSITION_REBIND_SCHEMA_VERSION,
-        "rebind_policy": SOURCE_DISPOSITION_REBIND_POLICY,
+        "rebind_policy": (
+            SOURCE_DISPOSITION_REUSED_PORTABLE_REBIND_POLICY
+            if same_portable_mount_replaced
+            else SOURCE_DISPOSITION_REBIND_POLICY
+        ),
         "pending_rebind": True,
     }
 

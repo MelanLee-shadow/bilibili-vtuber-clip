@@ -152,6 +152,9 @@ _CONNECTION_STUB_MAX_XML_EVENT_COUNT = 1
 _CONNECTION_STUB_MAX_SUCCESSOR_GAP_SECONDS = 3
 _CONNECTION_STUB_REBIND_SCHEMA = "recording-source-fuse-identity-rebind.v1"
 _CONNECTION_STUB_REBIND_POLICY = "FUSE_REMOUNT_DEVICE_INODE_REBIND"
+_CONNECTION_STUB_REUSED_PORTABLE_REBIND_POLICY = (
+    "FUSE_REMOUNT_REUSED_PORTABLE_IDENTITY_REBIND"
+)
 _CONNECTION_STUB_TIMESTAMP_REBIND_SCHEMA = "recording-source-fuse-timestamp-rebind.v1"
 _CONNECTION_STUB_TIMESTAMP_REBIND_POLICY = "FUSE_SUCCESSOR_MTIME_CTIME_REATTESTATION"
 _FILE_FINGERPRINT_KEYS = (
@@ -263,6 +266,33 @@ def _portable_mount_identity(identity: object) -> dict[str, object] | None:
         "filesystem_type": identity.get("filesystem_type"),
         "mount_source": identity.get("mount_source"),
     }
+
+
+def _same_portable_mount_replaced(current: object, previous: object) -> bool:
+    """Accept a local mount-id transition only as a rehashed receipt witness."""
+
+    current_id = current.get("mount_id") if isinstance(current, dict) else None
+    previous_id = previous.get("mount_id") if isinstance(previous, dict) else None
+    return bool(
+        _portable_mount_identity(current) == _portable_mount_identity(previous)
+        and isinstance(current_id, int)
+        and not isinstance(current_id, bool)
+        and current_id > 0
+        and isinstance(previous_id, int)
+        and not isinstance(previous_id, bool)
+        and previous_id > 0
+        and current_id != previous_id
+    )
+
+
+def _all_roles_reindexed_within_replaced_mount(changes: dict[str, list[str]]) -> bool:
+    return bool(
+        set(changes) == set(_DISPOSITION_FILE_ROLES)
+        and all(
+            "inode" in fields and set(fields).issubset({"device", "inode"})
+            for fields in changes.values()
+        )
+    )
 
 
 def _disposition_binding_projection(binding: dict[str, object]) -> dict[str, object]:
@@ -386,6 +416,10 @@ def _connection_stub_identity_matches(
             receipt.get("schema_version") == _CONNECTION_STUB_REBIND_SCHEMA
             and receipt.get("policy") == _CONNECTION_STUB_REBIND_POLICY
         )
+        is_reused_portable_rebind = (
+            receipt.get("schema_version") == _CONNECTION_STUB_REBIND_SCHEMA
+            and receipt.get("policy") == _CONNECTION_STUB_REUSED_PORTABLE_REBIND_POLICY
+        )
         is_timestamp_rebind = (
             receipt.get("schema_version") == _CONNECTION_STUB_TIMESTAMP_REBIND_SCHEMA
             and receipt.get("policy") == _CONNECTION_STUB_TIMESTAMP_REBIND_POLICY
@@ -393,7 +427,11 @@ def _connection_stub_identity_matches(
         expected_fields = base_receipt_fields | (
             {"changed_fields"} if is_timestamp_rebind else set()
         )
-        if (not is_identity_rebind and not is_timestamp_rebind) or set(receipt) != expected_fields:
+        if (
+            not is_identity_rebind
+            and not is_reused_portable_rebind
+            and not is_timestamp_rebind
+        ) or set(receipt) != expected_fields:
             return False, "source disposition identity rebind receipt is malformed"
         integrity = receipt.get("canonical_integrity")
         unsigned = {key: value for key, value in receipt.items() if key != "canonical_integrity"}
@@ -447,6 +485,15 @@ def _connection_stub_identity_matches(
                 )
             ):
                 return False, "source disposition identity rebind binding drifted"
+        elif is_reused_portable_rebind:
+            if (
+                receipt.get("legacy_promotion") != _identity_rebind_legacy_contract()
+                or previous_receipt_sha256 is None
+                or previous_mount is None
+                or not _all_roles_reindexed_within_replaced_mount(changes)
+                or not _same_portable_mount_replaced(receipt.get("current_mount"), previous_mount)
+            ):
+                return False, "source disposition reused-portable rebind binding drifted"
         else:
             assert is_timestamp_rebind
             if (

@@ -114,7 +114,13 @@
   回执的 effective fingerprints 与 namespace-portable major:minor+FSTYPE+SOURCE
   投影；回执保留完整 namespace mount identity 供审计，但 Docker 重启单独改变
   mount_id/mount_point 时不得重复重绑。inventory 跨容器也验证同一 portable 投影。
-  后继 FLV 的旧 row
+  若已经有一条有效 identity-rebind 回执，而当前四个文件的 portable
+  `major:minor+FSTYPE+SOURCE` 投影仍相同、四个稳定字段不变、但当前 namespace
+  的完整 `mount_id` 与上一回执不同且四个 inode 同时重编号（device 可随之变化），adapter 只能按
+  `FUSE_REMOUNT_REUSED_PORTABLE_IDENTITY_REBIND` 再走同一 idle、子进程全字节
+  attest、前后 fingerprint/mount 稳定和链式回执流程。`mount_id` 只是同一
+  namespace 的新挂载见证，不是跨 namespace 的 portable truth；相同 portable
+  投影且相同 `mount_id` 的 inode 漂移仍 BLOCK，不能重签。后继 FLV 的旧 row
   没有历史 SHA-256，因此回执必须明确记录 legacy promotion：只沿用 path、稳定 stat、
   webhook file size、finalized ledger source size 及后继 MP4 历史 SHA 交叉绑定，不能宣称
   后继 FLV 历史 hash 已匹配。另有且仅有一条 timestamp-only 恢复：后继 FLV 与 MP4

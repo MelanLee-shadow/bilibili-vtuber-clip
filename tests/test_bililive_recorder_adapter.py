@@ -184,6 +184,50 @@ def _fuse_mount_identity(_path: Path) -> dict[str, object]:
     }
 
 
+def _fuse_mount_identity_with_id(mount_id: int) -> dict[str, object]:
+    return {**_fuse_mount_identity(Path("/unused")), "mount_id": mount_id}
+
+
+def _reindexed_fingerprint(real_fingerprint, path: Path) -> dict:
+    fingerprint = real_fingerprint(path)
+    fingerprint["inode"] += 10_000
+    return fingerprint
+
+
+def _reindexed_attestation(real_attestation, path: Path) -> dict:
+    attestation = real_attestation(path)
+    attestation["inode"] += 10_000
+    return attestation
+
+
+def _seed_prior_fuse_rebind(
+    stub: Path,
+    successor: Path,
+    webhook_files: dict,
+    finalized: dict,
+    row: dict,
+    monkeypatch,
+) -> list[dict]:
+    _resign_disposition_after_simulated_remount(row)
+    monkeypatch.setattr(
+        adapter,
+        "_mount_identity_for_path",
+        lambda _path: _fuse_mount_identity_with_id(77),
+    )
+    receipts: list[dict] = []
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=stub.parent.parent,
+        webhook_files=webhook_files,
+        finalized=finalized,
+        identity_rebinds=receipts,
+        identity_rebind_attestations=_identity_rebind_attestations(stub, successor),
+    )
+    assert len(receipts) == 1
+    return receipts
+
+
 def _local_spool_mount_identity(_path: Path) -> dict[str, object]:
     """A deterministic non-FUSE local-disk identity for the rebind spool.
 
@@ -894,6 +938,371 @@ def test_connection_stub_fuse_remount_rebinds_once_then_stays_metadata_only(
             finalized=finalized,
             identity_rebinds=rebinds,
         )
+
+
+def test_connection_stub_reused_portable_mount_rebind_is_hash_bound(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """CloudFS can reindex a whole FUSE view while reusing major:minor."""
+
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    receipts = _seed_prior_fuse_rebind(
+        stub, successor, webhook_files, finalized, row, monkeypatch
+    )
+    real_fingerprint = adapter._regular_file_fingerprint
+    real_attestation = adapter._attest_regular_file
+    monkeypatch.setattr(
+        adapter,
+        "_regular_file_fingerprint",
+        lambda path: _reindexed_fingerprint(real_fingerprint, path),
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_attest_regular_file",
+        lambda path: _reindexed_attestation(real_attestation, path),
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_mount_identity_for_path",
+        lambda _path: _fuse_mount_identity_with_id(88),
+    )
+
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+        identity_rebinds=receipts,
+        identity_rebind_attestations=_identity_rebind_attestations(stub, successor),
+    )
+
+    assert len(receipts) == 2
+    receipt = receipts[-1]
+    assert receipt["policy"] == adapter.SOURCE_DISPOSITION_REUSED_PORTABLE_REBIND_POLICY
+    assert receipt["previous_receipt_canonical_sha256"] == receipts[0]["canonical_integrity"][
+        "canonical_json_sha256"
+    ]
+    assert receipt["current_mount"]["mount_id"] == 88
+    assert set(receipt["current_bindings"]) == set(adapter._DISPOSITION_FILE_ROLES)
+    assert all(
+        receipt["current_bindings"][role]["inode"]
+        != receipt["previous_bindings"][role]["inode"]
+        for role in adapter._DISPOSITION_FILE_ROLES
+    )
+
+    monkeypatch.setattr(
+        adapter,
+        "_attest_regular_file",
+        lambda _path: pytest.fail("settled reused-portable rebind must remain metadata-only"),
+    )
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+        identity_rebinds=receipts,
+    )
+
+
+@pytest.mark.parametrize("canary", ["hash", "stable_field", "partial_reindex", "same_mount"])
+def test_connection_stub_reused_portable_mount_rebind_fails_closed(
+    tmp_path: Path,
+    monkeypatch,
+    canary: str,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    receipts = _seed_prior_fuse_rebind(
+        stub, successor, webhook_files, finalized, row, monkeypatch
+    )
+    real_fingerprint = adapter._regular_file_fingerprint
+    real_attestation = adapter._attest_regular_file
+
+    def current_fingerprint(path: Path) -> dict:
+        fingerprint = _reindexed_fingerprint(real_fingerprint, path)
+        if canary == "stable_field" and path == stub:
+            fingerprint["mtime_ns"] += 1
+        if canary == "partial_reindex" and path != stub:
+            fingerprint["inode"] -= 10_000
+        return fingerprint
+
+    def current_attestation(path: Path) -> dict:
+        attestation = _reindexed_attestation(real_attestation, path)
+        if canary == "hash" and path == stub:
+            attestation["sha256"] = "0" * 64
+        return attestation
+
+    monkeypatch.setattr(adapter, "_regular_file_fingerprint", current_fingerprint)
+    monkeypatch.setattr(adapter, "_attest_regular_file", current_attestation)
+    monkeypatch.setattr(
+        adapter,
+        "_mount_identity_for_path",
+        lambda _path: _fuse_mount_identity_with_id(77 if canary == "same_mount" else 88),
+    )
+
+    expected = "full-byte hash drift" if canary == "hash" else "drift"
+    with pytest.raises(adapter.AdapterError, match=expected):
+        adapter.validate_connection_stub_disposition(
+            stub,
+            row,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+            identity_rebinds=receipts,
+            identity_rebind_attestations=_identity_rebind_attestations(stub, successor),
+        )
+    assert len(receipts) == 1
+
+
+def test_connection_stub_reused_portable_rebind_receipt_chain_tamper_fails_closed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    receipts = _seed_prior_fuse_rebind(
+        stub, successor, webhook_files, finalized, row, monkeypatch
+    )
+    real_fingerprint = adapter._regular_file_fingerprint
+    real_attestation = adapter._attest_regular_file
+    monkeypatch.setattr(
+        adapter,
+        "_regular_file_fingerprint",
+        lambda path: _reindexed_fingerprint(real_fingerprint, path),
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_attest_regular_file",
+        lambda path: _reindexed_attestation(real_attestation, path),
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_mount_identity_for_path",
+        lambda _path: _fuse_mount_identity_with_id(88),
+    )
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+        identity_rebinds=receipts,
+        identity_rebind_attestations=_identity_rebind_attestations(stub, successor),
+    )
+    receipts[-1]["current_mount"]["mount_id"] = 77
+    receipts[-1]["canonical_integrity"] = {
+        "algorithm": "sha256",
+        "canonical_json_sha256": adapter._canonical_json_sha256(
+            {key: value for key, value in receipts[-1].items() if key != "canonical_integrity"}
+        ),
+    }
+
+    with pytest.raises(adapter.AdapterError, match="reused-portable rebind binding drifted"):
+        adapter.validate_connection_stub_disposition(
+            stub,
+            row,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+            identity_rebinds=receipts,
+        )
+
+
+def test_reused_portable_rebind_waits_for_recorder_idle_without_hashing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    receipts = _seed_prior_fuse_rebind(
+        stub, successor, webhook_files, finalized, row, monkeypatch
+    )
+    real_fingerprint = adapter._regular_file_fingerprint
+    spool = tmp_path / "local-spool"
+
+    def mount_identity(path: Path) -> dict[str, object]:
+        return (
+            _local_spool_mount_identity(path)
+            if str(path).startswith(str(spool))
+            else _fuse_mount_identity_with_id(88)
+        )
+
+    relative = f"2026-08-12/{stub.name}"
+    state = {
+        "source_dispositions": {relative: row},
+        "source_disposition_identity_rebinds": {relative: receipts},
+        "webhook_files": webhook_files,
+        "finalized": finalized,
+    }
+    monkeypatch.setattr(
+        adapter,
+        "_regular_file_fingerprint",
+        lambda path: _reindexed_fingerprint(real_fingerprint, path),
+    )
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", mount_identity)
+    monkeypatch.setattr(
+        adapter,
+        "_attest_regular_file",
+        lambda _path: pytest.fail("active recorder must not hash source bytes"),
+    )
+
+    with pytest.raises(adapter.AdapterError, match="waiting for recorder idle"):
+        adapter.revalidate_source_dispositions(
+            state,
+            record_root=tmp_path,
+            room_id=123456,
+            allow_identity_rebind_start=False,
+            identity_rebind_spool=spool,
+        )
+    task = state["source_disposition_identity_rebind_tasks"][relative]
+    assert task["status"] == "WAITING_FOR_IDLE"
+    assert task["hash_roles"] == ["source", "xml", "successor_mp4"]
+
+
+def test_reused_portable_rebind_rejects_mount_instability_before_receipt(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    receipts = _seed_prior_fuse_rebind(
+        stub, successor, webhook_files, finalized, row, monkeypatch
+    )
+    real_fingerprint = adapter._regular_file_fingerprint
+    real_attestation = adapter._attest_regular_file
+    mount_reads = 0
+
+    def unstable_mount(_path: Path) -> dict[str, object]:
+        nonlocal mount_reads
+        mount_reads += 1
+        return _fuse_mount_identity_with_id(88 if mount_reads <= 4 else 89)
+
+    monkeypatch.setattr(
+        adapter,
+        "_regular_file_fingerprint",
+        lambda path: _reindexed_fingerprint(real_fingerprint, path),
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_attest_regular_file",
+        lambda path: _reindexed_attestation(real_attestation, path),
+    )
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", unstable_mount)
+
+    with pytest.raises(adapter.AdapterError, match="FUSE mount changed during identity rebind"):
+        adapter.validate_connection_stub_disposition(
+            stub,
+            row,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+            identity_rebinds=receipts,
+            identity_rebind_attestations=_identity_rebind_attestations(stub, successor),
+        )
+    assert len(receipts) == 1
+
+
+def test_reused_portable_rebind_hash_child_failure_stays_blocked(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    receipts = _seed_prior_fuse_rebind(
+        stub, successor, webhook_files, finalized, row, monkeypatch
+    )
+    real_fingerprint = adapter._regular_file_fingerprint
+    relative = f"2026-08-12/{stub.name}"
+    spool = tmp_path / "local-spool"
+
+    def mount_identity(path: Path) -> dict[str, object]:
+        return (
+            _local_spool_mount_identity(path)
+            if str(path).startswith(str(spool))
+            else _fuse_mount_identity_with_id(88)
+        )
+
+    state = {
+        "source_dispositions": {relative: row},
+        "source_disposition_identity_rebinds": {relative: receipts},
+        "webhook_files": webhook_files,
+        "finalized": finalized,
+    }
+    monkeypatch.setattr(
+        adapter,
+        "_regular_file_fingerprint",
+        lambda path: _reindexed_fingerprint(real_fingerprint, path),
+    )
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", mount_identity)
+
+    with pytest.raises(adapter.AdapterError, match="hash is pending"):
+        adapter.revalidate_source_dispositions(
+            state,
+            record_root=tmp_path,
+            room_id=123456,
+            allow_identity_rebind_start=True,
+            identity_rebind_spool=spool,
+        )
+    task = state["source_disposition_identity_rebind_tasks"][relative]
+    result_path = adapter._identity_rebind_run_dir(spool, relative) / "result.json"
+    deadline = time.monotonic() + 5
+    while not result_path.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    child = adapter._IDENTITY_REBIND_CHILDREN[int(task["pid"])]
+    while child.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert child.returncode == 2
+
+    with pytest.raises(adapter.AdapterError, match="identity rebind hash failed"):
+        adapter.revalidate_source_dispositions(
+            state,
+            record_root=tmp_path,
+            room_id=123456,
+            allow_identity_rebind_start=True,
+            identity_rebind_spool=spool,
+        )
+    assert len(receipts) == 1
+    assert state["source_disposition_identity_rebind_tasks"][relative]["status"] == "PENDING_HASH"
 
 
 def test_connection_stub_local_inode_drift_still_fails_closed(
