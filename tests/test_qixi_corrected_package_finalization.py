@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from src.autoslice import qixi_corrected_package_finalization as finalization
+from src.autoslice import qixi_terminal_reconciliation as terminal_reconciliation
 from src.autoslice import final_human_review
 from src.autoslice import qixi_terminal_subtitle_projection as terminal_projection
 from src.autoslice import qixi_source_fact_terminal_preservation as source_fact_preservation
@@ -1294,6 +1295,116 @@ def test_current_terminal_projection_finalizes_with_real_redelivery_and_chat_hel
             package_root=package,
             qixi_repo_root=repo,
         )
+
+
+def test_terminal_rebind_uses_source_offset_and_consumes_only_verified_replay() -> None:
+    """The deployed 62-cue truth has three source-timeline exact-read rows."""
+
+    terminal_srt = (
+        Path("assets/lidousha/qixi_terminal_subtitle_projection")
+        / "auto_113022_354_496.terminal.srt"
+    ).read_text(encoding="utf-8")
+    chat = {
+        "schema_version": "chat-authority-audit.v2",
+        "source_subtitle_truth_audit": {"applied": [], "satisfied": []},
+        "redelivery_subtitle_baseline_audit": {
+            "status": "ALREADY_SATISFIED",
+            "mappings": [
+                {
+                    "baseline_cue_index": 41,
+                    "start_ms": 110260,
+                    "end_ms": 112820,
+                    "text": "嗯，你只听中午场怎么说",
+                    "final_owner_verified": True,
+                }
+            ],
+        },
+        "applied": [
+            {
+                "exact_text": "还有冰火会",
+                "matched_start_ms": 60840,
+                "matched_end_ms": 63120,
+                "boundary_required": True,
+            },
+            {
+                "exact_text": "依旧情人节唱苦情歌",
+                "matched_start_ms": 94720,
+                "matched_end_ms": 96620,
+                "boundary_required": True,
+            },
+            {
+                "exact_text": "我只听中午场怎么说",
+                "matched_start_ms": 120050,
+                "matched_end_ms": 122610,
+                "boundary_required": True,
+                "final_verification_scope": "SUPERSEDED_BY_REDELIVERY_BASELINE",
+                "final_verification_scope_reason": (
+                    "BOUNDARY_OWNER_REVERTED_BY_VERIFIED_BASELINE_REPLAY"
+                ),
+                "final_redelivery_baseline_revert": {
+                    "baseline_cue_indexes": [41],
+                    "before_payload": "我只听中午场怎么说",
+                    "after_payload": "嗯，你只听中午场怎么说",
+                },
+            },
+        ],
+        "sender_repairs": [],
+        "gift_repairs": [],
+        "coreference_repairs": [],
+        "entity_repairs": [],
+        "pending_text_overrides": [],
+    }
+    stale = copy.deepcopy(chat)
+    assert not finalization.verify_chat_authority_final_surfaces(
+        stale,
+        final_text_srt=terminal_srt,
+        final_speaker_srt=terminal_srt,
+        delivery_start_ms=0,
+        delivery_end_ms=142210,
+    )
+
+    terminal_reconciliation.reconcile_terminal_baseline_replay_supersessions(
+        chat,
+        terminal_projection_authority={"authority_sha256": "sha256:" + "a" * 64},
+        delivery_start_ms=9790,
+    )
+    reconciliation = chat["applied"][2]["reconciliation"]
+    assert reconciliation["baseline_cue_indexes"] == [41]
+    assert reconciliation["status"] == "SUPERSEDED_BY_REDELIVERY_BASELINE"
+    assert finalization.verify_chat_authority_final_surfaces(
+        chat,
+        final_text_srt=terminal_srt,
+        final_speaker_srt=terminal_srt,
+        delivery_start_ms=9790,
+        delivery_end_ms=152000,
+    )
+
+    wrong_range = copy.deepcopy(chat)
+    wrong_range["applied"][2].pop("reconciliation")
+    wrong_range["redelivery_subtitle_baseline_audit"]["mappings"][0]["start_ms"] += 1
+    terminal_reconciliation.reconcile_terminal_baseline_replay_supersessions(
+        wrong_range,
+        terminal_projection_authority={"authority_sha256": "sha256:" + "a" * 64},
+        delivery_start_ms=9790,
+    )
+    assert "reconciliation" not in wrong_range["applied"][2]
+
+    unproved = copy.deepcopy(chat)
+    unproved["applied"][2].pop("reconciliation")
+    unproved["applied"][2]["final_redelivery_baseline_revert"]["after_payload"] = "错误文本"
+    terminal_reconciliation.reconcile_terminal_baseline_replay_supersessions(
+        unproved,
+        terminal_projection_authority={"authority_sha256": "sha256:" + "a" * 64},
+        delivery_start_ms=9790,
+    )
+    assert "reconciliation" not in unproved["applied"][2]
+    assert not finalization.verify_chat_authority_final_surfaces(
+        unproved,
+        final_text_srt=terminal_srt,
+        final_speaker_srt=terminal_srt,
+        delivery_start_ms=9790,
+        delivery_end_ms=152000,
+    )
 
 
 def test_current_terminal_audit_closure_refuses_rebound_source_evidence_drift(

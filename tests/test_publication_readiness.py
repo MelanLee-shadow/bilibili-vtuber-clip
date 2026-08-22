@@ -225,6 +225,148 @@ def test_nested_burn_and_real_joint_qc_are_accepted_but_escaped_paths_fail(tmp_p
     assert rows["nested"]["category"] == STATE_DRIFT
 
 
+def test_canonical_record_requires_every_candidate_mirror_to_match(
+    tmp_path: Path,
+) -> None:
+    repo, runtime = _runtime(tmp_path)
+    root, record = _package(runtime, "2026-08-20", "mirrors")
+    mirror = root / "mirrors.recut.burned.record.json"
+    mirror.write_bytes(record.read_bytes())
+    (runtime / "state/2026-08-20.json").write_text(
+        json.dumps({"picks": [{"candidate_id": "mirrors", "status": "review_ready", "rc": 0}]})
+    )
+    rows = _rows(
+        build_readiness_graph(
+            repository_root=repo,
+            runtime_root=runtime,
+            registry_loader=lambda *_a, **_k: _registry(),
+        )
+    )
+    assert rows["mirrors"]["category"] == READY_TO_PREPARE
+    from src.autoslice.publication_readiness import _canonical_record_file
+
+    assert _canonical_record_file(root, "mirrors") == record
+
+    mirror.write_bytes(b'{"different":true}')
+    row = _rows(
+        build_readiness_graph(
+            repository_root=repo,
+            runtime_root=runtime,
+            registry_loader=lambda *_a, **_k: _registry(),
+        )
+    )["mirrors"]
+    assert row["category"] == STATE_DRIFT
+    assert "PACKAGE_RECORD_MISSING_OR_AMBIGUOUS" in row["reason_codes"]
+    mirror.write_bytes(record.read_bytes())
+
+    legacy = runtime / "out/2026-08-20/legacy/replacement_recuts"
+    legacy.mkdir(parents=True)
+    (legacy / "left.record.json").write_bytes(record.read_bytes())
+    (legacy / "right.record.json").write_bytes(b"{\"different\":true}")
+    state = json.loads((runtime / "state/2026-08-20.json").read_text())
+    state["picks"].append({"candidate_id": "legacy", "status": "review_ready", "rc": 0})
+    (runtime / "state/2026-08-20.json").write_text(json.dumps(state))
+    rows = _rows(
+        build_readiness_graph(
+            repository_root=repo,
+            runtime_root=runtime,
+            registry_loader=lambda *_a, **_k: _registry(),
+        )
+    )
+    assert rows["legacy"]["category"] == STATE_DRIFT
+    assert "PACKAGE_RECORD_MISSING_OR_AMBIGUOUS" in rows["legacy"]["reason_codes"]
+
+
+def test_manifest_declared_delivery_record_is_not_a_candidate_record_mirror(tmp_path: Path) -> None:
+    repo, runtime = _runtime(tmp_path)
+    root, record = _package(runtime, "2026-08-20", "delivery-role")
+    record_doc = json.loads(record.read_text())
+    publish = root / "delivery-role.publish.json"
+    record_doc["publish_staging"] = {"publish_json_path": str(publish)}
+    record.write_text(json.dumps(record_doc))
+    delivery_record = root / "delivery-role.recut.burned.record.json"
+    delivery_doc = dict(record_doc)
+    delivery_doc["delivery_only_evidence"] = "historical materialization receipt"
+    delivery_record.write_text(json.dumps(delivery_doc))
+    (root / "delivery-role.review-manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "lidousha-daily-review-manifest.v1",
+                "candidate_id": "delivery-role",
+                "items": [
+                    {
+                        "candidate_id": "delivery-role",
+                        "evidence_json": record.name,
+                        "record": delivery_record.name,
+                        "publish_json": publish.name,
+                        "sha256": {"evidence_json": hashlib.sha256(delivery_record.read_bytes()).hexdigest()},
+                    }
+                ]
+            }
+        )
+    )
+    (runtime / "state/2026-08-20.json").write_text(
+        json.dumps({"picks": [{"candidate_id": "delivery-role", "status": "review_ready", "rc": 0}]})
+    )
+    row = _rows(
+        build_readiness_graph(
+            repository_root=repo,
+            runtime_root=runtime,
+            registry_loader=lambda *_a, **_k: _registry(),
+        )
+    )["delivery-role"]
+    assert row["category"] == READY_TO_PREPARE
+
+    manifest = root / "delivery-role.review-manifest.json"
+    document = json.loads(manifest.read_text())
+    document["schema_version"] = "untrusted-review-manifest.v1"
+    manifest.write_text(json.dumps(document))
+    row = _rows(
+        build_readiness_graph(
+            repository_root=repo,
+            runtime_root=runtime,
+            registry_loader=lambda *_a, **_k: _registry(),
+        )
+    )["delivery-role"]
+    assert row["category"] == STATE_DRIFT
+    assert "PACKAGE_RECORD_MISSING_OR_AMBIGUOUS" in row["reason_codes"]
+
+    document["schema_version"] = "lidousha-daily-review-manifest.v1"
+    document["items"][0]["sha256"]["evidence_json"] = "0" * 64
+    manifest.write_text(json.dumps(document))
+    row = _rows(
+        build_readiness_graph(
+            repository_root=repo,
+            runtime_root=runtime,
+            registry_loader=lambda *_a, **_k: _registry(),
+        )
+    )["delivery-role"]
+    assert row["category"] == STATE_DRIFT
+    assert "PACKAGE_RECORD_MISSING_OR_AMBIGUOUS" in row["reason_codes"]
+
+
+def test_multiple_canonical_record_names_are_ambiguous_even_when_byte_identical(
+    tmp_path: Path,
+) -> None:
+    repo, runtime = _runtime(tmp_path)
+    root, record = _package(runtime, "2026-08-20", "duplicate")
+    duplicate = root / "nested/duplicate.record.json"
+    duplicate.parent.mkdir()
+    duplicate.write_bytes(record.read_bytes())
+    (runtime / "state/2026-08-20.json").write_text(
+        json.dumps({"picks": [{"candidate_id": "duplicate", "status": "review_ready", "rc": 0}]})
+    )
+    row = _rows(
+        build_readiness_graph(
+            repository_root=repo,
+            runtime_root=runtime,
+            registry_loader=lambda *_a, **_k: _registry(),
+        )
+    )["duplicate"]
+    assert row["category"] == STATE_DRIFT
+    assert "PACKAGE_RECORD_MISSING_OR_AMBIGUOUS" in row["reason_codes"]
+
+
 def test_parent_symlink_and_candidate_exception_are_local_drift(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo, runtime = _runtime(tmp_path)
     root, _record = _package(runtime, "2026-08-20", "safe")

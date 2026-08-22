@@ -183,6 +183,117 @@ def _one_file(root: Path, patterns: tuple[str, ...]) -> Path | None:
     return next(iter(found)) if len(found) == 1 else None
 
 
+def _canonical_record_file(root: Path, candidate_id: str) -> Path | None:
+    """Resolve the candidate record, retaining delivery records as artifacts.
+
+    A review manifest may name one *delivery* ``record`` alongside the
+    candidate ``evidence_json``.  Those are different roles: the delivery
+    record is an installed-package artifact, not an alternate candidate
+    authority.  All remaining safe record candidates, including named
+    mirrors, must have stable byte-identical contents.  This keeps an extra
+    conflicting record fail-closed while supporting the documented
+    evidence-json/delivery-record package shape.
+    """
+
+    records: dict[Path, bytes] = {}
+    for path in root.rglob("*.record.json"):
+        try:
+            _safe_path(path, root)
+            records[path] = _snapshot_regular(path, root)
+        except (OSError, ValueError):
+            return None
+    if not records:
+        return None
+    canonical_name = f"{candidate_id}.record.json"
+    canonical = [path for path in records if path.name == canonical_name]
+    if len(canonical) > 1:
+        return None
+    delivery_records: set[Path] = set()
+    if len(canonical) == 1:
+        try:
+            canonical_document = _load_json(canonical[0], root)
+            staging = canonical_document.get("publish_staging")
+            canonical_publish = (
+                Path(str(staging.get("publish_json_path"))).name
+                if isinstance(staging, Mapping) and isinstance(staging.get("publish_json_path"), str)
+                else None
+            )
+        except (OSError, ValueError, json.JSONDecodeError):
+            return None
+        for manifest_path in root.rglob("*review*manifest*.json"):
+            try:
+                manifest = _load_json(manifest_path, root)
+            except (OSError, ValueError, json.JSONDecodeError):
+                return None
+            # Only the established daily review manifest has a delivery-record
+            # role.  An unrelated JSON merely matching the filename glob must
+            # not change authority selection.
+            if manifest.get("schema_version") != "lidousha-daily-review-manifest.v1":
+                continue
+            manifest_candidate = str(manifest.get("candidate_id") or "")
+            if manifest_candidate != candidate_id:
+                continue
+            items = manifest.get("items")
+            if not isinstance(items, list):
+                return None
+            for item in items:
+                if not isinstance(item, Mapping):
+                    return None
+                item_candidate = str(item.get("candidate_id") or item.get("id") or "")
+                if item_candidate != candidate_id:
+                    continue
+                evidence_name = item.get("evidence_json")
+                delivery_name = item.get("record")
+                manifest_publish = item.get("publish_json")
+                if not all(isinstance(value, str) and value for value in (evidence_name, delivery_name, manifest_publish)):
+                    return None
+                if (
+                    Path(evidence_name).name != evidence_name
+                    or evidence_name != canonical_name
+                    or Path(delivery_name).name != delivery_name
+                    or Path(manifest_publish).name != manifest_publish
+                    or canonical_publish != manifest_publish
+                ):
+                    return None
+                sha256s = item.get("sha256")
+                expected_delivery_sha = (
+                    str(sha256s.get("evidence_json") or "").removeprefix("sha256:")
+                    if isinstance(sha256s, Mapping)
+                    else ""
+                )
+                if len(expected_delivery_sha) != 64 or any(char not in "0123456789abcdef" for char in expected_delivery_sha):
+                    return None
+                delivery = manifest_path.parent / delivery_name
+                if delivery not in records:
+                    return None
+                actual_delivery_sha = hashlib.sha256(records[delivery]).hexdigest()
+                record_sha = sha256s.get("record") if isinstance(sha256s, Mapping) else None
+                normalized_record_sha = str(record_sha or "").removeprefix("sha256:")
+                if (
+                    actual_delivery_sha != expected_delivery_sha
+                    or (
+                        record_sha is not None
+                        and (
+                            len(normalized_record_sha) != 64
+                            or any(char not in "0123456789abcdef" for char in normalized_record_sha)
+                            or normalized_record_sha != actual_delivery_sha
+                        )
+                    )
+                ):
+                    return None
+                delivery_records.add(delivery)
+    snapshots: dict[bytes, list[Path]] = {}
+    for path, snapshot in records.items():
+        if path not in delivery_records:
+            snapshots.setdefault(snapshot, []).append(path)
+    if len(snapshots) != 1 or not snapshots:
+        return None
+    only = next(iter(snapshots.values()))
+    if len(canonical) == 1:
+        return canonical[0]
+    return min(only)
+
+
 def _field_path(document: Mapping[str, object], *keys: str) -> Path | None:
     for key in keys:
         value = document.get(key)
@@ -239,7 +350,7 @@ def _inspect_package(root: Path | None, candidate_id: str, date: str) -> tuple[s
     dependencies: dict[str, str] = {}
     if root is None:
         return {"PACKAGE_ROOT_MISSING"}, dependencies, None
-    record_path = _one_file(root, (f"{candidate_id}.record.json", "*.record.json"))
+    record_path = _canonical_record_file(root, candidate_id)
     if record_path is None:
         return {"PACKAGE_RECORD_MISSING_OR_AMBIGUOUS"}, dependencies, None
     dependencies["record"] = str(record_path)

@@ -45,6 +45,8 @@ from src.autoslice.qixi_current_terminal_audit_closure import (
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.producer_text_finalization import verify_chat_authority_final_surfaces
+from src.autoslice.qixi_current_terminal_ass_repair import validate_current_ass_repair
+from src.autoslice.qixi_terminal_reconciliation import reconcile_terminal_baseline_replay_supersessions
 from src.autoslice.package_relocation_contract import (
     CHAT_PATH_POINTERS,
     PUBLISH_PATH_POINTERS,
@@ -1347,48 +1349,25 @@ def _project_documents(
     return record, publish, chat
 
 
-def _validate_current_ass_repair(
-    *, authority: Mapping[str, Any], artifacts: Mapping[str, tuple[Path, str, int, str, str]], record: Mapping[str, object]
+def _validate_current_ass_repair_or_raise(
+    *,
+    authority: Mapping[str, Any],
+    artifacts: Mapping[str, tuple[Path, str, int, str, str]],
+    record: Mapping[str, object],
 ) -> None:
-    """Bind the repaired current record to its applied, sealed-runtime receipt."""
-    receipt = _load_object(artifacts["ass_repair_receipt"][0], label="ASS repair receipt")
-    drift = authority["source_drift"]
-    if (
-        _sha256(artifacts["ass_repair_receipt"][0]) != drift["ass_repair_receipt_sha256"]
-        or receipt.get("schema_version") != "qixi-delivery-record-ass-binding-recovery.v1"
-        or receipt.get("mode") != "APPLIED"
-        or receipt.get("candidate_id") != authority["candidate_id"]
-        or receipt.get("allowed_json_pointers") != ["/artifact_hashes/ass_sha256", "/subtitle_ass_path"]
-    ):
-        raise QixiCorrectedPackageError("current ASS repair receipt is invalid")
-    postimage = receipt.get("postimage")
-    evidence = receipt.get("evidence_descriptors")
-    evidence_rows = {
-        name: evidence.get(name) if isinstance(evidence, Mapping) else None
-        for name in ("ass", "subtitle", "burned", "correction")
-    }
-    if (
-        not isinstance(postimage, Mapping)
-        or not isinstance(evidence, Mapping)
-        or not all(isinstance(row, Mapping) for row in evidence_rows.values())
-        or (
-            _normal_sha(postimage.get("sha256"), label="ASS repair postimage")
-            != artifacts["record"][1]
-            or postimage.get("bytes") != artifacts["record"][2]
-            or _normal_sha(evidence_rows["ass"].get("sha256"), label="ASS repair evidence")
-            != artifacts["ass"][1]
-            or _normal_sha(evidence_rows["subtitle"].get("sha256"), label="ASS repair evidence")
-            != artifacts["subtitle"][1]
-            or _normal_sha(evidence_rows["burned"].get("sha256"), label="ASS repair evidence")
-            != artifacts["video"][1]
-            or _normal_sha(evidence_rows["correction"].get("sha256"), label="ASS repair evidence")
-            != artifacts["correction"][1]
+    """Adapt the standalone sealed-receipt validator to finalizer errors."""
+
+    try:
+        validate_current_ass_repair(
+            authority=authority,
+            artifacts=artifacts,
+            record=record,
+            load_object=_load_object,
+            sha256=_sha256,
+            normal_sha=_normal_sha,
         )
-    ):
-        raise QixiCorrectedPackageError("current ASS repair receipt evidence drifts")
-    hashes = record.get("artifact_hashes")
-    if not isinstance(hashes, Mapping) or _normal_sha(hashes.get("ass_sha256"), label="current record ASS") != artifacts["ass"][1]:
-        raise QixiCorrectedPackageError("current ASS repair record binding drifts")
+    except ValueError as exc:
+        raise QixiCorrectedPackageError(str(exc)) from exc
 
 
 def _project_current_terminal_documents(
@@ -1432,7 +1411,7 @@ def _project_current_terminal_documents(
         or publish.get("title") != title
     ):
         raise QixiCorrectedPackageError("current record/publish sources drift")
-    _validate_current_ass_repair(authority=authority, artifacts=artifacts, record=record)
+    _validate_current_ass_repair_or_raise(authority=authority, artifacts=artifacts, record=record)
     subtitle_text = artifacts["subtitle"][0].read_text(encoding="utf-8")
     if (
         correction.get("candidate_id") != candidate_id
@@ -1660,12 +1639,25 @@ def _project_current_terminal_documents(
         != artifacts["correction"][1]
     ):
         raise QixiCorrectedPackageError("current correction record locator drifts")
+    # Current deployed records carry this source-timeline anchor. Older sealed
+    # fixtures predate the explicit field and are already delivery-relative.
+    delivery_start = current_boundary.get("final_start_ms", 0)
+    if isinstance(delivery_start, bool) or not isinstance(delivery_start, int):
+        raise QixiCorrectedPackageError("current terminal boundary start is invalid")
+    try:
+        reconcile_terminal_baseline_replay_supersessions(
+            chat,
+            terminal_projection_authority=authority["terminal_projection"],
+            delivery_start_ms=delivery_start,
+        )
+    except ValueError as exc:
+        raise QixiCorrectedPackageError(str(exc)) from exc
     if not verify_chat_authority_final_surfaces(
         chat,
         final_text_srt=subtitle_text,
         final_speaker_srt=subtitle_text,
-        delivery_start_ms=0,
-        delivery_end_ms=int(record["duration_ms"]),
+        delivery_start_ms=delivery_start,
+        delivery_end_ms=delivery_start + int(record["duration_ms"]),
     ):
         raise QixiCorrectedPackageError("current terminal chat does not verify final release surfaces")
     return record, publish, chat
