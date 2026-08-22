@@ -216,6 +216,11 @@ def test_synthesized_private_finalizer_uses_prepare_only_and_private_handle(
     record.update({
         "subtitle_timing_qa": {}, "chat_authority_audit_path": str(chat),
         "clip_context_path": str(clip), "publish_staging": {"title": "旧标题", "selection_hook": "钩子", "cover_generation": {}},
+        "speaker_mode": "auto", "subtitle_style": "lidousha-speaker-sapphire-host-white-guest-v2",
+        "story_contract": {
+            "candidate_id": CID, "selection_hook": "钩子", "selection_scorecard": {"x": 1},
+            "session_relation_authority": {"status": "BOUND"},
+        },
         "artifact_hashes": {**record["artifact_hashes"], "chat_authority_audit_sha256": _sha(chat.read_bytes())},
     })
     record_path.write_text(json.dumps(record))
@@ -232,7 +237,7 @@ def test_synthesized_private_finalizer_uses_prepare_only_and_private_handle(
         runtime = Path(kwargs["out_root"]).parents[2]
         prepared = runtime / ".producer-prepared" / "talk" / CID / "seed"
         prepared.mkdir(parents=True)
-        (prepared / "prepared.json").write_text("{}\n")
+        (prepared / "prepared.json").write_text(json.dumps({"prepared_sha256": "sha256:" + "0" * 64}) + "\n")
         (prepared / "prepared.json").chmod(0o600)
         return 0
 
@@ -245,5 +250,8 @@ def test_synthesized_private_finalizer_uses_prepare_only_and_private_handle(
     assert calls["options"].prepare_only is True
     assert calls["spec"]["given_title"] is None
     assert calls["spec"]["recovery_publication_authority"] is None
+    assert calls["options"].speaker_mode == "auto"
+    assert calls["speaker_subtitle_style_id"] == "lidousha-speaker-sapphire-host-white-guest-v2"
+    assert calls["spec"]["story_contract"]["session_relation_authority"] == {"status": "BOUND"}
     assert result.prepared_manifest.is_relative_to(result.private_runtime_root)
     assert not list(recut.glob("*.prepared.json"))

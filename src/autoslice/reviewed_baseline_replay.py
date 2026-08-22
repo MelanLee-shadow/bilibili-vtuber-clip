@@ -109,6 +109,14 @@ class PrivateReplayFinalization:
     prepared_sha256: str
 
 
+@dataclass(frozen=True, slots=True)
+class PrivateReplayPackage:
+    root: Path
+    review_manifest: RegularBinding
+    package_audit: RegularBinding
+    predicate_matrix: tuple[dict[str, str], ...]
+
+
 def _canonical(value: object) -> bytes:
     return (
         json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True,
@@ -777,9 +785,18 @@ def synthesize_replay_spec_and_finalize_private(
     provenance = _load_json(regular_binding(provenance_path, label="PROVENANCE"), label="PROVENANCE")
     boundary = record.get("boundary_audit")
     timing = record.get("subtitle_timing_qa")
+    story = record.get("story_contract")
+    speaker_mode = record.get("speaker_mode")
+    speaker_style = record.get("subtitle_style")
+    burned = record.get("burned_preview")
     chat_path = record.get("chat_authority_audit_path")
     clip_path = record.get("clip_context_path")
-    if not isinstance(boundary, Mapping) or not isinstance(timing, Mapping) or not isinstance(chat_path, str) or not isinstance(clip_path, str):
+    if (
+        not isinstance(boundary, Mapping) or not isinstance(timing, Mapping)
+        or not isinstance(story, Mapping) or not isinstance(chat_path, str)
+        or not isinstance(clip_path, str) or speaker_mode not in {"auto", "uniform_host"}
+        or not isinstance(speaker_style, str) or not speaker_style
+    ):
         raise ReviewedBaselineReplayError("REPLAY_FINALIZER_INPUT_MISSING")
     chat = regular_binding(Path(chat_path), label="CHAT_AUTHORITY")
     clip = regular_binding(Path(clip_path), label="CLIP_CONTEXT")
@@ -804,18 +821,24 @@ def synthesize_replay_spec_and_finalize_private(
     spec = {
         "date": plan.date, "candidate_id": plan.candidate_id, "output_root": str(out_root),
         "given_title": None, "recovery_publication_authority": None,
-        "selection_hook": str((record.get("publish_staging") or {}).get("selection_hook") or record.get("selection_hook") or ""),
+        "selection_hook": str(story.get("selection_hook") or ""),
+        "selection_scorecard": story.get("selection_scorecard"),
+        "session_relation_authority": story.get("session_relation_authority"),
+        "story_contract": dict(story),
+        "source_piece": provenance.get("final_recut"),
         "clip_context_path": str(out_root / f"{plan.candidate_id}.clip-context.json"),
         "clip_context": _load_json(clip, label="CLIP_CONTEXT"),
         "pieces": [provenance.get("final_recut", {})],
         "subtitle_redelivery_baseline": plan.baseline.config,
         "boundary_semantic_review": boundary.get("boundary_semantic_review"),
     }
+    if story.get("candidate_id") != plan.candidate_id or not spec["selection_hook"]:
+        raise ReviewedBaselineReplayError("REPLAY_STORY_CONTRACT_BINDING_DRIFT")
     spec_path = runtime / "replay-spec.json"
     _write_private(spec_path, _canonical(spec))
     options = ProducerFinalizationOptions(
         spec=spec_path, substrate="reviewed-baseline-replay", correct="reviewed-baseline",
-        speaker_mode="uniform_host", speaker_overrides=None,
+        speaker_mode=str(speaker_mode), speaker_overrides=None,
         speaker_source_session_anchors=None, speaker_mixed_overlap_evidence=None,
         speaker_python=speaker_python, reuse_cover=True, prepare_only=True,
     )
@@ -829,14 +852,15 @@ def synthesize_replay_spec_and_finalize_private(
         raise ReviewedBaselineReplayError("REPLAY_FINALIZER_ADAPTERS_INVALID") from exc
     run = finalizer or finalize_producer_package
     run(
-        options=options, profile_id="lidousha", speaker_subtitle_style_id="lidousha-final-sapphire72",
+        options=options, profile_id="lidousha", speaker_subtitle_style_id=speaker_style,
         spec=spec, cid=plan.candidate_id, out_root=out_root, host="localhost",
         padded=plan.padded_path, padded_provenance_path=provenance_path,
         piece_provenance_rows=[dict(provenance.get("final_recut") or {})],
         final_start=final_start, final_end=final_end, sanitized=source_cues,
         timing_qa=dict(timing), audit=dict(boundary), text_override_path=None,
         subtitle_regression_path=None, chat_authority_audit=_load_json(chat, label="CHAT_AUTHORITY"),
-        chat_authority_path=out_root / f"{plan.candidate_id}.chat-authority.json", branding_intro=None,
+        chat_authority_path=out_root / f"{plan.candidate_id}.chat-authority.json",
+        branding_intro=(dict(burned.get("branding_intro")) if isinstance(burned, Mapping) and isinstance(burned.get("branding_intro"), Mapping) else None),
         adapters=adapters,
     )
     prepared = sorted((runtime / ".producer-prepared" / "talk" / plan.candidate_id).glob("*/prepared.json"))
@@ -845,7 +869,79 @@ def synthesize_replay_spec_and_finalize_private(
     prepared_binding = regular_binding(prepared[0], label="PREPARED_HANDLE")
     if prepared_binding is None or not prepared_binding.path.is_relative_to(runtime):
         raise ReviewedBaselineReplayError("REPLAY_FINALIZER_PREPARED_HANDLE_UNSAFE")
-    return PrivateReplayFinalization(spec_path, runtime, prepared[0], prepared_binding.sha256)
+    document = _load_json(prepared_binding, label="PREPARED_HANDLE")
+    seal = document.get("prepared_sha256")
+    if not isinstance(seal, str) or _SHA.fullmatch(seal) is None:
+        raise ReviewedBaselineReplayError("REPLAY_FINALIZER_PREPARED_HANDLE_INVALID")
+    return PrivateReplayFinalization(spec_path, runtime, prepared[0], seal)
+
+
+def flatten_and_audit_private_replay(
+    finalization: PrivateReplayFinalization, *, candidate_id: str,
+) -> PrivateReplayPackage:
+    """Flatten the canonical prepared handle and require the package auditor.
+
+    This consumes only the sealed prepared manifest inside the private runtime;
+    no delivery target, record, state, or upload surface is writable here.
+    """
+
+    from scripts.audit_lidousha_review_package import AUDIT_POLICY_EPOCH, audit_package
+    from scripts.build_manual_review_manifest import build_manual
+    from src.autoslice.producer_delivery_transaction import PreparedDelivery, _read_document
+
+    handle = PreparedDelivery(finalization.private_runtime_root, "talk", candidate_id,
+                              finalization.prepared_sha256.removeprefix("sha256:"), finalization.prepared_manifest)
+    document = _read_document(handle)
+    if document.get("lane") != "talk" or document.get("candidate_id") != candidate_id or document.get("upload_enabled") is not False:
+        raise ReviewedBaselineReplayError("REPLAY_PREPARED_HANDLE_INVALID")
+    package = finalization.private_runtime_root / "flattened-package"
+    _mkdir_private(package)
+    suffixes = {
+        "video": ".mp4", "subtitle": ".srt", "uniform_host_ass": ".final-sapphire72.ass",
+        "speaker_srt": ".speaker.srt", "speaker_ass": ".speaker.ass",
+        "speaker_manifest": ".speaker.json", "chat_authority": ".chat-authority.json",
+        "redelivery_baseline": ".redelivery-baseline.json", "subtitle_regression": ".subtitle-regression.json",
+        "filler_audit": ".filler-audit.json", "text_finalization": ".text-finalization.json",
+        "clip_context": ".clip-context.json", "cover_title_mask": ".cover.title-mask.png",
+        "cover_pre_overlay": ".cover.pre-overlay.png", "cover_route_background": ".cover.ai-bg.png",
+        "publish": ".publish.json", "record": ".record.json", "cover": ".cover.png",
+    }
+    seen: set[str] = set()
+    for entry in document.get("artifacts", []):
+        if not isinstance(entry, Mapping):
+            raise ReviewedBaselineReplayError("REPLAY_PREPARED_HANDLE_INVALID")
+        role = entry.get("role")
+        raw = entry.get("staged_path")
+        if not isinstance(role, str) or not isinstance(raw, str) or role not in suffixes or role in seen:
+            raise ReviewedBaselineReplayError("REPLAY_PREPARED_ARTIFACT_INVALID")
+        seen.add(role)
+        source = Path(raw)
+        binding = regular_binding(source, label="PREPARED_ARTIFACT")
+        if binding is None or binding.sha256 != entry.get("staged_sha256"):
+            raise ReviewedBaselineReplayError("REPLAY_PREPARED_ARTIFACT_DRIFT")
+        _copy_private_artifact(source, package / f"{candidate_id}{suffixes[role]}")
+    try:
+        manifest = build_manual(package, operator="Codex root", note="Reviewed-baseline replay private preflight; upload remains disabled.")
+    except Exception as exc:
+        raise ReviewedBaselineReplayError("REPLAY_PRIVATE_MANIFEST_BLOCKED") from exc
+    manifest_path = package / "review_manifest.json"
+    _write_private(manifest_path, _canonical(manifest))
+    audit = audit_package(package)
+    if (
+        audit.get("schema_version") != "lidousha-review-package-audit.v2"
+        or audit.get("policy_epoch") != AUDIT_POLICY_EPOCH
+        or audit.get("passed") is not True
+        or audit.get("blocking_count") != 0
+    ):
+        raise ReviewedBaselineReplayError("REPLAY_PRIVATE_PACKAGE_AUDIT_BLOCKED")
+    audit_path = package / "package-audit.json"
+    _write_private(audit_path, _canonical(audit))
+    return PrivateReplayPackage(
+        package, regular_binding(manifest_path, label="REVIEW_MANIFEST"),
+        regular_binding(audit_path, label="PACKAGE_AUDIT"),
+        ({"predicate": "FINAL_REVIEW_PACKAGE_AUDIT", "status": "PASS"},
+         {"predicate": "UPLOAD_ALLOWED", "status": "PASS_FALSE"}),
+    )
 
 
 def prepare_replay_after_image(
