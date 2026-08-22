@@ -21,6 +21,10 @@ class FixedCoverStageOptions:
     require_screenshot_direct: bool = False
     approved_punch: tuple[str, ...] | None = None
     approved_punch_receipt: Mapping[str, object] | None = None
+    # Candidate-scoped, hash-bound screen-space exclusion for an identity
+    # landmark (for example, Li Dousha's ears).  This is intentionally opt-in:
+    # ordinary staging must not invent a subject geometry from a title.
+    identity_landmark_title_exclusion: Mapping[str, object] | None = None
 
 
 def resolved_cover_mode(options: FixedCoverStageOptions, environment_mode: str) -> str:

@@ -49,7 +49,8 @@ AUTHORITY_PATH = Path(
 )
 CANDIDATE_ID = "auto_123655_771_844"
 RECORDING_DATE = "2026-08-17"
-PUNCH_CANDIDATES = ("有女友感吗？", "宿敌有点亲密")
+PUNCH_ORIGINAL = ("宿敌也有女友感？",)
+PUNCH_CANDIDATES = ("关系居然分六类", "宿敌也在其中")
 PREFLIGHT_SCHEMA = "qixi-screenshot-direct-cover-repair-preflight.v1"
 PREFLIGHT_RECEIPT_SCHEMA = "qixi-screenshot-direct-cover-repair-preflight-receipt.v1"
 JOURNAL_SCHEMA = "qixi-screenshot-direct-cover-repair-journal.v1"
@@ -117,6 +118,7 @@ def validate_authority(value: Mapping[str, object]) -> dict[str, object]:
         "upload_enabled", "title", "punch_candidates", "terminal_refresh_authority",
         "legacy_cover", "immutable_media", "title_projection_sha256",
         "allowed_mutations", "punch_semantic_receipt",
+        "identity_landmark_title_exclusion",
     }
     if (
         set(authority) != required
@@ -169,6 +171,9 @@ def validate_authority(value: Mapping[str, object]) -> dict[str, object]:
     ):
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_AUTHORITY_SCOPE_INVALID")
     _validate_sealed_punch_receipt(authority["punch_semantic_receipt"])
+    _validate_identity_landmark_title_exclusion(
+        authority["identity_landmark_title_exclusion"], generation=None,
+    )
     authority["authority_sha256"] = claimed
     return authority
 
@@ -425,9 +430,9 @@ def _validate_sealed_punch_receipt(value: object) -> dict[str, object]:
         not isinstance(claimed, str)
         or claimed != canonical_sha256(receipt)
         or receipt.get("schema_version") != "lidousha-cover-punch-semantic-review.v2"
-        or receipt.get("status") != "PASS"
+        or receipt.get("status") != "REVISED"
         or receipt.get("reason_code") is not None
-        or receipt.get("original_punch") != list(PUNCH_CANDIDATES)
+        or receipt.get("original_punch") != list(PUNCH_ORIGINAL)
         or final != list(PUNCH_CANDIDATES)
         or any(receipt.get(key) is not True for key in (
             "stranger_can_infer_event", "contains_concrete_subject",
@@ -447,7 +452,7 @@ def _validate_sealed_punch_receipt(value: object) -> dict[str, object]:
             "attempt": 1,
             "request_sha256": receipt["request_sha256"],
             "response_sha256": receipt["response_sha256"],
-            "model_status": "PASS",
+            "model_status": "REVISE",
             "validated_final_punch": list(PUNCH_CANDIDATES),
             "status": "ACCEPTED",
         }
@@ -455,6 +460,76 @@ def _validate_sealed_punch_receipt(value: object) -> dict[str, object]:
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PUNCH_RECEIPT_INVALID")
     receipt["receipt_sha256"] = claimed
     return receipt
+
+
+def _boxes_intersect(left: object, right: object) -> bool:
+    return bool(
+        isinstance(left, (list, tuple))
+        and isinstance(right, (list, tuple))
+        and len(left) == len(right) == 4
+        and left[0] < right[2]
+        and right[0] < left[2]
+        and left[1] < right[3]
+        and right[1] < left[3]
+    )
+
+
+def _validate_identity_landmark_title_exclusion(
+    value: object, *, generation: Mapping[str, object] | None,
+) -> dict[str, object]:
+    """Replay the candidate's ear-safe title geometry against final pixels."""
+
+    if not isinstance(value, Mapping) or set(value) != {
+        "schema_version", "landmark", "background_sha256", "protected_bbox", "title_zone",
+    }:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_IDENTITY_LANDMARK_INVALID")
+    protected = value.get("protected_bbox")
+    title_zone = value.get("title_zone")
+    if (
+        value.get("schema_version") != "lidousha-cover-identity-landmark-title-exclusion.v1"
+        or value.get("landmark") != "lidousha_panda_ears"
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", str(value.get("background_sha256")))
+        or any(
+            not isinstance(box, list)
+            or len(box) != 4
+            or any(isinstance(part, bool) or not isinstance(part, int) for part in box)
+            or not (0 <= box[0] < box[2] <= 1920 and 0 <= box[1] < box[3] <= 1080)
+            for box in (protected, title_zone)
+        )
+        or _boxes_intersect(protected, title_zone)
+    ):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_IDENTITY_LANDMARK_INVALID")
+    normalized = {
+        "schema_version": value["schema_version"],
+        "landmark": value["landmark"],
+        "background_sha256": value["background_sha256"],
+        "protected_bbox": list(protected),
+        "title_zone": list(title_zone),
+    }
+    if generation is None:
+        return normalized
+    evidence = generation.get("identity_landmark_title_exclusion")
+    rendered = generation.get("rendered_text_pixels")
+    text_bbox = evidence.get("text_pixel_bbox") if isinstance(evidence, Mapping) else None
+    title_zone = normalized["title_zone"]
+    if (
+        generation.get("ai_background_sha256") != normalized["background_sha256"]
+        or not isinstance(evidence, Mapping)
+        or any(evidence.get(key) != item for key, item in normalized.items())
+        or evidence.get("status") != "PASS"
+        or not isinstance(rendered, Mapping)
+        or text_bbox != rendered.get("text_pixel_bbox")
+        or not isinstance(text_bbox, list)
+        or len(text_bbox) != 4
+        or text_bbox[0] < title_zone[0]
+        or text_bbox[1] < title_zone[1]
+        or text_bbox[2] > title_zone[2]
+        or text_bbox[3] > title_zone[3]
+        or _boxes_intersect(text_bbox, normalized["protected_bbox"])
+        or rendered.get("pre_overlay_sha256") != normalized["background_sha256"]
+    ):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_IDENTITY_LANDMARK_DRIFT")
+    return normalized
 
 
 def sealed_punch_semantic_receipt(
@@ -589,6 +664,9 @@ def _production_stage_cover(
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_STAGE_INPUT_INVALID") from exc
     if not isinstance(story, Mapping):
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_STAGE_INPUT_INVALID")
+    identity_exclusion = _validate_identity_landmark_title_exclusion(
+        authority["identity_landmark_title_exclusion"], generation=None,
+    )
     def image_edit_trap(**_kwargs: object) -> dict[str, object]:
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_IMAGE_EDIT_FORBIDDEN")
     result = _stage_lidousha_ai_cover(
@@ -601,6 +679,7 @@ def _production_stage_cover(
             require_screenshot_direct=require_screenshot_direct,
             approved_punch=approved_punch,
             approved_punch_receipt=semantic_receipt,
+            identity_landmark_title_exclusion=identity_exclusion,
         ),
         image_edit=image_edit_trap,
         enforce_final_host_identity=True,
@@ -624,6 +703,7 @@ def _production_stage_cover(
         or generation["thumbnail_text_gate"].get("status") != "PASS"
     ):
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_SCREENSHOT_GATE_BLOCKED")
+    _validate_identity_landmark_title_exclusion(identity_exclusion, generation=generation)
     route = generation["route_decision"]
     required_participants = route.get("required_participant_ids")
     if not isinstance(required_participants, list):
@@ -674,6 +754,7 @@ def _production_stage_cover(
         story=story,
         package_root=Path(logical_cover).parent,
         after=after,
+        identity_landmark_title_exclusion=identity_exclusion,
     )
     return {"generation": relocated, "cover_path": staged, "sidecars": sidecars,
             "logical_cover_path": logical_cover,
@@ -688,19 +769,29 @@ _RELOCATED_GATE_REASON_CODES = {
     "cover_final_participant_identity": "COVER_REPAIR_RELOCATED_PARTICIPANT_INVALID",
     "cover_punch_semantics": "COVER_REPAIR_RELOCATED_PUNCH_INVALID",
     "cover_materialized_hashes": "COVER_REPAIR_RELOCATED_MATERIALIZED_INVALID",
+    "cover_identity_landmark": "COVER_REPAIR_RELOCATED_IDENTITY_LANDMARK_INVALID",
 }
 
 
 def _replay_relocated_cover_gates(
     *, generation: Mapping[str, object], story: Mapping[str, object],
     package_root: Path, after: Mapping[Path, bytes],
+    identity_landmark_title_exclusion: Mapping[str, object] | None = None,
 ) -> list[dict[str, str]]:
     """Run all independent post-relocation predicates without leaking paths."""
 
     matrix: list[dict[str, str]] = []
-    for predicate_id, check in replayed_cover_gate_callables(
+    checks = list(replayed_cover_gate_callables(
         generation, story=story, package_root=package_root, after=after,
-    ):
+    ))
+    if identity_landmark_title_exclusion is not None:
+        checks.append((
+            "cover_identity_landmark",
+            lambda: _validate_identity_landmark_title_exclusion(
+                identity_landmark_title_exclusion, generation=generation,
+            ),
+        ))
+    for predicate_id, check in checks:
         try:
             check()
         except Exception:
@@ -881,7 +972,7 @@ def run_canonical_full_dry(
     semantic = review_punch(
         title=title, story=story, cover_text=cover_text, candidates=PUNCH_CANDIDATES
     )
-    if not isinstance(semantic, Mapping) or semantic.get("status") != "PASS":
+    if not isinstance(semantic, Mapping) or semantic.get("status") not in {"PASS", "REVISED"}:
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PUNCH_SEMANTIC_BLOCKED")
     punch = require_repaired_punch(semantic.get("final_punch"))
     def stage(root: Path) -> Mapping[str, object]:

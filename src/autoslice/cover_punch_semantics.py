@@ -88,6 +88,17 @@ def punch_line_em_width(text: str) -> float:
     return sum(0.5 if " " <= char <= "~" else 1.0 for char in text)
 
 
+def wrap_approved_punch_line(fragment: str, *, max_em: float = PUNCH_LINE_MAX_EM) -> list[str]:
+    """Keep one reviewed fragment as one immutable physical line."""
+
+    value = fragment.strip()
+    if not value:
+        return []
+    if punch_line_em_width(value) > max_em:
+        raise ValueError("COVER_PUNCH_LINE_REQUIRES_CPA_REVISE")
+    return [value]
+
+
 def cover_thumbnail_lines_are_readable(rendered_lines: object) -> bool:
     """Return whether the final hook is a literal 1-2 line thumbnail unit."""
 

@@ -22,8 +22,8 @@ def _sealed_punch_receipt(
 ) -> dict[str, object]:
     body: dict[str, object] = {
         "schema_version": "lidousha-cover-punch-semantic-review.v2",
-        "status": "PASS", "reason_code": None,
-        "original_punch": list(repair.PUNCH_CANDIDATES),
+        "status": "REVISED", "reason_code": None,
+        "original_punch": list(repair.PUNCH_ORIGINAL),
         "final_punch": list(repair.PUNCH_CANDIDATES),
         "stranger_can_infer_event": True, "contains_concrete_subject": True,
         "contains_action_or_conflict": True, "no_fabricated_fact": True,
@@ -35,7 +35,7 @@ def _sealed_punch_receipt(
         "attempt_count": 1,
         "attempts": [{
             "attempt": 1, "request_sha256": "1" * 64, "response_sha256": "2" * 64,
-            "model_status": "PASS", "validated_final_punch": list(repair.PUNCH_CANDIDATES),
+            "model_status": "REVISE", "validated_final_punch": list(repair.PUNCH_CANDIDATES),
             "status": "ACCEPTED",
         }],
     }
@@ -56,6 +56,13 @@ def _authority(generation: dict[str, object], cover: bytes, qc: bytes) -> dict[s
         "title": {"value": "title", "sha256": "sha256:" + hashlib.sha256(b"title").hexdigest()},
         "punch_candidates": list(repair.PUNCH_CANDIDATES),
         "punch_semantic_receipt": _sealed_punch_receipt(),
+        "identity_landmark_title_exclusion": {
+            "schema_version": "lidousha-cover-identity-landmark-title-exclusion.v1",
+            "landmark": "lidousha_panda_ears",
+            "background_sha256": "sha256:" + "6" * 64,
+            "protected_bbox": [700, 120, 1230, 310],
+            "title_zone": [260, 640, 1660, 1070],
+        },
         "terminal_refresh_authority": {"relative_path": "assets/x.json", "authority_sha256": "sha256:" + "1" * 64},
         "legacy_cover": {
             "final_cover": {"path": "/runtime/cover.png", "sha256": "sha256:" + hashlib.sha256(cover).hexdigest(), "bytes": len(cover)},
@@ -99,9 +106,80 @@ def test_legacy_screenshot_evidence_is_subtree_bound() -> None:
 
 
 def test_repaired_punch_is_only_from_fixed_candidate_pool() -> None:
-    assert repair.require_repaired_punch(["有女友感吗？", "宿敌有点亲密"]) == repair.PUNCH_CANDIDATES
+    assert repair.require_repaired_punch(list(repair.PUNCH_CANDIDATES)) == repair.PUNCH_CANDIDATES
     with pytest.raises(repair.QixiScreenshotDirectCoverRepairError, match="OUTSIDE_POOL"):
         repair.require_repaired_punch(["任意新梗"])
+
+
+def test_identity_landmark_exclusion_is_hash_bound_and_replayed() -> None:
+    exclusion = {
+        "schema_version": "lidousha-cover-identity-landmark-title-exclusion.v1",
+        "landmark": "lidousha_panda_ears",
+        "background_sha256": "sha256:" + "a" * 64,
+        "protected_bbox": [700, 120, 1230, 310],
+        "title_zone": [260, 640, 1660, 1070],
+    }
+    generation = {
+        "ai_background_sha256": exclusion["background_sha256"],
+        "identity_landmark_title_exclusion": {
+            **exclusion, "status": "PASS", "text_pixel_bbox": [270, 690, 1600, 980],
+        },
+        "rendered_text_pixels": {
+            "pre_overlay_sha256": exclusion["background_sha256"],
+            "text_pixel_bbox": [270, 690, 1600, 980],
+        },
+    }
+    assert repair._validate_identity_landmark_title_exclusion(
+        exclusion, generation=generation,
+    ) == exclusion
+    generation["rendered_text_pixels"]["text_pixel_bbox"] = [700, 120, 1230, 310]
+    with pytest.raises(repair.QixiScreenshotDirectCoverRepairError, match="IDENTITY_LANDMARK_DRIFT"):
+        repair._validate_identity_landmark_title_exclusion(exclusion, generation=generation)
+    generation["rendered_text_pixels"]["text_pixel_bbox"] = [270, 690, 1600, 980]
+    generation["identity_landmark_title_exclusion"]["text_pixel_bbox"] = [100, 690, 1600, 980]
+    generation["rendered_text_pixels"]["text_pixel_bbox"] = [100, 690, 1600, 980]
+    with pytest.raises(repair.QixiScreenshotDirectCoverRepairError, match="IDENTITY_LANDMARK_DRIFT"):
+        repair._validate_identity_landmark_title_exclusion(exclusion, generation=generation)
+
+
+def test_identity_landmark_exclusion_moves_fixed_title_below_ears(tmp_path) -> None:
+    from PIL import Image
+
+    from src.autoslice.cover_generation import (
+        LidoushaCoverArtDirection,
+        _overlay_lidousha_cover_title,
+    )
+
+    background = tmp_path / "background.png"
+    Image.new("RGB", (1920, 1080), (210, 120, 120)).save(background)
+    background_sha = "sha256:" + hashlib.sha256(background.read_bytes()).hexdigest()
+    exclusion = {
+        "schema_version": "lidousha-cover-identity-landmark-title-exclusion.v1",
+        "landmark": "lidousha_panda_ears",
+        "background_sha256": background_sha,
+        "protected_bbox": [700, 120, 1230, 310],
+        "title_zone": [260, 640, 1660, 1070],
+    }
+    direction = LidoushaCoverArtDirection(
+        role="shy_cute_default", expression_en="soft smile",
+        background_style="coral-checker-pop", layout="banner", hook_color="purple",
+        is_song=False, cover_punch=repair.PUNCH_CANDIDATES,
+    )
+    evidence = _overlay_lidousha_cover_title(
+        background, tmp_path / "cover.png", cover_text="小李有女友感吗？宿敌是否有点亲密了",
+        art_direction=direction, identity_landmark_title_exclusion=exclusion,
+    )
+    identity = evidence["identity_landmark_title_exclusion"]
+    assert identity["status"] == "PASS"
+    assert identity["text_pixel_bbox"][1] >= exclusion["title_zone"][1]
+    assert identity["text_pixel_bbox"][1] >= exclusion["protected_bbox"][3]
+    broken = dict(exclusion)
+    broken["background_sha256"] = "sha256:" + "0" * 64
+    with pytest.raises(ValueError, match="IDENTITY_LANDMARK_EXCLUSION_INVALID"):
+        _overlay_lidousha_cover_title(
+            background, tmp_path / "broken.png", cover_text="x",
+            art_direction=direction, identity_landmark_title_exclusion=broken,
+        )
 
 
 def test_sealed_punch_receipt_is_hash_bound_and_revalidated_against_runtime_text() -> None:
@@ -158,7 +236,7 @@ def test_fixed_full_dry_reuses_sealed_punch_without_punch_provider(
             cover_text=cover_text,
             candidates=repair.PUNCH_CANDIDATES,
         )
-        assert review["status"] == "PASS"
+        assert review["status"] == "REVISED"
         return {"status": "FULL_DRY_RUN_PASS"}
 
     monkeypatch.setattr(repair, "run_canonical_full_dry", canonical)

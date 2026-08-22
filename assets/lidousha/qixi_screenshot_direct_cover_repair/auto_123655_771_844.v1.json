@@ -5,26 +5,33 @@
   "runtime_root": "/opt/bilive/autoslice",
   "upload_enabled": false,
   "title": {"value": "【李豆沙】小李有女友感吗？宿敌是否有点亲密了", "sha256": "sha256:da31a09ec4473efc1579b48aeb9169c32be054735e87ef83042f265492ea784d"},
-  "punch_candidates": ["有女友感吗？", "宿敌有点亲密"],
+  "punch_candidates": ["关系居然分六类", "宿敌也在其中"],
   "punch_semantic_receipt": {
     "schema_version": "lidousha-cover-punch-semantic-review.v2",
-    "status": "PASS",
+    "status": "REVISED",
     "reason_code": null,
-    "original_punch": ["有女友感吗？", "宿敌有点亲密"],
-    "final_punch": ["有女友感吗？", "宿敌有点亲密"],
+    "original_punch": ["宿敌也有女友感？"],
+    "final_punch": ["关系居然分六类", "宿敌也在其中"],
     "stranger_can_infer_event": true,
     "contains_concrete_subject": true,
     "contains_action_or_conflict": true,
     "no_fabricated_fact": true,
-    "story_summary": "弹幕追问小李有没有女友感，她却把关系说成宿敌却又有点亲密。",
-    "click_motivation": "女友感与宿敌亲密形成反差，观众会想点开看她如何给这段关系下定义。",
+    "story_summary": "小李把彼此关系分成女儿、妈妈、主人、朋友、赛博桌宠和宿敌六类，连宿敌也被纳入其中。",
+    "click_motivation": "关系分类离谱又反差，观众会想点开看宿敌为何也能和亲密关系并列。",
     "cover_text_sha256": "28548aa9fe31bf86032f7f37a3b88fd666668ec78771e602c9dd3da7805d4390",
     "story_hook_sha256": "2a06d384f069ddfea802abb3c208392460b500dfbc534258295319c5e7624221",
-    "request_sha256": "39f6e2a70243ba960c0252eaa7957c0c305008e525a91dc3fbac6e85cc541add",
-    "response_sha256": "fa6e30e4c2da90b995f19c68fce11149eff4ae77e6f086a7369ec01a162b7b3c",
+    "request_sha256": "b935e0a74e31c5206d5c9ad21db2914c239d1064aaebaffaee3b72c95c4e3fe7",
+    "response_sha256": "95f0b4a241bf0457817f0aa8c3e6c39c399ff515bc08f718e3a9597cbf20bde1",
     "attempt_count": 1,
-    "attempts": [{"attempt": 1, "request_sha256": "39f6e2a70243ba960c0252eaa7957c0c305008e525a91dc3fbac6e85cc541add", "response_sha256": "fa6e30e4c2da90b995f19c68fce11149eff4ae77e6f086a7369ec01a162b7b3c", "model_status": "PASS", "validated_final_punch": ["有女友感吗？", "宿敌有点亲密"], "status": "ACCEPTED"}],
-    "receipt_sha256": "sha256:6a9c7f35c9a3c9fa945874f9367042c4fccf62fc4752f80e5ed7fbb83572b0e7"
+    "attempts": [{"attempt": 1, "request_sha256": "b935e0a74e31c5206d5c9ad21db2914c239d1064aaebaffaee3b72c95c4e3fe7", "response_sha256": "95f0b4a241bf0457817f0aa8c3e6c39c399ff515bc08f718e3a9597cbf20bde1", "model_status": "REVISE", "validated_final_punch": ["关系居然分六类", "宿敌也在其中"], "status": "ACCEPTED"}],
+    "receipt_sha256": "sha256:0c48b3fb0408cfcfaf0dc3497b32d3ff87bed463bf8c22f7e504f04bcdc8562c"
+  },
+  "identity_landmark_title_exclusion": {
+    "schema_version": "lidousha-cover-identity-landmark-title-exclusion.v1",
+    "landmark": "lidousha_panda_ears",
+    "background_sha256": "sha256:fe67da90dd587921063adc601eac198d2cc79647e59b2715ec601185eab45fff",
+    "protected_bbox": [700, 120, 1230, 310],
+    "title_zone": [260, 640, 1660, 1070]
   },
   "terminal_refresh_authority": {"relative_path": "assets/lidousha/qixi_terminal_evidence_refresh/auto_123655_771_844.v1.json", "authority_sha256": "sha256:4298f33bf342507a0b5e234ebaf1d2a63ca38dab8895cb10e011cca25de94f42"},
   "legacy_cover": {
@@ -59,5 +66,5 @@
     "publish": {"allowed": ["/cover_generation", "/cover_path", "/artifact_hashes/cover_sha256", "/title_cover_joint_qc"], "required": ["/cover_generation", "/cover_path", "/artifact_hashes/cover_sha256", "/title_cover_joint_qc"]},
     "state": {"allowed": ["/picks/*/cover_path", "/picks/*/cover_generation", "/picks/*/cover_sha256"], "required": ["/picks/*/cover_path", "/picks/*/cover_generation", "/picks/*/cover_sha256"]}
   },
-  "authority_sha256": "sha256:42d97db47ac4722cb3c0e9d692ed26b4206cf565940aa6dfa7bc31797861cfd2"
+  "authority_sha256": "sha256:b840388257b5357ba859478b5e29fb4477a95aa166f28f8e79891acdf8824f32"
 }

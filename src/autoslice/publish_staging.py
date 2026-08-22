@@ -1688,7 +1688,6 @@ def _stage_lidousha_ai_cover(
     evidence_dir = artifact_root / "evidence"
     for directory in (cover_refs_dir, ai_dir, covers_dir, evidence_dir):
         directory.mkdir(parents=True, exist_ok=True)
-
     (
         reference_path,
         frame_selection,
@@ -1705,7 +1704,6 @@ def _stage_lidousha_ai_cover(
     if reference_block is not None:
         return reference_block
     assert reference_path is not None
-
     source_composition_verification: Mapping[str, object] | None = None
     if enforce_final_host_identity:
         active_source_composition_verifier = (
@@ -1758,7 +1756,6 @@ def _stage_lidousha_ai_cover(
             "path": str(source_composition_path),
             "sha256": "sha256:" + _sha256(source_composition_path),
         }
-
     emote_library = load_emote_library(ROOT)
     art_direction = fixed_art_direction(
         _lidousha_cover_art_direction, candidate_id=candidate_id, title=title,
@@ -1772,7 +1769,6 @@ def _stage_lidousha_ai_cover(
             cover_generation, ["COVER_APPROVED_PUNCH_RECEIPT_INVALID"],
             "fixed cover repair requires its canonical approved-punch receipt",
         )
-
     # 路由：语义/人物证据先行，几何只决定已经验真人物的构图处理。
     treatment, route = _build_lidousha_cover_route(
         cover_generation=cover_generation,
@@ -1904,6 +1900,9 @@ def _stage_lidousha_ai_cover(
             base_url=base_url,
             api_key=api_key,
             full_text_cover_contract=full_text_cover_contract,
+            identity_landmark_title_exclusion=(
+                fixed_options.identity_landmark_title_exclusion
+            ),
         )
         result = _enforce_final_talk_cover_thumbnail_gate(result)
         if "SCREENSHOT_ROUTE_MATERIALIZATION_FAILED" not in (result.get("reason_codes") or []):
@@ -2155,14 +2154,13 @@ def _stage_screenshot_direct_cover(
     base_url: str = "",
     full_text_cover_contract: Mapping[str, object] | None = None,
     api_key: str = "",
+    identity_landmark_title_exclusion: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """截图路线封面：直出或 +CPA 轻微调；物化失败原路线内阻断。
-
     表现力选帧的最佳帧 → 裁切（吃掉弹幕栏/字幕带）→ [polish：CPA 逐像素保真
     修图（清 UI 杂物+画质），失败显式降级直出] → 叠梗字。截图/裁切/叠字
     任一步失败都保留证据并 fail closed，绝不静默切换成全图 AI 重绘。
     """
-
     # 手定标题只锁投稿文字 authority，不决定视觉路线或封面全文。所有 talk
     # 标题有 CPA 短梗时都用 punch 版式；只有独立显式的 full-text-cover
     # contract 才能授权完整 cover_text，否则最终缩略图门会 fail closed。
@@ -2241,6 +2239,7 @@ def _stage_screenshot_direct_cover(
             api_key=api_key,
             verifier=_verify_polish_face_integrity,
             full_text_cover_contract=full_text_cover_contract,
+            identity_landmark_title_exclusion=identity_landmark_title_exclusion,
         )
         (
             poster_evidence,

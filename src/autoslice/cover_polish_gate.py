@@ -182,6 +182,7 @@ def _compose_screenshot_cover_with_face_gate(
     api_key: str,
     verifier: Callable[..., dict[str, object]] | None = None,
     full_text_cover_contract: object = None,
+    identity_landmark_title_exclusion: Mapping[str, object] | None = None,
 ) -> tuple[dict[str, object], dict[str, object], dict[str, object] | None]:
     """Compose the poster card + title and face-gate polished finals.
 
@@ -226,6 +227,7 @@ def _compose_screenshot_cover_with_face_gate(
             cover_text=cover_text,
             art_direction=art_direction,
             full_text_cover_contract=full_text_cover_contract,
+            identity_landmark_title_exclusion=identity_landmark_title_exclusion,
         )
         if method != "screenshot_polish":
             break
