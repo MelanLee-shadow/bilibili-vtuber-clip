@@ -595,6 +595,49 @@ def _provider_evidence(
     }
 
 
+def _observed_source_fact_receipt_sha256s(
+    closure: object, runtime: object, targets: Mapping[Path, bytes],
+) -> list[str]:
+    """Observe only the canonical receipt projected into a private after-image.
+
+    Provider callbacks are untrusted transport boundaries.  In particular, do
+    not hash their raw response (which can contain prompt, completion or
+    credentials).  A diagnostic may name a receipt only after the canonical
+    private after-image has materialized all three required mirrors and their
+    values agree.  The emitted value is the canonical receipt digest alone.
+    """
+
+    try:
+        record_payload = targets[runtime.artifact_paths["record"]]
+        publish_payload = targets[runtime.artifact_paths["publish"]]
+        record = json.loads(record_payload)
+        publish = json.loads(publish_payload)
+        if not isinstance(record, Mapping) or not isinstance(publish, Mapping):
+            return []
+        story = record.get("story_contract")
+        staging = record.get("publish_staging")
+        if not isinstance(story, Mapping) or not isinstance(staging, Mapping):
+            return []
+        receipt = staging.get("source_fact_review")
+        if (
+            not isinstance(receipt, Mapping)
+            or story.get("source_fact_review") != receipt
+            or publish.get("source_fact_review") != receipt
+        ):
+            return []
+        digest = closure._canonical_sha256(dict(receipt))
+        if (
+            not isinstance(digest, str)
+            or not digest.startswith("sha256:")
+            or len(digest) != 71
+        ):
+            return []
+        return [digest]
+    except (KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+        # No partial/malformed after-image is evidence of a provider receipt.
+        return []
+
+
 def _validate_provider_evidence(value: Mapping[str, Mapping[str, object]]) -> None:
     if set(value) != {"source_fact", "cover"}:
         raise RuntimeError("diagnostic provider evidence lanes drift")
@@ -661,6 +704,10 @@ def _run_apply(
                         closure, stage_root
                     )
                 else:
+                    if source_attempt is ProviderAttemptStatus.ATTEMPTED:
+                        source_receipts[:] = _observed_source_fact_receipt_sha256s(
+                            closure, inputs, targets
+                        )
                     before = _safe_before(targets)
                     matrix, _ = collect_matrix(
                         authority=normalized,
@@ -817,6 +864,10 @@ def run(mode: Mode, *, repo_root: Path, runtime_root: Path,
             stage_publish=stage_publish or closure._stage_publish_draft,
             observation=observation,
         )
+        if source_attempt is ProviderAttemptStatus.ATTEMPTED:
+            source_receipts[:] = _observed_source_fact_receipt_sha256s(
+                closure, runtime, targets
+            )
         before = _safe_before(targets)
         matrix, _ = collect_matrix(
             authority=normalized,

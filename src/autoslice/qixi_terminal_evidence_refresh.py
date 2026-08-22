@@ -1703,10 +1703,14 @@ def validate_committed_refresh(*, repo_root: Path = ROOT) -> None:
     )
 
 
-def committed_successor_snapshot(
+def _committed_successor_snapshot(
     *, repo_root: Path = ROOT, allow_verified_cover_successor: bool = False,
-) -> dict[str, bytes]:
-    """Return the validated terminal successor, never a mutable postimage read.
+) -> tuple[dict[str, bytes], dict[str, bytes]]:
+    """Read the committed journal/receipt once and return bound after/before images.
+
+    A caller which needs both images must not validate the after image and
+    subsequently reopen the mutable journal for the before image.  Keeping the
+    pair in one verified snapshot closes that TOCTOU seam.
 
     Cover closure runs strictly after the terminal transaction.  Its record,
     delivery, publish, state and chat inputs must therefore be taken from the
@@ -1722,6 +1726,7 @@ def committed_successor_snapshot(
     if journal.get("status") != "COMMITTED" or not isinstance(entries, list):
         raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_COMMIT_MISSING")
     result: dict[str, bytes] = {}
+    before: dict[str, bytes] = {}
     for row in entries:
         if not isinstance(row, Mapping) or not isinstance(row.get("role"), str):
             raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_JOURNAL_SCHEMA_INVALID")
@@ -1730,14 +1735,15 @@ def committed_successor_snapshot(
             raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_JOURNAL_SCHEMA_INVALID")
         try:
             result[role] = base64.b64decode(str(row["after_bytes_b64"]), validate=True)
+            before[role] = base64.b64decode(str(row["before_bytes_b64"]), validate=True)
         except (ValueError, UnicodeEncodeError) as exc:
             raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_JOURNAL_SCHEMA_INVALID") from exc
-    if set(result) != {"chat", "record", "delivery_record", "publish", "state"}:
+    if (
+        set(result) != {"chat", "record", "delivery_record", "publish", "state"}
+        or set(before) != {"chat", "record", "delivery_record", "publish", "state"}
+    ):
         raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_JOURNAL_SCHEMA_INVALID")
-    _validate_journal(journal, authority=authority, before={
-        role: base64.b64decode(str(row["before_bytes_b64"]), validate=True)
-        for row in entries for role in [str(row["role"])]
-    }, after=result)
+    _validate_journal(journal, authority=authority, before=before, after=result)
     receipt = _json_document(_read_regular(root / "receipt.json"), "RECEIPT")
     if receipt != _receipt_for(journal):
         raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_RECEIPT_DRIFT")
@@ -1755,7 +1761,36 @@ def committed_successor_snapshot(
                 f"QIXI_TERMINAL_REFRESH_{role.upper()}_DRIFT"
             )
         result[role] = payload
+    return result, before
+
+
+def committed_successor_snapshot(
+    *, repo_root: Path = ROOT, allow_verified_cover_successor: bool = False,
+) -> dict[str, bytes]:
+    """Return the validated terminal successor, never a mutable postimage read.
+
+    Cover closure runs strictly after the terminal transaction.  Its record,
+    delivery, publish, state and chat inputs must therefore be taken from the
+    COMMITTED journal's exact after bytes, while immutable artifacts still
+    replay their sealed preimage descriptors.  Calling ``validate_runtime``
+    here would incorrectly require the old JSON preimage after a successful
+    terminal commit.
+    """
+
+    result, _before = _committed_successor_snapshot(
+        repo_root=repo_root, allow_verified_cover_successor=allow_verified_cover_successor
+    )
     return result
+
+
+def committed_successor_snapshot_with_before(
+    *, repo_root: Path = ROOT, allow_verified_cover_successor: bool = False,
+) -> tuple[dict[str, bytes], dict[str, bytes]]:
+    """Return the successor and predecessor image from one verified snapshot."""
+
+    return _committed_successor_snapshot(
+        repo_root=repo_root, allow_verified_cover_successor=allow_verified_cover_successor
+    )
 
 
 def build_staged_refresh(

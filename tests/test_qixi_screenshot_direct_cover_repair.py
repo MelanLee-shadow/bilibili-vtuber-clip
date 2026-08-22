@@ -423,8 +423,17 @@ def test_committed_cover_successor_bridge_replays_terminal_before_chat(
 
     monkeypatch.setattr(repair, "load_authority", lambda _root: authority)
     monkeypatch.setattr(terminal, "load_authority", lambda _root: terminal_authority)
-    monkeypatch.setattr(terminal, "committed_successor_snapshot", lambda **_kwargs: roles)
-    monkeypatch.setattr(repair, "_terminal_before_image", lambda **_kwargs: before)
+    snapshot_calls: list[dict[str, object]] = []
+
+    def one_bound_terminal_snapshot(**kwargs: object) -> tuple[dict[str, bytes], dict[str, bytes]]:
+        snapshot_calls.append(dict(kwargs))
+        return roles, before
+
+    monkeypatch.setattr(
+        terminal,
+        "committed_successor_snapshot_with_before",
+        one_bound_terminal_snapshot,
+    )
     monkeypatch.setattr(
         repair, "_terminal_preimage",
         lambda *_args, **kwargs: (bound_roots.append(kwargs["repo_root"]), terminal_preimage)[1],
@@ -464,6 +473,8 @@ def test_committed_cover_successor_bridge_replays_terminal_before_chat(
     assert bridge["chat"] == roles["chat"]
     assert sealed_seen == [before["chat"]]
     assert bound_roots == [tmp_path, tmp_path]
+    assert snapshot_calls == [{"repo_root": tmp_path, "allow_verified_cover_successor": True}]
+    assert not hasattr(repair, "_terminal_before_image")
 
     receipt_path.write_text("{}", encoding="utf-8")
     receipt_path.chmod(0o600)

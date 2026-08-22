@@ -961,8 +961,10 @@ def test_provider_response_is_not_mislabeled_as_a_persisted_receipt(
 ) -> None:
     repo, runtime, authority, _paths = _fixture(tmp_path)
 
+    raw_response = "unsealed response prompt=do-not-disclose-token-abc123"
+
     def calls_source_then_fails(_record: dict[str, object], **kwargs: object) -> dict[str, object]:
-        assert kwargs["source_fact_llm_call"]("provider payload") == "unsealed response"
+        assert kwargs["source_fact_llm_call"]("provider payload") == raw_response
         raise closure.QixiPostCorrectionPublicSurfaceError("stage rejected after provider call")
 
     result = closure_modes.run(
@@ -971,7 +973,7 @@ def test_provider_response_is_not_mislabeled_as_a_persisted_receipt(
         runtime_root=runtime,
         authority=authority,
         stage_publish=calls_source_then_fails,
-        source_fact_llm_call=lambda _prompt: "unsealed response",
+        source_fact_llm_call=lambda _prompt: raw_response,
         _test_deployed_seal={
             "deployed_commit": "b" * 40,
             "authority_file_sha256": "sha256:" + "c" * 64,
@@ -984,6 +986,46 @@ def test_provider_response_is_not_mislabeled_as_a_persisted_receipt(
         "source_fact": {"attempt_status": "ATTEMPTED", "receipt_sha256s": []},
         "cover": {"attempt_status": "UNKNOWN", "receipt_sha256s": []},
     }
+    assert raw_response not in json.dumps(receipt, ensure_ascii=False)
+
+
+def test_private_after_image_emits_only_canonical_source_fact_receipt_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, runtime, authority, _paths = _fixture(tmp_path)
+    raw_response = "completion=do-not-disclose-token-abc123"
+
+    def provider_backed_stage(record: dict[str, object], **kwargs: object) -> dict[str, object]:
+        # This proves that a callback response is never the diagnostic value:
+        # only the materialized three-way source-fact mirror is observed.
+        assert kwargs["source_fact_llm_call"]("private provider prompt") == raw_response
+        return _fake_stage(record, **kwargs)
+
+    monkeypatch.setattr(
+        closure_modes,
+        "_stage_manifest",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("force diagnostic")),
+    )
+    result = closure_modes.run(
+        closure_modes.Mode.FULL_DRY_RUN,
+        repo_root=repo,
+        runtime_root=runtime,
+        authority=authority,
+        stage_publish=provider_backed_stage,
+        source_fact_llm_call=lambda _prompt: raw_response,
+        _test_deployed_seal={
+            "deployed_commit": "b" * 40,
+            "authority_file_sha256": "sha256:" + "c" * 64,
+            "deployed_manifest_sha256": "sha256:" + "d" * 64,
+            "deployed_manifest_file_sha256": "sha256:" + "e" * 64,
+        },
+    )
+    receipt = json.loads(Path(str(result["diagnostic_receipt"])).read_text())
+    hashes = receipt["provider_evidence"]["source_fact"]["receipt_sha256s"]
+    assert result["status"] == "FULL_DRY_RUN_BLOCKED"
+    assert receipt["provider_evidence"]["source_fact"]["attempt_status"] == "ATTEMPTED"
+    assert len(hashes) == 1 and hashes[0].startswith("sha256:")
+    assert raw_response not in json.dumps(receipt, ensure_ascii=False)
 
 
 def test_private_stage_manifest_hashes_untrusted_names_without_echoing_them(tmp_path: Path) -> None:

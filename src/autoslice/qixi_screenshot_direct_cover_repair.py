@@ -251,41 +251,6 @@ def snapshot_fixed_runtime(authority: Mapping[str, object], *, repo_root: Path =
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_RUNTIME_DRIFT") from exc
 
 
-def _terminal_before_image(
-    *, repo_root: Path, authority: Mapping[str, object], terminal: object,
-) -> dict[str, bytes]:
-    """Recover terminal preimages only after its journal and receipt were replayed."""
-
-    terminal_authority = terminal.load_authority(repo_root)
-    binding = authority["terminal_refresh_authority"]
-    assert isinstance(binding, Mapping)
-    if terminal_authority.get("authority_sha256") != binding.get("authority_sha256"):
-        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_TERMINAL_SUCCESSOR_DRIFT")
-    journal = terminal._json_document(
-        terminal._read_regular(terminal._refresh_root(terminal_authority) / "journal.json"),
-        "JOURNAL",
-    )
-    entries = journal.get("entries")
-    if not isinstance(entries, list):
-        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_TERMINAL_SUCCESSOR_DRIFT")
-    before: dict[str, bytes] = {}
-    for entry in entries:
-        if not isinstance(entry, Mapping) or not isinstance(entry.get("role"), str):
-            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_TERMINAL_SUCCESSOR_DRIFT")
-        role = str(entry["role"])
-        if role in before:
-            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_TERMINAL_SUCCESSOR_DRIFT")
-        try:
-            before[role] = base64.b64decode(str(entry["before_bytes_b64"]), validate=True)
-        except (ValueError, UnicodeEncodeError) as exc:
-            raise QixiScreenshotDirectCoverRepairError(
-                "COVER_REPAIR_TERMINAL_SUCCESSOR_DRIFT"
-            ) from exc
-    if set(before) != {"chat", "record", "delivery_record", "publish", "state"}:
-        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_TERMINAL_SUCCESSOR_DRIFT")
-    return before
-
-
 def committed_cover_successor_snapshot(*, repo_root: Path = ROOT) -> dict[str, bytes]:
     """Replay the only legal terminal→cover successor chain without live fallback.
 
@@ -305,11 +270,8 @@ def committed_cover_successor_snapshot(*, repo_root: Path = ROOT) -> dict[str, b
 
         authority = load_authority(repo_root)
         terminal_authority = terminal.load_authority(repo_root)
-        terminal_runtime = terminal.committed_successor_snapshot(
+        terminal_runtime, terminal_before = terminal.committed_successor_snapshot_with_before(
             repo_root=repo_root, allow_verified_cover_successor=True,
-        )
-        terminal_before = _terminal_before_image(
-            repo_root=repo_root, authority=authority, terminal=terminal,
         )
         if set(terminal_runtime) != {
             "chat", "record", "delivery_record", "publish", "state",

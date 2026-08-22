@@ -8,7 +8,7 @@
 #   AGENTS.md README.md; ignored files excluded)
 # - verifies the complete staged file list and SHA-256 manifest
 # - owns a remote deploy guard from initial observation through final cleanup
-# - pauses new runs, waits for runner.lock, then swaps every managed component with rollback
+# - pauses new runs, drains tick.lock then runner.lock, and swaps every managed component with rollback
 # - verifies rollback against a full path/type/mode/SHA-256 manifest
 # - seals DEPLOYED_COMMIT plus a commit-bound authority-asset manifest only
 #   after every runtime/external-file and complete-tree check succeeds
@@ -1269,7 +1269,12 @@ LOCAL_MANIFEST_PY
 # process is interrupted while the remote flock is still waiting, cleanup must
 # know that the empty stop file belongs to this deployment and remove it.
 DISABLED_TOUCHED=1
-ssh "$HOST" "touch '$DISABLED'; /usr/bin/flock -w 7200 '$REMOTE_BASE/runner.lock' true"
+# Stop new cron work before draining it.  The long-lived lease belongs to the
+# entire runner tick; runner.lock remains a short commit mutex inside Python.
+# Do not nest these waits: a deployment never holds tick.lock while waiting for
+# a manual runner commit lease, so lock order stays tick -> runner without a
+# deploy/tick mutual wait.
+ssh "$HOST" "touch '$DISABLED'; /usr/bin/flock -w 7200 '$REMOTE_BASE/tick.lock' true; /usr/bin/flock -w 7200 '$REMOTE_BASE/runner.lock' true"
 ssh "$HOST" "test ! -e '$STAGE' && test ! -e '$BACKUP' && mkdir '$STAGE'"
 STAGE_CREATED=1
 
@@ -2157,6 +2162,7 @@ PY_FRESH
 new_adapter_source=/opt/bilive/autoslice/repo/ops/recording/bililive_recorder_adapter.py
 host_adapter_path=/opt/bilive/recording/bililive_recorder_adapter.py
 watchdog_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/watchdog.lock /opt/bilive/autoslice/free_mount_watchdog.sh >> /opt/bilive/autoslice/logs/watchdog.log 2>&1'
+runner_cron='*/10 * * * * /usr/bin/flock -n /opt/bilive/autoslice/tick.lock env AUTOSLICE_BASE=/opt/bilive/autoslice python3 /opt/bilive/autoslice/repo/scripts/free_session_autoslice.py --once >> /opt/bilive/autoslice/logs/runner.log 2>&1'
 upload_fatal_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/upload-fatal-sentinel.lock /opt/bilive/autoslice/upload_fatal_sentinel.sh >> /opt/bilive/autoslice/logs/upload-fatal-sentinel.log 2>&1'
 timely_terms_cron='17 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/timely-terms.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_timely_terms.py --cache-dir /opt/bilive/autoslice/cache/timely-term-crawler --write /opt/bilive/autoslice/state/timely_terms.json'\'' >> /opt/bilive/autoslice/logs/timely-terms.log 2>&1'
 streamer_registry_cron='7 6 * * 0 /usr/bin/flock -n /opt/bilive/autoslice/streamer-registry.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_streamer_registry.py --cache-dir /opt/bilive/autoslice/cache/streamer-registry-crawler --write /opt/bilive/autoslice/state/streamer_registry.json'\'' >> /opt/bilive/autoslice/logs/streamer-registry.log 2>&1'
@@ -2167,6 +2173,7 @@ streamer_dynamics_cron='47 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/strea
 managed_crontab_exact() {
     existing_crontab=$(crontab -l) || return 1
     for entry in \
+        "scripts/free_session_autoslice.py:$runner_cron" \
         "free_mount_watchdog.sh:$watchdog_cron" \
         "upload_fatal_sentinel.sh:$upload_fatal_cron" \
         "scripts/crawl_timely_terms.py:$timely_terms_cron" \
@@ -2291,6 +2298,7 @@ if [ "$external_payload_unchanged" -eq 0 ]; then
 existing_crontab=$(crontab -l 2>/dev/null || true)
 {
     printf '%s\n' "$existing_crontab" \
+        | grep -Fv 'scripts/free_session_autoslice.py' \
         | grep -Fv '/opt/bilive/autoslice/free_mount_watchdog.sh' \
         | grep -Fv '/opt/bilive/autoslice/upload_fatal_sentinel.sh' \
         | grep -Fv 'scripts/crawl_timely_terms.py' \
@@ -2299,6 +2307,7 @@ existing_crontab=$(crontab -l 2>/dev/null || true)
         | grep -Fv 'scripts/crawl_community_names.py' \
         | grep -Fv 'scripts/crawl_topic_entity_graph.py' \
         | grep -Fv 'scripts/crawl_streamer_dynamics.py' || true
+    printf '%s\n' "$runner_cron"
     printf '%s\n' "$watchdog_cron"
     printf '%s\n' "$upload_fatal_cron"
     printf '%s\n' "$streamer_registry_cron"
@@ -2308,6 +2317,8 @@ existing_crontab=$(crontab -l 2>/dev/null || true)
     printf '%s\n' "$topic_entity_cron"
     printf '%s\n' "$streamer_dynamics_cron"
 } | crontab -
+crontab -l | grep -Fxq "$runner_cron"
+test "$(crontab -l | grep -Fxc "$runner_cron")" -eq 1
 crontab -l | grep -Fxq "$watchdog_cron"
 test "$(crontab -l | grep -Fxc "$watchdog_cron")" -eq 1
 crontab -l | grep -Fxq "$upload_fatal_cron"

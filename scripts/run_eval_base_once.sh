@@ -17,7 +17,7 @@ for required in "$BASE/repo/scripts/free_session_autoslice.py" "$BASE/recordings
   [ -e "$required" ] || { echo "REFUSE: missing $required" >&2; exit 2; }
 done
 
-exec flock -n "$BASE/runner.lock" env \
+exec flock -n "$BASE/tick.lock" env \
   AUTOSLICE_BASE="$BASE" \
   AUTOSLICE_REC_ROOT="$BASE/recordings" \
   AUTOSLICE_IGNORE_LIVE_HOLD=1 \

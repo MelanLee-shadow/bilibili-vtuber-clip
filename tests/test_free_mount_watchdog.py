@@ -52,7 +52,7 @@ def _run_watchdog(
     if disabled:
         (base / "DISABLED").touch()
     if lock_holder_cmd:
-        lock = base / "runner.lock"
+        lock = base / "tick.lock"
         lock.touch()
         holder = proc_root / "424242"
         holder.mkdir()
