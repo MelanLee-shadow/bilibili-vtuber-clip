@@ -35,9 +35,10 @@ def test_deploy_critical_sections_hold_tick_while_acquiring_runner() -> None:
         '/usr/bin/flock -w 7200 "$REMOTE_BASE/tick.lock" '
         '/usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s --'
     )
-    # rollback, tree swap, external install, and identity sealing all share the
-    # same concrete tick -> runner nesting rather than two released drains.
-    assert deploy.count(nested) == 4
+    # The producer-batch pre-swap drain joins rollback, tree swap, external
+    # install, and identity sealing under the same concrete tick -> runner
+    # nesting rather than two released drains.
+    assert deploy.count(nested) == 5
     assert "; /usr/bin/flock -w 7200 '$REMOTE_BASE/runner.lock' true" not in deploy
 
 

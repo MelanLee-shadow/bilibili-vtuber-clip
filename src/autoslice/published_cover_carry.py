@@ -489,7 +489,7 @@ def result_cover_delivery_ready(
 
 def finalize_talk_delivery_status(
     result: dict[str, object], candidate_id: str, work_dir: Path, marker: object,
-    runner, date: str,
+    runner, date: str, *, prepared_cover_ready: bool | None = None,
 ) -> None:
     """Keep talk lane's terminal call thin while retaining strict proof."""
 
@@ -499,14 +499,14 @@ def finalize_talk_delivery_status(
         result,
         candidate_id=candidate_id,
         work_dir=work_dir,
-        cover_ready=result_cover_delivery_ready(
-            result=result,
-            marker=marker,
-            base=runner.BASE,
-            date=date,
-            candidate_id=candidate_id,
-            delivered_paths=runner.delivered_paths,
-            initial_cover_proof_valid=runner._initial_cover_proof_valid,
+        cover_ready=(
+            prepared_cover_ready
+            if prepared_cover_ready is not None
+            else result_cover_delivery_ready(
+                result=result, marker=marker, base=runner.BASE, date=date,
+                candidate_id=candidate_id, delivered_paths=runner.delivered_paths,
+                initial_cover_proof_valid=runner._initial_cover_proof_valid,
+            )
         ),
     )
 

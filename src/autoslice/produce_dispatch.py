@@ -172,6 +172,7 @@ def produce_batch_windowed(
     song_window_pre_ms: int,
     song_window_post_ms: int,
     live_hold_active_fn: Callable[[], bool] | None = None,
+    prepare_only: bool = False,
 ) -> list[dict]:
     """Produce ``items`` concurrently, preserving input order.
 
@@ -183,7 +184,7 @@ def produce_batch_windowed(
 
     def _one(item: dict) -> dict:
         try:
-            produce_kwargs = {}
+            produce_kwargs = {"prepare_only": True} if prepare_only else {}
             if produce_fn is produce_talk_fn and item.get("published_cover_carry_required") is True:
                 carry = item.get("published_cover_carry")
                 from src.autoslice.published_cover_carry import validate_materialized_marker
@@ -191,11 +192,11 @@ def produce_batch_windowed(
                     carry, base=base, date=date, candidate_id=str(item.get("cid") or "")
                 ):
                     raise ValueError("PUBLISHED_COVER_CARRY_MARKER_INVALID")
-                produce_kwargs = {"reuse_cover": True}
+                produce_kwargs["reuse_cover"] = True
             elif produce_fn is produce_talk_fn and item.get("reuse_cover"):
                 # Historical bare reuse remains supported only when it never
                 # asserted this stricter, typed published-carry policy.
-                produce_kwargs = {"reuse_cover": True}
+                produce_kwargs["reuse_cover"] = True
             result = produce_fn(date, item, **produce_kwargs)
             if item.get("session_id"):
                 result.setdefault("session_id", item["session_id"])

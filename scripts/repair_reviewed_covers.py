@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import fcntl
 import hashlib
 import json
 import re
@@ -58,6 +57,10 @@ from src.autoslice.candidate_public_text_surface_authority import (  # noqa: E40
 from src.autoslice.reviewed_cover_committed_recovery_authority import (  # noqa: E402
     ReviewedCoverCommittedRecoveryAuthorityError,
     validate_committed_recovery,
+)
+from src.autoslice.qixi_transaction_core import (  # noqa: E402
+    QixiTransactionCoreError,
+    exclusive_runner_commit,
 )
 
 
@@ -1175,22 +1178,19 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not (BASE / "DISABLED").is_file():
         raise ReviewedCoverRepairError("DISABLED must exist for reviewed cover repair")
-    runner_lock = BASE / "runner.lock"
-    runner_lock.parent.mkdir(parents=True, exist_ok=True)
-    with runner_lock.open("a+") as handle:
-        try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise ReviewedCoverRepairError("runner.lock is busy") from exc
-        try:
-            with exclusive_upload_lock(DEFAULT_UPLOAD_LOCK):
-                if not (BASE / "DISABLED").is_file():
-                    raise ReviewedCoverRepairError(
-                        "DISABLED disappeared before reviewed cover repair acquired its locks"
-                    )
-                result = run(args.plan)
-        except UploadLockBusy as exc:
-            raise ReviewedCoverRepairError("upload.lock is busy") from exc
+    try:
+        with exclusive_runner_commit(BASE):
+            try:
+                with exclusive_upload_lock(DEFAULT_UPLOAD_LOCK):
+                    if not (BASE / "DISABLED").is_file():
+                        raise ReviewedCoverRepairError(
+                            "DISABLED disappeared before reviewed cover repair acquired its locks"
+                        )
+                    result = run(args.plan)
+            except UploadLockBusy as exc:
+                raise ReviewedCoverRepairError("upload.lock is busy") from exc
+    except QixiTransactionCoreError as exc:
+        raise ReviewedCoverRepairError("runner.lock is busy") from exc
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 

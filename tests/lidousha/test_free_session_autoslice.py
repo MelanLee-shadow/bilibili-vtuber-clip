@@ -12,6 +12,7 @@ import pytest
 
 import scripts.free_session_autoslice as runner
 from src.autoslice import song_delivery
+from src.autoslice import runner_state_writeback
 import src.autoslice.live_gate as live_gate
 import src.autoslice.speaker_session_router as speaker_router
 from src.autoslice.boundary_semantic_review import (
@@ -4493,6 +4494,41 @@ def test_produce_batch_forwards_persisted_reuse_cover_for_talk_repairs(monkeypat
     assert [row["candidate_id"] for row in results] == ["repair", "fresh"]
 
 
+def test_prepare_dispatch_keeps_private_mode_for_carry_and_legacy_reuse(tmp_path, monkeypatch):
+    """No cover-reuse branch may discard the runner's prepare-only capability."""
+
+    calls = []
+    public_target = tmp_path / "lidousha" / "would-be-direct.mp4"
+
+    def fake_talk(_date, item, *, reuse_cover=False, prepare_only=False):
+        calls.append((item["cid"], reuse_cover, prepare_only))
+        if not prepare_only:
+            public_target.parent.mkdir(parents=True, exist_ok=True)
+            public_target.write_bytes(b"unsafe direct delivery")
+        return {"candidate_id": item["cid"], "status": "delivery_prepared_no_target"}
+
+    monkeypatch.setattr(runner, "produce_talk", fake_talk)
+    import src.autoslice.published_cover_carry as published_cover_carry
+    monkeypatch.setattr(published_cover_carry, "validate_materialized_marker", lambda *_a, **_k: True)
+
+    runner.produce_batch(
+        "2026-08-17",
+        [
+            {"cid": "strict-carry", "reuse_cover": True,
+             "published_cover_carry_required": True, "published_cover_carry": {}},
+            {"cid": "legacy-reuse", "reuse_cover": True},
+        ],
+        fake_talk,
+        prepare_only=True,
+    )
+
+    assert calls == [
+        ("strict-carry", True, True),
+        ("legacy-reuse", True, True),
+    ]
+    assert not public_target.exists()
+
+
 def test_produce_batch_rejects_required_published_carry_before_talk(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(runner, "produce_talk", lambda *_a, **_kw: calls.append(1))
@@ -4718,7 +4754,9 @@ def test_process_date_blocks_finalized_raw_segment_missing_mp4(monkeypatch, tmp_
 
 def test_process_date_backfills_after_speaker_anchor_evidence_shortage(monkeypatch, tmp_path):
     date = "2026-07-11"
-    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+    base = tmp_path / "autoslice"
+    base.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
     first = {
         "segment_path": "/rec/session.mp4",
         "seg_dur_ms": 2_000_000,
@@ -4765,7 +4803,13 @@ def test_process_date_backfills_after_speaker_anchor_evidence_shortage(monkeypat
     monkeypatch.setattr(runner, "write_reports", lambda _date, _state: None)
     attempted: list[str] = []
 
-    def fake_produce_batch(_date, items, _producer):
+    monkeypatch.setattr(
+        runner_state_writeback, "read_exact_state_preimage", lambda *_args, **_kwargs: b"{}",
+    )
+    monkeypatch.setattr(runner_state_writeback, "state_bytes", lambda _state: b"{}")
+
+    def fake_produce_batch(_date, items, _producer, *, prepare_only=False):
+        assert prepare_only is True
         cid = items[0]["cid"]
         attempted.append(cid)
         if cid == first["cid"]:
@@ -4811,6 +4855,8 @@ def test_process_date_exact_selection_preserves_speaker_evidence_failure(
     monkeypatch, tmp_path
 ):
     date = "2026-07-11"
+    base = tmp_path / "autoslice"
+    base.mkdir()
     candidate = {
         "segment_path": "/rec/session.mp4",
         "seg_dur_ms": 2_000_000,
@@ -4845,7 +4891,7 @@ def test_process_date_exact_selection_preserves_speaker_evidence_failure(
         "picks": [],
         "songs": [],
     }
-    monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
+    monkeypatch.setattr(runner, "BASE", base)
     monkeypatch.setattr(runner, "AUTOMATIC_MAINTENANCE_NOT_BEFORE", date)
     monkeypatch.setattr(runner, "read_state", lambda _date: state)
     monkeypatch.setattr(runner, "runtime_health_error", lambda: None)
@@ -4879,7 +4925,13 @@ def test_process_date_exact_selection_preserves_speaker_evidence_failure(
     monkeypatch.setattr(runner, "write_reports", lambda *_args: None)
     attempted_producers = []
 
-    def fake_produce_batch(_date, _items, producer):
+    monkeypatch.setattr(
+        runner_state_writeback, "read_exact_state_preimage", lambda *_args, **_kwargs: b"{}",
+    )
+    monkeypatch.setattr(runner_state_writeback, "state_bytes", lambda _state: b"{}")
+
+    def fake_produce_batch(_date, _items, producer, *, prepare_only=False):
+        assert prepare_only is True
         attempted_producers.append(producer)
         return [
             {
@@ -4903,7 +4955,8 @@ def test_process_date_exact_selection_preserves_speaker_evidence_failure(
         "speaker_evidence_insufficient"
     )
     assert state["status"] == "recovery_incomplete"
-    assert attempted_producers == [runner.produce_talk]
+    assert len(attempted_producers) == 1
+    assert attempted_producers[0] is runner.produce_talk
     assert state["pending_song"] == []
     assert state["song_backlog"] == []
     assert state["song_selection_backlog"] == []
@@ -7860,6 +7913,13 @@ def test_song_pipeline_fingerprint_excludes_talk_entity_authority(tmp_path, monk
         "scripts/run_full_session_selector_cpa_shadow.py",
         "src/autoslice/agy_lrc_alignment.py",
         "src/autoslice/song_lane.py",
+        "src/autoslice/produce_dispatch.py",
+        "src/autoslice/producer_batch_projection.py",
+        "src/autoslice/producer_batch_runner_integration.py",
+        "src/autoslice/producer_batch_transaction.py",
+        "src/autoslice/producer_delivery_prepare.py",
+        "src/autoslice/producer_delivery_transaction.py",
+        "src/autoslice/runner_state_writeback.py",
         "assets/lidousha/known_songs.json",
         "assets/lidousha/voiceprint_profile.v1.json",
     ]
@@ -12678,8 +12738,11 @@ def test_speaker_review_requeues_only_after_fingerprint_change(tmp_path, monkeyp
     assert state["pending_talk"][0]["talk_transient_retry_count"] == 0
 
 
-def test_process_date_wakes_old_boundary_failure_without_new_segments(monkeypatch):
+def test_process_date_wakes_old_boundary_failure_without_new_segments(tmp_path, monkeypatch):
     date = "2026-07-10"
+    base = tmp_path / "autoslice"
+    base.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
     monkeypatch.setattr(runner, "AUTOMATIC_MAINTENANCE_NOT_BEFORE", date)
     state = {
         "status": "review_ready_with_failures",
@@ -12701,6 +12764,10 @@ def test_process_date_wakes_old_boundary_failure_without_new_segments(monkeypatc
     }
     produced = []
     monkeypatch.setattr(runner, "read_state", lambda _date: state)
+    monkeypatch.setattr(
+        runner_state_writeback, "read_exact_state_preimage", lambda *_args, **_kwargs: b"{}",
+    )
+    monkeypatch.setattr(runner_state_writeback, "state_bytes", lambda _state: b"{}")
 
     def wake(_date, value):
         value["pending_talk"].append(
@@ -12729,7 +12796,8 @@ def test_process_date_wakes_old_boundary_failure_without_new_segments(monkeypatc
     monkeypatch.setattr(runner, "session_sealed", lambda _date, _state: True)
     monkeypatch.setattr(runner, "refill_songs", lambda _state: None)
 
-    def produce(_date, items, _fn):
+    def produce(_date, items, _fn, *, prepare_only=False):
+        assert prepare_only is True
         produced.extend(items)
         return [{"candidate_id": items[0]["cid"], "status": "review_ready"}]
 
@@ -12744,8 +12812,11 @@ def test_process_date_wakes_old_boundary_failure_without_new_segments(monkeypatc
     assert state["pending_talk"] == []
 
 
-def test_process_date_does_not_auto_maintain_pre_horizon_history(monkeypatch):
+def test_process_date_does_not_auto_maintain_pre_horizon_history(tmp_path, monkeypatch):
     date = "2026-07-10"
+    base = tmp_path / "autoslice"
+    base.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
     monkeypatch.setattr(runner, "AUTOMATIC_MAINTENANCE_NOT_BEFORE", "2026-07-11")
     state = {
         "status": "review_ready_with_failures",
@@ -12803,6 +12874,8 @@ def test_process_date_does_not_auto_maintain_pre_horizon_history(monkeypatch):
 def test_process_date_transient_selected_repair_remains_retryable(tmp_path, monkeypatch):
     date = "2026-07-10"
     rec_root = tmp_path / "recordings"
+    base = tmp_path / "autoslice"
+    base.mkdir()
     date_dir = rec_root / date
     date_dir.mkdir(parents=True)
     segment = date_dir / "segment.mp4"
@@ -12827,7 +12900,12 @@ def test_process_date_transient_selected_repair_remains_retryable(tmp_path, monk
         "picks": [],
     }
     monkeypatch.setattr(runner, "REC_ROOT", rec_root)
+    monkeypatch.setattr(runner, "BASE", base)
     monkeypatch.setattr(runner, "read_state", lambda _date: state)
+    monkeypatch.setattr(
+        runner_state_writeback, "read_exact_state_preimage", lambda *_args, **_kwargs: b"{}",
+    )
+    monkeypatch.setattr(runner_state_writeback, "state_bytes", lambda _state: b"{}")
     monkeypatch.setattr(runner, "pipeline_fingerprint", lambda: "sha256:same")
     monkeypatch.setattr(runner, "write_state", lambda _date, _state: None)
     monkeypatch.setattr(runner, "list_segments", lambda _date: [])
@@ -12840,7 +12918,8 @@ def test_process_date_transient_selected_repair_remains_retryable(tmp_path, monk
     monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
     monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
 
-    def fail_once(_date, items, _fn):
+    def fail_once(_date, items, _fn, *, prepare_only=False):
+        assert prepare_only is True
         item = items[0]
         return [
             {
@@ -12866,6 +12945,20 @@ def test_process_date_transient_selected_repair_remains_retryable(tmp_path, monk
     assert state["pending_talk"] == []
     assert runner.requeue_recoverable_talks(date, state) == 1
     assert state["pending_talk"][0]["talk_transient_retry_count"] == 1
+
+
+def test_process_date_dangling_batch_journal_symlink_blocks_before_provider_prepare(
+    tmp_path, monkeypatch
+):
+    base = tmp_path / "runtime"
+    base.mkdir()
+    (base / ".producer-batch-journal").symlink_to(base / "missing-journals")
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(
+        runner, "read_state", lambda _date: pytest.fail("must not reach provider/state dispatch"),
+    )
+
+    runner.process_date("2026-08-22")
 
 def test_record_is_song_recognizes_non_lrc_songs():
     """7/9 实锤：日语歌《ただそばにいて》LRC 钉歌失败(song_boundary/alignment 全空)，

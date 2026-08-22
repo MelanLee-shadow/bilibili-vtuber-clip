@@ -363,6 +363,7 @@ def read_publish_meta(work_dir: Path) -> dict:
             "cover_sha256": hashes.get("cover_sha256"),
             "cover_generation": d.get("cover_generation"),
             "video_sha256": hashes.get("burned_video_sha256") or hashes.get("video_sha256"),
+            "subtitle_sha256": hashes.get("subtitle_sha256") or hashes.get("delivery_subtitle_sha256"),
             **candidate_public_text_result_projection(work_dir=work_dir, publish_path=publish, publish=d),
         }
     return {}

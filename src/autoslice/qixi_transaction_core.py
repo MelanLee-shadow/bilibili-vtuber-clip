@@ -57,6 +57,21 @@ def require_runner_commit_lease(lease: RunnerCommitLease, *, runtime_root: Path)
         raise QixiTransactionCoreError("runner commit lease is invalid")
 
 
+def current_runner_commit_lease(*, runtime_root: Path) -> RunnerCommitLease | None:
+    """Return this thread's live canonical lease, if it is for ``runtime_root``.
+
+    Legacy/manual orchestration can call the normal state writer while it owns
+    the opaque capability.  Exposing this read-only accessor avoids a second
+    flock attempt without allowing callers to forge or reuse a released lease.
+    """
+
+    lease = getattr(_lease_local, "active", None)
+    if lease is None:
+        return None
+    require_runner_commit_lease(lease, runtime_root=runtime_root)
+    return lease
+
+
 @dataclass(frozen=True, slots=True)
 class FileSnapshot:
     """One regular inode whose bytes and mode were observed atomically enough for CAS.

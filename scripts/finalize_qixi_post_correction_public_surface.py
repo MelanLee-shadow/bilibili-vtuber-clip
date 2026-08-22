@@ -6,7 +6,9 @@ The checked-in/deployed authority owns the only runtime identity.  ``--plan``
 is shallow sealed-runtime preflight, ``--diagnose`` is read-only, and
 ``--full-dry-run`` may run only private staging before formal replay.  Only
 ``--apply`` can commit the normal source-fact/cover transaction; it obtains
-the runtime's canonical ``runner.lock`` itself before provider work begins.
+the runtime's canonical ``runner.lock`` only for short revalidation and the
+durable journal commit.  Provider-backed after-image preparation and private
+validation happen first without that hot mutation lock.
 """
 
 from __future__ import annotations

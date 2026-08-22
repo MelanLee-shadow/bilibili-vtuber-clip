@@ -54,8 +54,11 @@ from src.autoslice.publication_reconciliation import (  # noqa: E402
 )
 from src.autoslice.runner_state_writeback import (  # noqa: E402
     RunnerStateWritebackError,
+    read_exact_state_preimage,
+    write_exact_state_bytes_under_lease,
     write_state,
 )
+from src.autoslice.qixi_transaction_core import exclusive_runner_commit  # noqa: E402
 
 
 DEFAULT_BASE = Path("/opt/bilive/autoslice")
@@ -433,7 +436,13 @@ def _step_state_precheck(
     """
 
     try:
-        with pi.exclusive_lock(runner_lock, label="runner.lock"):
+        runtime_root = state_path.parents[1]
+        if runner_lock != runtime_root / "runner.lock":
+            raise pi.PackageImportError(
+                "RUNNER_LOCK_PATH_DRIFT",
+                "state import must use the canonical runtime runner.lock",
+            )
+        with exclusive_runner_commit(runtime_root):
             state = _read_state(state_path)
             authorization = None
             if adopt_failed_pick is not None:
@@ -565,7 +574,13 @@ def _step_state_bind(
         )
         # 持锁贯穿读—改—写：runner 的 tick 可能已经把 state 读进内存并要跑 90
         # 分钟才写回，不持锁的带外手术会被那次陈旧写回整体抹掉。
-        with pi.exclusive_lock(runner_lock, label="runner.lock"):
+        runtime_root = state_path.parents[1]
+        if runner_lock != runtime_root / "runner.lock":
+            raise pi.PackageImportError(
+                "RUNNER_LOCK_PATH_DRIFT",
+                "state import must use the canonical runtime runner.lock",
+            )
+        with exclusive_runner_commit(runtime_root) as lease:
             before_state = _read_state(state_path)
             current_authorization = None
             if failed_pick_authorization is not None:
@@ -605,8 +620,10 @@ def _step_state_bind(
                     write_state(
                         state_path,
                         dict(after_state),
+                        runtime_root=runtime_root,
                         updated_at=bound_at,
                         log=lambda message: print(message, file=sys.stderr),
+                        lease=lease,
                     )
                 verified = _read_state(state_path)
                 state_postimage_sha256 = pi.sha256_file(state_path)
@@ -655,6 +672,8 @@ def _step_state_bind(
                         state_path=state_path,
                         backup_path=backup,
                         preimage_sha256=state_preimage_sha256,
+                        runtime_root=runtime_root,
+                        lease=lease,
                     )
                 except pi.PackageImportError as rollback_error:
                     raise pi.PackageImportError(
@@ -701,8 +720,15 @@ def _step_state_bind(
 def _rollback_state_bind(*, receipt: Receipt, token: StateBindRollback) -> None:
     """Restore exact state bytes when any post-bind review gate refuses."""
 
-    with pi.exclusive_lock(token.runner_lock, label="runner.lock"):
-        current_sha256 = pi.sha256_file(token.state_path)
+    runtime_root = token.state_path.parents[1]
+    if token.runner_lock != runtime_root / "runner.lock":
+        raise pi.PackageImportError(
+            "RUNNER_LOCK_PATH_DRIFT",
+            "state rollback must use the canonical runtime runner.lock",
+        )
+    with exclusive_runner_commit(runtime_root) as lease:
+        current = read_exact_state_preimage(token.state_path, runtime_root=runtime_root)
+        current_sha256 = pi.sha256_bytes(current or b"")
         if current_sha256 != token.postimage_sha256:
             raise pi.PackageImportError(
                 "STATE_ROLLBACK_POSTIMAGE_DRIFT",
@@ -714,6 +740,8 @@ def _rollback_state_bind(*, receipt: Receipt, token: StateBindRollback) -> None:
             state_path=token.state_path,
             backup_path=token.backup_path,
             preimage_sha256=token.preimage_sha256,
+            runtime_root=runtime_root,
+            lease=lease,
         )
     receipt.add(
         "STATE_BIND",
@@ -725,7 +753,8 @@ def _rollback_state_bind(*, receipt: Receipt, token: StateBindRollback) -> None:
 
 
 def _restore_state_preimage_locked(
-    *, state_path: Path, backup_path: Path, preimage_sha256: str
+    *, state_path: Path, backup_path: Path, preimage_sha256: str,
+    runtime_root: Path, lease,
 ) -> None:
     """Restore and verify exact bytes while the caller holds runner.lock."""
 
@@ -736,7 +765,11 @@ def _restore_state_preimage_locked(
             "STATE_ROLLBACK_BACKUP_DRIFT",
             f"state preimage backup changed: {backup}",
         )
-    pi.atomic_write_bytes(state_path, payload)
+    current = read_exact_state_preimage(state_path, runtime_root=runtime_root)
+    write_exact_state_bytes_under_lease(
+        state_path, runtime_root=runtime_root, lease=lease,
+        expected_before=current, after_bytes=payload,
+    )
     if pi.sha256_file(state_path) != preimage_sha256:
         raise pi.PackageImportError(
             "STATE_ROLLBACK_VERIFY_FAILED",

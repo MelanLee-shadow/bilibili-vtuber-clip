@@ -641,11 +641,8 @@ def _commit_verified_song_package(
         }
         # Direct delivery reports the manifest separately, not as a public
         # sidecar.  Preserve that exact result projection in prepare mode.
-        sidecar_roles = [
-            role for role in intended
-            if role not in {"video", "delivery_manifest"}
-        ]
-        return {
+        sidecar_roles = [role for role in intended if role != "video"]
+        prepared_result = {
             # A prepared package has passed candidate-private verification but
             # has not exposed a delivery target.  Do not use direct-delivery
             # field names here: state/publication predicates treat them as a
@@ -661,6 +658,13 @@ def _commit_verified_song_package(
             "intended_cover_status": "AI_COVER_READY" if "cover" in intended else "BLOCKED_AI_COVER_REQUIRED",
             "status": "delivery_prepared_no_target",
         }
+        if "cover" in intended:
+            prepared_result["intended_cover"] = intended["cover"]
+            materialized = summary_record.get("materialized_recut")
+            staging = materialized.get("publish_staging") if isinstance(materialized, dict) else None
+            if isinstance(staging, dict):
+                prepared_result["prepared_cover_generation"] = staging.get("cover_generation")
+        return prepared_result
 
     receipt = _atomic_verified_song_delivery(
         candidate_id=delivery_candidate_id,

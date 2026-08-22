@@ -153,15 +153,14 @@ def test_recovery_manifest_builder_bootstraps_repo_root_for_direct_execution():
 
 def test_deploy_owns_disabled_before_remote_wait_can_be_interrupted():
     source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    ownership = source.index(
-        'DISABLED_TOUCHED=1\nssh "$HOST" "touch \'$DISABLED\'; /usr/bin/flock -w 7200'
-    )
+    ownership = source.index("DISABLED_TOUCHED=1")
+    touch = source.index('ssh "$HOST" "touch \'$DISABLED\'"', ownership)
     staging = source.index(
         'ssh "$HOST" "test ! -e \'$STAGE\'',
         ownership,
     )
 
-    assert ownership < staging
+    assert ownership < touch < staging
 
 
 def test_runner_passes_default_adapter_state_to_recording_inventory():
@@ -544,7 +543,7 @@ def test_deploy_unchanged_external_route_preserves_a_live_adapter(tmp_path):
         + "\nbackup=$TEST_BACKUP\n"
         + "new_adapter_source=$TEST_REPO/ops/recording/bililive_recorder_adapter.py\n"
         + "host_adapter_path=$TEST_RECORDING/bililive_recorder_adapter.py\n"
-        + "default_crontab=$(printf '%s\\n' \"$watchdog_cron\" \"$upload_fatal_cron\" \"$streamer_registry_cron\" \"$psplive_roster_cron\" \"$timely_terms_cron\" \"$community_names_cron\" \"$topic_entity_cron\" \"$streamer_dynamics_cron\")\n"
+        + "default_crontab=$(printf '%s\\n' \"$runner_cron\" \"$watchdog_cron\" \"$upload_fatal_cron\" \"$streamer_registry_cron\" \"$psplive_roster_cron\" \"$timely_terms_cron\" \"$community_names_cron\" \"$topic_entity_cron\" \"$streamer_dynamics_cron\")\n"
         + 'export CRONTAB_CONTENT="${TEST_CRONTAB_CONTENT-$default_crontab}"\n'
         + "adapter_restart_safe() { printf strict >> \"$STRICT_LOG\"; return 1; }\n"
         + "adapter_connection_stub_bootstrap_safe() { printf strict >> \"$STRICT_LOG\"; return 1; }\n"

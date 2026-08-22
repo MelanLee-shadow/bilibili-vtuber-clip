@@ -14,8 +14,19 @@ from __future__ import annotations
 from copy import deepcopy
 import json
 import os
+import re
+import stat
+import tempfile
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
+
+from src.autoslice.qixi_transaction_core import (
+    RunnerCommitLease,
+    current_runner_commit_lease,
+    exclusive_runner_commit,
+    require_runner_commit_lease,
+    stable_regular_snapshot,
+)
 
 
 CANDIDATE_COLLECTIONS = (
@@ -69,13 +80,17 @@ def track_state(path: Path, state: Mapping[str, object]) -> TrackedState:
 def make_date_state_writer(
     path_for_date: Callable[[str], Path],
     *,
+    runtime_root: Callable[[], Path],
     updated_at: Callable[[], str],
     log: Callable[[str], None],
-) -> Callable[[str, dict], None]:
+) -> Callable[..., None]:
     """Bind runner clock/path dependencies without duplicating a wrapper."""
 
-    def write(date: str, state: dict) -> None:
-        write_state(path_for_date(date), state, updated_at=updated_at(), log=log)
+    def write(date: str, state: dict, *, lease: RunnerCommitLease | None = None) -> None:
+        write_state(
+            path_for_date(date), state, runtime_root=runtime_root(),
+            updated_at=updated_at(), log=log, lease=lease,
+        )
 
     return write
 
@@ -322,13 +337,16 @@ def merge_runner_state(
 
 def _read_disk(path: Path, *, base: Mapping[str, object]) -> tuple[dict, bytes | None]:
     try:
-        raw = path.read_bytes()
-    except FileNotFoundError:
+        snapshot = stable_regular_snapshot(path, label="runner state")
+    except Exception as exc:
+        raise RunnerStateWritebackError("RUNNER_STATE_WRITEBACK_DISK_STATE_INVALID") from exc
+    if snapshot is None:
         try:
-            backup = json.loads(
-                path.with_suffix(".json.bak").read_text(encoding="utf-8")
+            backup_snapshot = stable_regular_snapshot(
+                path.with_suffix(".json.bak"), label="runner state backup",
             )
-        except (OSError, ValueError):
+            backup = json.loads(backup_snapshot.payload.decode("utf-8")) if backup_snapshot else _MISSING
+        except (Exception, ValueError):
             backup = _MISSING
         if backup == dict(base):
             return deepcopy(dict(base)), None
@@ -337,6 +355,7 @@ def _read_disk(path: Path, *, base: Mapping[str, object]) -> tuple[dict, bytes |
         raise RunnerStateWritebackError(
             "RUNNER_STATE_WRITEBACK_DISK_STATE_DISAPPEARED"
         )
+    raw = snapshot.payload
     try:
         value = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as exc:
@@ -350,46 +369,168 @@ def _read_disk(path: Path, *, base: Mapping[str, object]) -> tuple[dict, bytes |
     return value, raw
 
 
-def _atomic_write(path: Path, state: Mapping[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(
-        json.dumps(state, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+def _safe_state_parent(path: Path, *, runtime_root: Path) -> Path:
+    """Create the private state directory without following a path component."""
+
+    root = Path(runtime_root).absolute()
+    absolute = path.absolute()
+    if (
+        not re.fullmatch(r"[A-Za-z0-9_-]{1,64}\.json", absolute.name)
+        or absolute.parent != root / "state"
+    ):
+        raise RunnerStateWritebackError("RUNNER_STATE_WRITEBACK_PARENT_UNSAFE")
+    try:
+        root_stat = os.lstat(root)
+    except OSError as exc:
+        raise RunnerStateWritebackError("RUNNER_STATE_WRITEBACK_PARENT_UNSAFE") from exc
+    if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
+        raise RunnerStateWritebackError("RUNNER_STATE_WRITEBACK_PARENT_UNSAFE")
+    parent = root / "state"
+    try:
+        observed = os.lstat(parent)
+    except FileNotFoundError:
+        try:
+            os.mkdir(parent, 0o700)
+        except OSError as exc:
+            raise RunnerStateWritebackError("RUNNER_STATE_WRITEBACK_PARENT_UNSAFE") from exc
+        observed = os.lstat(parent)
+    except OSError as exc:
+        raise RunnerStateWritebackError("RUNNER_STATE_WRITEBACK_PARENT_UNSAFE") from exc
+    if stat.S_ISLNK(observed.st_mode) or not stat.S_ISDIR(observed.st_mode):
+        raise RunnerStateWritebackError("RUNNER_STATE_WRITEBACK_PARENT_UNSAFE")
+    return parent
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(
+        path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0),
     )
-    if path.exists():
-        os.replace(path, path.with_suffix(".json.bak"))
-    os.replace(tmp, path)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _write_all(descriptor: int, payload: bytes, *, label: str) -> None:
+    """Write a complete authority image or fail before any rename."""
+
+    view = memoryview(payload)
+    while view:
+        try:
+            written = os.write(descriptor, view)
+        except OSError as exc:
+            raise RunnerStateWritebackError(f"RUNNER_STATE_WRITEBACK_{label}_WRITE_FAILED") from exc
+        if not isinstance(written, int) or written <= 0 or written > len(view):
+            raise RunnerStateWritebackError(f"RUNNER_STATE_WRITEBACK_{label}_WRITE_FAILED")
+        view = view[written:]
+
+
+def _atomic_write_bytes(path: Path, payload: bytes, *, runtime_root: Path) -> None:
+    parent = _safe_state_parent(path, runtime_root=runtime_root)
+    for existing in (path, path.with_suffix(".json.bak")):
+        try:
+            observed = os.lstat(existing)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise RunnerStateWritebackError("RUNNER_STATE_WRITEBACK_TARGET_UNSAFE") from exc
+        if stat.S_ISLNK(observed.st_mode) or not stat.S_ISREG(observed.st_mode):
+            raise RunnerStateWritebackError("RUNNER_STATE_WRITEBACK_TARGET_UNSAFE")
+    previous = stable_regular_snapshot(path, label="runner state")
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=parent)
+    temporary = Path(temporary_name)
+    backup_temporary: Path | None = None
+    try:
+        os.fchmod(descriptor, 0o600)
+        _write_all(descriptor, payload, label="TEMP")
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        if previous is not None:
+            backup_descriptor, backup_name = tempfile.mkstemp(
+                prefix=f".{path.name}.bak.", dir=parent,
+            )
+            backup_temporary = Path(backup_name)
+            try:
+                os.fchmod(backup_descriptor, 0o600)
+                _write_all(backup_descriptor, previous.payload, label="BACKUP")
+                os.fsync(backup_descriptor)
+            finally:
+                os.close(backup_descriptor)
+            os.replace(backup_temporary, path.with_suffix(".json.bak"))
+            backup_temporary = None
+            _fsync_directory(parent)
+        os.replace(temporary, path)
+        _fsync_directory(parent)
+        observed = os.lstat(path)
+        if stat.S_ISLNK(observed.st_mode) or not stat.S_ISREG(observed.st_mode):
+            raise RunnerStateWritebackError("RUNNER_STATE_WRITEBACK_TARGET_UNSAFE")
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+        if backup_temporary is not None:
+            backup_temporary.unlink(missing_ok=True)
+
+
+def _atomic_write(path: Path, state: Mapping[str, object], *, runtime_root: Path) -> None:
+    _atomic_write_bytes(path, state_bytes(state), runtime_root=runtime_root)
+
+
+def state_bytes(state: Mapping[str, object]) -> bytes:
+    """Render the exact state after-image used by a producer batch journal."""
+
+    return json.dumps(state, ensure_ascii=False, indent=2).encode("utf-8")
+
+
+def read_exact_state_preimage(path: Path, *, runtime_root: Path) -> bytes | None:
+    """Read the exact state bytes through the same no-follow authority gate."""
+
+    _safe_state_parent(Path(path), runtime_root=runtime_root)
+    snapshot = stable_regular_snapshot(Path(path), label="runner state")
+    return snapshot.payload if snapshot is not None else None
 
 
 def write_state(
     path: Path,
     state: dict,
     *,
+    runtime_root: Path,
     updated_at: str,
     log: Callable[[str], None],
+    lease: RunnerCommitLease | None = None,
 ) -> None:
     """Write state atomically, merging a tracked tick against fresh disk bytes."""
+
+    if lease is None:
+        lease = current_runner_commit_lease(runtime_root=runtime_root)
+    if lease is None:
+        with exclusive_runner_commit(runtime_root) as held:
+            write_state(
+                path, state, runtime_root=runtime_root, updated_at=updated_at,
+                log=log, lease=held,
+            )
+        return
+    require_runner_commit_lease(lease, runtime_root=runtime_root)
 
     path = Path(path)
     if not isinstance(state, TrackedState) or state._writeback_path != path:
         state["updated_at"] = updated_at
-        _atomic_write(path, state)
+        _atomic_write(path, state, runtime_root=runtime_root)
         return
 
     base = deepcopy(state._writeback_base)
     local = deepcopy(dict(state))
     for _attempt in range(MAX_CAS_ATTEMPTS):
+        _safe_state_parent(path, runtime_root=runtime_root)
         disk, before = _read_disk(path, base=base)
         merged, conflicts = merge_runner_state(base, disk, local)
         merged["updated_at"] = updated_at
-        try:
-            current = path.read_bytes()
-        except FileNotFoundError:
-            current = None
+        current = stable_regular_snapshot(path, label="runner state")
+        current = current.payload if current is not None else None
         if current != before:
             continue
-        _atomic_write(path, merged)
+        _atomic_write(path, merged, runtime_root=runtime_root)
         state.accept_writeback(merged)
         for conflict in conflicts:
             log(
@@ -400,3 +541,63 @@ def write_state(
     raise RunnerStateWritebackError(
         "RUNNER_STATE_WRITEBACK_CAS_RETRY_EXHAUSTED"
     )
+
+
+def write_exact_state_under_lease(
+    path: Path,
+    *,
+    runtime_root: Path,
+    lease: RunnerCommitLease,
+    expected_before: bytes | None,
+    after: Mapping[str, object],
+) -> bytes:
+    """CAS-install one already-built state after-image under a live lease.
+
+    Producer batch recovery owns a byte-exact preimage and must not apply the
+    normal three-way merge policy.  This is intentionally separate from
+    :func:`write_state`: callers either hold the lease or fail closed.
+    """
+
+    require_runner_commit_lease(lease, runtime_root=runtime_root)
+    path = Path(path)
+    current = read_exact_state_preimage(path, runtime_root=runtime_root)
+    if current != expected_before:
+        raise RunnerStateWritebackError("RUNNER_STATE_WRITEBACK_EXACT_PREIMAGE_DRIFT")
+    payload = state_bytes(after)
+    _atomic_write_bytes(path, payload, runtime_root=runtime_root)
+    if isinstance(after, TrackedState):
+        # ``accept_writeback`` clears its receiver before copying the value;
+        # snapshot a self-referential TrackedState first or the live tick would
+        # become an empty mapping immediately after a durable exact write.
+        after.accept_writeback(dict(after))
+    return payload
+
+
+def write_exact_state_bytes_under_lease(
+    path: Path,
+    *,
+    runtime_root: Path,
+    lease: RunnerCommitLease,
+    expected_before: bytes | None,
+    after_bytes: bytes,
+) -> bytes:
+    """CAS-restore already validated state bytes under the live lease.
+
+    External package rollback owns a frozen preimage whose exact bytes (not
+    merely parsed JSON) are part of its receipt.  It therefore cannot use the
+    normal merge writer or re-render the document before restoring it.
+    """
+
+    require_runner_commit_lease(lease, runtime_root=runtime_root)
+    path = Path(path)
+    current = read_exact_state_preimage(path, runtime_root=runtime_root)
+    if current != expected_before:
+        raise RunnerStateWritebackError("RUNNER_STATE_WRITEBACK_EXACT_PREIMAGE_DRIFT")
+    try:
+        parsed = json.loads(after_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RunnerStateWritebackError("RUNNER_STATE_WRITEBACK_EXACT_AFTER_INVALID") from exc
+    if not isinstance(parsed, dict):
+        raise RunnerStateWritebackError("RUNNER_STATE_WRITEBACK_EXACT_AFTER_INVALID")
+    _atomic_write_bytes(path, after_bytes, runtime_root=runtime_root)
+    return after_bytes

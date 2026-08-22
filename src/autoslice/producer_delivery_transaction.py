@@ -9,6 +9,7 @@ never writes a public delivery target.  Materialization requires the canonical
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -18,7 +19,7 @@ import stat
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from src.autoslice.qixi_transaction_core import (
     RunnerCommitLease,
@@ -53,6 +54,20 @@ class PreparedDelivery:
     candidate_id: str
     prepared_sha256: str
     manifest_path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedDeliveryPreflight:
+    """Verified handle details for a lane-owned batch journal.
+
+    This is not a public delivery result.  Only
+    ``producer_batch_transaction`` may materialize it after its entire prefix
+    has passed preflight and its own durable journal exists.
+    """
+
+    handle: PreparedDelivery
+    document: dict
+    checked: tuple[tuple[dict, Path, Path, str], ...]
 
 
 def _sha256_fd(descriptor: int) -> str:
@@ -175,7 +190,12 @@ def _private_directory(root: Path, *parts: str) -> Path:
             try:
                 os.mkdir(child, 0o700)
             except OSError as exc:
-                raise ProducerDeliveryTransactionError(f"cannot create private directory: {child}") from exc
+                # Concurrent candidate-private preparations may race to make a
+                # shared namespace component.  A competing EEXIST is safe only
+                # after the same no-link/mode validation below; every other
+                # failure remains fail-closed.
+                if exc.errno != errno.EEXIST:
+                    raise ProducerDeliveryTransactionError(f"cannot create private directory: {child}") from exc
             observed = os.lstat(child)
             if stat.S_IMODE(observed.st_mode) != 0o700:
                 raise ProducerDeliveryTransactionError(f"private directory mode unsafe: {child}")
@@ -294,14 +314,37 @@ def _write_create_only(path: Path, payload: bytes) -> bool:
     except OSError as exc:
         raise ProducerDeliveryTransactionError(f"cannot create private document: {path}") from exc
     try:
-        os.write(descriptor, payload)
+        _write_all(descriptor, payload)
         os.fsync(descriptor)
+    except OSError as exc:
+        # This inode was create-only and has never become a durable authority.
+        # Remove its partial contents rather than leaving a name that future
+        # recovery could mistake for a journal collision.
+        try:
+            observed = os.fstat(descriptor)
+            live = os.lstat(path)
+            if stat.S_ISREG(live.st_mode) and (live.st_dev, live.st_ino) == (observed.st_dev, observed.st_ino):
+                os.unlink(path)
+        except OSError:
+            pass
+        raise ProducerDeliveryTransactionError(f"private document write failed: {path}") from exc
     finally:
         os.close(descriptor)
     observed = os.lstat(path)
     if not stat.S_ISREG(observed.st_mode) or stat.S_IMODE(observed.st_mode) != 0o600:
         raise ProducerDeliveryTransactionError(f"private document mode invalid: {path}")
     return True
+
+
+def _write_all(descriptor: int, payload: bytes) -> None:
+    """Write a complete immutable document before any durable replace."""
+
+    remaining = memoryview(payload)
+    while remaining:
+        written = os.write(descriptor, remaining)
+        if not isinstance(written, int) or written <= 0:
+            raise OSError("short document write")
+        remaining = remaining[written:]
 
 
 def _runtime_root(path: Path) -> Path:
@@ -665,6 +708,56 @@ def _checked_artifacts(
     return checked
 
 
+def preflight_prepared_delivery(
+    *, handle: PreparedDelivery, lease: RunnerCommitLease, allow_installed: bool = False,
+) -> PreparedDeliveryPreflight:
+    """Revalidate one handle without creating journal, target, or state bytes."""
+
+    require_runner_commit_lease(lease, runtime_root=handle.runtime_root)
+    document = _read_document(handle, allow_materialized=allow_installed)
+    if document.get("deployed_authority") != deployment_authority_binding(handle.runtime_root):
+        raise ProducerDeliveryTransactionError("deployed authority preimage drifts")
+    checked = _checked_artifacts(
+        document, runtime_root=handle.runtime_root, allow_installed=allow_installed,
+    )
+    return PreparedDeliveryPreflight(handle, document, tuple(checked))
+
+
+def materialize_preflight_under_batch(
+    preflight: PreparedDeliveryPreflight,
+    *, lease: RunnerCommitLease,
+    checkpoint: Callable[[dict[str, str]], None] | None = None,
+) -> list[dict[str, str]]:
+    """Install a preflighted handle after its owning batch journal is durable."""
+
+    require_runner_commit_lease(lease, runtime_root=preflight.handle.runtime_root)
+    installed: list[dict[str, str]] = []
+    for entry, staged, target, expected in preflight.checked:
+        if not target.exists():
+            _materialize_target_parent(preflight.handle.runtime_root, target.parent)
+            if target.exists() or target.is_symlink():
+                raise ProducerDeliveryTransactionError("delivery target ownership drifts")
+            os.replace(staged, target)
+            _fsync_directory(target.parent)
+        else:
+            observed = os.lstat(target)
+            if (
+                not stat.S_ISREG(observed.st_mode)
+                or (observed.st_dev, observed.st_ino)
+                != (entry["staged_device"], entry["staged_inode"])
+            ):
+                raise ProducerDeliveryTransactionError("delivery target ownership drifts")
+        if _sha256_file(target) != expected:
+            raise ProducerDeliveryTransactionError("installed target hash drifts")
+        installed.append({
+            "role": str(entry["role"]), "path": str(target),
+            "sha256": f"sha256:{expected}",
+        })
+        if checkpoint is not None:
+            checkpoint(installed[-1])
+    return installed
+
+
 def _journal_payload(*, handle: PreparedDelivery, artifacts: list[dict], status: str = "PREPARED", installed_roles: list[str] | None = None) -> dict:
     document = {
         "schema_version": DELIVERY_JOURNAL_SCHEMA,
@@ -799,7 +892,7 @@ def _write_replace(path: Path, payload: bytes) -> None:
     temporary = Path(name)
     try:
         os.fchmod(descriptor, 0o600)
-        os.write(descriptor, payload)
+        _write_all(descriptor, payload)
         os.fsync(descriptor)
         os.close(descriptor)
         descriptor = -1

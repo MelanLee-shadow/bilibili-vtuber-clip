@@ -1274,7 +1274,55 @@ DISABLED_TOUCHED=1
 # Every swap/seal critical section owns the leases in fixed tick -> runner
 # order.  The outer flock stays held while the inner is acquired, so no manual
 # commit can enter between a drained tick and the deployment mutation.
-ssh "$HOST" "touch '$DISABLED'; exec /usr/bin/flock -w 7200 '$REMOTE_BASE/tick.lock' /usr/bin/flock -w 7200 '$REMOTE_BASE/runner.lock' true"
+ssh "$HOST" "touch '$DISABLED'"
+ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/tick.lock" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
+    "$REMOTE_BASE" <<'REMOTE_DRAIN_PRODUCER_BATCH'
+set -euo pipefail
+base=$1
+umask 077
+# A batch in PREPARED/INSTALLING owns private staged inodes and an exact
+# pre-deploy state image.  Swapping repository authority across it would make
+# recovery unsafe.  This deploy slice refuses such a runtime; the next tick
+# must replay it under the old deployed identity before a new deploy begins.
+python3 - "$base" <<'PY_PENDING_PRODUCER_BATCH'
+import os
+import stat
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+journals = root / ".producer-batch-journal"
+if not journals.exists() and not journals.is_symlink():
+    raise SystemExit(0)
+observed = os.lstat(journals)
+if (
+    stat.S_ISLNK(observed.st_mode)
+    or not stat.S_ISDIR(observed.st_mode)
+    or stat.S_IMODE(observed.st_mode) != 0o700
+):
+    raise SystemExit("REFUSE: producer batch journal namespace is unsafe")
+sys.path.insert(0, str(root / "repo"))
+try:
+    from src.autoslice.producer_batch_transaction import (
+        ProducerBatchTransactionError,
+        validate_committed_batch_journal_for_deploy,
+    )
+except Exception as exc:
+    raise SystemExit("REFUSE: cannot load canonical producer batch validator") from exc
+for path in journals.glob("*.json"):
+    observed = os.lstat(path)
+    if (
+        stat.S_ISLNK(observed.st_mode)
+        or not stat.S_ISREG(observed.st_mode)
+        or stat.S_IMODE(observed.st_mode) != 0o600
+    ):
+        raise SystemExit("REFUSE: producer batch journal entry is unsafe")
+    try:
+        validate_committed_batch_journal_for_deploy(runtime_root=root, path=path)
+    except ProducerBatchTransactionError as exc:
+        raise SystemExit(f"REFUSE: producer batch journal blocks deploy: {exc}") from exc
+PY_PENDING_PRODUCER_BATCH
+REMOTE_DRAIN_PRODUCER_BATCH
 ssh "$HOST" "test ! -e '$STAGE' && test ! -e '$BACKUP' && mkdir '$STAGE'"
 STAGE_CREATED=1
 

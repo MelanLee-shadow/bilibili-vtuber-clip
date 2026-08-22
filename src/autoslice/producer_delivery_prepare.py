@@ -14,6 +14,7 @@ from pathlib import Path
 from src.autoslice.producer_delivery_transaction import (
     DeliveryArtifact,
     PreparedDelivery,
+    _read_document,
     deployment_authority_binding,
     prepare_delivery,
 )
@@ -139,6 +140,17 @@ def talk_delivery_summary(
             "manifest_path": str(prepared.manifest_path),
             "prepared_sha256": f"sha256:{prepared.prepared_sha256}",
             "upload_enabled": False,
+        }
+        # The runner must form its state after-image before public target
+        # renames.  Bind that projection to the sealed prepared artifact map,
+        # not merely to role names or title-derived paths.
+        document = _read_document(prepared)
+        result["prepared_artifacts"] = {
+            str(entry["role"]): {
+                "path": str(entry["target_path"]),
+                "sha256": str(entry["staged_sha256"]),
+            }
+            for entry in document["artifacts"]
         }
     return result
 
