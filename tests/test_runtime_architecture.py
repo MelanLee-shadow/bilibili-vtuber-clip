@@ -118,7 +118,7 @@ FUNCTION_DEBT_LEDGER = {
     # 2026-08-10 净 -7：截图优先修复顺带还债——source-composition 见证的调用+
     # 异常包装整体抽到 src/autoslice/cover_scene_binding.py
     # （run_source_composition_witness），场景分叉的新增行零留在本函数。
-    ("src/autoslice/publish_staging.py", "_stage_lidousha_ai_cover"): 398,
+    ("src/autoslice/publish_staging.py", "_stage_lidousha_ai_cover"): 394,
     # 2026-07-31 +27：reuse 封面绑定（1013 jyl-r9 案——reuse 不绑 cover sha，
     # recovery manifest 必然 REFUSE；Ivan 常设修复授权链）。已连续吃增长，
     # 下次动这个函数必须先拆，不许再抬。
@@ -322,7 +322,7 @@ MODULE_DEBT_LEDGER = {
     # cover_route_policy.py，本模块只留 import 别名与调用点。
     # 2026-08-10 +19：合并 ft-a8600994 快车道分支（Ivan 2026-08-10 逐字「这就是要合并的快车道代码，现在就去合并 merge」）带入的
     # relocation/冻结包接线（同 _stage_publish_draft 那一项）。合并后实测。
-    "src/autoslice/publish_staging.py": 2_616,
+    "src/autoslice/publish_staging.py": 2_613,
     "src/autoslice/same_bv_repair.py": 2_422,
 }
 SCRIPT_EXCLUSIONS = {

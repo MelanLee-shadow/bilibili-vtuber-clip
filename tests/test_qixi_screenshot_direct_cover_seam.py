@@ -4,6 +4,7 @@ from pathlib import Path
 
 from src.autoslice import publish_staging
 from src.autoslice.cover_generation import LidoushaCoverArtDirection
+from src.autoslice.fixed_cover_stage import FixedCoverStageOptions
 
 
 def _direction() -> LidoushaCoverArtDirection:
@@ -65,8 +66,9 @@ def test_fixed_screenshot_direct_lane_never_demotes_to_images_edit(
         title="【李豆沙】小李有女友感吗？宿敌是否有点亲密了",
         cover_text="小李有女友感吗？宿敌是否有点亲密了",
         run_ffmpeg=True,
-        cover_mode_override="screenshot",
-        require_screenshot_direct=True,
+        fixed_options=FixedCoverStageOptions(
+            cover_mode_override="screenshot", require_screenshot_direct=True,
+        ),
         image_edit=lambda **_kwargs: (_ for _ in ()).throw(
             AssertionError("image edit must not run")
         ),
@@ -78,5 +80,4 @@ def test_fixed_screenshot_direct_lane_never_demotes_to_images_edit(
 def test_default_stage_behavior_keeps_environment_route_compatibility(tmp_path: Path) -> None:
     """The new options are opt-in; this assertion pins their default values."""
 
-    assert publish_staging._stage_lidousha_ai_cover.__kwdefaults__["cover_mode_override"] is None
-    assert publish_staging._stage_lidousha_ai_cover.__kwdefaults__["require_screenshot_direct"] is False
+    assert publish_staging._stage_lidousha_ai_cover.__kwdefaults__["fixed_options"] == FixedCoverStageOptions()

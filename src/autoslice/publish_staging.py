@@ -83,9 +83,9 @@ from .cover_punch_semantics import (
     PUNCH_LINE_MAX_EM,
     cover_text_requires_punch_for_thumbnail,
     talk_cover_thumbnail_gate_violations,
-    validate_cover_punch_semantic_review,
     validate_full_text_cover_contract,
 )
+from .fixed_cover_stage import FixedCoverStageOptions, fixed_art_direction, resolved_cover_mode
 from .llm_client import LlmCall, extract_json_object
 from .manual_title_repair_authority import (
     ManualTitleRepairAuthorityError,
@@ -1639,10 +1639,7 @@ def _stage_lidousha_ai_cover(
     full_text_cover_contract: Mapping[str, object] | None = None,
     diversity_slot: int | None = None,
     private_artifact_root: Path | None = None,
-    cover_mode_override: str | None = None,
-    require_screenshot_direct: bool = False,
-    approved_punch: tuple[str, ...] | None = None,
-    approved_punch_receipt: Mapping[str, object] | None = None,
+    fixed_options: FixedCoverStageOptions = FixedCoverStageOptions(),
 ) -> dict[str, object]:
     cover_generation: dict[str, object] = {
         "workflow": LIDOUSHA_COVER_WORKFLOW,
@@ -1668,17 +1665,7 @@ def _stage_lidousha_ai_cover(
     # AUTOSLICE_COVER_MODE = auto（默认，按名场面强度路由）| screenshot（强制直出）
     # | polish（强制截图+CPA 轻微调）| cpa（强制全图重绘，旧行为）。
     # 凭据门只对强制 cpa 模式前置；其余路线推迟到真正要调 CPA 时再卡。
-    # Fixed repair lanes must never rely on mutable process environment to
-    # select their treatment.  The ordinary pipeline retains its environment
-    # behaviour; the only stricter caller passes the explicit screenshot
-    # override together with ``require_screenshot_direct`` below.
-    cover_mode = (
-        cover_mode_override
-        if cover_mode_override is not None
-        else os.environ.get("AUTOSLICE_COVER_MODE", "").strip().lower()
-    ) or "auto"
-    if cover_mode not in ("auto", "screenshot", "polish", "cpa"):
-        cover_mode = "auto"
+    cover_mode = resolved_cover_mode(fixed_options, os.environ.get("AUTOSLICE_COVER_MODE", "").strip().lower()) or "auto"
     cover_generation["cover_mode"] = cover_mode
     base_url = os.environ.get("CPA_BASE_URL", "").strip().rstrip("/")
     api_key = os.environ.get("CPA_API_KEY", "").strip()
@@ -1772,48 +1759,18 @@ def _stage_lidousha_ai_cover(
             "sha256": "sha256:" + _sha256(source_composition_path),
         }
 
-    # Art direction is picked AFTER the fail-closed gates (creds/ffmpeg/ref frame)
-    # so a blocked cover never spends an LLM call. It is fail-OPEN (deterministic
-    # baseline) while the cover IMAGE stays fail-closed.
     emote_library = load_emote_library(ROOT)
-    art_direction = _lidousha_cover_art_direction(
-        candidate_id=candidate_id,
-        title=title,
-        cover_text=cover_text,
-        art_direction_llm_call=art_direction_llm_call,
-        emote_library=emote_library,
-        allow_punch=punch_allowed,
-        diversity_slot=diversity_slot,
-        story_hook=(
-            str(story_contract.get("selection_hook") or "")
-            if isinstance(story_contract, Mapping)
-            else ""
-        ),
+    art_direction = fixed_art_direction(
+        _lidousha_cover_art_direction, candidate_id=candidate_id, title=title,
+        cover_text=cover_text, llm_call=art_direction_llm_call, emote_library=emote_library,
+        punch_allowed=punch_allowed, diversity_slot=diversity_slot,
+        story_hook=(str(story_contract.get("selection_hook") or "") if isinstance(story_contract, Mapping) else ""),
+        options=fixed_options,
     )
-    if approved_punch is not None:
-        if (
-            not punch_allowed
-            or not isinstance(approved_punch_receipt, Mapping)
-            or approved_punch_receipt.get("status") != "PASS"
-            or tuple(approved_punch_receipt.get("final_punch") or ()) != approved_punch
-            or not validate_cover_punch_semantic_review(
-                approved_punch_receipt,
-                rendered_lines=list(approved_punch),
-                cover_text=cover_text,
-                story_hook=(
-                    str(story_contract.get("selection_hook") or "")
-                    if isinstance(story_contract, Mapping) else ""
-                ),
-            )
-        ):
-            return _blocked_ai_cover_result(
-                cover_generation, ["COVER_APPROVED_PUNCH_RECEIPT_INVALID"],
-                "fixed cover repair requires its canonical approved-punch receipt",
-            )
-        art_direction = dataclasses_replace(
-            art_direction,
-            cover_punch=approved_punch,
-            cover_punch_semantic_review=dict(approved_punch_receipt),
+    if art_direction is None:
+        return _blocked_ai_cover_result(
+            cover_generation, ["COVER_APPROVED_PUNCH_RECEIPT_INVALID"],
+            "fixed cover repair requires its canonical approved-punch receipt",
         )
 
     # 路由：语义/人物证据先行，几何只决定已经验真人物的构图处理。
@@ -1951,10 +1908,7 @@ def _stage_lidousha_ai_cover(
         result = _enforce_final_talk_cover_thumbnail_gate(result)
         if "SCREENSHOT_ROUTE_MATERIALIZATION_FAILED" not in (result.get("reason_codes") or []):
             return result
-        if require_screenshot_direct:
-            # A candidate-specific screenshot repair cannot use the generic
-            # fallback: a failed direct composition is evidence for a human
-            # or provider review, never authorization to call images.edit.
+        if fixed_options.require_screenshot_direct:
             return result
         screenshot_receipt = cover_generation.get("screenshot_direct")
         demotion_detail = f"demoted from {treatment}: " + str(

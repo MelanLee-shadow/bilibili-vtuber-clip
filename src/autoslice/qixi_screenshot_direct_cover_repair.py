@@ -484,6 +484,7 @@ def _production_stage_cover(
 ) -> dict[str, object]:
     """Run the canonical screenshot stage only inside the private root."""
     from src.autoslice.publish_staging import _stage_lidousha_ai_cover
+    from src.autoslice.fixed_cover_stage import FixedCoverStageOptions
     from src.autoslice.cover_host_identity_gate import (
         validate_final_host_identity_verification,
         verify_lidousha_final_host_identity,
@@ -513,9 +514,12 @@ def _production_stage_cover(
         title="【李豆沙】小李有女友感吗？宿敌是否有点亲密了",
         cover_text=str(record.get("publish_staging", {}).get("cover_text") or ""),
         run_ffmpeg=True, private_artifact_root=root, punch_allowed=True,
-        cover_mode_override=cover_mode_override,
-        require_screenshot_direct=require_screenshot_direct,
-        approved_punch=approved_punch, approved_punch_receipt=semantic_receipt,
+        fixed_options=FixedCoverStageOptions(
+            cover_mode_override=cover_mode_override,
+            require_screenshot_direct=require_screenshot_direct,
+            approved_punch=approved_punch,
+            approved_punch_receipt=semantic_receipt,
+        ),
         image_edit=image_edit_trap,
         enforce_final_host_identity=True,
         final_host_identity_verifier=verify_lidousha_final_host_identity,
