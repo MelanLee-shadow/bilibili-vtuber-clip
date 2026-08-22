@@ -76,6 +76,32 @@ def test_prepare_retains_typed_stage_reason_in_sanitized_failure(tmp_path: Path,
     assert caught.value.reason_code == "REPLAY_BASELINE_APPLICATION_FAILED"
 
 
+def test_prepare_records_only_an_actual_provider_callback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    record = tmp_path / "record.json"
+    record.write_text("{}\n")
+    plan = SimpleNamespace(
+        date="2026-08-14", candidate_id="cid", record_path=record,
+        baseline=SimpleNamespace(config={"sha256": "a" * 64}),
+    )
+    parent = tmp_path / "private"
+    parent.mkdir(mode=0o700)
+    stage = parent / "candidate-stage"
+    stage.mkdir()
+    (stage / "stage.json").write_text("{}\n")
+    monkeypatch.setattr(cli, "stage_replay", lambda *_args, **_kwargs: {"stage": str(stage)})
+    monkeypatch.setattr(cli, "_production_llm_call", lambda **_kwargs: lambda _prompt: "{}")
+
+    def provider_failure(*_args, **kwargs):
+        kwargs["provider_invocation"]()
+        raise cli.ReviewedBaselineReplayError("REPLAY_FINALIZER_CHAT_AUTHORITY_DRIFT")
+
+    monkeypatch.setattr(cli, "synthesize_replay_spec_and_finalize_private", provider_failure)
+    with pytest.raises(cli._PrepareFailure) as caught:
+        cli._prepare(plan, runtime=tmp_path, stage_parent=parent)
+    assert caught.value.provider_attempted is True
+    assert caught.value.reason_code == "REPLAY_FINALIZER_CHAT_AUTHORITY_DRIFT"
+
+
 def test_safe_reason_code_keeps_only_typed_codes() -> None:
     assert cli._safe_reason_code(cli.ReviewedBaselineReplayError("REPLAY_BASELINE_APPLICATION_FAILED")) == (
         "REPLAY_BASELINE_APPLICATION_FAILED"
@@ -83,6 +109,11 @@ def test_safe_reason_code_keeps_only_typed_codes() -> None:
     assert cli._safe_reason_code(RuntimeError("/private/provider stderr: token=secret")) == (
         "REPLAY_PREPARE_EXCEPTION"
     )
+
+
+def test_record_bound_authority_failures_get_their_own_predicate() -> None:
+    assert cli._failure_predicate("REPLAY_FINALIZER_CHAT_AUTHORITY_DRIFT") == "RECORD_BOUND_CHAT_AUTHORITY"
+    assert cli._failure_predicate("REPLAY_FINALIZER_CLIP_CONTEXT_PAYLOAD_DRIFT") == "RECORD_BOUND_CLIP_CONTEXT"
 
 
 def test_full_dry_failure_receipt_preserves_typed_prepare_reason(
@@ -317,7 +348,7 @@ def test_full_package_prepare_overlaps_and_apply_rebinds_state_serially(
         active -= 1
         return stage, SimpleNamespace(prepared_sha256="sha256:" + "b" * 64), SimpleNamespace(
             after=object(), projection=object(),
-        ), None, ()
+        ), None, (), False
 
     def fake_rebind(plan, *, runtime_root, state_path, finalization, after, projection):
         assert projection is not None
@@ -370,7 +401,7 @@ def test_committed_cleanup_oserror_cannot_mask_journal(
         cli, "_prepare",
         lambda *_args, **_kwargs: (stage, SimpleNamespace(prepared_manifest=stage / "prepared.json"), SimpleNamespace(
             after=object(), projection=object(),
-        ), None, ()),
+        ), None, (), False),
     )
     monkeypatch.setattr(cli, "rebind_replay_after_image_state", lambda *_args, **_kwargs: SimpleNamespace())
     journal = runtime / "journal.json"
@@ -406,7 +437,7 @@ def test_rebind_failure_cleans_uncharted_transaction_stage(
     prepared_after = SimpleNamespace(after=object(), projection=object())
     monkeypatch.setattr(cli, "build_replay_plan", lambda **_kwargs: plan)
     monkeypatch.setattr(cli, "_prepare", lambda *_args, **_kwargs: (
-        stage, SimpleNamespace(prepared_manifest=stage / "prepared.json"), prepared_after, None, (),
+        stage, SimpleNamespace(prepared_manifest=stage / "prepared.json"), prepared_after, None, (), False,
     ))
     monkeypatch.setattr(
         cli, "rebind_replay_after_image_state",

@@ -10,6 +10,7 @@ import pytest
 
 import src.autoslice.redelivery_full_window_replay as full_window_replay
 import src.autoslice.reviewed_baseline_replay as replay
+import src.autoslice.reviewed_baseline_replay_authority as replay_authority
 from src.autoslice.repository_asset_authority import _canonical_sha256
 
 
@@ -703,6 +704,295 @@ def test_replay_publish_adapter_refuses_source_fact_title_rewrite(
         adapter({}, cues=[], run_ffmpeg=False)
 
 
+def _record_bound_authority_fixture(tmp_path: Path) -> tuple[SimpleNamespace, Path, dict[str, object], Path, Path]:
+    """Build a drifted candidate pair plus one exact portable record mirror."""
+
+    candidate = tmp_path / "out" / DATE / CID
+    package = candidate / "replacement_recuts"
+    package.mkdir(parents=True)
+    direct_chat = candidate / f"{CID}.chat-authority.json"
+    direct_clip = candidate / f"{CID}.clip-context.json"
+    direct_chat.write_bytes(b"drifted-chat")
+    direct_clip.write_bytes(b"drifted-clip")
+    source_sha = "sha256:" + "1" * 64
+    subtitle_sha = "sha256:" + "2" * 64
+    speaker_sha = "sha256:" + "3" * 64
+    ass_sha = "sha256:" + "4" * 64
+    draft = "1\n00:00:00,000 --> 00:00:01,000\ntext\n"
+    clip = {
+        "schema_version": "lidousha-clip-context.v1", "candidate_id": CID,
+        "recording_date": DATE, "mutation_authorized": False,
+        "whole_clip_draft_srt": draft, "whole_clip_draft_srt_sha256": _sha(draft.encode()),
+        "pieces": [{"source_media_sha256": source_sha}],
+        "retrieval_budget": {"whole_clip_transcript_truncated": False},
+    }
+    clip["context_sha256"] = _canonical_sha256(clip)
+    chat = {
+        "schema_version": "chat-authority-audit.v2", "status": "APPLIED_AND_VERIFIED",
+        "final_status": "FINAL_ARTIFACTS_VERIFIED",
+        "final_output_srt_sha256": subtitle_sha.removeprefix("sha256:"),
+        "final_text_srt_sha256": subtitle_sha.removeprefix("sha256:"),
+        "final_speaker_srt_sha256": speaker_sha.removeprefix("sha256:"),
+        "speaker_ass_sha256": ass_sha.removeprefix("sha256:"),
+        "final_review_audit": {"schema_version": "final-review-audit.v2", "status": "CLEAN", "reviewed_srt_sha256": subtitle_sha},
+        "structured_chat_binding_audit": {"schema_version": "structured-chat-binding-audit.v1", "status": "PASS"},
+    }
+    portable = tmp_path / "runtime" / "repo" / "lidousha" / DATE
+    portable.mkdir(parents=True)
+    stem = "portable-name"
+    portable_chat = portable / f"{stem}.chat-authority.json"
+    portable_clip = portable / f"{stem}.clip-context.json"
+    portable_chat.write_text(json.dumps(chat))
+    portable_clip.write_text(json.dumps(clip))
+    publish = {"artifact_hashes": {
+        "chat_authority_audit_sha256": _sha(portable_chat.read_bytes()),
+        "clip_context_file_sha256": _sha(portable_clip.read_bytes()),
+    }}
+    portable_publish = portable / f"{stem}.publish.json"
+    portable_publish.write_text(json.dumps(publish))
+    record = {
+        "chat_authority_audit_path": str(direct_chat), "clip_context_path": str(direct_clip),
+        "clip_context_payload_sha256": clip["context_sha256"],
+        "artifact_hashes": {
+            "chat_authority_audit_sha256": _sha(portable_chat.read_bytes()),
+            "clip_context_file_sha256": _sha(portable_clip.read_bytes()),
+            "publish_draft_sha256": _sha(portable_publish.read_bytes()),
+            "subtitle_sha256": subtitle_sha, "speaker_review_srt_sha256": speaker_sha,
+            "ass_sha256": ass_sha,
+        },
+        "story_contract": {
+            "candidate_id": CID,
+            "clip_context_binding": {"context_sha256": clip["context_sha256"]},
+        },
+    }
+    record_path = package / f"{CID}.record.json"
+    record_path.write_text(json.dumps(record))
+    portable_record = portable / f"{stem}.record.json"
+    portable_record.write_bytes(record_path.read_bytes())
+    plan = SimpleNamespace(candidate_id=CID, date=DATE, package_root=candidate)
+    return plan, record_path, record, portable, portable_record
+
+
+def _rebind_portable_authority(
+    *, record_path: Path, record: dict[str, object], portable: Path, portable_record: Path,
+) -> None:
+    """Refresh the fixture's record/publish byte closure after a sidecar edit."""
+
+    stem = portable_record.name.removesuffix(".record.json")
+    chat = portable / f"{stem}.chat-authority.json"
+    clip = portable / f"{stem}.clip-context.json"
+    publish_path = portable / f"{stem}.publish.json"
+    hashes = record["artifact_hashes"]
+    assert isinstance(hashes, dict)
+    hashes["chat_authority_audit_sha256"] = _sha(chat.read_bytes())
+    hashes["clip_context_file_sha256"] = _sha(clip.read_bytes())
+    publish = json.loads(publish_path.read_text())
+    publish["artifact_hashes"] = {
+        "chat_authority_audit_sha256": hashes["chat_authority_audit_sha256"],
+        "clip_context_file_sha256": hashes["clip_context_file_sha256"],
+    }
+    publish_path.write_text(json.dumps(publish))
+    hashes["publish_draft_sha256"] = _sha(publish_path.read_bytes())
+    record_path.write_text(json.dumps(record))
+    portable_record.write_bytes(record_path.read_bytes())
+
+
+def _resolve_fixture_authority(
+    *, plan: SimpleNamespace, record_path: Path, record: dict[str, object], portable: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> replay_authority.RecordBoundFinalizerAuthority:
+    monkeypatch.setattr(replay_authority, "_portable_date_root", lambda **_kwargs: portable)
+    return replay_authority.resolve_record_bound_finalizer_authority(
+        plan=plan, record_binding=replay.regular_binding(record_path, label="RECORD"), record=record,
+        runtime_authority_root=portable.parents[3], source_media_sha256="sha256:" + "1" * 64,
+        regular_binding=replay.regular_binding, safe_directory=replay._safe_directory,
+        load_json=replay._load_json, error=replay.ReviewedBaselineReplayError,
+    )
+
+
+def test_record_bound_portable_mirror_recovers_only_exact_sidecar_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, record_path, record, portable, _portable_record = _record_bound_authority_fixture(tmp_path)
+    authority = _resolve_fixture_authority(
+        plan=plan, record_path=record_path, record=record, portable=portable, monkeypatch=monkeypatch,
+    )
+
+    assert authority.source == "portable-record-mirror"
+    assert authority.chat.path.parent == portable
+    assert authority.clip_context.path.parent == portable
+    assert authority.chat.sha256 == record["artifact_hashes"]["chat_authority_audit_sha256"]
+    assert authority.clip_context.sha256 == record["artifact_hashes"]["clip_context_file_sha256"]
+
+
+def test_record_bound_authority_uses_current_exact_pair_without_portable_lookup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, record_path, record, portable, portable_record = _record_bound_authority_fixture(tmp_path)
+    stem = portable_record.name.removesuffix(".record.json")
+    candidate = plan.package_root
+    (candidate / f"{CID}.chat-authority.json").write_bytes(
+        (portable / f"{stem}.chat-authority.json").read_bytes()
+    )
+    (candidate / f"{CID}.clip-context.json").write_bytes(
+        (portable / f"{stem}.clip-context.json").read_bytes()
+    )
+    monkeypatch.setattr(
+        replay_authority, "_portable_date_root",
+        lambda **_kwargs: pytest.fail("exact current authority must not scan portable mirrors"),
+    )
+    authority = replay_authority.resolve_record_bound_finalizer_authority(
+        plan=plan, record_binding=replay.regular_binding(record_path, label="RECORD"), record=record,
+        runtime_authority_root=tmp_path / "runtime", source_media_sha256="sha256:" + "1" * 64,
+        regular_binding=replay.regular_binding, safe_directory=replay._safe_directory,
+        load_json=replay._load_json, error=replay.ReviewedBaselineReplayError,
+    )
+    assert authority.source == "current-candidate"
+
+
+def test_record_bound_portable_mirror_refuses_missing_or_symlink_companion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, record_path, record, portable, portable_record = _record_bound_authority_fixture(tmp_path)
+    portable_record.unlink()
+    with pytest.raises(replay.ReviewedBaselineReplayError, match="PORTABLE_AUTHORITY_RECORD_AMBIGUOUS"):
+        _resolve_fixture_authority(
+            plan=plan, record_path=record_path, record=record, portable=portable, monkeypatch=monkeypatch,
+        )
+
+    _plan, _record_path, _record, portable, portable_record = _record_bound_authority_fixture(tmp_path / "symlink")
+    (portable / "portable-name.clip-context.json").unlink()
+    (portable / "portable-name.clip-context.json").symlink_to(portable / "portable-name.chat-authority.json")
+    with pytest.raises(replay.ReviewedBaselineReplayError, match="PORTABLE_CLIP_CONTEXT_UNSAFE"):
+        _resolve_fixture_authority(
+            plan=_plan, record_path=_record_path, record=_record, portable=portable, monkeypatch=monkeypatch,
+        )
+
+
+@pytest.mark.parametrize(
+    ("kind", "mutate", "reason"),
+    [
+        ("chat", lambda value: value.update({"final_status": "STALE"}), "CHAT_AUTHORITY_RECORD_CLOSURE_DRIFT"),
+        ("clip-candidate", lambda value: value.update({"candidate_id": "other"}), "CLIP_CONTEXT_INVALID"),
+        ("clip-date", lambda value: value.update({"recording_date": "2026-08-15"}), "CLIP_CONTEXT_INVALID"),
+        ("clip-source", lambda value: value["pieces"][0].update({"source_media_sha256": "sha256:" + "e" * 64}), "CLIP_CONTEXT_INVALID"),
+        ("clip-payload", lambda _value: None, "CLIP_CONTEXT_PAYLOAD_DRIFT"),
+    ],
+)
+def test_record_bound_portable_authority_rechecks_chat_and_clip_closure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, mutate, reason: str,
+) -> None:
+    plan, record_path, record, portable, portable_record = _record_bound_authority_fixture(tmp_path)
+    path = portable / f"portable-name.{ 'chat-authority' if kind == 'chat' else 'clip-context' }.json"
+    document = json.loads(path.read_text())
+    mutate(document)
+    if kind == "clip-payload":
+        document["whole_clip_draft_srt"] = "1\n00:00:00,000 --> 00:00:01,000\nother\n"
+        document["whole_clip_draft_srt_sha256"] = _sha(document["whole_clip_draft_srt"].encode())
+    if kind.startswith("clip-"):
+        document["context_sha256"] = _canonical_sha256({
+            key: value for key, value in document.items() if key != "context_sha256"
+        })
+    path.write_text(json.dumps(document))
+    _rebind_portable_authority(
+        record_path=record_path, record=record, portable=portable, portable_record=portable_record,
+    )
+    with pytest.raises(replay.ReviewedBaselineReplayError, match=reason):
+        _resolve_fixture_authority(
+            plan=plan, record_path=record_path, record=record, portable=portable, monkeypatch=monkeypatch,
+        )
+
+
+def test_record_bound_authority_requires_real_hashes() -> None:
+    assert replay_authority._same_sha(None, None) is False
+    assert replay_authority._same_sha("", "") is False
+
+
+def test_exact_final_reviewer_returns_callable_and_tracks_every_provider_callback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The tracker observes each provider-backed callback only at invocation."""
+
+    padded = tmp_path / "padded.mp4"
+    padded.write_bytes(b"padded")
+    plan = SimpleNamespace(candidate_id=CID, date=DATE)
+    monkeypatch.setattr(replay, "_reconstruct_structured_chat", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(
+        "src.autoslice.delivery_fast_path.resolve_operator_text_full_ownership",
+        lambda _spec: {"schema_version": "operator-text-full-ownership.v1"},
+    )
+    monkeypatch.setattr(
+        "src.autoslice.delivery_fast_path.skipped_final_review_audit", lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        "src.autoslice.review_package_boundary_validators.semantic_boundary_review_is_valid",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        "src.autoslice.producer_boundary_review_stage.exact_delivery_correction_audit",
+        lambda **kwargs: kwargs["llm_call"]("boundary") or {"status": "PASS"},
+    )
+    monkeypatch.setattr(
+        "src.autoslice.delivery_fast_path.discover_priority_findings", lambda *_args, **_kwargs: ([], {}),
+    )
+    monkeypatch.setattr(
+        "src.autoslice.producer_text_pipeline._final_review_structured_context", lambda **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        "src.autoslice.clip_context.clip_context_prompt_text", lambda _context: "context",
+    )
+    monkeypatch.setattr(
+        "src.autoslice.producer_text_pipeline._run_exact_final_release_review",
+        lambda **kwargs: (
+            kwargs["verify_confusable_entity"]("entity"),
+            kwargs["screen_read_probe"](0, 1),
+            kwargs["final_review_llm"]("final"),
+            kwargs["pronoun_audit_llm"]("pronoun"),
+            {"status": "CLEAN"},
+        )[-1],
+    )
+    attempts: list[None] = []
+    reviewer = replay.replay_exact_final_reviewer(
+        plan, spec={
+            "pieces": [{"source_media_sha256": "sha256:" + "1" * 64}],
+            "selection_hook": "hook", "selection_scorecard": {},
+            "boundary_semantic_review": {"candidate_id": CID},
+        }, clip_context={}, runtime_root=tmp_path, out_root=tmp_path, padded=padded,
+        verify_confusable_entity=lambda _request: {}, screen_read_probe=lambda *_args: {},
+        boundary_llm=lambda _prompt: "{}", final_llm=lambda _prompt: "{}",
+        pronoun_llm=lambda _prompt: "{}", provider_invocation=lambda: attempts.append(None),
+    )
+    assert callable(reviewer)
+    assert reviewer("1\n00:00:00,000 --> 00:00:01,000\ntext\n", {}, 0, 1) == {"status": "CLEAN"}
+    assert len(attempts) == 5
+
+
+def test_record_bound_portable_mirror_rejects_ambiguous_or_mismatched_companions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, record_path, record, portable, portable_record = _record_bound_authority_fixture(tmp_path)
+    monkeypatch.setattr(replay_authority, "_portable_date_root", lambda **_kwargs: portable)
+    # A second byte-identical record has no authority to choose between stems.
+    (portable / "second.record.json").write_bytes(portable_record.read_bytes())
+    with pytest.raises(replay.ReviewedBaselineReplayError, match="PORTABLE_AUTHORITY_RECORD_AMBIGUOUS"):
+        replay_authority.resolve_record_bound_finalizer_authority(
+            plan=plan, record_binding=replay.regular_binding(record_path, label="RECORD"), record=record,
+            runtime_authority_root=tmp_path / "runtime", source_media_sha256="sha256:" + "1" * 64,
+            regular_binding=replay.regular_binding, safe_directory=replay._safe_directory,
+            load_json=replay._load_json, error=replay.ReviewedBaselineReplayError,
+        )
+
+    (portable / "second.record.json").unlink()
+    (portable / "portable-name.clip-context.json").write_bytes(b"wrong")
+    with pytest.raises(replay.ReviewedBaselineReplayError, match="FINALIZER_CLIP_CONTEXT_DRIFT"):
+        replay_authority.resolve_record_bound_finalizer_authority(
+            plan=plan, record_binding=replay.regular_binding(record_path, label="RECORD"), record=record,
+            runtime_authority_root=tmp_path / "runtime", source_media_sha256="sha256:" + "1" * 64,
+            regular_binding=replay.regular_binding, safe_directory=replay._safe_directory,
+            load_json=replay._load_json, error=replay.ReviewedBaselineReplayError,
+        )
+
+
 def test_synthesized_private_finalizer_uses_prepare_only_and_private_handle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -726,6 +1016,14 @@ def test_synthesized_private_finalizer_uses_prepare_only_and_private_handle(
     })
     record_path.write_text(json.dumps(record))
     plan = replay.build_replay_plan(repo_root=ROOT, out_root=out_root, date=DATE, candidate_id=CID)
+    monkeypatch.setattr(
+        replay, "resolve_record_bound_finalizer_authority",
+        lambda **_kwargs: SimpleNamespace(
+            chat=replay.regular_binding(chat, label="CHAT"),
+            clip_context=replay.regular_binding(clip, label="CLIP"),
+            source="fixture",
+        ),
+    )
 
     @dataclass(frozen=True)
     class Adapters:
@@ -887,7 +1185,7 @@ def test_synthesized_private_finalizer_uses_prepare_only_and_private_handle(
 
 
 def test_private_finalizer_refuses_to_reuse_an_old_clean_review(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     out_root, _ = _package(tmp_path)
     recut = out_root / DATE / CID / "replacement_recuts"
@@ -907,6 +1205,13 @@ def test_private_finalizer_refuses_to_reuse_an_old_clean_review(
     })
     record_path.write_text(json.dumps(record))
     plan = replay.build_replay_plan(repo_root=ROOT, out_root=out_root, date=DATE, candidate_id=CID)
+    monkeypatch.setattr(
+        replay, "resolve_record_bound_finalizer_authority",
+        lambda **_kwargs: SimpleNamespace(
+            chat=replay.regular_binding(chat, label="CHAT"),
+            clip_context=replay.regular_binding(clip, label="CLIP"), source="fixture",
+        ),
+    )
 
     @dataclass(frozen=True)
     class Adapters:

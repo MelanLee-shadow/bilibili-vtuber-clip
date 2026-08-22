@@ -45,6 +45,7 @@ from src.autoslice.reviewed_baseline_replay_projection import (
     exact_candidate_sidecar_target,
     validate_retained_projection,
 )
+from src.autoslice.reviewed_baseline_replay_authority import resolve_record_bound_finalizer_authority
 
 
 REPLAY_STAGE_SCHEMA = "reviewed-baseline-replay-stage.v1"
@@ -812,12 +813,12 @@ def replay_exact_final_reviewer(
     boundary_llm: Callable[[str], str] | None = None,
     final_llm: Callable[[str], str] | None = None,
     pronoun_llm: Callable[[str], str] | None = None,
+    provider_invocation: Callable[[], None] | None = None,
 ) -> Callable[[str, Mapping[str, object], int, int], dict[str, object]]:
     """Construct the canonical fresh exact-final closure for replay.
 
-    The typed exhaustive operator ownership only skips discovery that could
-    not alter the reviewed baseline.  It does not reuse an old CLEAN receipt:
-    boundary and exact-release reviewers run against the newly rendered SRT.
+    Typed exhaustive ownership skips only zero-mutation discovery; boundary
+    and exact-release reviewers still run against the newly rendered SRT.
     """
 
     from scripts.gemini_slice_jingting import glossary as review_glossary
@@ -834,7 +835,6 @@ def replay_exact_final_reviewer(
     from src.autoslice.review_package_boundary_validators import semantic_boundary_review_is_valid
     from src.autoslice.screen_read_witness import build_env_screen_read_probe
     from src.autoslice.clip_context import clip_context_prompt_text
-
     ownership = resolve_operator_text_full_ownership(spec)
     if ownership is None:
         raise ReviewedBaselineReplayError("REPLAY_OPERATOR_TEXT_OWNERSHIP_INVALID")
@@ -850,11 +850,17 @@ def replay_exact_final_reviewer(
         raise ReviewedBaselineReplayError("REPLAY_ENTITY_VERIFIER_MISSING")
     if screen_read_probe is None:
         screen_read_probe = build_env_screen_read_probe(padded)
-    boundary_call = boundary_llm or _production_llm_call(runtime_root=runtime, effort="medium")
-    final_call = final_llm or _production_llm_call(runtime_root=runtime, effort="medium")
-    pronoun_call = pronoun_llm or _production_llm_call(runtime_root=runtime, effort="low")
-    def unused(*_args: object, **_kwargs: object) -> None:
-        return None
+    def tracked(call: Callable) -> Callable:
+        if provider_invocation is None:
+            return call
+        return lambda *args, **kwargs: (provider_invocation(), call(*args, **kwargs))[1]
+
+    boundary_call = tracked(boundary_llm or _production_llm_call(runtime_root=runtime, effort="medium"))
+    final_call = tracked(final_llm or _production_llm_call(runtime_root=runtime, effort="medium"))
+    pronoun_call = tracked(pronoun_llm or _production_llm_call(runtime_root=runtime, effort="low"))
+    entity_call = tracked(verify_confusable_entity)
+    screen_call = tracked(screen_read_probe)
+    def unused(*_args: object, **_kwargs: object) -> None: return None
     adapters = TextPipelineAdapters(
         build_aggregate_transcriber=unused, build_agy_transcriber=unused,
         load_term_boundary_surfaces=unused, profile_asset_file=lambda _key: Path("/__replay_unused__"),
@@ -869,9 +875,8 @@ def replay_exact_final_reviewer(
         correction = skipped_final_review_audit(
             "SKIPPED_TRUTH_FULL_OWNERSHIP", truth_full_ownership=ownership,
         )
-        # Only the immutable whole-source boundary review seeds a *fresh*
-        # delivery review.  A prior final-delivery/CLEAN receipt is never a
-        # replayable substitute for the newly rendered subtitle bytes.
+        # Only immutable whole-source review seeds fresh delivery review;
+        # prior final-delivery/CLEAN bytes are never a replayable substitute.
         source_boundary = spec.get("boundary_semantic_review")
         if (
             not isinstance(source_boundary, Mapping)
@@ -907,15 +912,14 @@ def replay_exact_final_reviewer(
             srt_text=final_srt_text, correction_audit=correction,
             adapters=adapters, authoritative_chat=authoritative_chat,
             selection_hook=str(spec.get("selection_hook") or ""),
-            clip_context=clip_context, verify_confusable_entity=verify_confusable_entity,
+            clip_context=clip_context, verify_confusable_entity=entity_call,
             verified_authority_audit=verified_authority_audit,
-            timeline_offset_ms=timeline_offset_ms, screen_read_probe=screen_read_probe,
+            timeline_offset_ms=timeline_offset_ms, screen_read_probe=screen_call,
             priority_raw_findings=findings, acoustic_discovery_audit=discovery,
             final_review_llm=final_call, pronoun_audit_llm=pronoun_call,
         )
 
     return review
-
 
 def synthesize_replay_spec_and_finalize_private(
     plan: ReplayPlan,
@@ -930,6 +934,7 @@ def synthesize_replay_spec_and_finalize_private(
     use_production_exact_final_reviewer: bool = False,
     exact_final_entity_verifier: Callable | None = None,
     exact_final_text_adapters: object | None = None,
+    provider_invocation: Callable[[], None] | None = None,
 ) -> PrivateReplayFinalization:
     """Call the canonical producer finalizer in an isolated prepare-only root.
 
@@ -988,20 +993,18 @@ def synthesize_replay_spec_and_finalize_private(
     speaker_mode = record.get("speaker_mode")
     speaker_style = record.get("subtitle_style")
     burned = record.get("burned_preview")
-    chat_path = record.get("chat_authority_audit_path")
-    clip_path = record.get("clip_context_path")
     if (
         not isinstance(boundary, Mapping) or not isinstance(timing, Mapping)
-        or not isinstance(story, Mapping) or not isinstance(chat_path, str)
-        or not isinstance(clip_path, str) or speaker_mode not in {"auto", "uniform_host"}
+        or not isinstance(story, Mapping) or speaker_mode not in {"auto", "uniform_host"}
         or not isinstance(speaker_style, str) or not speaker_style
     ):
         raise ReviewedBaselineReplayError("REPLAY_FINALIZER_INPUT_MISSING")
-    chat = regular_binding(Path(chat_path), label="CHAT_AUTHORITY")
-    clip = regular_binding(Path(clip_path), label="CLIP_CONTEXT")
-    hashes = record.get("artifact_hashes")
-    if chat is None or clip is None or not isinstance(hashes, Mapping) or hashes.get("chat_authority_audit_sha256") != chat.sha256:
-        raise ReviewedBaselineReplayError("REPLAY_FINALIZER_AUTHORITY_DRIFT")
+    authority = resolve_record_bound_finalizer_authority(
+        plan=plan, record_binding=record_binding, record=record, runtime_authority_root=runtime_authority_root,
+        source_media_sha256=normalized_piece["source_media_sha256"], regular_binding=regular_binding,
+        safe_directory=_safe_directory, load_json=_load_json, error=ReviewedBaselineReplayError)
+    chat = authority.chat
+    clip = authority.clip_context
     private_runtime_root = _mkdir_private(stage / "finalizer-runtime")
     _copy_deployed_authority(
         source_runtime_root=runtime_authority_root,
@@ -1087,6 +1090,7 @@ def synthesize_replay_spec_and_finalize_private(
             runtime_root=runtime_authority_root, out_root=out_root,
             padded=plan.padded_path,
             verify_confusable_entity=exact_final_entity_verifier,
+            provider_invocation=provider_invocation,
         )
     reviewer = reviewer or getattr(adapters, "run_exact_final_review", None)
     if not callable(reviewer):

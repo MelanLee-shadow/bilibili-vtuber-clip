@@ -232,10 +232,19 @@ def _runtime_gate(runtime: Path) -> None:
 
 
 _AFTER_IMAGE_PREDICATES = (
+    "RECORD_BOUND_CHAT_AUTHORITY", "RECORD_BOUND_CLIP_CONTEXT",
     "SOURCE_FACT_REVIEW", "EXACT_DELIVERY_BOUNDARY_REVIEW", "EXACT_FINAL_RELEASE_REVIEW",
     "RECORD_PUBLISH_CHAT_MIRRORS", "FROZEN_TITLE_AUTHORITY",
     "COVER_ROUTE_PIXEL_HOST_PARTICIPANT_PUNCH", "PACKAGE_AUDIT", "STATE_AFTER_IMAGE_DIFF",
 )
+
+
+def _failure_predicate(reason_code: str) -> str:
+    if reason_code.startswith("REPLAY_FINALIZER_CHAT_AUTHORITY"):
+        return "RECORD_BOUND_CHAT_AUTHORITY"
+    if reason_code.startswith("REPLAY_FINALIZER_CLIP_CONTEXT"):
+        return "RECORD_BOUND_CLIP_CONTEXT"
+    return "PRIVATE_FINALIZATION"
 
 
 def _matrix(
@@ -452,19 +461,32 @@ def _prepare(plan, *, runtime: Path, stage_parent: Path, state_path: Path | None
     # explicitly supplied.  This CLI does not invent one: a production caller
     # must use the dedicated exact-final builder once its fresh private spec is
     # available.  It is therefore impossible to misrepresent this as READY.
+    provider_attempted = False
+
+    def mark_provider_attempt() -> None:
+        nonlocal provider_attempted
+        provider_attempted = True
+
+    raw_source_fact_llm = _production_llm_call(runtime_root=runtime, effort="high")
+
+    def source_fact_llm(prompt: str) -> str:
+        mark_provider_attempt()
+        return raw_source_fact_llm(prompt)
+
     try:
         finalization = synthesize_replay_spec_and_finalize_private(
             plan, stage=stage, runtime_authority_root=runtime,
             speaker_python=Path(sys.executable),
-            source_fact_llm=_production_llm_call(runtime_root=runtime, effort="high"),
+            source_fact_llm=source_fact_llm,
             adapters=_adapters(), use_production_exact_final_reviewer=True,
             exact_final_text_adapters=_text_adapters(),
+            provider_invocation=mark_provider_attempt,
         )
     except (Exception, SystemExit) as exc:
         stage_sha = _stage_manifest_sha256(stage)
         provider_hashes = _provider_receipt_sha256s(stage)
         _cleanup_private_stage(stage, parent=stage_parent)
-        raise _PrepareFailure(reason_code=_safe_reason_code(exc), provider_attempted=True, stage_manifest_sha256=stage_sha,
+        raise _PrepareFailure(reason_code=_safe_reason_code(exc), provider_attempted=provider_attempted, stage_manifest_sha256=stage_sha,
                               provider_receipt_sha256s=provider_hashes) from None
     stage_sha = _stage_manifest_sha256(stage)
     provider_hashes = _provider_receipt_sha256s(finalization.private_runtime_root)
@@ -477,10 +499,10 @@ def _prepare(plan, *, runtime: Path, stage_parent: Path, state_path: Path | None
     except (Exception, SystemExit) as exc:
         prepared_sha = _prepared_manifest_sha256(finalization)
         _cleanup_private_stage(stage, parent=stage_parent)
-        raise _PrepareFailure(reason_code=_safe_reason_code(exc), provider_attempted=True, stage_manifest_sha256=stage_sha,
+        raise _PrepareFailure(reason_code=_safe_reason_code(exc), provider_attempted=provider_attempted, stage_manifest_sha256=stage_sha,
                               prepared_manifest_sha256=prepared_sha,
                               provider_receipt_sha256s=provider_hashes) from None
-    return stage, finalization, after, stage_sha, provider_hashes
+    return stage, finalization, after, stage_sha, provider_hashes, provider_attempted
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -517,7 +539,7 @@ def main(argv: list[str] | None = None) -> int:
                     prepared[plan.candidate_id] = future.result()
                 except (Exception, SystemExit) as exc:  # Never surface provider/path text.
                     errors[plan.candidate_id] = (
-                        _safe_reason_code(exc), bool(getattr(exc, "provider_attempted", True)),
+                        _safe_reason_code(exc), bool(getattr(exc, "provider_attempted", False)),
                         getattr(exc, "stage_manifest_sha256", None),
                         getattr(exc, "prepared_manifest_sha256", None),
                         tuple(getattr(exc, "provider_receipt_sha256s", ())),
@@ -532,7 +554,7 @@ def main(argv: list[str] | None = None) -> int:
                 blocked = True
                 reason_code, provider_attempted, stage_sha, prepared_sha, provider_hashes = error
                 matrix = _matrix(plan, status="NOT_EVALUATED",
-                                 failures={"PRIVATE_FINALIZATION": reason_code})
+                                 failures={_failure_predicate(reason_code): reason_code})
                 receipt = _sanitized_failure_receipt(
                     runtime=runtime, plan=plan, matrix=matrix, provider_attempted=provider_attempted,
                     stage_manifest_sha256=stage_sha, prepared_manifest_sha256=prepared_sha,
@@ -542,7 +564,7 @@ def main(argv: list[str] | None = None) -> int:
                                              "status": "BLOCKED", "predicate_matrix": matrix,
                                              "diagnostic_receipt_sha256": receipt})
                 continue
-            stage, finalization, prepared_after, stage_sha, provider_hashes = prepared[plan.candidate_id]
+            stage, finalization, prepared_after, stage_sha, provider_hashes, provider_attempted = prepared[plan.candidate_id]
             after = prepared_after.after
             committed_journal = None
             commit_attempted = False
@@ -597,7 +619,7 @@ def main(argv: list[str] | None = None) -> int:
                             matrix.append({"predicate": "PRIVATE_STAGE_CLEANUP", "status": "FAIL"})
                     item = {"candidate_id": plan.candidate_id, "status": "BLOCKED", "predicate_matrix": matrix,
                             "diagnostic_receipt_sha256": _sanitized_failure_receipt(
-                                runtime=runtime, plan=plan, matrix=matrix, provider_attempted=True,
+                                runtime=runtime, plan=plan, matrix=matrix, provider_attempted=provider_attempted,
                                 stage_manifest_sha256=stage_sha,
                                 prepared_manifest_sha256=_prepared_manifest_sha256(finalization),
                                 provider_receipt_sha256s=provider_hashes)}
@@ -621,7 +643,7 @@ def main(argv: list[str] | None = None) -> int:
                             "diagnostic_receipt_sha256": _sanitized_failure_receipt(
                                 runtime=runtime, plan=plan,
                                 matrix=[*_matrix(plan, status="NOT_EVALUATED"), {"predicate": "PRIVATE_STAGE_CLEANUP", "status": "FAIL"}],
-                                provider_attempted=True, stage_manifest_sha256=stage_sha,
+                                provider_attempted=provider_attempted, stage_manifest_sha256=stage_sha,
                                 prepared_manifest_sha256=_prepared_manifest_sha256(finalization),
                                 provider_receipt_sha256s=provider_hashes)}
             result["candidates"].append(item)
