@@ -11,7 +11,10 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import re
+import shutil
+import stat
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -355,7 +358,7 @@ def read_publish_meta(work_dir: Path) -> dict:
         except (OSError, ValueError):
             continue
         hashes = d.get("artifact_hashes") if isinstance(d.get("artifact_hashes"), dict) else {}
-        return {
+        result = {
             "title": d.get("title"), "title_source": d.get("title_source"),
             "title_authority_status": d.get("title_authority_status"), "title_authority_error": d.get("title_authority_error"),
             "cover_status": d.get("cover_status"),
@@ -363,10 +366,40 @@ def read_publish_meta(work_dir: Path) -> dict:
             "cover_sha256": hashes.get("cover_sha256"),
             "cover_generation": d.get("cover_generation"),
             "video_sha256": hashes.get("burned_video_sha256") or hashes.get("video_sha256"),
-            "subtitle_sha256": hashes.get("subtitle_sha256") or hashes.get("delivery_subtitle_sha256"),
             **candidate_public_text_result_projection(work_dir=work_dir, publish_path=publish, publish=d),
         }
+        # Legacy publish metadata did not promise a subtitle digest.  Keep
+        # that public shape when none was produced; prepared delivery sealing
+        # validates a real subtitle hash independently before it can commit.
+        subtitle_sha256 = hashes.get("subtitle_sha256") or hashes.get("delivery_subtitle_sha256")
+        if isinstance(subtitle_sha256, str) and subtitle_sha256:
+            result["subtitle_sha256"] = subtitle_sha256
+        return result
     return {}
+
+
+def _remove_candidate_private_recuts(out_root: Path, candidate_id: str) -> None:
+    """Delete only this candidate's private recut attempt after title rejection."""
+
+    candidate_root = out_root / candidate_id
+    recuts = candidate_root / "replacement_recuts"
+    try:
+        candidate_info = os.lstat(candidate_root)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise RuntimeError("candidate-private cleanup cannot inspect its root") from exc
+    if stat.S_ISLNK(candidate_info.st_mode) or not stat.S_ISDIR(candidate_info.st_mode):
+        raise RuntimeError("candidate-private cleanup root is unsafe")
+    try:
+        recuts_info = os.lstat(recuts)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise RuntimeError("candidate-private cleanup cannot inspect recuts") from exc
+    if stat.S_ISLNK(recuts_info.st_mode) or not stat.S_ISDIR(recuts_info.st_mode):
+        raise RuntimeError("candidate-private recuts root is unsafe")
+    shutil.rmtree(recuts)
 
 
 def _speaker_review_manifest_state(work_dir: Path) -> dict[str, tuple[int, int, int, int]]:
@@ -1923,12 +1956,10 @@ def produce_talk(
             "TITLE_AUTHORITY_UNRESOLVED" in tail
             and str(result.get("title_authority_status") or "").startswith("UNRESOLVED")
         ):
-            # The producer now fails before delivery.  Keep cleanup for old
-            # partial/stale attempts, then classify this deterministic lane so
-            # the bounded title retry policy can act on it.
-            # No title-derived cleanup: another candidate can share the same
-            # readable hook.  This candidate has not materialized delivery,
-            # and its private evidence remains for the bounded title retry.
+            # The producer fails before delivery.  Clear only this attempt's
+            # private recuts; title-prefix cleanup could delete a sibling with
+            # the same readable hook.
+            _remove_candidate_private_recuts(out_root, cid)
             result["status"] = "title_failed"
             return _carry_talk_recovery_result(item, result)
         if "SPEAKER_REVIEW_REQUIRED" in attempt_output:
@@ -1968,9 +1999,9 @@ def produce_talk(
         )
         return _carry_talk_recovery_result(item, result)
     if str(result.get("title_authority_status") or "").startswith("UNRESOLVED"):
-        # No delivery with a cid title / cid-text cover — clean and retry later.
-        # Never glob a public title prefix here: the CID-suffixed package is
-        # the ownership boundary and a failed title has no delivery to remove.
+        # No delivery with a cid title / cid-text cover — clean this private
+        # attempt and retry later.  Never glob a public title prefix here.
+        _remove_candidate_private_recuts(out_root, cid)
         result["status"] = "title_failed"
         return _carry_talk_recovery_result(item, result)
     # Boundary self-repair (Ivan 2026-07-10) replaced quarantine: a delivered

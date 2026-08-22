@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 import scripts.free_session_autoslice as runner
-from src.autoslice import candidate_selection
+from src.autoslice import candidate_selection, runner_state_writeback
 from src.autoslice import semantic_evidence_scorecard_refresh as semantic_chat_refresh
 from src.autoslice.exact_talk_recovery_scope import maintain_delivery_recovery_scope
 from src.autoslice.final_review_provider_budget_retry import (
@@ -2395,9 +2395,19 @@ def test_frozen_allowlist_survives_mid_tick_convergence_without_backfill(
 
 
 def test_process_date_preserves_song_queues_and_never_backfills_after_rejection(
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     state = _state()
+    base = tmp_path / "autoslice"
+    base.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+
+    def persist_test_state(_date: str, value: dict) -> None:
+        path = runner.state_path(_date)
+        path.parent.mkdir(mode=0o700, exist_ok=True)
+        path.write_bytes(runner_state_writeback.state_bytes(value))
+
+    persist_test_state(DATE, state)
     song_preimage = copy.deepcopy(
         {
             key: state[key]
@@ -2446,8 +2456,9 @@ def test_process_date_preserves_song_queues_and_never_backfills_after_rejection(
         ]
         calls.append(("prioritize", [row.get("cid") for row in value["pending_talk"]]))
 
-    def produce_batch(_date: str, items: list[dict], produce_fn) -> list[dict]:
+    def produce_batch(_date: str, items: list[dict], produce_fn, *, prepare_only: bool) -> list[dict]:
         assert produce_fn is runner.produce_talk
+        assert prepare_only is True
         assert [row["cid"] for row in items] == [TARGET]
         calls.append(("produce", TARGET))
         return [{"candidate_id": TARGET, "status": "candidate_rejected"}]
@@ -2488,7 +2499,7 @@ def test_process_date_preserves_song_queues_and_never_backfills_after_rejection(
         lambda *_a, **_k: pytest.fail("combined Talk/Song recovery crossed the scope"),
     )
     monkeypatch.setattr(runner, "song_pipeline_fingerprint", lambda: "sha256:test")
-    monkeypatch.setattr(runner, "write_state", lambda *_a, **_k: None)
+    monkeypatch.setattr(runner, "write_state", persist_test_state)
     monkeypatch.setattr(runner, "write_reports", lambda *_a, **_k: None)
     monkeypatch.setattr(runner, "cpa_healthy", lambda: True)
     monkeypatch.setattr(
@@ -2546,7 +2557,7 @@ def test_process_date_preserves_song_queues_and_never_backfills_after_rejection(
 
 
 def test_process_date_v5_seals_synthetic_pick_before_any_state_persist(
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The real runner commit point cannot persist an unbound crash result."""
 
@@ -2564,6 +2575,16 @@ def test_process_date_v5_seals_synthetic_pick_before_any_state_persist(
     state["published_topic_dedup_review"]["holds"] = []
     state["published_topic_resolution_recovery"] = {"head": "queue"}
     state["pending_talk"] = [queue_row]
+    base = tmp_path / "autoslice"
+    base.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+
+    def persist_test_state(_date: str, value: dict) -> None:
+        path = runner.state_path(_date)
+        path.parent.mkdir(mode=0o700, exist_ok=True)
+        path.write_bytes(runner_state_writeback.state_bytes(value))
+
+    persist_test_state(DATE, state)
     persisted: list[dict] = []
     calls: list[str] = []
 
@@ -2646,6 +2667,7 @@ def test_process_date_v5_seals_synthetic_pick_before_any_state_persist(
                 "head": "sealed-pick"
             }
         persisted.append(copy.deepcopy(value))
+        persist_test_state(_date, value)
 
     monkeypatch.setattr(runner, "write_state", write_state)
     monkeypatch.setattr(runner, "write_reports", lambda *_a, **_k: None)
@@ -2761,6 +2783,16 @@ def test_v4_real_annotation_and_terminal_projection_preserve_all_song_rows(
         "segments_done": [],
         "segments_dead": {},
     }
+    base = tmp_path / "autoslice"
+    base.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+
+    def persist_test_state(_date: str, value: dict) -> None:
+        path = runner.state_path(_date)
+        path.parent.mkdir(mode=0o700, exist_ok=True)
+        path.write_bytes(runner_state_writeback.state_bytes(value))
+
+    persist_test_state(DATE, state)
     song_keys = (
         "pending_song",
         "song_backlog",
@@ -2829,7 +2861,7 @@ def test_v4_real_annotation_and_terminal_projection_preserve_all_song_rows(
             "chat_binding_status": "NOT_REQUIRED",
         },
     )
-    monkeypatch.setattr(runner, "write_state", lambda *_a, **_k: None)
+    monkeypatch.setattr(runner, "write_state", persist_test_state)
     monkeypatch.setattr(runner, "write_reports", lambda *_a, **_k: None)
     monkeypatch.setattr(runner, "cpa_healthy", lambda: True)
     monkeypatch.setattr(runner, "session_sealed", lambda *_a, **_k: True)
@@ -2843,11 +2875,12 @@ def test_v4_real_annotation_and_terminal_projection_preserve_all_song_rows(
     monkeypatch.setattr(runner, "collect_song_name_candidates", lambda *_a, **_k: [])
     monkeypatch.setattr(runner, "split_produce_blocked_talk_items", lambda rows: (rows, []))
 
-    def produce(_date: str, rows: list[dict], produce_fn) -> list[dict]:
+    def produce(_date: str, rows: list[dict], produce_fn, *, prepare_only: bool) -> list[dict]:
         assert produce_fn is runner.produce_talk
+        assert prepare_only is True
         assert [row["cid"] for row in rows] == [target]
         produced.append(target)
-        return [{"candidate_id": target, "status": "review_ready", "rc": 0}]
+        return [{"candidate_id": target, "status": "candidate_rejected"}]
 
     monkeypatch.setattr(runner, "produce_batch", produce)
     monkeypatch.setattr(

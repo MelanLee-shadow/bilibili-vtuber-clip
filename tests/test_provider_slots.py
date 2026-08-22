@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import errno
 import multiprocessing
 import os
+import stat
 import time
 from pathlib import Path
 
@@ -143,6 +145,52 @@ def test_provider_slot_refuses_symlinked_runtime_parent(tmp_path: Path) -> None:
     linked_parent.symlink_to(real_parent, target_is_directory=True)
     with pytest.raises(ProviderSlotError, match="runtime root is unsafe"):
         with provider_slot(linked_parent / "runtime"):
+            pass
+
+
+def test_provider_slot_creates_only_missing_final_runtime_root(tmp_path: Path) -> None:
+    runtime = tmp_path / "new-runtime"
+    with provider_slot(runtime, timeout_seconds=1):
+        pass
+    assert runtime.is_dir()
+    assert stat.S_IMODE(os.lstat(runtime).st_mode) == 0o700
+
+
+def test_provider_slot_refuses_symlink_at_missing_runtime_root(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    runtime = tmp_path / "runtime"
+    runtime.symlink_to(target, target_is_directory=True)
+    with pytest.raises(ProviderSlotError, match="runtime root is unsafe"):
+        with provider_slot(runtime):
+            pass
+
+
+def test_provider_slot_refuses_missing_runtime_ancestor(tmp_path: Path) -> None:
+    runtime = tmp_path / "missing-parent" / "runtime"
+    with pytest.raises(ProviderSlotError, match="cannot be inspected"):
+        with provider_slot(runtime):
+            pass
+    assert not runtime.parent.exists()
+
+
+def test_provider_slot_rejects_final_root_symlink_creation_race(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = tmp_path / "runtime"
+    target = tmp_path / "target"
+    real_mkdir = provider_slots.os.mkdir
+
+    def replace_missing_root(path: os.PathLike[str] | str, mode: int = 0o777) -> None:
+        if Path(path) == runtime:
+            real_mkdir(target, 0o700)
+            runtime.symlink_to(target, target_is_directory=True)
+            raise FileExistsError(errno.EEXIST, "already exists", str(runtime))
+        real_mkdir(path, mode)
+
+    monkeypatch.setattr(provider_slots.os, "mkdir", replace_missing_root)
+    with pytest.raises(ProviderSlotError, match="runtime root is unsafe"):
+        with provider_slot(runtime):
             pass
 
 

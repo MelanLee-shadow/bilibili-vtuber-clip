@@ -9,6 +9,7 @@ manifest replay.
 from __future__ import annotations
 
 import fcntl
+import errno
 import os
 import stat
 import threading
@@ -176,6 +177,23 @@ def _safe_runtime_root(path: Path) -> os.stat_result:
         cursor /= part
         try:
             info = os.lstat(cursor)
+        except FileNotFoundError as exc:
+            # Direct adapter callers historically supplied an empty per-run
+            # ``AUTOSLICE_BASE`` and expected the permit namespace to be
+            # initialized there.  Only the final authority component may be
+            # created: walking or creating a missing ancestor would make a
+            # misspelled/redirected runtime root authoritative.
+            if cursor != path:
+                raise ProviderSlotError("provider runtime root cannot be inspected") from exc
+            try:
+                os.mkdir(cursor, 0o700)
+            except OSError as mkdir_exc:
+                if mkdir_exc.errno != errno.EEXIST:
+                    raise ProviderSlotError("provider runtime root cannot be created") from mkdir_exc
+            try:
+                info = os.lstat(cursor)
+            except OSError as stat_exc:
+                raise ProviderSlotError("provider runtime root cannot be inspected") from stat_exc
         except OSError as exc:
             raise ProviderSlotError("provider runtime root cannot be inspected") from exc
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):

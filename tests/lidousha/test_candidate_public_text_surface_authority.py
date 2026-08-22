@@ -793,8 +793,8 @@ def test_produce_talk_projects_resolved_public_hook_into_state_and_report(
         "UNRESOLVED_PUBLIC_TEXT_RESULT_PROJECTION"
     )
     assert "PUBLIC_TEXT_RESULT_MIRROR_DRIFT" in blocked["title_authority_error"]
-    assert OLD_HOOK not in json.dumps(blocked, ensure_ascii=False)
     assert not (base / "out" / date / CID / "replacement_recuts").exists()
+    assert OLD_HOOK not in json.dumps(blocked, ensure_ascii=False)
 
 
 def test_read_publish_meta_without_candidate_authority_keeps_legacy_shape(

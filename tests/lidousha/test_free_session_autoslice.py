@@ -10745,7 +10745,7 @@ def test_talk_boundary_failure_does_not_retry_without_continuation_scope(tmp_pat
     assert spec["boundary_repair_extend_cap_ms"] == 30_000
 
 
-def test_talk_title_authority_failure_preserves_unowned_legacy_delivery_and_private_evidence(tmp_path, monkeypatch):
+def test_talk_title_authority_failure_preserves_unowned_legacy_delivery_and_cleans_private_attempt(tmp_path, monkeypatch):
     date = "2026-07-10"
     base = tmp_path / "autoslice"
     repo = tmp_path / "repo"
@@ -10806,7 +10806,7 @@ def test_talk_title_authority_failure_preserves_unowned_legacy_delivery_and_priv
     # delete an older/manual package with the same readable hook.
     assert (repo / "lidousha" / date / f"{delivery_name}.mp4").read_bytes() == b"stale"
     assert not (repo / "lidousha" / date / f"{delivery_name}__{cid}.mp4").exists()
-    assert (base / "out" / date / cid / "replacement_recuts").is_dir()
+    assert not (base / "out" / date / cid / "replacement_recuts").exists()
 
 
 def test_stale_boundary_log_does_not_classify_new_transient_failure(tmp_path, monkeypatch):
