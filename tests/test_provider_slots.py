@@ -93,9 +93,9 @@ def test_provider_wait_env_is_strict(monkeypatch: pytest.MonkeyPatch, value: str
 def test_provider_wait_covers_all_configured_candidate_waves(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AUTOSLICE_PROVIDER_CONCURRENCY", "2")
     monkeypatch.setenv("AUTOSLICE_PROVIDER_WAIT_SECONDS", "1")
-    # Five candidates under capacity two means the fifth may wait through
-    # three complete waves, not merely one currently occupied request.
-    assert provider_wait_for_call(1020) == 1020 * 3 + 60
+    # Five candidates under capacity two means the fifth waits through two
+    # preceding complete waves, not merely one occupied request.
+    assert provider_wait_for_call(1020) == 1020 * 2 + 60
 
 
 def test_live_canonical_runtime_never_silently_bypasses_pool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

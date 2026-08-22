@@ -135,18 +135,6 @@ FUNCTION_DEBT_LEDGER = {
     # 2026-08-10 净 -6：同上——终检见证的 verifier-missing 分支与调用抽到
     # cover_scene_binding.run_final_host_identity_witness。
     ("src/autoslice/publish_staging.py", "_stage_screenshot_direct_cover"): 314,
-    # 2026-08-08 +13：歌lane provider门修复（Ivan 2026-08-08「老毛病竟然还
-    # 重新犯，你必须修复」）——JINGTING_PROVIDER_NOT_AGY 及同族此前未被识别
-    # 为 transient，同一 attempt 里跟着的 SONG_*_MISSING/INVALID 级联码就会
-    # 被 project_terminal_song_disposition 判定终态弃选（2026-08-07
-    # song_230754_1118 复发）。新增分支在 SONG_INFRA_TRANSIENT_REASON_CODES
-    # 里找本次 attempt 剩余的 infra 码。测试
-    # test_full_song_provider_outage_stays_infra_wait_not_terminal_rejection。
-    # 2026-08-10 净 -12：歌名命名权威切换（Ivan 逐字「如果意识到了可能是歌
-    # 再从 BCUT 切换过来」）顺带还债——全源趟取证键白名单抽成模块常量
-    # FULL_SOURCE_RETRY_FORENSIC_KEYS（音频命名权威也进这张表，否则真名会像
-    # 修复前的标题一样被这层白名单埋掉）。本函数只减不增，账本按实际收紧。
-    ("src/autoslice/song_lane.py", "produce_song"): 312,
 }
 
 # 2026-07-31 冻结基线：12 项。同上，全部是欠账。
@@ -283,7 +271,7 @@ MODULE_DEBT_LEDGER = {
     # _run_exact_final_review_gate 那条同案说明）。新增逻辑的重量全在新模块
     # src/autoslice/chat_authority_ownership.py（未计入本模块行数），本模块
     # 只涨了 5 行 import/rationale + 5 行调用点。
-    "src/autoslice/producer_package_finalization.py": 2_783,
+    "src/autoslice/producer_package_finalization.py": 2_769,
     # 2026-07-31 +40：同上（SC 发送者 deferral）。
     # 2026-08-08 +7：会话内重述修复接线（Ivan 2026-08-08 当日指令，
     # docs/reviews/2026-08-08-restatement-repair-design.md §4）——会话内

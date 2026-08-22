@@ -34,6 +34,7 @@ from src.autoslice.cover_route_evidence import (
     build_cover_route_decision,
     record_cover_route_execution,
 )
+from src.autoslice.repository_asset_authority import _canonical_sha256
 from tests.host_vocal_test_support import bind_ready_live_performance_report, make_ready_host_vocal_claim
 from scripts.free_session_autoslice import (
     COVER_REPAIR_MAX_ATTEMPTS,
@@ -1005,6 +1006,51 @@ def test_cover_repair_needed_for_delivered_pick_without_cover(tmp_path, monkeypa
     assert cover_repair_needed("2026-07-06", rec)
     mp4, cover = delivered_paths("2026-07-06", rec)
     assert mp4.is_file() and cover.name.endswith(".cover.png")
+
+
+def test_cid_bound_talk_delivery_path_is_authoritative_for_cover_maintenance(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    date, cid = "2026-07-06", "auto_1_2_3"
+    delivery = tmp_path / "lidousha" / date
+    delivery.mkdir(parents=True)
+    mp4 = delivery / "same.hook__auto_1_2_3.mp4"
+    cover = delivery / "same.hook__auto_1_2_3.cover.png"
+    mp4.write_bytes(b"mp4")
+    cover.write_bytes(b"png")
+    rec = {"candidate_id": cid, "hook": "same.hook", "summary": {"delivery": str(mp4)}}
+    assert delivered_paths(date, rec) == (mp4, cover)
+
+
+def test_legacy_title_only_talk_delivery_remains_readable_fallback(tmp_path, monkeypatch):
+    rec = _delivered_talk_pick(tmp_path, monkeypatch, with_cover=True)
+    assert delivered_paths("2026-07-06", rec) is not None
+
+
+def test_legacy_explicit_song_delivery_remains_readable_without_cid_suffix(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    delivery = tmp_path / "lidousha" / "2026-07-06"
+    delivery.mkdir(parents=True)
+    mp4 = delivery / "old-song-name.mp4"
+    mp4.write_bytes(b"mp4")
+    assert delivered_paths("2026-07-06", {"candidate_id": "song-1", "delivered": str(mp4)}) == (
+        mp4, delivery / "old-song-name.cover.png"
+    )
+
+
+def test_prepared_talk_summary_cannot_activate_delivery_path_predicate(tmp_path, monkeypatch):
+    from src.autoslice.producer_prepare_result import prepared_talk_result
+
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    date, cid = "2026-07-06", "auto_1_2_3"
+    delivery = tmp_path / "lidousha" / date
+    delivery.mkdir(parents=True)
+    intended = delivery / "same.hook__auto_1_2_3.mp4"
+    intended.write_bytes(b"unowned same path")
+    result = prepared_talk_result({
+        "candidate_id": cid, "hook": "same.hook",
+        "summary": {"delivery": str(intended)},
+    })
+    assert delivered_paths(date, result) is None
 
 
 def test_blocked_stale_cover_is_repaired_even_when_file_exists(tmp_path, monkeypatch):
@@ -2921,6 +2967,67 @@ def test_commit_verified_song_package_delivers_without_cover(tmp_path, monkeypat
     }
     assert manifest["absent_artifacts"]["cover"]["status"] == "ABSENT"
     assert not Path(manifest["absent_artifacts"]["cover"]["path"]).exists()
+
+
+def test_prepare_verified_song_package_has_no_materialized_delivery_projection(
+    tmp_path, monkeypatch
+):
+    date = "2026-07-10"
+    base = tmp_path / "autoslice"
+    candidate_root = base / "out" / date / "song_outer"
+    fx = _deferred_song_summary(candidate_root)
+    repo = base / "repo"
+    repo.mkdir()
+    body = {
+        "schema_version": "deployed-authority-manifest.v1",
+        "deployed_commit": "a" * 40,
+        "entries": {"docs/pipeline/80-package-delivery.md": {
+            "bytes": 1, "sha256": "sha256:" + "b" * 64,
+        }},
+    }
+    manifest = dict(body)
+    manifest["manifest_sha256"] = _canonical_sha256(body)
+    (repo / "DEPLOYED_COMMIT").write_text("a" * 40 + "\n", encoding="utf-8")
+    (repo / "DEPLOYED_AUTHORITY_MANIFEST.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    delivery_root = base / "lidousha"
+    delivery_root.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+    monkeypatch.setattr(runner, "REPO_ROOT", repo)
+    monkeypatch.setattr(runner, "profile_delivery_root", lambda: delivery_root)
+    completion = {
+        "ready": True,
+        "reason_codes": [],
+        "alignment_report_path": str(fx["alignment"]),
+        "alignment_report_sha256": fx["digest"](fx["alignment"]),
+        "host_vocal_proof_path": str(fx["proof"]),
+        "host_vocal_proof_sha256": fx["digest"](fx["proof"]),
+    }
+    monkeypatch.setattr(runner, "song_completion_evidence", lambda _record: completion)
+    monkeypatch.setattr(runner, "song_delivery_ok", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        runner,
+        "generate_upload_tags",
+        lambda *_args, **_kwargs: {
+            "engine": "fixture", "status": "OK_NO_LLM",
+            "final_tags": ["李豆沙"], "final_tag_line": "李豆沙",
+        },
+    )
+    result = runner._commit_verified_song_package(
+        date=date,
+        delivery_candidate_id="song_outer",
+        summary_record=fx["summary"],
+        title="【李豆沙】豆沙歌，测试",
+        selector_rc=0,
+        summary_authority_root=fx["root"].parent,
+        prepare_only=True,
+    )
+    target = Path(result["intended_delivery"]["path"])
+    assert result["status"] == "delivery_prepared_no_target"
+    assert not target.exists()
+    assert "delivered" not in result and "cover_status" not in result
+    assert result["prepared_delivery"]["upload_enabled"] is False
 
 
 def test_song_cover_binding_rolls_back_manifest_and_records_on_commit_failure(tmp_path, monkeypatch):
@@ -10578,7 +10685,7 @@ def test_talk_boundary_failure_does_not_retry_without_continuation_scope(tmp_pat
     assert spec["boundary_repair_extend_cap_ms"] == 30_000
 
 
-def test_talk_title_authority_failure_is_classified_and_leaves_no_delivery(tmp_path, monkeypatch):
+def test_talk_title_authority_failure_preserves_unowned_legacy_delivery_and_private_evidence(tmp_path, monkeypatch):
     date = "2026-07-10"
     base = tmp_path / "autoslice"
     repo = tmp_path / "repo"
@@ -10635,8 +10742,11 @@ def test_talk_title_authority_failure_is_classified_and_leaves_no_delivery(tmp_p
     )
 
     assert result["status"] == "title_failed"
-    assert not list((repo / "lidousha" / date).glob(f"{delivery_name}.*"))
-    assert not (base / "out" / date / cid / "replacement_recuts").exists()
+    # A failed candidate has no CID-bound public package, but cannot title-glob
+    # delete an older/manual package with the same readable hook.
+    assert (repo / "lidousha" / date / f"{delivery_name}.mp4").read_bytes() == b"stale"
+    assert not (repo / "lidousha" / date / f"{delivery_name}__{cid}.mp4").exists()
+    assert (base / "out" / date / cid / "replacement_recuts").is_dir()
 
 
 def test_stale_boundary_log_does_not_classify_new_transient_failure(tmp_path, monkeypatch):

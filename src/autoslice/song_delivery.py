@@ -39,6 +39,11 @@ from src.autoslice.verified_io import (
     _read_json_object,
     _document_video_hash,
 )
+from src.autoslice.producer_delivery_transaction import (
+    DeliveryArtifact,
+    deployment_authority_binding,
+    prepare_delivery,
+)
 
 
 _runner = RunnerProxy()
@@ -471,6 +476,7 @@ def _commit_verified_song_package(
     title: str,
     selector_rc: int,
     summary_authority_root: Path,
+    prepare_only: bool = False,
 ) -> dict:
     """Commit one already-proven song without rerunning ASR/LRC/AGY.
 
@@ -547,7 +553,8 @@ def _commit_verified_song_package(
 
     name = _song_delivery_basename(title, delivery_candidate_id)
     delivery = _runner.profile_delivery_root() / date
-    delivery.mkdir(parents=True, exist_ok=True)
+    if not prepare_only:
+        delivery.mkdir(parents=True, exist_ok=True)
     specs: dict[str, tuple[Path, Path, str]] = {
         "video": (burned, delivery / f"{name}.mp4", video_sha256),
     }
@@ -606,6 +613,55 @@ def _commit_verified_song_package(
                 )
             )
 
+    if prepare_only:
+        manifest_source, manifest_sha256 = _write_prepared_song_delivery_manifest(
+            candidate_id=delivery_candidate_id,
+            manifest_source=summary_authority_root / f".{name}.prepared-delivery.manifest.json",
+            artifact_specs=specs,
+            absent_artifacts={} if cover_ok else {"cover": delivery / f"{name}.cover.png"},
+        )
+        specs["delivery_manifest"] = (
+            manifest_source,
+            delivery / f"{name}.delivery.manifest.json",
+            manifest_sha256,
+        )
+        prepared = prepare_delivery(
+            runtime_root=_runner.BASE,
+            lane="song",
+            candidate_id=delivery_candidate_id,
+            artifacts=[
+                DeliveryArtifact(role, source, target, expected)
+                for role, (source, target, expected) in specs.items()
+            ],
+            deployed_authority=deployment_authority_binding(_runner.BASE),
+        )
+        intended = {
+            role: {"path": str(target), "sha256": expected}
+            for role, (_source, target, expected) in specs.items()
+        }
+        # Direct delivery reports the manifest separately, not as a public
+        # sidecar.  Preserve that exact result projection in prepare mode.
+        sidecar_roles = [
+            role for role in intended
+            if role not in {"video", "delivery_manifest"}
+        ]
+        return {
+            # A prepared package has passed candidate-private verification but
+            # has not exposed a delivery target.  Do not use direct-delivery
+            # field names here: state/publication predicates treat them as a
+            # materialized package.
+            "intended_delivery": intended["video"],
+            "intended_delivery_sidecars": {role: intended[role] for role in sidecar_roles},
+            "prepared_delivery": {
+                "manifest_path": str(prepared.manifest_path),
+                "prepared_sha256": f"sha256:{prepared.prepared_sha256}",
+                "upload_enabled": False,
+            },
+            "intended_delivery_manifest": intended["delivery_manifest"],
+            "intended_cover_status": "AI_COVER_READY" if "cover" in intended else "BLOCKED_AI_COVER_REQUIRED",
+            "status": "delivery_prepared_no_target",
+        }
+
     receipt = _atomic_verified_song_delivery(
         candidate_id=delivery_candidate_id,
         manifest_path=delivery / f"{name}.delivery.manifest.json",
@@ -641,6 +697,14 @@ def _commit_verified_song_package(
     if receipt["cleanup_warnings"]:
         result["delivery_cleanup_warnings"] = receipt["cleanup_warnings"]
     return result
+
+
+def prepare_verified_song_package(**kwargs: object) -> dict:
+    """Explicit runner-facing Song prepare mode; never exposes delivery bytes."""
+
+    if "prepare_only" in kwargs:
+        raise SongDeliveryError("prepare mode is selected by this entry point")
+    return _commit_verified_song_package(**kwargs, prepare_only=True)
 
 
 VERIFIED_SONG_DELIVERY_SCHEMA_VERSION = "verified-song-delivery.v1"
@@ -949,3 +1013,54 @@ def _atomic_verified_song_delivery(
         "upload_enabled": False,
         "cleanup_warnings": cleanup_warnings,
     }
+
+
+def _write_prepared_song_delivery_manifest(
+    *,
+    candidate_id: str,
+    manifest_source: Path,
+    artifact_specs: dict[str, tuple[Path, Path, str]],
+    absent_artifacts: dict[str, Path],
+) -> tuple[Path, str]:
+    """Build the same no-upload delivery manifest as direct Song commit.
+
+    It remains candidate-private until the runner materializes the prepared
+    handle, but carries the public manifest's exact target inventory now.
+    """
+
+    manifest_artifacts: dict[str, dict[str, str]] = {}
+    for role, (source, destination, expected) in artifact_specs.items():
+        normalized = _normalized_sha256(expected)
+        manifest_artifacts[role] = {
+            "path": str(destination.absolute()),
+            "sha256": f"sha256:{normalized}",
+            "source_path": str(source.resolve(strict=True)),
+            "source_sha256": f"sha256:{normalized}",
+        }
+    document = {
+        "schema_version": VERIFIED_SONG_DELIVERY_SCHEMA_VERSION,
+        "status": "DELIVERED_NO_UPLOAD",
+        "candidate_id": candidate_id,
+        "upload_enabled": False,
+        "artifacts": manifest_artifacts,
+        "absent_artifacts": {
+            role: {"path": str(destination.absolute()), "status": "ABSENT"}
+            for role, destination in absent_artifacts.items()
+        },
+    }
+    payload = (json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(manifest_source, flags, 0o600)
+    except FileExistsError:
+        if manifest_source.is_symlink() or manifest_source.read_bytes() != payload:
+            raise SongDeliveryError("prepared song delivery manifest collision")
+    except OSError as exc:
+        raise SongDeliveryError(f"cannot create prepared song delivery manifest: {exc}") from exc
+    else:
+        try:
+            os.write(descriptor, payload)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    return manifest_source, "sha256:" + hashlib.sha256(payload).hexdigest()

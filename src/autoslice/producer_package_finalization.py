@@ -72,6 +72,11 @@ from src.autoslice.producer_media import (
     _validated_burned_artifact,
     _write_json_atomic,
 )
+from src.autoslice.producer_delivery_prepare import (
+    emit_talk_delivery_summary,
+    prepare_and_emit_talk_delivery_from_finalization,
+    talk_delivery_summary,
+)
 from src.autoslice.redelivery_source_binding import (
     RedeliverySourceBindingError,
     final_recut_absolute_source_interval,
@@ -192,6 +197,10 @@ class ProducerFinalizationOptions:
     speaker_mixed_overlap_evidence: Path | None
     speaker_python: Path
     reuse_cover: bool
+    # The runner will opt in after its batch-CAS transaction is installed.
+    # Standalone/manual producer invocations retain their established direct
+    # delivery behavior until then.
+    prepare_only: bool = False
 
 @dataclass(frozen=True)
 class ProducerFinalizationAdapters:
@@ -2616,44 +2625,18 @@ def _deliver_staged_record(
     if cover and Path(cover).is_file():
         adapters.run_command(["cp", str(cover), str(delivery / f"{name}.cover.png")])
 
-    print(json.dumps(
-        {
-            "candidate_id": cid,
-            "final_end_ms": final_end,
-            "duration_ms": int(record["duration_ms"]),
-            "closure_sentence": audit["closure_sentence"],
-            "boundary_verdict": audit["verdict"],
-            "red_flags": audit.get("red_flags", []),
-            "boundary_repairs": audit.get("boundary_repairs", []),
-            "timing_qa": timing_qa.get("counts"),
-            "cover_status": staging.get("cover_status"),
-            "title": staging.get("title"),
-            "delivery": str(delivery / f"{name}.mp4"),
-            "subtitle": str(delivery / f"{name}.srt"),
-            "speaker_subtitle": str(delivery / f"{name}.speaker.srt") if speaker_review_srt else None,
-            "speaker_ass": str(delivery / f"{name}.speaker.ass") if speaker_ass else None,
-            "speaker_status": speaker_manifest.get("status") if speaker_manifest else "OFF",
-            "speaker_guess": speaker_guess.summary_digest(speaker_manifest),
-            "subtitle_regression_status": (
-                subtitle_regression_audit.get("status")
-                if subtitle_regression_audit is not None
-                else "NOT_CONFIGURED"
-            ),
-            "redelivery_baseline_status": (
-                recut.redelivery_baseline_audit.get("status")
-                if recut.redelivery_baseline_audit is not None
-                else "NOT_CONFIGURED"
-            ),
-            "talk_filler_audit": (
-                str(delivery / f"{name}.filler-audit.json")
-                if talk_filler_audit_path is not None
-                else None
-            ),
-        },
-        ensure_ascii=False,
-        indent=2,
+    emit_talk_delivery_summary(talk_delivery_summary(
+        candidate_id=cid, final_end=final_end, record=record, audit=audit,
+        timing_qa=timing_qa, staging=staging, delivery=delivery / name,
+        speaker_review_srt=speaker_review_srt, speaker_ass=speaker_ass,
+        speaker_manifest=speaker_manifest, speaker_guess=speaker_guess,
+        subtitle_regression_audit=subtitle_regression_audit,
+        redelivery_baseline_audit=recut.redelivery_baseline_audit,
+        talk_filler_audit_path=talk_filler_audit_path,
     ))
     return 0
+
+
 def finalize_producer_package(
     *,
     options: ProducerFinalizationOptions,
@@ -2767,7 +2750,7 @@ def finalize_producer_package(
         record=record,
         adapters=adapters,
     )
-    return _deliver_staged_record(
+    delivery_kwargs = dict(
         spec=spec,
         cid=cid,
         final_end=final_end,
@@ -2781,3 +2764,6 @@ def finalize_producer_package(
         adapters=adapters,
         talk_filler_audit_path=talk_filler_audit_path,
     )
+    if options.prepare_only:
+        return prepare_and_emit_talk_delivery_from_finalization(**delivery_kwargs)
+    return _deliver_staged_record(**delivery_kwargs)

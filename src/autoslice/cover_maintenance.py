@@ -30,14 +30,35 @@ _runner = RunnerProxy()
 def delivered_paths(date: str, rec: dict) -> tuple[Path, Path] | None:
     """(mp4, cover) delivery paths for a pick/song record, or None if the mp4
     was never delivered (failed/gated records have nothing to repair)."""
-    if rec.get("delivered"):  # song lane records the delivered path explicitly
-        mp4 = Path(rec["delivered"])
+    explicit = rec.get("delivered")
+    strict_cid_bound = False
+    if not isinstance(explicit, str):
+        summary = rec.get("summary")
+        explicit = summary.get("delivery") if isinstance(summary, dict) else None
+        strict_cid_bound = isinstance(explicit, str)
+    if isinstance(explicit, str) and explicit:
+        candidate_id = str(rec.get("candidate_id") or "")
+        expected_root = _runner.profile_delivery_root() / date
+        try:
+            root = expected_root.resolve(strict=True)
+            mp4 = Path(explicit).resolve(strict=True)
+            if (
+                not mp4.is_relative_to(root)
+                or (strict_cid_bound and (
+                    not candidate_id or not mp4.name.endswith(f"__{candidate_id}.mp4")
+                ))
+            ):
+                return None
+        except (OSError, ValueError):
+            return None
     else:
+        # Read-only compatibility for title-only packages made before the
+        # CID-injective delivery contract.  New results persist exact paths.
         name = _runner.safe_name(rec.get("hook", ""), rec.get("candidate_id", ""))
         mp4 = _runner.profile_delivery_root() / date / f"{name}.mp4"
     if not mp4.is_file():
         return None
-    return mp4, mp4.with_suffix(".cover.png")
+    return mp4, Path(str(mp4)[:-4] + ".cover.png")
 
 
 def cover_ref_for(date: str, cid: str) -> Path | None:

@@ -91,7 +91,9 @@ def provider_wait_for_call(call_timeout_seconds: float, *, grace_seconds: float 
         or grace_seconds < 0
     ):
         raise ProviderSlotError("provider call timeout is unsafe")
-    waves = (_MAX_PROVIDER_CANDIDATES + provider_capacity() - 1) // provider_capacity()
+    # The tail candidate waits only for the *preceding* complete waves.  With
+    # five candidates and capacity two that is two waves (not three).
+    waves = (_MAX_PROVIDER_CANDIDATES - 1) // provider_capacity()
     required = float(call_timeout_seconds) * waves + float(grace_seconds)
     if required > _MAX_PROVIDER_QUEUE_SECONDS:
         raise ProviderSlotError("provider call timeout exceeds the 10800 second queue bound")
