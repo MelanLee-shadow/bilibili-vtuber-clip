@@ -121,6 +121,13 @@
   attest、前后 fingerprint/mount 稳定和链式回执流程。`mount_id` 只是同一
   namespace 的新挂载见证，不是跨 namespace 的 portable truth；相同 portable
   投影且相同 `mount_id` 的 inode 漂移仍 BLOCK，不能重签。后继 FLV 的旧 row
+  若同一次已见证 remount 还使**两个且仅两个**后继角色的 `mtime_ns`/`ctime_ns`
+  同时变化，必须用独立
+  `FUSE_REMOUNT_REUSED_PORTABLE_IDENTITY_SUCCESSOR_MTIME_CTIME_REATTESTATION`
+  回执：四个角色仍都要 inode 重编号，source/xml 仅允许 device/inode 变化，后继
+  两角色必须各自同时有 inode、mtime、ctime 变化，且同样全字节 attest、legacy
+  webhook/finalized 绑定、child/post-hash mount 稳定和链式 SHA 约束。单角色时间漂移、
+  size/mode/path/bytes 漂移、相同 mount epoch 或任何 receipt 篡改均 BLOCK。后继 FLV 的旧 row
   没有历史 SHA-256，因此回执必须明确记录 legacy promotion：只沿用 path、稳定 stat、
   webhook file size、finalized ledger source size 及后继 MP4 历史 SHA 交叉绑定，不能宣称
   后继 FLV 历史 hash 已匹配。另有且仅有一条 timestamp-only 恢复：后继 FLV 与 MP4

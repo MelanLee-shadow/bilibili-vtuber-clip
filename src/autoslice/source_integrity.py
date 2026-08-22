@@ -155,6 +155,12 @@ _CONNECTION_STUB_REBIND_POLICY = "FUSE_REMOUNT_DEVICE_INODE_REBIND"
 _CONNECTION_STUB_REUSED_PORTABLE_REBIND_POLICY = (
     "FUSE_REMOUNT_REUSED_PORTABLE_IDENTITY_REBIND"
 )
+_CONNECTION_STUB_REUSED_PORTABLE_TIMESTAMP_REBIND_SCHEMA = (
+    "recording-source-fuse-reused-portable-timestamp-rebind.v1"
+)
+_CONNECTION_STUB_REUSED_PORTABLE_TIMESTAMP_REBIND_POLICY = (
+    "FUSE_REMOUNT_REUSED_PORTABLE_IDENTITY_SUCCESSOR_MTIME_CTIME_REATTESTATION"
+)
 _CONNECTION_STUB_TIMESTAMP_REBIND_SCHEMA = "recording-source-fuse-timestamp-rebind.v1"
 _CONNECTION_STUB_TIMESTAMP_REBIND_POLICY = "FUSE_SUCCESSOR_MTIME_CTIME_REATTESTATION"
 _FILE_FINGERPRINT_KEYS = (
@@ -295,6 +301,24 @@ def _all_roles_reindexed_within_replaced_mount(changes: dict[str, list[str]]) ->
     )
 
 
+def _reused_portable_timestamp_rebind_changes(changes: dict[str, list[str]]) -> bool:
+    return bool(
+        set(changes) == set(_DISPOSITION_FILE_ROLES)
+        and all(
+            "inode" in changes[role]
+            and set(changes[role]).issubset({"device", "inode"})
+            for role in ("source", "xml")
+        )
+        and all(
+            {"inode", "mtime_ns", "ctime_ns"}.issubset(changes[role])
+            and set(changes[role]).issubset(
+                {"device", "inode", "mtime_ns", "ctime_ns"}
+            )
+            for role in _TIMESTAMP_REBIND_ROLES
+        )
+    )
+
+
 def _disposition_binding_projection(binding: dict[str, object]) -> dict[str, object]:
     projection = {"path": binding.get("path")}
     projection.update({key: binding.get(key) for key in _FILE_FINGERPRINT_KEYS})
@@ -420,16 +444,25 @@ def _connection_stub_identity_matches(
             receipt.get("schema_version") == _CONNECTION_STUB_REBIND_SCHEMA
             and receipt.get("policy") == _CONNECTION_STUB_REUSED_PORTABLE_REBIND_POLICY
         )
+        is_reused_portable_timestamp_rebind = (
+            receipt.get("schema_version")
+            == _CONNECTION_STUB_REUSED_PORTABLE_TIMESTAMP_REBIND_SCHEMA
+            and receipt.get("policy")
+            == _CONNECTION_STUB_REUSED_PORTABLE_TIMESTAMP_REBIND_POLICY
+        )
         is_timestamp_rebind = (
             receipt.get("schema_version") == _CONNECTION_STUB_TIMESTAMP_REBIND_SCHEMA
             and receipt.get("policy") == _CONNECTION_STUB_TIMESTAMP_REBIND_POLICY
         )
         expected_fields = base_receipt_fields | (
-            {"changed_fields"} if is_timestamp_rebind else set()
+            {"changed_fields"}
+            if is_timestamp_rebind or is_reused_portable_timestamp_rebind
+            else set()
         )
         if (
             not is_identity_rebind
             and not is_reused_portable_rebind
+            and not is_reused_portable_timestamp_rebind
             and not is_timestamp_rebind
         ) or set(receipt) != expected_fields:
             return False, "source disposition identity rebind receipt is malformed"
@@ -494,6 +527,16 @@ def _connection_stub_identity_matches(
                 or not _same_portable_mount_replaced(receipt.get("current_mount"), previous_mount)
             ):
                 return False, "source disposition reused-portable rebind binding drifted"
+        elif is_reused_portable_timestamp_rebind:
+            if (
+                receipt.get("legacy_promotion") != _timestamp_rebind_legacy_contract(row, previous)
+                or receipt.get("changed_fields") != changes
+                or previous_receipt_sha256 is None
+                or previous_mount is None
+                or not _reused_portable_timestamp_rebind_changes(changes)
+                or not _same_portable_mount_replaced(receipt.get("current_mount"), previous_mount)
+            ):
+                return False, "source disposition reused-portable timestamp rebind binding drifted"
         else:
             assert is_timestamp_rebind
             if (

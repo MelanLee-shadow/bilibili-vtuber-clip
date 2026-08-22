@@ -51,6 +51,12 @@ SOURCE_DISPOSITION_REBIND_POLICY = "FUSE_REMOUNT_DEVICE_INODE_REBIND"
 SOURCE_DISPOSITION_REUSED_PORTABLE_REBIND_POLICY = (
     "FUSE_REMOUNT_REUSED_PORTABLE_IDENTITY_REBIND"
 )
+SOURCE_DISPOSITION_REUSED_PORTABLE_TIMESTAMP_REBIND_SCHEMA_VERSION = (
+    "recording-source-fuse-reused-portable-timestamp-rebind.v1"
+)
+SOURCE_DISPOSITION_REUSED_PORTABLE_TIMESTAMP_REBIND_POLICY = (
+    "FUSE_REMOUNT_REUSED_PORTABLE_IDENTITY_SUCCESSOR_MTIME_CTIME_REATTESTATION"
+)
 SOURCE_DISPOSITION_TIMESTAMP_REBIND_SCHEMA_VERSION = (
     "recording-source-fuse-timestamp-rebind.v1"
 )
@@ -354,6 +360,26 @@ def _all_roles_reindexed_within_replaced_mount(changes: dict[str, list[str]]) ->
     )
 
 
+def _reused_portable_timestamp_rebind_changes(changes: dict[str, list[str]]) -> bool:
+    """Recognize exactly a whole-view reindex plus successor time reattestation."""
+
+    return bool(
+        set(changes) == set(_DISPOSITION_FILE_ROLES)
+        and all(
+            "inode" in changes[role]
+            and set(changes[role]).issubset({"device", "inode"})
+            for role in ("source", "xml")
+        )
+        and all(
+            {"inode", "mtime_ns", "ctime_ns"}.issubset(changes[role])
+            and set(changes[role]).issubset(
+                {"device", "inode", "mtime_ns", "ctime_ns"}
+            )
+            for role in _TIMESTAMP_REBIND_ROLES
+        )
+    )
+
+
 def _shared_fuse_mount_identity(paths: Iterable[Path]) -> dict[str, Any] | None:
     identities = [_mount_identity_for_path(path) for path in paths]
     if not identities or not all(_is_fuse_mount(identity) for identity in identities):
@@ -490,16 +516,25 @@ def _validate_disposition_rebind_chain(
             receipt.get("schema_version") == SOURCE_DISPOSITION_REBIND_SCHEMA_VERSION
             and receipt.get("policy") == SOURCE_DISPOSITION_REUSED_PORTABLE_REBIND_POLICY
         )
+        is_reused_portable_timestamp_rebind = (
+            receipt.get("schema_version")
+            == SOURCE_DISPOSITION_REUSED_PORTABLE_TIMESTAMP_REBIND_SCHEMA_VERSION
+            and receipt.get("policy")
+            == SOURCE_DISPOSITION_REUSED_PORTABLE_TIMESTAMP_REBIND_POLICY
+        )
         is_timestamp_rebind = (
             receipt.get("schema_version") == SOURCE_DISPOSITION_TIMESTAMP_REBIND_SCHEMA_VERSION
             and receipt.get("policy") == SOURCE_DISPOSITION_TIMESTAMP_REBIND_POLICY
         )
         expected_fields = base_receipt_fields | (
-            {"changed_fields"} if is_timestamp_rebind else set()
+            {"changed_fields"}
+            if is_timestamp_rebind or is_reused_portable_timestamp_rebind
+            else set()
         )
         if (
             not is_identity_rebind
             and not is_reused_portable_rebind
+            and not is_reused_portable_timestamp_rebind
             and not is_timestamp_rebind
         ) or set(receipt) != expected_fields:
             raise AdapterError("source disposition identity rebind receipt is malformed")
@@ -564,6 +599,18 @@ def _validate_disposition_rebind_chain(
                 or not _same_portable_mount_replaced(receipt.get("current_mount"), previous_mount)
             ):
                 raise AdapterError("source disposition reused-portable rebind binding drifted")
+        elif is_reused_portable_timestamp_rebind:
+            if (
+                receipt.get("legacy_promotion") != _timestamp_rebind_legacy_contract(row, previous)
+                or receipt.get("changed_fields") != changes
+                or previous_receipt_sha256 is None
+                or previous_mount is None
+                or not _reused_portable_timestamp_rebind_changes(changes)
+                or not _same_portable_mount_replaced(receipt.get("current_mount"), previous_mount)
+            ):
+                raise AdapterError(
+                    "source disposition reused-portable timestamp rebind binding drifted"
+                )
         else:
             assert is_timestamp_rebind
             if (
@@ -624,6 +671,25 @@ def _prepare_disposition_identity_validation(
             return {"current": current, "pending_rebind": False}
         raise AdapterError("source disposition FUSE mount changed without file identity drift")
     changes = _changed_fingerprint_fields(effective, current)
+    reused_portable_timestamp_rebind = bool(
+        has_receipts
+        and _same_portable_mount_replaced(current_mount, previous_mount)
+        and _reused_portable_timestamp_rebind_changes(changes)
+    )
+    if reused_portable_timestamp_rebind:
+        if not isinstance(identity_rebinds, list):  # pragma: no cover - has_receipts proves it
+            raise AdapterError("source disposition FUSE rebind lacks a durable receipt ledger")
+        return {
+            "current": current,
+            "effective": effective,
+            "previous_receipt_sha256": previous_receipt_sha256,
+            "previous_mount": previous_mount,
+            "current_mount": current_mount,
+            "changed_fields": changes,
+            "rebind_schema_version": SOURCE_DISPOSITION_REUSED_PORTABLE_TIMESTAMP_REBIND_SCHEMA_VERSION,
+            "rebind_policy": SOURCE_DISPOSITION_REUSED_PORTABLE_TIMESTAMP_REBIND_POLICY,
+            "pending_rebind": True,
+        }
     timestamp_rebind = set(changes) == set(_TIMESTAMP_REBIND_ROLES) and all(
         fields and all(field in _TIMESTAMP_REBIND_FIELDS for field in fields)
         for fields in changes.values()
@@ -746,11 +812,10 @@ def _finish_disposition_identity_rebind(
         "changed_fields"
     ):
         raise AdapterError("source disposition changed-field projection drifted during rebind")
-    timestamp_rebind = (
-        validation.get("rebind_schema_version")
-        == SOURCE_DISPOSITION_TIMESTAMP_REBIND_SCHEMA_VERSION
-        and validation.get("rebind_policy") == SOURCE_DISPOSITION_TIMESTAMP_REBIND_POLICY
-    )
+    timestamp_rebind = validation.get("rebind_policy") in {
+        SOURCE_DISPOSITION_TIMESTAMP_REBIND_POLICY,
+        SOURCE_DISPOSITION_REUSED_PORTABLE_TIMESTAMP_REBIND_POLICY,
+    }
     receipt: dict[str, Any] = {
         "schema_version": validation["rebind_schema_version"],
         "policy": validation["rebind_policy"],
