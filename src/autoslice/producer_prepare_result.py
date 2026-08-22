@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import stat
+from pathlib import Path
 
 
 def talk_delivery_basename(hook: object, candidate_id: object) -> str:
@@ -22,6 +26,30 @@ def talk_producer_command(command: list[str], *, reuse_cover: bool, prepare_only
     if prepare_only:
         command.append("--prepare-only")
     return command
+
+
+def remove_candidate_private_recuts(out_root: Path, candidate_id: str) -> None:
+    """Delete only this candidate's private recut attempt after title rejection."""
+
+    candidate_root = out_root / candidate_id
+    recuts = candidate_root / "replacement_recuts"
+    try:
+        candidate_info = os.lstat(candidate_root)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise RuntimeError("candidate-private cleanup cannot inspect its root") from exc
+    if stat.S_ISLNK(candidate_info.st_mode) or not stat.S_ISDIR(candidate_info.st_mode):
+        raise RuntimeError("candidate-private cleanup root is unsafe")
+    try:
+        recuts_info = os.lstat(recuts)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise RuntimeError("candidate-private cleanup cannot inspect recuts") from exc
+    if stat.S_ISLNK(recuts_info.st_mode) or not stat.S_ISDIR(recuts_info.st_mode):
+        raise RuntimeError("candidate-private recuts root is unsafe")
+    shutil.rmtree(recuts)
 
 
 def prepared_talk_result(result: dict) -> dict:

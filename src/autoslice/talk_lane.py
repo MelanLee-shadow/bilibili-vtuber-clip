@@ -11,10 +11,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import os
 import re
-import shutil
-import stat
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -93,6 +90,7 @@ from src.autoslice.talk_filler import (
 )
 from src.autoslice.producer_prepare_result import (
     prepared_talk_result,
+    remove_candidate_private_recuts,
     talk_delivery_basename,
     talk_producer_command,
 )
@@ -376,30 +374,6 @@ def read_publish_meta(work_dir: Path) -> dict:
             result["subtitle_sha256"] = subtitle_sha256
         return result
     return {}
-
-
-def _remove_candidate_private_recuts(out_root: Path, candidate_id: str) -> None:
-    """Delete only this candidate's private recut attempt after title rejection."""
-
-    candidate_root = out_root / candidate_id
-    recuts = candidate_root / "replacement_recuts"
-    try:
-        candidate_info = os.lstat(candidate_root)
-    except FileNotFoundError:
-        return
-    except OSError as exc:
-        raise RuntimeError("candidate-private cleanup cannot inspect its root") from exc
-    if stat.S_ISLNK(candidate_info.st_mode) or not stat.S_ISDIR(candidate_info.st_mode):
-        raise RuntimeError("candidate-private cleanup root is unsafe")
-    try:
-        recuts_info = os.lstat(recuts)
-    except FileNotFoundError:
-        return
-    except OSError as exc:
-        raise RuntimeError("candidate-private cleanup cannot inspect recuts") from exc
-    if stat.S_ISLNK(recuts_info.st_mode) or not stat.S_ISDIR(recuts_info.st_mode):
-        raise RuntimeError("candidate-private recuts root is unsafe")
-    shutil.rmtree(recuts)
 
 
 def _speaker_review_manifest_state(work_dir: Path) -> dict[str, tuple[int, int, int, int]]:
@@ -1959,7 +1933,7 @@ def produce_talk(
             # The producer fails before delivery.  Clear only this attempt's
             # private recuts; title-prefix cleanup could delete a sibling with
             # the same readable hook.
-            _remove_candidate_private_recuts(out_root, cid)
+            remove_candidate_private_recuts(out_root, cid)
             result["status"] = "title_failed"
             return _carry_talk_recovery_result(item, result)
         if "SPEAKER_REVIEW_REQUIRED" in attempt_output:
@@ -2001,7 +1975,7 @@ def produce_talk(
     if str(result.get("title_authority_status") or "").startswith("UNRESOLVED"):
         # No delivery with a cid title / cid-text cover — clean this private
         # attempt and retry later.  Never glob a public title prefix here.
-        _remove_candidate_private_recuts(out_root, cid)
+        remove_candidate_private_recuts(out_root, cid)
         result["status"] = "title_failed"
         return _carry_talk_recovery_result(item, result)
     # Boundary self-repair (Ivan 2026-07-10) replaced quarantine: a delivered
