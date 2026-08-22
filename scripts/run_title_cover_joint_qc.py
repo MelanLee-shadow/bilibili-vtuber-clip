@@ -182,6 +182,12 @@ def build_joint_qc_receipt(
         '"pass": bool 综合是否通过}\n如实判断,不要迎合。'
     )
     witness = image_probe(cover_path, question)
+    if isinstance(witness, dict) and logical_cover_path is not None:
+        # The probe observed private staged bytes, but the hash below binds
+        # those exact bytes to the final logical cover.  Public consumers must
+        # never retain the deleted stage locator as their witness image path.
+        witness = dict(witness)
+        witness["image_path"] = logical_cover_path
     verdict = None
     answer = witness.get("answer") if isinstance(witness, dict) else None
     if isinstance(answer, str):
@@ -204,6 +210,8 @@ def build_joint_qc_receipt(
         and verdict.get("title_cover_aligned") is True
         and verdict.get("physical_text_line_count") in (1, 2)
         and verdict.get("unrelated_or_misleading_elements") == []
+        and isinstance(verdict.get("reason"), str)
+        and bool(verdict.get("reason").strip())
         and verdict.get("pass") is True
     )
     return {

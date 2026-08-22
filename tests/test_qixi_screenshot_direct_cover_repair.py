@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 
@@ -35,7 +36,10 @@ def _authority(generation: dict[str, object], cover: bytes, qc: bytes) -> dict[s
         },
         "immutable_media": {"srt": "sha256:" + "2" * 64, "ass": "sha256:" + "3" * 64, "burn": "sha256:" + "4" * 64},
         "title_projection_sha256": "sha256:" + "5" * 64,
-        "allowed_mutations": {"record": [], "delivery_record": [], "publish": [], "state": []},
+        "allowed_mutations": {
+            role: {"allowed": [], "required": []}
+            for role in ("record", "delivery_record", "publish", "state")
+        },
     }
     result["authority_sha256"] = _sha(result)
     return result
@@ -83,7 +87,7 @@ def test_joint_qc_callable_binds_staged_bytes_to_intended_logical_path(tmp_path)
             "answer": '{"lidousha_primary":true,"thumbnail_readable":true,'
             '"single_clear_hook":true,"text_overcrowded":false,'
             '"title_cover_aligned":true,"physical_text_line_count":2,'
-            '"unrelated_or_misleading_elements":[],"pass":true}',
+            '"unrelated_or_misleading_elements":[],"reason":"符合标题","pass":true}',
         }
 
     receipt = build_joint_qc_receipt(
@@ -95,6 +99,7 @@ def test_joint_qc_callable_binds_staged_bytes_to_intended_logical_path(tmp_path)
     )
     assert receipt["pass"] is True
     assert receipt["cover_path"] == "/runtime/intended.cover.png"
+    assert receipt["witness"]["image_path"] == "/runtime/intended.cover.png"
     assert receipt["cover_sha256"] == "sha256:" + hashlib.sha256(cover.read_bytes()).hexdigest()
 
 
@@ -170,7 +175,7 @@ def test_production_joint_qc_binds_fixed_title_candidate_and_logical_path(tmp_pa
 
     def probe(path, prompt):
         seen["path"], seen["prompt"] = path, prompt
-        return {"status": "OBSERVED", "answer": '{"lidousha_primary":true,"thumbnail_readable":true,"single_clear_hook":true,"text_overcrowded":false,"title_cover_aligned":true,"physical_text_line_count":1,"unrelated_or_misleading_elements":[],"pass":true}'}
+        return {"status": "OBSERVED", "answer": '{"lidousha_primary":true,"thumbnail_readable":true,"single_clear_hook":true,"text_overcrowded":false,"title_cover_aligned":true,"physical_text_line_count":1,"unrelated_or_misleading_elements":[],"reason":"符合标题","pass":true}'}
 
     receipt = repair._production_joint_qc(
         cover_path=cover, logical_cover_path="/runtime/final.cover.png", image_probe=probe
@@ -202,3 +207,45 @@ def test_apply_preflight_targets_is_cas_replayable_without_provider(tmp_path) ->
         targets={target: b"after"},
         apply=True,
     )["status"] == "ALREADY_COMMITTED"
+
+
+def test_private_preflight_seals_relocated_sidecars(tmp_path) -> None:
+    authority = _authority(_generation(), b"old-cover", b"old-qc")
+    relocated = Path("/opt/bilive/autoslice/out/qixi-sidecar.png")
+
+    def stage(root):
+        cover = root / "cover.png"
+        sidecar = root / "pre-overlay.png"
+        cover.write_bytes(b"new-cover")
+        sidecar.write_bytes(b"pre-overlay")
+        generation = _generation()
+        generation["final_cover_sha256"] = "sha256:" + hashlib.sha256(cover.read_bytes()).hexdigest()
+        qc = {
+            "schema_version": "lidousha-title-cover-joint-qc.v1", "status": "PASS", "pass": True,
+            "cover_path": "/runtime/new.cover.png", "cover_sha256": generation["final_cover_sha256"],
+        }
+        return {
+            "generation": generation, "cover_path": cover, "qc_bytes": json.dumps(qc).encode(),
+            "logical_cover_path": "/runtime/new.cover.png", "logical_qc_path": "/runtime/new.qc.json",
+            "sidecars": {relocated: sidecar.read_bytes()},
+        }
+
+    result = repair.run_private_preflight(authority=authority, stage_root_parent=tmp_path, stage=stage)
+    assert result["manifest"]["sidecars"][str(relocated)]["sha256"] == "sha256:" + hashlib.sha256(b"pre-overlay").hexdigest()
+    stored = repair._load_preflight_store(Path(result["preflight_store"]), authority=authority)
+    assert stored["sidecars"] == {relocated: b"pre-overlay"}
+
+
+def test_mutation_contract_rejects_neighbor_leaf() -> None:
+    authority = _authority(_generation(), b"old-cover", b"old-qc")
+    authority["allowed_mutations"]["record"] = {
+        "allowed": ["/publish_staging/cover_path"],
+        "required": ["/publish_staging/cover_path"],
+    }
+    authority["authority_sha256"] = _sha({key: value for key, value in authority.items() if key != "authority_sha256"})
+    before = {role: {} for role in ("record", "delivery_record", "publish", "state")}
+    after = copy.deepcopy(before)
+    before["record"] = {"publish_staging": {"cover_path": "before", "cover_text": "same"}}
+    after["record"] = {"publish_staging": {"cover_path": "after", "cover_text": "drift"}}
+    with pytest.raises(repair.QixiScreenshotDirectCoverRepairError, match="ALLOWLIST_DRIFT"):
+        repair._assert_projection_mutation_contract(authority, before=before, after=after)

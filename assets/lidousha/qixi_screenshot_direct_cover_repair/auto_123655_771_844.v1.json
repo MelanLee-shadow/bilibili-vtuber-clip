@@ -33,6 +33,11 @@
     "burn": "sha256:402f80580c1e21e83aaa8c8917d93d389c4c25f14b194d9015aa6c4390bd91ff"
   },
   "title_projection_sha256": "sha256:e9961396290a8a5d21d7b2d035a6ca087d46092b488e2fb06086fbae606eb1b4",
-  "allowed_mutations": {"record": ["/cover_generation", "/publish_staging/cover_generation", "/artifact_hashes/cover_sha256", "/artifact_hashes/ai_background_sha256"], "delivery_record": ["/cover_generation", "/publish_staging/cover_generation", "/artifact_hashes/cover_sha256", "/artifact_hashes/ai_background_sha256"], "publish": ["/cover_generation", "/cover_path", "/artifact_hashes/cover_sha256", "/artifact_hashes/ai_background_sha256", "/title_cover_joint_qc"], "state": ["/picks/*/cover_path", "/picks/*/cover_generation", "/picks/*/cover_sha256"]},
-  "authority_sha256": "sha256:db0416ae5d1c3695cf77fc5aca4493ecc34c184ab85aecdff0aa3698ab7b7570"
+  "allowed_mutations": {
+    "record": {"allowed": ["/publish_staging/cover_generation", "/publish_staging/cover_path", "/publish_staging/cover_status", "/publish_staging/cover_text", "/artifact_hashes/cover_sha256"], "required": ["/publish_staging/cover_generation", "/publish_staging/cover_path", "/artifact_hashes/cover_sha256"]},
+    "delivery_record": {"allowed": ["/publish_staging/cover_generation", "/publish_staging/cover_path", "/publish_staging/cover_status", "/publish_staging/cover_text", "/artifact_hashes/cover_sha256"], "required": ["/publish_staging/cover_generation", "/publish_staging/cover_path", "/artifact_hashes/cover_sha256"]},
+    "publish": {"allowed": ["/cover_generation", "/cover_path", "/artifact_hashes/cover_sha256", "/title_cover_joint_qc"], "required": ["/cover_generation", "/cover_path", "/artifact_hashes/cover_sha256", "/title_cover_joint_qc"]},
+    "state": {"allowed": ["/picks/*/cover_path", "/picks/*/cover_generation", "/picks/*/cover_sha256"], "required": ["/picks/*/cover_path", "/picks/*/cover_generation", "/picks/*/cover_sha256"]}
+  },
+  "authority_sha256": "sha256:50c5c4356767a94351f8566f33bf62ef01a5ffff841b826be17f0feeef1744b7"
 }

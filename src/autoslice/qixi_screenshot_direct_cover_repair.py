@@ -16,6 +16,7 @@ import stat
 import tempfile
 import base64
 import re
+from contextlib import contextmanager, nullcontext
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -161,16 +162,25 @@ def validate_authority(value: Mapping[str, object]) -> dict[str, object]:
         or not re.fullmatch(r"sha256:[0-9a-f]{64}", str(terminal.get("authority_sha256")))
         or not isinstance(allowed, Mapping)
         or set(allowed) != {"record", "delivery_record", "publish", "state"}
-        or any(
-            not isinstance(roots, list)
-            or len(roots) != len(set(roots))
-            or any(not isinstance(root, str) or not root.startswith("/") for root in roots)
-            for roots in allowed.values()
-        )
+        or any(not _valid_mutation_scope(scope) for scope in allowed.values())
     ):
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_AUTHORITY_SCOPE_INVALID")
     authority["authority_sha256"] = claimed
     return authority
+
+
+def _valid_mutation_scope(value: object) -> bool:
+    """Validate the authority's exact allowed-versus-required pointer contract."""
+    if not isinstance(value, Mapping) or set(value) != {"allowed", "required"}:
+        return False
+    allowed, required = value.get("allowed"), value.get("required")
+    if not isinstance(allowed, list) or not isinstance(required, list):
+        return False
+    if len(allowed) != len(set(allowed)) or len(required) != len(set(required)):
+        return False
+    if any(not isinstance(item, str) or not item.startswith("/") for item in allowed + required):
+        return False
+    return set(required).issubset(allowed)
 
 
 def validate_legacy_cover_inputs(
@@ -212,8 +222,7 @@ def snapshot_fixed_runtime(authority: Mapping[str, object], *, repo_root: Path =
         assert isinstance(binding, Mapping)
         if terminal_authority["authority_sha256"] != binding["authority_sha256"]:
             raise ValueError("terminal authority mismatch")
-        terminal.validate_committed_refresh(repo_root=repo_root)
-        runtime = terminal.validate_runtime(terminal_authority)
+        runtime = terminal.committed_successor_snapshot(repo_root=repo_root)
         legacy = normalized["legacy_cover"]
         assert isinstance(legacy, Mapping)
         cover = stable_regular_snapshot(Path(str(legacy["final_cover"]["path"])), label="cover repair legacy cover")
@@ -221,7 +230,8 @@ def snapshot_fixed_runtime(authority: Mapping[str, object], *, repo_root: Path =
         if cover is None or qc is None:
             raise ValueError("legacy input absent")
         record = json.loads(runtime["record"])
-        generation = record.get("cover_generation") if isinstance(record, Mapping) else None
+        staging = record.get("publish_staging") if isinstance(record, Mapping) else None
+        generation = staging.get("cover_generation") if isinstance(staging, Mapping) else None
         if not isinstance(generation, Mapping):
             raise ValueError("cover generation absent")
         validate_legacy_cover_inputs(normalized, generation=generation, old_cover=cover.payload, old_qc=qc.payload)
@@ -266,11 +276,13 @@ def build_cover_projection(
         staging["cover_generation"] = dict(generation)
         staging["cover_path"] = str(normalized["legacy_cover"]["final_cover"]["path"])
         staging["cover_status"] = "AI_COVER_READY"
+        hashes = document.get("artifact_hashes")
+        if not isinstance(hashes, dict):
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_ARTIFACT_HASH_DRIFT")
+        hashes["cover_sha256"] = cover_sha
     publish["cover_generation"] = dict(generation)
     publish["cover_path"] = str(normalized["legacy_cover"]["final_cover"]["path"])
-    qc_target = Path(str(normalized["legacy_cover"]["failed_joint_qc"]["path"])).with_name(
-        f"{CANDIDATE_ID}.qixi-cover-repair-{str(normalized['authority_sha256'])[7:23]}.title-cover-joint-qc.json"
-    )
+    qc_target = cover_repair_qc_target(normalized)
     publish["title_cover_joint_qc"] = json.loads(qc_bytes)
     publish["title_cover_joint_qc"]["cover_path"] = str(normalized["legacy_cover"]["final_cover"]["path"])
     hashes = publish.get("artifact_hashes")
@@ -283,6 +295,16 @@ def build_cover_projection(
     matches[0].update({"cover_path": str(normalized["legacy_cover"]["final_cover"]["path"]), "cover_generation": dict(generation), "cover_sha256": cover_sha})
     for value in (record, delivery, publish, state):
         _assert_no_stage_locator(value)
+    _assert_projection_mutation_contract(
+        normalized, before={
+            "record": json.loads(runtime["record"]),
+            "delivery_record": json.loads(runtime["delivery_record"]),
+            "publish": json.loads(runtime["publish"]),
+            "state": json.loads(runtime["state"]),
+        }, after={
+            "record": record, "delivery_record": delivery, "publish": publish, "state": state,
+        },
+    )
     terminal_paths = {role: Path(str(json.loads(runtime[role]).get("_unused", ""))) for role in ()}
     del terminal_paths
     # The caller obtains these exact paths from the terminal authority, not from a provider response.
@@ -308,6 +330,55 @@ def _assert_no_stage_locator(value: object) -> None:
             _assert_no_stage_locator(child)
     elif isinstance(value, str) and ".qixi-screenshot-cover-stage-" in value:
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_STAGE_LOCATOR_DRIFT")
+
+
+def _changed_leaf_pointers(before: object, after: object, pointer: str = "") -> set[str]:
+    """Return only semantic leaf changes; mapping/list containers are not leaves."""
+    if isinstance(before, Mapping) and isinstance(after, Mapping):
+        changed: set[str] = set()
+        for key in set(before) | set(after):
+            child = f"{pointer}/{key}".replace("~", "~0").replace("/", "~1")
+            # Reconstruct the separator because only the key itself is escaped.
+            child = pointer + "/" + str(key).replace("~", "~0").replace("/", "~1")
+            if key not in before or key not in after:
+                changed.add(child)
+            else:
+                changed |= _changed_leaf_pointers(before[key], after[key], child)
+        return changed
+    if isinstance(before, list) and isinstance(after, list):
+        changed = set()
+        for index in range(max(len(before), len(after))):
+            child = f"{pointer}/{index}"
+            if index >= len(before) or index >= len(after):
+                changed.add(child)
+            else:
+                changed |= _changed_leaf_pointers(before[index], after[index], child)
+        return changed
+    return set() if before == after else {pointer or "/"}
+
+
+def _pointer_is_within(pointer: str, root: str) -> bool:
+    parts = pointer.strip("/").split("/")
+    roots = root.strip("/").split("/")
+    return len(parts) >= len(roots) and all(a == "*" or a == b for a, b in zip(roots, parts))
+
+
+def _assert_projection_mutation_contract(
+    authority: Mapping[str, object], *, before: Mapping[str, object], after: Mapping[str, object],
+) -> None:
+    """Reject extra leaves and require the exact authority-owned mutation roots."""
+    allowed = authority["allowed_mutations"]
+    assert isinstance(allowed, Mapping)
+    for role in ("record", "delivery_record", "publish", "state"):
+        scope = allowed[role]
+        assert isinstance(scope, Mapping)
+        changed = _changed_leaf_pointers(before[role], after[role])
+        allowed_roots = scope["allowed"]
+        required_roots = scope["required"]
+        if any(not any(_pointer_is_within(pointer, root) for root in allowed_roots) for pointer in changed):
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_ALLOWLIST_DRIFT")
+        if any(not any(_pointer_is_within(pointer, root) for pointer in changed) for root in required_roots):
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_REQUIRED_MUTATION_MISSING")
 
 
 def require_repaired_punch(value: object) -> tuple[str, ...]:
@@ -337,6 +408,22 @@ def _cpa_env(path: Path = Path("/opt/bilive/autoslice/cpa.env")) -> dict[str, st
     if not values.get("CPA_BASE_URL") or not values.get("CPA_API_KEY"):
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_CPA_CREDENTIALS_MISSING")
     return values
+
+
+@contextmanager
+def _scoped_cpa_environment(path: Path = Path("/opt/bilive/autoslice/cpa.env")):
+    """Temporarily expose fixed CPA credentials only to canonical adapters."""
+    values = _cpa_env(path)
+    previous = {key: os.environ.get(key) for key in values}
+    try:
+        os.environ.update(values)
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def _production_review_punch(
@@ -391,12 +478,25 @@ def _production_joint_qc(
 
 
 def _production_stage_cover(
-    *, root: Path, runtime: Mapping[str, bytes], approved_punch: tuple[str, ...],
+    *, authority: Mapping[str, object], root: Path, runtime: Mapping[str, bytes], approved_punch: tuple[str, ...],
     semantic_receipt: Mapping[str, object], cover_mode_override: str,
     require_screenshot_direct: bool,
 ) -> dict[str, object]:
     """Run the canonical screenshot stage only inside the private root."""
     from src.autoslice.publish_staging import _stage_lidousha_ai_cover
+    from src.autoslice.cover_host_identity_gate import (
+        validate_final_host_identity_verification,
+        verify_lidousha_final_host_identity,
+    )
+    from src.autoslice.cover_route_evidence import (
+        validate_cover_route_decision,
+        validate_final_participant_verification,
+        validate_rendered_text_pixel_evidence,
+    )
+    from src.autoslice.cover_source_composition import (
+        validate_source_composition_verification,
+        verify_lidousha_source_composition,
+    )
 
     try:
         record = json.loads(runtime["record"])
@@ -417,6 +517,9 @@ def _production_stage_cover(
         require_screenshot_direct=require_screenshot_direct,
         approved_punch=approved_punch, approved_punch_receipt=semantic_receipt,
         image_edit=image_edit_trap,
+        enforce_final_host_identity=True,
+        final_host_identity_verifier=verify_lidousha_final_host_identity,
+        source_composition_verifier=verify_lidousha_source_composition,
     )
     if not isinstance(result, Mapping) or result.get("status") != "AI_COVER_READY":
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_SCREENSHOT_GATE_BLOCKED")
@@ -428,13 +531,125 @@ def _production_stage_cover(
         or generation.get("image_generation_used") is not False
         or generation.get("image_generation_attempted") is not False
         or generation.get("route_decision", {}).get("actual_treatment") != "screenshot_direct"
+        or not validate_cover_route_decision(generation, allow_legacy_v1=False)
+        or not validate_final_host_identity_verification(generation)
+        or not validate_rendered_text_pixel_evidence(generation)
+        or not isinstance(generation.get("thumbnail_text_gate"), Mapping)
+        or generation["thumbnail_text_gate"].get("status") != "PASS"
+    ):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_SCREENSHOT_GATE_BLOCKED")
+    route = generation["route_decision"]
+    required_participants = route.get("required_participant_ids")
+    if not isinstance(required_participants, list):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_SCREENSHOT_GATE_BLOCKED")
+    if required_participants and not validate_final_participant_verification(generation):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_SCREENSHOT_GATE_BLOCKED")
+    reference_sha = generation.get("reference_sha256")
+    if not isinstance(reference_sha, str) or not validate_source_composition_verification(
+        generation.get("source_composition_verification"), reference_sha256=reference_sha
     ):
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_SCREENSHOT_GATE_BLOCKED")
     staged = Path(cover_path)
     if not staged.resolve(strict=True).is_relative_to(root.resolve(strict=True)):
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_STAGE_ESCAPE")
-    return {"generation": dict(generation), "cover_path": staged,
-            "logical_cover_path": str(staged), "logical_qc_path": str(root / "joint-qc.json")}
+    try:
+        snapshot = stable_regular_snapshot(staged, label="cover repair private output")
+    except QixiTransactionCoreError as exc:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_STAGE_ESCAPE") from exc
+    if snapshot is None or snapshot.payload != staged.read_bytes():
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_STAGE_ESCAPE")
+    relocated, sidecars = _relocate_private_generation(
+        authority=authority, root=root, generation=generation, cover_path=staged,
+    )
+    logical_cover = str(authority_final_cover_path(authority))
+    try:
+        from src.autoslice.qixi_post_correction_public_surface import replayed_cover_gate_callables
+
+        after = dict(sidecars)
+        after[Path(logical_cover)] = snapshot.payload
+        for _predicate, check in replayed_cover_gate_callables(
+            relocated, story=story, package_root=Path(logical_cover).parent, after=after,
+        ):
+            check()
+    except Exception as exc:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_RELOCATED_GATE_BLOCKED") from exc
+    return {"generation": relocated, "cover_path": staged, "sidecars": sidecars,
+            "logical_cover_path": logical_cover,
+            "logical_qc_path": str(cover_repair_qc_target(authority))}
+
+
+def authority_final_cover_path(authority: Mapping[str, object]) -> Path:
+    """Return the one official cover target named by the sealed authority."""
+    normalized = validate_authority(authority)
+    legacy = normalized["legacy_cover"]
+    assert isinstance(legacy, Mapping)
+    final = legacy.get("final_cover")
+    value = final.get("path") if isinstance(final, Mapping) else None
+    if not isinstance(value, str) or not value.startswith("/opt/bilive/autoslice/"):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_LOGICAL_TARGET_DRIFT")
+    return Path(value)
+
+
+def cover_repair_qc_target(authority: Mapping[str, object]) -> Path:
+    """Create the one authority-bound, create-only PASS QC locator."""
+    normalized = validate_authority(authority)
+    cover = authority_final_cover_path(normalized)
+    return cover.with_name(
+        f"{CANDIDATE_ID}.qixi-cover-repair-"
+        f"{str(normalized['authority_sha256'])[7:23]}.title-cover-joint-qc.json"
+    )
+
+
+def _relocate_private_generation(
+    *, authority: Mapping[str, object], root: Path, generation: Mapping[str, object], cover_path: Path,
+) -> tuple[dict[str, object], dict[Path, bytes]]:
+    """Freeze every private evidence file and replace only its exact locator.
+
+    A stage directory is deliberately deleted after full dry-run, so no path
+    occurring in the public generation may still refer to it.  The actual
+    final cover is the authority's fixed target; every other stage artifact is
+    put in a distinct authority-keyed namespace and committed create-only.
+    """
+    from src.autoslice.qixi_post_correction_projection_paths import public_artifact_path, public_artifact_root
+
+    final_cover = authority_final_cover_path(authority)
+    namespace = public_artifact_root(final_cover.parent, authority)
+    root = root.resolve(strict=True)
+    targets: dict[Path, bytes] = {}
+
+    def convert(value: object) -> object:
+        if isinstance(value, Mapping):
+            return {str(key): convert(child) for key, child in value.items()}
+        if isinstance(value, list):
+            return [convert(child) for child in value]
+        if not isinstance(value, str) or not value.startswith(str(root) + "/"):
+            return value
+        stage = Path(value)
+        try:
+            snapshot = stable_regular_snapshot(stage, label="cover repair stage sidecar")
+        except QixiTransactionCoreError as exc:
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_STAGE_SIDECAR_INVALID") from exc
+        if snapshot is None:
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_STAGE_SIDECAR_INVALID")
+        if stage.resolve(strict=True) == cover_path.resolve(strict=True):
+            target = final_cover
+        else:
+            try:
+                relative = stage.resolve(strict=True).relative_to(root).as_posix()
+            except ValueError as exc:
+                raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_STAGE_ESCAPE") from exc
+            target = public_artifact_path(namespace, relative)
+        previous = targets.get(target)
+        if previous is not None and previous != snapshot.payload:
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_STAGE_SIDECAR_COLLISION")
+        targets[target] = snapshot.payload
+        return str(target)
+
+    relocated = convert(generation)
+    if not isinstance(relocated, dict) or relocated.get("final_cover") != str(final_cover):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_STAGE_SIDECAR_INVALID")
+    _assert_no_stage_locator(relocated)
+    return relocated, {path: payload for path, payload in targets.items() if path != final_cover}
 
 
 def run_canonical_full_dry(
@@ -466,7 +681,7 @@ def run_canonical_full_dry(
     punch = require_repaired_punch(semantic.get("final_punch"))
     def stage(root: Path) -> Mapping[str, object]:
         output = stage_cover(
-            root=root, runtime=runtime, approved_punch=punch, semantic_receipt=semantic,
+            authority=normalized, root=root, runtime=runtime, approved_punch=punch, semantic_receipt=semantic,
             cover_mode_override="screenshot", require_screenshot_direct=True,
         )
         if not isinstance(output, Mapping) or output.get("generation", {}).get("method") != "screenshot_direct" or output.get("generation", {}).get("image_generation_used") is not False:
@@ -478,13 +693,112 @@ def run_canonical_full_dry(
         if not isinstance(qc, Mapping) or qc.get("status") != "PASS" or qc.get("pass") is not True:
             raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_JOINT_QC_BLOCKED")
         return {**output, "qc_bytes": _json_bytes(dict(qc))}
-    return run_private_preflight(authority=normalized, stage_root_parent=stage_root_parent, stage=stage)
+    return run_private_preflight(
+        authority=normalized, stage_root_parent=stage_root_parent, stage=stage,
+        runtime_preimage=runtime,
+    )
+
+
+def run_fixed_full_dry(*, repo_root: Path = ROOT, stage_root_parent: Path | None = None) -> dict[str, object]:
+    """Execute the only real fixed full-dry route; no official target is writable."""
+    authority = load_authority(repo_root)
+    runtime = snapshot_fixed_runtime(authority, repo_root=repo_root)
+    parent = stage_root_parent or Path(str(authority["runtime_root"])) / "reports"
+    from src.autoslice.cpa_frame_witness import image_vision_probe
+
+    def review_punch(*, title: object, story: object, cover_text: object, candidates: object) -> Mapping[str, object]:
+        if title != authority["title"]["value"] or candidates != PUNCH_CANDIDATES or not isinstance(story, Mapping):
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PUNCH_INPUT_INVALID")
+        lines, receipt = _production_review_punch(
+            story_hook=str(story.get("selection_hook") or ""), cover_text=str(cover_text or "")
+        )
+        if tuple(receipt.get("final_punch") or ()) != lines:
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PUNCH_REVIEW_INVALID")
+        return receipt
+
+    def joint_qc(*, cover_path: Path, title: object, candidate_id: object, logical_cover_path: object) -> dict[str, object]:
+        if title != authority["title"]["value"] or candidate_id != CANDIDATE_ID or not isinstance(logical_cover_path, str):
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_JOINT_QC_INVALID")
+        return _production_joint_qc(
+            cover_path=cover_path, logical_cover_path=logical_cover_path,
+            image_probe=lambda path, question: image_vision_probe(
+                path, question, api_base=os.environ.get("CPA_BASE_URL", ""),
+                api_key=os.environ.get("CPA_API_KEY", ""),
+            ),
+        )
+
+    with _scoped_cpa_environment():
+        return run_canonical_full_dry(
+            authority=authority, stage_root_parent=parent, runtime=runtime,
+            review_punch=review_punch, stage_cover=_production_stage_cover, joint_qc=joint_qc,
+        )
+
+
+def _unique_stored_preflight(parent: Path, authority: Mapping[str, object]) -> tuple[Path, dict[str, object]]:
+    root = _preflight_store_root(parent, authority)
+    candidates: list[tuple[Path, dict[str, object]]] = []
+    for child in root.iterdir():
+        if not child.is_dir() or child.is_symlink():
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PREFLIGHT_STORE_DRIFT")
+        candidates.append((child, _load_preflight_store(child, authority=authority)))
+    if len(candidates) != 1:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PREFLIGHT_AMBIGUOUS")
+    return candidates[0]
+
+
+def run_fixed_apply(*, repo_root: Path = ROOT, stage_root_parent: Path | None = None) -> dict[str, object]:
+    """Replay exactly one sealed full-dry store without provider access."""
+    authority = load_authority(repo_root)
+    parent = stage_root_parent or Path(str(authority["runtime_root"])) / "reports"
+    with exclusive_runner_lock(Path(str(authority["runtime_root"]))):
+        _store, stored = _unique_stored_preflight(parent, authority)
+        manifest = stored["manifest"]
+        assert isinstance(manifest, Mapping)
+        transaction = _transaction_root(parent, authority, str(manifest["preflight_sha256"]))
+        journal_path = transaction / "journal.json"
+        if os.path.lexists(journal_path):
+            journal = _read_journal(journal_path, authority, str(manifest["preflight_sha256"]))
+            if journal.get("status") == "COMMITTED":
+                entries = journal.get("entries")
+                if not isinstance(entries, list) or any(not isinstance(entry, Mapping) for entry in entries):
+                    raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_JOURNAL_DRIFT")
+                replay = {
+                    Path(str(entry["target"])): base64.b64decode(
+                        str(entry["after_bytes_b64"]), validate=True,
+                    ) for entry in entries
+                }
+                return apply_preflight_targets(
+                    authority=authority, stage_root_parent=parent,
+                    preflight_sha256=str(manifest["preflight_sha256"]), targets=replay,
+                    apply=True, lock_held=True, strict_targets=True,
+                )
+        runtime = snapshot_fixed_runtime(authority, repo_root=repo_root)
+        expected = manifest.get("runtime_preimage")
+        observed = {role: _sha256_bytes(payload) for role, payload in runtime.items()}
+        if not isinstance(expected, Mapping) or expected != observed:
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PREFLIGHT_RUNTIME_DRIFT")
+        targets = build_cover_projection(
+            authority=authority, runtime=runtime, cover_bytes=stored["cover"],
+            qc_bytes=stored["joint_qc"], generation=stored["generation"],
+        )
+        sidecars = stored["sidecars"]
+        assert isinstance(sidecars, Mapping)
+        for path, payload in sidecars.items():
+            if path in targets:
+                raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_STAGE_SIDECAR_COLLISION")
+            targets[path] = payload
+        return apply_preflight_targets(
+            authority=authority, stage_root_parent=parent,
+            preflight_sha256=str(manifest["preflight_sha256"]), targets=targets, apply=True,
+            lock_held=True, strict_targets=True,
+        )
 
 
 def build_preflight_manifest(
     *, authority: Mapping[str, object], cover_bytes: bytes, qc_bytes: bytes,
     generation: Mapping[str, object], logical_cover_path: str,
-    logical_qc_path: str,
+    logical_qc_path: str, runtime_preimage: Mapping[str, bytes] | None = None,
+    sidecars: Mapping[Path, bytes] | None = None,
 ) -> dict[str, object]:
     """Freeze a successful private-stage result without writing any target.
 
@@ -494,6 +808,16 @@ def build_preflight_manifest(
     provider or silently choosing a new route.
     """
     normalized = validate_authority(authority)
+    if runtime_preimage is not None and any(
+        not isinstance(role, str) or not isinstance(payload, bytes)
+        for role, payload in runtime_preimage.items()
+    ):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PREFLIGHT_INVALID")
+    if sidecars is not None and any(
+        not isinstance(path, Path) or not isinstance(payload, bytes)
+        for path, payload in sidecars.items()
+    ):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PREFLIGHT_INVALID")
     if (
         generation.get("method") != "screenshot_direct"
         or generation.get("image_generation_used") is not False
@@ -529,6 +853,14 @@ def build_preflight_manifest(
         "cover": {"logical_path": logical_cover_path, "sha256": _sha256_bytes(cover_bytes), "bytes": len(cover_bytes)},
         "joint_qc": {"logical_path": logical_qc_path, "sha256": _sha256_bytes(qc_bytes), "bytes": len(qc_bytes)},
         "generation_sha256": canonical_sha256(generation),
+        "runtime_preimage": {
+            role: _sha256_bytes(payload)
+            for role, payload in sorted((runtime_preimage or {}).items())
+        },
+        "sidecars": {
+            str(path): {"sha256": _sha256_bytes(payload), "bytes": len(payload)}
+            for path, payload in sorted((sidecars or {}).items(), key=lambda item: str(item[0]))
+        },
     }
     manifest["preflight_sha256"] = canonical_sha256(manifest)
     return manifest
@@ -541,7 +873,7 @@ def validate_preflight_manifest(value: Mapping[str, object], *, authority: Mappi
     required = {
         "schema_version", "candidate_id", "recording_date", "upload_enabled",
         "authority_sha256", "route", "image_generation_used", "cover", "joint_qc",
-        "generation_sha256",
+        "generation_sha256", "runtime_preimage", "sidecars",
     }
     normalized = validate_authority(authority)
     if (
@@ -554,6 +886,19 @@ def validate_preflight_manifest(value: Mapping[str, object], *, authority: Mappi
         or manifest.get("authority_sha256") != normalized["authority_sha256"]
         or manifest.get("route") != "screenshot_direct"
         or manifest.get("image_generation_used") is not False
+        or not isinstance(manifest.get("runtime_preimage"), Mapping)
+        or any(
+            not isinstance(role, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", str(digest))
+            for role, digest in manifest.get("runtime_preimage", {}).items()
+        )
+        or not isinstance(manifest.get("sidecars"), Mapping)
+        or any(
+            not isinstance(path, str) or not path.startswith("/opt/bilive/autoslice/")
+            or not isinstance(row, Mapping) or set(row) != {"sha256", "bytes"}
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", str(row.get("sha256")))
+            or isinstance(row.get("bytes"), bool) or not isinstance(row.get("bytes"), int)
+            for path, row in manifest.get("sidecars", {}).items()
+        )
     ):
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PREFLIGHT_DRIFT")
     for role in ("cover", "joint_qc"):
@@ -566,7 +911,7 @@ def validate_preflight_manifest(value: Mapping[str, object], *, authority: Mappi
 
 def run_private_preflight(
     *, authority: Mapping[str, object], stage_root_parent: Path,
-    stage: object,
+    stage: object, runtime_preimage: Mapping[str, bytes] | None = None,
 ) -> dict[str, object]:
     """Run one injected canonical stage wholly below a private directory.
 
@@ -591,7 +936,10 @@ def run_private_preflight(
         qc_bytes = output.get("qc_bytes")
         logical_cover = output.get("logical_cover_path")
         logical_qc = output.get("logical_qc_path")
-        if not isinstance(generation, Mapping) or not isinstance(cover_path, Path) or not isinstance(qc_bytes, bytes):
+        sidecars = output.get("sidecars", {})
+        if not isinstance(generation, Mapping) or not isinstance(cover_path, Path) or not isinstance(qc_bytes, bytes) or not isinstance(sidecars, Mapping):
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_STAGE_INVALID")
+        if any(not isinstance(path, Path) or not isinstance(payload, bytes) for path, payload in sidecars.items()):
             raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_STAGE_INVALID")
         resolved_root = root.resolve(strict=True)
         resolved_cover = cover_path.resolve(strict=True)
@@ -607,7 +955,7 @@ def run_private_preflight(
         manifest = build_preflight_manifest(
             authority=normalized, cover_bytes=cover_bytes, qc_bytes=qc_bytes,
             generation=generation, logical_cover_path=logical_cover,
-            logical_qc_path=logical_qc,
+            logical_qc_path=logical_qc, runtime_preimage=runtime_preimage, sidecars=sidecars,
         )
         store = _preflight_store_root(stage_root_parent, normalized)
         digest = str(manifest["preflight_sha256"])[7:]
@@ -629,6 +977,10 @@ def run_private_preflight(
             "joint-qc.json": qc_bytes,
             "generation.json": json.dumps(generation, ensure_ascii=False, sort_keys=True).encode("utf-8"),
             "manifest.json": json.dumps(manifest, ensure_ascii=False, sort_keys=True).encode("utf-8"),
+            "sidecars.json": _json_bytes({
+                str(path): base64.b64encode(payload).decode("ascii")
+                for path, payload in sorted(sidecars.items(), key=lambda item: str(item[0]))
+            }),
         }
         for name, payload in files.items():
             _write_private_new(destination / name, payload)
@@ -714,7 +1066,7 @@ def _preflight_receipt(manifest: Mapping[str, object], files: Mapping[str, bytes
 
 def _load_preflight_store(destination: Path, *, authority: Mapping[str, object]) -> dict[str, object]:
     _private_directory(destination)
-    expected_names = {"cover.png", "joint-qc.json", "generation.json", "manifest.json", "receipt.json"}
+    expected_names = {"cover.png", "joint-qc.json", "generation.json", "manifest.json", "sidecars.json", "receipt.json"}
     if {child.name for child in destination.iterdir()} != expected_names:
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PREFLIGHT_STORE_DRIFT")
     payloads: dict[str, bytes] = {}
@@ -730,9 +1082,26 @@ def _load_preflight_store(destination: Path, *, authority: Mapping[str, object])
         manifest = json.loads(payloads["manifest.json"])
         receipt = json.loads(payloads["receipt.json"])
         generation = json.loads(payloads["generation.json"])
+        encoded_sidecars = json.loads(payloads["sidecars.json"])
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PREFLIGHT_STORE_DRIFT") from exc
     manifest = validate_preflight_manifest(manifest, authority=authority)
+    if not isinstance(encoded_sidecars, Mapping):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PREFLIGHT_STORE_DRIFT")
+    sidecars: dict[Path, bytes] = {}
+    for path, encoded in encoded_sidecars.items():
+        if not isinstance(path, str) or not isinstance(encoded, str):
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PREFLIGHT_STORE_DRIFT")
+        try:
+            sidecars[Path(path)] = base64.b64decode(encoded, validate=True)
+        except (ValueError, UnicodeEncodeError) as exc:
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PREFLIGHT_STORE_DRIFT") from exc
+    expected_sidecars = manifest["sidecars"]
+    if {
+        str(path): {"sha256": _sha256_bytes(payload), "bytes": len(payload)}
+        for path, payload in sidecars.items()
+    } != expected_sidecars:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PREFLIGHT_STORE_DRIFT")
     files = {key: value for key, value in payloads.items() if key != "receipt.json"}
     if (
         not isinstance(receipt, Mapping)
@@ -740,7 +1109,7 @@ def _load_preflight_store(destination: Path, *, authority: Mapping[str, object])
         or canonical_sha256(generation) != manifest["generation_sha256"]
     ):
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PREFLIGHT_STORE_DRIFT")
-    return {"manifest": manifest, "cover": payloads["cover.png"], "joint_qc": payloads["joint-qc.json"], "generation": generation}
+    return {"manifest": manifest, "cover": payloads["cover.png"], "joint_qc": payloads["joint-qc.json"], "generation": generation, "sidecars": sidecars}
 
 
 def _remove_owned_private_stage(root: Path, owner: os.stat_result) -> None:
@@ -761,6 +1130,7 @@ def _remove_owned_private_stage(root: Path, owner: os.stat_result) -> None:
 def apply_preflight_targets(
     *, authority: Mapping[str, object], stage_root_parent: Path,
     preflight_sha256: str, targets: Mapping[Path, bytes], apply: bool,
+    lock_held: bool = False, strict_targets: bool = False,
 ) -> dict[str, object]:
     """Install an already-stored cover projection; it never invokes a provider.
 
@@ -777,7 +1147,8 @@ def apply_preflight_targets(
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PROJECTION_INVALID")
     if not apply:
         return {"status": "PLAN_PASS", "target_writes": 0, "upload_enabled": False}
-    with exclusive_runner_lock(Path(str(normalized["runtime_root"]))):
+    lock = nullcontext() if lock_held else exclusive_runner_lock(Path(str(normalized["runtime_root"])))
+    with lock:
         root = _transaction_root(stage_root_parent, normalized, preflight_sha256)
         journal_path = root / "journal.json"
         if os.path.lexists(journal_path):
@@ -793,6 +1164,8 @@ def apply_preflight_targets(
                     snapshot = stable_regular_snapshot(target, label="cover repair preimage")
                 except QixiTransactionCoreError as exc:
                     raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_TARGET_UNSAFE") from exc
+                if strict_targets and target not in _replaceable_targets(normalized) and snapshot is not None:
+                    raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_CREATE_ONLY_COLLISION")
                 entries.append({
                     "target": str(target), "before_bytes_b64": (base64.b64encode(snapshot.payload).decode() if snapshot else None),
                     "before_sha256": (snapshot.sha256 if snapshot else None), "before_mode": (snapshot.mode if snapshot else None),
@@ -816,6 +1189,18 @@ def apply_preflight_targets(
             raise
         _write_transaction_receipt(root, journal)
         return {"status": "COMMITTED", "target_writes": len(targets), "upload_enabled": False}
+
+
+def _replaceable_targets(authority: Mapping[str, object]) -> set[Path]:
+    """Only the terminal JSON mirrors and sealed predecessor cover may replace."""
+    try:
+        terminal = json.loads((ROOT / str(authority["terminal_refresh_authority"]["relative_path"])).read_text())
+        preimage = terminal["preimage"]
+        targets = {Path(str(preimage[role]["path"])) for role in ("record", "delivery_record", "publish", "state")}
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_TARGET_SCHEMA_INVALID") from exc
+    targets.add(authority_final_cover_path(authority))
+    return targets
 
 
 def _transaction_root(parent: Path, authority: Mapping[str, object], preflight_sha256: str) -> Path:

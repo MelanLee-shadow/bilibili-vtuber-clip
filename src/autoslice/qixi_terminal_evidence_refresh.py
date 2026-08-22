@@ -1696,6 +1696,61 @@ def validate_committed_refresh(*, repo_root: Path = ROOT) -> None:
     )
 
 
+def committed_successor_snapshot(
+    *, repo_root: Path = ROOT, allow_verified_cover_successor: bool = False,
+) -> dict[str, bytes]:
+    """Return the validated terminal successor, never a mutable postimage read.
+
+    Cover closure runs strictly after the terminal transaction.  Its record,
+    delivery, publish, state and chat inputs must therefore be taken from the
+    COMMITTED journal's exact after bytes, while immutable artifacts still
+    replay their sealed preimage descriptors.  Calling ``validate_runtime``
+    here would incorrectly require the old JSON preimage after a successful
+    terminal commit.
+    """
+    authority = load_authority(repo_root)
+    root = _refresh_root(authority)
+    journal = _json_document(_read_regular(root / "journal.json"), "JOURNAL")
+    entries = journal.get("entries")
+    if journal.get("status") != "COMMITTED" or not isinstance(entries, list):
+        raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_COMMIT_MISSING")
+    result: dict[str, bytes] = {}
+    for row in entries:
+        if not isinstance(row, Mapping) or not isinstance(row.get("role"), str):
+            raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_JOURNAL_SCHEMA_INVALID")
+        role = str(row["role"])
+        if role not in {"chat", "record", "delivery_record", "publish", "state"}:
+            raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_JOURNAL_SCHEMA_INVALID")
+        try:
+            result[role] = base64.b64decode(str(row["after_bytes_b64"]), validate=True)
+        except (ValueError, UnicodeEncodeError) as exc:
+            raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_JOURNAL_SCHEMA_INVALID") from exc
+    if set(result) != {"chat", "record", "delivery_record", "publish", "state"}:
+        raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_JOURNAL_SCHEMA_INVALID")
+    _validate_journal(journal, authority=authority, before={
+        role: base64.b64decode(str(row["before_bytes_b64"]), validate=True)
+        for row in entries for role in [str(row["role"])]
+    }, after=result)
+    receipt = _json_document(_read_regular(root / "receipt.json"), "RECEIPT")
+    if receipt != _receipt_for(journal):
+        raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_RECEIPT_DRIFT")
+    if not allow_verified_cover_successor:
+        validate_committed_refresh(repo_root=repo_root)
+    preimage = _require_mapping(authority["preimage"], "PREIMAGE")
+    for role in ("clip_context", "srt", "ass", "burn", "correction"):
+        descriptor = _require_mapping(preimage.get(role), "PREIMAGE")
+        payload = _read_regular(Path(str(descriptor.get("path") or "")))
+        if (
+            len(payload) != descriptor.get("bytes")
+            or "sha256:" + hashlib.sha256(payload).hexdigest() != descriptor.get("sha256")
+        ):
+            raise QixiTerminalEvidenceRefreshError(
+                f"QIXI_TERMINAL_REFRESH_{role.upper()}_DRIFT"
+            )
+        result[role] = payload
+    return result
+
+
 def build_staged_refresh(
     *,
     repo_root: Path,
