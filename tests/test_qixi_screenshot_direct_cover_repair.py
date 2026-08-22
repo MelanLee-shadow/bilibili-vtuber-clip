@@ -249,3 +249,23 @@ def test_mutation_contract_rejects_neighbor_leaf() -> None:
     after["record"] = {"publish_staging": {"cover_path": "after", "cover_text": "drift"}}
     with pytest.raises(repair.QixiScreenshotDirectCoverRepairError, match="ALLOWLIST_DRIFT"):
         repair._assert_projection_mutation_contract(authority, before=before, after=after)
+
+
+def test_background_reuse_keeps_old_locator_and_rejects_new_bytes(tmp_path) -> None:
+    old_background = tmp_path / "old-poster.png"
+    staged_background = tmp_path / "stage-poster.png"
+    old_background.write_bytes(b"immutable-poster")
+    staged_background.write_bytes(b"immutable-poster")
+    digest = "sha256:" + hashlib.sha256(b"immutable-poster").hexdigest()
+    prior = {"ai_background": str(old_background), "ai_background_sha256": digest}
+    staged = {"ai_background": str(staged_background), "ai_background_sha256": digest}
+    normalized = repair._preserve_immutable_background(
+        prior_generation=prior, staged_generation=staged,
+    )
+    assert normalized["ai_background"] == str(old_background)
+    assert normalized["ai_background_sha256"] == digest
+    staged_background.write_bytes(b"new-background")
+    with pytest.raises(repair.QixiScreenshotDirectCoverRepairError, match="AI_BACKGROUND_DRIFT"):
+        repair._preserve_immutable_background(
+            prior_generation=prior, staged_generation=staged,
+        )

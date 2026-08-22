@@ -558,8 +558,18 @@ def _production_stage_cover(
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_STAGE_ESCAPE") from exc
     if snapshot is None or snapshot.payload != staged.read_bytes():
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_STAGE_ESCAPE")
+    prior_staging = record.get("publish_staging")
+    prior_generation = (
+        prior_staging.get("cover_generation")
+        if isinstance(prior_staging, Mapping) else None
+    )
+    if not isinstance(prior_generation, Mapping):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_AI_BACKGROUND_DRIFT")
+    preserved_generation = _preserve_immutable_background(
+        prior_generation=prior_generation, staged_generation=generation,
+    )
     relocated, sidecars = _relocate_private_generation(
-        authority=authority, root=root, generation=generation, cover_path=staged,
+        authority=authority, root=root, generation=preserved_generation, cover_path=staged,
     )
     logical_cover = str(authority_final_cover_path(authority))
     try:
@@ -567,6 +577,15 @@ def _production_stage_cover(
 
         after = dict(sidecars)
         after[Path(logical_cover)] = snapshot.payload
+        for path_key in ("ai_background", "pre_overlay_path"):
+            reused = relocated.get(path_key)
+            if isinstance(reused, str) and Path(reused) not in after:
+                reused_snapshot = stable_regular_snapshot(
+                    Path(reused), label="cover repair reused materialized evidence",
+                )
+                if reused_snapshot is None:
+                    raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_AI_BACKGROUND_DRIFT")
+                after[Path(reused)] = reused_snapshot.payload
         for _predicate, check in replayed_cover_gate_callables(
             relocated, story=story, package_root=Path(logical_cover).parent, after=after,
         ):
@@ -598,6 +617,63 @@ def cover_repair_qc_target(authority: Mapping[str, object]) -> Path:
         f"{CANDIDATE_ID}.qixi-cover-repair-"
         f"{str(normalized['authority_sha256'])[7:23]}.title-cover-joint-qc.json"
     )
+
+
+def _preserve_immutable_background(
+    *, prior_generation: Mapping[str, object], staged_generation: Mapping[str, object],
+) -> dict[str, object]:
+    """Reuse the existing background byte-for-byte; this lane changes no art."""
+    prior_path = prior_generation.get("ai_background")
+    prior_sha = prior_generation.get("ai_background_sha256")
+    staged_path = staged_generation.get("ai_background")
+    if not isinstance(prior_path, str) or not isinstance(prior_sha, str) or not isinstance(staged_path, str):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_AI_BACKGROUND_DRIFT")
+    try:
+        old = stable_regular_snapshot(Path(prior_path), label="cover repair prior background")
+        new = stable_regular_snapshot(Path(staged_path), label="cover repair staged background")
+    except QixiTransactionCoreError as exc:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_AI_BACKGROUND_DRIFT") from exc
+    if old is None or new is None or old.sha256 != prior_sha or new.payload != old.payload:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_AI_BACKGROUND_DRIFT")
+    normalized = json.loads(json.dumps(staged_generation, ensure_ascii=False))
+    if not isinstance(normalized, dict):  # defensive JSON-domain assertion
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_AI_BACKGROUND_DRIFT")
+    normalized["ai_background"] = prior_path
+    normalized["ai_background_sha256"] = prior_sha
+
+    # These paths may be independent files, but when the stage emitted the
+    # exact old bytes their locator must remain historical too—not a fresh
+    # authority namespace artifact.  Non-identical pre-overlay evidence is
+    # still materialized as a new sidecar and cannot masquerade as background.
+    pairs = (("pre_overlay_path", "pre_overlay_sha256"),)
+    for path_key, sha_key in pairs:
+        old_path, old_sha = prior_generation.get(path_key), prior_generation.get(sha_key)
+        new_path = normalized.get(path_key)
+        if not isinstance(old_path, str) or not isinstance(old_sha, str) or not isinstance(new_path, str):
+            continue
+        try:
+            old_sidecar = stable_regular_snapshot(Path(old_path), label="cover repair prior sidecar")
+            new_sidecar = stable_regular_snapshot(Path(new_path), label="cover repair staged sidecar")
+        except QixiTransactionCoreError as exc:
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_AI_BACKGROUND_DRIFT") from exc
+        if old_sidecar is not None and new_sidecar is not None and old_sidecar.sha256 == old_sha and new_sidecar.payload == old_sidecar.payload:
+            normalized[path_key] = old_path
+            normalized[sha_key] = old_sha
+    old_poster = prior_generation.get("screenshot_graphic_poster")
+    new_poster = normalized.get("screenshot_graphic_poster")
+    if isinstance(old_poster, Mapping) and isinstance(new_poster, dict):
+        old_path, old_sha = old_poster.get("output_path"), old_poster.get("output_sha256")
+        new_path = new_poster.get("output_path")
+        if isinstance(old_path, str) and isinstance(old_sha, str) and isinstance(new_path, str):
+            try:
+                old_sidecar = stable_regular_snapshot(Path(old_path), label="cover repair prior poster")
+                new_sidecar = stable_regular_snapshot(Path(new_path), label="cover repair staged poster")
+            except QixiTransactionCoreError as exc:
+                raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_AI_BACKGROUND_DRIFT") from exc
+            if old_sidecar is not None and new_sidecar is not None and old_sidecar.sha256 == old_sha and new_sidecar.payload == old_sidecar.payload:
+                new_poster["output_path"] = old_path
+                new_poster["output_sha256"] = old_sha
+    return normalized
 
 
 def _relocate_private_generation(
