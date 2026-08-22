@@ -382,6 +382,52 @@ def test_sealed_chat_replays_predecessor_after_a_terminal_chat_successor(
         )
 
 
+def test_validate_receipt_accepts_only_bridge_returned_terminal_prechat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Source-fact replay cannot accept a caller-supplied historical chat."""
+
+    authority, runtime = _runtime(tmp_path)
+    record = runtime["record"]
+    assert isinstance(record, dict)
+    binding = authority.document["source_binding"]
+    assert isinstance(binding, dict)
+    chat = Path(str(binding["chat_authority"]["path"]))
+    sealed = chat.read_bytes()
+    chat.write_text('{"terminal":"after"}', encoding="utf-8")
+    review = authority_module.authorize(
+        consume_authority(
+            authority,
+            candidate_id=CANDIDATE_ID,
+            title=TITLE,
+            selection_hook=str(record["story_contract"]["selection_hook"]),
+            final_transcript=str(runtime["transcript"]),
+            final_reviewed_srt_path=Path(str(runtime["srt_path"])),
+            record=record,
+            speaker_evidence=runtime["speaker"],
+            sealed_chat_authority_bytes=sealed,
+        )
+    )
+    monkeypatch.setattr(authority_module, "load_authority", lambda *_args, **_kwargs: authority)
+    monkeypatch.setattr(
+        authority_module, "_validate_committed_public_successor", lambda *_args: sealed,
+    )
+    kwargs = {
+        "selection_hook": str(record["story_contract"]["selection_hook"]),
+        "title": TITLE,
+        "final_transcript": str(runtime["transcript"]),
+        "candidate_id": CANDIDATE_ID,
+        "final_reviewed_srt_path": Path(str(runtime["srt_path"])),
+        "record": record,
+        "speaker_evidence": runtime["speaker"],
+        "repo_root": tmp_path,
+    }
+    assert authority_module.validate_receipt(review, **kwargs)
+    assert not authority_module.validate_receipt(
+        review, sealed_chat_authority_bytes=sealed, **kwargs,
+    )
+
+
 def _preprovider_record(runtime: dict[str, object]) -> dict[str, object]:
     record = copy.deepcopy(runtime["record"])
     contract = copy.deepcopy(runtime["preprovider_contract"])

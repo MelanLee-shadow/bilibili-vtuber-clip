@@ -251,6 +251,165 @@ def snapshot_fixed_runtime(authority: Mapping[str, object], *, repo_root: Path =
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_RUNTIME_DRIFT") from exc
 
 
+def _terminal_before_image(
+    *, repo_root: Path, authority: Mapping[str, object], terminal: object,
+) -> dict[str, bytes]:
+    """Recover terminal preimages only after its journal and receipt were replayed."""
+
+    terminal_authority = terminal.load_authority(repo_root)
+    binding = authority["terminal_refresh_authority"]
+    assert isinstance(binding, Mapping)
+    if terminal_authority.get("authority_sha256") != binding.get("authority_sha256"):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_TERMINAL_SUCCESSOR_DRIFT")
+    journal = terminal._json_document(
+        terminal._read_regular(terminal._refresh_root(terminal_authority) / "journal.json"),
+        "JOURNAL",
+    )
+    entries = journal.get("entries")
+    if not isinstance(entries, list):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_TERMINAL_SUCCESSOR_DRIFT")
+    before: dict[str, bytes] = {}
+    for entry in entries:
+        if not isinstance(entry, Mapping) or not isinstance(entry.get("role"), str):
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_TERMINAL_SUCCESSOR_DRIFT")
+        role = str(entry["role"])
+        if role in before:
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_TERMINAL_SUCCESSOR_DRIFT")
+        try:
+            before[role] = base64.b64decode(str(entry["before_bytes_b64"]), validate=True)
+        except (ValueError, UnicodeEncodeError) as exc:
+            raise QixiScreenshotDirectCoverRepairError(
+                "COVER_REPAIR_TERMINAL_SUCCESSOR_DRIFT"
+            ) from exc
+    if set(before) != {"chat", "record", "delivery_record", "publish", "state"}:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_TERMINAL_SUCCESSOR_DRIFT")
+    return before
+
+
+def committed_cover_successor_snapshot(*, repo_root: Path = ROOT) -> dict[str, bytes]:
+    """Replay the only legal terminal→cover successor chain without live fallback.
+
+    This is deliberately read-only.  It proves the cover transaction's sealed
+    preflight, journal, receipt and current CAS ownership before exposing the
+    terminal journal's *pre* chat payload to the title/source-fact predecessor
+    replay.  A mutable current chat is never an input to that predecessor.
+    """
+
+    try:
+        from src.autoslice import qixi_operator_exact_title_source_fact as source_fact
+        from src.autoslice import qixi_terminal_evidence_refresh as terminal
+        from src.autoslice.qixi_post_correction_public_artifact_recovery import (
+            validate_committed_successor,
+        )
+        from src.autoslice import qixi_post_correction_public_surface as public_surface
+
+        authority = load_authority(repo_root)
+        terminal_authority = terminal.load_authority(repo_root)
+        terminal_runtime = terminal.committed_successor_snapshot(
+            repo_root=repo_root, allow_verified_cover_successor=True,
+        )
+        terminal_before = _terminal_before_image(
+            repo_root=repo_root, authority=authority, terminal=terminal,
+        )
+        if set(terminal_runtime) != {
+            "chat", "record", "delivery_record", "publish", "state",
+            "clip_context", "srt", "ass", "burn", "correction",
+        }:
+            raise ValueError("terminal runtime inventory drifts")
+        predecessor = terminal_authority.get("predecessor_recovery")
+        if not isinstance(predecessor, Mapping):
+            raise ValueError("terminal predecessor descriptors drift")
+        for role in ("journal", "receipt"):
+            descriptor = predecessor.get(role)
+            if not isinstance(descriptor, Mapping):
+                raise ValueError("terminal predecessor descriptor drifts")
+            payload = terminal._read_regular(Path(str(descriptor.get("path") or "")))
+            if (
+                len(payload) != descriptor.get("bytes")
+                or _sha256_bytes(payload) != descriptor.get("sha256")
+            ):
+                raise ValueError("terminal predecessor receipt drifts")
+        parent = Path(str(authority["runtime_root"])) / "reports"
+        _store, stored = _unique_stored_preflight(parent, authority, read_only=True)
+        manifest = stored.get("manifest")
+        if not isinstance(manifest, Mapping):
+            raise ValueError("cover preflight manifest drifts")
+        expected_runtime = {
+            role: _sha256_bytes(payload) for role, payload in terminal_runtime.items()
+        }
+        legacy = authority["legacy_cover"]
+        assert isinstance(legacy, Mapping)
+        for role in ("cover", "qc"):
+            descriptor = legacy["final_cover" if role == "cover" else "failed_joint_qc"]
+            assert isinstance(descriptor, Mapping)
+            expected_runtime[role] = str(descriptor["sha256"])
+        if manifest.get("runtime_preimage") != expected_runtime:
+            raise ValueError("cover preflight runtime does not bind terminal successor")
+        transaction = _transaction_root(
+            parent, authority, str(manifest["preflight_sha256"]), create=False,
+        )
+        journal = _read_journal(
+            transaction / "journal.json", authority, str(manifest["preflight_sha256"]),
+        )
+        _sealed_journal_targets(
+            authority=authority, journal=journal, stored=stored, repo_root=repo_root,
+        )
+        _verify_committed(journal)
+        receipt = stable_regular_snapshot(
+            transaction / "receipt.json", label="cover repair committed receipt",
+        )
+        expected_receipt = _json_bytes(_transaction_receipt_for(journal))
+        if receipt is None or receipt.mode != 0o600 or receipt.payload != expected_receipt:
+            raise ValueError("cover transaction receipt drifts")
+        by_target = {
+            Path(str(entry["target"])): entry
+            for entry in journal["entries"] if isinstance(entry, Mapping)
+        }
+        preimage = _terminal_preimage(authority, repo_root=repo_root)
+        for role in ("record", "delivery_record", "publish", "state"):
+            descriptor = preimage.get(role)
+            if not isinstance(descriptor, Mapping):
+                raise ValueError("terminal preimage schema drifts")
+            entry = by_target.get(Path(str(descriptor["path"])))
+            if not isinstance(entry, Mapping):
+                raise ValueError("cover successor target inventory drifts")
+            before = base64.b64decode(str(entry["before_bytes_b64"]), validate=True)
+            if (
+                before != terminal_runtime[role]
+                or entry.get("before_sha256") != _sha256_bytes(before)
+            ):
+                raise ValueError("cover successor does not follow terminal after-image")
+        source_authority = source_fact.load_authority(source_fact.CANDIDATE_ID, repo_root=repo_root)
+        if source_authority is None:
+            raise ValueError("title authority is absent")
+        source_document = source_fact.validate_authority_document(source_authority.document)
+        public_binding = source_document["source_binding"]["public_surface_authority"]
+        assert isinstance(public_binding, Mapping)
+        relative = Path(str(public_binding["relative_path"]))
+        public_payload = (repo_root / relative).read_bytes()
+        require_repository_asset_authority(
+            repo_root=repo_root, relative_path=relative, observed_bytes=public_payload,
+        )
+        if (
+            len(public_payload) != public_binding["bytes"]
+            or _sha256_bytes(public_payload) != public_binding["sha256"]
+        ):
+            raise ValueError("bound public authority drifts")
+        public_document = public_surface.validate_authority(json.loads(public_payload))
+        validate_committed_successor(
+            public_document,
+            sealed_chat_authority_bytes=terminal_before["chat"],
+            allow_terminal_successor=True,
+        )
+        return {"sealed_chat_authority_bytes": terminal_before["chat"], **terminal_runtime}
+    except QixiScreenshotDirectCoverRepairError:
+        raise
+    except (OSError, ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise QixiScreenshotDirectCoverRepairError(
+            "COVER_REPAIR_COMMITTED_SUCCESSOR_INVALID"
+        ) from exc
+
+
 def build_cover_projection(
     *, authority: Mapping[str, object], runtime: Mapping[str, bytes],
     cover_bytes: bytes, qc_bytes: bytes, generation: Mapping[str, object],
@@ -1034,13 +1193,17 @@ def run_fixed_full_dry(*, repo_root: Path = ROOT, stage_root_parent: Path | None
         )
 
 
-def _unique_stored_preflight(parent: Path, authority: Mapping[str, object]) -> tuple[Path, dict[str, object]]:
-    root = _preflight_store_root(parent, authority)
+def _unique_stored_preflight(
+    parent: Path, authority: Mapping[str, object], *, read_only: bool = False,
+) -> tuple[Path, dict[str, object]]:
+    root = _preflight_store_root(parent, authority, create=not read_only)
     candidates: list[tuple[Path, dict[str, object]]] = []
     for child in root.iterdir():
         if not child.is_dir() or child.is_symlink():
             raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PREFLIGHT_STORE_DRIFT")
-        candidates.append((child, _load_preflight_store(child, authority=authority)))
+        candidates.append((child, _load_preflight_store(
+            child, authority=authority, read_only=read_only,
+        )))
     if len(candidates) != 1:
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PREFLIGHT_AMBIGUOUS")
     return candidates[0]
@@ -1059,12 +1222,12 @@ def run_fixed_apply(*, repo_root: Path = ROOT, stage_root_parent: Path | None = 
         if os.path.lexists(journal_path):
             journal = _read_journal(journal_path, authority, str(manifest["preflight_sha256"]))
             replay = _sealed_journal_targets(
-                authority=authority, journal=journal, stored=stored,
+                authority=authority, journal=journal, stored=stored, repo_root=repo_root,
             )
             return apply_preflight_targets(
                 authority=authority, stage_root_parent=parent,
                 preflight_sha256=str(manifest["preflight_sha256"]), targets=replay,
-                apply=True, lock_held=True, strict_targets=True,
+                apply=True, lock_held=True, strict_targets=True, repo_root=repo_root,
             )
         runtime = snapshot_fixed_runtime(authority, repo_root=repo_root)
         expected = manifest.get("runtime_preimage")
@@ -1084,12 +1247,41 @@ def run_fixed_apply(*, repo_root: Path = ROOT, stage_root_parent: Path | None = 
         return apply_preflight_targets(
             authority=authority, stage_root_parent=parent,
             preflight_sha256=str(manifest["preflight_sha256"]), targets=targets, apply=True,
-            lock_held=True, strict_targets=True,
+            lock_held=True, strict_targets=True, repo_root=repo_root,
         )
+
+
+def _terminal_preimage(
+    authority: Mapping[str, object], *, repo_root: Path,
+) -> dict[str, object]:
+    """Read the bound terminal authority from this checkout, never ``ROOT``."""
+
+    binding = authority.get("terminal_refresh_authority")
+    if not isinstance(binding, Mapping):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_TERMINAL_SUCCESSOR_DRIFT")
+    relative = Path(str(binding.get("relative_path") or ""))
+    if relative.is_absolute() or ".." in relative.parts:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_TERMINAL_SUCCESSOR_DRIFT")
+    try:
+        payload = (repo_root / relative).read_bytes()
+        require_repository_asset_authority(
+            repo_root=repo_root, relative_path=relative, observed_bytes=payload
+        )
+        terminal = json.loads(payload)
+        preimage = terminal.get("preimage") if isinstance(terminal, Mapping) else None
+    except (OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_TERMINAL_SUCCESSOR_DRIFT") from exc
+    if (
+        not isinstance(preimage, Mapping)
+        or terminal.get("authority_sha256") != binding.get("authority_sha256")
+    ):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_TERMINAL_SUCCESSOR_DRIFT")
+    return dict(preimage)
 
 
 def _sealed_journal_targets(
     *, authority: Mapping[str, object], journal: Mapping[str, object], stored: Mapping[str, object],
+    repo_root: Path = ROOT,
 ) -> dict[Path, bytes]:
     """Resume only a journal whose postimages are bound to its sealed store."""
     entries = journal.get("entries")
@@ -1099,10 +1291,7 @@ def _sealed_journal_targets(
     sidecars = stored.get("sidecars")
     if not isinstance(sidecars, Mapping) or any(not isinstance(path, Path) or not isinstance(payload, bytes) for path, payload in sidecars.items()):
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_JOURNAL_DRIFT")
-    terminal = json.loads((ROOT / str(authority["terminal_refresh_authority"]["relative_path"])).read_text())
-    preimage = terminal.get("preimage")
-    if not isinstance(preimage, Mapping):
-        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_JOURNAL_DRIFT")
+    preimage = _terminal_preimage(authority, repo_root=repo_root)
     json_paths = {Path(str(preimage[role]["path"])) for role in ("record", "delivery_record", "publish", "state")}
     expected = json_paths | {authority_final_cover_path(authority), cover_repair_qc_target(authority)} | set(sidecars)
     targets: dict[Path, bytes] = {}
@@ -1371,9 +1560,11 @@ def _require_private_parent(parent: Path) -> None:
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PREFLIGHT_STORE_UNSAFE")
 
 
-def _private_directory(path: Path) -> None:
+def _private_directory(path: Path, *, create: bool = True) -> None:
     _require_private_parent(path.parent)
     if not os.path.lexists(path):
+        if not create:
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PREFLIGHT_STORE_DRIFT")
         try:
             path.mkdir(mode=0o700)
         except OSError as exc:
@@ -1383,11 +1574,13 @@ def _private_directory(path: Path) -> None:
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PREFLIGHT_STORE_UNSAFE")
 
 
-def _preflight_store_root(parent: Path, authority: Mapping[str, object]) -> Path:
+def _preflight_store_root(
+    parent: Path, authority: Mapping[str, object], *, create: bool = True,
+) -> Path:
     namespace = parent / "qixi_screenshot_direct_cover_preflights"
-    _private_directory(namespace)
+    _private_directory(namespace, create=create)
     root = namespace / str(authority["authority_sha256"])[7:23]
-    _private_directory(root)
+    _private_directory(root, create=create)
     return root
 
 
@@ -1415,8 +1608,10 @@ def _preflight_receipt(manifest: Mapping[str, object], files: Mapping[str, bytes
     return receipt
 
 
-def _load_preflight_store(destination: Path, *, authority: Mapping[str, object]) -> dict[str, object]:
-    _private_directory(destination)
+def _load_preflight_store(
+    destination: Path, *, authority: Mapping[str, object], read_only: bool = False,
+) -> dict[str, object]:
+    _private_directory(destination, create=not read_only)
     expected_names = {"cover.png", "joint-qc.json", "generation.json", "manifest.json", "sidecars.json", "receipt.json"}
     if {child.name for child in destination.iterdir()} != expected_names:
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PREFLIGHT_STORE_DRIFT")
@@ -1481,7 +1676,7 @@ def _remove_owned_private_stage(root: Path, owner: os.stat_result) -> None:
 def apply_preflight_targets(
     *, authority: Mapping[str, object], stage_root_parent: Path,
     preflight_sha256: str, targets: Mapping[Path, bytes], apply: bool,
-    lock_held: bool = False, strict_targets: bool = False,
+    lock_held: bool = False, strict_targets: bool = False, repo_root: Path = ROOT,
 ) -> dict[str, object]:
     """Install an already-stored cover projection; it never invokes a provider.
 
@@ -1515,7 +1710,7 @@ def apply_preflight_targets(
                     snapshot = stable_regular_snapshot(target, label="cover repair preimage")
                 except QixiTransactionCoreError as exc:
                     raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_TARGET_UNSAFE") from exc
-                if strict_targets and target not in _replaceable_targets(normalized) and snapshot is not None:
+                if strict_targets and target not in _replaceable_targets(normalized, repo_root=repo_root) and snapshot is not None:
                     raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_CREATE_ONLY_COLLISION")
                 entries.append({
                     "target": str(target), "before_bytes_b64": (base64.b64encode(snapshot.payload).decode() if snapshot else None),
@@ -1542,11 +1737,10 @@ def apply_preflight_targets(
         return {"status": "COMMITTED", "target_writes": len(targets), "upload_enabled": False}
 
 
-def _replaceable_targets(authority: Mapping[str, object]) -> set[Path]:
+def _replaceable_targets(authority: Mapping[str, object], *, repo_root: Path = ROOT) -> set[Path]:
     """Only the terminal JSON mirrors and sealed predecessor cover may replace."""
     try:
-        terminal = json.loads((ROOT / str(authority["terminal_refresh_authority"]["relative_path"])).read_text())
-        preimage = terminal["preimage"]
+        preimage = _terminal_preimage(authority, repo_root=repo_root)
         targets = {Path(str(preimage[role]["path"])) for role in ("record", "delivery_record", "publish", "state")}
     except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_TARGET_SCHEMA_INVALID") from exc
@@ -1554,10 +1748,12 @@ def _replaceable_targets(authority: Mapping[str, object]) -> set[Path]:
     return targets
 
 
-def _transaction_root(parent: Path, authority: Mapping[str, object], preflight_sha256: str) -> Path:
+def _transaction_root(
+    parent: Path, authority: Mapping[str, object], preflight_sha256: str, *, create: bool = True,
+) -> Path:
     root = parent / "qixi_screenshot_direct_cover_transactions" / str(authority["authority_sha256"])[7:23] / preflight_sha256[7:23]
     for directory in (root.parent.parent, root.parent, root):
-        _private_directory(directory)
+        _private_directory(directory, create=create)
     return root
 
 
@@ -1647,9 +1843,14 @@ def _verify_committed(journal: Mapping[str, object]) -> None:
             raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_COMMITTED_DRIFT")
 
 
-def _write_transaction_receipt(root: Path, journal: Mapping[str, object]) -> None:
+def _transaction_receipt_for(journal: Mapping[str, object]) -> dict[str, object]:
     receipt = {"schema_version": "qixi-screenshot-direct-cover-repair-receipt.v1", "status": "COMMITTED", "authority_sha256": journal["authority_sha256"], "journal_sha256": journal["journal_sha256"]}
     receipt["receipt_sha256"] = canonical_sha256(receipt)
+    return receipt
+
+
+def _write_transaction_receipt(root: Path, journal: Mapping[str, object]) -> None:
+    receipt = _transaction_receipt_for(journal)
     path = root / "receipt.json"
     payload = _json_bytes(receipt)
     if os.path.lexists(path):

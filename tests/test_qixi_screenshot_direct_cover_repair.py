@@ -5,6 +5,7 @@ import hashlib
 import json
 from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -353,6 +354,143 @@ def test_fixed_full_dry_reuses_sealed_punch_without_punch_provider(
     assert repair.run_fixed_full_dry(repo_root=tmp_path, stage_root_parent=tmp_path) == {
         "status": "FULL_DRY_RUN_PASS"
     }
+
+
+def test_committed_cover_successor_bridge_replays_terminal_before_chat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fourth successor is accepted only from its sealed transaction chain."""
+
+    from src.autoslice import qixi_operator_exact_title_source_fact as source_fact
+    from src.autoslice import qixi_post_correction_public_artifact_recovery as recovery
+    from src.autoslice import qixi_post_correction_public_surface as public_surface
+    from src.autoslice import qixi_terminal_evidence_refresh as terminal
+
+    roles = {
+        "chat": b"terminal-after-chat", "record": b"terminal-record",
+        "delivery_record": b"terminal-delivery", "publish": b"terminal-publish",
+        "state": b"terminal-state", "clip_context": b"context", "srt": b"srt",
+        "ass": b"ass", "burn": b"burn", "correction": b"correction",
+    }
+    before = {key: b"terminal-before-chat" if key == "chat" else value for key, value in roles.items()
+              if key in {"chat", "record", "delivery_record", "publish", "state"}}
+    paths = {role: tmp_path / f"{role}.json" for role in before if role != "chat"}
+    terminal_preimage = {role: {"path": str(path)} for role, path in paths.items()}
+    authority = {
+        "authority_sha256": "sha256:" + "a" * 64,
+        "runtime_root": str(tmp_path),
+        "terminal_refresh_authority": {"authority_sha256": "sha256:" + "b" * 64},
+        "legacy_cover": {
+            "final_cover": {"sha256": repair._sha256_bytes(b"old-cover")},
+            "failed_joint_qc": {"sha256": repair._sha256_bytes(b"old-qc")},
+        },
+    }
+    expected_runtime = {key: repair._sha256_bytes(value) for key, value in roles.items()}
+    expected_runtime.update({"cover": repair._sha256_bytes(b"old-cover"), "qc": repair._sha256_bytes(b"old-qc")})
+    manifest = {"preflight_sha256": "sha256:" + "c" * 64, "runtime_preimage": expected_runtime}
+    journal = {
+        "authority_sha256": authority["authority_sha256"], "journal_sha256": "sha256:" + "d" * 64,
+        "entries": [
+            {"target": str(paths[role]), "before_bytes_b64": repair.base64.b64encode(roles[role]).decode(),
+             "before_sha256": repair._sha256_bytes(roles[role])}
+            for role in ("record", "delivery_record", "publish", "state")
+        ],
+    }
+    transaction = tmp_path / "transaction"
+    transaction.mkdir(mode=0o700)
+    receipt = repair._transaction_receipt_for(journal)
+    receipt_path = transaction / "receipt.json"
+    receipt_path.write_bytes(repair._json_bytes(receipt))
+    receipt_path.chmod(0o600)
+    predecessor_journal = tmp_path / "terminal-predecessor-journal.json"
+    predecessor_receipt = tmp_path / "terminal-predecessor-receipt.json"
+    predecessor_journal.write_bytes(b"journal")
+    predecessor_receipt.write_bytes(b"receipt")
+    terminal_authority = {
+        "authority_sha256": authority["terminal_refresh_authority"]["authority_sha256"],
+        "predecessor_recovery": {
+            role: {
+                "path": str(path), "bytes": len(path.read_bytes()),
+                "sha256": repair._sha256_bytes(path.read_bytes()),
+            }
+            for role, path in (("journal", predecessor_journal), ("receipt", predecessor_receipt))
+        },
+    }
+    public_path = tmp_path / "public-authority.json"
+    public_path.write_text("{}", encoding="utf-8")
+    sealed_seen: list[bytes] = []
+    bound_roots: list[Path] = []
+
+    monkeypatch.setattr(repair, "load_authority", lambda _root: authority)
+    monkeypatch.setattr(terminal, "load_authority", lambda _root: terminal_authority)
+    monkeypatch.setattr(terminal, "committed_successor_snapshot", lambda **_kwargs: roles)
+    monkeypatch.setattr(repair, "_terminal_before_image", lambda **_kwargs: before)
+    monkeypatch.setattr(
+        repair, "_terminal_preimage",
+        lambda *_args, **kwargs: (bound_roots.append(kwargs["repo_root"]), terminal_preimage)[1],
+    )
+    monkeypatch.setattr(repair, "_unique_stored_preflight", lambda *_args, **_kwargs: (
+        tmp_path / "store", {"manifest": manifest},
+    ))
+    monkeypatch.setattr(repair, "_transaction_root", lambda *_args, **_kwargs: transaction)
+    monkeypatch.setattr(repair, "_read_journal", lambda *_args, **_kwargs: journal)
+    monkeypatch.setattr(
+        repair, "_sealed_journal_targets",
+        lambda **kwargs: (bound_roots.append(kwargs["repo_root"]), {})[1],
+    )
+    monkeypatch.setattr(repair, "_verify_committed", lambda _journal: None)
+    monkeypatch.setattr(repair, "require_repository_asset_authority", lambda **_kwargs: None)
+    monkeypatch.setattr(source_fact, "load_authority", lambda *_args, **_kwargs: SimpleNamespace(document={}))
+    monkeypatch.setattr(
+        source_fact, "validate_authority_document", lambda _value: {
+            "source_binding": {"public_surface_authority": {
+                "relative_path": public_path.name, "bytes": 2,
+                "sha256": repair._sha256_bytes(b"{}"),
+            }}
+        },
+    )
+    monkeypatch.setattr(public_surface, "validate_authority", lambda _value: {"sealed": True})
+    def replay_predecessor(_authority: object, **kwargs: object) -> None:
+        observed = kwargs["sealed_chat_authority_bytes"]
+        if observed != b"terminal-before-chat":
+            raise ValueError("terminal before chat mismatch")
+        assert isinstance(observed, bytes)
+        sealed_seen.append(observed)
+
+    monkeypatch.setattr(recovery, "validate_committed_successor", replay_predecessor)
+
+    bridge = repair.committed_cover_successor_snapshot(repo_root=tmp_path)
+    assert bridge["sealed_chat_authority_bytes"] == before["chat"]
+    assert bridge["chat"] == roles["chat"]
+    assert sealed_seen == [before["chat"]]
+    assert bound_roots == [tmp_path, tmp_path]
+
+    receipt_path.write_text("{}", encoding="utf-8")
+    receipt_path.chmod(0o600)
+    with pytest.raises(repair.QixiScreenshotDirectCoverRepairError, match="COMMITTED_SUCCESSOR_INVALID"):
+        repair.committed_cover_successor_snapshot(repo_root=tmp_path)
+    receipt_path.write_bytes(repair._json_bytes(receipt))
+    receipt_path.chmod(0o600)
+    manifest["runtime_preimage"] = {"chat": repair._sha256_bytes(b"tampered")}
+    with pytest.raises(repair.QixiScreenshotDirectCoverRepairError, match="COMMITTED_SUCCESSOR_INVALID"):
+        repair.committed_cover_successor_snapshot(repo_root=tmp_path)
+    manifest["runtime_preimage"] = expected_runtime
+    journal["entries"][0]["before_bytes_b64"] = repair.base64.b64encode(b"wrong").decode()
+    with pytest.raises(repair.QixiScreenshotDirectCoverRepairError, match="COMMITTED_SUCCESSOR_INVALID"):
+        repair.committed_cover_successor_snapshot(repo_root=tmp_path)
+    journal["entries"][0]["before_bytes_b64"] = repair.base64.b64encode(roles["record"]).decode()
+    before["chat"] = b"wrong-terminal-before-chat"
+    with pytest.raises(repair.QixiScreenshotDirectCoverRepairError, match="COMMITTED_SUCCESSOR_INVALID"):
+        repair.committed_cover_successor_snapshot(repo_root=tmp_path)
+    before["chat"] = b"terminal-before-chat"
+    monkeypatch.setattr(
+        repair, "_verify_committed",
+        lambda _journal: (_ for _ in ()).throw(
+            repair.QixiScreenshotDirectCoverRepairError("COVER_REPAIR_COMMITTED_DRIFT")
+        ),
+    )
+    with pytest.raises(repair.QixiScreenshotDirectCoverRepairError, match="COMMITTED_DRIFT"):
+        repair.committed_cover_successor_snapshot(repo_root=tmp_path)
 
 
 def test_relocated_gate_seam_uses_projection_authority_and_reports_all_failures(
