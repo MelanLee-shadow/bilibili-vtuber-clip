@@ -450,37 +450,45 @@ def stage_replay(
     assert match is not None  # already proved while binding the plan
     padded_start = int(match.group(1))
     try:
-        source_cues = _fresh_srt_to_source_cues(
+        _fresh_srt_to_source_cues(
             text_value, window_start_ms=0,
             duration_ms=int(match.group(2)) - padded_start,
         )
     except ValueError as exc:
         raise ReviewedBaselineReplayError("REPLAY_PIPELINE_DIAGNOSTIC_GEOMETRY_INVALID") from exc
-    # Materialize the automatic draft in the same padded-local coordinates as
-    # the diagnostic.  The v2 baseline call below separately receives the
-    # absolute source interval it owns.
-    current_start = padded_start + plan.local_start_ms
-    current_end = padded_start + plan.local_end_ms
-    automatic = stage / "automatic-window.srt"
-    _write_source_range_srt(
-        source_cues, plan.local_start_ms, plan.local_end_ms, automatic
-    )
-    automatic_binding = regular_binding(automatic, label="AUTOMATIC_WINDOW")
-    try:
-        automatic_text = _read_small_bytes(automatic_binding, label="AUTOMATIC_WINDOW").decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise ReviewedBaselineReplayError("REPLAY_AUTOMATIC_WINDOW_INVALID") from exc
+    # A v2 exact-interval baseline owns this entire padded source window.  It
+    # must be replayed before the final delivery trim: passing only the final
+    # subwindow makes the baseline's absolute coverage look cut and falls back
+    # to unsafe fuzzy cue alignment.  Once its sealed full-window output is
+    # materialized, crop that output deterministically to the final bounds.
     reviewed, audit = apply_redelivery_subtitle_baseline(
-        automatic_text, config=config, spec_parent=plan.baseline.manifest_path.parent,
-        current_source_start_ms=current_start,
-        current_source_end_ms=current_end,
+        text_value, config=config, spec_parent=plan.baseline.manifest_path.parent,
+        current_source_start_ms=padded_start,
+        current_source_end_ms=int(match.group(2)),
         current_source_recording_basename=str(config["source_recording_basename"]),
         current_source_sha256=str(config["source_sha256"]),
     )
     if audit.get("status") not in {"APPLIED", "ALREADY_SATISFIED"}:
         raise ReviewedBaselineReplayError("REPLAY_BASELINE_APPLICATION_FAILED")
-    automatic.unlink()
-    _write_private(stage / "reviewed.srt", reviewed.encode("utf-8"))
+    try:
+        reviewed_cues = _fresh_srt_to_source_cues(
+            reviewed, window_start_ms=0,
+            duration_ms=int(match.group(2)) - padded_start,
+        )
+    except ValueError as exc:
+        raise ReviewedBaselineReplayError("REPLAY_REVIEWED_BASELINE_GEOMETRY_INVALID") from exc
+    cropped_path = stage / ".reviewed-window.srt"
+    _write_source_range_srt(
+        reviewed_cues, plan.local_start_ms, plan.local_end_ms, cropped_path
+    )
+    try:
+        cropped_bytes = _read_small_bytes(
+            regular_binding(cropped_path, label="REVIEWED_WINDOW"),
+            label="REVIEWED_WINDOW",
+        )
+    finally:
+        cropped_path.unlink(missing_ok=True)
+    _write_private(stage / "reviewed.srt", cropped_bytes)
     _write_private(stage / "redelivery-baseline.json", _canonical(audit))
     document: dict[str, Any] = {
         "schema_version": REPLAY_STAGE_SCHEMA,

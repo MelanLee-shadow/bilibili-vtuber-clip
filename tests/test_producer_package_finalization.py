@@ -7,6 +7,11 @@ import pytest
 
 from scripts.apply_subtitle_text_overrides import apply_document
 from src.autoslice import producer_package_finalization as finalization
+from src.autoslice.recut_materialization import _write_source_range_srt as canonical_write_source_range_srt
+from src.autoslice.review_evidence import SourceCue
+from src.autoslice.producer_text_finalization import (
+    _verify_redelivery_baseline_owners,
+)
 from src.autoslice.source_fact_rescore_provenance import (
     PROVENANCE_FIELD,
     canonical_sha256,
@@ -3254,9 +3259,12 @@ def test_final_recut_rebases_timeline_bound_text_override(
     def run_command(command: list[str], **_kwargs) -> None:
         Path(command[-1]).write_bytes(b"recut")
 
+    write_ranges: list[tuple[int, int]] = []
+
     def write_source_range_srt(
         _cues, _start_ms: int, _end_ms: int, output: Path
     ) -> None:
+        write_ranges.append((_start_ms, _end_ms))
         output.write_text(
             "1\n00:00:04,770 --> 00:00:07,970\n让李豆沙线下叫停了时\n",
             encoding="utf-8",
@@ -3557,15 +3565,13 @@ def test_final_recut_v2_projects_reviewed_text_and_remerges_release_sliver(
     def run_command(command: list[str], **_kwargs) -> None:
         Path(command[-1]).write_bytes(b"recut")
 
+    write_ranges: list[tuple[int, int]] = []
+
     def write_source_range_srt(
-        _cues, _start_ms: int, _end_ms: int, output: Path
+        cues, _start_ms: int, _end_ms: int, output: Path
     ) -> None:
-        output.write_text(
-            "1\n00:00:00,000 --> 00:00:00,200\n随机甲\n\n"
-            "2\n00:00:00,200 --> 00:00:02,000\n随机乙\n\n"
-            "3\n00:00:02,000 --> 00:00:03,000\n新延长尾句\n",
-            encoding="utf-8",
-        )
+        write_ranges.append((_start_ms, _end_ms))
+        canonical_write_source_range_srt(cues, _start_ms, _end_ms, output)
 
     def unused(*_args, **_kwargs):
         raise AssertionError("unrelated finalization adapter was called")
@@ -3602,7 +3608,8 @@ def test_final_recut_v2_projects_reviewed_text_and_remerges_release_sliver(
             "source_recording_basename": "recording.mp4",
             "source_sha256": source_sha256,
             "absolute_source_start_ms": 100_000,
-            "absolute_source_end_ms": 103_000,
+            "absolute_source_end_ms": 104_000,
+            "exact_interval_replay": True,
         },
     }
     piece_provenance_rows = [
@@ -3637,7 +3644,11 @@ def test_final_recut_v2_projects_reviewed_text_and_remerges_release_sliver(
         piece_provenance_rows=piece_provenance_rows,
         final_start=1_000,
         final_end=4_000,
-        sanitized=[],
+        sanitized=[
+            SourceCue("one", 0, 1_000, "随机甲", "zh", "speech", 1.0),
+            SourceCue("two", 1_000, 1_200, "随机乙", "zh", "speech", 1.0),
+            SourceCue("three", 1_200, 3_000, "新延长尾句", "zh", "speech", 1.0),
+        ],
         timing_qa={},
         text_override_path=None,
         adapters=adapters,
@@ -3646,24 +3657,62 @@ def test_final_recut_v2_projects_reviewed_text_and_remerges_release_sliver(
     )
 
     output = recut.subtitle_path.read_text(encoding="utf-8")
-    assert "哦，人工审定乙" in output
-    assert "\n哦\n" not in output
+    # The v2 baseline is applied to its full owned content interval, then the
+    # final delivery crop removes the pre-final 0--1.2s reviewed cues.  It
+    # must not merge an out-of-delivery sliver back into the selected output.
+    assert "人工审定乙" in output
+    assert "哦" not in output
     assert "裁掉的旧开头" not in output
-    assert "新延长尾句" in output
+    assert "新延长尾句" not in output
     assert recut.redelivery_baseline_audit is not None
+    assert write_ranges[-2:] == [(0, 4_000), (1_000, 4_000)]
+    assert recut.redelivery_baseline_audit["exact_replay_then_final_crop"] is True
+    assert recut.redelivery_baseline_audit["current_source_interval"] == {
+        "absolute_source_start_ms": 100_000, "absolute_source_end_ms": 104_000,
+    }
+    assert recut.redelivery_baseline_audit["final_delivery_projection"] == {
+        "absolute_source_start_ms": 101_000, "absolute_source_end_ms": 104_000,
+    }
     assert recut.redelivery_baseline_audit["status"] == "APPLIED"
-    assert recut.redelivery_baseline_audit["final_release_grade_cue_merges"] == [
+    assert recut.redelivery_baseline_audit["full_source_mapped_cue_count"] == 3
+    assert recut.redelivery_baseline_audit["mapped_cue_count"] == 1
+    assert recut.redelivery_baseline_audit["omitted_context_mapping_count"] == 2
+    assert recut.redelivery_baseline_audit["mappings"] == [
         {
-            "block": 1,
-            "text": "哦",
-            "action": "MERGED_INTO_NEXT",
+            "mapping_kind": "exact_reviewed_interval_replay",
+            "baseline_cue_index": 3,
+            "output_cue_index": 3,
+            "start_ms": 200,
+            "end_ms": 2_000,
+            "full_source_start_ms": 1_200,
+            "full_source_end_ms": 3_000,
+            "baseline_absolute_source_start_ms": 101_200,
+            "baseline_absolute_source_end_ms": 103_000,
+            "text": "人工审定乙",
+            "pre_replay_cues": [
+                {
+                    "current_cue_index": 3,
+                    "start_ms": 1_200,
+                    "end_ms": 3_000,
+                    "text": "新延长尾句",
+                }
+            ],
         }
     ]
-    assert recut.redelivery_baseline_audit[
-        "post_release_grade_output_sha256"
-    ] == hashlib.sha256(output.encode("utf-8")).hexdigest()
-    assert recut.redelivery_baseline_audit["uncovered_current_cue_count"] == 1
-    assert recut.redelivery_baseline_audit["omitted_baseline_cue_count"] == 1
+    assert recut.redelivery_baseline_audit["full_source_replay_sha256"].startswith(
+        "sha256:"
+    )
+    owner_audit = {
+        "redelivery_subtitle_baseline_audit": recut.redelivery_baseline_audit,
+    }
+    owner_ok, owner_count = _verify_redelivery_baseline_owners(
+        owner_audit,
+        final_text_srt=output,
+        final_speaker_srt=output,
+        delivery_start_ms=1_000,
+    )
+    assert owner_ok
+    assert owner_count == 1
     provenance = json.loads(
         recut.media_path.with_suffix(".provenance.json").read_text(
             encoding="utf-8"
@@ -3677,6 +3726,113 @@ def test_final_recut_v2_projects_reviewed_text_and_remerges_release_sliver(
         assert provenance["source_piece"]["source_path"] == (
             "/recordings/recording.mp4"
         )
+
+
+def test_full_window_replay_translates_final_local_protected_windows() -> None:
+    """Exact full-window replay must not attest a final-local drop as padded-local."""
+
+    translated = finalization._full_window_protected_windows(
+        [(20, 65)],
+        final_start_ms=9_750,
+        padded_content_start_ms=0,
+    )
+
+    assert translated == [(9_770, 9_815)]
+    assert translated != [(20, 65)]
+
+
+def test_final_recut_cleans_full_window_baseline_temp_after_writer_failure(
+    tmp_path: Path,
+) -> None:
+    padded = tmp_path / "padded.mp4"
+    padded.write_bytes(b"padded")
+    (tmp_path / "out").mkdir()
+    padded_provenance = tmp_path / "padded.provenance.json"
+    padded_provenance.write_text("{}\n", encoding="utf-8")
+    baseline = tmp_path / "reviewed.srt"
+    baseline.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n审定全文\n",
+        encoding="utf-8",
+    )
+    source_sha256 = "a" * 64
+
+    def run_command(command: list[str], **_kwargs: object) -> None:
+        Path(command[-1]).write_bytes(b"recut")
+
+    def write_then_fail_for_full_window(
+        cues: list[SourceCue], start_ms: int, end_ms: int, output: Path
+    ) -> None:
+        canonical_write_source_range_srt(cues, start_ms, end_ms, output)
+        if output.name.startswith(".candidate.baseline-full-window"):
+            raise RuntimeError("injected full-window writer failure")
+
+    def unused(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("unrelated finalization adapter was called")
+
+    adapters = finalization.ProducerFinalizationAdapters(
+        accurate_recut_command=lambda **kwargs: ["recut", str(kwargs["output_media"])],
+        run_command=run_command,
+        write_source_range_srt=write_then_fail_for_full_window,
+        apply_text_override_document=unused,
+        run_speaker_finalization=unused,
+        burn_preview_subtitles=unused,
+        stage_publish_draft=unused,
+        generate_upload_tags=unused,
+        delivery_root=lambda: tmp_path / "delivery",
+    )
+    spec = {
+        "pieces": [
+            {
+                "remote_media": "/recordings/recording.mp4",
+                "start_ms": 100_000,
+                "end_ms": 101_000,
+            }
+        ],
+        "subtitle_redelivery_baseline": {
+            "schema_version": "subtitle-redelivery-baseline.v2",
+            "mode": "preserve_text_outside_source_truth",
+            "path": str(baseline),
+            "sha256": hashlib.sha256(baseline.read_bytes()).hexdigest(),
+            "authority": "Ivan reviewed delivery",
+            "source_recording_basename": "recording.mp4",
+            "source_sha256": source_sha256,
+            "absolute_source_start_ms": 100_000,
+            "absolute_source_end_ms": 101_000,
+            "exact_interval_replay": True,
+        },
+    }
+
+    with pytest.raises(RuntimeError, match="injected full-window writer failure"):
+        finalization._materialize_final_recut(
+            spec=spec,
+            cid="candidate",
+            out_root=tmp_path / "out",
+            padded=padded,
+            padded_provenance_path=padded_provenance,
+            piece_provenance_rows=[
+                {
+                    "source_path": "/recordings/recording.mp4",
+                    "source_sha256": source_sha256,
+                }
+            ],
+            final_start=100,
+            final_end=1_000,
+            sanitized=[
+                SourceCue("one", 0, 1_000, "自动全文", "zh", "speech", 1.0)
+            ],
+            timing_qa={},
+            text_override_path=None,
+            adapters=adapters,
+            spec_parent=tmp_path,
+            chat_authority_audit={},
+        )
+
+    assert not (
+        tmp_path
+        / "out"
+        / "replacement_recuts"
+        / ".candidate.baseline-full-window.srt"
+    ).exists()
 
 
 @pytest.mark.parametrize(

@@ -106,10 +106,14 @@ def test_stage_rebuilds_only_private_artifacts_and_preserves_expected_video_hash
         return type("Completed", (), {"returncode": 0})()
 
     monkeypatch.setattr(replay.subprocess, "run", fake_run)
-    monkeypatch.setattr(
-        replay, "apply_redelivery_subtitle_baseline",
-        lambda text, **_kwargs: (text, {"status": "APPLIED"}),
-    )
+    seen: dict[str, object] = {}
+
+    def apply_full_padded_baseline(text: str, **kwargs: object) -> tuple[str, dict[str, str]]:
+        seen["text"] = text
+        seen.update(kwargs)
+        return text, {"status": "APPLIED"}
+
+    monkeypatch.setattr(replay, "apply_redelivery_subtitle_baseline", apply_full_padded_baseline)
     stage_parent = tmp_path / "private"
     stage_parent.mkdir(mode=0o700)
     result = replay.stage_replay(plan, stage_parent=stage_parent)
@@ -126,6 +130,39 @@ def test_stage_rebuilds_only_private_artifacts_and_preserves_expected_video_hash
     assert all(path.stat().st_mode & 0o777 == 0o600 for path in stage.iterdir() if path.name != "recut.mp4")
     assert _sha((stage / "recut.mp4").read_bytes()) == plan.expected_video_sha256
     assert not list((out_root / DATE / CID / "replacement_recuts").glob("*.stage.json"))
+    diagnostic = plan.baseline.config["operator_truth_lanes"]["pipeline_diagnostic"]
+    expected_text = (plan.baseline.manifest_path.parent / diagnostic["path"]).read_text(encoding="utf-8")
+    assert seen["text"] == expected_text
+    assert seen["current_source_start_ms"] == 1_592_760
+    assert seen["current_source_end_ms"] == 1_746_900
+
+
+def test_stage_replays_exact_baseline_over_full_padded_window_before_final_crop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A final subwindow is not a legal substitute for an exact padded baseline."""
+
+    out_root, media = _package(tmp_path)
+    plan = replay.build_replay_plan(repo_root=ROOT, out_root=out_root, date=DATE, candidate_id=CID)
+
+    def fake_run(command: list[str], **_kwargs: object) -> object:
+        Path(command[-1]).write_bytes(media)
+        return type("Completed", (), {"returncode": 0})()
+
+    monkeypatch.setattr(replay.subprocess, "run", fake_run)
+    parent = tmp_path / "private"
+    parent.mkdir(mode=0o700)
+    result = replay.stage_replay(plan, stage_parent=parent)
+
+    audit = json.loads((Path(result["stage"]) / "redelivery-baseline.json").read_text())
+    assert audit["status"] in {"APPLIED", "ALREADY_SATISFIED"}
+    assert audit["application_strategy"] == "exact_reviewed_interval_replay"
+    assert audit["current_source_interval"] == {
+        "absolute_source_start_ms": 1_592_760,
+        "absolute_source_end_ms": 1_746_900,
+    }
+    reviewed = (Path(result["stage"]) / "reviewed.srt").read_text(encoding="utf-8")
+    assert reviewed.strip()
 
 
 def test_stage_rejects_rebuilt_video_that_is_not_the_old_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -56,6 +56,71 @@ def test_prepare_converts_finalizer_system_exit_to_per_candidate_failure(
     with pytest.raises(cli._PrepareFailure) as caught:
         cli._prepare(plan, runtime=tmp_path, stage_parent=parent)
     assert caught.value.provider_attempted is False
+    assert caught.value.reason_code == "REPLAY_PREPARE_SYSTEM_EXIT"
+
+
+def test_prepare_retains_typed_stage_reason_in_sanitized_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    record = tmp_path / "record.json"
+    record.write_text("{}\n")
+    baseline = SimpleNamespace(config={"sha256": "a" * 64})
+    plan = SimpleNamespace(date="2026-08-14", candidate_id="cid", record_path=record, baseline=baseline)
+    parent = tmp_path / "private"
+    parent.mkdir(mode=0o700)
+    monkeypatch.setattr(
+        cli, "stage_replay",
+        lambda *_a, **_kw: (_ for _ in ()).throw(cli.ReviewedBaselineReplayError("REPLAY_BASELINE_APPLICATION_FAILED")),
+    )
+    with pytest.raises(cli._PrepareFailure) as caught:
+        cli._prepare(plan, runtime=tmp_path, stage_parent=parent)
+    assert caught.value.provider_attempted is False
+    assert caught.value.reason_code == "REPLAY_BASELINE_APPLICATION_FAILED"
+
+
+def test_safe_reason_code_keeps_only_typed_codes() -> None:
+    assert cli._safe_reason_code(cli.ReviewedBaselineReplayError("REPLAY_BASELINE_APPLICATION_FAILED")) == (
+        "REPLAY_BASELINE_APPLICATION_FAILED"
+    )
+    assert cli._safe_reason_code(RuntimeError("/private/provider stderr: token=secret")) == (
+        "REPLAY_PREPARE_EXCEPTION"
+    )
+
+
+def test_full_dry_failure_receipt_preserves_typed_prepare_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    parent = tmp_path / "private"
+    parent.mkdir(mode=0o700)
+    plan = SimpleNamespace(
+        date="2026-08-14", candidate_id="cid", matrix=(),
+        baseline=SimpleNamespace(config={"sha256": "a" * 64}),
+    )
+    monkeypatch.setattr(cli, "_safe_directory", lambda path: Path(path))
+    monkeypatch.setattr(cli, "_runtime_gate", lambda _runtime: None)
+    monkeypatch.setattr(cli, "build_replay_plan", lambda **_kwargs: plan)
+
+    def fail_prepare(*_args: object, **_kwargs: object) -> object:
+        raise cli._PrepareFailure(
+            reason_code="REPLAY_BASELINE_APPLICATION_FAILED", provider_attempted=False,
+        )
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(cli, "_prepare", fail_prepare)
+    monkeypatch.setattr(
+        cli, "_sanitized_failure_receipt",
+        lambda **kwargs: captured.update(kwargs) or "sha256:" + "d" * 64,
+    )
+    assert cli.main([
+        "--full-dry-run", "--runtime-root", str(runtime), "--date", "2026-08-14",
+        "--candidate-id", "cid", "--private-stage-parent", str(parent),
+    ]) == 2
+    assert captured["provider_attempted"] is False
+    assert captured["matrix"][-1] == {
+        "predicate": "PRIVATE_FINALIZATION", "status": "FAIL",
+        "reason_code": "REPLAY_BASELINE_APPLICATION_FAILED",
+    }
+    assert json.loads(capsys.readouterr().out)["candidates"][0]["status"] == "BLOCKED"
 
 
 def test_prepared_manifest_diagnostic_hash_is_file_digest_not_inner_seal(tmp_path: Path) -> None:

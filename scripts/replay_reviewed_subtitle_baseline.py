@@ -13,6 +13,7 @@ import concurrent.futures
 import hashlib
 import json
 import os
+import re
 import stat
 import sys
 from pathlib import Path
@@ -48,16 +49,30 @@ _REPLAY_OWNED_STALE_REASONS = frozenset({
     "SELECTION_SUPPORT_TERMINAL_BLOCKED",
 })
 _REPLAY_NORMALIZABLE_CATEGORIES = frozenset({"STATE_DRIFT", "NEEDS_IVAN_TRUTH"})
+_SAFE_REASON_CODE = re.compile(r"[A-Z][A-Z0-9_]{2,159}\Z")
 
 
 class _PrepareFailure(RuntimeError):
-    def __init__(self, *, provider_attempted: bool, stage_manifest_sha256: str | None = None,
+    def __init__(self, *, reason_code: str, provider_attempted: bool, stage_manifest_sha256: str | None = None,
                  prepared_manifest_sha256: str | None = None,
                  provider_receipt_sha256s: tuple[str, ...] = ()) -> None:
+        super().__init__(reason_code)
+        self.reason_code = reason_code
         self.provider_attempted = provider_attempted
         self.stage_manifest_sha256 = stage_manifest_sha256
         self.prepared_manifest_sha256 = prepared_manifest_sha256
         self.provider_receipt_sha256s = provider_receipt_sha256s
+
+
+def _safe_reason_code(exc: BaseException) -> str:
+    """Expose only a stable typed reason, never provider or filesystem text."""
+
+    value = getattr(exc, "reason_code", str(exc))
+    if isinstance(value, str) and _SAFE_REASON_CODE.fullmatch(value):
+        return value
+    if isinstance(exc, SystemExit):
+        return "REPLAY_PREPARE_SYSTEM_EXIT"
+    return "REPLAY_PREPARE_EXCEPTION"
 
 
 def _args(argv: list[str] | None) -> argparse.Namespace:
@@ -424,15 +439,15 @@ def _prepare(plan, *, runtime: Path, stage_parent: Path, state_path: Path | None
     )
     try:
         staged = stage_replay(plan, stage_parent=stage_parent)
-    except (Exception, SystemExit):
+    except (Exception, SystemExit) as exc:
         if expected_stage.exists() and not expected_stage.is_symlink():
             _cleanup_private_stage(expected_stage, parent=stage_parent)
-        raise _PrepareFailure(provider_attempted=False) from None
+        raise _PrepareFailure(reason_code=_safe_reason_code(exc), provider_attempted=False) from None
     stage = Path(str(staged.get("stage") or ""))
     if not stage.is_absolute() or stage.parent != stage_parent:
         if stage.is_absolute() and stage.parent == stage_parent and stage.exists() and not stage.is_symlink():
             _cleanup_private_stage(stage, parent=stage_parent)
-        raise _PrepareFailure(provider_attempted=False) from None
+        raise _PrepareFailure(reason_code="REPLAY_PRIVATE_STAGE_RETURN_INVALID", provider_attempted=False) from None
     # The synth entrypoint fail-closes unless the canonical entity verifier is
     # explicitly supplied.  This CLI does not invent one: a production caller
     # must use the dedicated exact-final builder once its fresh private spec is
@@ -445,11 +460,11 @@ def _prepare(plan, *, runtime: Path, stage_parent: Path, state_path: Path | None
             adapters=_adapters(), use_production_exact_final_reviewer=True,
             exact_final_text_adapters=_text_adapters(),
         )
-    except (Exception, SystemExit):
+    except (Exception, SystemExit) as exc:
         stage_sha = _stage_manifest_sha256(stage)
         provider_hashes = _provider_receipt_sha256s(stage)
         _cleanup_private_stage(stage, parent=stage_parent)
-        raise _PrepareFailure(provider_attempted=True, stage_manifest_sha256=stage_sha,
+        raise _PrepareFailure(reason_code=_safe_reason_code(exc), provider_attempted=True, stage_manifest_sha256=stage_sha,
                               provider_receipt_sha256s=provider_hashes) from None
     stage_sha = _stage_manifest_sha256(stage)
     provider_hashes = _provider_receipt_sha256s(finalization.private_runtime_root)
@@ -459,10 +474,10 @@ def _prepare(plan, *, runtime: Path, stage_parent: Path, state_path: Path | None
         after = prepare_replay_after_image(
             plan, runtime_root=runtime, state_path=state_path, finalization=finalization,
         )
-    except (Exception, SystemExit):
+    except (Exception, SystemExit) as exc:
         prepared_sha = _prepared_manifest_sha256(finalization)
         _cleanup_private_stage(stage, parent=stage_parent)
-        raise _PrepareFailure(provider_attempted=True, stage_manifest_sha256=stage_sha,
+        raise _PrepareFailure(reason_code=_safe_reason_code(exc), provider_attempted=True, stage_manifest_sha256=stage_sha,
                               prepared_manifest_sha256=prepared_sha,
                               provider_receipt_sha256s=provider_hashes) from None
     return stage, finalization, after, stage_sha, provider_hashes
@@ -502,7 +517,7 @@ def main(argv: list[str] | None = None) -> int:
                     prepared[plan.candidate_id] = future.result()
                 except (Exception, SystemExit) as exc:  # Never surface provider/path text.
                     errors[plan.candidate_id] = (
-                        type(exc).__name__, bool(getattr(exc, "provider_attempted", True)),
+                        _safe_reason_code(exc), bool(getattr(exc, "provider_attempted", True)),
                         getattr(exc, "stage_manifest_sha256", None),
                         getattr(exc, "prepared_manifest_sha256", None),
                         tuple(getattr(exc, "provider_receipt_sha256s", ())),

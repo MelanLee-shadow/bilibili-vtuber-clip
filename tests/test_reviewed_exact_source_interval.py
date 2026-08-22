@@ -317,6 +317,13 @@ def test_package_audit_accepts_exact_materialization_and_rejects_drift() -> None
             "absolute_source_start_ms": 577780,
             "absolute_source_end_ms": 735090,
         },
+        # A full-window exact replay may subsequently crop its final delivery.
+        # The owner audit still binds current/reviewed coverage to the full
+        # registered interval; crop coordinates are a separate projection.
+        "final_delivery_projection": {
+            "absolute_source_start_ms": 587530,
+            "absolute_source_end_ms": 734840,
+        },
     }
     frozen = {RUNTIME_CONFIG_KEY: authority}
     assert _terminal_projection_materialization_valid(

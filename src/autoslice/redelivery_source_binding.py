@@ -22,6 +22,10 @@ class V2RedeliverySourceBinding:
     absolute_source_end_ms: int
     source_recording_basename: str
     source_sha256: str
+    content_absolute_start_ms: int
+    content_absolute_end_ms: int
+    padded_content_start_ms: int
+    padded_content_end_ms: int
 
 
 def resolve_v2_redelivery_source_binding(
@@ -83,6 +87,10 @@ def resolve_v2_redelivery_source_binding(
         absolute_source_end_ms=piece_start_ms + content_relative_end_ms,
         source_recording_basename=Path(source_path).name,
         source_sha256=source_sha256,
+        content_absolute_start_ms=piece_start_ms,
+        content_absolute_end_ms=piece_end_ms,
+        padded_content_start_ms=padded_content_start_ms,
+        padded_content_end_ms=padded_content_end_ms,
     )
 
 
