@@ -1805,6 +1805,14 @@ def _regroup_lines(lines: Sequence[str], k: int) -> list[str]:
     return [g for g in groups if g]
 
 
+def _punch_wrap(
+    fragment: str, *, max_em: float = PUNCH_LINE_MAX_EM, max_lines: int = 2
+) -> list[str]:
+    """Legacy entry point for the immutable reviewed-punch line contract."""
+    del max_lines
+    return wrap_approved_punch_line(fragment, max_em=max_em)
+
+
 def _fit_cover_punch_lines(punch_lines, *, zone, font_path, hook_rgb, base_fill, max_size):
     """Ecosystem-style punch typesetting (2026-07-20 B站高播放封面调研)。
 
@@ -1820,8 +1828,8 @@ def _fit_cover_punch_lines(punch_lines, *, zone, font_path, hook_rgb, base_fill,
     zone_w = (x1 - x0) * 0.98
     zone_h = (y1 - y0) * 0.96
     scratch = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
-    main_lines = wrap_approved_punch_line(punch_lines[0])
-    sub_lines = [wrapped for frag in punch_lines[1:] for wrapped in wrap_approved_punch_line(frag)]
+    main_lines = _punch_wrap(punch_lines[0])
+    sub_lines = [line for frag in punch_lines[1:] for line in _punch_wrap(frag)]
 
     def build(emph: int):
         sub_size = max(56, int(round(emph * 0.5)))

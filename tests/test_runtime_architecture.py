@@ -222,7 +222,9 @@ MODULE_DEBT_LEDGER = {
     # 2026-08-10 +7：合并 ft-a8600994 快车道分支（Ivan 2026-08-10 逐字「这就是要合并的快车道代码，现在就去合并 merge」）——ft 新增的
     # punch_fragment_whitespace_is_source_safe 守卫接线 + 合并说明注释。
     # 数字为合并后实测,非估算。
-    "src/autoslice/cover_generation.py": 2_338,
+    # 2026-08-21 +8：reviewed-punch 实现迁至 cover_punch_semantics 后保留
+    # _punch_wrap 的旧签名入口；它只转发至同一 fail-closed 实现。
+    "src/autoslice/cover_generation.py": 2_346,
     # 2026-08-02 +166：bind_manual_package_cover——手动产线包封面回写（同一套
     # 校验/binding/原子写；Ivan 8/2 /goal 授权；测试 test_manual_cover_bind.py）。
     "src/autoslice/cover_repair.py": 2_217,

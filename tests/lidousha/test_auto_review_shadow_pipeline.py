@@ -5186,6 +5186,9 @@ def test_cover_punch_renderer_fails_closed_instead_of_midword_wrap():
     from src.autoslice import cover_generation
 
     assert cover_generation._punch_wrap("小姐姐布下迷魂阵") == ["小姐姐布下迷魂阵"]
+    assert cover_generation._punch_wrap(
+        "小姐姐布下迷魂阵", max_em=9.0, max_lines=1
+    ) == ["小姐姐布下迷魂阵"]
     with pytest.raises(ValueError, match="COVER_PUNCH_LINE_REQUIRES_CPA_REVISE"):
         cover_generation._punch_wrap("被粉色小姐姐布下迷魂阵")
 
