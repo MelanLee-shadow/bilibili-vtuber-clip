@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Private, no-target-write preparation for a reviewed-baseline replay.
+"""Prepare a sealed private reviewed-baseline replay, never an upload.
 
-``--stage`` is intentionally separate from the default plan: it writes only a
-0600 manifest and candidate-private media/SRT artifacts beneath the caller's
-private directory.  There is no ``--apply`` yet because a staged video/SRT is
-not a complete final package and must not replace live package surfaces.
+The default is a no-target-write plan.  ``--stage`` adds only a private
+candidate stage.  The package transaction deliberately has no operator-supplied
+target/state arguments: only the lane's sealed after-image builder may name
+delivery, record, publish, and state surfaces.
 """
 
 from __future__ import annotations
@@ -46,25 +46,37 @@ def main(argv: list[str] | None = None) -> int:
             )
             for candidate_id in args.candidate_id
         ]
-        result = {
+        staged: dict[str, object] = {}
+        candidates = []
+        for plan in plans:
+            item: dict[str, object] = {
+                "candidate_id": plan.candidate_id,
+                "record_path": str(plan.record_path),
+                "padded_path": str(plan.padded_path),
+                "local_start_ms": plan.local_start_ms,
+                "local_end_ms": plan.local_end_ms,
+                "expected_video_sha256": plan.expected_video_sha256,
+                # Full finalization cannot silently be claimed from baseline
+                # text alone.  A source-fact receipt is the only remaining
+                # provider-bearing prerequisite, so it is explicit rather
+                # than a misleading PENDING state.
+                "predicate_matrix": [
+                    *list(plan.matrix[:4]),
+                    {"predicate": "SOURCE_FACT_REVIEW", "status": "NEEDS_PROVIDER"},
+                    {"predicate": "PACKAGE_AFTER_IMAGE", "status": "BLOCKED_BY_SOURCE_FACT"},
+                    {"predicate": "UPLOAD_ALLOWED", "status": "PASS_FALSE"},
+                ],
+            }
+            if args.stage:
+                private = stage_replay(plan, stage_parent=args.stage_parent)
+                item["private_stage"] = private
+                staged[plan.candidate_id] = private
+            candidates.append(item)
+        result: dict[str, object] = {
             "schema_version": "reviewed-baseline-replay-plan.v1",
             "mode": "PRIVATE_STAGE" if args.stage else "DRY_RUN",
             "upload_allowed": False,
-            "candidates": [
-                ({
-                    "candidate_id": plan.candidate_id,
-                    "record_path": str(plan.record_path),
-                    "padded_path": str(plan.padded_path),
-                    "local_start_ms": plan.local_start_ms,
-                    "local_end_ms": plan.local_end_ms,
-                    "expected_video_sha256": plan.expected_video_sha256,
-                    "predicate_matrix": list(plan.matrix),
-                } | (
-                    {"private_stage": stage_replay(plan, stage_parent=args.stage_parent)}
-                    if args.stage else {}
-                ))
-                for plan in plans
-            ],
+            "candidates": candidates,
         }
     except ReviewedBaselineReplayError as exc:
         print(json.dumps({"status": "REFUSED", "reason_code": str(exc)}, ensure_ascii=False))

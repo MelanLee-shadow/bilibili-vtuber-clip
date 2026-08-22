@@ -17,16 +17,18 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from src.autoslice.redelivery_subtitle_baseline import (
     apply_redelivery_subtitle_baseline,
 )
 from src.autoslice.recut_materialization import (
+    _accurate_reencode_recut_command,
     _fresh_srt_to_source_cues,
     _write_source_range_srt,
 )
@@ -72,6 +74,39 @@ class ReplayPlan:
     expected_video_sha256: str
     baseline: ReviewedSubtitleBaseline
     matrix: tuple[dict[str, str], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PrivateRenderedReplay:
+    """Hash-bound private speaker/ASS/burn artifacts for a later after-image."""
+
+    stage: Path
+    reviewed_srt: RegularBinding
+    speaker_srt: RegularBinding | None
+    speaker_ass: RegularBinding | None
+    speaker_manifest: RegularBinding | None
+    burned_media: RegularBinding
+    burned_preview: Mapping[str, object]
+    branding_intro: Mapping[str, object] | None
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedReplayAfterImage:
+    """Candidate-private after-image or a typed source-fact prerequisite."""
+
+    status: str
+    predicate_matrix: tuple[dict[str, str], ...]
+    after_image: object | None
+
+
+@dataclass(frozen=True, slots=True)
+class PrivateReplayFinalization:
+    """The canonical producer's private prepared-delivery result."""
+
+    spec_path: Path
+    private_runtime_root: Path
+    prepared_manifest: Path
+    prepared_sha256: str
 
 
 def _canonical(value: object) -> bytes:
@@ -282,6 +317,22 @@ def build_replay_plan(*, repo_root: Path, out_root: Path, date: str, candidate_i
     diagnostic_binding = regular_binding(diagnostic_path, label="PIPELINE_DIAGNOSTIC")
     if diagnostic_binding.sha256.removeprefix("sha256:") != diagnostic.get("sha256"):
         raise ReviewedBaselineReplayError("REPLAY_PIPELINE_DIAGNOSTIC_DRIFT")
+    try:
+        diagnostic_text = _read_small_bytes(
+            diagnostic_binding, label="PIPELINE_DIAGNOSTIC"
+        ).decode("utf-8")
+        _fresh_srt_to_source_cues(
+            diagnostic_text,
+            window_start_ms=int(config["absolute_source_start_ms"]),
+            duration_ms=(
+                int(config["absolute_source_end_ms"])
+                - int(config["absolute_source_start_ms"])
+            ),
+        )
+    except (KeyError, TypeError, ValueError, UnicodeDecodeError) as exc:
+        raise ReviewedBaselineReplayError(
+            "REPLAY_PIPELINE_DIAGNOSTIC_GEOMETRY_INVALID"
+        ) from exc
     matrix = (
         {"predicate": "RECORD_OLD_VIDEO_SHA256", "status": "PASS"},
         {"predicate": "PADDED_SOURCE_BINDING", "status": "PASS"},
@@ -341,13 +392,15 @@ def stage_replay(
     media = stage / "recut.mp4"
     command = list(run_command or ())
     if not command:
-        command = [
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", "0.000",
-            "-i", str(plan.padded_path), "-ss", f"{plan.local_start_ms / 1000:.3f}",
-            "-t", f"{(plan.local_end_ms - plan.local_start_ms) / 1000:.3f}",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac",
-            "-b:a", "128k", "-movflags", "+faststart", str(media),
-        ]
+        # Reuse the production accurate-recut command (including its coarse
+        # seek and decode-before-trim path); a superficially equivalent local
+        # ffmpeg spelling is not a safe source-bound replay authority.
+        command = _accurate_reencode_recut_command(
+            source_video=plan.padded_path,
+            output_media=media,
+            start_ms=plan.local_start_ms,
+            duration_ms=plan.local_end_ms - plan.local_start_ms,
+        )
     if command[-1] != str(media):
         raise ReviewedBaselineReplayError("REPLAY_COMMAND_TARGET_INVALID")
     completed = subprocess.run(command, check=False, capture_output=True)
@@ -423,3 +476,550 @@ def stage_replay(
     document["stage_sha256"] = _sha(_canonical(document))
     _write_private(stage / "stage.json", _canonical(document))
     return {"stage": str(stage), "stage_sha256": document["stage_sha256"], "predicate_matrix": document["predicate_matrix"]}
+
+
+def render_private_replay(
+    plan: ReplayPlan,
+    *,
+    stage: Path,
+    speaker_mode: str,
+    speaker_overrides: Path | None,
+    speaker_python: Path,
+    branding_intro: Mapping[str, object] | None,
+    renderer: Callable[..., tuple[Path, Path, Path | None, Path | None, Path | None, object, Mapping[str, object]]] | None = None,
+) -> PrivateRenderedReplay:
+    """Reuse the correction renderer with the verified private recut override.
+
+    This never names a package target.  It is the deterministic half of a
+    full replay; the source-fact/publication after-image remains separately
+    sealed before this material can be committed.
+    """
+
+    stage = _safe_directory(stage)
+    record = _load_json(regular_binding(plan.record_path, label="RECORD"), label="RECORD")
+    media = stage / "recut.mp4"
+    reviewed = stage / "reviewed.srt"
+    if regular_binding(media, label="STAGED_VIDEO").sha256 != plan.expected_video_sha256:
+        raise ReviewedBaselineReplayError("REPLAY_OLD_RECORD_VIDEO_SHA256_MISMATCH")
+    if renderer is None:
+        from scripts.apply_subtitle_correction import _render_correction_in_staging
+        renderer = _render_correction_in_staging
+    try:
+        render_dir, _srt, speaker_srt, speaker_ass, speaker_manifest, _speaker, reburn = renderer(
+            record=record,
+            srt=_read_small_bytes(regular_binding(reviewed, label="STAGED_SRT"), label="STAGED_SRT").decode("utf-8"),
+            recut_dir=stage,
+            candidate_id=plan.candidate_id,
+            speaker_mode=speaker_mode,
+            speaker_overrides=speaker_overrides,
+            speaker_python=speaker_python,
+            branding_intro=branding_intro,
+            media_source=media,
+            stage_parent=stage,
+        )
+    except Exception as exc:
+        raise ReviewedBaselineReplayError("REPLAY_SPEAKER_ASS_BURN_FAILED") from exc
+    if not isinstance(reburn, Mapping) or reburn.get("status") != "BURNED":
+        raise ReviewedBaselineReplayError("REPLAY_SPEAKER_ASS_BURN_FAILED")
+    raw_burned = reburn.get("path")
+    if not isinstance(raw_burned, str):
+        raise ReviewedBaselineReplayError("REPLAY_SPEAKER_ASS_BURN_FAILED")
+    burned = regular_binding(Path(raw_burned), label="BURNED_MEDIA")
+    if burned is None or not burned.path.is_relative_to(render_dir):
+        raise ReviewedBaselineReplayError("REPLAY_SPEAKER_ASS_BURN_UNSAFE")
+    return PrivateRenderedReplay(
+        stage=render_dir,
+        reviewed_srt=regular_binding(reviewed, label="STAGED_SRT"),
+        speaker_srt=regular_binding(speaker_srt, label="SPEAKER_SRT") if speaker_srt else None,
+        speaker_ass=regular_binding(speaker_ass, label="SPEAKER_ASS") if speaker_ass else None,
+        speaker_manifest=(regular_binding(speaker_manifest, label="SPEAKER_MANIFEST") if speaker_manifest else None),
+        burned_media=burned,
+        burned_preview=dict(reburn),
+        branding_intro=branding_intro,
+    )
+
+
+def _copy_private_artifact(source: Path, target: Path) -> RegularBinding:
+    source_binding = regular_binding(source, label="PRIVATE_SOURCE")
+    if target.exists() or target.is_symlink():
+        raise ReviewedBaselineReplayError("REPLAY_PRIVATE_ARTIFACT_COLLISION")
+    # Never hard-link a source-owned control artifact: chmod/fsync of the
+    # private target would mutate the source inode's ctime/mode and invalidate
+    # the very binding this replay is trying to preserve.
+    try:
+        shutil.copyfile(source, target)
+    except OSError as exc:
+        raise ReviewedBaselineReplayError("REPLAY_PRIVATE_ARTIFACT_COPY_FAILED") from exc
+    os.chmod(target, 0o600)
+    target_binding = regular_binding(target, label="PRIVATE_TARGET")
+    if target_binding.sha256 != source_binding.sha256:
+        raise ReviewedBaselineReplayError("REPLAY_PRIVATE_ARTIFACT_COPY_DRIFT")
+    return target_binding
+
+
+def _copy_verified_tree(source: Path, target: Path) -> None:
+    """Copy a package only after rejecting all symlink/special traversal."""
+
+    source = _safe_directory(source)
+    for path in sorted(source.rglob("*")):
+        observed = os.lstat(path)
+        if stat.S_ISLNK(observed.st_mode) or not (stat.S_ISREG(observed.st_mode) or stat.S_ISDIR(observed.st_mode)):
+            raise ReviewedBaselineReplayError("REPLAY_PACKAGE_TREE_UNSAFE")
+        if stat.S_ISREG(observed.st_mode):
+            regular_binding(path, label="PACKAGE_TREE")
+    try:
+        shutil.copytree(source, target, copy_function=shutil.copyfile)
+    except OSError as exc:
+        raise ReviewedBaselineReplayError("REPLAY_PACKAGE_TREE_COPY_FAILED") from exc
+    for path in sorted(target.rglob("*")):
+        observed = os.lstat(path)
+        if stat.S_ISLNK(observed.st_mode) or not (stat.S_ISREG(observed.st_mode) or stat.S_ISDIR(observed.st_mode)):
+            raise ReviewedBaselineReplayError("REPLAY_PACKAGE_TREE_COPY_UNSAFE")
+        if stat.S_ISREG(observed.st_mode):
+            os.chmod(path, 0o600)
+
+
+def audit_private_replay_package(*, plan: ReplayPlan, rendered: PrivateRenderedReplay) -> dict[str, object]:
+    """Run the canonical auditor against a private complete-package copy.
+
+    This proves exactly why an old package can or cannot be replayed before a
+    public after-image exists.  It intentionally returns the auditor's typed
+    blockers instead of weakening a title/cover/final-review gate.
+    """
+
+    from scripts.audit_lidousha_review_package import audit_package
+
+    root = rendered.stage.parent / "package-audit-input"
+    _copy_verified_tree(plan.package_root, root)
+    record = _load_json(regular_binding(plan.record_path, label="RECORD"), label="RECORD")
+    replacements = {
+        record.get("media_path"): rendered.stage.parent / "recut.mp4",
+        record.get("subtitle_path"): rendered.reviewed_srt.path,
+        (record.get("burned_preview") or {}).get("path") if isinstance(record.get("burned_preview"), Mapping) else None: rendered.burned_media.path,
+    }
+    for raw_target, source in replacements.items():
+        if not isinstance(raw_target, str):
+            raise ReviewedBaselineReplayError("REPLAY_RECORD_TARGETS_INVALID")
+        live_target = Path(raw_target)
+        try:
+            relative = live_target.relative_to(plan.package_root)
+        except ValueError as exc:
+            raise ReviewedBaselineReplayError("REPLAY_RECORD_TARGET_ESCAPES_PACKAGE") from exc
+        target = root / relative
+        if not target.is_file() or target.is_symlink():
+            raise ReviewedBaselineReplayError("REPLAY_PRIVATE_PACKAGE_TARGET_MISSING")
+        target.unlink()
+        _copy_private_artifact(source, target)
+    result = audit_package(root)
+    if not isinstance(result, dict):
+        raise ReviewedBaselineReplayError("REPLAY_PACKAGE_AUDIT_INVALID")
+    _write_private(rendered.stage.parent / "package-audit.json", _canonical(result))
+    return result
+
+
+def stage_private_publish_replay(
+    plan: ReplayPlan,
+    *,
+    rendered: PrivateRenderedReplay,
+    source_fact_llm: Callable[..., object],
+) -> tuple[dict[str, object], RegularBinding]:
+    """Use canonical publish staging with a validated byte-identical cover carry.
+
+    The callback does not manufacture a cover receipt: it reuses only a cover
+    generation already bound to the old record and verifies the selected image
+    before canonical publish staging rebinds its StoryContract.
+    """
+
+    from src.autoslice.publish_staging import _stage_publish_draft
+    from src.autoslice.jingting_chunker import parse_srt_cues
+    from src.autoslice.story_contract import cover_story_contract_binding
+
+    record = _load_json(regular_binding(plan.record_path, label="RECORD"), label="RECORD")
+    staging = record.get("publish_staging")
+    if not isinstance(staging, Mapping):
+        raise ReviewedBaselineReplayError("REPLAY_PUBLISH_STAGING_MISSING")
+    title = staging.get("title")
+    if not isinstance(title, str) or not title.strip():
+        raise ReviewedBaselineReplayError("REPLAY_FROZEN_TITLE_MISSING")
+    generation = staging.get("cover_generation")
+    if not isinstance(generation, Mapping):
+        raise ReviewedBaselineReplayError("REPLAY_COVER_GENERATION_MISSING")
+    cover_path = staging.get("cover_path")
+    cover_sha = (record.get("artifact_hashes") or {}).get("cover_sha256") if isinstance(record.get("artifact_hashes"), Mapping) else None
+    if not isinstance(cover_path, str) or not isinstance(cover_sha, str):
+        raise ReviewedBaselineReplayError("REPLAY_COVER_BINDING_MISSING")
+    cover = regular_binding(Path(cover_path), label="COVER")
+    if cover is None or cover.sha256 != cover_sha or generation.get("final_cover_sha256") != cover_sha:
+        raise ReviewedBaselineReplayError("REPLAY_COVER_BINDING_DRIFT")
+
+    def carry_cover(updated: Mapping[str, object], **_kwargs: object) -> dict[str, object]:
+        story = updated.get("story_contract")
+        if not isinstance(story, Mapping):
+            raise ReviewedBaselineReplayError("REPLAY_STORY_CONTRACT_MISSING")
+        carried = dict(generation)
+        carried["story_contract"] = cover_story_contract_binding(story)
+        return {
+            "status": "AI_COVER_READY", "cover_path": str(cover.path),
+            "cover_sha256": cover.sha256, "cover_generation": carried,
+            "reason_codes": [],
+        }
+
+    materialized = dict(record)
+    materialized["status"] = "MATERIALIZED"
+    materialized["media_path"] = str(rendered.stage.parent / "recut.mp4")
+    materialized["subtitle_path"] = str(rendered.reviewed_srt.path)
+    materialized["subtitle_ass_path"] = str(rendered.speaker_ass.path) if rendered.speaker_ass else None
+    materialized["speaker_review_srt_path"] = str(rendered.speaker_srt.path) if rendered.speaker_srt else None
+    hashes = dict(materialized.get("artifact_hashes") or {})
+    hashes["video_sha256"] = plan.expected_video_sha256
+    hashes["subtitle_sha256"] = rendered.reviewed_srt.sha256
+    if rendered.speaker_ass is not None:
+        hashes["ass_sha256"] = rendered.speaker_ass.sha256
+    materialized["artifact_hashes"] = hashes
+    cues = parse_srt_cues(rendered.reviewed_srt.path.read_text(encoding="utf-8"))
+    staged = _stage_publish_draft(
+        materialized, candidate_id=plan.candidate_id, title=title,
+        cues=cues, run_ffmpeg=False, title_llm_call=None,
+        art_direction_llm_call=None, skip_cover=False,
+        selection_hook=str(staging.get("selection_hook") or record.get("selection_hook") or ""),
+        stage_cover=carry_cover, source_fact_llm_call=source_fact_llm,
+        private_artifact_root=None,
+    )
+    if not isinstance(staged, dict) or not isinstance(staged.get("publish_staging"), Mapping):
+        raise ReviewedBaselineReplayError("REPLAY_PRIVATE_PUBLISH_FAILED")
+    publish_path = Path(str(staged["publish_staging"].get("publish_json_path") or ""))
+    binding = regular_binding(publish_path, label="PRIVATE_PUBLISH")
+    if binding is None or not binding.path.is_relative_to(rendered.stage):
+        raise ReviewedBaselineReplayError("REPLAY_PRIVATE_PUBLISH_UNSAFE")
+    return staged, binding
+
+
+def replay_publish_adapter(
+    plan: ReplayPlan, *, source_fact_llm: Callable[..., object]
+) -> Callable[..., dict[str, object]]:
+    """Return the lane-owned finalizer adapter for frozen title/cover carry.
+
+    ``finalize_producer_package`` still supplies the materialized record and
+    source cues.  This wrapper is the only place where old publish surfaces
+    are carried, after revalidating their hashes; ordinary producer callers
+    cannot pass this capability.
+    """
+
+    def stage(record: Mapping[str, object], **kwargs: object) -> dict[str, object]:
+        from src.autoslice.publish_staging import _stage_publish_draft
+        from src.autoslice.story_contract import cover_story_contract_binding
+
+        old = _load_json(regular_binding(plan.record_path, label="RECORD"), label="RECORD")
+        old_staging = old.get("publish_staging")
+        if not isinstance(old_staging, Mapping):
+            raise ReviewedBaselineReplayError("REPLAY_PUBLISH_STAGING_MISSING")
+        title = old_staging.get("title")
+        generation = old_staging.get("cover_generation")
+        cover_path = old_staging.get("cover_path")
+        hashes = old.get("artifact_hashes")
+        cover_sha = hashes.get("cover_sha256") if isinstance(hashes, Mapping) else None
+        if not isinstance(title, str) or not isinstance(generation, Mapping) or not isinstance(cover_path, str) or not isinstance(cover_sha, str):
+            raise ReviewedBaselineReplayError("REPLAY_FROZEN_PUBLICATION_INVALID")
+        cover = regular_binding(Path(cover_path), label="COVER")
+        if cover is None or cover.sha256 != cover_sha or generation.get("final_cover_sha256") != cover_sha:
+            raise ReviewedBaselineReplayError("REPLAY_COVER_BINDING_DRIFT")
+
+        def carry(updated: Mapping[str, object], **_unused: object) -> dict[str, object]:
+            story = updated.get("story_contract")
+            if not isinstance(story, Mapping):
+                raise ReviewedBaselineReplayError("REPLAY_STORY_CONTRACT_MISSING")
+            copied = dict(generation)
+            copied["story_contract"] = cover_story_contract_binding(story)
+            return {"status": "AI_COVER_READY", "cover_path": str(cover.path),
+                    "cover_sha256": cover.sha256, "cover_generation": copied,
+                    "reason_codes": []}
+
+        return _stage_publish_draft(
+            dict(record), candidate_id=plan.candidate_id, title=title,
+            cues=kwargs["cues"], run_ffmpeg=bool(kwargs.get("run_ffmpeg")),
+            title_llm_call=None, art_direction_llm_call=None, skip_cover=False,
+            selection_hook=str(old_staging.get("selection_hook") or old.get("selection_hook") or ""),
+            stage_cover=carry, source_fact_llm_call=source_fact_llm,
+            private_artifact_root=None,
+        ) or {}
+
+    return stage
+
+
+def synthesize_replay_spec_and_finalize_private(
+    plan: ReplayPlan,
+    *,
+    stage: Path,
+    speaker_python: Path,
+    source_fact_llm: Callable[..., object],
+    adapters: object,
+    finalizer: Callable[..., int] | None = None,
+) -> PrivateReplayFinalization:
+    """Call the canonical producer finalizer in an isolated prepare-only root.
+
+    The synthetic spec is deliberately derived from bound record/provenance
+    fields only.  It leaves ``given_title`` and recovery authority null; the
+    lane-owned publish adapter carries the already validated frozen surface.
+    """
+
+    from src.autoslice.producer_package_finalization import (
+        ProducerFinalizationOptions,
+        finalize_producer_package,
+    )
+    from src.autoslice.recut_materialization import _fresh_srt_to_source_cues
+
+    stage = _safe_directory(stage)
+    record_binding = regular_binding(plan.record_path, label="RECORD")
+    record = _load_json(record_binding, label="RECORD")
+    provenance_path = next(plan.package_root.joinpath("replacement_recuts").glob("*.recut.provenance.json"), None)
+    if provenance_path is None:
+        raise ReviewedBaselineReplayError("REPLAY_PROVENANCE_AMBIGUOUS")
+    provenance = _load_json(regular_binding(provenance_path, label="PROVENANCE"), label="PROVENANCE")
+    boundary = record.get("boundary_audit")
+    timing = record.get("subtitle_timing_qa")
+    chat_path = record.get("chat_authority_audit_path")
+    clip_path = record.get("clip_context_path")
+    if not isinstance(boundary, Mapping) or not isinstance(timing, Mapping) or not isinstance(chat_path, str) or not isinstance(clip_path, str):
+        raise ReviewedBaselineReplayError("REPLAY_FINALIZER_INPUT_MISSING")
+    chat = regular_binding(Path(chat_path), label="CHAT_AUTHORITY")
+    clip = regular_binding(Path(clip_path), label="CLIP_CONTEXT")
+    hashes = record.get("artifact_hashes")
+    if chat is None or clip is None or not isinstance(hashes, Mapping) or hashes.get("chat_authority_audit_sha256") != chat.sha256:
+        raise ReviewedBaselineReplayError("REPLAY_FINALIZER_AUTHORITY_DRIFT")
+    runtime = stage / "finalizer-runtime"
+    _mkdir_private(runtime)
+    out_root = runtime / "out" / plan.date / plan.candidate_id
+    out_root.mkdir(parents=True, mode=0o700)
+    _copy_private_artifact(chat.path, out_root / f"{plan.candidate_id}.chat-authority.json")
+    _copy_private_artifact(clip.path, out_root / f"{plan.candidate_id}.clip-context.json")
+    diagnostic = plan.baseline.config["operator_truth_lanes"]["pipeline_diagnostic"]
+    diagnostic_path = plan.baseline.manifest_path.parent / str(diagnostic["path"])
+    diagnostic_text = _read_small_bytes(regular_binding(diagnostic_path, label="PIPELINE_DIAGNOSTIC"), label="PIPELINE_DIAGNOSTIC").decode("utf-8")
+    source_cues = _fresh_srt_to_source_cues(
+        diagnostic_text, window_start_ms=int(plan.baseline.config["absolute_source_start_ms"]),
+        duration_ms=int(plan.baseline.config["absolute_source_end_ms"]) - int(plan.baseline.config["absolute_source_start_ms"]),
+    )
+    final_start = plan.local_start_ms
+    final_end = plan.local_end_ms
+    spec = {
+        "date": plan.date, "candidate_id": plan.candidate_id, "output_root": str(out_root),
+        "given_title": None, "recovery_publication_authority": None,
+        "selection_hook": str((record.get("publish_staging") or {}).get("selection_hook") or record.get("selection_hook") or ""),
+        "clip_context_path": str(out_root / f"{plan.candidate_id}.clip-context.json"),
+        "clip_context": _load_json(clip, label="CLIP_CONTEXT"),
+        "pieces": [provenance.get("final_recut", {})],
+        "subtitle_redelivery_baseline": plan.baseline.config,
+        "boundary_semantic_review": boundary.get("boundary_semantic_review"),
+    }
+    spec_path = runtime / "replay-spec.json"
+    _write_private(spec_path, _canonical(spec))
+    options = ProducerFinalizationOptions(
+        spec=spec_path, substrate="reviewed-baseline-replay", correct="reviewed-baseline",
+        speaker_mode="uniform_host", speaker_overrides=None,
+        speaker_source_session_anchors=None, speaker_mixed_overlap_evidence=None,
+        speaker_python=speaker_python, reuse_cover=True, prepare_only=True,
+    )
+    try:
+        adapters = replace(
+            adapters,
+            stage_publish_draft=replay_publish_adapter(plan, source_fact_llm=source_fact_llm),
+            delivery_root=lambda: runtime / "delivery",
+        )
+    except TypeError as exc:
+        raise ReviewedBaselineReplayError("REPLAY_FINALIZER_ADAPTERS_INVALID") from exc
+    run = finalizer or finalize_producer_package
+    run(
+        options=options, profile_id="lidousha", speaker_subtitle_style_id="lidousha-final-sapphire72",
+        spec=spec, cid=plan.candidate_id, out_root=out_root, host="localhost",
+        padded=plan.padded_path, padded_provenance_path=provenance_path,
+        piece_provenance_rows=[dict(provenance.get("final_recut") or {})],
+        final_start=final_start, final_end=final_end, sanitized=source_cues,
+        timing_qa=dict(timing), audit=dict(boundary), text_override_path=None,
+        subtitle_regression_path=None, chat_authority_audit=_load_json(chat, label="CHAT_AUTHORITY"),
+        chat_authority_path=out_root / f"{plan.candidate_id}.chat-authority.json", branding_intro=None,
+        adapters=adapters,
+    )
+    prepared = sorted((runtime / ".producer-prepared" / "talk" / plan.candidate_id).glob("*/prepared.json"))
+    if len(prepared) != 1:
+        raise ReviewedBaselineReplayError("REPLAY_FINALIZER_PREPARED_HANDLE_MISSING")
+    prepared_binding = regular_binding(prepared[0], label="PREPARED_HANDLE")
+    if prepared_binding is None or not prepared_binding.path.is_relative_to(runtime):
+        raise ReviewedBaselineReplayError("REPLAY_FINALIZER_PREPARED_HANDLE_UNSAFE")
+    return PrivateReplayFinalization(spec_path, runtime, prepared[0], prepared_binding.sha256)
+
+
+def prepare_replay_after_image(
+    plan: ReplayPlan,
+    *,
+    staged: Mapping[str, object],
+    rendered: PrivateRenderedReplay | None,
+    runtime_root: Path,
+    state_path: Path,
+    source_fact_llm: Callable[..., object] | None,
+) -> PreparedReplayAfterImage:
+    """Build the lane-owned, no-upload after-image from sealed private inputs.
+
+    A provider-free invocation returns a terminal ``NEEDS_PROVIDER`` matrix;
+    it never writes state, delivery, record, publish, or journal.  When a
+    caller injects the normal source-fact adapter, it must return the existing
+    typed PASS receipt before we produce a commit-capable object.
+    """
+
+    from src.autoslice.reviewed_baseline_replay_transaction import (
+        ReplayAfterImage,
+        _prepare_artifacts,
+        stream_binding,
+    )
+    from src.autoslice.runner_state_writeback import read_exact_state_preimage, state_bytes
+
+    if rendered is None:
+        return PreparedReplayAfterImage(
+            "NEEDS_PROVIDER",
+            tuple([*plan.matrix, {"predicate": "SOURCE_FACT_REVIEW", "status": "NEEDS_PROVIDER"}]),
+            None,
+        )
+    audit = audit_private_replay_package(plan=plan, rendered=rendered)
+    audit_passed = audit.get("passed") is True and audit.get("blocking_count") == 0
+    audit_row = {
+        "predicate": "FINAL_REVIEW_PACKAGE_AUDIT",
+        "status": "PASS" if audit_passed else "BLOCKED",
+    }
+    record_binding = regular_binding(plan.record_path, label="RECORD")
+    record = _load_json(record_binding, label="RECORD")
+    if source_fact_llm is None:
+        return PreparedReplayAfterImage(
+            "NEEDS_PROVIDER",
+            tuple([*plan.matrix, audit_row, {"predicate": "SOURCE_FACT_REVIEW", "status": "NEEDS_PROVIDER"}]),
+            None,
+        )
+    try:
+        published_record, publish_binding = stage_private_publish_replay(
+            plan, rendered=rendered, source_fact_llm=source_fact_llm
+        )
+    except ReviewedBaselineReplayError:
+        raise
+    except Exception as exc:
+        raise ReviewedBaselineReplayError("REPLAY_PRIVATE_PUBLISH_FAILED") from exc
+    staged_publish = published_record.get("publish_staging")
+    source_fact = staged_publish.get("source_fact_review") if isinstance(staged_publish, Mapping) else None
+    from src.autoslice.source_fact_review import source_fact_review_passes
+    if not isinstance(source_fact, Mapping) or not source_fact_review_passes(source_fact):
+        return PreparedReplayAfterImage(
+            "BLOCKED",
+            tuple([*plan.matrix, audit_row, {"predicate": "SOURCE_FACT_REVIEW", "status": "BLOCKED"}]),
+            None,
+        )
+    if not audit_passed:
+        return PreparedReplayAfterImage(
+            "BLOCKED",
+            tuple([*plan.matrix, audit_row, {"predicate": "SOURCE_FACT_REVIEW", "status": "PASS"}]),
+            None,
+        )
+    raw_stage = staged.get("stage")
+    if not isinstance(raw_stage, str) or Path(raw_stage) != rendered.stage.parent:
+        raise ReviewedBaselineReplayError("REPLAY_PRIVATE_STAGE_DRIFT")
+    private_root = rendered.stage.parent / "after-image"
+    _mkdir_private(private_root)
+    artifacts: dict[str, Path] = {}
+    artifacts["recut.mp4"] = private_root / "recut.mp4"
+    _copy_private_artifact(rendered.stage.parent / "recut.mp4", artifacts["recut.mp4"])
+    artifacts["burned.mp4"] = private_root / "burned.mp4"
+    _copy_private_artifact(rendered.burned_media.path, artifacts["burned.mp4"])
+    artifacts["subtitle.srt"] = private_root / "subtitle.srt"
+    _copy_private_artifact(rendered.reviewed_srt.path, artifacts["subtitle.srt"])
+    if rendered.speaker_srt is not None:
+        artifacts["speaker.srt"] = private_root / "speaker.srt"
+        _copy_private_artifact(rendered.speaker_srt.path, artifacts["speaker.srt"])
+    if rendered.speaker_ass is not None:
+        artifacts["speaker.ass"] = private_root / "speaker.ass"
+        _copy_private_artifact(rendered.speaker_ass.path, artifacts["speaker.ass"])
+    if rendered.speaker_manifest is not None:
+        artifacts["speaker.json"] = private_root / "speaker.json"
+        _copy_private_artifact(rendered.speaker_manifest.path, artifacts["speaker.json"])
+    after_record = dict(published_record)
+    hashes = dict(record.get("artifact_hashes") or {})
+    hashes["video_sha256"] = plan.expected_video_sha256
+    hashes["subtitle_sha256"] = rendered.reviewed_srt.sha256
+    if rendered.speaker_ass is not None:
+        hashes["ass_sha256"] = rendered.speaker_ass.sha256
+    after_record["artifact_hashes"] = hashes
+    after_record["subtitle_source"] = str(record.get("subtitle_source") or "") + "+reviewed_redelivery_baseline"
+    after_record["burned_preview"] = {
+        **dict(rendered.burned_preview),
+        "path": str(record.get("burned_preview", {}).get("path") if isinstance(record.get("burned_preview"), Mapping) else ""),
+        "sha256": rendered.burned_media.sha256,
+    }
+    record_stage = private_root / "record.json"
+    _write_private(record_stage, _canonical(after_record))
+    artifacts["record.json"] = record_stage
+    artifacts["publish.json"] = private_root / "publish.json"
+    _copy_private_artifact(publish_binding.path, artifacts["publish.json"])
+    media_target = record.get("media_path")
+    subtitle_target = record.get("subtitle_path")
+    burned_preview = record.get("burned_preview")
+    burned_target = burned_preview.get("path") if isinstance(burned_preview, Mapping) else None
+    if not isinstance(media_target, str) or not isinstance(subtitle_target, str) or not isinstance(burned_target, str):
+        raise ReviewedBaselineReplayError("REPLAY_RECORD_TARGETS_INVALID")
+    target_map: dict[str, Path] = {
+        "recut.mp4": Path(media_target), "subtitle.srt": Path(subtitle_target),
+        "burned.mp4": Path(burned_target), "record.json": plan.record_path,
+    }
+    old_publish = record.get("publish_staging")
+    old_publish_path = old_publish.get("publish_json_path") if isinstance(old_publish, Mapping) else None
+    if not isinstance(old_publish_path, str):
+        raise ReviewedBaselineReplayError("REPLAY_PUBLISH_TARGET_MISSING")
+    target_map["publish.json"] = Path(old_publish_path)
+    optional_targets = {
+        "speaker.srt": record.get("speaker_review_srt_path"),
+        "speaker.ass": record.get("subtitle_ass_path"),
+        "speaker.json": record.get("speaker_finalization_manifest_path"),
+    }
+    for role, target in optional_targets.items():
+        if role in artifacts:
+            if not isinstance(target, str):
+                raise ReviewedBaselineReplayError("REPLAY_RECORD_TARGETS_INVALID")
+            target_map[role] = Path(target)
+    state_before = read_exact_state_preimage(state_path, runtime_root=runtime_root)
+    if state_before is None:
+        raise ReviewedBaselineReplayError("REPLAY_STATE_MISSING")
+    try:
+        state = json.loads(state_before.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ReviewedBaselineReplayError("REPLAY_STATE_INVALID") from exc
+    if not isinstance(state, dict) or not isinstance(state.get("picks"), list):
+        raise ReviewedBaselineReplayError("REPLAY_STATE_INVALID")
+    matches = [row for row in state["picks"] if isinstance(row, dict) and row.get("candidate_id") == plan.candidate_id]
+    if len(matches) != 1 or matches[0].get("status") != "candidate_rejected":
+        raise ReviewedBaselineReplayError("REPLAY_STATE_CANDIDATE_PREIMAGE_DRIFT")
+    row = matches[0]
+    row["status"] = "review_ready"
+    row["record_path"] = str(plan.record_path)
+    row["subtitle_sha256"] = rendered.reviewed_srt.sha256
+    row["video_sha256"] = plan.expected_video_sha256
+    state_after = state_bytes(state)
+    deployed_commit = stream_binding(runtime_root / "repo" / "DEPLOYED_COMMIT", label="DEPLOYED_COMMIT")
+    deployed_manifest = stream_binding(runtime_root / "repo" / "DEPLOYED_AUTHORITY_MANIFEST", label="DEPLOYED_MANIFEST")
+    if deployed_commit is None or deployed_manifest is None:
+        raise ReviewedBaselineReplayError("REPLAY_DEPLOYED_AUTHORITY_MISSING")
+    after = ReplayAfterImage(
+        date=plan.date, candidate_id=plan.candidate_id,
+        deployed={"commit": deployed_commit.sha256, "authority_manifest_sha256": deployed_manifest.sha256},
+        state_path=state_path, state_before=state_before, state_after=state_after,
+        record_before_sha256=record_binding.sha256,
+        stage_sha256=str(staged.get("stage_sha256") or ""),
+        artifacts=_prepare_artifacts(stage_root=private_root, targets=target_map),
+        upload_allowed=False,
+    )
+    # Do not expose a commit handle until the canonical package auditor has
+    # examined a complete private review package.  The baseline lane cannot
+    # fabricate that manifest or title/cover proof from a raw provider mapping.
+    # The returned object therefore stays blocked unless the later package
+    # materializer replaces this branch with its audited result.
+    _ = after
+    return PreparedReplayAfterImage(
+        "BLOCKED",
+        tuple([*plan.matrix, audit_row, {"predicate": "SOURCE_FACT_REVIEW", "status": "PASS"},
+               {"predicate": "FINAL_REVIEW_PACKAGE_AUDIT", "status": "BLOCKED"},
+               {"predicate": "UPLOAD_ALLOWED", "status": "PASS_FALSE"}]),
+        None,
+    )

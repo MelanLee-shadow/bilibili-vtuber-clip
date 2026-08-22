@@ -1003,12 +1003,25 @@ def _render_correction_in_staging(
     speaker_overrides: Path | None,
     speaker_python: Path,
     branding_intro: Mapping[str, object] | None,
+    media_source: Path | None = None,
+    stage_parent: Path | None = None,
 ) -> tuple[Path, Path, Path | None, Path | None, Path | None, object, Mapping[str, object]]:
-    """Render every mutable correction artifact in a private sibling directory."""
+    """Render every mutable correction artifact in a private sibling directory.
+
+    ``media_source`` is an explicit private-media override for replay lanes.  It
+    is intentionally opt-in: the ordinary correction path still stages the
+    record's materialized media, while a correction transaction can rebuild a
+    verified recut before this function ever sees it.
+    """
 
     try:
-        staging_dir = Path(tempfile.mkdtemp(prefix=".subtitle-correction-stage-", dir=recut_dir))
-        media = _stage_media_input(Path(str(record["media_path"])), staging_dir)
+        staging_dir = Path(tempfile.mkdtemp(
+            prefix=".subtitle-correction-stage-", dir=stage_parent or recut_dir
+        ))
+        media = _stage_media_input(
+            media_source if media_source is not None else Path(str(record["media_path"])),
+            staging_dir,
+        )
         staged_srt = staging_dir / Path(str(record["subtitle_path"])).name
         staged_srt.write_text(srt, encoding="utf-8")
         if speaker_mode == "uniform_host":
