@@ -11,6 +11,8 @@ import pytest
 from scripts.run_title_cover_joint_qc import build_joint_qc_receipt
 from src.autoslice import qixi_screenshot_direct_cover_repair as repair
 from src.autoslice import qixi_post_correction_projection_paths as projection_paths
+from src.autoslice.cover_generation import LidoushaCoverArtDirection
+from src.autoslice.fixed_cover_stage import FixedCoverStageOptions, apply_approved_punch
 
 
 def _sha(value: object) -> str:
@@ -202,6 +204,51 @@ def test_sealed_punch_receipt_is_hash_bound_and_revalidated_against_runtime_text
     )
     with pytest.raises(repair.QixiScreenshotDirectCoverRepairError, match="PUNCH_RECEIPT_INVALID"):
         repair.validate_authority(tampered)
+
+
+def test_fixed_stage_accepts_only_valid_revised_approved_punch() -> None:
+    cover_text = "小李有女友感吗？宿敌是否有点亲密了"
+    story_hook = "小李和宿敌有点亲密"
+    receipt = _sealed_punch_receipt(
+        cover_text=cover_text, story_hook=story_hook,
+    )
+    direction = LidoushaCoverArtDirection(
+        role="shy_cute_default", expression_en="soft smile",
+        background_style="coral-checker-pop", layout="banner",
+        hook_color="purple", is_song=False,
+    )
+    options = FixedCoverStageOptions(
+        approved_punch=repair.PUNCH_CANDIDATES,
+        approved_punch_receipt=receipt,
+    )
+    accepted = apply_approved_punch(
+        direction, options=options, punch_allowed=True,
+        cover_text=cover_text, story_hook=story_hook,
+    )
+    assert accepted is not None
+    assert accepted.cover_punch == repair.PUNCH_CANDIDATES
+    assert accepted.cover_punch_semantic_review == receipt
+
+    for change in (
+        lambda value: value.update(no_fabricated_fact=False),
+        lambda value: value.update(final_punch=["伪造梗字"]),
+        lambda value: value.update(status="FAILED"),
+        lambda value: value.update(status="REJECT"),
+    ):
+        rejected_receipt = copy.deepcopy(receipt)
+        change(rejected_receipt)
+        assert apply_approved_punch(
+            direction,
+            options=FixedCoverStageOptions(
+                approved_punch=repair.PUNCH_CANDIDATES,
+                approved_punch_receipt=rejected_receipt,
+            ),
+            punch_allowed=True, cover_text=cover_text, story_hook=story_hook,
+        ) is None
+    assert apply_approved_punch(
+        direction, options=options, punch_allowed=False,
+        cover_text=cover_text, story_hook=story_hook,
+    ) is None
 
 
 def test_fixed_full_dry_reuses_sealed_punch_without_punch_provider(

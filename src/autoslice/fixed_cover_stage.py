@@ -46,7 +46,7 @@ def apply_approved_punch(
     if (
         not punch_allowed
         or not isinstance(receipt, Mapping)
-        or receipt.get("status") != "PASS"
+        or receipt.get("status") not in {"PASS", "REVISED"}
         or tuple(receipt.get("final_punch") or ()) != punch
         or not validate_cover_punch_semantic_review(
             receipt, rendered_lines=list(punch), cover_text=cover_text, story_hook=story_hook,
