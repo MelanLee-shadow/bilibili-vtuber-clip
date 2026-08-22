@@ -30,6 +30,15 @@ def _write(path: Path, payload: bytes) -> str:
     return _sha(payload)
 
 
+def _attested_record(path: Path) -> dict[str, object]:
+    payload = path.read_bytes()
+    return {
+        "path": str(path),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
+    }
+
+
 def _registry(*entries: dict[str, object]) -> dict[str, object]:
     return {"schema_version": "publication-registry.v1", "entries": list(entries)}
 
@@ -401,12 +410,128 @@ def test_serial_requires_conventional_manifest_attested_record_and_clean_ledger(
     manifest.write_text("{}")
     (runtime / "state/2026-08-20.json").write_text(json.dumps({"picks": [{"candidate_id": "serial", "status": "review_ready", "rc": 0}]}))
     def loader(_path: Path, **_kwargs: object) -> tuple[dict | None, list[str]]:
-        return {"video": {"sha256": "sha256:video"}, "package_attestation": {"record": {"path": str(record)}}}, []
+        return {"video": {"sha256": "sha256:video"}, "package_attestation": {"record": _attested_record(record)}}, []
     rows = _rows(build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry(), manifest_loader=loader, ledger_checker=lambda *_a: (None, None, [])))
     assert rows["serial"]["category"] == READY_FOR_SERIAL_UPLOAD
     rows = _rows(build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry(), manifest_loader=lambda *_a, **_k: ({"video": {"sha256": "sha256:video"}, "package_attestation": {"record": {"path": "wrong"}}}, []), ledger_checker=lambda *_a: (None, None, [])))
     assert rows["serial"]["category"] == STATE_DRIFT
-    rows = _rows(build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry(), manifest_loader=lambda *_a, **_k: ({"candidate_id": "other", "recording_date": "2026-08-21", "video": {"sha256": "sha256:video"}, "package_attestation": {"record": {"path": str(record)}}}, []), ledger_checker=lambda *_a: (None, None, [])))
+    rows = _rows(build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry(), manifest_loader=lambda *_a, **_k: ({"candidate_id": "other", "recording_date": "2026-08-21", "video": {"sha256": "sha256:video"}, "package_attestation": {"record": _attested_record(record)}}, []), ledger_checker=lambda *_a: (None, None, [])))
+    assert rows["serial"]["category"] == STATE_DRIFT
+    assert "UPLOAD_MANIFEST_IDENTITY_DRIFT" in rows["serial"]["reason_codes"]
+
+
+def test_serial_accepts_byte_bound_same_stem_record_but_rejects_drift(
+    tmp_path: Path,
+) -> None:
+    repo, runtime = _runtime(tmp_path)
+    root, record = _package(runtime, "2026-08-20", "serial")
+    publish = root / "serial.publish.json"
+    record_doc = json.loads(record.read_text())
+    record_doc["publish_staging"] = {"publish_json_path": str(publish)}
+    record.write_text(json.dumps(record_doc))
+    delivery_record = root / "serial.recut.record.json"
+    delivery_record.write_bytes(record.read_bytes())
+    review_manifest = root / "serial.review-manifest.json"
+
+    def bind_delivery_record(payload: bytes) -> None:
+        delivery_record.write_bytes(payload)
+        review_manifest.write_text(
+            json.dumps(
+                {
+                    "schema_version": "lidousha-daily-review-manifest.v1",
+                    "candidate_id": "serial",
+                    "items": [
+                        {
+                            "candidate_id": "serial",
+                            "evidence_json": record.name,
+                            "record": delivery_record.name,
+                            "publish_json": publish.name,
+                            "sha256": {
+                                "evidence_json": hashlib.sha256(payload).hexdigest(),
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+
+    bind_delivery_record(delivery_record.read_bytes())
+    (root / "serial.upload_manifest.json").write_text("{}")
+    (runtime / "state/2026-08-20.json").write_text(
+        json.dumps({"picks": [{"candidate_id": "serial", "status": "review_ready", "rc": 0}]})
+    )
+    initial = delivery_record.read_bytes()
+
+    def manifest_for(
+        payload: bytes, *, declared_sha: str | None = None
+    ) -> tuple[dict[str, object], list[str]]:
+        return (
+            {
+                "manifest_version": 3,
+                "schema_version": "authorized-upload-manifest.v3",
+                "candidate_id": "serial",
+                "recording_date": "2026-08-20",
+                "video": {"sha256": "sha256:video"},
+                "package_attestation": {
+                    "record": {
+                        "path": str(delivery_record),
+                        "sha256": declared_sha or hashlib.sha256(payload).hexdigest(),
+                        "bytes": len(payload),
+                    }
+                },
+            },
+            [],
+        )
+
+    rows = _rows(
+        build_readiness_graph(
+            repository_root=repo,
+            runtime_root=runtime,
+            registry_loader=lambda *_a, **_k: _registry(),
+            manifest_loader=lambda *_a, **_k: manifest_for(initial),
+            ledger_checker=lambda *_a: (None, None, []),
+        )
+    )
+    assert rows["serial"]["category"] == READY_FOR_SERIAL_UPLOAD
+
+    for invalid_sha in (_sha(initial), "g" * 64):
+        rows = _rows(
+            build_readiness_graph(
+                repository_root=repo,
+                runtime_root=runtime,
+                registry_loader=lambda *_a, **_k: _registry(),
+                manifest_loader=lambda *_a, invalid_sha=invalid_sha, **_k: manifest_for(
+                    initial, declared_sha=invalid_sha
+                ),
+                ledger_checker=lambda *_a: (None, None, []),
+            )
+        )
+        assert rows["serial"]["category"] == STATE_DRIFT
+        assert "UPLOAD_MANIFEST_IDENTITY_DRIFT" in rows["serial"]["reason_codes"]
+
+    drifted = b'{"same-stem":"drift"}'
+    bind_delivery_record(drifted)
+    rows = _rows(
+        build_readiness_graph(
+            repository_root=repo,
+            runtime_root=runtime,
+            registry_loader=lambda *_a, **_k: _registry(),
+            manifest_loader=lambda *_a, **_k: manifest_for(initial),
+            ledger_checker=lambda *_a: (None, None, []),
+        )
+    )
+    assert rows["serial"]["category"] == STATE_DRIFT
+    assert "UPLOAD_MANIFEST_IDENTITY_DRIFT" in rows["serial"]["reason_codes"]
+
+    rows = _rows(
+        build_readiness_graph(
+            repository_root=repo,
+            runtime_root=runtime,
+            registry_loader=lambda *_a, **_k: _registry(),
+            manifest_loader=lambda *_a, **_k: manifest_for(drifted),
+            ledger_checker=lambda *_a: (None, None, []),
+        )
+    )
     assert rows["serial"]["category"] == STATE_DRIFT
     assert "UPLOAD_MANIFEST_IDENTITY_DRIFT" in rows["serial"]["reason_codes"]
 
@@ -418,7 +543,7 @@ def test_serial_rejects_missing_local_audit_and_uploaded_registry_disagreement(t
     (root / "serial.package-audit.json").unlink()
     (runtime / "state/2026-08-20.json").write_text(json.dumps({"picks": [{"candidate_id": "serial", "status": "review_ready", "rc": 0}]}))
     def loader(*_args: object, **_kwargs: object) -> tuple[dict[str, object], list[str]]:
-        return {"video": {"sha256": "sha256:video"}, "package_attestation": {"record": {"path": str(record)}}}, []
+        return {"video": {"sha256": "sha256:video"}, "package_attestation": {"record": _attested_record(record)}}, []
     rows = _rows(build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry(), manifest_loader=loader, ledger_checker=lambda *_a: (None, None, [])))
     assert rows["serial"]["category"] == STATE_DRIFT
     _write(root / "serial.package-audit.json", b'{"status":"PASS"}')
@@ -435,7 +560,7 @@ def test_unresolved_ledger_blocks_only_serial_and_bad_state_does_not_hide_ready(
     (runtime / "state/2026-08-19.json").write_text("{bad")
     (runtime / "state/2026-08-20.json").write_text(json.dumps({"picks": [{"candidate_id": "ready", "status": "review_ready", "rc": 0}, {"candidate_id": "other", "status": "review_ready", "rc": 0}]}))
     def loader(_path: Path, **_kwargs: object) -> tuple[dict | None, list[str]]:
-        return {"video": {"sha256": "sha256:video"}, "package_attestation": {"record": {"path": str(record)}}}, []
+        return {"video": {"sha256": "sha256:video"}, "package_attestation": {"record": _attested_record(record)}}, []
     graph = build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry(), manifest_loader=loader, ledger_checker=lambda *_a: ("unresolved", None, ["STARTED"]))
     rows = _rows(graph)
     assert rows["ready"]["category"] == READY_TO_PREPARE
@@ -450,7 +575,7 @@ def test_invalid_registry_forbids_serial_but_keeps_local_prepare(tmp_path: Path)
     (root / "serial.upload_manifest.json").write_text("{}")
     (runtime / "state/2026-08-20.json").write_text(json.dumps({"picks": [{"candidate_id": "serial", "status": "review_ready", "rc": 0}]}))
     def loader(*_args: object, **_kwargs: object) -> tuple[dict[str, object], list[str]]:
-        return {"video": {"sha256": "sha256:video"}, "package_attestation": {"record": {"path": str(record)}}}, []
+        return {"video": {"sha256": "sha256:video"}, "package_attestation": {"record": _attested_record(record)}}, []
     graph = build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: (_ for _ in ()).throw(ValueError("bad registry")), manifest_loader=loader, ledger_checker=lambda *_a: (None, None, []))
     row = _rows(graph)["serial"]
     assert row["category"] == READY_TO_PREPARE
@@ -468,7 +593,7 @@ def test_manifest_and_ledger_exceptions_are_candidate_local(tmp_path: Path) -> N
         if "manifest-bad" in path.name:
             raise RuntimeError("manifest race")
         candidate = "ledger-bad" if "ledger-bad" in path.name else "good"
-        return {"candidate_id": candidate, "recording_date": "2026-08-20", "video": {"sha256": "sha256:" + candidate}, "package_attestation": {"record": {"path": str(roots[candidate][1])}}}, []
+        return {"candidate_id": candidate, "recording_date": "2026-08-20", "video": {"sha256": "sha256:" + candidate}, "package_attestation": {"record": _attested_record(roots[candidate][1])}}, []
     def checker(_ledger: Path, sha: str) -> tuple[str | None, dict | None, list[str]]:
         if sha.endswith("ledger-bad"):
             raise RuntimeError("ledger race")

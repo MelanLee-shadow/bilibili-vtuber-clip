@@ -470,6 +470,55 @@ def _manifest_path(root: Path | None) -> Path | None:
     return _one_file(root, ("*.upload_manifest.json", "*upload*manifest*.json")) if root else None
 
 
+def _attested_record_matches_canonical(
+    attested: object,
+    *,
+    canonical_record: Path,
+    package_root: Path,
+) -> bool:
+    """Accept only an exact canonical record or a byte-bound package copy.
+
+    Authorized-upload v3 normally attests the same-stem record beside the
+    reviewed media.  Readiness may instead select a canonical candidate record
+    in the same package.  A different locator is therefore safe only when both
+    files are regular, package-contained, and reproduce the attested bytes.
+    """
+    if not isinstance(attested, Mapping):
+        return False
+    raw_path = attested.get("path")
+    if not isinstance(raw_path, str) or not raw_path:
+        return False
+    try:
+        attested_path = _safe_path(Path(raw_path), package_root)
+        canonical_path = _safe_path(canonical_record, package_root)
+        attested_bytes = _snapshot_regular(attested_path, package_root)
+    except (OSError, ValueError):
+        return False
+    declared_sha = attested.get("sha256")
+    declared_bytes = attested.get("bytes")
+    actual_sha = hashlib.sha256(attested_bytes).hexdigest()
+    if not (
+        isinstance(declared_sha, str)
+        and len(declared_sha) == 64
+        and all(char in "0123456789abcdef" for char in declared_sha)
+        and isinstance(declared_bytes, int)
+        and not isinstance(declared_bytes, bool)
+        and declared_sha == actual_sha
+        and declared_bytes == len(attested_bytes)
+    ):
+        return False
+    if attested_path == canonical_path:
+        return True
+    try:
+        canonical_bytes = _snapshot_regular(canonical_path, package_root)
+    except (OSError, ValueError):
+        return False
+    return (
+        hashlib.sha256(canonical_bytes).hexdigest() == actual_sha
+        and len(canonical_bytes) == declared_bytes
+    )
+
+
 def _category(reasons: set[str], *, serial: bool) -> str:
     if serial:
         return READY_FOR_SERIAL_UPLOAD
@@ -588,7 +637,11 @@ def build_readiness_graph(*, repository_root: Path, runtime_root: Path, registry
                 else:
                     attestation = parsed.get("package_attestation") if isinstance(parsed, Mapping) else None
                     attested_record = attestation.get("record") if isinstance(attestation, Mapping) else None
-                    if not isinstance(attested_record, Mapping) or str(attested_record.get("path") or "") != str(record_path):
+                    if record_path is None or root is None or not _attested_record_matches_canonical(
+                        attested_record,
+                        canonical_record=record_path,
+                        package_root=root,
+                    ):
                         reasons.add("UPLOAD_MANIFEST_IDENTITY_DRIFT")
                     if parsed.get("candidate_id") not in (None, candidate_id) or parsed.get("recording_date") not in (None, date):
                         reasons.add("UPLOAD_MANIFEST_IDENTITY_DRIFT")
