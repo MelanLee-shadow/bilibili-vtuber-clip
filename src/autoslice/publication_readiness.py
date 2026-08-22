@@ -137,10 +137,20 @@ def _load_json(path: Path, root: Path | None = None) -> Mapping[str, object]:
 
 def _state_rows(
     runtime_root: Path,
+    *, recording_dates: frozenset[str] | None = None,
+    candidate_ids: frozenset[str] | None = None,
 ) -> tuple[list[tuple[Path, str, str, Mapping[str, object]]], list[dict[str, str]]]:
     rows: list[tuple[Path, str, str, Mapping[str, object]]] = []
     problems: list[dict[str, str]] = []
-    for path in sorted((runtime_root / "state").glob("????-??-??.json")):
+    state_root = runtime_root / "state"
+    paths = (
+        [state_root / f"{date}.json" for date in sorted(recording_dates)]
+        if recording_dates is not None
+        else sorted(state_root.glob("????-??-??.json"))
+    )
+    for path in paths:
+        if not path.exists():
+            continue
         try:
             document = _load_json(path, runtime_root / "state")
         except (OSError, ValueError, json.JSONDecodeError):
@@ -159,6 +169,8 @@ def _state_rows(
                 )
                 if not isinstance(pick, Mapping) or not candidate_id:
                     problems.append(_reason("STATE_COLLECTION_INVALID", f"{path}:{collection_name}"))
+                    continue
+                if candidate_ids is not None and candidate_id not in candidate_ids:
                     continue
                 rows.append((path, collection_name, lane, pick))
     return rows, problems
@@ -546,7 +558,13 @@ def _category(reasons: set[str], *, serial: bool) -> str:
     return READY_TO_PREPARE
 
 
-def build_readiness_graph(*, repository_root: Path, runtime_root: Path, registry_loader: Callable[..., Mapping[str, object]] = load_publication_registry, manifest_loader: Callable[..., tuple[dict | None, list[str]]] = authorized_upload.load_and_verify, ledger_reader: Callable[[Path], tuple[list[dict], list[str]]] = authorized_upload.read_ledger, ledger_checker: Callable[[Path, str], tuple[str | None, dict | None, list[str]]] = authorized_upload.ledger_guard) -> dict[str, object]:
+def build_readiness_graph(*, repository_root: Path, runtime_root: Path,
+                          recording_dates: frozenset[str] | None = None,
+                          candidate_ids: frozenset[str] | None = None,
+                          registry_loader: Callable[..., Mapping[str, object]] = load_publication_registry,
+                          manifest_loader: Callable[..., tuple[dict | None, list[str]]] = authorized_upload.load_and_verify,
+                          ledger_reader: Callable[[Path], tuple[list[dict], list[str]]] = authorized_upload.read_ledger,
+                          ledger_checker: Callable[[Path, str], tuple[str | None, dict | None, list[str]]] = authorized_upload.ledger_guard) -> dict[str, object]:
     """Return a read-only graph. No result is a release or upload grant."""
     registry_path = repository_root / "assets/lidousha/publication_registry.v1.json"
     graph_problems: list[dict[str, str]] = []
@@ -558,9 +576,17 @@ def build_readiness_graph(*, repository_root: Path, runtime_root: Path, registry
         registry_rows = []
         registry_valid = False
         graph_problems.append(_reason("PUBLICATION_REGISTRY_INVALID", "publication_registry"))
-    indexed = {(str(row.get("candidate_id") or ""), str(row.get("recording_date") or "")): row for row in registry_rows if isinstance(row, Mapping)}
+    indexed = {
+        (str(row.get("candidate_id") or ""), str(row.get("recording_date") or "")): row
+        for row in registry_rows
+        if isinstance(row, Mapping)
+        and (recording_dates is None or str(row.get("recording_date") or "") in recording_dates)
+        and (candidate_ids is None or str(row.get("candidate_id") or "") in candidate_ids)
+    }
     candidates: dict[tuple[str, str], list[tuple[Path | None, str, str, Mapping[str, object]]]] = {}
-    state_rows, state_problems = _state_rows(runtime_root)
+    state_rows, state_problems = _state_rows(
+        runtime_root, recording_dates=recording_dates, candidate_ids=candidate_ids,
+    )
     graph_problems.extend(state_problems)
     for state_path, collection, lane, pick in state_rows:
         candidate_id = _candidate_id(pick)

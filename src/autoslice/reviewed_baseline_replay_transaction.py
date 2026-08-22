@@ -267,7 +267,76 @@ def _seal(document: dict[str, Any]) -> bytes:
     return _canon(body)
 
 
-def _prepare_artifacts(*, stage_root: Path, targets: Mapping[str, Path]) -> tuple[ReplayArtifact, ...]:
+def _validate_future_target_parent(path: Path, *, runtime_root: Path) -> Path:
+    """Validate a target's existing ancestor chain without creating delivery dirs."""
+
+    runtime = Path(runtime_root).absolute()
+    raw_target = Path(path)
+    if any(part in {".", ".."} for part in raw_target.parts):
+        raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_ARTIFACT_TARGET_INVALID")
+    target = raw_target.absolute()
+    if not target.is_relative_to(runtime) or target == runtime:
+        raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_ARTIFACT_TARGET_INVALID")
+    _safe_dir(runtime)
+    cursor = runtime
+    missing = False
+    for part in target.parent.relative_to(runtime).parts:
+        cursor /= part
+        try:
+            observed = os.lstat(cursor)
+        except FileNotFoundError:
+            missing = True
+            continue
+        except OSError as exc:
+            raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_PARENT_UNSAFE") from exc
+        if missing or stat.S_ISLNK(observed.st_mode) or not stat.S_ISDIR(observed.st_mode):
+            raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_PARENT_UNSAFE")
+    return target.parent
+
+
+def _ensure_target_parent(path: Path, *, runtime_root: Path) -> Path:
+    """Create only the validated missing target parents under the commit lease."""
+
+    parent = _validate_future_target_parent(path, runtime_root=runtime_root)
+    runtime = Path(runtime_root).absolute()
+    cursor = runtime
+    for part in parent.relative_to(runtime).parts:
+        cursor /= part
+        try:
+            observed = os.lstat(cursor)
+        except FileNotFoundError:
+            try:
+                os.mkdir(cursor, 0o700)
+            except OSError as exc:
+                raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_PARENT_UNSAFE") from exc
+            observed = os.lstat(cursor)
+            if stat.S_ISLNK(observed.st_mode) or not stat.S_ISDIR(observed.st_mode):
+                raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_PARENT_UNSAFE")
+            _fsync_dir(cursor.parent)
+        except OSError as exc:
+            raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_PARENT_UNSAFE") from exc
+        if stat.S_ISLNK(observed.st_mode) or not stat.S_ISDIR(observed.st_mode):
+            raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_PARENT_UNSAFE")
+    return parent
+
+
+def _target_binding_or_absent(path: Path, *, runtime_root: Path) -> StreamBinding | None:
+    """Return a target binding without treating an as-yet-uncreated date dir as drift."""
+
+    _validate_future_target_parent(path, runtime_root=runtime_root)
+    try:
+        observed = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_TARGET_UNSAFE") from exc
+    if stat.S_ISLNK(observed.st_mode) or not stat.S_ISREG(observed.st_mode):
+        raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_TARGET_UNSAFE")
+    return stream_binding(path, label="TARGET")
+
+
+def _prepare_artifacts(*, stage_root: Path, targets: Mapping[str, Path],
+                       runtime_root: Path | None = None) -> tuple[ReplayArtifact, ...]:
     """Seal each private staged artifact to a pre-existing public target binding."""
 
     if not targets or len(set(targets)) != len(targets):
@@ -281,8 +350,150 @@ def _prepare_artifacts(*, stage_root: Path, targets: Mapping[str, Path]) -> tupl
         staged = stream_binding(Path(stage_root) / role, label="STAGED")
         if staged is None:
             raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_STAGED_ARTIFACT_MISSING")
-        values.append(ReplayArtifact(role, staged, Path(target).absolute(), stream_binding(Path(target), label="TARGET")))
+        absolute_target = Path(target).absolute()
+        before = (
+            _target_binding_or_absent(absolute_target, runtime_root=runtime_root)
+            if runtime_root is not None
+            else stream_binding(absolute_target, label="TARGET")
+        )
+        values.append(ReplayArtifact(role, staged, absolute_target, before))
     return tuple(values)
+
+
+def _stage_directory(*, runtime_root: Path, date: str, candidate_id: str, seed: str) -> Path:
+    """Create one candidate-private, same-runtime staging namespace."""
+
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) or not re.fullmatch(
+        r"[A-Za-z0-9_-]{1,96}", candidate_id
+    ) or not re.fullmatch(r"[0-9a-f]{64}", seed):
+        raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_STAGE_NAMESPACE_INVALID")
+    runtime = Path(runtime_root).absolute()
+    _safe_dir(runtime)
+    current = runtime
+    # Namespaces may be shared and are safely idempotent; the final content
+    # seed belongs to exactly one staging invocation and must be create-only.
+    for name in (".reviewed-baseline-replay-private", date, candidate_id):
+        current /= name
+        _safe_dir(current, create=True)
+    leaf = current / seed
+    try:
+        os.mkdir(leaf, 0o700)
+    except FileExistsError as exc:
+        raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_STAGE_COLLISION") from exc
+    except OSError as exc:
+        raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_STAGE_NAMESPACE_INVALID") from exc
+    _safe_dir(leaf)
+    if stat.S_IMODE(os.lstat(leaf).st_mode) != 0o700:
+        raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_PRIVATE_MODE_DRIFT")
+    return leaf
+
+
+def _copy_stage_regular(source: StreamBinding, *, destination: Path) -> StreamBinding:
+    """Copy a stable source binding to a create-only private staged inode."""
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        source_fd = os.open(source.path, flags)
+    except OSError as exc:
+        raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_STAGE_SOURCE_DRIFT") from exc
+    try:
+        opened = os.fstat(source_fd)
+        if (
+            opened.st_dev, opened.st_ino, stat.S_IMODE(opened.st_mode), opened.st_size,
+            opened.st_mtime_ns, opened.st_ctime_ns,
+        ) != (
+            source.device, source.inode, source.mode, source.size,
+            source.mtime_ns, source.ctime_ns,
+        ):
+            raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_STAGE_SOURCE_DRIFT")
+        create_flags = (
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        try:
+            target_fd = os.open(destination, create_flags, 0o600)
+        except OSError as exc:
+            raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_STAGE_CREATE_FAILED") from exc
+        try:
+            while chunk := os.read(source_fd, 1024 * 1024):
+                _write_all(target_fd, chunk)
+            os.fchmod(target_fd, 0o600)
+            os.fsync(target_fd)
+        finally:
+            os.close(target_fd)
+    finally:
+        os.close(source_fd)
+    if stream_binding(source.path, label="STAGE_SOURCE") != source:
+        raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_STAGE_SOURCE_DRIFT")
+    staged = stream_binding(destination, label="STAGED")
+    if staged is None or staged.sha256 != source.sha256:
+        raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_STAGE_COPY_DRIFT")
+    return staged
+
+
+def stage_lane_after_image_artifacts(
+    *,
+    runtime_root: Path,
+    date: str,
+    candidate_id: str,
+    sources: Mapping[str, Path],
+    targets: Mapping[str, Path],
+) -> tuple[ReplayArtifact, ...]:
+    """Stage a reviewed-baseline lane's already-decided artifact map.
+
+    This accepts no state or caller-selected paths: its caller has already
+    derived exact role→target authority from the sealed replay plan.  Copies
+    are private and same-filesystem with the runtime, while formal delivery
+    targets remain untouched until :func:`commit_replay` owns a lease.
+    """
+
+    if set(sources) != set(targets) or not sources:
+        raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_AFTER_IMAGE_INVALID")
+    rows: list[tuple[str, StreamBinding, Path]] = []
+    for role in sorted(sources):
+        if re.fullmatch(r"[A-Za-z0-9_.-]{1,160}", role) is None:
+            raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_ARTIFACT_ROLES_INVALID")
+        source = stream_binding(sources[role], label="SOURCE")
+        target = Path(targets[role]).absolute()
+        if source is None or not target.is_relative_to(Path(runtime_root).absolute()):
+            raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_AFTER_IMAGE_INVALID")
+        rows.append((role, source, target))
+    if len({target for _role, _source, target in rows}) != len(rows):
+        raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_ARTIFACT_TARGET_INVALID")
+    seed = hashlib.sha256(_canon([
+        {"role": role, "source": _binding_dict(source), "target": str(target)}
+        for role, source, target in rows
+    ])).hexdigest()
+    stage = _stage_directory(
+        runtime_root=Path(runtime_root), date=date, candidate_id=candidate_id, seed=seed,
+    )
+    try:
+        for role, source, _target in rows:
+            _copy_stage_regular(source, destination=stage / role)
+        _fsync_dir(stage)
+        return _prepare_artifacts(
+            stage_root=stage, targets={role: target for role, _source, target in rows},
+            runtime_root=Path(runtime_root),
+        )
+    except BaseException:
+        # No journal exists before this function returns.  The exact seed
+        # directory is therefore owned solely by this failed staging attempt.
+        _remove_owned_stage(stage, runtime_root=Path(runtime_root))
+        raise
+
+
+def _remove_owned_stage(stage: Path, *, runtime_root: Path) -> None:
+    stage = Path(stage).absolute()
+    root = Path(runtime_root).absolute() / ".reviewed-baseline-replay-private"
+    if not stage.is_relative_to(root):
+        raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_STAGE_CLEANUP_UNSAFE")
+    _safe_dir(stage)
+    for item in stage.iterdir():
+        row = os.lstat(item)
+        if stat.S_ISLNK(row.st_mode) or not stat.S_ISREG(row.st_mode):
+            raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_STAGE_CLEANUP_UNSAFE")
+        os.unlink(item)
+    os.rmdir(stage)
 
 
 def _journal_document(*, date: str, candidate_id: str, deployed: Mapping[str, str],
@@ -292,9 +503,12 @@ def _journal_document(*, date: str, candidate_id: str, deployed: Mapping[str, st
         # Delivery bytes/sidecars first; public mirrors then record are only
         # usable after those bytes exist; exact state remains last below.
         role = artifact.role
-        if role in {"record.json", "delivery-record.json"}:
+        if (
+            role in {"record.json", "delivery-record.json", "package-record", "delivery-record"}
+            or role.endswith(".record.json")
+        ):
             return (3, role)
-        if "publish" in role or "delivery" in role:
+        if "publish" in role or role.startswith("delivery-"):
             return (2, role)
         return (1, role)
     entries = [{"role": artifact.role, "staged": _binding_dict(artifact.staged),
@@ -313,13 +527,17 @@ def _journal_document(*, date: str, candidate_id: str, deployed: Mapping[str, st
 
 
 def _assert_deployed(runtime_root: Path, deployed: Mapping[str, str]) -> None:
-    for name in ("commit", "authority_manifest_sha256"):
-        expected = deployed.get(name)
-        if not isinstance(expected, str):
-            raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_DEPLOYED_INVALID")
-    commit = stream_binding(Path(runtime_root) / "repo" / "DEPLOYED_COMMIT", label="DEPLOYED_COMMIT")
-    manifest = stream_binding(Path(runtime_root) / "repo" / "DEPLOYED_AUTHORITY_MANIFEST", label="DEPLOYED_AUTHORITY")
-    if commit is None or manifest is None or commit.sha256 != deployed["commit"] or manifest.sha256 != deployed["authority_manifest_sha256"]:
+    """Re-read the canonical deployed seal immediately under the lease."""
+
+    from src.autoslice.producer_delivery_transaction import deployment_authority_binding
+
+    try:
+        current = deployment_authority_binding(Path(runtime_root))
+    except Exception as exc:
+        # A malformed replacement seal is a drift of the previously bound
+        # deployment authority, not a reason to proceed with a new journal.
+        raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_DEPLOYED_DRIFT") from exc
+    if dict(deployed) != current:
         raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_DEPLOYED_DRIFT")
 
 
@@ -349,17 +567,20 @@ def commit_replay(
         for artifact in artifacts:
             if stream_binding(artifact.staged.path, label="STAGED") != artifact.staged:
                 raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_STAGED_DRIFT")
-            if stream_binding(artifact.target, label="TARGET") != artifact.before:
+            if _target_binding_or_absent(artifact.target, runtime_root=Path(runtime_root)) != artifact.before:
                 raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_TARGET_DRIFT")
-            _safe_dir(artifact.target.parent)
             # Rename is the only install primitive.  A stage on another
             # device would force copy-and-overwrite semantics, so reject it
             # before the journal exists; the lane builder must use a
             # candidate-private sibling on the delivery filesystem.
-            if artifact.staged.device != os.stat(artifact.target.parent).st_dev:
+            nearest = artifact.target.parent
+            while not nearest.exists():
+                nearest = nearest.parent
+            if artifact.staged.device != os.stat(nearest).st_dev:
                 raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_STAGE_FILESYSTEM_DRIFT")
-        # No formal journal namespace is created until every independently
-        # observable preimage has passed under the same lease.
+        # No formal target parent is created until a durable PREPARED journal
+        # exists.  A later failure can therefore resume rather than orphan a
+        # new delivery-date directory without an ownership checkpoint.
         _safe_dir(journal.parent, create=True)
         _create(journal, _seal(document))
         _install_document(journal, document, runtime_root=Path(runtime_root), lease=lease,
@@ -383,6 +604,39 @@ def commit_prepared_after_image(*, runtime_root: Path, after: ReplayAfterImage,
     )
 
 
+def cleanup_prepared_after_image_stage(*, runtime_root: Path, after: ReplayAfterImage,
+                                       committed_journal: Path | None = None) -> None:
+    """Delete only an unjournaled or proven-COMMITTED private artifact stage."""
+
+    parents = {artifact.staged.path.parent for artifact in after.artifacts}
+    if len(parents) != 1:
+        raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_STAGE_CLEANUP_UNSAFE")
+    stage = parents.pop().absolute()
+    runtime = Path(runtime_root).absolute()
+    if not stage.is_relative_to(runtime / ".reviewed-baseline-replay-private"):
+        raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_STAGE_CLEANUP_UNSAFE")
+    if committed_journal is not None:
+        document = _read_journal(committed_journal)
+        if document.get("status") != "COMMITTED":
+            raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_STAGE_CLEANUP_PENDING")
+    journal_root = runtime / ".reviewed-baseline-replay-journal"
+    if committed_journal is None and (journal_root.exists() or journal_root.is_symlink()):
+        _safe_dir(journal_root)
+        for item in journal_root.iterdir():
+            if item.is_symlink() or not item.is_file():
+                raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_STAGE_CLEANUP_UNSAFE")
+            document = _read_journal(item)
+            if document.get("candidate_id") == after.candidate_id and document.get("status") != "COMMITTED":
+                raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_STAGE_CLEANUP_PENDING")
+    _safe_dir(stage)
+    for item in stage.iterdir():
+        row = os.lstat(item)
+        if stat.S_ISLNK(row.st_mode) or not stat.S_ISREG(row.st_mode):
+            raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_STAGE_CLEANUP_UNSAFE")
+        os.unlink(item)
+    os.rmdir(stage)
+
+
 def _install_document(journal: Path, document: dict[str, Any], *, runtime_root: Path,
                       lease: RunnerCommitLease, fail_after_role: str | None = None) -> None:
     require_runner_commit_lease(lease, runtime_root=runtime_root)
@@ -398,7 +652,8 @@ def _install_document(journal: Path, document: dict[str, Any], *, runtime_root: 
         target = Path(str(entry.get("target") or ""))
         if staged is None or not target.is_absolute():
             raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_ENTRY_INVALID")
-        current = stream_binding(target, label="TARGET")
+        _validate_future_target_parent(target, runtime_root=runtime_root)
+        current = _target_binding_or_absent(target, runtime_root=runtime_root)
         if entry.get("installed") is True:
             if current is None or (current.device, current.inode, current.sha256, current.mode) != (staged.device, staged.inode, staged.sha256, staged.mode):
                 raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_CHECKPOINT_DRIFT")
@@ -408,6 +663,7 @@ def _install_document(journal: Path, document: dict[str, Any], *, runtime_root: 
         else:
             if current != before or stream_binding(staged.path, label="STAGED") != staged:
                 raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_ARTIFACT_DRIFT")
+            _ensure_target_parent(target, runtime_root=runtime_root)
             os.replace(staged.path, target)
             _fsync_dir(target.parent)
             installed = stream_binding(target, label="TARGET")
@@ -420,9 +676,11 @@ def _install_document(journal: Path, document: dict[str, Any], *, runtime_root: 
             raise RuntimeError("REPLAY_TXN_INJECTED_CRASH")
     state_before = document["state_before_sha256"]
     state_after = str(document["state_after_utf8"]).encode("utf-8")
+    if document.get("state_after_sha256") != _sha(state_after):
+        raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_STATE_AFTER_INVALID")
     from src.autoslice.runner_state_writeback import read_exact_state_preimage
     current_state = read_exact_state_preimage(Path(document["state_path"]), runtime_root=runtime_root)
-    if _sha(current_state or b"") == state_after:
+    if _sha(current_state or b"") == document["state_after_sha256"]:
         pass
     elif _sha(current_state or b"") == state_before:
         write_exact_state_bytes_under_lease(Path(document["state_path"]), runtime_root=runtime_root,
@@ -437,6 +695,13 @@ def resume_replay(*, runtime_root: Path, journal: Path) -> None:
     """Provider-free recovery of one known replay journal."""
 
     document = _read_journal(journal)
+    root = Path(runtime_root).absolute() / ".reviewed-baseline-replay-journal"
+    expected = _journal_path(
+        Path(runtime_root), date=str(document.get("date") or ""),
+        candidate_id=str(document.get("candidate_id") or ""), seed=str(document.get("seed") or ""),
+    )
+    if Path(journal).absolute() != expected.absolute() or expected.parent != root:
+        raise ReviewedBaselineReplayTransactionError("REPLAY_TXN_JOURNAL_NAMESPACE_INVALID")
     if document.get("status") == "COMMITTED":
         return
     if document.get("status") not in {"PREPARED", "INSTALLING"}:

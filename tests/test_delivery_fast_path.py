@@ -25,6 +25,7 @@ from src.autoslice.delivery_fast_path import (
     verify_transcript_entities,
 )
 from src.autoslice.final_review_auditor import audit_correction_mutation_authority
+from src.autoslice.truth_ownership_mutation_audit import audit_zero_mutation_correction_skip
 from src.autoslice.reviewed_subtitle_baseline_registry import (
     load_candidate_reviewed_subtitle_baseline,
 )
@@ -117,6 +118,53 @@ def test_operator_pin_and_truth_lane_versions_are_not_interchangeable() -> None:
         "operator-reviewed-subtitle-truth-lanes.v2"
     )
     assert resolve_operator_text_full_ownership(spec) is None
+
+
+def test_v3_operator_drop_ownership_is_a_valid_zero_mutation_bridge() -> None:
+    """A DROP-only reviewed lane still owns every source cue exactly once."""
+
+    spec = _operator_text_owned_spec()
+    baseline = spec["subtitle_redelivery_baseline"]
+    pin = baseline["operator_text_full_ownership"]
+    pin.update({
+        "schema_version": "operator-reviewed-text-full-ownership-pin.v3",
+        "source_cue_count": pin.pop("cue_count"), "release_cue_count": 4,
+        "changed_cue_count": 1, "operator_exact_text_cue_count": 0,
+        "operator_unchanged_freeze_cue_count": 4, "operator_drop_cue_count": 1,
+    })
+    baseline["operator_truth_lanes"]["schema_version"] = "operator-reviewed-subtitle-truth-lanes.v2"
+    ownership = resolve_operator_text_full_ownership(spec)
+    assert ownership is not None
+    correction = skipped_final_review_audit(
+        "SKIPPED_TRUTH_FULL_OWNERSHIP", truth_full_ownership=ownership,
+    )
+    assert audit_zero_mutation_correction_skip(correction) is not None
+
+
+def test_truth_lane_versions_require_their_exact_drop_coverage_shape() -> None:
+    v2 = _operator_text_owned_spec()
+    baseline = v2["subtitle_redelivery_baseline"]
+    pin = baseline["operator_text_full_ownership"]
+    pin.update({
+        "schema_version": "operator-reviewed-text-full-ownership-pin.v3",
+        "source_cue_count": pin.pop("cue_count"), "release_cue_count": 5,
+        "operator_drop_cue_count": 0,
+    })
+    baseline["operator_truth_lanes"]["schema_version"] = "operator-reviewed-subtitle-truth-lanes.v2"
+    # Resolver produces the field, but a crafted receipt without it cannot
+    # claim v3 coverage completeness.
+    receipt = resolve_operator_text_full_ownership(v2)
+    assert receipt is not None
+    receipt["coverage"].pop("dropped_cue_count")
+    assert audit_zero_mutation_correction_skip(
+        skipped_final_review_audit("SKIPPED_TRUTH_FULL_OWNERSHIP", truth_full_ownership=receipt)
+    )["status"] == "BLOCK"
+    v1 = resolve_operator_text_full_ownership(_operator_text_owned_spec())
+    assert v1 is not None
+    v1["coverage"]["dropped_cue_count"] = 0
+    assert audit_zero_mutation_correction_skip(
+        skipped_final_review_audit("SKIPPED_TRUTH_FULL_OWNERSHIP", truth_full_ownership=v1)
+    )["status"] == "BLOCK"
     spec = _operator_text_owned_spec()
     pin = spec["subtitle_redelivery_baseline"]["operator_text_full_ownership"]
     pin["schema_version"] = "operator-reviewed-text-full-ownership-pin.v3"

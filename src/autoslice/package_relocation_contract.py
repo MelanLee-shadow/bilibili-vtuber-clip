@@ -394,7 +394,7 @@ def project_uniform_host_locators(
     derived hashes transactionally.
     """
 
-    if kind not in {"record", "publish", "chat"}:
+    if kind not in {"record", "publish", "chat", "speaker"}:
         raise PackageRelocationError("uniform-host projection kind is invalid")
     if len(mappings) != len(ROOT_ROLES):
         raise PackageRelocationError("uniform-host projection root mapping is invalid")
@@ -421,6 +421,7 @@ def project_uniform_host_locators(
         "record": RECORD_PATH_POINTERS,
         "publish": PUBLISH_PATH_POINTERS,
         "chat": CHAT_PATH_POINTERS,
+        "speaker": SPEAKER_PATH_POINTERS,
     }[kind]
     for pointer in pointers:
         value = get_value(result, pointer)
@@ -438,6 +439,28 @@ def project_uniform_host_locators(
                 pointer,
                 mappings[ROOT_ROLES.index(role)][1] + suffix,
             )
+    # A record persists an exact copy of the standalone speaker manifest.
+    # Its runtime locators are subject to the same role contract; leaving
+    # them private while rewriting the top-level record locators would create
+    # an internally inconsistent after-image.
+    if kind == "record" and isinstance(result.get("speaker_finalization"), dict):
+        for nested in SPEAKER_PATH_POINTERS:
+            pointer = ("speaker_finalization", *nested)
+            value = get_value(result, pointer)
+            if value is None:
+                continue
+            matched = validate_path_root_role(
+                value, kind="record", pointer=pointer, mappings=mappings
+            )
+            if matched is None:
+                continue
+            role, side, suffix = matched
+            if side == "source":
+                set_value(
+                    result,
+                    pointer,
+                    mappings[ROOT_ROLES.index(role)][1] + suffix,
+                )
     seen_frozen = set()
     for pointer, value in walk_strings(result):
         if not value.startswith("/"):

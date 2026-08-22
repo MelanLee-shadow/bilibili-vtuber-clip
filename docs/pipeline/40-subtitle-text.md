@@ -180,6 +180,18 @@ timeline 上重放已绑定的 semantic verdict；第 8 阶段直接物化 autho
   reviewed SRT 与 baseline audit。该 stage 不是 package apply：speaker/ASS/burn、title/cover、
   final review 和 package audit 仍须从完整 after-image 通过，之后才可经 state-last transaction
   安装；不得用单独 SRT/MP4 或 private stage 覆盖 live package。
+- reviewed-baseline replay 的 `--plan` 只读取 sealed baseline/old-record/source 绑定，不能报成
+  full preflight；`--readiness-graph` 只读指定 date/CID 的 state discovery，不审计其它日期的
+  package。只有 `--full-dry-run` 才在 candidate-private namespace 完整重建 speaker/ASS/burn、
+  fresh exact-final/source-fact、frozen title/cover carry、record/publish/chat mirrors 和 package
+  audit，并输出逐 predicate 的 `PASS / FAIL / NOT_EVALUATED / NEEDS_PROVIDER` matrix。它不得写
+  formal record/state/journal/delivery/upload，私有 stage 在成功或失败后都必须安全清理。
+- `--apply` 仍先在 runner lease 外并行完成上述 private prepare；每个 candidate 随后按输入顺序
+  在短 `runner.lock` lease 下重新从最新 state bytes 投影**自己的** state-after，并 CAS/检查
+  已封口 artifact preimage、installed checkpoint 与 deployment authority 后 state-last commit。
+  前一 candidate 的 state 成功不得使后一 candidate 复用 stale whole-state image；任一 drift
+  在正式 target/state 写前拒绝。这个 no-upload transaction 不获取 `upload.lock`，也不创建
+  `AUTO_UPLOAD` 或 upload manifest；投稿仍只走 90 的 single-uploader 显式授权闭环。
 - redelivery v2 在 coverage prefix/tail 唯一允许保留的 edge straddler，必须与**每一条**
   retained reviewed cue 都按半开区间零重叠；恰好边界相接的 0ms overlap 可披露为
   `BOUNDARY_STRADDLE_WITHOUT_REVIEWED_CUE_OVERLAP`。任何正重叠，包括 1ms，仍须报

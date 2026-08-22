@@ -14,6 +14,17 @@ title-cover QC 和 ledger 无歧义重放后，才可被排入串行候选；仍
 逐字授权，绝不把 graph 当 authority。单批、单部署与完整 suite 是实际 preparation/deploy
 的准入规则，不是该观察分类自动授予的后续动作。
 
+## Reviewed-baseline replay 与上传隔离
+
+`scripts/replay_reviewed_subtitle_baseline.py` 的 PLAN、full-dry-run、apply 与 readiness
+graph 都是 no-upload package-recovery lane，不是本页的投稿入口。PLAN 只读 authority；full
+dry-run 在 private stage 完整验证 after-image 并输出 typed matrix；apply 可并行 private prepare，
+但每个 candidate 必须在短 runner lease 内以最新 state CAS 顺序 state-last commit。它不得创建
+`AUTO_UPLOAD`、authorized-upload manifest、upload ledger row 或获取 `upload.lock`。完成 package
+transaction 后仍须重新通过本页的 canonical audit、CPA title-cover QC、human/recovery evidence 和
+explicit Ivan manifest；只有 `authorized_upload.py` 在单一 `upload.lock` 下可产生上传副作用，且
+transport/状态歧义不得重试上传。
+
 ## 发布准入
 
 - 每条都需要 Ivan 明确授权；manifest 保存授权原话，工具不能替用户创造授权。

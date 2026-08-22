@@ -137,6 +137,36 @@ def test_pending_and_backlog_collections_are_read_only_preparation_candidates(
     assert all("PACKAGE_ROOT_MISSING" not in row["reason_codes"] for row in rows.values())
 
 
+def test_scoped_graph_does_not_inspect_unrelated_dates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, runtime = _runtime(tmp_path)
+    (runtime / "state/2026-08-14.json").write_text(json.dumps({
+        "picks": [{"candidate_id": "wanted", "status": "review_ready", "rc": 0}],
+    }))
+    (runtime / "state/2026-08-15.json").write_text(json.dumps({
+        "picks": [{"candidate_id": "unrelated", "status": "review_ready", "rc": 0}],
+    }))
+    from src.autoslice import publication_readiness
+
+    inspected: list[tuple[str, str]] = []
+    original = publication_readiness._inspect_package
+
+    def inspect(root, candidate_id, date):
+        inspected.append((candidate_id, date))
+        assert (candidate_id, date) == ("wanted", "2026-08-14")
+        return original(root, candidate_id, date)
+
+    monkeypatch.setattr(publication_readiness, "_inspect_package", inspect)
+    graph = build_readiness_graph(
+        repository_root=repo, runtime_root=runtime,
+        recording_dates=frozenset({"2026-08-14"}), candidate_ids=frozenset({"wanted"}),
+        registry_loader=lambda *_a, **_k: _registry(),
+    )
+    assert set(_rows(graph)) == {"wanted"}
+    assert inspected == [("wanted", "2026-08-14")]
+
+
 def test_consistent_candidate_sources_merge_but_conflicts_are_state_drift(tmp_path: Path) -> None:
     repo, runtime = _runtime(tmp_path)
     state = {
