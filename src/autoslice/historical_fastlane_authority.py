@@ -584,14 +584,14 @@ def _source_binding(
     date_dir = root / date
     _safe_dir(date_dir)
     entries = _source_tree(date_dir)
-    if not entries:
+    if not any(entry.get("type") == "regular" for entry in entries):
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SOURCE_EMPTY")
     if _streaming_regular_fingerprint(adapter_state_path, label="adapter_state") is None:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_ADAPTER_STATE_UNAVAILABLE")
     audit = audit_finalized_recording_inventory(
         date_dir, room_id=room_id, adapter_state_path=adapter_state_path,
     )
-    if audit.get("can_select") is not True:
+    if audit.get("can_select") is not True or not isinstance(audit.get("consumer_segments"), list) or not audit["consumer_segments"]:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SOURCE_INVENTORY_BLOCKED")
     return {
         "recording_root": str(root), "date": date, "room_id": room_id, "entries": entries,

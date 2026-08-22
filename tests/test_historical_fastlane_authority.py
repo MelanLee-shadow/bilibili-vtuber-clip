@@ -187,6 +187,22 @@ def test_historical_authority_refuses_bad_flv_and_active_adapter_before_any_rece
         prepare_historical_run_authority(runtime_root=root, recording_root=rec, adapter_status_path=adapter, date=DATE, candidate_ids=IDS, nonce="historical-20260814-c", expires_at="2026-08-22T00:30:00Z", expected_state_sha256=_sha(state), expected_authority=deployment_authority_binding(root), now=NOW, room_id=123, adapter_state_path=adapter_state, recorder_endpoint="http://test/graphql", recorder_env=tmp_path / "recorder.env")
 
 
+def test_historical_authority_refuses_empty_target_date_even_with_staging_directory(tmp_path: Path):
+    root, rec, adapter, adapter_state = _runtime(tmp_path)
+    (root / "DISABLED").write_text("paused\n")
+    (rec / DATE / "123_20260814-11-30-25.mp4").unlink()
+    (rec / DATE / ".brec-adapter-staging").mkdir()
+    state = (root / "state" / f"{DATE}.json").read_bytes()
+    with pytest.raises(HistoricalFastlaneAuthorityError, match="SOURCE_EMPTY"):
+        prepare_historical_run_authority(
+            runtime_root=root, recording_root=rec, adapter_status_path=adapter, date=DATE,
+            candidate_ids=IDS, nonce="historical-empty-date", expires_at="2026-08-22T00:30:00Z",
+            expected_state_sha256=_sha(state), expected_authority=deployment_authority_binding(root),
+            now=NOW, room_id=123, adapter_state_path=adapter_state,
+            recorder_endpoint="http://test/graphql", recorder_env=tmp_path / "recorder.env",
+        )
+
+
 def test_cron_shaped_runner_invocation_cannot_activate_historical_authority(tmp_path: Path):
     root = Path(__file__).resolve().parents[1]
     runtime = tmp_path / "runtime"
