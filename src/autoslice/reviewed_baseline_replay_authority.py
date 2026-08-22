@@ -89,7 +89,10 @@ def _validate_chat(
     subtitle = hashes.get("subtitle_sha256")
     if (
         document.get("schema_version") != "chat-authority-audit.v2"
-        or document.get("status") != "APPLIED_AND_VERIFIED"
+        # ``NO_MATCH`` is the canonical terminal result when the chat proposal
+        # engine found no correction to make; its final-artifact closure is
+        # still just as binding as an applied verified correction.
+        or document.get("status") not in {"NO_MATCH", "APPLIED_AND_VERIFIED"}
         or document.get("final_status") != "FINAL_ARTIFACTS_VERIFIED"
         or not _same_sha(document.get("final_output_srt_sha256"), subtitle)
         or not _same_sha(document.get("final_text_srt_sha256"), subtitle)
@@ -102,6 +105,65 @@ def _validate_chat(
         or structured.get("status") != "PASS"
     ):
         raise error("REPLAY_FINALIZER_CHAT_AUTHORITY_RECORD_CLOSURE_DRIFT")
+
+
+def reconstruct_structured_chat(
+    clip_context: Mapping[str, object], *, candidate_id: str, recording_date: str,
+    source_media_sha256: str, error: Callable[[str], Exception],
+) -> tuple[object, ...]:
+    """Rebuild exact-final chat from one sealed, complete clip context."""
+
+    from src.autoslice.chat_evidence import ChatEvidence
+    from src.autoslice.clip_context import ClipContextError, validate_clip_context
+
+    try:
+        validated = validate_clip_context(
+            clip_context, candidate_id=candidate_id, recording_date=recording_date,
+            source_media_sha256s=(source_media_sha256,),
+        )
+    except ClipContextError as exc:
+        raise error("REPLAY_CLIP_CONTEXT_BINDING_INVALID") from exc
+    rows = validated.get("structured_chat")
+    budget = validated.get("retrieval_budget")
+    if (
+        not isinstance(rows, list) or not isinstance(budget, Mapping)
+        or budget.get("structured_chat_truncated") is not False
+        or budget.get("structured_chat_selected_rows") != len(rows)
+        or budget.get("structured_chat_total_rows") != len(rows)
+        or not isinstance(budget.get("structured_chat_row_cap"), int)
+        or budget["structured_chat_row_cap"] < len(rows)
+        or budget.get("structured_chat_selection_policy")
+        != "all_sc_gift_guard_then_temporal_danmaku_sampling"
+    ):
+        raise error("REPLAY_STRUCTURED_CHAT_BUDGET_INVALID")
+    expected = {
+        "kind", "offset_ms", "text", "sender", "source", "source_sha256",
+        "source_event_id",
+    }
+    result = []
+    for row in rows:
+        if not isinstance(row, Mapping) or set(row) != expected:
+            raise error("REPLAY_STRUCTURED_CHAT_ROW_SHAPE_INVALID")
+        kind = row["kind"]
+        offset = row["offset_ms"]
+        values = (row["text"], row["sender"], row["source"], row["source_sha256"], row["source_event_id"])
+        if (
+            kind not in {"danmaku", "superchat", "gift", "guard"}
+            or isinstance(offset, bool) or not isinstance(offset, int)
+            or any(not isinstance(value, str) for value in values)
+            or not row["source"]
+            or _SHA256.fullmatch(row["source_sha256"]) is None
+        ):
+            raise error("REPLAY_STRUCTURED_CHAT_ROW_VALUE_INVALID")
+        # XML-backed danmaku has no independent event id.  Non-danmaku rows
+        # must remain individually attributable.
+        if not row["source_event_id"] and kind != "danmaku":
+            raise error("REPLAY_STRUCTURED_CHAT_EVENT_ID_INVALID")
+        result.append(ChatEvidence(
+            str(kind), offset, str(row["text"]), str(row["sender"]),
+            str(row["source"]), str(row["source_sha256"]), str(row["source_event_id"]),
+        ))
+    return tuple(result)
 
 
 def _portable_date_root(

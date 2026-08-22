@@ -738,54 +738,12 @@ def _reconstruct_structured_chat(
     source_media_sha256: str,
 ) -> tuple[object, ...]:
     """Rebuild exact-final chat context from the sealed clip-context rows."""
+    from src.autoslice.reviewed_baseline_replay_authority import reconstruct_structured_chat
 
-    from src.autoslice.chat_evidence import ChatEvidence
-    from src.autoslice.clip_context import ClipContextError, validate_clip_context
-
-    try:
-        validated = validate_clip_context(
-            clip_context, candidate_id=plan.candidate_id,
-            recording_date=plan.date, source_media_sha256s=(source_media_sha256,),
-        )
-    except ClipContextError as exc:
-        raise ReviewedBaselineReplayError("REPLAY_CLIP_CONTEXT_BINDING_INVALID") from exc
-    rows = validated.get("structured_chat")
-    budget = validated.get("retrieval_budget")
-    if (
-        not isinstance(rows, list) or not isinstance(budget, Mapping)
-        or budget.get("structured_chat_truncated") is not False
-        or budget.get("structured_chat_selected_rows") != len(rows)
-        or budget.get("structured_chat_total_rows") != len(rows)
-        or not isinstance(budget.get("structured_chat_row_cap"), int)
-        or budget["structured_chat_row_cap"] < len(rows)
-        or budget.get("structured_chat_selection_policy")
-        != "all_sc_gift_guard_then_temporal_danmaku_sampling"
-    ):
-        raise ReviewedBaselineReplayError("REPLAY_STRUCTURED_CHAT_INVALID")
-    expected = {
-        "kind", "offset_ms", "text", "sender", "source", "source_sha256",
-        "source_event_id",
-    }
-    result = []
-    for row in rows:
-        if not isinstance(row, Mapping) or set(row) != expected:
-            raise ReviewedBaselineReplayError("REPLAY_STRUCTURED_CHAT_INVALID")
-        kind = row["kind"]
-        offset = row["offset_ms"]
-        values = (row["text"], row["sender"], row["source"], row["source_sha256"], row["source_event_id"])
-        if (
-            kind not in {"danmaku", "superchat", "gift", "guard"}
-            or isinstance(offset, bool) or not isinstance(offset, int) or offset < 0
-            or any(not isinstance(value, str) for value in values)
-            or not str(row["source"]) or not str(row["source_sha256"])
-            or not str(row["source_event_id"])
-        ):
-            raise ReviewedBaselineReplayError("REPLAY_STRUCTURED_CHAT_INVALID")
-        result.append(ChatEvidence(
-            str(kind), offset, str(row["text"]), str(row["sender"]),
-            str(row["source"]), str(row["source_sha256"]), str(row["source_event_id"]),
-        ))
-    return tuple(result)
+    return reconstruct_structured_chat(
+        clip_context, candidate_id=plan.candidate_id, recording_date=plan.date,
+        source_media_sha256=source_media_sha256, error=ReviewedBaselineReplayError,
+    )
 
 
 def _production_llm_call(*, runtime_root: Path, effort: str) -> Callable[[str], str]:

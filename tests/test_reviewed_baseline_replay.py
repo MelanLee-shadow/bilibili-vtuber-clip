@@ -908,6 +908,105 @@ def test_record_bound_authority_requires_real_hashes() -> None:
     assert replay_authority._same_sha("", "") is False
 
 
+def test_record_bound_authority_accepts_canonical_no_match_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, record_path, record, portable, portable_record = _record_bound_authority_fixture(tmp_path)
+    chat_path = portable / "portable-name.chat-authority.json"
+    chat = json.loads(chat_path.read_text())
+    chat["status"] = "NO_MATCH"
+    chat_path.write_text(json.dumps(chat))
+    _rebind_portable_authority(
+        record_path=record_path, record=record, portable=portable, portable_record=portable_record,
+    )
+
+    assert _resolve_fixture_authority(
+        plan=plan, record_path=record_path, record=record, portable=portable, monkeypatch=monkeypatch,
+    ).source == "portable-record-mirror"
+
+
+@pytest.mark.parametrize("status", ["FAILED", "PENDING_TEXT_OVERRIDE", "UNRESOLVED"])
+def test_record_bound_authority_refuses_nonterminal_chat_statuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str,
+) -> None:
+    plan, record_path, record, portable, portable_record = _record_bound_authority_fixture(tmp_path)
+    chat_path = portable / "portable-name.chat-authority.json"
+    chat = json.loads(chat_path.read_text())
+    chat["status"] = status
+    chat_path.write_text(json.dumps(chat))
+    _rebind_portable_authority(
+        record_path=record_path, record=record, portable=portable, portable_record=portable_record,
+    )
+
+    with pytest.raises(replay.ReviewedBaselineReplayError, match="CHAT_AUTHORITY_RECORD_CLOSURE_DRIFT"):
+        _resolve_fixture_authority(
+            plan=plan, record_path=record_path, record=record, portable=portable, monkeypatch=monkeypatch,
+        )
+
+
+def _sealed_structured_chat_context(rows: list[dict[str, object]]) -> tuple[dict[str, object], str]:
+    source_sha = "sha256:" + "a" * 64
+    draft = "1\n00:00:00,000 --> 00:00:01,000\ntext\n"
+    context = {
+        "schema_version": "lidousha-clip-context.v1", "candidate_id": CID,
+        "recording_date": DATE, "mutation_authorized": False,
+        "whole_clip_draft_srt": draft, "whole_clip_draft_srt_sha256": _sha(draft.encode()),
+        "pieces": [{"source_media_sha256": source_sha}], "structured_chat": rows,
+        "retrieval_budget": {
+            "whole_clip_transcript_truncated": False,
+            "structured_chat_truncated": False,
+            "structured_chat_selected_rows": len(rows),
+            "structured_chat_total_rows": len(rows),
+            "structured_chat_row_cap": 240,
+            "structured_chat_selection_policy": "all_sc_gift_guard_then_temporal_danmaku_sampling",
+        },
+    }
+    context["context_sha256"] = _canonical_sha256(context)
+    return context, source_sha
+
+
+def _canonical_chat_row(*, kind: str = "danmaku", offset: int = -5000, event_id: str = "") -> dict[str, object]:
+    return {
+        "kind": kind, "offset_ms": offset, "text": "弹幕", "sender": "观众",
+        "source": "/recording/source.xml", "source_sha256": "sha256:" + "a" * 64,
+        "source_event_id": event_id,
+    }
+
+
+def test_reconstruct_structured_chat_accepts_negative_xml_danmaku_without_event_id() -> None:
+    context, source_sha = _sealed_structured_chat_context([_canonical_chat_row()])
+    chat = replay._reconstruct_structured_chat(
+        context, plan=SimpleNamespace(candidate_id=CID, date=DATE), source_media_sha256=source_sha,
+    )
+
+    assert len(chat) == 1
+    assert chat[0].offset_ms == -5000
+    assert chat[0].source_event_id == ""
+
+
+@pytest.mark.parametrize(
+    ("mutate", "reason"),
+    [
+        (lambda context: context["retrieval_budget"].update({"structured_chat_truncated": True}), "BUDGET_INVALID"),
+        (lambda context: context["structured_chat"][0].pop("sender"), "ROW_SHAPE_INVALID"),
+        (lambda context: context["structured_chat"][0].update({"kind": "other"}), "ROW_VALUE_INVALID"),
+        (lambda context: context["structured_chat"][0].update({"source_sha256": "not-a-hash"}), "ROW_VALUE_INVALID"),
+        (lambda context: context["structured_chat"][0].update({"kind": "superchat", "source_event_id": ""}), "EVENT_ID_INVALID"),
+    ],
+)
+def test_reconstruct_structured_chat_refuses_budget_row_shape_value_and_event_drift(mutate, reason: str) -> None:
+    context, source_sha = _sealed_structured_chat_context([_canonical_chat_row()])
+    mutate(context)
+    context["context_sha256"] = _canonical_sha256({
+        key: value for key, value in context.items() if key != "context_sha256"
+    })
+
+    with pytest.raises(replay.ReviewedBaselineReplayError, match=f"REPLAY_STRUCTURED_CHAT_{reason}"):
+        replay._reconstruct_structured_chat(
+            context, plan=SimpleNamespace(candidate_id=CID, date=DATE), source_media_sha256=source_sha,
+        )
+
+
 def test_exact_final_reviewer_returns_callable_and_tracks_every_provider_callback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
