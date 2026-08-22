@@ -46,11 +46,6 @@ FUNCTION_DEBT_LEDGER = {
     # 只接入登记误听面分类、弱 provenance 与声学路由；分类器在新小模块。
     # 2026-08-09 净 -1：F16/F17 trusted priority provenance 接线压成薄调用。
     ("src/autoslice/final_review_auditor.py", "audit_final_subtitles"): 418,
-    # 2026-08-09 -3：exact reviewed terminal projection 接线同时把 tail-pad
-    # coverage receipt 抽到模块级 helper，锁定本次边界修复的净拆解收益。
-    # 2026-08-10 合并 ft-a8600994：以下两项按合并后**实测**行数记账,数字来自本次
-    # merge(主线 F16/F17 接线与 ft 边界修复各自的净收益叠加),非凭空抬降。
-    ("src/autoslice/producer_package_finalization.py", "_materialize_final_recut"): 314,
     # 2026-08-08 +3：owned_intervals 执法接线（Ivan 2026-08-08 配额上传波
     # 修复——zsm8 案：baseline 已应用的 cue 被 exact-final CPA 自愈无声改写；
     # redelivery_subtitle_baseline.py 写 owned_intervals 从未被读取）。
@@ -276,7 +271,9 @@ MODULE_DEBT_LEDGER = {
     # _run_exact_final_review_gate 那条同案说明）。新增逻辑的重量全在新模块
     # src/autoslice/chat_authority_ownership.py（未计入本模块行数），本模块
     # 只涨了 5 行 import/rationale + 5 行调用点。
-    "src/autoslice/producer_package_finalization.py": 2_769,
+    # 2026-08-22 净 -24：exact v2 full-window replay、审计投影与临时文件
+    # 清理抽到 redelivery_full_window_replay.py；锁定实测净拆解收益。
+    "src/autoslice/producer_package_finalization.py": 2_745,
     # 2026-07-31 +40：同上（SC 发送者 deferral）。
     # 2026-08-08 +7：会话内重述修复接线（Ivan 2026-08-08 当日指令，
     # docs/reviews/2026-08-08-restatement-repair-design.md §4）——会话内

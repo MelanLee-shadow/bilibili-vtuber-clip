@@ -7,6 +7,7 @@ import pytest
 
 from scripts.apply_subtitle_text_overrides import apply_document
 from src.autoslice import producer_package_finalization as finalization
+from src.autoslice import redelivery_full_window_replay as full_window_replay
 from src.autoslice.recut_materialization import _write_source_range_srt as canonical_write_source_range_srt
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.producer_text_finalization import (
@@ -3731,7 +3732,7 @@ def test_final_recut_v2_projects_reviewed_text_and_remerges_release_sliver(
 def test_full_window_replay_translates_final_local_protected_windows() -> None:
     """Exact full-window replay must not attest a final-local drop as padded-local."""
 
-    translated = finalization._full_window_protected_windows(
+    translated = full_window_replay.translate_final_local_protected_windows(
         [(20, 65)],
         final_start_ms=9_750,
         padded_content_start_ms=0,

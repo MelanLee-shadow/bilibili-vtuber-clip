@@ -25,8 +25,9 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-from src.autoslice.redelivery_subtitle_baseline import (
-    apply_redelivery_subtitle_baseline,
+from src.autoslice.redelivery_full_window_replay import (
+    FullWindowReplayError,
+    replay_full_window_text_and_crop,
 )
 from src.autoslice.recut_materialization import (
     _accurate_reencode_recut_command,
@@ -456,38 +457,25 @@ def stage_replay(
         )
     except ValueError as exc:
         raise ReviewedBaselineReplayError("REPLAY_PIPELINE_DIAGNOSTIC_GEOMETRY_INVALID") from exc
-    # A v2 exact-interval baseline owns this entire padded source window.  It
-    # must be replayed before the final delivery trim: passing only the final
-    # subwindow makes the baseline's absolute coverage look cut and falls back
-    # to unsafe fuzzy cue alignment.  Once its sealed full-window output is
-    # materialized, crop that output deterministically to the final bounds.
-    reviewed, audit = apply_redelivery_subtitle_baseline(
-        text_value, config=config, spec_parent=plan.baseline.manifest_path.parent,
-        current_source_start_ms=padded_start,
-        current_source_end_ms=int(match.group(2)),
-        current_source_recording_basename=str(config["source_recording_basename"]),
-        current_source_sha256=str(config["source_sha256"]),
-    )
-    if audit.get("status") not in {"APPLIED", "ALREADY_SATISFIED"}:
-        raise ReviewedBaselineReplayError("REPLAY_BASELINE_APPLICATION_FAILED")
-    try:
-        reviewed_cues = _fresh_srt_to_source_cues(
-            reviewed, window_start_ms=0,
-            duration_ms=int(match.group(2)) - padded_start,
-        )
-    except ValueError as exc:
-        raise ReviewedBaselineReplayError("REPLAY_REVIEWED_BASELINE_GEOMETRY_INVALID") from exc
     cropped_path = stage / ".reviewed-window.srt"
-    _write_source_range_srt(
-        reviewed_cues, plan.local_start_ms, plan.local_end_ms, cropped_path
-    )
     try:
-        cropped_bytes = _read_small_bytes(
-            regular_binding(cropped_path, label="REVIEWED_WINDOW"),
-            label="REVIEWED_WINDOW",
+        cropped_bytes, audit = replay_full_window_text_and_crop(
+            text=text_value,
+            config=config,
+            spec_parent=plan.baseline.manifest_path.parent,
+            padded_start_ms=padded_start,
+            padded_end_ms=int(match.group(2)),
+            final_start_ms=plan.local_start_ms,
+            final_end_ms=plan.local_end_ms,
+            write_source_range_srt=_write_source_range_srt,
+            crop_path=cropped_path,
+            read_crop=lambda path: _read_small_bytes(
+                regular_binding(path, label="REVIEWED_WINDOW"),
+                label="REVIEWED_WINDOW",
+            ),
         )
-    finally:
-        cropped_path.unlink(missing_ok=True)
+    except FullWindowReplayError as exc:
+        raise ReviewedBaselineReplayError(str(exc)) from exc
     _write_private(stage / "reviewed.srt", cropped_bytes)
     _write_private(stage / "redelivery-baseline.json", _canonical(audit))
     document: dict[str, Any] = {

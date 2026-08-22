@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import src.autoslice.redelivery_full_window_replay as full_window_replay
 import src.autoslice.reviewed_baseline_replay as replay
 from src.autoslice.repository_asset_authority import _canonical_sha256
 
@@ -113,7 +114,11 @@ def test_stage_rebuilds_only_private_artifacts_and_preserves_expected_video_hash
         seen.update(kwargs)
         return text, {"status": "APPLIED"}
 
-    monkeypatch.setattr(replay, "apply_redelivery_subtitle_baseline", apply_full_padded_baseline)
+    monkeypatch.setattr(
+        full_window_replay,
+        "apply_redelivery_subtitle_baseline",
+        apply_full_padded_baseline,
+    )
     stage_parent = tmp_path / "private"
     stage_parent.mkdir(mode=0o700)
     result = replay.stage_replay(plan, stage_parent=stage_parent)

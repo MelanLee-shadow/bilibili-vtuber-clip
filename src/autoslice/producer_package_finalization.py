@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 import re
-import stat
 import tempfile
 from copy import deepcopy
 from dataclasses import dataclass
@@ -73,10 +72,6 @@ from src.autoslice.producer_media import (
     _validated_burned_artifact,
     _write_json_atomic,
 )
-from src.autoslice.recut_materialization import (
-    BOUNDARY_CLIPPED_CUE_MAX_VISIBLE_MS,
-    BOUNDARY_CUE_START_TOLERANCE_MS,
-)
 from src.autoslice.producer_delivery_prepare import (
     emit_talk_delivery_summary,
     prepare_and_emit_talk_delivery_from_finalization,
@@ -101,7 +96,10 @@ from src.autoslice.redelivery_baseline_ownership import (
 from src.autoslice.chat_authority_ownership import (
     suppress_chat_authority_owned_self_heal_findings,
 )
-from src.autoslice.redelivery_subtitle_baseline import apply_redelivery_subtitle_baseline
+from src.autoslice.redelivery_full_window_replay import (
+    FullWindowReplayError,
+    replay_baseline_for_final_recut,
+)
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
     validate_recovery_publication_authority,
@@ -114,7 +112,6 @@ from src.autoslice.unreadable_cue_drop_stage import (
 )
 from src.autoslice.source_subtitle_truth import (
     apply_source_subtitle_truth,
-    source_truth_owner_windows,
 )
 from src.autoslice.source_fact_review import source_fact_review_passes
 from src.autoslice.source_fact_rescore_provenance import (
@@ -590,180 +587,6 @@ def _audit_deferred_exact_replay_reverification(
     return result
 
 
-def _full_window_protected_windows(
-    protected_windows: list[tuple[int, int]],
-    *,
-    final_start_ms: int,
-    padded_content_start_ms: int,
-) -> list[tuple[int, int]]:
-    """Translate final-local truth drops to the padded replay coordinate grid."""
-
-    full_offset_ms = final_start_ms - padded_content_start_ms
-    return [
-        (start_ms + full_offset_ms, end_ms + full_offset_ms)
-        for start_ms, end_ms in protected_windows
-    ]
-
-
-def _canonical_json_sha256(value: object) -> str:
-    return "sha256:" + hashlib.sha256(
-        json.dumps(
-            value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
-    ).hexdigest()
-
-
-def _project_full_window_baseline_audit_to_final_delivery(
-    audit: dict,
-    *,
-    final_start_ms: int,
-    final_end_ms: int,
-) -> None:
-    """Keep the sealed source replay while exposing only delivery-local owners.
-
-    Exact v2 replay's native audit uses the full padded-window cue grid.  The
-    final owner verifier, deferred-language resolver, and self-heal suppressor
-    intentionally consume ``mappings`` / ``owned_intervals`` against the
-    final delivery SRT instead.  Preserve the source grid under a content hash,
-    then project the active fields with the same clipping rule as
-    ``_write_source_range_srt``.
-    """
-
-    source_mappings = audit.get("mappings")
-    source_owned_intervals = audit.get("owned_intervals")
-    source_protected_intervals = audit.get("protected_intervals")
-    if not all(
-        isinstance(value, list)
-        for value in (
-            source_mappings,
-            source_owned_intervals,
-            source_protected_intervals,
-        )
-    ):
-        raise SystemExit("REDELIVERY_BASELINE_FULL_REPLAY_AUDIT_INVALID")
-    full_source_projection = {
-        "schema_version": "redelivery-baseline-full-source-replay.v1",
-        "mappings": deepcopy(source_mappings),
-        "owned_intervals": deepcopy(source_owned_intervals),
-        "protected_intervals": deepcopy(source_protected_intervals),
-    }
-    active_mappings: list[dict] = []
-    omitted_context_mappings: list[dict] = []
-    for mapping in source_mappings:
-        if not isinstance(mapping, Mapping):
-            raise SystemExit("REDELIVERY_BASELINE_FULL_REPLAY_MAPPING_INVALID")
-        start_ms = mapping.get("start_ms")
-        end_ms = mapping.get("end_ms")
-        if (
-            isinstance(start_ms, bool)
-            or isinstance(end_ms, bool)
-            or not isinstance(start_ms, int)
-            or not isinstance(end_ms, int)
-            or end_ms <= start_ms
-        ):
-            raise SystemExit("REDELIVERY_BASELINE_FULL_REPLAY_MAPPING_INVALID")
-        clipped_start_ms = max(start_ms, final_start_ms)
-        clipped_end_ms = min(end_ms, final_end_ms)
-        if clipped_end_ms <= clipped_start_ms:
-            omitted_context_mappings.append(
-                {
-                    "baseline_cue_index": mapping.get("baseline_cue_index"),
-                    "source_start_ms": start_ms,
-                    "source_end_ms": end_ms,
-                    "reason": "OUTSIDE_FINAL_DELIVERY",
-                }
-            )
-            continue
-        if (
-            clipped_start_ms - final_start_ms <= BOUNDARY_CUE_START_TOLERANCE_MS
-            and clipped_end_ms - clipped_start_ms
-            <= BOUNDARY_CLIPPED_CUE_MAX_VISIBLE_MS
-        ):
-            omitted_context_mappings.append(
-                {
-                    "baseline_cue_index": mapping.get("baseline_cue_index"),
-                    "source_start_ms": start_ms,
-                    "source_end_ms": end_ms,
-                    "reason": "BOUNDARY_FLASH_FRAGMENT_OMITTED",
-                }
-            )
-            continue
-        projected = deepcopy(dict(mapping))
-        projected.update(
-            {
-                "start_ms": clipped_start_ms - final_start_ms,
-                "end_ms": clipped_end_ms - final_start_ms,
-                "full_source_start_ms": start_ms,
-                "full_source_end_ms": end_ms,
-            }
-        )
-        active_mappings.append(projected)
-
-    active_owned_intervals: list[dict[str, int]] = []
-    for interval in source_owned_intervals:
-        if not isinstance(interval, Mapping):
-            raise SystemExit("REDELIVERY_BASELINE_FULL_REPLAY_OWNED_INTERVAL_INVALID")
-        start_ms = interval.get("start_ms")
-        end_ms = interval.get("end_ms")
-        if (
-            isinstance(start_ms, bool)
-            or isinstance(end_ms, bool)
-            or not isinstance(start_ms, int)
-            or not isinstance(end_ms, int)
-            or end_ms <= start_ms
-        ):
-            raise SystemExit("REDELIVERY_BASELINE_FULL_REPLAY_OWNED_INTERVAL_INVALID")
-        clipped_start_ms = max(start_ms, final_start_ms)
-        clipped_end_ms = min(end_ms, final_end_ms)
-        if clipped_end_ms <= clipped_start_ms or (
-            clipped_start_ms - final_start_ms <= BOUNDARY_CUE_START_TOLERANCE_MS
-            and clipped_end_ms - clipped_start_ms
-            <= BOUNDARY_CLIPPED_CUE_MAX_VISIBLE_MS
-        ):
-            continue
-        active_owned_intervals.append(
-            {
-                "start_ms": clipped_start_ms - final_start_ms,
-                "end_ms": clipped_end_ms - final_start_ms,
-            }
-        )
-
-    active_protected_intervals: list[dict[str, int]] = []
-    for interval in source_protected_intervals:
-        if not isinstance(interval, Mapping):
-            raise SystemExit("REDELIVERY_BASELINE_FULL_REPLAY_PROTECTED_INTERVAL_INVALID")
-        start_ms = interval.get("start_ms")
-        end_ms = interval.get("end_ms")
-        if (
-            isinstance(start_ms, bool)
-            or isinstance(end_ms, bool)
-            or not isinstance(start_ms, int)
-            or not isinstance(end_ms, int)
-            or end_ms <= start_ms
-        ):
-            raise SystemExit("REDELIVERY_BASELINE_FULL_REPLAY_PROTECTED_INTERVAL_INVALID")
-        clipped_start_ms = max(start_ms, final_start_ms)
-        clipped_end_ms = min(end_ms, final_end_ms)
-        if clipped_start_ms < clipped_end_ms:
-            active_protected_intervals.append(
-                {
-                    "start_ms": clipped_start_ms - final_start_ms,
-                    "end_ms": clipped_end_ms - final_start_ms,
-                }
-            )
-    audit["full_source_replay"] = full_source_projection
-    audit["full_source_replay_sha256"] = _canonical_json_sha256(
-        full_source_projection
-    )
-    audit["mappings"] = active_mappings
-    audit["owned_intervals"] = active_owned_intervals
-    audit["protected_intervals"] = active_protected_intervals
-    audit["full_source_mapped_cue_count"] = len(source_mappings)
-    audit["mapped_cue_count"] = len(active_mappings)
-    audit["omitted_context_mapping_count"] = len(omitted_context_mappings)
-    audit["omitted_context_mappings"] = omitted_context_mappings
-
-
 def _materialize_final_recut(
     *,
     spec: dict,
@@ -865,126 +688,22 @@ def _materialize_final_recut(
             if isinstance(row, Mapping)
         ]
         truth_reapply = bool(truth_rows)
-        protected_windows: list[tuple[int, int]] = []
-        # A dropped hallucination no longer has a current cue to align against
-        # its old baseline cue, so that exact deletion window must be excluded
-        # from both sides of the one-to-one mapper.  Every text-bearing truth
-        # window is intentionally *not* protected: restore the entire reviewed
-        # lexical baseline first, then replay every higher-authority truth.
-        # Otherwise one canonical mention anywhere in a broad entity window
-        # can hide a new wrong variant in a sibling cue (毁神/鼠神 incident).
-        for key in ("applied", "satisfied"):
-            for row in truth_audit.get(key) or []:
-                if row.get("action") != "drop_cue":
-                    continue
-                for owner_start, owner_end in source_truth_owner_windows(row):
-                    start_ms = max(0, owner_start - final_start)
-                    end_ms = min(
-                        final_end - final_start,
-                        owner_end - final_start,
-                    )
-                    if start_ms < end_ms:
-                        protected_windows.append((start_ms, end_ms))
-        exact_full_window_replay = bool(
-            v2_source_binding is not None
-            and baseline_config.get("exact_interval_replay") is True
-            and baseline_config.get("absolute_source_start_ms")
-            == v2_source_binding.content_absolute_start_ms
-            and baseline_config.get("absolute_source_end_ms")
-            == v2_source_binding.content_absolute_end_ms
-        )
-        if exact_full_window_replay:
-            # ``protected_windows`` were derived relative to the final crop.
-            # The baseline call below instead sees the whole padded content
-            # window, so translate them before attesting ownership.
-            protected_windows = _full_window_protected_windows(
-                protected_windows,
-                final_start_ms=final_start,
-                padded_content_start_ms=v2_source_binding.padded_content_start_ms,
-            )
-        full_path: Path | None = None
-        owns_full_path = False
-        current_source_start_ms: int | None = None
-        current_source_end_ms: int | None = None
-        current_source_recording_basename: str | None = None
-        current_source_sha256: str | None = None
-        if v2_source_binding is not None:
-            current_source_start_ms = v2_source_binding.absolute_source_start_ms
-            current_source_end_ms = v2_source_binding.absolute_source_end_ms
-            current_source_recording_basename = v2_source_binding.source_recording_basename
-            current_source_sha256 = v2_source_binding.source_sha256
-            if exact_full_window_replay:
-                current_source_start_ms = v2_source_binding.content_absolute_start_ms
-                current_source_end_ms = v2_source_binding.content_absolute_end_ms
         try:
-            if exact_full_window_replay:
-                # Exact v2 authority owns the whole content/padded window.
-                # Replay it before the selected delivery crop; applying it to
-                # only the crop falsely reports reviewed cues as cut.
-                full_path = recut_dir / f".{cid}.baseline-full-window.srt"
-                try:
-                    os.lstat(full_path)
-                except FileNotFoundError:
-                    pass
-                else:
-                    raise SystemExit(
-                        "REDELIVERY_BASELINE_FULL_REPLAY_TEMP_PATH_EXISTS"
-                    )
-                owns_full_path = True
-                adapters.write_source_range_srt(
-                    sanitized,
-                    v2_source_binding.padded_content_start_ms,
-                    v2_source_binding.padded_content_end_ms,
-                    full_path,
-                )
-                current_text = full_path.read_text(encoding="utf-8")
-            else:
-                current_text = subtitle_path.read_text(encoding="utf-8")
-            output_text, redelivery_baseline_audit = apply_redelivery_subtitle_baseline(
-                current_text,
+            output_text, redelivery_baseline_audit = replay_baseline_for_final_recut(
+                truth_audit=truth_audit,
+                recut_dir=recut_dir,
+                cid=cid,
+                sanitized=sanitized,
+                binding=v2_source_binding,
                 config=baseline_config,
                 spec_parent=(spec_parent or Path.cwd()),
-                protected_windows=protected_windows,
-                current_source_start_ms=current_source_start_ms,
-                current_source_end_ms=current_source_end_ms,
-                current_source_recording_basename=current_source_recording_basename,
-                current_source_sha256=current_source_sha256,
+                final_start_ms=final_start,
+                final_end_ms=final_end,
+                subtitle_path=subtitle_path,
+                write_source_range_srt=adapters.write_source_range_srt,
             )
-            if exact_full_window_replay and redelivery_baseline_audit["status"] != "FAILED":
-                full_cues = [
-                SourceCue(
-                    f"redelivery_full_{index:04d}",
-                    v2_source_binding.padded_content_start_ms + cue.start_ms,
-                    v2_source_binding.padded_content_start_ms + cue.end_ms,
-                    cue.text.strip(), "zh", "speech", 1.0,
-                )
-                for index, cue in enumerate(parse_srt_cues(output_text), start=1)
-                if cue.text.strip()
-                ]
-                adapters.write_source_range_srt(full_cues, final_start, final_end, subtitle_path)
-                output_text = subtitle_path.read_text(encoding="utf-8")
-                redelivery_baseline_audit["final_delivery_projection"] = {
-                    "absolute_source_start_ms": v2_source_binding.absolute_source_start_ms,
-                    "absolute_source_end_ms": v2_source_binding.absolute_source_end_ms,
-                }
-                redelivery_baseline_audit["exact_replay_then_final_crop"] = True
-                _project_full_window_baseline_audit_to_final_delivery(
-                    redelivery_baseline_audit,
-                    final_start_ms=final_start,
-                    final_end_ms=final_end,
-                )
-        finally:
-            if owns_full_path and full_path is not None:
-                try:
-                    full_stat = os.lstat(full_path)
-                except FileNotFoundError:
-                    pass
-                else:
-                    if not stat.S_ISREG(full_stat.st_mode):
-                        raise SystemExit(
-                            "REDELIVERY_BASELINE_FULL_REPLAY_TEMP_PATH_UNSAFE"
-                        )
-                    full_path.unlink()
+        except FullWindowReplayError as exc:
+            raise SystemExit(str(exc)) from exc
         redelivery_baseline_audit_path = (
             recut_dir / f"{cid}.redelivery-baseline.json"
         )
