@@ -17,12 +17,17 @@ source-fact provider 实际被调用，只有在私有 after-image 已把相同�
 receipt 在这一步之前失败时该列表为空。它不是 release authority。
 
 APPLY 先在 runner commit lease 之外冻结 authority/runtime preimage、调用受 runtime-local
-cross-process provider slots 限流的 source-fact/cover adapter，并把通过 formal gates 的 after-image
-写成 create-only、hash-bound、`upload_enabled=false` 的私有 intended store；其后才短取
+cross-process provider slots 限流的 source-fact/cover adapter，并在 private stage **成功清理后**才把
+通过 formal gates 的 after-image 写成 create-only、hash-bound、`upload_enabled=false` 的私有 intended
+store；stage cleanup 失败时没有可提交 handle/store，仍可写上述 sanitized diagnostic receipt。其后才短取
 `RunnerCommitLease` 重新读取 runtime/deployed authority，确认所有 target/state preimage 仍精确
-一致，创建既有 prepared journal 并安装。漂移、busy、store hash/inventory/symlink 异常都在任何
-formal journal/target/state 写前拒绝；已有 formal journal 的 resume 不调用 provider。provider slots
-默认容量 2，`AUTOSLICE_PROVIDER_CONCURRENCY` 只接受 1–5，且不包 deterministic audit/manifest replay。
+一致（包括 prepared store 内完整 `runtime_preimages`），创建既有 prepared journal 并安装。漂移、busy、
+store hash/inventory/symlink 异常都在任何
+formal journal/target/state 写前拒绝；已有 formal journal、或恰好一个与 fresh runtime preimages 一致的
+private prepared store 的 resume 都不调用 provider；prepared store 缺失时才允许新的 prepare，多个或任何
+无效 store 一律拒绝。provider slots
+默认容量 2，饱和时有限等待而非立即失败；`AUTOSLICE_PROVIDER_CONCURRENCY` 只接受 1–5，
+`AUTOSLICE_PROVIDER_WAIT_SECONDS` 默认 600、只接受 1–900，且不包 deterministic audit/manifest replay。
 
 scripts/publication_readiness_graph.py 输出所有 current unpublished state candidates 与 registry
 hold 行的只读观察图。它复用 registry、upload ledger、manifest replay 与当前 state 门；

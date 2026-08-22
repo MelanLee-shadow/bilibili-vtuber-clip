@@ -1165,6 +1165,22 @@ def _prepared_parent(inputs: RuntimeInputs) -> Path:
     return _journal_root(inputs).parent / "prepared"
 
 
+def _runtime_preimages(inputs: RuntimeInputs) -> dict[str, dict[str, str]]:
+    """Exact authority/runtime bytes that a prepared store is allowed to replay."""
+
+    sealed = {
+        role: {
+            "path": str(path),
+            "sha256": str(
+                _descriptor(inputs.authority["artifacts"][role], label=f"artifact {role}")["sha256"]
+            ),
+        }
+        for role, path in inputs.artifact_paths.items()
+    }
+    sealed["state"] = {"path": str(inputs.state_path), "sha256": inputs.state_sha256}
+    return sealed
+
+
 def _prepared_body(
     *, inputs: RuntimeInputs, targets: Mapping[Path, bytes], metadata: Mapping[str, object]
 ) -> dict[str, object]:
@@ -1179,21 +1195,13 @@ def _prepared_body(
         }
         for path, payload in sorted(targets.items(), key=lambda row: str(row[0]))
     ]
-    sealed = {
-        role: {
-            "path": str(path),
-            "sha256": str(_descriptor(inputs.authority["artifacts"][role], label=f"artifact {role}")["sha256"]),
-        }
-        for role, path in inputs.artifact_paths.items()
-    }
-    sealed["state"] = {"path": str(inputs.state_path), "sha256": inputs.state_sha256}
     return {
         "schema_version": PREPARED_SCHEMA_VERSION,
         "candidate_id": CANDIDATE_ID,
         "recording_date": RECORDING_DATE,
         "upload_enabled": False,
         "authority_sha256": inputs.authority["authority_sha256"],
-        "runtime_preimages": sealed,
+        "runtime_preimages": _runtime_preimages(inputs),
         "targets": target_rows,
         "metadata": dict(metadata),
     }
@@ -1205,14 +1213,37 @@ def _write_prepared_after_image(
     body = _prepared_body(inputs=inputs, targets=targets, metadata=metadata)
     digest = _canonical_sha256(body)
     root = _prepared_parent(inputs) / digest[7:]
-    _private_journal_root(root, create=True)
     document = {**body, "prepared_sha256": digest}
-    _write_new(root / "prepared.json", _json_bytes(document))
+    payload = _json_bytes(document)
+    _private_journal_root(root, create=True)
+    path = root / "prepared.json"
+
+    def exact_existing() -> bool:
+        _require_regular(path, label="prepared Qixi after-image")
+        info = os.lstat(path)
+        if stat.S_IMODE(info.st_mode) != 0o600:
+            raise QixiPostCorrectionPublicSurfaceError("prepared Qixi after-image mode drifts")
+        if {entry.name for entry in root.iterdir()} != {"prepared.json"}:
+            raise QixiPostCorrectionPublicSurfaceError("prepared Qixi after-image inventory drifts")
+        try:
+            return path.read_bytes() == payload
+        except OSError as exc:
+            raise QixiPostCorrectionPublicSurfaceError("prepared Qixi after-image is unreadable") from exc
+
+    if os.path.lexists(path):
+        if not exact_existing():
+            raise QixiPostCorrectionPublicSurfaceError("prepared Qixi after-image collision drifts")
+    else:
+        try:
+            _write_new(path, payload)
+        except FileExistsError:
+            if not exact_existing():
+                raise QixiPostCorrectionPublicSurfaceError("prepared Qixi after-image collision drifts") from None
     return PreparedQixiAfterImage(root=root, prepared_sha256=digest)
 
 
 def _read_prepared_after_image(
-    prepared: PreparedQixiAfterImage, *, authority: Mapping[str, object]
+    prepared: PreparedQixiAfterImage, *, authority: Mapping[str, object], inputs: RuntimeInputs
 ) -> tuple[dict[Path, bytes], dict[str, object]]:
     """Replay a hash-bound intended transaction without trusting its handle."""
 
@@ -1250,6 +1281,7 @@ def _read_prepared_after_image(
         or document["recording_date"] != RECORDING_DATE
         or document["upload_enabled"] is not False
         or document["authority_sha256"] != authority["authority_sha256"]
+        or document["runtime_preimages"] != _runtime_preimages(inputs)
         or not isinstance(document["targets"], list)
         or not isinstance(document["metadata"], Mapping)
     ):
@@ -1273,6 +1305,51 @@ def _read_prepared_after_image(
     return targets, dict(document["metadata"])
 
 
+def _prepared_handles_for_runtime(inputs: RuntimeInputs) -> list[PreparedQixiAfterImage]:
+    """Return every valid private prepared store for this exact fresh runtime."""
+
+    parent = _prepared_parent(inputs)
+    if not os.path.lexists(parent):
+        return []
+    _private_journal_root(parent, create=False)
+    handles: list[PreparedQixiAfterImage] = []
+    for root in sorted(parent.iterdir(), key=lambda path: path.name):
+        if len(root.name) != 64:
+            raise QixiPostCorrectionPublicSurfaceError("prepared Qixi after-image digest namespace drifts")
+        try:
+            int(root.name, 16)
+        except ValueError as exc:
+            raise QixiPostCorrectionPublicSurfaceError(
+                "prepared Qixi after-image digest namespace drifts"
+            ) from exc
+        handle = PreparedQixiAfterImage(root=root, prepared_sha256="sha256:" + root.name)
+        # Do not skip malformed/stale entries: an ambiguous recovery namespace
+        # must not silently issue a new provider request.
+        _read_prepared_after_image(handle, authority=inputs.authority, inputs=inputs)
+        handles.append(handle)
+    return handles
+
+
+def _commit_prepared_after_image_under_lease(
+    prepared: PreparedQixiAfterImage, *, inputs: RuntimeInputs
+) -> dict[str, object]:
+    """Convert one fresh private store to the existing formal Qixi journal."""
+
+    journal_root = _journal_root(inputs)
+    existing = _load_journal(journal_root, authority=inputs.authority)
+    if existing is not None:
+        status = _commit_journal(journal_root, existing, authority=inputs.authority)
+        return _finalize_result(status, journal_root, existing)
+    targets, metadata = _read_prepared_after_image(
+        prepared, authority=inputs.authority, inputs=inputs
+    )
+    # This replays every exact runtime preimage before it creates the first
+    # formal journal inode; drift leaves target/state/journal untouched.
+    journal = _write_prepared_journal(journal_root, inputs=inputs, targets=targets, metadata=metadata)
+    status = _commit_journal(journal_root, journal, authority=inputs.authority)
+    return _finalize_result(status, journal_root, journal)
+
+
 def prepare_qixi_after_image(
     *,
     repo_root: Path = ROOT,
@@ -1281,7 +1358,8 @@ def prepare_qixi_after_image(
     authority: Mapping[str, object] | None = None,
     _stage_publish: Callable[..., dict[str, object] | None] = _stage_publish_draft,
     _stage_observation: object | None = None,
-    _failure_observer: Callable[[RuntimeInputs, Path, BaseException, Mapping[Path, bytes] | None, bool], None] | None = None,
+    _failure_observer: Callable[[RuntimeInputs, Path, BaseException, Mapping[Path, bytes] | None, bool, object | None], None] | None = None,
+    _failure_stage_snapshot: Callable[[Path], object] | None = None,
 ) -> PreparedQixiAfterImage:
     """Build and seal a private after-image without runner/state/journal writes."""
 
@@ -1290,9 +1368,10 @@ def prepare_qixi_after_image(
     inputs = validate_runtime(normalized, repo_root=repo_root, runtime_root=runtime_root)
     stage_root = Path(tempfile.mkdtemp(prefix=".qixi-public-surface-stage-", dir=inputs.artifact_paths["record"].parent))
     targets: Mapping[Path, bytes] | None = None
+    metadata: Mapping[str, object] | None = None
     failure: BaseException | None = None
-    prepared: PreparedQixiAfterImage | None = None
     cleanup_failed = False
+    stage_snapshot: object | None = None
     try:
         targets, metadata = _build_after_image(
             inputs,
@@ -1304,25 +1383,38 @@ def prepare_qixi_after_image(
         _assert_prepare_preimages(inputs, targets)
         before = {path: _preimage_snapshot(path, label="prepared after-image preimage")[0] for path in targets}
         _validate_after_image(authority=normalized, before=before, after=targets)
-        prepared = _write_prepared_after_image(inputs=inputs, targets=targets, metadata=metadata)
     except BaseException as exc:
         failure = exc
     finally:
+        # Capture only a caller-supplied sanitized/hash-only view while the
+        # private stage still exists. The callback never receives raw names,
+        # media, prompts, completions, or provider output.
+        if _failure_stage_snapshot is not None:
+            try:
+                stage_snapshot = _failure_stage_snapshot(stage_root)
+            except BaseException:
+                stage_snapshot = None
         try:
             _remove_private_stage(stage_root)
         except BaseException:
             cleanup_failed = True
+    if cleanup_failed and failure is None:
+        failure = QixiPostCorrectionPublicSurfaceError(
+            "private stage cleanup failed; prepared Qixi after-image is unavailable"
+        )
     if failure is not None:
         if _failure_observer is not None:
             try:
-                _failure_observer(inputs, stage_root, failure, targets, cleanup_failed)
+                _failure_observer(inputs, stage_root, failure, targets, cleanup_failed, stage_snapshot)
             except BaseException:
                 pass
         raise failure
-    assert prepared is not None
-    # A fully hash-bound intended store is safe to commit even if a stale
-    # private stage residue needs manual cleanup; it is not a target/journal.
-    return prepared
+    assert targets is not None and metadata is not None
+    # Do not leave a committable intended store until the provider/private
+    # staging surface is fully gone. A cleanup failure therefore has no path
+    # to formal journal or target writes, while the observer above retains its
+    # sanitized diagnostic evidence.
+    return _write_prepared_after_image(inputs=inputs, targets=targets, metadata=metadata)
 
 
 def commit_qixi_after_image(
@@ -1335,28 +1427,21 @@ def commit_qixi_after_image(
 ) -> dict[str, object]:
     """Install one prepared Qixi after-image under a short runner commit lease."""
 
-    if reload_deployed_authority:
-        loaded = load_deployed_authority(repo_root)
-        if authority is not None and loaded.get("authority_sha256") != authority.get("authority_sha256"):
-            raise QixiPostCorrectionPublicSurfaceError("deployed authority drifted before prepared commit")
-    else:
-        loaded = dict(authority) if authority is not None else load_deployed_authority(repo_root)
-    normalized = validate_authority(loaded)
     with _exclusive_runner_lock(runtime_root):
+        if reload_deployed_authority:
+            loaded = load_deployed_authority(repo_root)
+            if authority is not None and loaded.get("authority_sha256") != authority.get("authority_sha256"):
+                raise QixiPostCorrectionPublicSurfaceError("deployed authority drifted before prepared commit")
+        else:
+            loaded = dict(authority) if authority is not None else load_deployed_authority(repo_root)
+        normalized = validate_authority(loaded)
         inputs = validate_runtime(normalized, repo_root=repo_root, runtime_root=runtime_root)
         journal_root = _journal_root(inputs)
         existing = _load_journal(journal_root, authority=normalized)
         if existing is not None:
             status = _commit_journal(journal_root, existing, authority=normalized)
             return _finalize_result(status, journal_root, existing)
-        targets, metadata = _read_prepared_after_image(prepared, authority=normalized)
-        # This replays every exact runtime preimage before it creates the first
-        # formal journal inode; drift leaves target/state/journal untouched.
-        journal = _write_prepared_journal(
-            journal_root, inputs=inputs, targets=targets, metadata=metadata
-        )
-        status = _commit_journal(journal_root, journal, authority=normalized)
-        return _finalize_result(status, journal_root, journal)
+        return _commit_prepared_after_image_under_lease(prepared, inputs=inputs)
 
 
 def _journal_sha256(journal: Mapping[str, object]) -> str:
@@ -1385,8 +1470,11 @@ def _private_journal_root(root: Path, *, create: bool) -> None:
             raise QixiPostCorrectionPublicSurfaceError("post-correction journal parent is unsafe")
         try:
             root.mkdir(mode=0o700)
-        except FileExistsError as exc:
-            raise QixiPostCorrectionPublicSurfaceError("post-correction journal root raced creation") from exc
+        except FileExistsError:
+            # The leaf can be a deterministic prepared digest created by a
+            # harmless retry. Revalidate it here; callers still require their
+            # exact create-only file/inventory below.
+            _private_journal_root(root, create=False)
 
 
 def _entry_role(target: Path, *, inputs: RuntimeInputs) -> str:
@@ -2092,7 +2180,8 @@ def _finalize_legacy(
     _stage_publish: Callable[..., dict[str, object] | None] = _stage_publish_draft,
     _runner_lock_held: bool = False,
     _stage_observation: object | None = None,
-    _prejournal_failure: Callable[[RuntimeInputs, Path, BaseException, Mapping[Path, bytes] | None, bool], None] | None = None,
+    _prejournal_failure: Callable[[RuntimeInputs, Path, BaseException, Mapping[Path, bytes] | None, bool, object | None], None] | None = None,
+    _prejournal_stage_snapshot: Callable[[Path], object] | None = None,
     _reload_deployed_authority: bool = False,
 ) -> dict[str, object]:
     """Plan (zero-write) or apply this one sealed public-surface closure."""
@@ -2108,11 +2197,29 @@ def _finalize_legacy(
         # A pre-existing formal journal is a recovery path: short lock, no
         # provider.  New provider work is deliberately below this branch.
         with _exclusive_runner_lock(runtime_root):
-            journal_root = _journal_root_from_authority(normalized)
-            journal = _load_journal(journal_root, authority=normalized)
+            commit_authority = normalized
+            if _reload_deployed_authority:
+                deployed = validate_authority(load_deployed_authority(repo_root))
+                if deployed["authority_sha256"] != normalized["authority_sha256"]:
+                    raise QixiPostCorrectionPublicSurfaceError(
+                        "deployed authority drifted before prepared commit"
+                    )
+                commit_authority = deployed
+            journal_root = _journal_root_from_authority(commit_authority)
+            journal = _load_journal(journal_root, authority=commit_authority)
             if journal is not None:
-                status = _commit_journal(journal_root, journal, authority=normalized)
+                status = _commit_journal(journal_root, journal, authority=commit_authority)
                 return _finalize_result(status, journal_root, journal)
+            fresh_inputs = validate_runtime(commit_authority, repo_root=repo_root, runtime_root=runtime_root)
+            prepared_handles = _prepared_handles_for_runtime(fresh_inputs)
+            if len(prepared_handles) > 1:
+                raise QixiPostCorrectionPublicSurfaceError(
+                    "prepared Qixi after-image recovery is ambiguous"
+                )
+            if len(prepared_handles) == 1:
+                return _commit_prepared_after_image_under_lease(
+                    prepared_handles[0], inputs=fresh_inputs
+                )
         try:
             prepared = prepare_qixi_after_image(
                 repo_root=repo_root,
@@ -2122,6 +2229,7 @@ def _finalize_legacy(
                 _stage_publish=_stage_publish,
                 _stage_observation=_stage_observation,
                 _failure_observer=_prejournal_failure,
+                _failure_stage_snapshot=_prejournal_stage_snapshot,
             )
         except BaseException:
             raise

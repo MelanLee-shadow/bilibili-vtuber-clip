@@ -371,6 +371,33 @@ def _unlink_owned(path: Path, *, device: int, inode: int, label: str) -> None:
     path.unlink()
 
 
+def _runner_lock_open_flags() -> int:
+    """Require kernel no-follow and close-on-exec for the global lease inode."""
+
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    cloexec = getattr(os, "O_CLOEXEC", None)
+    if not isinstance(nofollow, int) or not isinstance(cloexec, int):
+        raise QixiTransactionCoreError("runner lock safe open is unavailable")
+    return os.O_RDWR | os.O_CREAT | nofollow | cloexec
+
+
+def _same_safe_runner_lock(path: Path, descriptor: int, opened: os.stat_result) -> None:
+    try:
+        observed = os.lstat(path)
+        live = os.fstat(descriptor)
+    except OSError as exc:
+        raise QixiTransactionCoreError("runner lock cannot be revalidated") from exc
+    if (
+        not stat.S_ISREG(opened.st_mode)
+        or stat.S_ISLNK(observed.st_mode)
+        or not stat.S_ISREG(observed.st_mode)
+        or (observed.st_dev, observed.st_ino) != (opened.st_dev, opened.st_ino)
+        or (live.st_dev, live.st_ino) != (opened.st_dev, opened.st_ino)
+        or not stat.S_ISREG(live.st_mode)
+    ):
+        raise QixiTransactionCoreError("runner lock identity unsafe")
+
+
 @contextmanager
 def exclusive_runner_commit(runtime_root: Path):
     """Acquire one inode-validated, non-reentrant runner commit lease."""
@@ -380,20 +407,18 @@ def exclusive_runner_commit(runtime_root: Path):
 
     lock = runtime_root / "runner.lock"
     _safe_parent(lock)
-    descriptor = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        descriptor = os.open(lock, _runner_lock_open_flags(), 0o600)
+    except OSError as exc:
+        raise QixiTransactionCoreError("runner lock cannot be opened safely") from exc
     try:
         opened = os.fstat(descriptor)
-        observed = os.lstat(lock)
-        if (
-            not stat.S_ISREG(observed.st_mode)
-            or stat.S_ISLNK(observed.st_mode)
-            or (observed.st_dev, observed.st_ino) != (opened.st_dev, opened.st_ino)
-        ):
-            raise QixiTransactionCoreError("runner lock identity unsafe")
+        _same_safe_runner_lock(lock, descriptor, opened)
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise QixiTransactionCoreError("runner lock busy") from exc
+        _same_safe_runner_lock(lock, descriptor, opened)
         lease = RunnerCommitLease(
             runtime_root=runtime_root,
             lock_path=lock,

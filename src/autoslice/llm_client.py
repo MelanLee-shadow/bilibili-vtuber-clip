@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from src.autoslice.provider_slots import ProviderSlotBusy, ProviderSlotError, provider_slot
+from src.autoslice.provider_slots import ProviderSlotError, ProviderSlotTimeout, provider_slot
 
 LlmCall = Callable[[str], str]
 
@@ -74,8 +74,8 @@ def _provider_dispatch(call: Callable[[], str], configured_root: str | None = No
     try:
         with provider_slot(runtime_root):
             return call()
-    except ProviderSlotBusy as exc:
-        raise LlmCallError("provider capacity is busy") from exc
+    except ProviderSlotTimeout as exc:
+        raise LlmCallError("provider capacity wait timed out") from exc
     except ProviderSlotError as exc:
         raise LlmCallError("provider capacity is unavailable") from exc
 

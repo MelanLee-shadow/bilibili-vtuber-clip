@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -1114,6 +1115,106 @@ def test_qixi_commit_rejects_runtime_drift_before_formal_journal_or_target_write
     assert prepared.root.joinpath("prepared.json").is_file()
 
 
+def test_qixi_identical_prepared_writer_accepts_byte_identical_existing_store(
+    tmp_path: Path,
+) -> None:
+    repo, runtime, authority, _paths = _fixture(tmp_path)
+    prepared = closure.prepare_qixi_after_image(
+        repo_root=repo, runtime_root=runtime, authority=authority, _stage_publish=_fake_stage,
+    )
+    inputs = closure.validate_runtime(authority, repo_root=repo, runtime_root=runtime)
+    targets, metadata = closure._read_prepared_after_image(prepared, authority=authority, inputs=inputs)
+    retry = closure._write_prepared_after_image(inputs=inputs, targets=targets, metadata=metadata)
+    assert retry == prepared
+    assert {entry.name for entry in prepared.root.iterdir()} == {"prepared.json"}
+
+
+def test_qixi_resume_valid_private_prepared_store_commits_without_provider(tmp_path: Path) -> None:
+    repo, runtime, authority, _paths = _fixture(tmp_path)
+    prepared = closure.prepare_qixi_after_image(
+        repo_root=repo, runtime_root=runtime, authority=authority, _stage_publish=_fake_stage,
+    )
+    calls = 0
+
+    def provider_must_not_run(_prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("prepared-store resume called provider")
+
+    result = closure._finalize_legacy(
+        apply=True,
+        repo_root=repo,
+        runtime_root=runtime,
+        authority=authority,
+        source_fact_llm_call=provider_must_not_run,
+        _stage_publish=_fake_stage,
+    )
+    assert result["status"] == "APPLIED"
+    assert calls == 0
+    assert prepared.root.joinpath("prepared.json").is_file()
+
+
+def test_qixi_resume_rejects_ambiguous_private_prepared_stores_without_provider(
+    tmp_path: Path,
+) -> None:
+    repo, runtime, authority, _paths = _fixture(tmp_path)
+    prepared = closure.prepare_qixi_after_image(
+        repo_root=repo, runtime_root=runtime, authority=authority, _stage_publish=_fake_stage,
+    )
+    inputs = closure.validate_runtime(authority, repo_root=repo, runtime_root=runtime)
+    targets, metadata = closure._read_prepared_after_image(prepared, authority=authority, inputs=inputs)
+    second = closure._write_prepared_after_image(
+        inputs=inputs, targets=targets, metadata={**metadata, "retry_marker": "second"}
+    )
+    assert second != prepared
+    calls = 0
+
+    def provider_must_not_run(_prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("ambiguous prepared store called provider")
+
+    with pytest.raises(closure.QixiPostCorrectionPublicSurfaceError, match="recovery is ambiguous"):
+        closure._finalize_legacy(
+            apply=True,
+            repo_root=repo,
+            runtime_root=runtime,
+            authority=authority,
+            source_fact_llm_call=provider_must_not_run,
+            _stage_publish=_fake_stage,
+        )
+    assert calls == 0
+
+
+def test_qixi_resume_rejects_invalid_private_prepared_store_without_provider(tmp_path: Path) -> None:
+    repo, runtime, authority, _paths = _fixture(tmp_path)
+    inputs = closure.validate_runtime(authority, repo_root=repo, runtime_root=runtime)
+    root = closure._prepared_parent(inputs) / ("0" * 64)
+    root.parent.mkdir(parents=True, mode=0o700)
+    os.chmod(root.parent, 0o700)
+    root.mkdir(mode=0o700)
+    root.joinpath("prepared.json").write_bytes(b"{}\n")
+    os.chmod(root / "prepared.json", 0o600)
+    calls = 0
+
+    def provider_must_not_run(_prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("invalid prepared store called provider")
+
+    with pytest.raises(closure.QixiPostCorrectionPublicSurfaceError, match="prepared Qixi after-image"):
+        closure._finalize_legacy(
+            apply=True,
+            repo_root=repo,
+            runtime_root=runtime,
+            authority=authority,
+            source_fact_llm_call=provider_must_not_run,
+            _stage_publish=_fake_stage,
+        )
+    assert calls == 0
+    assert not closure._journal_root_from_authority(authority).exists()
+
+
 def test_qixi_commit_rejects_tampered_private_prepared_store_without_target_write(
     tmp_path: Path,
 ) -> None:
@@ -1126,6 +1227,35 @@ def test_qixi_commit_rejects_tampered_private_prepared_store_without_target_writ
     with pytest.raises(closure.QixiPostCorrectionPublicSurfaceError, match="prepared Qixi after-image"):
         closure.commit_qixi_after_image(
             prepared, repo_root=repo, runtime_root=runtime, authority=authority,
+        )
+    assert paths["record"].read_bytes() == before
+    assert not closure._journal_root_from_authority(authority).exists()
+
+
+def test_qixi_commit_rejects_rehashed_runtime_preimage_tamper_before_journal(
+    tmp_path: Path,
+) -> None:
+    repo, runtime, authority, paths = _fixture(tmp_path)
+    prepared = closure.prepare_qixi_after_image(
+        repo_root=repo, runtime_root=runtime, authority=authority, _stage_publish=_fake_stage,
+    )
+    before = paths["record"].read_bytes()
+    document = json.loads(prepared.root.joinpath("prepared.json").read_text())
+    document.pop("prepared_sha256")
+    assert isinstance(document["runtime_preimages"], dict)
+    assert isinstance(document["runtime_preimages"]["state"], dict)
+    document["runtime_preimages"]["state"]["sha256"] = "sha256:" + "f" * 64
+    replacement_digest = closure._canonical_sha256(document)
+    document["prepared_sha256"] = replacement_digest
+    replacement_root = prepared.root.parent / replacement_digest[7:]
+    prepared.root.rename(replacement_root)
+    replacement_root.joinpath("prepared.json").write_bytes(_json(document))
+    replacement = closure.PreparedQixiAfterImage(
+        root=replacement_root, prepared_sha256=replacement_digest
+    )
+    with pytest.raises(closure.QixiPostCorrectionPublicSurfaceError, match="prepared Qixi after-image binding drifts"):
+        closure.commit_qixi_after_image(
+            replacement, repo_root=repo, runtime_root=runtime, authority=authority,
         )
     assert paths["record"].read_bytes() == before
     assert not closure._journal_root_from_authority(authority).exists()
@@ -1167,13 +1297,63 @@ def test_qixi_commit_busy_lock_does_not_consume_prepared_store(tmp_path: Path) -
     assert prepared.root.joinpath("prepared.json").is_file()
 
 
+def test_qixi_commit_reloads_deployed_authority_inside_lease_and_rejects_race(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, runtime, authority, paths = _fixture(tmp_path)
+    prepared = closure.prepare_qixi_after_image(
+        repo_root=repo, runtime_root=runtime, authority=authority, _stage_publish=_fake_stage,
+    )
+    before_record = paths["record"].read_bytes()
+    paths["state"].write_bytes(_json({"picks": [{"candidate_id": closure.CANDIDATE_ID, "title": "new deploy"}]}))
+    deployed = copy.deepcopy(authority)
+    state_descriptor = _descriptor(paths["state"])
+    state_descriptor["mode"] = paths["state"].stat().st_mode & 0o777
+    deployed["state_file"] = state_descriptor
+    deployed["sealed_before"]["state"] = dict(state_descriptor)
+    deployed["authority_sha256"] = closure._canonical_sha256(
+        {key: value for key, value in deployed.items() if key != "authority_sha256"}
+    )
+    assert closure.validate_authority(deployed)["authority_sha256"] != authority["authority_sha256"]
+
+    held = False
+    original_lease = closure._exclusive_runner_lock
+
+    @contextmanager
+    def tracked_lease(root: Path):
+        nonlocal held
+        with original_lease(root):
+            held = True
+            try:
+                yield
+            finally:
+                held = False
+
+    def changed_deployed_authority(_repo: Path) -> dict[str, object]:
+        assert held, "deployed authority must be reloaded under runner lease"
+        return deployed
+
+    monkeypatch.setattr(closure, "_exclusive_runner_lock", tracked_lease)
+    monkeypatch.setattr(closure, "load_deployed_authority", changed_deployed_authority)
+    with pytest.raises(closure.QixiPostCorrectionPublicSurfaceError, match="deployed authority drifted"):
+        closure.commit_qixi_after_image(
+            prepared,
+            repo_root=repo,
+            runtime_root=runtime,
+            authority=authority,
+            reload_deployed_authority=True,
+        )
+    assert paths["record"].read_bytes() == before_record
+    assert not closure._journal_root_from_authority(authority).exists()
+
+
 def test_qixi_existing_formal_journal_resumes_without_provider(tmp_path: Path) -> None:
     repo, runtime, authority, _paths = _fixture(tmp_path)
     prepared = closure.prepare_qixi_after_image(
         repo_root=repo, runtime_root=runtime, authority=authority, _stage_publish=_fake_stage,
     )
     inputs = closure.validate_runtime(authority, repo_root=repo, runtime_root=runtime)
-    targets, metadata = closure._read_prepared_after_image(prepared, authority=authority)
+    targets, metadata = closure._read_prepared_after_image(prepared, authority=authority, inputs=inputs)
     root = closure._journal_root(inputs)
     closure._write_prepared_journal(root, inputs=inputs, targets=targets, metadata=metadata)
     calls = 0
@@ -1193,6 +1373,67 @@ def test_qixi_existing_formal_journal_resumes_without_provider(tmp_path: Path) -
     )
     assert result["status"] == "APPLIED"
     assert calls == 0
+
+
+def test_qixi_existing_journal_reloads_deployed_authority_under_lease_before_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, runtime, authority, paths = _fixture(tmp_path)
+    prepared = closure.prepare_qixi_after_image(
+        repo_root=repo, runtime_root=runtime, authority=authority, _stage_publish=_fake_stage,
+    )
+    inputs = closure.validate_runtime(authority, repo_root=repo, runtime_root=runtime)
+    targets, metadata = closure._read_prepared_after_image(prepared, authority=authority, inputs=inputs)
+    root = closure._journal_root(inputs)
+    closure._write_prepared_journal(root, inputs=inputs, targets=targets, metadata=metadata)
+    before_record = paths["record"].read_bytes()
+    paths["state"].write_bytes(_json({"picks": [{"candidate_id": closure.CANDIDATE_ID, "title": "new deploy"}]}))
+    deployed = copy.deepcopy(authority)
+    state_descriptor = _descriptor(paths["state"])
+    state_descriptor["mode"] = paths["state"].stat().st_mode & 0o777
+    deployed["state_file"] = state_descriptor
+    deployed["sealed_before"]["state"] = dict(state_descriptor)
+    deployed["authority_sha256"] = closure._canonical_sha256(
+        {key: value for key, value in deployed.items() if key != "authority_sha256"}
+    )
+    held = False
+    original_lease = closure._exclusive_runner_lock
+
+    @contextmanager
+    def tracked_lease(runtime_root: Path):
+        nonlocal held
+        with original_lease(runtime_root):
+            held = True
+            try:
+                yield
+            finally:
+                held = False
+
+    def changed_deployed_authority(_repo: Path) -> dict[str, object]:
+        assert held, "resume must reload deployed authority under runner lease"
+        return deployed
+
+    calls = 0
+
+    def provider_must_not_run(_prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("journal resume called provider")
+
+    monkeypatch.setattr(closure, "_exclusive_runner_lock", tracked_lease)
+    monkeypatch.setattr(closure, "load_deployed_authority", changed_deployed_authority)
+    with pytest.raises(closure.QixiPostCorrectionPublicSurfaceError, match="deployed authority drifted"):
+        closure._finalize_legacy(
+            apply=True,
+            repo_root=repo,
+            runtime_root=runtime,
+            authority=authority,
+            source_fact_llm_call=provider_must_not_run,
+            _reload_deployed_authority=True,
+        )
+    assert calls == 0
+    assert paths["record"].read_bytes() == before_record
+    assert json.loads(root.joinpath("journal.json").read_text())["status"] == "PREPARED"
 
 
 def test_private_stage_manifest_hashes_untrusted_names_without_echoing_them(tmp_path: Path) -> None:
@@ -1369,7 +1610,8 @@ def test_apply_build_failure_reports_cleanup_without_masking_the_gate_error(
     )
     receipts = list(root.glob("diagnostic-*.json"))
     assert len(receipts) == 1
-    matrix = {row["name"]: row for row in json.loads(receipts[0].read_text())["matrix"]["predicates"]}
+    receipt = json.loads(receipts[0].read_text())
+    matrix = {row["name"]: row for row in receipt["matrix"]["predicates"]}
     assert matrix["stage_build"]["status"] == "FAIL"
     assert matrix["stage_cleanup"] == {
         "name": "stage_cleanup",
@@ -1379,27 +1621,39 @@ def test_apply_build_failure_reports_cleanup_without_masking_the_gate_error(
     assert all(path.read_bytes() == before[name] for name, path in paths.items())
     assert not list(paths["record"].parent.glob("qixi_post_correction_public_surface/*/journal.json"))
     assert bool(list(paths["record"].parent.glob(".qixi-public-surface-stage-*"))) is cleanup_fails
+    if not cleanup_fails:
+        # The stage is already gone, but the receipt retains only anonymous
+        # role/hash/byte evidence captured before cleanup.
+        assert receipt["stage_manifest_status"] == "AVAILABLE"
+        assert receipt["stage_manifest"]
+        encoded = json.dumps(receipt["stage_manifest"], ensure_ascii=False)
+        assert "qixi-public-surface-stage" not in encoded
+        assert "prompt" not in encoded
+        assert all(set(row) == {"relative_role", "relative_path_sha256", "sha256", "bytes"} for row in receipt["stage_manifest"])
 
 
-def test_apply_stage_cleanup_does_not_mask_a_prepared_journal(
+def test_apply_stage_cleanup_failure_blocks_prepared_handle_and_formal_writes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    repo, runtime, authority, _paths = _fixture(tmp_path)
+    repo, runtime, authority, paths = _fixture(tmp_path)
+    before = {name: path.read_bytes() for name, path in paths.items()}
     monkeypatch.setattr(
         closure,
         "_remove_private_stage",
         lambda _stage: (_ for _ in ()).throw(OSError("cleanup unavailable")),
     )
-    result = closure._finalize_legacy(
-        apply=True,
-        repo_root=repo,
-        runtime_root=runtime,
-        authority=authority,
-        _stage_publish=_fake_stage,
-    )
-    assert result["status"] in {"APPLIED", "APPLIED_WITH_CLEANUP_RESIDUE"}
+    with pytest.raises(closure.QixiPostCorrectionPublicSurfaceError, match="private stage cleanup failed"):
+        closure._finalize_legacy(
+            apply=True,
+            repo_root=repo,
+            runtime_root=runtime,
+            authority=authority,
+            _stage_publish=_fake_stage,
+        )
     root = closure._journal_root_from_authority(authority)
-    assert json.loads((root / "journal.json").read_text())["status"] == "COMMITTED"
+    assert not root.exists()
+    assert not root.parent.joinpath("prepared").exists()
+    assert all(path.read_bytes() == before[name] for name, path in paths.items())
 
 
 def test_diagnostic_deployed_seal_keeps_internal_and_raw_authority_hashes_distinct(

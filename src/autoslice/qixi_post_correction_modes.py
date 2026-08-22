@@ -693,9 +693,19 @@ def _run_apply(
             error: BaseException,
             targets: Mapping[Path, bytes] | None,
             cleanup_failed: bool,
+            stage_snapshot: object | None,
         ) -> None:
             del error
             try:
+                captured_manifest: list[dict[str, object]] | None = None
+                captured_status: str | None = None
+                if (
+                    isinstance(stage_snapshot, tuple)
+                    and len(stage_snapshot) == 2
+                    and isinstance(stage_snapshot[0], list)
+                    and isinstance(stage_snapshot[1], str)
+                ):
+                    captured_manifest, captured_status = stage_snapshot
                 if targets is None:
                     matrix, _ = collect_matrix(
                         authority=normalized, repo_root=repo_root, runtime_root=runtime_root
@@ -704,9 +714,10 @@ def _run_apply(
                         _with_stage_build(matrix, PredicateStatus.FAIL, "PREDICATE_REJECTED"),
                         observation,
                     )
-                    stage_manifest, stage_manifest_status = _partial_stage_or_empty(
-                        closure, stage_root
-                    )
+                    if captured_manifest is None or captured_status is None:
+                        stage_manifest, stage_manifest_status = _partial_stage_or_empty(closure, stage_root)
+                    else:
+                        stage_manifest, stage_manifest_status = captured_manifest, captured_status
                 else:
                     if source_attempt is ProviderAttemptStatus.ATTEMPTED:
                         source_receipts[:] = _observed_source_fact_receipt_sha256s(
@@ -741,12 +752,15 @@ def _run_apply(
                             predicate_id="formal_after_image",
                         )
                     matrix = _with_formal(matrix, prepare=prepare, after_image=after_image)
-                    try:
-                        stage_manifest = _stage_manifest(closure, inputs, targets)
-                    except Exception:
-                        stage_manifest, stage_manifest_status = [], "UNAVAILABLE"
+                    if captured_manifest is None or captured_status is None:
+                        try:
+                            stage_manifest = _stage_manifest(closure, inputs, targets)
+                        except Exception:
+                            stage_manifest, stage_manifest_status = [], "UNAVAILABLE"
+                        else:
+                            stage_manifest_status = "AVAILABLE"
                     else:
-                        stage_manifest_status = "AVAILABLE"
+                        stage_manifest, stage_manifest_status = captured_manifest, captured_status
                 matrix = _with_stage_cleanup(
                     matrix,
                     PredicateStatus.FAIL if cleanup_failed else PredicateStatus.PASS,
@@ -778,6 +792,7 @@ def _run_apply(
             source_fact_llm_call=tracked_source_fact, authority=normalized,
             _stage_publish=stage_publish or closure._stage_publish_draft,
             _stage_observation=observation, _prejournal_failure=prejournal_failure,
+            _prejournal_stage_snapshot=lambda stage_root: _partial_stage_or_empty(closure, stage_root),
             _reload_deployed_authority=reload_deployed_authority)
 
 
