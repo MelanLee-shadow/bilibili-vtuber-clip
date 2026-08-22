@@ -1,0 +1,269 @@
+{
+  "schema_version": "operator-reviewed-subtitle-truth-diff.v2",
+  "candidate_id": "auto_113028_1271_1328",
+  "pipeline_srt_sha256": "5da5af9dba5ce3ff2fee7d585bda809eb3a9edb612a18868ace683cb94281043",
+  "release_truth_srt_sha256": "9f33f247deb405b409d50f294bbfab08db7d5f43086241dd736fac0498faf64b",
+  "decision_ledger_sha256": "6fac5913ee143619c840483a8355e6ba63690f9bf47ddd27b3d34b9fcb5ce1a2",
+  "cue_count": 21,
+  "source_cue_count": 24,
+  "release_cue_count": 21,
+  "operator_drop_cue_count": 3,
+  "changed_cue_count": 3,
+  "rows": [
+    {
+      "cue": 1,
+      "source_index": "1",
+      "start_ms": 250,
+      "end_ms": 2010,
+      "pipeline_text": "我觉得特别神奇",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 1,
+      "release_truth_text": "我觉得特别神奇"
+    },
+    {
+      "cue": 2,
+      "source_index": "2",
+      "start_ms": 2010,
+      "end_ms": 3770,
+      "pipeline_text": "就是那一次",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 2,
+      "release_truth_text": "就是那一次"
+    },
+    {
+      "cue": 3,
+      "source_index": "3",
+      "start_ms": 3970,
+      "end_ms": 6370,
+      "pipeline_text": "那天第一次有人来我直播间",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 3,
+      "release_truth_text": "那天第一次有人来我直播间"
+    },
+    {
+      "cue": 4,
+      "source_index": "4",
+      "start_ms": 6410,
+      "end_ms": 8610,
+      "pipeline_text": "就是点《宁夏》的时候",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 4,
+      "release_truth_text": "就是点《宁夏》的时候"
+    },
+    {
+      "cue": 5,
+      "source_index": "5",
+      "start_ms": 9560,
+      "end_ms": 10080,
+      "pipeline_text": "呃",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 5,
+      "release_truth_text": "呃"
+    },
+    {
+      "cue": 6,
+      "source_index": "6",
+      "start_ms": 10080,
+      "end_ms": 11520,
+      "pipeline_text": "我就愣住了一下",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 6,
+      "release_truth_text": "我就愣住了一下"
+    },
+    {
+      "cue": 7,
+      "source_index": "7",
+      "start_ms": 11520,
+      "end_ms": 13360,
+      "pipeline_text": "我说，哎，怎么想听这首歌",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 7,
+      "release_truth_text": "我说，哎，怎么想听这首歌"
+    },
+    {
+      "cue": 8,
+      "source_index": "8",
+      "start_ms": 13360,
+      "end_ms": 18880,
+      "pipeline_text": "然后第二天我去公司的路上，打的车里就在放《宁夏》",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 8,
+      "release_truth_text": "然后第二天我去公司的路上，打的车里就在放《宁夏》"
+    },
+    {
+      "cue": 9,
+      "source_index": "9",
+      "start_ms": 19460,
+      "end_ms": 20860,
+      "pipeline_text": "非常奇妙",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 9,
+      "release_truth_text": "非常奇妙"
+    },
+    {
+      "cue": 10,
+      "source_index": "10",
+      "start_ms": 20860,
+      "end_ms": 24300,
+      "pipeline_text": "感觉有一些量子纠缠在里面呢",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 10,
+      "release_truth_text": "感觉有一些量子纠缠在里面呢"
+    },
+    {
+      "cue": 11,
+      "source_index": "11",
+      "start_ms": 24620,
+      "end_ms": 26180,
+      "pipeline_text": "谢谢大家的打call",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 11,
+      "release_truth_text": "谢谢大家的打call"
+    },
+    {
+      "cue": 12,
+      "source_index": "12",
+      "start_ms": 26180,
+      "end_ms": 28180,
+      "pipeline_text": "要安静地睡过去了吗",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 12,
+      "release_truth_text": "要安静地睡过去了吗"
+    },
+    {
+      "cue": 13,
+      "source_index": "13",
+      "start_ms": 28700,
+      "end_ms": 30460,
+      "pipeline_text": "niji的夏天，宁静",
+      "disposition": "OPERATOR_DROP",
+      "release_cue_index": null,
+      "release_truth_text": null,
+      "decision_authority": {
+        "kind": "IVAN_OPERATOR",
+        "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; exact line sha256 e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; durable mirror docs/reviews/2026-08-19-ivan-review-batch-rulings.md. Ivan ruling #5: niji/にじさんじ song humming has no subtitle."
+      },
+      "drop_reason": "Ivan ruling #5: niji/にじさんじ song humming has no subtitle."
+    },
+    {
+      "cue": 14,
+      "source_index": "14",
+      "start_ms": 30460,
+      "end_ms": 33240,
+      "pipeline_text": "你躺你的躺耶",
+      "disposition": "OPERATOR_DROP",
+      "release_cue_index": null,
+      "release_truth_text": null,
+      "decision_authority": {
+        "kind": "IVAN_OPERATOR",
+        "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; exact line sha256 e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; durable mirror docs/reviews/2026-08-19-ivan-review-batch-rulings.md. Ivan ruling #5: niji/にじさんじ song humming has no subtitle."
+      },
+      "drop_reason": "Ivan ruling #5: niji/にじさんじ song humming has no subtitle."
+    },
+    {
+      "cue": 15,
+      "source_index": "15",
+      "start_ms": 33240,
+      "end_ms": 36140,
+      "pipeline_text": "你你你你躺你的躺",
+      "disposition": "OPERATOR_DROP",
+      "release_cue_index": null,
+      "release_truth_text": null,
+      "decision_authority": {
+        "kind": "IVAN_OPERATOR",
+        "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; exact line sha256 e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; durable mirror docs/reviews/2026-08-19-ivan-review-batch-rulings.md. Ivan ruling #5: niji/にじさんじ song humming has no subtitle."
+      },
+      "drop_reason": "Ivan ruling #5: niji/にじさんじ song humming has no subtitle."
+    },
+    {
+      "cue": 16,
+      "source_index": "16",
+      "start_ms": 36830,
+      "end_ms": 38510,
+      "pipeline_text": "谢谢风浪的心动卡",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 13,
+      "release_truth_text": "谢谢风浪的心动卡"
+    },
+    {
+      "cue": 17,
+      "source_index": "17",
+      "start_ms": 38510,
+      "end_ms": 39510,
+      "pipeline_text": "谢谢你",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 14,
+      "release_truth_text": "谢谢你"
+    },
+    {
+      "cue": 18,
+      "source_index": "18",
+      "start_ms": 39750,
+      "end_ms": 41870,
+      "pipeline_text": "晚安，做个好梦哦",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 15,
+      "release_truth_text": "晚安，做个好梦哦"
+    },
+    {
+      "cue": 19,
+      "source_index": "19",
+      "start_ms": 42350,
+      "end_ms": 43990,
+      "pipeline_text": "好好休息一下吧",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 16,
+      "release_truth_text": "好好休息一下吧"
+    },
+    {
+      "cue": 20,
+      "source_index": "20",
+      "start_ms": 45520,
+      "end_ms": 47920,
+      "pipeline_text": "kmx和李豆沙是量子纠缠的关系吗",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 17,
+      "release_truth_text": "kmx和李豆沙是量子纠缠的关系吗"
+    },
+    {
+      "cue": 21,
+      "source_index": "21",
+      "start_ms": 47920,
+      "end_ms": 48920,
+      "pipeline_text": "当然是啊",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 18,
+      "release_truth_text": "当然是啊"
+    },
+    {
+      "cue": 22,
+      "source_index": "22",
+      "start_ms": 48960,
+      "end_ms": 51020,
+      "pipeline_text": "你们只要产生了关系",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 19,
+      "release_truth_text": "你们只要产生了关系"
+    },
+    {
+      "cue": 23,
+      "source_index": "23",
+      "start_ms": 51020,
+      "end_ms": 53480,
+      "pipeline_text": "就会有，就会产生量子纠缠",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 20,
+      "release_truth_text": "就会有，就会产生量子纠缠"
+    },
+    {
+      "cue": 24,
+      "source_index": "24",
+      "start_ms": 53590,
+      "end_ms": 57630,
+      "pipeline_text": "不管在世界哪个角落，都会出现量子纠缠的",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 21,
+      "release_truth_text": "不管在世界哪个角落，都会出现量子纠缠的"
+    }
+  ]
+}

@@ -16,9 +16,11 @@ from src.autoslice.reviewed_subtitle_baseline_registry import (
     ReviewedSubtitleBaselineRegistryError,
     load_candidate_reviewed_subtitle_baseline,
 )
+from src.autoslice.redelivery_subtitle_baseline import apply_redelivery_subtitle_baseline
 
 
 CID = "auto_1_2_3"
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _srt(second_text: str, *, second_start: str = "00:00:01,000") -> str:
@@ -220,6 +222,102 @@ def test_rejects_timing_drift_and_speaker_annotation(tmp_path: Path) -> None:
         compile_operator_baseline(**fixture)
 
 
+def test_v3_drop_is_exhaustive_and_cannot_use_an_empty_release_cue(tmp_path: Path) -> None:
+    source = tmp_path / "source.srt"
+    source.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n保留\n\n2\n00:00:01,000 --> 00:00:02,000\n哼唱\n\n3\n00:00:02,000 --> 00:00:03,000\n改前\n",
+        encoding="utf-8",
+    )
+    reviewed = tmp_path / "reviewed.srt"
+    reviewed.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n保留\n\n2\n00:00:02,000 --> 00:00:03,000\n改后\n",
+        encoding="utf-8",
+    )
+    source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    rows = []
+    for cue, text, disposition in ((1, "保留", "OPERATOR_UNCHANGED_FREEZE"), (2, "哼唱", "OPERATOR_DROP"), (3, "改前", "OPERATOR_EXACT_TEXT")):
+        row = {"cue": cue, "disposition": disposition}
+        if disposition == "OPERATOR_DROP":
+            row.update({"decision_authority": "LEDGER_OPERATOR_AUTHORITY", "drop_reason": "Ivan ruling: sung span has no subtitle"})
+        elif disposition == "OPERATOR_EXACT_TEXT":
+            row.update({"release_text": "改后", "decision_authority": "LEDGER_OPERATOR_AUTHORITY"})
+        rows.append(row)
+    result = compile_operator_baseline(
+        source_srt=source, reviewed_srt=reviewed, candidate_id=CID,
+        authority="Ivan exhaustive source-cue review", source_recording_basename="recording.mp4",
+        source_recording_sha256="ab" * 32, absolute_source_start_ms=0,
+        absolute_source_end_ms=3_000,
+        decision_ledger={"schema_version": "operator-reviewed-subtitle-decisions.v3", "candidate_id": CID, "report_scope": "EXHAUSTIVE", "pipeline_srt_sha256": source_sha, "operator_authority": {"kind": "IVAN_OPERATOR", "evidence_ref": "review: exhaustive"}, "cue_decisions": rows},
+    )
+    assert result["baseline_manifest"]["operator_text_full_ownership"]["operator_drop_cue_count"] == 1
+    assert json.loads(str(result["diagnostic_diff"]))["rows"][1]["release_truth_text"] is None
+
+    root = tmp_path / "assets"
+    root.mkdir()
+    baseline = root / f"{CID}.reviewed.srt"
+    baseline.write_text(str(result["baseline_srt"]), encoding="utf-8")
+    pipeline = root / "pipeline.srt"
+    pipeline.write_text(str(result["pipeline_diagnostic_srt"]), encoding="utf-8")
+    ledger = root / "decisions.json"
+    ledger.write_text(str(result["decision_ledger"]), encoding="utf-8")
+    diff = root / "diff.json"
+    diff.write_text(str(result["diagnostic_diff"]), encoding="utf-8")
+    manifest = dict(result["baseline_manifest"])
+    manifest["path"] = baseline.name
+    manifest["operator_truth_lanes"] = {
+        **manifest["operator_truth_lanes"],
+        "pipeline_diagnostic": {"path": pipeline.name, "sha256": hashlib.sha256(pipeline.read_bytes()).hexdigest()},
+        "decision_ledger": {"path": ledger.name, "sha256": hashlib.sha256(ledger.read_bytes()).hexdigest()},
+        "diff_receipt": {"path": diff.name, "sha256": hashlib.sha256(diff.read_bytes()).hexdigest()},
+    }
+    (root / f"{CID}.subtitle-baseline.v1.json").write_text(json.dumps(manifest), encoding="utf-8")
+    loaded = load_candidate_reviewed_subtitle_baseline(root, CID)
+    assert loaded is not None
+    output, audit = apply_redelivery_subtitle_baseline(
+        source.read_text(encoding="utf-8"), config=loaded.config, spec_parent=root,
+        current_source_start_ms=0, current_source_end_ms=3_000,
+        current_source_recording_basename="recording.mp4", current_source_sha256="ab" * 32,
+    )
+    assert audit["status"] == "APPLIED"
+    assert "哼唱" not in output and "改后" in output
+
+    bad = json.loads(json.dumps(result["baseline_manifest"]))
+    assert bad["operator_text_full_ownership"]["source_cue_count"] == 3
+    rows[2]["cue"] = 2
+    with pytest.raises(OperatorBaselineCompileError, match="source cue binding drift"):
+        compile_operator_baseline(
+            source_srt=source, reviewed_srt=reviewed, candidate_id=CID,
+            authority="Ivan exhaustive source-cue review", source_recording_basename="recording.mp4",
+            source_recording_sha256="ab" * 32, absolute_source_start_ms=0,
+            absolute_source_end_ms=3_000,
+            decision_ledger={"schema_version": "operator-reviewed-subtitle-decisions.v3", "candidate_id": CID, "report_scope": "EXHAUSTIVE", "pipeline_srt_sha256": source_sha, "operator_authority": {"kind": "IVAN_OPERATOR", "evidence_ref": "review: exhaustive"}, "cue_decisions": rows},
+        )
+    rows[2]["cue"] = 3
+    rows[1].pop("drop_reason")
+    with pytest.raises(OperatorBaselineCompileError, match="drop row is invalid"):
+        compile_operator_baseline(
+            source_srt=source, reviewed_srt=reviewed, candidate_id=CID,
+            authority="Ivan exhaustive source-cue review", source_recording_basename="recording.mp4",
+            source_recording_sha256="ab" * 32, absolute_source_start_ms=0,
+            absolute_source_end_ms=3_000,
+            decision_ledger={"schema_version": "operator-reviewed-subtitle-decisions.v3", "candidate_id": CID, "report_scope": "EXHAUSTIVE", "pipeline_srt_sha256": source_sha, "operator_authority": {"kind": "IVAN_OPERATOR", "evidence_ref": "review: exhaustive"}, "cue_decisions": rows},
+        )
+
+
+def test_ivan_ruling_four_drops_the_local_036_humming_cue() -> None:
+    ledger = json.loads(
+        (
+            ROOT / "assets/lidousha/reviewed_subtitle_baselines/"
+            "auto_113028_1602_1698.operator-decisions.v3.json"
+        ).read_text(encoding="utf-8")
+    )
+    row = ledger["cue_decisions"][7]
+    assert row == {
+        "cue": 8,
+        "disposition": "OPERATOR_DROP",
+        "decision_authority": "LEDGER_OPERATOR_AUTHORITY",
+        "drop_reason": "Ivan ruling #4: 0:36 Japanese 花海 humming has no subtitle.",
+    }
 def test_unresolved_delegated_provider_evidence_blocks_materialization(tmp_path: Path) -> None:
     fixture = _fixture(tmp_path)
     fixture["reviewed_srt"].write_text(_srt("星汐说"), encoding="utf-8")

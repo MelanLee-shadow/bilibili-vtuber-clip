@@ -1,0 +1,50 @@
+{
+  "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
+  "candidate_id": "auto_113028_1602_1698",
+  "schema_version": "subtitle-redelivery-baseline.v2",
+  "mode": "preserve_text_outside_source_truth",
+  "exact_interval_replay": true,
+  "path": "auto_113028_1602_1698.reviewed.srt",
+  "sha256": "46e769a270867a3f3eb12047778d4628151771539ec7d67e4cb4040c02e31efd",
+  "authority": "Ivan 2026-08-19 exhaustive ruling #4; only the sealed cue decisions may change release text.",
+  "source_recording_basename": "22966160_20260814-11-30-28.mp4",
+  "source_sha256": "20c2fc8ccf054c038eb2e308a9ed2a0bb00593de8c7e8895e87ae0b1ee13734c",
+  "absolute_source_start_ms": 1592760,
+  "absolute_source_end_ms": 1746900,
+  "operator_text_full_ownership": {
+    "schema_version": "operator-reviewed-text-full-ownership-pin.v3",
+    "baseline_sha256": "46e769a270867a3f3eb12047778d4628151771539ec7d67e4cb4040c02e31efd",
+    "pipeline_srt_sha256": "512f74a7159c36c88b6c49d48ef46055f9caa6b094d4c6bf77336fe29a8956d5",
+    "decision_ledger_sha256": "3b860b2cc00ffaed8ab7d888094c1a41433bf3bee87cf0d03efbec73ee0390f8",
+    "diagnostic_diff_sha256": "9ad397f5d1a399d81f45f23d8daaed0ef443b6e0b11b110c7e37a40014836fb2",
+    "operator_authority": {
+      "kind": "IVAN_OPERATOR",
+      "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; exact line sha256 e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; durable mirror docs/reviews/2026-08-19-ivan-review-batch-rulings.md. Ivan ruling #4: 0:13 见面发现 + Japanese あれ?; 0:36/0:52 花海 Japanese humming has no subtitle."
+    },
+    "source_cue_count": 24,
+    "release_cue_count": 20,
+    "changed_cue_count": 5,
+    "operator_exact_text_cue_count": 1,
+    "operator_unchanged_freeze_cue_count": 19,
+    "operator_drop_cue_count": 4,
+    "speaker_authority": "NOT_CLAIMED_TEXT_ONLY"
+  },
+  "operator_truth_lanes": {
+    "schema_version": "operator-reviewed-subtitle-truth-lanes.v2",
+    "release_truth": {
+      "srt_sha256": "46e769a270867a3f3eb12047778d4628151771539ec7d67e4cb4040c02e31efd"
+    },
+    "pipeline_diagnostic": {
+      "sha256": "512f74a7159c36c88b6c49d48ef46055f9caa6b094d4c6bf77336fe29a8956d5",
+      "path": "auto_113028_1602_1698.pipeline-diagnostic.srt"
+    },
+    "decision_ledger": {
+      "sha256": "3b860b2cc00ffaed8ab7d888094c1a41433bf3bee87cf0d03efbec73ee0390f8",
+      "path": "auto_113028_1602_1698.operator-decisions.v3.json"
+    },
+    "diff_receipt": {
+      "sha256": "9ad397f5d1a399d81f45f23d8daaed0ef443b6e0b11b110c7e37a40014836fb2",
+      "path": "auto_113028_1602_1698.operator-truth-diff.v2.json"
+    }
+  }
+}

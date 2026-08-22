@@ -1,0 +1,308 @@
+{
+  "schema_version": "operator-reviewed-subtitle-truth-diff.v2",
+  "candidate_id": "auto_123036_727_785",
+  "pipeline_srt_sha256": "6aba17462effe3c6bf1ae7b36e65bb09414a4545b4db2b73f03f6f0a09f93dcf",
+  "release_truth_srt_sha256": "32bceb56a72f9689a4a968ef702fd3c0991b3632e1f596024a1b48743a1f6592",
+  "decision_ledger_sha256": "387f470b4e8551d6290cec0b77eab02085d633688a45295d56a136396486184f",
+  "cue_count": 29,
+  "source_cue_count": 29,
+  "release_cue_count": 29,
+  "operator_drop_cue_count": 0,
+  "changed_cue_count": 1,
+  "rows": [
+    {
+      "cue": 1,
+      "source_index": "1",
+      "start_ms": 250,
+      "end_ms": 1250,
+      "pipeline_text": "吃过饭了吗",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 1,
+      "release_truth_text": "吃过饭了吗"
+    },
+    {
+      "cue": 2,
+      "source_index": "2",
+      "start_ms": 1250,
+      "end_ms": 2250,
+      "pipeline_text": "吃过了",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 2,
+      "release_truth_text": "吃过了"
+    },
+    {
+      "cue": 3,
+      "source_index": "3",
+      "start_ms": 4790,
+      "end_ms": 7870,
+      "pipeline_text": "OK，谢谢桃溪周围的粉丝团灯牌",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 3,
+      "release_truth_text": "OK，谢谢桃溪周围的粉丝团灯牌"
+    },
+    {
+      "cue": 4,
+      "source_index": "4",
+      "start_ms": 7870,
+      "end_ms": 9820,
+      "pipeline_text": "谢谢我听说我听说的钢镚",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 4,
+      "release_truth_text": "谢谢我听说我听说的钢镚"
+    },
+    {
+      "cue": 5,
+      "source_index": "5",
+      "start_ms": 9820,
+      "end_ms": 11290,
+      "pipeline_text": "姐姐姐姐姐姐李好温柔",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 5,
+      "release_truth_text": "姐姐姐姐姐姐李好温柔"
+    },
+    {
+      "cue": 6,
+      "source_index": "6",
+      "start_ms": 11290,
+      "end_ms": 12190,
+      "pipeline_text": "谢谢你",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 6,
+      "release_truth_text": "谢谢你"
+    },
+    {
+      "cue": 7,
+      "source_index": "7",
+      "start_ms": 12190,
+      "end_ms": 14130,
+      "pipeline_text": "可以趴在姐姐大人脚边睡觉吗",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 7,
+      "release_truth_text": "可以趴在姐姐大人脚边睡觉吗"
+    },
+    {
+      "cue": 8,
+      "source_index": "8",
+      "start_ms": 14130,
+      "end_ms": 15140,
+      "pipeline_text": "不可以这样",
+      "disposition": "OPERATOR_EXACT_TEXT",
+      "release_cue_index": 8,
+      "release_truth_text": "不可以就要",
+      "decision_authority": {
+        "kind": "IVAN_OPERATOR",
+        "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; exact line sha256 e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; durable mirror docs/reviews/2026-08-19-ivan-review-batch-rulings.md. Ivan ruling #7: 0:21 不可以就要 (read chat)."
+      }
+    },
+    {
+      "cue": 9,
+      "source_index": "9",
+      "start_ms": 15140,
+      "end_ms": 17090,
+      "pipeline_text": "当抱腿熊耍赖",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 9,
+      "release_truth_text": "当抱腿熊耍赖"
+    },
+    {
+      "cue": 10,
+      "source_index": "10",
+      "start_ms": 17090,
+      "end_ms": 18150,
+      "pipeline_text": "鬼喊鬼叫",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 10,
+      "release_truth_text": "鬼喊鬼叫"
+    },
+    {
+      "cue": 11,
+      "source_index": "11",
+      "start_ms": 18150,
+      "end_ms": 19750,
+      "pipeline_text": "那我就一脚踹开",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 11,
+      "release_truth_text": "那我就一脚踹开"
+    },
+    {
+      "cue": 12,
+      "source_index": "12",
+      "start_ms": 20430,
+      "end_ms": 22710,
+      "pipeline_text": "那我就一脚踹开呀",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 12,
+      "release_truth_text": "那我就一脚踹开呀"
+    },
+    {
+      "cue": 13,
+      "source_index": "13",
+      "start_ms": 24100,
+      "end_ms": 26220,
+      "pipeline_text": "鬼を呼ん是什么意思",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 13,
+      "release_truth_text": "鬼を呼ん是什么意思"
+    },
+    {
+      "cue": 14,
+      "source_index": "14",
+      "start_ms": 27120,
+      "end_ms": 28720,
+      "pipeline_text": "想去买点喝的，",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 14,
+      "release_truth_text": "想去买点喝的，"
+    },
+    {
+      "cue": 15,
+      "source_index": "15",
+      "start_ms": 28720,
+      "end_ms": 30280,
+      "pipeline_text": "李姐最常喝的冷饮是啥",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 15,
+      "release_truth_text": "李姐最常喝的冷饮是啥"
+    },
+    {
+      "cue": 16,
+      "source_index": "16",
+      "start_ms": 30840,
+      "end_ms": 32120,
+      "pipeline_text": "最常喝的是",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 16,
+      "release_truth_text": "最常喝的是"
+    },
+    {
+      "cue": 17,
+      "source_index": "17",
+      "start_ms": 33520,
+      "end_ms": 34680,
+      "pipeline_text": "冰美式",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 17,
+      "release_truth_text": "冰美式"
+    },
+    {
+      "cue": 18,
+      "source_index": "18",
+      "start_ms": 35800,
+      "end_ms": 37000,
+      "pipeline_text": "你喝吗",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 18,
+      "release_truth_text": "你喝吗"
+    },
+    {
+      "cue": 19,
+      "source_index": "19",
+      "start_ms": 37230,
+      "end_ms": 38670,
+      "pipeline_text": "你喝吗",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 19,
+      "release_truth_text": "你喝吗"
+    },
+    {
+      "cue": 20,
+      "source_index": "20",
+      "start_ms": 38670,
+      "end_ms": 39750,
+      "pipeline_text": "还是那个",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 20,
+      "release_truth_text": "还是那个"
+    },
+    {
+      "cue": 21,
+      "source_index": "21",
+      "start_ms": 39750,
+      "end_ms": 42390,
+      "pipeline_text": "要不你买个零糖可乐也可以",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 21,
+      "release_truth_text": "要不你买个零糖可乐也可以"
+    },
+    {
+      "cue": 22,
+      "source_index": "22",
+      "start_ms": 42910,
+      "end_ms": 44230,
+      "pipeline_text": "支持零糖可乐",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 22,
+      "release_truth_text": "支持零糖可乐"
+    },
+    {
+      "cue": 23,
+      "source_index": "23",
+      "start_ms": 44230,
+      "end_ms": 46630,
+      "pipeline_text": "家人们，哈哈哈",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 23,
+      "release_truth_text": "家人们，哈哈哈"
+    },
+    {
+      "cue": 24,
+      "source_index": "24",
+      "start_ms": 47860,
+      "end_ms": 50060,
+      "pipeline_text": "我喜欢喝不甜的东西",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 24,
+      "release_truth_text": "我喜欢喝不甜的东西"
+    },
+    {
+      "cue": 25,
+      "source_index": "25",
+      "start_ms": 50060,
+      "end_ms": 51700,
+      "pipeline_text": "要不拿铁也可以",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 25,
+      "release_truth_text": "要不拿铁也可以"
+    },
+    {
+      "cue": 26,
+      "source_index": "26",
+      "start_ms": 51700,
+      "end_ms": 53060,
+      "pipeline_text": "冰拿铁也可以",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 26,
+      "release_truth_text": "冰拿铁也可以"
+    },
+    {
+      "cue": 27,
+      "source_index": "27",
+      "start_ms": 53330,
+      "end_ms": 55069,
+      "pipeline_text": "我觉得瑞幸好难喝",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 27,
+      "release_truth_text": "我觉得瑞幸好难喝"
+    },
+    {
+      "cue": 28,
+      "source_index": "28",
+      "start_ms": 55069,
+      "end_ms": 56070,
+      "pipeline_text": "有没有懂的",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 28,
+      "release_truth_text": "有没有懂的"
+    },
+    {
+      "cue": 29,
+      "source_index": "29",
+      "start_ms": 56070,
+      "end_ms": 59050,
+      "pipeline_text": "我觉得瑞幸的咖啡非常淡",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 29,
+      "release_truth_text": "我觉得瑞幸的咖啡非常淡"
+    }
+  ]
+}

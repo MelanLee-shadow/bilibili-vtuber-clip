@@ -44,12 +44,16 @@ BASELINE_SCHEMA_VERSIONS = frozenset(
 )
 BASELINE_MODE = "preserve_text_outside_source_truth"
 OPERATOR_TEXT_PIN_V2 = "operator-reviewed-text-full-ownership-pin.v2"
+OPERATOR_TEXT_PIN_V3 = "operator-reviewed-text-full-ownership-pin.v3"
 OPERATOR_TRUTH_LANES_SCHEMA = "operator-reviewed-subtitle-truth-lanes.v1"
+OPERATOR_TRUTH_LANES_V2_SCHEMA = "operator-reviewed-subtitle-truth-lanes.v2"
 OPERATOR_DECISION_LEDGER_SCHEMAS = frozenset({
     "operator-reviewed-subtitle-decisions.v1",
     "operator-reviewed-subtitle-decisions.v2",
+    "operator-reviewed-subtitle-decisions.v3",
 })
 OPERATOR_DIAGNOSTIC_DIFF_SCHEMA = "operator-reviewed-subtitle-truth-diff.v1"
+OPERATOR_DIAGNOSTIC_DIFF_V2_SCHEMA = "operator-reviewed-subtitle-truth-diff.v2"
 _CANDIDATE_ID_RX = re.compile(r"[A-Za-z0-9_-]{1,96}\Z")
 _SHA256_RX = re.compile(r"(?:sha256:)?([0-9a-f]{64})\Z")
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -110,6 +114,11 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _clean_sha256(value: object) -> str:
+    match = _SHA256_RX.fullmatch(str(value or "").strip())
+    return match.group(1) if match is not None else ""
 
 
 def _regular_canonical_file(path: Path, *, root: Path, label: str) -> Path:
@@ -233,8 +242,12 @@ def _validate_operator_truth_lanes(
     """Validate v2 lanes; legacy v1 pins never obtain the all-text fast path."""
 
     pin = document.get("operator_text_full_ownership")
-    if not isinstance(pin, Mapping) or pin.get("schema_version") != OPERATOR_TEXT_PIN_V2:
+    if not isinstance(pin, Mapping) or pin.get("schema_version") not in {OPERATOR_TEXT_PIN_V2, OPERATOR_TEXT_PIN_V3}:
         return {}, {}
+    if pin.get("schema_version") == OPERATOR_TEXT_PIN_V3:
+        return _validate_operator_truth_lanes_v3(
+            document, root=root, candidate_id=candidate_id, baseline_sha256=baseline_sha256
+        )
     lanes = document.get("operator_truth_lanes")
     if not isinstance(lanes, Mapping) or set(lanes) != {
         "schema_version", "release_truth", "pipeline_diagnostic", "decision_ledger", "diff_receipt"
@@ -521,6 +534,116 @@ def _validate_operator_truth_lanes(
     )
 
 
+def _validate_operator_truth_lanes_v3(
+    document: Mapping[str, object], *, root: Path, candidate_id: str, baseline_sha256: str
+) -> tuple[dict[str, object], dict[str, Path]]:
+    """Fail closed on the v3 source-cue KEEP/REPLACE/DROP mapping."""
+
+    pin = document["operator_text_full_ownership"]
+    assert isinstance(pin, Mapping)
+    lanes = document.get("operator_truth_lanes")
+    lane_keys = {"schema_version", "release_truth", "pipeline_diagnostic", "decision_ledger", "diff_receipt"}
+    if not isinstance(lanes, Mapping) or set(lanes) != lane_keys or lanes.get("schema_version") != OPERATOR_TRUTH_LANES_V2_SCHEMA:
+        raise ReviewedSubtitleBaselineRegistryError("operator v3 truth lanes are invalid")
+    release = lanes.get("release_truth")
+    if not isinstance(release, Mapping) or set(release) != {"srt_sha256"} or _clean_sha256(release.get("srt_sha256")) != baseline_sha256:
+        raise ReviewedSubtitleBaselineRegistryError("operator v3 release truth lane sha256 drift")
+    pipeline_path, pipeline_sha, pipeline_bytes = _read_hash_bound_sibling(lanes.get("pipeline_diagnostic"), root=root, label="operator v3 pipeline diagnostic SRT")
+    ledger_path, ledger_sha, ledger_bytes = _read_hash_bound_sibling(lanes.get("decision_ledger"), root=root, label="operator v3 decision ledger")
+    diff_path, diff_sha, diff_bytes = _read_hash_bound_sibling(lanes.get("diff_receipt"), root=root, label="operator v3 diagnostic diff")
+    try:
+        pipeline = parse_srt_cues(pipeline_bytes.decode("utf-8"))
+        release_cues = parse_srt_cues((root / str(document["path"])).read_text(encoding="utf-8"))
+        ledger = json.loads(ledger_bytes.decode("utf-8"))
+        diff = json.loads(diff_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ReviewedSubtitleBaselineRegistryError("operator v3 truth-lane input is invalid") from exc
+    ledger_keys = {"schema_version", "candidate_id", "report_scope", "pipeline_srt_sha256", "operator_authority", "cue_decisions"}
+    diff_keys = {"schema_version", "candidate_id", "pipeline_srt_sha256", "release_truth_srt_sha256", "decision_ledger_sha256", "cue_count", "changed_cue_count", "source_cue_count", "release_cue_count", "operator_drop_cue_count", "rows"}
+    if (
+        not isinstance(ledger, Mapping) or set(ledger) != ledger_keys
+        or ledger.get("schema_version") != "operator-reviewed-subtitle-decisions.v3"
+        or ledger.get("candidate_id") != candidate_id or ledger.get("report_scope") != "EXHAUSTIVE"
+        or str(ledger.get("pipeline_srt_sha256") or "").removeprefix("sha256:") != pipeline_sha
+        or not isinstance(ledger.get("cue_decisions"), list)
+        or not isinstance(diff, Mapping) or set(diff) != diff_keys
+        or diff.get("schema_version") != OPERATOR_DIAGNOSTIC_DIFF_V2_SCHEMA
+        or diff.get("candidate_id") != candidate_id or diff.get("pipeline_srt_sha256") != pipeline_sha
+        or diff.get("release_truth_srt_sha256") != baseline_sha256 or diff.get("decision_ledger_sha256") != ledger_sha
+        or not isinstance(diff.get("rows"), list)
+    ):
+        raise ReviewedSubtitleBaselineRegistryError("operator v3 truth-lane contract is invalid")
+    authority = _require_operator_authority(ledger.get("operator_authority"), label="operator v3 decision ledger authority")
+    decisions = ledger["cue_decisions"]
+    rows = diff["rows"]
+    if len(decisions) != len(pipeline) or len(rows) != len(pipeline) or not pipeline or not release_cues:
+        raise ReviewedSubtitleBaselineRegistryError("operator v3 cue coverage is invalid")
+    release_cursor = exact_count = freeze_count = drop_count = changed_count = 0
+    def row_authority(value: object) -> dict[str, str]:
+        return authority if value == "LEDGER_OPERATOR_AUTHORITY" else _require_operator_authority(value, label="operator v3 cue decision")
+    for ordinal, (source, decision, row) in enumerate(zip(pipeline, decisions, rows, strict=True), start=1):
+        common = {"cue", "disposition"}
+        if not isinstance(decision, Mapping) or not isinstance(row, Mapping) or not common.issubset(decision):
+            raise ReviewedSubtitleBaselineRegistryError("operator v3 cue row is invalid")
+        before = str(source.text).strip()
+        if (
+            decision.get("cue") != ordinal
+        ):
+            raise ReviewedSubtitleBaselineRegistryError("operator v3 source binding drift")
+        disposition = decision.get("disposition")
+        expected = {"cue": ordinal, "source_index": str(source.index), "start_ms": source.start_ms, "end_ms": source.end_ms, "pipeline_text": before, "disposition": disposition}
+        if disposition == "OPERATOR_DROP":
+            if set(decision) != common | {"decision_authority", "drop_reason"} or not isinstance(decision.get("drop_reason"), str) or not decision["drop_reason"].strip():
+                raise ReviewedSubtitleBaselineRegistryError("operator drop row is invalid")
+            expected.update({"release_cue_index": None, "release_truth_text": None, "decision_authority": row_authority(decision.get("decision_authority")), "drop_reason": decision["drop_reason"].strip()})
+            drop_count += 1
+        else:
+            if release_cursor >= len(release_cues):
+                raise ReviewedSubtitleBaselineRegistryError("operator v3 release grid is incomplete")
+            target = release_cues[release_cursor]
+            after = str(target.text).strip()
+            if str(target.index) != str(release_cursor + 1) or (target.start_ms, target.end_ms) != (source.start_ms, source.end_ms) or not after:
+                raise ReviewedSubtitleBaselineRegistryError("operator v3 release grid drift")
+            expected.update({"release_cue_index": release_cursor + 1, "release_truth_text": after})
+            if disposition == "OPERATOR_UNCHANGED_FREEZE":
+                if set(decision) != common or before != after:
+                    raise ReviewedSubtitleBaselineRegistryError("operator v3 unchanged freeze is invalid")
+                freeze_count += 1
+            elif disposition == "OPERATOR_EXACT_TEXT":
+                if set(decision) != common | {"release_text", "decision_authority"} or decision.get("release_text") != after:
+                    raise ReviewedSubtitleBaselineRegistryError("operator v3 exact text is invalid")
+                expected["decision_authority"] = row_authority(decision.get("decision_authority"))
+                exact_count += 1
+            else:
+                raise ReviewedSubtitleBaselineRegistryError("operator v3 disposition is invalid")
+            if before != after:
+                changed_count += 1
+            release_cursor += 1
+        if dict(row) != expected:
+            raise ReviewedSubtitleBaselineRegistryError("operator v3 diagnostic diff drift")
+    expected_pin = {"schema_version", "baseline_sha256", "pipeline_srt_sha256", "decision_ledger_sha256", "diagnostic_diff_sha256", "operator_authority", "source_cue_count", "release_cue_count", "changed_cue_count", "operator_exact_text_cue_count", "operator_unchanged_freeze_cue_count", "operator_drop_cue_count", "speaker_authority"}
+    if (
+        set(pin) != expected_pin or pin.get("schema_version") != OPERATOR_TEXT_PIN_V3
+        or _clean_sha256(pin.get("baseline_sha256")) != baseline_sha256
+        or _clean_sha256(pin.get("pipeline_srt_sha256")) != pipeline_sha
+        or _clean_sha256(pin.get("decision_ledger_sha256")) != ledger_sha
+        or _clean_sha256(pin.get("diagnostic_diff_sha256")) != diff_sha
+        or _require_operator_authority(pin.get("operator_authority"), label="operator v3 pin authority") != authority
+        or pin.get("speaker_authority") != "NOT_CLAIMED_TEXT_ONLY"
+        or (pin.get("source_cue_count"), pin.get("release_cue_count"), pin.get("changed_cue_count"), pin.get("operator_exact_text_cue_count"), pin.get("operator_unchanged_freeze_cue_count"), pin.get("operator_drop_cue_count")) != (len(pipeline), len(release_cues), changed_count + drop_count, exact_count, freeze_count, drop_count)
+        or (diff.get("source_cue_count"), diff.get("release_cue_count"), diff.get("cue_count"), diff.get("changed_cue_count"), diff.get("operator_drop_cue_count")) != (len(pipeline), len(release_cues), len(release_cues), changed_count + drop_count, drop_count)
+        or not (exact_count + drop_count) or release_cursor != len(release_cues)
+    ):
+        raise ReviewedSubtitleBaselineRegistryError("operator v3 pin coverage is invalid")
+    return (
+        {"schema_version": OPERATOR_TRUTH_LANES_V2_SCHEMA, "release_truth": {"srt_sha256": baseline_sha256},
+         "pipeline_diagnostic": {"path": str(pipeline_path), "sha256": pipeline_sha},
+         "decision_ledger": {"path": str(ledger_path), "sha256": ledger_sha},
+         "diff_receipt": {"path": str(diff_path), "sha256": diff_sha}},
+        {"pipeline_diagnostic": pipeline_path, "decision_ledger": ledger_path, "diff_receipt": diff_path},
+    )
+
+
 def load_candidate_reviewed_subtitle_baseline(
     root: Path,
     candidate_id: str,
@@ -592,6 +715,23 @@ def load_candidate_reviewed_subtitle_baseline(
         candidate_id=candidate_id,
         baseline_sha256=actual_sha256,
     )
+    # A full-ownership lane changes what provider/reviewer work may be skipped.
+    # On its canonical repository path every byte in that lane must therefore
+    # come from HEAD (or the deployed authority manifest), never an untracked
+    # local reviewed-SRT/ledger injection.
+    canonical_root = _lexical_absolute(repo_root) / _BASELINE_REPO_DIRECTORY
+    if operator_truth_lanes and root == canonical_root:
+        try:
+            for path in (manifest, baseline, *_operator_truth_lane_paths.values()):
+                require_repository_asset_authority(
+                    repo_root=repo_root,
+                    relative_path=path.relative_to(repo_root),
+                    observed_bytes=path.read_bytes(),
+                )
+        except (OSError, ValueError, RepositoryAssetAuthorityError) as exc:
+            raise ReviewedSubtitleBaselineRegistryError(
+                "operator truth lanes are not sealed by the active repository"
+            ) from exc
 
     if schema_version == "subtitle-redelivery-baseline.v2":
         if not isinstance(document.get("exact_interval_replay", False), bool):

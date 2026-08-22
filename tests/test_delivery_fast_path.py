@@ -111,6 +111,21 @@ def test_operator_text_ownership_skips_rewriters_without_claiming_speaker() -> N
     assert coverage["speaker_ownership"] == "NOT_CLAIMED_TEXT_ONLY"
 
 
+def test_operator_pin_and_truth_lane_versions_are_not_interchangeable() -> None:
+    spec = _operator_text_owned_spec()
+    spec["subtitle_redelivery_baseline"]["operator_truth_lanes"]["schema_version"] = (
+        "operator-reviewed-subtitle-truth-lanes.v2"
+    )
+    assert resolve_operator_text_full_ownership(spec) is None
+    spec = _operator_text_owned_spec()
+    pin = spec["subtitle_redelivery_baseline"]["operator_text_full_ownership"]
+    pin["schema_version"] = "operator-reviewed-text-full-ownership-pin.v3"
+    pin["source_cue_count"] = pin.pop("cue_count")
+    pin["release_cue_count"] = 5
+    pin["operator_drop_cue_count"] = 0
+    assert resolve_operator_text_full_ownership(spec) is None
+
+
 @pytest.mark.parametrize(
     "field,value",
     [

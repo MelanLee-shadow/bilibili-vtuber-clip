@@ -1,0 +1,50 @@
+{
+  "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
+  "candidate_id": "auto_123036_727_785",
+  "schema_version": "subtitle-redelivery-baseline.v2",
+  "mode": "preserve_text_outside_source_truth",
+  "exact_interval_replay": true,
+  "path": "auto_123036_727_785.reviewed.srt",
+  "sha256": "32bceb56a72f9689a4a968ef702fd3c0991b3632e1f596024a1b48743a1f6592",
+  "authority": "Ivan 2026-08-19 exhaustive ruling #7; only the sealed cue decisions may change release text.",
+  "source_recording_basename": "22966160_20260814-12-30-36.mp4",
+  "source_sha256": "0d1bb56caa00f056878524fe2647714333426ad8cedba3dc1beba08f0f92d7a5",
+  "absolute_source_start_ms": 717160,
+  "absolute_source_end_ms": 833950,
+  "operator_text_full_ownership": {
+    "schema_version": "operator-reviewed-text-full-ownership-pin.v3",
+    "baseline_sha256": "32bceb56a72f9689a4a968ef702fd3c0991b3632e1f596024a1b48743a1f6592",
+    "pipeline_srt_sha256": "6aba17462effe3c6bf1ae7b36e65bb09414a4545b4db2b73f03f6f0a09f93dcf",
+    "decision_ledger_sha256": "387f470b4e8551d6290cec0b77eab02085d633688a45295d56a136396486184f",
+    "diagnostic_diff_sha256": "c6473de1448b9b29eef446738354f0a81ce28a93d47c6dfd7a8055daa5609524",
+    "operator_authority": {
+      "kind": "IVAN_OPERATOR",
+      "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; exact line sha256 e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; durable mirror docs/reviews/2026-08-19-ivan-review-batch-rulings.md. Ivan ruling #7: 0:21 不可以就要 (read chat)."
+    },
+    "source_cue_count": 29,
+    "release_cue_count": 29,
+    "changed_cue_count": 1,
+    "operator_exact_text_cue_count": 1,
+    "operator_unchanged_freeze_cue_count": 28,
+    "operator_drop_cue_count": 0,
+    "speaker_authority": "NOT_CLAIMED_TEXT_ONLY"
+  },
+  "operator_truth_lanes": {
+    "schema_version": "operator-reviewed-subtitle-truth-lanes.v2",
+    "release_truth": {
+      "srt_sha256": "32bceb56a72f9689a4a968ef702fd3c0991b3632e1f596024a1b48743a1f6592"
+    },
+    "pipeline_diagnostic": {
+      "sha256": "6aba17462effe3c6bf1ae7b36e65bb09414a4545b4db2b73f03f6f0a09f93dcf",
+      "path": "auto_123036_727_785.pipeline-diagnostic.srt"
+    },
+    "decision_ledger": {
+      "sha256": "387f470b4e8551d6290cec0b77eab02085d633688a45295d56a136396486184f",
+      "path": "auto_123036_727_785.operator-decisions.v3.json"
+    },
+    "diff_receipt": {
+      "sha256": "c6473de1448b9b29eef446738354f0a81ce28a93d47c6dfd7a8055daa5609524",
+      "path": "auto_123036_727_785.operator-truth-diff.v2.json"
+    }
+  }
+}

@@ -44,7 +44,11 @@ OPERATOR_TEXT_FULL_OWNERSHIP_SCHEMA = "operator_text_full_ownership.v1"
 OPERATOR_TEXT_FULL_OWNERSHIP_PIN_SCHEMA = (
     "operator-reviewed-text-full-ownership-pin.v2"
 )
+OPERATOR_TEXT_FULL_OWNERSHIP_PIN_V3_SCHEMA = (
+    "operator-reviewed-text-full-ownership-pin.v3"
+)
 OPERATOR_TRUTH_LANES_SCHEMA = "operator-reviewed-subtitle-truth-lanes.v1"
+OPERATOR_TRUTH_LANES_V2_SCHEMA = "operator-reviewed-subtitle-truth-lanes.v2"
 EXACT_REPLAY_BASELINE_SCHEMA = "subtitle-redelivery-baseline.v2"
 FINAL_REVIEW_AUDIT_SCHEMA = "final-review-audit.v1"
 
@@ -302,6 +306,31 @@ def resolve_truth_full_ownership(
 def _valid_operator_text_pin(
     pin: object, *, baseline_sha256: str
 ) -> Mapping[str, object] | None:
+    if isinstance(pin, Mapping) and pin.get("schema_version") == OPERATOR_TEXT_FULL_OWNERSHIP_PIN_V3_SCHEMA:
+        expected_v3 = {
+            "schema_version", "baseline_sha256", "pipeline_srt_sha256",
+            "decision_ledger_sha256", "diagnostic_diff_sha256", "operator_authority",
+            "source_cue_count", "release_cue_count", "changed_cue_count",
+            "operator_exact_text_cue_count", "operator_unchanged_freeze_cue_count",
+            "operator_drop_cue_count", "speaker_authority",
+        }
+        if (
+            set(pin) != expected_v3
+            or _clean_sha256(pin.get("baseline_sha256")) != baseline_sha256
+            or not all(_clean_sha256(pin.get(key)) for key in ("pipeline_srt_sha256", "decision_ledger_sha256", "diagnostic_diff_sha256"))
+            or pin.get("speaker_authority") != "NOT_CLAIMED_TEXT_ONLY"
+        ):
+            return None
+        counts = tuple(pin.get(key) for key in ("source_cue_count", "release_cue_count", "changed_cue_count", "operator_exact_text_cue_count", "operator_unchanged_freeze_cue_count", "operator_drop_cue_count"))
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in counts):
+            return None
+        source, release, changed, exact, freeze, dropped = counts
+        if not (source > 0 and release > 0 and dropped >= 0 and source == release + dropped and exact + dropped > 0 and exact + freeze + dropped == source and 0 <= changed <= exact + dropped):
+            return None
+        authority = pin.get("operator_authority")
+        if not isinstance(authority, Mapping) or set(authority) != {"kind", "evidence_ref"} or authority.get("kind") != "IVAN_OPERATOR" or not isinstance(authority.get("evidence_ref"), str) or not authority["evidence_ref"].strip():
+            return None
+        return pin
     expected = {
         "schema_version",
         "baseline_sha256",
@@ -379,7 +408,11 @@ def _valid_operator_truth_lanes(
             "decision_ledger",
             "diff_receipt",
         }
-        or value.get("schema_version") != OPERATOR_TRUTH_LANES_SCHEMA
+        or value.get("schema_version") != (
+            OPERATOR_TRUTH_LANES_V2_SCHEMA
+            if pin.get("schema_version") == OPERATOR_TEXT_FULL_OWNERSHIP_PIN_V3_SCHEMA
+            else OPERATOR_TRUTH_LANES_SCHEMA
+        )
     ):
         return None
     release = value.get("release_truth")
@@ -431,19 +464,26 @@ def resolve_operator_text_full_ownership(
     )
     if truth_lanes is None:
         return None
+    source_cue_count = pin.get("source_cue_count", pin.get("cue_count"))
+    release_cue_count = pin.get("release_cue_count", pin.get("cue_count"))
     return {
         "schema_version": OPERATOR_TEXT_FULL_OWNERSHIP_SCHEMA,
         "status": "OPERATOR_TEXT_FULL_OWNERSHIP",
         "coverage": {
-            "cue_count": int(str(pin["cue_count"])),
-            "reviewed_text_cue_count": int(str(pin["cue_count"])),
+            "cue_count": int(str(source_cue_count)),
+            "reviewed_text_cue_count": int(str(release_cue_count)),
             "changed_text_cue_count": int(str(pin["changed_cue_count"])),
             "operator_exact_text_cue_count": int(
                 str(pin["operator_exact_text_cue_count"])
             ),
-            "unchanged_freeze_cue_count": int(
-                str(pin["operator_unchanged_freeze_cue_count"])
-            ),
+                "unchanged_freeze_cue_count": int(
+                    str(pin["operator_unchanged_freeze_cue_count"])
+                ),
+                **(
+                    {"dropped_cue_count": int(str(pin["operator_drop_cue_count"]))}
+                    if "operator_drop_cue_count" in pin
+                    else {}
+                ),
             "text_ownership": "EXACT_INTERVAL_REPLAY_OF_OPERATOR_REVIEWED_BASELINE",
             "speaker_ownership": "NOT_CLAIMED_TEXT_ONLY",
             "proof": {

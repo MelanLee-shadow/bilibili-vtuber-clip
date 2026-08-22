@@ -1,0 +1,50 @@
+{
+  "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
+  "candidate_id": "auto_120032_753_816",
+  "schema_version": "subtitle-redelivery-baseline.v2",
+  "mode": "preserve_text_outside_source_truth",
+  "exact_interval_replay": true,
+  "path": "auto_120032_753_816.reviewed.srt",
+  "sha256": "3cfcf2954c1d32a078e99aaff5585213b5edbbedd6db8f87d62097d06775ea77",
+  "authority": "Ivan 2026-08-19 exhaustive ruling #6; only the sealed cue decisions may change release text.",
+  "source_recording_basename": "22966160_20260814-12-00-32.mp4",
+  "source_sha256": "0f0770a9426c48fee5457cf9639a77e5a477f41ec806f4e4789e19c336e1aae5",
+  "absolute_source_start_ms": 743770,
+  "absolute_source_end_ms": 864000,
+  "operator_text_full_ownership": {
+    "schema_version": "operator-reviewed-text-full-ownership-pin.v3",
+    "baseline_sha256": "3cfcf2954c1d32a078e99aaff5585213b5edbbedd6db8f87d62097d06775ea77",
+    "pipeline_srt_sha256": "a3ac0efb39d5348f8e8e756712de9a18a6aa87123b0ccbd8fb9bd68c54afb8b1",
+    "decision_ledger_sha256": "ecef045ba999ca94f3afa58a57562ce728fd004e9dc0d03cec949e0f27f737f3",
+    "diagnostic_diff_sha256": "ee662f130cb91537db8dd471cddc777318e30179ed7b2c6e8fe7f203a3f23522",
+    "operator_authority": {
+      "kind": "IVAN_OPERATOR",
+      "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; exact line sha256 e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; durable mirror docs/reviews/2026-08-19-ivan-review-batch-rulings.md. Ivan ruling #6: 1:01 naruhodo ne Japanese; follow the chat surface."
+    },
+    "source_cue_count": 22,
+    "release_cue_count": 22,
+    "changed_cue_count": 1,
+    "operator_exact_text_cue_count": 1,
+    "operator_unchanged_freeze_cue_count": 21,
+    "operator_drop_cue_count": 0,
+    "speaker_authority": "NOT_CLAIMED_TEXT_ONLY"
+  },
+  "operator_truth_lanes": {
+    "schema_version": "operator-reviewed-subtitle-truth-lanes.v2",
+    "release_truth": {
+      "srt_sha256": "3cfcf2954c1d32a078e99aaff5585213b5edbbedd6db8f87d62097d06775ea77"
+    },
+    "pipeline_diagnostic": {
+      "sha256": "a3ac0efb39d5348f8e8e756712de9a18a6aa87123b0ccbd8fb9bd68c54afb8b1",
+      "path": "auto_120032_753_816.pipeline-diagnostic.srt"
+    },
+    "decision_ledger": {
+      "sha256": "ecef045ba999ca94f3afa58a57562ce728fd004e9dc0d03cec949e0f27f737f3",
+      "path": "auto_120032_753_816.operator-decisions.v3.json"
+    },
+    "diff_receipt": {
+      "sha256": "ee662f130cb91537db8dd471cddc777318e30179ed7b2c6e8fe7f203a3f23522",
+      "path": "auto_120032_753_816.operator-truth-diff.v2.json"
+    }
+  }
+}

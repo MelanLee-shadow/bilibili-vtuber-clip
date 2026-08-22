@@ -1,0 +1,50 @@
+{
+  "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
+  "candidate_id": "auto_113028_1271_1328",
+  "schema_version": "subtitle-redelivery-baseline.v2",
+  "mode": "preserve_text_outside_source_truth",
+  "exact_interval_replay": true,
+  "path": "auto_113028_1271_1328.reviewed.srt",
+  "sha256": "9f33f247deb405b409d50f294bbfab08db7d5f43086241dd736fac0498faf64b",
+  "authority": "Ivan 2026-08-19 exhaustive ruling #5; only the sealed cue decisions may change release text.",
+  "source_recording_basename": "22966160_20260814-11-30-28.mp4",
+  "source_sha256": "20c2fc8ccf054c038eb2e308a9ed2a0bb00593de8c7e8895e87ae0b1ee13734c",
+  "absolute_source_start_ms": 1261170,
+  "absolute_source_end_ms": 1376550,
+  "operator_text_full_ownership": {
+    "schema_version": "operator-reviewed-text-full-ownership-pin.v3",
+    "baseline_sha256": "9f33f247deb405b409d50f294bbfab08db7d5f43086241dd736fac0498faf64b",
+    "pipeline_srt_sha256": "5da5af9dba5ce3ff2fee7d585bda809eb3a9edb612a18868ace683cb94281043",
+    "decision_ledger_sha256": "6fac5913ee143619c840483a8355e6ba63690f9bf47ddd27b3d34b9fcb5ce1a2",
+    "diagnostic_diff_sha256": "48142b7ebf737dde41472757030385794deb43ba9091289d1f4962885fd446b1",
+    "operator_authority": {
+      "kind": "IVAN_OPERATOR",
+      "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; exact line sha256 e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; durable mirror docs/reviews/2026-08-19-ivan-review-batch-rulings.md. Ivan ruling #5: niji/にじさんじ song humming has no subtitle."
+    },
+    "source_cue_count": 24,
+    "release_cue_count": 21,
+    "changed_cue_count": 3,
+    "operator_exact_text_cue_count": 0,
+    "operator_unchanged_freeze_cue_count": 21,
+    "operator_drop_cue_count": 3,
+    "speaker_authority": "NOT_CLAIMED_TEXT_ONLY"
+  },
+  "operator_truth_lanes": {
+    "schema_version": "operator-reviewed-subtitle-truth-lanes.v2",
+    "release_truth": {
+      "srt_sha256": "9f33f247deb405b409d50f294bbfab08db7d5f43086241dd736fac0498faf64b"
+    },
+    "pipeline_diagnostic": {
+      "sha256": "5da5af9dba5ce3ff2fee7d585bda809eb3a9edb612a18868ace683cb94281043",
+      "path": "auto_113028_1271_1328.pipeline-diagnostic.srt"
+    },
+    "decision_ledger": {
+      "sha256": "6fac5913ee143619c840483a8355e6ba63690f9bf47ddd27b3d34b9fcb5ce1a2",
+      "path": "auto_113028_1271_1328.operator-decisions.v3.json"
+    },
+    "diff_receipt": {
+      "sha256": "48142b7ebf737dde41472757030385794deb43ba9091289d1f4962885fd446b1",
+      "path": "auto_113028_1271_1328.operator-truth-diff.v2.json"
+    }
+  }
+}

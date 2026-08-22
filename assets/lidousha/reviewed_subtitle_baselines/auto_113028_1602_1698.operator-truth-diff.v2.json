@@ -1,0 +1,278 @@
+{
+  "schema_version": "operator-reviewed-subtitle-truth-diff.v2",
+  "candidate_id": "auto_113028_1602_1698",
+  "pipeline_srt_sha256": "512f74a7159c36c88b6c49d48ef46055f9caa6b094d4c6bf77336fe29a8956d5",
+  "release_truth_srt_sha256": "46e769a270867a3f3eb12047778d4628151771539ec7d67e4cb4040c02e31efd",
+  "decision_ledger_sha256": "3b860b2cc00ffaed8ab7d888094c1a41433bf3bee87cf0d03efbec73ee0390f8",
+  "cue_count": 20,
+  "source_cue_count": 24,
+  "release_cue_count": 20,
+  "operator_drop_cue_count": 4,
+  "changed_cue_count": 5,
+  "rows": [
+    {
+      "cue": 1,
+      "source_index": "1",
+      "start_ms": 250,
+      "end_ms": 1370,
+      "pipeline_text": "《线上直播间",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 1,
+      "release_truth_text": "《线上直播间"
+    },
+    {
+      "cue": 2,
+      "source_index": "2",
+      "start_ms": 1370,
+      "end_ms": 4090,
+      "pipeline_text": "老公不可能是女生？！》问号感叹号",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 2,
+      "release_truth_text": "老公不可能是女生？！》问号感叹号"
+    },
+    {
+      "cue": 3,
+      "source_index": "3",
+      "start_ms": 6290,
+      "end_ms": 8330,
+      "pipeline_text": "见面发现阿里",
+      "disposition": "OPERATOR_EXACT_TEXT",
+      "release_cue_index": 3,
+      "release_truth_text": "见面发现，あれ？",
+      "decision_authority": {
+        "kind": "IVAN_OPERATOR",
+        "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; exact line sha256 e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; durable mirror docs/reviews/2026-08-19-ivan-review-batch-rulings.md. Ivan ruling #4: 0:13 见面发现 + Japanese あれ?; 0:36/0:52 花海 Japanese humming has no subtitle."
+      }
+    },
+    {
+      "cue": 4,
+      "source_index": "4",
+      "start_ms": 11150,
+      "end_ms": 13710,
+      "pipeline_text": "一句日一句中太难了",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 4,
+      "release_truth_text": "一句日一句中太难了"
+    },
+    {
+      "cue": 5,
+      "source_index": "5",
+      "start_ms": 13830,
+      "end_ms": 16190,
+      "pipeline_text": "我搜下花海的日文歌词",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 5,
+      "release_truth_text": "我搜下花海的日文歌词"
+    },
+    {
+      "cue": 6,
+      "source_index": "6",
+      "start_ms": 24030,
+      "end_ms": 26150,
+      "pipeline_text": "当当当当当",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 6,
+      "release_truth_text": "当当当当当"
+    },
+    {
+      "cue": 7,
+      "source_index": "7",
+      "start_ms": 26750,
+      "end_ms": 28030,
+      "pipeline_text": "我爱TA",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 7,
+      "release_truth_text": "我爱TA"
+    },
+    {
+      "cue": 8,
+      "source_index": "8",
+      "start_ms": 28030,
+      "end_ms": 31420,
+      "pipeline_text": "喜滋美滋阿西",
+      "disposition": "OPERATOR_DROP",
+      "release_cue_index": null,
+      "release_truth_text": null,
+      "decision_authority": {
+        "kind": "IVAN_OPERATOR",
+        "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; exact line sha256 e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; durable mirror docs/reviews/2026-08-19-ivan-review-batch-rulings.md. Ivan ruling #4: 0:13 见面发现 + Japanese あれ?; 0:36/0:52 花海 Japanese humming has no subtitle."
+      },
+      "drop_reason": "Ivan ruling #4: 0:36 Japanese 花海 humming has no subtitle."
+    },
+    {
+      "cue": 9,
+      "source_index": "9",
+      "start_ms": 32300,
+      "end_ms": 35300,
+      "pipeline_text": "好古典是吗",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 8,
+      "release_truth_text": "好古典是吗"
+    },
+    {
+      "cue": 10,
+      "source_index": "10",
+      "start_ms": 36630,
+      "end_ms": 38430,
+      "pipeline_text": "这首歌这首歌吗",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 9,
+      "release_truth_text": "这首歌这首歌吗"
+    },
+    {
+      "cue": 11,
+      "source_index": "11",
+      "start_ms": 38950,
+      "end_ms": 40510,
+      "pipeline_text": "花海这首歌吗",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 10,
+      "release_truth_text": "花海这首歌吗"
+    },
+    {
+      "cue": 12,
+      "source_index": "12",
+      "start_ms": 41680,
+      "end_ms": 42880,
+      "pipeline_text": "花海",
+      "disposition": "OPERATOR_DROP",
+      "release_cue_index": null,
+      "release_truth_text": null,
+      "decision_authority": {
+        "kind": "IVAN_OPERATOR",
+        "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; exact line sha256 e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; durable mirror docs/reviews/2026-08-19-ivan-review-batch-rulings.md. Ivan ruling #4: 0:13 见面发现 + Japanese あれ?; 0:36/0:52 花海 Japanese humming has no subtitle."
+      },
+      "drop_reason": "Ivan ruling #4: Japanese 花海 humming has no subtitle."
+    },
+    {
+      "cue": 13,
+      "source_index": "13",
+      "start_ms": 43680,
+      "end_ms": 45920,
+      "pipeline_text": "马一莫多了",
+      "disposition": "OPERATOR_DROP",
+      "release_cue_index": null,
+      "release_truth_text": null,
+      "decision_authority": {
+        "kind": "IVAN_OPERATOR",
+        "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; exact line sha256 e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; durable mirror docs/reviews/2026-08-19-ivan-review-batch-rulings.md. Ivan ruling #4: 0:13 见面发现 + Japanese あれ?; 0:36/0:52 花海 Japanese humming has no subtitle."
+      },
+      "drop_reason": "Ivan ruling #4: Japanese 花海 humming has no subtitle."
+    },
+    {
+      "cue": 14,
+      "source_index": "14",
+      "start_ms": 46160,
+      "end_ms": 49480,
+      "pipeline_text": "不能文明",
+      "disposition": "OPERATOR_DROP",
+      "release_cue_index": null,
+      "release_truth_text": null,
+      "decision_authority": {
+        "kind": "IVAN_OPERATOR",
+        "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; exact line sha256 e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; durable mirror docs/reviews/2026-08-19-ivan-review-batch-rulings.md. Ivan ruling #4: 0:13 见面发现 + Japanese あれ?; 0:36/0:52 花海 Japanese humming has no subtitle."
+      },
+      "drop_reason": "Ivan ruling #4: Japanese 花海 humming has no subtitle."
+    },
+    {
+      "cue": 15,
+      "source_index": "15",
+      "start_ms": 50320,
+      "end_ms": 52360,
+      "pipeline_text": "你李姐也是男的",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 11,
+      "release_truth_text": "你李姐也是男的"
+    },
+    {
+      "cue": 16,
+      "source_index": "16",
+      "start_ms": 52580,
+      "end_ms": 54140,
+      "pipeline_text": "男的也是女的",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 12,
+      "release_truth_text": "男的也是女的"
+    },
+    {
+      "cue": 17,
+      "source_index": "17",
+      "start_ms": 54140,
+      "end_ms": 55660,
+      "pipeline_text": "女的也是男的",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 13,
+      "release_truth_text": "女的也是男的"
+    },
+    {
+      "cue": 18,
+      "source_index": "18",
+      "start_ms": 55739,
+      "end_ms": 57100,
+      "pipeline_text": "男的也是男的",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 14,
+      "release_truth_text": "男的也是男的"
+    },
+    {
+      "cue": 19,
+      "source_index": "19",
+      "start_ms": 57100,
+      "end_ms": 58300,
+      "pipeline_text": "女的也是女的",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 15,
+      "release_truth_text": "女的也是女的"
+    },
+    {
+      "cue": 20,
+      "source_index": "20",
+      "start_ms": 58300,
+      "end_ms": 59380,
+      "pipeline_text": "女的也是男的",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 16,
+      "release_truth_text": "女的也是男的"
+    },
+    {
+      "cue": 21,
+      "source_index": "21",
+      "start_ms": 59380,
+      "end_ms": 60660,
+      "pipeline_text": "男的也是女的",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 17,
+      "release_truth_text": "男的也是女的"
+    },
+    {
+      "cue": 22,
+      "source_index": "22",
+      "start_ms": 90230,
+      "end_ms": 92670,
+      "pipeline_text": "男的女的磕到了什么",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 18,
+      "release_truth_text": "男的女的磕到了什么"
+    },
+    {
+      "cue": 23,
+      "source_index": "23",
+      "start_ms": 92670,
+      "end_ms": 93430,
+      "pipeline_text": "你竟然敢磕",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 19,
+      "release_truth_text": "你竟然敢磕"
+    },
+    {
+      "cue": 24,
+      "source_index": "24",
+      "start_ms": 93430,
+      "end_ms": 96390,
+      "pipeline_text": "男的女的违背这个直播间世界观了",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 20,
+      "release_truth_text": "男的女的违背这个直播间世界观了"
+    }
+  ]
+}
