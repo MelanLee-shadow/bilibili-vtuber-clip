@@ -7,6 +7,7 @@ import json
 import os
 import stat
 from collections.abc import Callable, Mapping
+from datetime import datetime
 from pathlib import Path
 
 from scripts import authorized_upload
@@ -561,6 +562,7 @@ def _category(reasons: set[str], *, serial: bool) -> str:
 def build_readiness_graph(*, repository_root: Path, runtime_root: Path,
                           recording_dates: frozenset[str] | None = None,
                           candidate_ids: frozenset[str] | None = None,
+                          now: datetime | None = None,
                           registry_loader: Callable[..., Mapping[str, object]] = load_publication_registry,
                           manifest_loader: Callable[..., tuple[dict | None, list[str]]] = authorized_upload.load_and_verify,
                           ledger_reader: Callable[[Path], tuple[list[dict], list[str]]] = authorized_upload.read_ledger,
@@ -661,7 +663,7 @@ def build_readiness_graph(*, repository_root: Path, runtime_root: Path,
                 runtime_root=runtime_root,
             )
             and not selection_support_override.selection_support_override_applies(
-                pick, state=owning_state, date=date, runtime_root=runtime_root
+                pick, state=owning_state, date=date, runtime_root=runtime_root, now=now,
             )
         ):
             reasons.add("SELECTION_SUPPORT_TERMINAL_BLOCKED")

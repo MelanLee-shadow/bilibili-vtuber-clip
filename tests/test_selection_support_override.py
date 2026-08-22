@@ -413,6 +413,7 @@ def test_readiness_does_not_hide_terminal_selection_support_behind_cover_qc(tmp_
     graph = build_readiness_graph(
         repository_root=root / "repo",
         runtime_root=root,
+        now=NOW,
         registry_loader=lambda *_args, **_kwargs: {"entries": []},
         ledger_reader=lambda _path: ([], []),
         ledger_checker=lambda *_args: (None, None, []),
@@ -427,6 +428,7 @@ def test_readiness_does_not_hide_terminal_selection_support_behind_cover_qc(tmp_
     graph = build_readiness_graph(
         repository_root=root / "repo",
         runtime_root=root,
+        now=NOW,
         registry_loader=lambda *_args, **_kwargs: {"entries": []},
         ledger_reader=lambda _path: ([], []),
         ledger_checker=lambda *_args: (None, None, []),
