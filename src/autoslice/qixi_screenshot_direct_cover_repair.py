@@ -758,20 +758,14 @@ def run_fixed_apply(*, repo_root: Path = ROOT, stage_root_parent: Path | None = 
         journal_path = transaction / "journal.json"
         if os.path.lexists(journal_path):
             journal = _read_journal(journal_path, authority, str(manifest["preflight_sha256"]))
-            if journal.get("status") == "COMMITTED":
-                entries = journal.get("entries")
-                if not isinstance(entries, list) or any(not isinstance(entry, Mapping) for entry in entries):
-                    raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_JOURNAL_DRIFT")
-                replay = {
-                    Path(str(entry["target"])): base64.b64decode(
-                        str(entry["after_bytes_b64"]), validate=True,
-                    ) for entry in entries
-                }
-                return apply_preflight_targets(
-                    authority=authority, stage_root_parent=parent,
-                    preflight_sha256=str(manifest["preflight_sha256"]), targets=replay,
-                    apply=True, lock_held=True, strict_targets=True,
-                )
+            replay = _sealed_journal_targets(
+                authority=authority, journal=journal, stored=stored,
+            )
+            return apply_preflight_targets(
+                authority=authority, stage_root_parent=parent,
+                preflight_sha256=str(manifest["preflight_sha256"]), targets=replay,
+                apply=True, lock_held=True, strict_targets=True,
+            )
         runtime = snapshot_fixed_runtime(authority, repo_root=repo_root)
         expected = manifest.get("runtime_preimage")
         observed = {role: _sha256_bytes(payload) for role, payload in runtime.items()}
@@ -792,6 +786,63 @@ def run_fixed_apply(*, repo_root: Path = ROOT, stage_root_parent: Path | None = 
             preflight_sha256=str(manifest["preflight_sha256"]), targets=targets, apply=True,
             lock_held=True, strict_targets=True,
         )
+
+
+def _sealed_journal_targets(
+    *, authority: Mapping[str, object], journal: Mapping[str, object], stored: Mapping[str, object],
+) -> dict[Path, bytes]:
+    """Resume only a journal whose postimages are bound to its sealed store."""
+    entries = journal.get("entries")
+    manifest, generation = stored.get("manifest"), stored.get("generation")
+    if not isinstance(entries, list) or not isinstance(manifest, Mapping) or not isinstance(generation, Mapping):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_JOURNAL_DRIFT")
+    sidecars = stored.get("sidecars")
+    if not isinstance(sidecars, Mapping) or any(not isinstance(path, Path) or not isinstance(payload, bytes) for path, payload in sidecars.items()):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_JOURNAL_DRIFT")
+    terminal = json.loads((ROOT / str(authority["terminal_refresh_authority"]["relative_path"])).read_text())
+    preimage = terminal.get("preimage")
+    if not isinstance(preimage, Mapping):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_JOURNAL_DRIFT")
+    json_paths = {Path(str(preimage[role]["path"])) for role in ("record", "delivery_record", "publish", "state")}
+    expected = json_paths | {authority_final_cover_path(authority), cover_repair_qc_target(authority)} | set(sidecars)
+    targets: dict[Path, bytes] = {}
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_JOURNAL_DRIFT")
+        try:
+            target = Path(str(entry["target"]))
+            payload = base64.b64decode(str(entry["after_bytes_b64"]), validate=True)
+        except (ValueError, UnicodeEncodeError) as exc:
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_JOURNAL_DRIFT") from exc
+        if target in targets or target not in expected:
+            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_JOURNAL_DRIFT")
+        targets[target] = payload
+    if set(targets) != expected:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_JOURNAL_DRIFT")
+    if targets[authority_final_cover_path(authority)] != stored.get("cover") or targets[cover_repair_qc_target(authority)] != stored.get("joint_qc"):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_JOURNAL_DRIFT")
+    if any(targets[path] != payload for path, payload in sidecars.items()):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_JOURNAL_DRIFT")
+    try:
+        record = json.loads(targets[Path(str(preimage["record"]["path"]))])
+        delivery = json.loads(targets[Path(str(preimage["delivery_record"]["path"]))])
+        publish = json.loads(targets[Path(str(preimage["publish"]["path"]))])
+        state = json.loads(targets[Path(str(preimage["state"]["path"]))])
+    except (UnicodeDecodeError, json.JSONDecodeError, KeyError) as exc:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_JOURNAL_DRIFT") from exc
+    if (
+        not isinstance(record, Mapping) or not isinstance(delivery, Mapping)
+        or record != delivery
+        or record.get("publish_staging", {}).get("cover_generation") != generation
+        or publish.get("cover_generation") != generation
+        or publish.get("title_cover_joint_qc") != json.loads(stored["joint_qc"])
+    ):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_JOURNAL_DRIFT")
+    rows = state.get("picks") if isinstance(state, Mapping) else None
+    matches = [row for row in rows if isinstance(row, Mapping) and row.get("candidate_id") == CANDIDATE_ID] if isinstance(rows, list) else []
+    if len(matches) != 1 or matches[0].get("cover_generation") != generation:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_JOURNAL_DRIFT")
+    return targets
 
 
 def build_preflight_manifest(
