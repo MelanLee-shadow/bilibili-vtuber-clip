@@ -113,7 +113,7 @@ def validate_authority(value: Mapping[str, object]) -> dict[str, object]:
         "schema_version", "candidate_id", "recording_date", "runtime_root",
         "upload_enabled", "title", "punch_candidates", "terminal_refresh_authority",
         "legacy_cover", "immutable_media", "title_projection_sha256",
-        "allowed_mutations",
+        "allowed_mutations", "punch_semantic_receipt",
     }
     if (
         set(authority) != required
@@ -165,6 +165,7 @@ def validate_authority(value: Mapping[str, object]) -> dict[str, object]:
         or any(not _valid_mutation_scope(scope) for scope in allowed.values())
     ):
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_AUTHORITY_SCOPE_INVALID")
+    _validate_sealed_punch_receipt(authority["punch_semantic_receipt"])
     authority["authority_sha256"] = claimed
     return authority
 
@@ -390,6 +391,84 @@ def require_repaired_punch(value: object) -> tuple[str, ...]:
     if any(not isinstance(line, str) or line not in PUNCH_CANDIDATES for line in lines):
         raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PUNCH_OUTSIDE_POOL")
     return lines
+
+
+_SEALED_PUNCH_RECEIPT_FIELDS = frozenset(
+    {
+        "schema_version", "status", "reason_code", "original_punch", "final_punch",
+        "stranger_can_infer_event", "contains_concrete_subject",
+        "contains_action_or_conflict", "no_fabricated_fact", "story_summary",
+        "click_motivation", "cover_text_sha256", "story_hook_sha256",
+        "request_sha256", "response_sha256", "attempt_count", "attempts",
+        "receipt_sha256",
+    }
+)
+
+
+def _valid_bare_sha256(value: object) -> bool:
+    return bool(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value))
+
+
+def _validate_sealed_punch_receipt(value: object) -> dict[str, object]:
+    """Validate the exact, commit-bound CPA receipt without calling CPA."""
+
+    if not isinstance(value, Mapping) or set(value) != _SEALED_PUNCH_RECEIPT_FIELDS:
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PUNCH_RECEIPT_INVALID")
+    receipt = dict(value)
+    claimed = receipt.pop("receipt_sha256")
+    final = receipt.get("final_punch")
+    attempts = receipt.get("attempts")
+    if (
+        not isinstance(claimed, str)
+        or claimed != canonical_sha256(receipt)
+        or receipt.get("schema_version") != "lidousha-cover-punch-semantic-review.v2"
+        or receipt.get("status") != "PASS"
+        or receipt.get("reason_code") is not None
+        or receipt.get("original_punch") != list(PUNCH_CANDIDATES)
+        or final != list(PUNCH_CANDIDATES)
+        or any(receipt.get(key) is not True for key in (
+            "stranger_can_infer_event", "contains_concrete_subject",
+            "contains_action_or_conflict", "no_fabricated_fact",
+        ))
+        or any(not isinstance(receipt.get(key), str) or not receipt[key].strip() for key in (
+            "story_summary", "click_motivation",
+        ))
+        or any(not _valid_bare_sha256(receipt.get(key)) for key in (
+            "cover_text_sha256", "story_hook_sha256", "request_sha256", "response_sha256",
+        ))
+        or receipt.get("attempt_count") != 1
+        or not isinstance(attempts, list)
+        or len(attempts) != 1
+        or not isinstance(attempts[0], Mapping)
+        or dict(attempts[0]) != {
+            "attempt": 1,
+            "request_sha256": receipt["request_sha256"],
+            "response_sha256": receipt["response_sha256"],
+            "model_status": "PASS",
+            "validated_final_punch": list(PUNCH_CANDIDATES),
+            "status": "ACCEPTED",
+        }
+    ):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PUNCH_RECEIPT_INVALID")
+    receipt["receipt_sha256"] = claimed
+    return receipt
+
+
+def sealed_punch_semantic_receipt(
+    authority: Mapping[str, object], *, cover_text: str, story_hook: str,
+) -> dict[str, object]:
+    """Revalidate the sealed review against this exact runtime text surface."""
+
+    normalized = validate_authority(authority)
+    receipt = _validate_sealed_punch_receipt(normalized["punch_semantic_receipt"])
+    if not validate_cover_punch_semantic_review(
+        receipt,
+        rendered_lines=list(PUNCH_CANDIDATES),
+        cover_text=cover_text,
+        story_hook=story_hook,
+    ):
+        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PUNCH_REVIEW_INVALID")
+    return receipt
 
 
 def _cpa_env(path: Path = Path("/opt/bilive/autoslice/cpa.env")) -> dict[str, str]:
@@ -787,14 +866,18 @@ def run_fixed_full_dry(*, repo_root: Path = ROOT, stage_root_parent: Path | None
     from src.autoslice.cpa_frame_witness import image_vision_probe
 
     def review_punch(*, title: object, story: object, cover_text: object, candidates: object) -> Mapping[str, object]:
-        if title != authority["title"]["value"] or candidates != PUNCH_CANDIDATES or not isinstance(story, Mapping):
+        if (
+            title != authority["title"]["value"]
+            or candidates != PUNCH_CANDIDATES
+            or not isinstance(story, Mapping)
+            or not isinstance(cover_text, str)
+        ):
             raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PUNCH_INPUT_INVALID")
-        lines, receipt = _production_review_punch(
-            story_hook=str(story.get("selection_hook") or ""), cover_text=str(cover_text or "")
+        return sealed_punch_semantic_receipt(
+            authority,
+            cover_text=cover_text,
+            story_hook=str(story.get("selection_hook") or ""),
         )
-        if tuple(receipt.get("final_punch") or ()) != lines:
-            raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_PUNCH_REVIEW_INVALID")
-        return receipt
 
     def joint_qc(*, cover_path: Path, title: object, candidate_id: object, logical_cover_path: object) -> dict[str, object]:
         if title != authority["title"]["value"] or candidate_id != CANDIDATE_ID or not isinstance(logical_cover_path, str):

@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,31 @@ from src.autoslice import qixi_screenshot_direct_cover_repair as repair
 
 def _sha(value: object) -> str:
     return repair.canonical_sha256(value)
+
+
+def _sealed_punch_receipt(
+    *, cover_text: str = "小李有女友感吗？宿敌是否有点亲密了", story_hook: str = "小李和宿敌有点亲密",
+) -> dict[str, object]:
+    body: dict[str, object] = {
+        "schema_version": "lidousha-cover-punch-semantic-review.v2",
+        "status": "PASS", "reason_code": None,
+        "original_punch": list(repair.PUNCH_CANDIDATES),
+        "final_punch": list(repair.PUNCH_CANDIDATES),
+        "stranger_can_infer_event": True, "contains_concrete_subject": True,
+        "contains_action_or_conflict": True, "no_fabricated_fact": True,
+        "story_summary": "小李把女友感关系说成宿敌又有点亲密。",
+        "click_motivation": "女友感与宿敌亲密的反差值得点开。",
+        "cover_text_sha256": hashlib.sha256(cover_text.encode()).hexdigest(),
+        "story_hook_sha256": hashlib.sha256(story_hook.encode()).hexdigest(),
+        "request_sha256": "1" * 64, "response_sha256": "2" * 64,
+        "attempt_count": 1,
+        "attempts": [{
+            "attempt": 1, "request_sha256": "1" * 64, "response_sha256": "2" * 64,
+            "model_status": "PASS", "validated_final_punch": list(repair.PUNCH_CANDIDATES),
+            "status": "ACCEPTED",
+        }],
+    }
+    return {**body, "receipt_sha256": _sha(body)}
 
 
 def _authority(generation: dict[str, object], cover: bytes, qc: bytes) -> dict[str, object]:
@@ -28,6 +54,7 @@ def _authority(generation: dict[str, object], cover: bytes, qc: bytes) -> dict[s
         "runtime_root": "/runtime", "upload_enabled": False,
         "title": {"value": "title", "sha256": "sha256:" + hashlib.sha256(b"title").hexdigest()},
         "punch_candidates": list(repair.PUNCH_CANDIDATES),
+        "punch_semantic_receipt": _sealed_punch_receipt(),
         "terminal_refresh_authority": {"relative_path": "assets/x.json", "authority_sha256": "sha256:" + "1" * 64},
         "legacy_cover": {
             "final_cover": {"path": "/runtime/cover.png", "sha256": "sha256:" + hashlib.sha256(cover).hexdigest(), "bytes": len(cover)},
@@ -74,6 +101,69 @@ def test_repaired_punch_is_only_from_fixed_candidate_pool() -> None:
     assert repair.require_repaired_punch(["有女友感吗？", "宿敌有点亲密"]) == repair.PUNCH_CANDIDATES
     with pytest.raises(repair.QixiScreenshotDirectCoverRepairError, match="OUTSIDE_POOL"):
         repair.require_repaired_punch(["任意新梗"])
+
+
+def test_sealed_punch_receipt_is_hash_bound_and_revalidated_against_runtime_text() -> None:
+    cover_text = "小李有女友感吗？宿敌是否有点亲密了"
+    story_hook = "小李和宿敌有点亲密"
+    authority = _authority(_generation(), b"old-cover", b"old-qc")
+    assert repair.sealed_punch_semantic_receipt(
+        authority, cover_text=cover_text, story_hook=story_hook,
+    )["receipt_sha256"] == authority["punch_semantic_receipt"]["receipt_sha256"]
+    with pytest.raises(repair.QixiScreenshotDirectCoverRepairError, match="PUNCH_REVIEW_INVALID"):
+        repair.sealed_punch_semantic_receipt(
+            authority, cover_text=cover_text + "漂移", story_hook=story_hook,
+        )
+    tampered = copy.deepcopy(authority)
+    receipt = tampered["punch_semantic_receipt"]
+    assert isinstance(receipt, dict)
+    receipt["story_summary"] = "伪造摘要"
+    tampered["authority_sha256"] = _sha(
+        {key: value for key, value in tampered.items() if key != "authority_sha256"}
+    )
+    with pytest.raises(repair.QixiScreenshotDirectCoverRepairError, match="PUNCH_RECEIPT_INVALID"):
+        repair.validate_authority(tampered)
+
+
+def test_fixed_full_dry_reuses_sealed_punch_without_punch_provider(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cover_text = "小李有女友感吗？宿敌是否有点亲密了"
+    story_hook = "小李和宿敌有点亲密"
+    authority = _authority(_generation(), b"old-cover", b"old-qc")
+    authority["runtime_root"] = str(tmp_path)
+    authority["authority_sha256"] = _sha(
+        {key: value for key, value in authority.items() if key != "authority_sha256"}
+    )
+    runtime = {
+        "record": json.dumps({
+            "story_contract": {"selection_hook": story_hook},
+            "publish_staging": {"cover_text": cover_text},
+        }).encode()
+    }
+    monkeypatch.setattr(repair, "load_authority", lambda _root: authority)
+    monkeypatch.setattr(repair, "snapshot_fixed_runtime", lambda *_args, **_kwargs: runtime)
+    monkeypatch.setattr(repair, "_scoped_cpa_environment", lambda: nullcontext())
+    monkeypatch.setattr(
+        repair,
+        "_production_review_punch",
+        lambda **_kwargs: pytest.fail("sealed full-dry must not call punch provider"),
+    )
+
+    def canonical(**kwargs):
+        review = kwargs["review_punch"](
+            title=authority["title"]["value"],
+            story={"selection_hook": story_hook},
+            cover_text=cover_text,
+            candidates=repair.PUNCH_CANDIDATES,
+        )
+        assert review["status"] == "PASS"
+        return {"status": "FULL_DRY_RUN_PASS"}
+
+    monkeypatch.setattr(repair, "run_canonical_full_dry", canonical)
+    assert repair.run_fixed_full_dry(repo_root=tmp_path, stage_root_parent=tmp_path) == {
+        "status": "FULL_DRY_RUN_PASS"
+    }
 
 
 def test_joint_qc_callable_binds_staged_bytes_to_intended_logical_path(tmp_path) -> None:
