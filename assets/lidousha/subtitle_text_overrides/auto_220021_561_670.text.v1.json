@@ -1,0 +1,21 @@
+{
+  "schema_version": 4,
+  "candidate_id": "auto_220021_561_670",
+  "upload": false,
+  "source_cue_witness_sha256": "3aed3018c15c129525761fcc7348f4da2d825f7c3101a284b355b50c7a4618d9",
+  "decision_output_witness_sha256": "9ff3021b50523cbacab7891a9092709364d37752792a3bdc0a8ce64c9c87e0c2",
+  "overrides": [
+    {
+      "source_cue": 6,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:16,660",
+        "end": "00:00:18,540",
+        "text": "S for high gal"
+      },
+      "text": "不好意思",
+      "authority": "Ivan 2026-08-19 selected-final-review recovery; sealed exact source transcript witness",
+      "reason": "Resolve only the observed cue-6 final-review finding; no other cue is authorized."
+    }
+  ]
+}

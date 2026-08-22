@@ -1,0 +1,21 @@
+{
+  "schema_version": 4,
+  "candidate_id": "auto_203011_328_389",
+  "upload": false,
+  "source_cue_witness_sha256": "08809d20a457fb205b6fca7ce53655b2f07a5a345982c5f589597fe946bf53c7",
+  "decision_output_witness_sha256": "1673071458731f7e25cc74921feb72de6b7e1fdc1df9d11f7130f6da645b6f77",
+  "overrides": [
+    {
+      "source_cue": 4,
+      "action": "replace",
+      "expect": {
+        "start": "00:00:07,590",
+        "end": "00:00:08,720",
+        "text": "谢谢沧老师"
+      },
+      "text": "先方とのお打合わせ",
+      "authority": "Ivan 2026-08-19 selected-final-review recovery; sealed exact source transcript witness",
+      "reason": "Resolve only the observed cue-4 final-review finding; no other cue is authorized."
+    }
+  ]
+}

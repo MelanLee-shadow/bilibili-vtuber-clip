@@ -1,0 +1,53 @@
+{
+  "authority_sha256": "sha256:028306e4d9413faed75f21e69eebf494fc06b0ea1b905c018595cde89d804357",
+  "candidate_id": "auto_220021_561_670",
+  "expected_failure": {
+    "failure_recovery_fingerprint": "sha256:0b7dda455e7d124c2aa4fbd01f323ce8d6283aa7f37ab8816757a15332b778c6",
+    "finding": {
+      "base_text_sha256": "9d3125c859b166ea0b196c0afbfb704c3afdd5575ea65d9ed48c9f0b3d50291d",
+      "candidate_provenance": {"kind": "bounded_exact_source_audio_transcript", "mutation_authorized": false, "surface": "不好意思"},
+      "correlated_text_witness": false,
+      "cue_index": 6,
+      "evidence_cue_ids": [7],
+      "exact_release_adjudication": {"repaired": false, "schema_version": "subtitle-span-adjudication.v1", "status": "OBSERVED"},
+      "force_acoustic": false,
+      "kind": "nonword",
+      "proposed_full_cue": "不好意思",
+      "repair_class": "spoken_unit",
+      "span_end_codepoint": 14,
+      "span_start_codepoint": 0,
+      "suggestion": "不好意思",
+      "suggestion_rejected_reason": "EDIT_LENGTH_DELTA_TOO_LARGE",
+      "suspect": "S for high gal",
+      "why": "[exact source transcript 第三候选] 候选盲同窗原声全文听写；仍须 CPA 选 PROPOSED"
+    },
+    "reviewed_srt_sha256": "sha256:dfb2d77f133100f32f76c4f94dd56dae55db6ab02afdbcdcc2ba5d67dccf5704",
+    "surface_files": [
+      {"file": "auto_220021_561_670.review-flags.json", "role": "review_flags", "sha256": "sha256:b1df3b81a6bb390a779581bf98496ecf299a3eb47874c63c9d51cde7aa07bee1"},
+      {"file": "auto_220021_561_670.chat-authority.json", "role": "chat_authority", "sha256": "sha256:88728f603043603c59c77b0f57364309f8215640c9baa5a47d201df627e3981c"}
+    ]
+  },
+  "permissions": {"allowed_operations": ["apply_exact_subtitle_text_override", "requeue_selected_final_review"], "provider_allowed": false, "upload_allowed": false},
+  "receipt_contract": {"action": "REQUEUED_BY_OPERATOR_FINAL_REVIEW_GRANT", "candidate_id": "auto_220021_561_670", "schema_version": "selected-final-review-recovery-receipt.v1", "transition_kind": "REJECTION_TO_QUEUE"},
+  "schema_version": "selected-final-review-recovery-authority.v1",
+  "scope_predecessor": {
+    "authority_sha256": "sha256:65a22c27c3f073aab1df622849336b1a54a4812980b15128105e1a07d0f7835b",
+    "candidate_id": "auto_203011_328_389",
+    "mode": "exact_converged_final_review_v7",
+    "relative_path": "assets/lidousha/selected_final_review_recovery_authorities/auto_203011_328_389.v1.json",
+    "scope_template_sha256": "sha256:e387ee7d8a78bd906a5eac6653f8655e6ada8beee31f1f91bdee3127b33323ad"
+  },
+  "scope_template": {
+    "candidate_ids": ["auto_220021_561_670"],
+    "grant_id": "2026-08-19-auto_220021_561_670-selected-final-review-recovery",
+    "intent": "RECOVER_NAMED_SELECTED_FINAL_REVIEW_REJECTION",
+    "reason": "Recover exactly the named final-review subtitle rejection from Ivan’s 2026-08-19 batch ruling.",
+    "recording_date": "2026-08-13",
+    "schema_version": "operator-processing-scope-grant.v7",
+    "upload_allowed": false,
+    "user_authorization": {"quote": "以上我说的所有内容修复后都可以走快车道上传，优先级顺序是我说时效性强的优先上传（=七夕），然后按顺序走快车道上传", "timestamp": "2026-08-19T00:08:52.249Z"}
+  },
+  "source_ruling": {"commit": "a622af1e9976db08594490461d3218b23564213c", "path": "docs/reviews/2026-08-19-ivan-review-batch-rulings.md", "quote": "以上我说的所有内容修复后都可以走快车道上传，优先级顺序是我说时效性强的优先上传（=七夕），然后按顺序走快车道上传", "sha256": "b0aace7c72825a8ac12e3033d0d5acd275916d7fd433d45ed043a714daeb35e3", "user_event": {"line_sha256": "e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa", "session_id": "0df2296b-500a-4681-ab5e-6fb46dc39579", "timestamp": "2026-08-19T00:08:52.249Z", "uuid": "555195ed-ec18-418d-a311-558f7e54291f"}},
+  "state_date": "2026-08-13",
+  "text_override": {"decision_output_witness_sha256": "9ff3021b50523cbacab7891a9092709364d37752792a3bdc0a8ce64c9c87e0c2", "relative_path": "assets/lidousha/subtitle_text_overrides/auto_220021_561_670.text.v1.json", "sha256": "bafd5825dadf8657e4d0350067f2442dfaa738e998cb318d7c4c79ecc991a9b2", "source_cue_witness_sha256": "3aed3018c15c129525761fcc7348f4da2d825f7c3101a284b355b50c7a4618d9"}
+}

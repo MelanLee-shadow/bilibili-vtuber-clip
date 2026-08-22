@@ -1,0 +1,60 @@
+{
+  "authority_sha256": "sha256:65a22c27c3f073aab1df622849336b1a54a4812980b15128105e1a07d0f7835b",
+  "candidate_id": "auto_203011_328_389",
+  "expected_failure": {
+    "failure_recovery_fingerprint": "sha256:373356a2e90fdb761506821d448045eb799dabad2f12f5807849bc447a9b63ba",
+    "finding": {
+      "base_text_sha256": "33c1a561140dd2b0db82e95703388f36e3949dd52d403e38895be390d88cd306",
+      "candidate_provenance": {"kind": "bounded_exact_source_audio_transcript", "mutation_authorized": false, "surface": "先方とのお打合わせ"},
+      "correlated_text_witness": false,
+      "cue_index": 4,
+      "evidence_cue_ids": [],
+      "exact_release_adjudication": {"repaired": false, "schema_version": "subtitle-span-adjudication.v1", "status": "OBSERVED"},
+      "force_acoustic": false,
+      "kind": "context",
+      "proposed_full_cue": "先方とのお打合わせ",
+      "repair_class": "spoken_unit",
+      "span_end_codepoint": 5,
+      "span_start_codepoint": 0,
+      "suggestion": "先方とのお打合わせ",
+      "suspect": "谢谢沧老师",
+      "why": "[exact source transcript 第三候选] 候选盲同窗原声全文听写；仍须 CPA 选 PROPOSED"
+    },
+    "reviewed_srt_sha256": "sha256:4122f3392a9531d200bf2cd6d6c10b1aeafd60d48f9b58553fdbfacc6ac4bcba",
+    "surface_files": [
+      {"file": "auto_203011_328_389.review-flags.json", "role": "review_flags", "sha256": "sha256:ce5d2b04f621061ad724dcdcf7c2bfaca72fc17bf6ddcae4219d67e1a485ff08"},
+      {"file": "auto_203011_328_389.chat-authority.json", "role": "chat_authority", "sha256": "sha256:ed2e4d39cbc9a42dbe7ae62ddfcfcf64bede452dab5971ae54ffcac9d97fdbd6"}
+    ]
+  },
+  "permissions": {"allowed_operations": ["apply_exact_subtitle_text_override", "requeue_selected_final_review"], "provider_allowed": false, "upload_allowed": false},
+  "receipt_contract": {"action": "REQUEUED_BY_OPERATOR_FINAL_REVIEW_GRANT", "candidate_id": "auto_203011_328_389", "schema_version": "selected-final-review-recovery-receipt.v1", "transition_kind": "REJECTION_TO_QUEUE"},
+  "schema_version": "selected-final-review-recovery-authority.v1",
+  "scope_predecessor": {
+    "mode": "exact_replace",
+    "scope": {
+      "candidate_ids": ["auto_203011_328_389"],
+      "expires_at": "2026-08-22T16:00:00Z",
+      "grant_id": "3596-line947-held-current-rerender-2026-08-13-auto_203011_328_389",
+      "intent": "RERENDER_NAMED_HELD_CURRENT_FOR_REVIEW",
+      "reason": "Ivan 2026-08-19 line947 held-current whole-clip review rerender: correct the named no-upload review candidate under the deployed current pipeline.",
+      "recording_date": "2026-08-13",
+      "schema_version": "operator-processing-scope-grant.v3",
+      "upload_allowed": false,
+      "user_authorization": {"quote": "拔智齿后想要老公亲亲，李豆沙拒绝安慰只会嘲笑，弹幕疑似小李附体 ，这条切片标题首先就有问题，而且非常明显，那就是小李和李豆沙是同一个人，结果标题好像说的是两个人，这显然是个非常大的错误，你看看标题起的工作日志怎么回事，怎么会这样子。以及，0:14念了一个钢镚（2元SC），而且有一个显而易见的处理技巧是要把李豆沙自己的话和SC的话在字幕中至少用空格隔开，表示不同人之间的对话回应，例如SC说小豆老公，李豆沙回应，“不是你老公”，首先这段话也不应该被分割成两个字幕行，语义完整的断句不能被强行分割。其次，字幕应该改成“小豆老公；； 不是你老公”，以及可以记住一个新的专名\"；；\"或者中文念出来是“分号分号”，模拟哭哭的表情，如果SC或者弹幕带了这个，表示是一个专有的属于李豆沙直播间的梗，不应该被忽略掉。1:04这里是回应弹幕“小豆好吵（”，这里没有念弹幕内容而是直接回应，这里的弹幕错了，你看看为什么错的，诊断流水线并修复。然后重做标题和封面。", "timestamp": "2026-08-19T00:08:52.249Z"}
+    },
+    "sha256": "sha256:31ac58bab2721e2381f1f10557f98f7ac1ca7fb9b4d758b5e1169d85ca84ced2"
+  },
+  "scope_template": {
+    "candidate_ids": ["auto_203011_328_389"],
+    "grant_id": "2026-08-19-auto_203011_328_389-selected-final-review-recovery",
+    "intent": "RECOVER_NAMED_SELECTED_FINAL_REVIEW_REJECTION",
+    "reason": "Recover exactly the named final-review subtitle rejection from Ivan’s 2026-08-19 batch ruling.",
+    "recording_date": "2026-08-13",
+    "schema_version": "operator-processing-scope-grant.v7",
+    "upload_allowed": false,
+    "user_authorization": {"quote": "以上我说的所有内容修复后都可以走快车道上传，优先级顺序是我说时效性强的优先上传（=七夕），然后按顺序走快车道上传", "timestamp": "2026-08-19T00:08:52.249Z"}
+  },
+  "source_ruling": {"commit": "a622af1e9976db08594490461d3218b23564213c", "path": "docs/reviews/2026-08-19-ivan-review-batch-rulings.md", "quote": "以上我说的所有内容修复后都可以走快车道上传，优先级顺序是我说时效性强的优先上传（=七夕），然后按顺序走快车道上传", "sha256": "b0aace7c72825a8ac12e3033d0d5acd275916d7fd433d45ed043a714daeb35e3", "user_event": {"line_sha256": "e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa", "session_id": "0df2296b-500a-4681-ab5e-6fb46dc39579", "timestamp": "2026-08-19T00:08:52.249Z", "uuid": "555195ed-ec18-418d-a311-558f7e54291f"}},
+  "state_date": "2026-08-13",
+  "text_override": {"decision_output_witness_sha256": "1673071458731f7e25cc74921feb72de6b7e1fdc1df9d11f7130f6da645b6f77", "relative_path": "assets/lidousha/subtitle_text_overrides/auto_203011_328_389.text.v1.json", "sha256": "1c9a56c9e053e24a755dd7d28362e2a4734be2e5a0676ad58173e07e23c24f99", "source_cue_witness_sha256": "08809d20a457fb205b6fca7ce53655b2f07a5a345982c5f589597fe946bf53c7"}
+}
