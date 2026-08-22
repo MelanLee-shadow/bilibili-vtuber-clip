@@ -191,6 +191,33 @@ def test_historical_authority_requires_disabled_clean_idle_source_and_is_single_
     finish_historical_run(authority_path=path, runtime_root=root)
 
 
+def test_cli_integer_room_and_runner_profile_string_share_one_authority_binding(tmp_path: Path):
+    root, rec, adapter, adapter_state = _runtime(tmp_path)
+    (root / "DISABLED").write_text("paused\n")
+    state = (root / "state" / f"{DATE}.json").read_bytes()
+    path, document = prepare_historical_run_authority(
+        runtime_root=root, recording_root=rec, adapter_status_path=adapter, date=DATE,
+        candidate_ids=IDS, nonce="historical-room-normalized", expires_at="2026-08-22T00:30:00Z",
+        expected_state_sha256=_sha(state), expected_authority=deployment_authority_binding(root),
+        now=NOW, room_id=123, adapter_state_path=adapter_state,
+        recorder_endpoint="http://test/graphql", recorder_env=tmp_path / "recorder.env",
+    )
+    assert document["source_binding"]["room_id"] == 123
+    create_historical_run_authority(path, document)
+    started = load_and_start_historical_run(
+        authority_path=path, runtime_root=root, recording_root=rec, adapter_status_path=adapter,
+        adapter_state_path=adapter_state, recorder_endpoint="http://test/graphql",
+        recorder_env=tmp_path / "recorder.env", now=NOW, room_id="123",
+    )
+    assert started["status"] == "STARTED"
+
+
+@pytest.mark.parametrize("room_id", [True, False, 0, -1, "0", "0123", "+123", " 123", "123 ", "12.3"])
+def test_historical_room_id_requires_strict_positive_decimal(room_id: object):
+    with pytest.raises(HistoricalFastlaneAuthorityError, match="ROOM_ID_INVALID"):
+        historical_module.normalize_historical_room_id(room_id)
+
+
 def test_historical_authority_refuses_missing_disabled_or_source_drift(tmp_path: Path):
     root, rec, adapter, adapter_state = _runtime(tmp_path)
     state = (root / "state" / f"{DATE}.json").read_bytes()

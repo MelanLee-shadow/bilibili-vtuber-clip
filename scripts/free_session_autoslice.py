@@ -151,6 +151,7 @@ from src.autoslice.historical_fastlane_authority import (
     exclusive_tick as historical_exclusive_tick,
     finish_historical_run,
     load_and_start_historical_run,
+    normalize_historical_room_id,
 )
 from src.autoslice.live_gate import format_live_basis, live_signal_divergence
 from src.autoslice.selection_scorecard import (
@@ -1894,7 +1895,8 @@ def main(argv: list[str] | None = None) -> int:
                 started = load_and_start_historical_run(
                     authority_path=args.historical_authority, runtime_root=BASE,
                     recording_root=REC_ROOT, adapter_status_path=RECORDER_STATUS_PATH,
-                    adapter_state_path=RECORDER_ADAPTER_STATE_PATH, room_id=ROOM,
+                    adapter_state_path=RECORDER_ADAPTER_STATE_PATH,
+                    room_id=normalize_historical_room_id(ROOM),
                     recorder_endpoint=HISTORICAL_RECORDER_ENDPOINT, recorder_env=HISTORICAL_RECORDER_ENV,
                 )
                 try:

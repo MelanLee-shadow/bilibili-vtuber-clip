@@ -54,6 +54,7 @@ _ID_RX = re.compile(r"^[A-Za-z0-9_-]{1,96}$")
 _NONCE_RX = re.compile(r"^[a-z0-9][a-z0-9_-]{7,95}$")
 _SHA_RX = re.compile(r"^sha256:[0-9a-f]{64}$")
 _COMMIT_RX = re.compile(r"^[0-9a-f]{40}$")
+_ROOM_ID_RX = re.compile(r"^[1-9][0-9]*$")
 _MAX_SCOPE_RENEWAL = timedelta(days=14)
 _MAX_HISTORICAL_RUN = timedelta(minutes=90)
 _ADAPTER_STATUS_MAX_AGE_SECONDS = 90.0
@@ -85,6 +86,20 @@ class RegularFingerprint:
     mtime_ns: int
     ctime_ns: int
     sha256: str
+
+
+def normalize_historical_room_id(value: object) -> int:
+    """Return the sole sealed room-id representation used by this authority."""
+
+    if isinstance(value, bool):
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_ROOM_ID_INVALID")
+    if isinstance(value, int):
+        if value > 0:
+            return value
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_ROOM_ID_INVALID")
+    if isinstance(value, str) and _ROOM_ID_RX.fullmatch(value):
+        return int(value)
+    raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_ROOM_ID_INVALID")
 
 
 def _canonical(value: object) -> bytes:
@@ -581,7 +596,7 @@ def _source_tree(date_dir: Path) -> list[dict[str, object]]:
 
 
 def _source_binding(
-    recording_root: Path, *, date: str, room_id: int, adapter_state_path: Path,
+    recording_root: Path, *, date: str, room_id: object, adapter_state_path: Path,
     now: datetime,
 ) -> dict[str, object]:
     """Seal the complete admitted date tree, including closed FLVs.
@@ -591,6 +606,7 @@ def _source_binding(
     narrowing the source directory after approval.
     """
 
+    canonical_room_id = normalize_historical_room_id(room_id)
     root = _safe_dir(recording_root)
     _historical_date_only(date, now=now)
     date_dir = root / date
@@ -601,19 +617,19 @@ def _source_binding(
     if _streaming_regular_fingerprint(adapter_state_path, label="adapter_state") is None:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_ADAPTER_STATE_UNAVAILABLE")
     audit = audit_finalized_recording_inventory(
-        date_dir, room_id=room_id, adapter_state_path=adapter_state_path,
+        date_dir, room_id=canonical_room_id, adapter_state_path=adapter_state_path,
     )
     if audit.get("can_select") is not True or not isinstance(audit.get("consumer_segments"), list) or not audit["consumer_segments"]:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SOURCE_INVENTORY_BLOCKED")
     return {
-        "recording_root": str(root), "date": date, "room_id": room_id, "entries": entries,
+        "recording_root": str(root), "date": date, "room_id": canonical_room_id, "entries": entries,
         "inventory_sha256": _json_sha(entries), "inventory_audit_sha256": _json_sha(audit),
         "adapter_state_path": str(adapter_state_path.absolute()),
     }
 
 
 def _validate_source_binding(
-    document: object, *, recording_root: Path, date: str, room_id: int,
+    document: object, *, recording_root: Path, date: str, room_id: object,
     adapter_state_path: Path, now: datetime,
 ) -> dict[str, object]:
     if not isinstance(document, dict) or set(document) != {
@@ -630,7 +646,8 @@ def _validate_source_binding(
     return observed
 
 
-def _adapter_snapshot(path: Path, *, room_id: int, now: datetime) -> str:
+def _adapter_snapshot(path: Path, *, room_id: object, now: datetime) -> str:
+    canonical_room_id = normalize_historical_room_id(room_id)
     snapshot = _streaming_regular_fingerprint(path, label="adapter_status")
     if snapshot is None:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_ADAPTER_STATUS_UNAVAILABLE")
@@ -648,7 +665,6 @@ def _adapter_snapshot(path: Path, *, room_id: int, now: datetime) -> str:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_ADAPTER_STATUS_STALE")
     if (
         document.get("schema_version") != "recorder-neutral-status.v1"
-        or str(document.get("room_id")) != str(room_id)
         or document.get("service_reachable") is not True
         or document.get("streaming") is not False
         or document.get("recording") is not False
@@ -657,12 +673,19 @@ def _adapter_snapshot(path: Path, *, room_id: int, now: datetime) -> str:
         or document.get("error") not in (None, "")
     ):
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_ADAPTER_NOT_CLEAN_IDLE")
+    try:
+        observed_room_id = normalize_historical_room_id(document.get("room_id"))
+    except HistoricalFastlaneAuthorityError as exc:
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_ADAPTER_STATUS_INVALID") from exc
+    if observed_room_id != canonical_room_id:
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_ADAPTER_NOT_CLEAN_IDLE")
     return snapshot.sha256
 
 
-def _direct_recorder_idle(*, endpoint: str, env_file: Path, room_id: int) -> None:
+def _direct_recorder_idle(*, endpoint: str, env_file: Path, room_id: object) -> None:
     """Query BililiveRecorder directly; credentials never enter the receipt."""
 
+    canonical_room_id = normalize_historical_room_id(room_id)
     before = _streaming_regular_fingerprint(env_file, label="recorder_env")
     if before is None:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_DIRECT_RECORDER_UNAVAILABLE")
@@ -671,7 +694,7 @@ def _direct_recorder_idle(*, endpoint: str, env_file: Path, room_id: int) -> Non
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_DIRECT_RECORDER_UNAVAILABLE")
     try:
         observed = query_room_status(
-            endpoint, room_id,
+            endpoint, canonical_room_id,
             username=environment.get("BREC_HTTP_BASIC_USER", ""),
             password=environment.get("BREC_HTTP_BASIC_PASS", ""),
         )
@@ -686,7 +709,7 @@ def _direct_recorder_idle(*, endpoint: str, env_file: Path, room_id: int) -> Non
 def prepare_historical_run_authority(
     *, runtime_root: Path, recording_root: Path, adapter_status_path: Path,
     date: str, candidate_ids: tuple[str, ...], nonce: str, expires_at: str,
-    expected_state_sha256: str, expected_authority: Mapping[str, str], room_id: int,
+    expected_state_sha256: str, expected_authority: Mapping[str, str], room_id: object,
     adapter_state_path: Path, recorder_endpoint: str, recorder_env: Path,
     now: datetime | None = None, clock: Callable[[], datetime] | None = None,
 ) -> tuple[Path, dict[str, object]]:
@@ -697,6 +720,7 @@ def prepare_historical_run_authority(
     """
 
     root = _runtime_root(runtime_root)
+    canonical_room_id = normalize_historical_room_id(room_id)
     initial_now = now or (clock() if clock is not None else datetime.now(timezone.utc))
     if not _NONCE_RX.fullmatch(nonce) or not _DATE_RX.fullmatch(date) or not candidate_ids or len(set(candidate_ids)) != len(candidate_ids) or any(not _ID_RX.fullmatch(cid) for cid in candidate_ids):
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_RUN_ARGUMENT_INVALID")
@@ -716,7 +740,7 @@ def prepare_historical_run_authority(
     state = _parse_state(state_bytes_before)
     scope = _scope(state, date=date, candidate_ids=candidate_ids, now=initial_now)
     source = _source_binding(
-        recording_root, date=date, room_id=room_id,
+        recording_root, date=date, room_id=canonical_room_id,
         adapter_state_path=adapter_state_path, now=initial_now,
     )
     observed_now = clock() if clock is not None else (now if now is not None else datetime.now(timezone.utc))
@@ -725,8 +749,8 @@ def prepare_historical_run_authority(
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_RUN_EXPIRED")
     if _json_sha(_scope(state, date=date, candidate_ids=candidate_ids, now=observed_now)) != _json_sha(scope):
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SCOPE_PREIMAGE_DRIFT")
-    adapter_sha = _adapter_snapshot(adapter_status_path, room_id=room_id, now=observed_now)
-    _direct_recorder_idle(endpoint=recorder_endpoint, env_file=recorder_env, room_id=room_id)
+    adapter_sha = _adapter_snapshot(adapter_status_path, room_id=canonical_room_id, now=observed_now)
+    _direct_recorder_idle(endpoint=recorder_endpoint, env_file=recorder_env, room_id=canonical_room_id)
     document = _self_bound({
         "schema_version": HISTORICAL_RUN_SCHEMA, "status": "PREPARED", "nonce": nonce,
         "recording_date": date, "attempt_limit": 1, "expires_at": expires_at,
@@ -801,7 +825,7 @@ def _validate_run_authority(document: object) -> dict[str, object]:
 def load_and_start_historical_run(
     *, authority_path: Path, runtime_root: Path, recording_root: Path, adapter_status_path: Path,
     adapter_state_path: Path, recorder_endpoint: str, recorder_env: Path,
-    now: datetime | None = None, room_id: int, clock: Callable[[], datetime] | None = None,
+    now: datetime | None = None, room_id: object, clock: Callable[[], datetime] | None = None,
 ) -> dict[str, object]:
     """Revalidate and atomically mark PREPARED -> STARTED before normal tick.
 
@@ -810,6 +834,7 @@ def load_and_start_historical_run(
     """
 
     root = _runtime_root(runtime_root)
+    canonical_room_id = normalize_historical_room_id(room_id)
     initial_now = now or (clock() if clock is not None else datetime.now(timezone.utc))
     document = _load_run_authority(authority_path)
     namespace = _safe_dir(root / ".historical-autoslice-once", mode=0o700)
@@ -833,7 +858,7 @@ def load_and_start_historical_run(
     if _json_sha(scope) != document["scope_sha256"]:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SCOPE_PREIMAGE_DRIFT")
     _validate_source_binding(
-        document["source_binding"], recording_root=recording_root, date=date, room_id=room_id,
+        document["source_binding"], recording_root=recording_root, date=date, room_id=canonical_room_id,
         adapter_state_path=adapter_state_path, now=initial_now,
     )
     observed_now = clock() if clock is not None else (now if now is not None else datetime.now(timezone.utc))
@@ -852,8 +877,8 @@ def load_and_start_historical_run(
     scope = _scope(state, date=date, candidate_ids=ids, now=observed_now)
     if _json_sha(scope) != document["scope_sha256"]:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SCOPE_PREIMAGE_DRIFT")
-    started_adapter_sha = _adapter_snapshot(adapter_status_path, room_id=room_id, now=observed_now)
-    _direct_recorder_idle(endpoint=recorder_endpoint, env_file=recorder_env, room_id=room_id)
+    started_adapter_sha = _adapter_snapshot(adapter_status_path, room_id=canonical_room_id, now=observed_now)
+    _direct_recorder_idle(endpoint=recorder_endpoint, env_file=recorder_env, room_id=canonical_room_id)
     with exclusive_runner_commit(root):
         current_document = _load_run_authority(authority_path)
         if current_document != document:
