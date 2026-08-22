@@ -50,28 +50,55 @@ _REPLAY_OWNED_STALE_REASONS = frozenset({
 })
 _REPLAY_NORMALIZABLE_CATEGORIES = frozenset({"STATE_DRIFT", "NEEDS_IVAN_TRUTH"})
 _SAFE_REASON_CODE = re.compile(r"[A-Z][A-Z0-9_]{2,159}\Z")
+_MAX_REVIEW_FLAGS_BYTES = 512 * 1024
+# A finalizer's SystemExit routinely appends a candidate-private path or an
+# adapter's diagnostic text.  Only these known *outer* families may cross the
+# replay diagnostic boundary, and only as their all-caps prefix.
+_SAFE_FINALIZER_EXIT_PREFIXES = (
+    "FINAL_REVIEW_RELEASE_BLOCKED",
+    "FINAL_DELIVERY_BOUNDARY_REVIEW_MISSING",
+    "FINAL_REVIEW_EXACT_FINALIZER_MISSING",
+    "FINAL_SUBTITLE_BURN_",
+    "SPEAKER_",
+    "CHAT_AUTHORITY_",
+    "SOURCE_FACT_",
+    "STORY_CONTRACT_",
+    "TITLE_AUTHORITY_",
+)
 
 
 class _PrepareFailure(RuntimeError):
     def __init__(self, *, reason_code: str, provider_attempted: bool, stage_manifest_sha256: str | None = None,
                  prepared_manifest_sha256: str | None = None,
-                 provider_receipt_sha256s: tuple[str, ...] = ()) -> None:
+                 provider_receipt_sha256s: tuple[str, ...] = (),
+                 predicate_failures: tuple[tuple[str, str], ...] = ()) -> None:
         super().__init__(reason_code)
         self.reason_code = reason_code
         self.provider_attempted = provider_attempted
         self.stage_manifest_sha256 = stage_manifest_sha256
         self.prepared_manifest_sha256 = prepared_manifest_sha256
         self.provider_receipt_sha256s = provider_receipt_sha256s
+        self.predicate_failures = predicate_failures
 
 
 def _safe_reason_code(exc: BaseException) -> str:
     """Expose only a stable typed reason, never provider or filesystem text."""
 
+    if isinstance(exc, SystemExit):
+        # Do not derive from ``str(exc)``: it may contain a private path,
+        # prompt, provider stderr, or a numeric process exit status.
+        raw = exc.code
+        if isinstance(raw, str):
+            prefix = raw.split(":", 1)[0]
+            if (
+                _SAFE_REASON_CODE.fullmatch(prefix)
+                and any(prefix.startswith(allowed) for allowed in _SAFE_FINALIZER_EXIT_PREFIXES)
+            ):
+                return prefix
+        return "REPLAY_PREPARE_SYSTEM_EXIT"
     value = getattr(exc, "reason_code", str(exc))
     if isinstance(value, str) and _SAFE_REASON_CODE.fullmatch(value):
         return value
-    if isinstance(exc, SystemExit):
-        return "REPLAY_PREPARE_SYSTEM_EXIT"
     return "REPLAY_PREPARE_EXCEPTION"
 
 
@@ -244,7 +271,128 @@ def _failure_predicate(reason_code: str) -> str:
         return "RECORD_BOUND_CHAT_AUTHORITY"
     if reason_code.startswith("REPLAY_FINALIZER_CLIP_CONTEXT"):
         return "RECORD_BOUND_CLIP_CONTEXT"
+    if reason_code.startswith(("FINAL_REVIEW_", "FINAL_DELIVERY_BOUNDARY_")):
+        return (
+            "EXACT_DELIVERY_BOUNDARY_REVIEW"
+            if reason_code.startswith("FINAL_DELIVERY_BOUNDARY_")
+            else "EXACT_FINAL_RELEASE_REVIEW"
+        )
+    if reason_code.startswith(("SOURCE_FACT_", "STORY_CONTRACT_SOURCE_FACT_")):
+        return "SOURCE_FACT_REVIEW"
+    if reason_code.startswith("STORY_CONTRACT_COVER_"):
+        return "COVER_ROUTE_PIXEL_HOST_PARTICIPANT_PUNCH"
+    if reason_code.startswith(("TITLE_AUTHORITY_", "STORY_CONTRACT_TITLE_")):
+        return "FROZEN_TITLE_AUTHORITY"
+    if reason_code.startswith(("FINAL_SUBTITLE_BURN_", "SPEAKER_")):
+        return "SPEAKER_ASS_BURN_REBUILD"
+    if reason_code.startswith("CHAT_AUTHORITY_"):
+        return "RECORD_BOUND_CHAT_AUTHORITY"
     return "PRIVATE_FINALIZATION"
+
+
+def _read_bound_small_json(path: Path, *, label: str) -> dict[str, object] | None:
+    """Read one bounded diagnostic control file through a stable no-follow fd."""
+
+    try:
+        binding = regular_binding(path, label=label)
+    except ReviewedBaselineReplayError:
+        return None
+    if binding.size > _MAX_REVIEW_FLAGS_BYTES:
+        return None
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        return None
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            opened.st_dev, opened.st_ino, stat.S_IMODE(opened.st_mode), opened.st_size,
+            opened.st_mtime_ns, opened.st_ctime_ns,
+        ) != (
+            binding.device, binding.inode, binding.mode, binding.size,
+            binding.mtime_ns, binding.ctime_ns,
+        ):
+            return None
+        chunks: list[bytes] = []
+        while chunk := os.read(descriptor, 64 * 1024):
+            chunks.append(chunk)
+    except OSError:
+        return None
+    finally:
+        os.close(descriptor)
+    try:
+        if regular_binding(path, label=label) != binding:
+            return None
+        value = json.loads(b"".join(chunks).decode("utf-8"))
+    except (ReviewedBaselineReplayError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _safe_reason_codes(value: object) -> tuple[str, ...]:
+    """Return only typed all-caps reason tokens from an exact list."""
+
+    if not isinstance(value, list):
+        return ()
+    return tuple(sorted({row for row in value if isinstance(row, str) and _SAFE_REASON_CODE.fullmatch(row)}))
+
+
+def _review_flags_predicate_failures(*, stage: Path, plan) -> tuple[tuple[str, str], ...]:
+    """Extract a tiny, path-free failure summary before private-stage cleanup.
+
+    Review flags are optional diagnostics, never authority.  A malformed,
+    over-sized, unsafe, or wrong-schema file is deliberately ignored so it
+    cannot manufacture a more specific outcome than the finalizer itself.
+    """
+
+    path = (
+        Path(stage) / "finalizer-runtime" / str(plan.date) / str(plan.candidate_id)
+        / f"{plan.candidate_id}.review-flags.json"
+    )
+    document = _read_bound_small_json(path, label="REVIEW_FLAGS")
+    if not isinstance(document, dict):
+        return ()
+    if (
+        document.get("schema_version") != "final-review-audit.v2"
+        or not isinstance(document.get("status"), str)
+        or not _SAFE_REASON_CODE.fullmatch(str(document["status"]))
+        or document.get("release_gate") != "BLOCK"
+    ):
+        return ()
+    failures: dict[str, str] = {}
+    boundary = document.get("boundary_semantic_review")
+    if (
+        isinstance(boundary, dict)
+        and boundary.get("schema_version") == "talk-boundary-semantic-review.v1"
+        and isinstance(boundary.get("status"), str)
+        and _SAFE_REASON_CODE.fullmatch(str(boundary["status"]))
+    ):
+        boundary_codes = _safe_reason_codes(boundary.get("reason_codes"))
+        if boundary_codes:
+            failures["EXACT_DELIVERY_BOUNDARY_REVIEW"] = boundary_codes[0]
+    final_codes = _safe_reason_codes(document.get("reason_codes"))
+    if final_codes:
+        failures["EXACT_FINAL_RELEASE_REVIEW"] = final_codes[0]
+    return tuple(sorted(failures.items()))
+
+
+def _prepare_failure(*, exc: BaseException, stage: Path | None = None, plan=None) -> _PrepareFailure:
+    """Build a sanitized per-candidate failure without preserving raw errors."""
+
+    reason_code = _safe_reason_code(exc)
+    failures = (
+        _review_flags_predicate_failures(stage=stage, plan=plan)
+        if stage is not None and plan is not None
+        else ()
+    )
+    if not failures:
+        failures = ((_failure_predicate(reason_code), reason_code),)
+    return _PrepareFailure(
+        reason_code=reason_code,
+        provider_attempted=False,
+        predicate_failures=failures,
+    )
 
 
 def _matrix(
@@ -451,7 +599,7 @@ def _prepare(plan, *, runtime: Path, stage_parent: Path, state_path: Path | None
     except (Exception, SystemExit) as exc:
         if expected_stage.exists() and not expected_stage.is_symlink():
             _cleanup_private_stage(expected_stage, parent=stage_parent)
-        raise _PrepareFailure(reason_code=_safe_reason_code(exc), provider_attempted=False) from None
+        raise _prepare_failure(exc=exc, plan=plan) from None
     stage = Path(str(staged.get("stage") or ""))
     if not stage.is_absolute() or stage.parent != stage_parent:
         if stage.is_absolute() and stage.parent == stage_parent and stage.exists() and not stage.is_symlink():
@@ -485,9 +633,12 @@ def _prepare(plan, *, runtime: Path, stage_parent: Path, state_path: Path | None
     except (Exception, SystemExit) as exc:
         stage_sha = _stage_manifest_sha256(stage)
         provider_hashes = _provider_receipt_sha256s(stage)
+        failure = _prepare_failure(exc=exc, stage=stage, plan=plan)
+        failure.provider_attempted = provider_attempted
+        failure.stage_manifest_sha256 = stage_sha
+        failure.provider_receipt_sha256s = provider_hashes
         _cleanup_private_stage(stage, parent=stage_parent)
-        raise _PrepareFailure(reason_code=_safe_reason_code(exc), provider_attempted=provider_attempted, stage_manifest_sha256=stage_sha,
-                              provider_receipt_sha256s=provider_hashes) from None
+        raise failure from None
     stage_sha = _stage_manifest_sha256(stage)
     provider_hashes = _provider_receipt_sha256s(finalization.private_runtime_root)
     try:
@@ -498,10 +649,13 @@ def _prepare(plan, *, runtime: Path, stage_parent: Path, state_path: Path | None
         )
     except (Exception, SystemExit) as exc:
         prepared_sha = _prepared_manifest_sha256(finalization)
+        failure = _prepare_failure(exc=exc, stage=stage, plan=plan)
+        failure.provider_attempted = provider_attempted
+        failure.stage_manifest_sha256 = stage_sha
+        failure.prepared_manifest_sha256 = prepared_sha
+        failure.provider_receipt_sha256s = provider_hashes
         _cleanup_private_stage(stage, parent=stage_parent)
-        raise _PrepareFailure(reason_code=_safe_reason_code(exc), provider_attempted=provider_attempted, stage_manifest_sha256=stage_sha,
-                              prepared_manifest_sha256=prepared_sha,
-                              provider_receipt_sha256s=provider_hashes) from None
+        raise failure from None
     return stage, finalization, after, stage_sha, provider_hashes, provider_attempted
 
 
@@ -538,11 +692,13 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     prepared[plan.candidate_id] = future.result()
                 except (Exception, SystemExit) as exc:  # Never surface provider/path text.
-                    errors[plan.candidate_id] = (
-                        _safe_reason_code(exc), bool(getattr(exc, "provider_attempted", False)),
-                        getattr(exc, "stage_manifest_sha256", None),
-                        getattr(exc, "prepared_manifest_sha256", None),
-                        tuple(getattr(exc, "provider_receipt_sha256s", ())),
+                    errors[plan.candidate_id] = _PrepareFailure(
+                        reason_code=_safe_reason_code(exc),
+                        provider_attempted=bool(getattr(exc, "provider_attempted", False)),
+                        stage_manifest_sha256=getattr(exc, "stage_manifest_sha256", None),
+                        prepared_manifest_sha256=getattr(exc, "prepared_manifest_sha256", None),
+                        provider_receipt_sha256s=tuple(getattr(exc, "provider_receipt_sha256s", ())),
+                        predicate_failures=tuple(getattr(exc, "predicate_failures", ())),
                     )
         result = {"schema_version": "reviewed-baseline-replay-run.v1",
                   "mode": "APPLY" if args.apply else "FULL_DRY_RUN",
@@ -552,9 +708,15 @@ def main(argv: list[str] | None = None) -> int:
             error = errors.get(plan.candidate_id)
             if error:
                 blocked = True
-                reason_code, provider_attempted, stage_sha, prepared_sha, provider_hashes = error
+                reason_code = error.reason_code
+                provider_attempted = error.provider_attempted
+                stage_sha = error.stage_manifest_sha256
+                prepared_sha = error.prepared_manifest_sha256
+                provider_hashes = error.provider_receipt_sha256s
                 matrix = _matrix(plan, status="NOT_EVALUATED",
-                                 failures={_failure_predicate(reason_code): reason_code})
+                                 failures=dict(error.predicate_failures) or {
+                                     _failure_predicate(reason_code): reason_code,
+                                 })
                 receipt = _sanitized_failure_receipt(
                     runtime=runtime, plan=plan, matrix=matrix, provider_attempted=provider_attempted,
                     stage_manifest_sha256=stage_sha, prepared_manifest_sha256=prepared_sha,

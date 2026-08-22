@@ -111,9 +111,123 @@ def test_safe_reason_code_keeps_only_typed_codes() -> None:
     )
 
 
+def test_safe_reason_code_extracts_only_allowlisted_system_exit_prefix() -> None:
+    assert cli._safe_reason_code(
+        SystemExit("FINAL_REVIEW_RELEASE_BLOCKED: /private/secret: provider stderr")
+    ) == "FINAL_REVIEW_RELEASE_BLOCKED"
+    assert cli._safe_reason_code(SystemExit(23)) == "REPLAY_PREPARE_SYSTEM_EXIT"
+    assert cli._safe_reason_code(SystemExit("UNTRUSTED_PROVIDER_SECRET: token=abc")) == (
+        "REPLAY_PREPARE_SYSTEM_EXIT"
+    )
+
+
 def test_record_bound_authority_failures_get_their_own_predicate() -> None:
     assert cli._failure_predicate("REPLAY_FINALIZER_CHAT_AUTHORITY_DRIFT") == "RECORD_BOUND_CHAT_AUTHORITY"
     assert cli._failure_predicate("REPLAY_FINALIZER_CLIP_CONTEXT_PAYLOAD_DRIFT") == "RECORD_BOUND_CLIP_CONTEXT"
+
+
+def _review_flags(stage: Path, *, date: str = "2026-08-14", cid: str = "cid") -> Path:
+    path = stage / "finalizer-runtime" / date / cid / f"{cid}.review-flags.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({
+        "schema_version": "final-review-audit.v2",
+        "status": "FLAGGED",
+        "release_gate": "BLOCK",
+        "reason_codes": ["FINAL_REVIEW_UNRESOLVED_FINDINGS"],
+        "boundary_semantic_review": {
+            "schema_version": "talk-boundary-semantic-review.v1",
+            "status": "BLOCK",
+            "reason_codes": ["BOUNDARY_SEMANTIC_REVIEW_REQUIRED"],
+        },
+    }) + "\n")
+    return path
+
+
+def test_prepare_extracts_exact_final_review_flags_without_private_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = tmp_path / "record.json"
+    record.write_text("{}\n")
+    plan = SimpleNamespace(
+        date="2026-08-14", candidate_id="cid", record_path=record,
+        baseline=SimpleNamespace(config={"sha256": "a" * 64}),
+    )
+    parent = tmp_path / "private"
+    parent.mkdir(mode=0o700)
+    stage = parent / "candidate-stage"
+    stage.mkdir()
+    (stage / "stage.json").write_text("{}\n")
+    _review_flags(stage)
+    monkeypatch.setattr(cli, "stage_replay", lambda *_args, **_kwargs: {"stage": str(stage)})
+    monkeypatch.setattr(cli, "_production_llm_call", lambda **_kwargs: lambda _prompt: "{}")
+    monkeypatch.setattr(
+        cli, "synthesize_replay_spec_and_finalize_private",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            SystemExit("FINAL_REVIEW_RELEASE_BLOCKED: /private/secret/provider stderr")
+        ),
+    )
+    with pytest.raises(cli._PrepareFailure) as caught:
+        cli._prepare(plan, runtime=tmp_path, stage_parent=parent)
+    failure = caught.value
+    assert failure.reason_code == "FINAL_REVIEW_RELEASE_BLOCKED"
+    assert dict(failure.predicate_failures) == {
+        "EXACT_DELIVERY_BOUNDARY_REVIEW": "BOUNDARY_SEMANTIC_REVIEW_REQUIRED",
+        "EXACT_FINAL_RELEASE_REVIEW": "FINAL_REVIEW_UNRESOLVED_FINDINGS",
+    }
+    assert "/private" not in json.dumps({"reason": failure.reason_code, "rows": failure.predicate_failures})
+    assert not stage.exists()
+
+
+@pytest.mark.parametrize("kind", ["malformed", "wrong-schema", "oversized", "symlink"])
+def test_review_flags_unsafe_or_invalid_are_ignored(
+    tmp_path: Path, kind: str,
+) -> None:
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    path = _review_flags(stage)
+    if kind == "malformed":
+        path.write_text("{not-json")
+    elif kind == "wrong-schema":
+        document = json.loads(path.read_text())
+        document["schema_version"] = "wrong.v1"
+        path.write_text(json.dumps(document))
+    elif kind == "oversized":
+        path.write_bytes(b"x" * (cli._MAX_REVIEW_FLAGS_BYTES + 1))
+    else:
+        target = tmp_path / "flags.json"
+        target.write_text(path.read_text())
+        path.unlink()
+        path.symlink_to(target)
+    plan = SimpleNamespace(date="2026-08-14", candidate_id="cid")
+    assert cli._review_flags_predicate_failures(stage=stage, plan=plan) == ()
+
+
+def test_prepare_cleans_stage_when_review_flags_are_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = tmp_path / "record.json"
+    record.write_text("{}\n")
+    plan = SimpleNamespace(
+        date="2026-08-14", candidate_id="cid", record_path=record,
+        baseline=SimpleNamespace(config={"sha256": "a" * 64}),
+    )
+    parent = tmp_path / "private"
+    parent.mkdir(mode=0o700)
+    stage = parent / "candidate-stage"
+    stage.mkdir()
+    (stage / "stage.json").write_text("{}\n")
+    _review_flags(stage).write_text("{malformed")
+    monkeypatch.setattr(cli, "stage_replay", lambda *_args, **_kwargs: {"stage": str(stage)})
+    monkeypatch.setattr(cli, "_production_llm_call", lambda **_kwargs: lambda _prompt: "{}")
+    monkeypatch.setattr(
+        cli, "synthesize_replay_spec_and_finalize_private",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(SystemExit("FINAL_REVIEW_RELEASE_BLOCKED: /private/secret")),
+    )
+    with pytest.raises(cli._PrepareFailure) as caught:
+        cli._prepare(plan, runtime=tmp_path, stage_parent=parent)
+    assert caught.value.reason_code == "FINAL_REVIEW_RELEASE_BLOCKED"
+    assert caught.value.predicate_failures == (("EXACT_FINAL_RELEASE_REVIEW", "FINAL_REVIEW_RELEASE_BLOCKED"),)
+    assert not stage.exists()
 
 
 def test_full_dry_failure_receipt_preserves_typed_prepare_reason(
@@ -152,6 +266,54 @@ def test_full_dry_failure_receipt_preserves_typed_prepare_reason(
         "reason_code": "REPLAY_BASELINE_APPLICATION_FAILED",
     }
     assert json.loads(capsys.readouterr().out)["candidates"][0]["status"] == "BLOCKED"
+
+
+def test_full_dry_receipt_carries_only_precise_review_flag_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    parent = tmp_path / "private"
+    parent.mkdir(mode=0o700)
+    plan = SimpleNamespace(
+        date="2026-08-14", candidate_id="cid", matrix=(),
+        baseline=SimpleNamespace(config={"sha256": "a" * 64}),
+    )
+    monkeypatch.setattr(cli, "_safe_directory", lambda path: Path(path))
+    monkeypatch.setattr(cli, "_runtime_gate", lambda _runtime: None)
+    monkeypatch.setattr(cli, "build_replay_plan", lambda **_kwargs: plan)
+
+    def fail_prepare(*_args: object, **_kwargs: object) -> object:
+        raise cli._PrepareFailure(
+            reason_code="FINAL_REVIEW_RELEASE_BLOCKED", provider_attempted=True,
+            predicate_failures=(
+                ("EXACT_DELIVERY_BOUNDARY_REVIEW", "BOUNDARY_SEMANTIC_REVIEW_REQUIRED"),
+                ("EXACT_FINAL_RELEASE_REVIEW", "FINAL_REVIEW_UNRESOLVED_FINDINGS"),
+            ),
+        )
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(cli, "_prepare", fail_prepare)
+    monkeypatch.setattr(
+        cli, "_sanitized_failure_receipt",
+        lambda **kwargs: captured.update(kwargs) or "sha256:" + "d" * 64,
+    )
+    assert cli.main([
+        "--full-dry-run", "--runtime-root", str(runtime), "--date", "2026-08-14",
+        "--candidate-id", "cid", "--private-stage-parent", str(parent),
+    ]) == 2
+    rows = {row["predicate"]: row for row in captured["matrix"]}
+    assert rows["EXACT_DELIVERY_BOUNDARY_REVIEW"] == {
+        "predicate": "EXACT_DELIVERY_BOUNDARY_REVIEW", "status": "FAIL",
+        "reason_code": "BOUNDARY_SEMANTIC_REVIEW_REQUIRED",
+    }
+    assert rows["EXACT_FINAL_RELEASE_REVIEW"] == {
+        "predicate": "EXACT_FINAL_RELEASE_REVIEW", "status": "FAIL",
+        "reason_code": "FINAL_REVIEW_UNRESOLVED_FINDINGS",
+    }
+    output = capsys.readouterr().out
+    assert "PRIVATE_FINALIZATION" not in output
+    assert "/private" not in output
 
 
 def test_prepared_manifest_diagnostic_hash_is_file_digest_not_inner_seal(tmp_path: Path) -> None:
