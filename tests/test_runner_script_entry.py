@@ -207,7 +207,7 @@ def test_deploy_commits_and_transactionally_installs_recorder_adapter():
     assert 'cmp -s "$backup/DEPLOYED_COMMIT.old" "$repo/DEPLOYED_COMMIT"' in (outer_rollback)
 
 
-def test_deploy_adapter_repair_exception_is_changed_bytes_only_and_preinstall():
+def test_deploy_adapter_repair_idle_is_gated_before_external_install():
     source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     external = source.split("<<'REMOTE_EXTERNAL_INSTALL'\n", 1)[1].split(
         "\nREMOTE_EXTERNAL_INSTALL", 1
@@ -257,6 +257,97 @@ def test_deploy_adapter_repair_exception_is_changed_bytes_only_and_preinstall():
     assert 'assert room.get("recording") is False' in external
     assert 'assert payload.get("error") is None' in external
     assert "restart_epoch=$(python3 -c 'import time; print(time.time())')" in external
+
+
+def test_deploy_unchanged_adapter_external_drift_accepts_supported_repair_idle(
+    tmp_path: Path,
+) -> None:
+    """A cron-only drift may install while the unchanged adapter is repair-idle."""
+
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    external = source.split("<<'REMOTE_EXTERNAL_INSTALL'\n", 1)[1].split(
+        "\nREMOTE_EXTERNAL_INSTALL", 1
+    )[0]
+    status_validator = _embedded_shell_function(
+        external, "adapter_status_supported_repair_idle"
+    )
+    selection_start = external.index("external_payload_unchanged=0")
+    selection_end = external.index(
+        'if [ "$external_payload_unchanged" -eq 0 ]; then\n    printf',
+        selection_start,
+    )
+    selection = external[selection_start:selection_end]
+    status_path = tmp_path / "status.json"
+    external_drift = tmp_path / "runner-cron-drift"
+    selected = tmp_path / "repair-idle-selected"
+    status_path.write_text(
+        json.dumps(
+            {
+                "generated_at_epoch": time.time(),
+                "service_reachable": False,
+                "streaming": False,
+                "recording": False,
+                "finalizing": False,
+                "error": "source disposition drift: finalized source fingerprint changed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    external_drift.write_text("runner cron differs\n", encoding="utf-8")
+    status_validator = status_validator.replace(
+        "/opt/bilive/recording/status.json", str(status_path)
+    )
+    script = "\n".join(
+        (
+            "set -euo pipefail",
+            status_validator,
+            "adapter_restart_safe() { return 1; }",
+            "adapter_repair_restart_safe() { adapter_status_supported_repair_idle && touch \"$REPAIR_SELECTED\"; }",
+            "adapter_connection_stub_bootstrap_safe() { return 1; }",
+            "external_payload_unchanged_safe() { test ! -e \"$EXTERNAL_DRIFT\"; }",
+            "adapter_content_changed=0",
+            "old_adapter_sha=unchanged",
+            "new_adapter_sha=unchanged",
+            "connection_stub_bootstrap=0",
+            selection,
+            'test -f "$REPAIR_SELECTED"',
+        )
+    )
+
+    def run() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["/bin/bash", "-c", script],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={
+                **os.environ,
+                "EXTERNAL_DRIFT": str(external_drift),
+                "REPAIR_SELECTED": str(selected),
+            },
+        )
+
+    accepted = run()
+    assert accepted.returncode == 0, accepted.stderr
+    assert selected.exists()
+
+    selected.unlink()
+    status_path.write_text(
+        json.dumps(
+            {
+                "generated_at_epoch": time.time(),
+                "service_reachable": False,
+                "streaming": False,
+                "recording": False,
+                "finalizing": False,
+                "error": "graphql unavailable",
+            }
+        ),
+        encoding="utf-8",
+    )
+    rejected = run()
+    assert rejected.returncode != 0
+    assert not selected.exists()
 
 
 def test_deploy_connection_stub_bootstrap_is_receipt_bound_and_exact():

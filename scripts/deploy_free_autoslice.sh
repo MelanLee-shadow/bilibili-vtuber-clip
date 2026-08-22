@@ -2292,7 +2292,16 @@ if external_payload_unchanged_safe "$old_adapter_sha"; then
     # captured preimage.  Do not touch files, cron, or the live adapter.
     external_payload_unchanged=1
 elif [ "$adapter_content_changed" -eq 0 ]; then
-    adapter_restart_safe "$old_adapter_sha"
+    # A runner/cron-only external payload drift still needs a fresh adapter
+    # environment gate before its files may be installed.  The existing
+    # adapter bytes do not require the changed-bytes bootstrap path, though:
+    # a supported source-disposition repair-idle heartbeat is the same safe
+    # no-live/no-recording posture as clean idle for that purpose.
+    if adapter_restart_safe "$old_adapter_sha"; then
+        :
+    else
+        adapter_repair_restart_safe "$old_adapter_sha"
+    fi
 elif adapter_restart_safe "$old_adapter_sha"; then
     :
 elif adapter_connection_stub_bootstrap_safe "$old_adapter_sha" "$new_adapter_sha"; then
