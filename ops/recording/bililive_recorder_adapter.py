@@ -57,6 +57,12 @@ SOURCE_DISPOSITION_REUSED_PORTABLE_TIMESTAMP_REBIND_SCHEMA_VERSION = (
 SOURCE_DISPOSITION_REUSED_PORTABLE_TIMESTAMP_REBIND_POLICY = (
     "FUSE_REMOUNT_REUSED_PORTABLE_IDENTITY_SUCCESSOR_MTIME_CTIME_REATTESTATION"
 )
+SOURCE_DISPOSITION_FIRST_TIMESTAMP_REBIND_SCHEMA_VERSION = (
+    "recording-source-fuse-first-identity-timestamp-rebind.v1"
+)
+SOURCE_DISPOSITION_FIRST_TIMESTAMP_REBIND_POLICY = (
+    "FUSE_FIRST_IDENTITY_SUCCESSOR_MTIME_CTIME_REATTESTATION"
+)
 SOURCE_DISPOSITION_TIMESTAMP_REBIND_SCHEMA_VERSION = (
     "recording-source-fuse-timestamp-rebind.v1"
 )
@@ -522,19 +528,26 @@ def _validate_disposition_rebind_chain(
             and receipt.get("policy")
             == SOURCE_DISPOSITION_REUSED_PORTABLE_TIMESTAMP_REBIND_POLICY
         )
+        is_first_timestamp_rebind = (
+            receipt.get("schema_version") == SOURCE_DISPOSITION_FIRST_TIMESTAMP_REBIND_SCHEMA_VERSION
+            and receipt.get("policy") == SOURCE_DISPOSITION_FIRST_TIMESTAMP_REBIND_POLICY
+        )
         is_timestamp_rebind = (
             receipt.get("schema_version") == SOURCE_DISPOSITION_TIMESTAMP_REBIND_SCHEMA_VERSION
             and receipt.get("policy") == SOURCE_DISPOSITION_TIMESTAMP_REBIND_POLICY
         )
         expected_fields = base_receipt_fields | (
             {"changed_fields"}
-            if is_timestamp_rebind or is_reused_portable_timestamp_rebind
+            if is_timestamp_rebind
+            or is_reused_portable_timestamp_rebind
+            or is_first_timestamp_rebind
             else set()
         )
         if (
             not is_identity_rebind
             and not is_reused_portable_rebind
             and not is_reused_portable_timestamp_rebind
+            and not is_first_timestamp_rebind
             and not is_timestamp_rebind
         ) or set(receipt) != expected_fields:
             raise AdapterError("source disposition identity rebind receipt is malformed")
@@ -611,6 +624,15 @@ def _validate_disposition_rebind_chain(
                 raise AdapterError(
                     "source disposition reused-portable timestamp rebind binding drifted"
                 )
+        elif is_first_timestamp_rebind:
+            if (
+                receipt.get("legacy_promotion") != _timestamp_rebind_legacy_contract(row, previous)
+                or receipt.get("changed_fields") != changes
+                or previous_receipt_sha256 is not None
+                or previous_mount is not None
+                or not _reused_portable_timestamp_rebind_changes(changes)
+            ):
+                raise AdapterError("source disposition first timestamp rebind binding drifted")
         else:
             assert is_timestamp_rebind
             if (
@@ -671,6 +693,28 @@ def _prepare_disposition_identity_validation(
             return {"current": current, "pending_rebind": False}
         raise AdapterError("source disposition FUSE mount changed without file identity drift")
     changes = _changed_fingerprint_fields(effective, current)
+    first_timestamp_rebind = bool(
+        not has_receipts and _reused_portable_timestamp_rebind_changes(changes)
+    )
+    if first_timestamp_rebind:
+        current_mount = _shared_fuse_mount_identity(paths.values())
+        if current_mount is None:
+            raise AdapterError(
+                "source disposition first timestamp drifted outside one shared FUSE mount"
+            )
+        if not isinstance(identity_rebinds, list):
+            raise AdapterError("source disposition FUSE rebind lacks a durable receipt ledger")
+        return {
+            "current": current,
+            "effective": effective,
+            "previous_receipt_sha256": None,
+            "previous_mount": None,
+            "current_mount": current_mount,
+            "changed_fields": changes,
+            "rebind_schema_version": SOURCE_DISPOSITION_FIRST_TIMESTAMP_REBIND_SCHEMA_VERSION,
+            "rebind_policy": SOURCE_DISPOSITION_FIRST_TIMESTAMP_REBIND_POLICY,
+            "pending_rebind": True,
+        }
     reused_portable_timestamp_rebind = bool(
         has_receipts
         and _same_portable_mount_replaced(current_mount, previous_mount)
@@ -815,6 +859,7 @@ def _finish_disposition_identity_rebind(
     timestamp_rebind = validation.get("rebind_policy") in {
         SOURCE_DISPOSITION_TIMESTAMP_REBIND_POLICY,
         SOURCE_DISPOSITION_REUSED_PORTABLE_TIMESTAMP_REBIND_POLICY,
+        SOURCE_DISPOSITION_FIRST_TIMESTAMP_REBIND_POLICY,
     }
     receipt: dict[str, Any] = {
         "schema_version": validation["rebind_schema_version"],

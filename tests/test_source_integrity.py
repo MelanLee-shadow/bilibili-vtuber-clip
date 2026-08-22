@@ -174,6 +174,54 @@ def _typed_timestamp_rebind(tmp_path, monkeypatch):
     return date_dir, stub, successor_mp4, state_path, receipt_mount
 
 
+def _typed_first_combined_rebind(tmp_path, monkeypatch):
+    date_dir, stub, successor_mp4, state_path = _typed_connection_stub(tmp_path, monkeypatch)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    relative = f"{date_dir.name}/{stub.name}"
+    row = state["source_dispositions"][relative]
+    bindings = (
+        row["source"],
+        row["xml"],
+        row["session"]["successor_source"],
+        row["session"]["successor_mp4"],
+    )
+    for binding in bindings:
+        binding["inode"] += 1
+    for binding in bindings[2:]:
+        binding["mtime_ns"] -= 1
+        binding["ctime_ns"] -= 1
+    unsigned = {key: value for key, value in row.items() if key != "canonical_integrity"}
+    row["canonical_integrity"]["canonical_json_sha256"] = adapter._canonical_json_sha256(unsigned)
+    receipt_mount = {
+        "mount_id": 77,
+        "major_minor": "0:67",
+        "root": "/",
+        "mount_point": "/adapter/Videos",
+        "filesystem_type": "fuse.cloudfs",
+        "mount_source": "CloudFS",
+    }
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", lambda _path: receipt_mount)
+    receipts: list[dict] = []
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=state["webhook_files"],
+        finalized=state["finalized"],
+        identity_rebinds=receipts,
+        identity_rebind_attestations={
+            "source": adapter._attest_regular_file(stub),
+            "xml": adapter._attest_regular_file(stub.with_suffix(".xml")),
+            "successor_mp4": adapter._attest_regular_file(successor_mp4),
+        },
+    )
+    assert receipts[-1]["policy"] == adapter.SOURCE_DISPOSITION_FIRST_TIMESTAMP_REBIND_POLICY
+    state["source_disposition_identity_rebinds"] = {relative: receipts}
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.setattr(source_integrity, "_mount_identity_for_path", lambda _path: receipt_mount)
+    return date_dir, stub, state_path, receipts
+
+
 def _typed_reused_portable_rebind(tmp_path, monkeypatch):
     date_dir, stub, successor_mp4, state_path = _typed_connection_stub(tmp_path, monkeypatch)
     state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -353,6 +401,42 @@ def test_recording_inventory_accepts_reused_portable_fuse_rebind(tmp_path, monke
             "source_disposition_status": "IGNORED_CONNECTION_STUB",
         }
     ]
+
+
+def test_recording_inventory_accepts_first_combined_fuse_rebind(tmp_path, monkeypatch):
+    date_dir, stub, state_path, receipts = _typed_first_combined_rebind(tmp_path, monkeypatch)
+
+    audit = audit_finalized_recording_inventory(
+        date_dir,
+        room_id="123456",
+        adapter_state_path=state_path,
+    )
+
+    assert len(receipts) == 1
+    assert audit["status"] == "PASS"
+
+
+def test_recording_inventory_rejects_first_combined_rebind_out_of_order(tmp_path, monkeypatch):
+    date_dir, _stub, state_path, receipts = _typed_first_combined_rebind(tmp_path, monkeypatch)
+    receipts[0]["previous_receipt_canonical_sha256"] = "0" * 64
+    receipts[0]["canonical_integrity"] = {
+        "algorithm": "sha256",
+        "canonical_json_sha256": adapter._canonical_json_sha256(
+            {key: value for key, value in receipts[0].items() if key != "canonical_integrity"}
+        ),
+    }
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    relative = next(iter(state["source_disposition_identity_rebinds"]))
+    state["source_disposition_identity_rebinds"][relative] = receipts
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    audit = audit_finalized_recording_inventory(
+        date_dir,
+        room_id="123456",
+        adapter_state_path=state_path,
+    )
+    assert audit["status"] == "BLOCKED"
+    assert "chain drifted" in audit["issues"][0]["source_disposition_error"]
 
 
 def test_recording_inventory_accepts_reused_portable_timestamp_rebind(tmp_path, monkeypatch):

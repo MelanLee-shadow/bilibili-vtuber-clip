@@ -161,6 +161,12 @@ _CONNECTION_STUB_REUSED_PORTABLE_TIMESTAMP_REBIND_SCHEMA = (
 _CONNECTION_STUB_REUSED_PORTABLE_TIMESTAMP_REBIND_POLICY = (
     "FUSE_REMOUNT_REUSED_PORTABLE_IDENTITY_SUCCESSOR_MTIME_CTIME_REATTESTATION"
 )
+_CONNECTION_STUB_FIRST_TIMESTAMP_REBIND_SCHEMA = (
+    "recording-source-fuse-first-identity-timestamp-rebind.v1"
+)
+_CONNECTION_STUB_FIRST_TIMESTAMP_REBIND_POLICY = (
+    "FUSE_FIRST_IDENTITY_SUCCESSOR_MTIME_CTIME_REATTESTATION"
+)
 _CONNECTION_STUB_TIMESTAMP_REBIND_SCHEMA = "recording-source-fuse-timestamp-rebind.v1"
 _CONNECTION_STUB_TIMESTAMP_REBIND_POLICY = "FUSE_SUCCESSOR_MTIME_CTIME_REATTESTATION"
 _FILE_FINGERPRINT_KEYS = (
@@ -450,19 +456,26 @@ def _connection_stub_identity_matches(
             and receipt.get("policy")
             == _CONNECTION_STUB_REUSED_PORTABLE_TIMESTAMP_REBIND_POLICY
         )
+        is_first_timestamp_rebind = (
+            receipt.get("schema_version") == _CONNECTION_STUB_FIRST_TIMESTAMP_REBIND_SCHEMA
+            and receipt.get("policy") == _CONNECTION_STUB_FIRST_TIMESTAMP_REBIND_POLICY
+        )
         is_timestamp_rebind = (
             receipt.get("schema_version") == _CONNECTION_STUB_TIMESTAMP_REBIND_SCHEMA
             and receipt.get("policy") == _CONNECTION_STUB_TIMESTAMP_REBIND_POLICY
         )
         expected_fields = base_receipt_fields | (
             {"changed_fields"}
-            if is_timestamp_rebind or is_reused_portable_timestamp_rebind
+            if is_timestamp_rebind
+            or is_reused_portable_timestamp_rebind
+            or is_first_timestamp_rebind
             else set()
         )
         if (
             not is_identity_rebind
             and not is_reused_portable_rebind
             and not is_reused_portable_timestamp_rebind
+            and not is_first_timestamp_rebind
             and not is_timestamp_rebind
         ) or set(receipt) != expected_fields:
             return False, "source disposition identity rebind receipt is malformed"
@@ -537,6 +550,15 @@ def _connection_stub_identity_matches(
                 or not _same_portable_mount_replaced(receipt.get("current_mount"), previous_mount)
             ):
                 return False, "source disposition reused-portable timestamp rebind binding drifted"
+        elif is_first_timestamp_rebind:
+            if (
+                receipt.get("legacy_promotion") != _timestamp_rebind_legacy_contract(row, previous)
+                or receipt.get("changed_fields") != changes
+                or previous_receipt_sha256 is not None
+                or previous_mount is not None
+                or not _reused_portable_timestamp_rebind_changes(changes)
+            ):
+                return False, "source disposition first timestamp rebind binding drifted"
         else:
             assert is_timestamp_rebind
             if (

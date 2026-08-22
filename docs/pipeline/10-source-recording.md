@@ -128,6 +128,11 @@
   两角色必须各自同时有 inode、mtime、ctime 变化，且同样全字节 attest、legacy
   webhook/finalized 绑定、child/post-hash mount 稳定和链式 SHA 约束。单角色时间漂移、
   size/mode/path/bytes 漂移、相同 mount epoch 或任何 receipt 篡改均 BLOCK。后继 FLV 的旧 row
+  还没有任何 rebind receipt 的旧 row 只能使用一次首链
+  `FUSE_FIRST_IDENTITY_SUCCESSOR_MTIME_CTIME_REATTESTATION`：它要求相同的四角色/
+  后继时间字段集合、一个共享当前 FUSE mount、`previous_receipt_canonical_sha256=null`
+  和无 previous mount；它不能被用于已有链的后续 receipt，不能代替上述 reused-portable
+  分支。后继 FLV 的旧 row
   没有历史 SHA-256，因此回执必须明确记录 legacy promotion：只沿用 path、稳定 stat、
   webhook file size、finalized ledger source size 及后继 MP4 历史 SHA 交叉绑定，不能宣称
   后继 FLV 历史 hash 已匹配。另有且仅有一条 timestamp-only 恢复：后继 FLV 与 MP4

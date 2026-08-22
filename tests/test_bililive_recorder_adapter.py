@@ -173,6 +173,24 @@ def _resign_disposition_after_simulated_remount(row: dict) -> None:
     row["canonical_integrity"]["canonical_json_sha256"] = adapter._canonical_json_sha256(unsigned)
 
 
+def _resign_disposition_after_first_combined_remount(row: dict) -> None:
+    """Persist the exact zero-receipt CloudFS predecessor shape."""
+
+    bindings = (
+        row["source"],
+        row["xml"],
+        row["session"]["successor_source"],
+        row["session"]["successor_mp4"],
+    )
+    for binding in bindings:
+        binding["inode"] += 1
+    for binding in bindings[2:]:
+        binding["mtime_ns"] -= 1
+        binding["ctime_ns"] -= 1
+    unsigned = {key: value for key, value in row.items() if key != "canonical_integrity"}
+    row["canonical_integrity"]["canonical_json_sha256"] = adapter._canonical_json_sha256(unsigned)
+
+
 def _fuse_mount_identity(_path: Path) -> dict[str, object]:
     return {
         "mount_id": 77,
@@ -721,6 +739,126 @@ def test_connection_stub_successor_hash_read_error_stays_in_normal_fail_closed_l
         )
         is None
     )
+
+
+def test_connection_stub_first_fuse_remount_reattests_successor_timestamps(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """A row with no rebind receipt may earn the combined policy exactly once."""
+
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    _resign_disposition_after_first_combined_remount(row)
+    monkeypatch.setattr(
+        adapter,
+        "_mount_identity_for_path",
+        lambda _path: _fuse_mount_identity_with_id(88),
+    )
+    bindings = {
+        "source": row["source"],
+        "xml": row["xml"],
+        "successor_source": row["session"]["successor_source"],
+        "successor_mp4": row["session"]["successor_mp4"],
+    }
+    paths = {
+        "source": stub,
+        "xml": stub.with_suffix(".xml"),
+        "successor_source": successor,
+        "successor_mp4": successor.with_suffix(".mp4"),
+    }
+    validation = adapter._prepare_disposition_identity_validation(
+        row=row,
+        bindings=bindings,
+        paths=paths,
+        identity_rebinds=[],
+    )
+    assert (
+        validation["rebind_schema_version"]
+        == adapter.SOURCE_DISPOSITION_FIRST_TIMESTAMP_REBIND_SCHEMA_VERSION
+    )
+    assert validation["rebind_policy"] == adapter.SOURCE_DISPOSITION_FIRST_TIMESTAMP_REBIND_POLICY
+    assert validation["previous_receipt_sha256"] is None
+    assert validation["previous_mount"] is None
+
+    receipts: list[dict] = []
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+        identity_rebinds=receipts,
+        identity_rebind_attestations=_identity_rebind_attestations(stub, successor),
+    )
+    assert len(receipts) == 1
+    assert receipts[0]["policy"] == adapter.SOURCE_DISPOSITION_FIRST_TIMESTAMP_REBIND_POLICY
+    assert receipts[0]["previous_receipt_canonical_sha256"] is None
+
+    misordered = dict(receipts[0])
+    misordered["previous_receipt_canonical_sha256"] = receipts[0]["canonical_integrity"][
+        "canonical_json_sha256"
+    ]
+    misordered["previous_bindings"] = receipts[0]["current_bindings"]
+    misordered["current_bindings"] = receipts[0]["current_bindings"]
+    misordered["changed_fields"] = {}
+    misordered["canonical_integrity"] = {
+        "algorithm": "sha256",
+        "canonical_json_sha256": adapter._canonical_json_sha256(
+            {key: value for key, value in misordered.items() if key != "canonical_integrity"}
+        ),
+    }
+    with pytest.raises(adapter.AdapterError, match="first timestamp rebind binding drifted"):
+        adapter._validate_disposition_rebind_chain(
+            row=row,
+            bindings=bindings,
+            identity_rebinds=[receipts[0], misordered],
+        )
+
+
+@pytest.mark.parametrize("canary", ["source_timestamp", "single_successor", "partial_reindex"])
+def test_connection_stub_first_combined_remount_fails_closed(
+    tmp_path: Path,
+    monkeypatch,
+    canary: str,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    _resign_disposition_after_first_combined_remount(row)
+    if canary == "source_timestamp":
+        row["source"]["mtime_ns"] -= 1
+    elif canary == "single_successor":
+        row["session"]["successor_mp4"]["mtime_ns"] += 1
+        row["session"]["successor_mp4"]["ctime_ns"] += 1
+    else:
+        row["xml"]["inode"] -= 1
+    row["canonical_integrity"]["canonical_json_sha256"] = adapter._canonical_json_sha256(
+        {key: value for key, value in row.items() if key != "canonical_integrity"}
+    )
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", _fuse_mount_identity)
+
+    with pytest.raises(adapter.AdapterError, match="non-identity fingerprint drift"):
+        adapter.validate_connection_stub_disposition(
+            stub,
+            row,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+            identity_rebinds=[],
+            identity_rebind_attestations=_identity_rebind_attestations(stub, successor),
+        )
 
 
 @pytest.mark.parametrize(
