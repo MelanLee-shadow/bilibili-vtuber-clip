@@ -625,14 +625,18 @@ def _observed_source_fact_receipt_sha256s(
             or publish.get("source_fact_review") != receipt
         ):
             return []
-        digest = closure._canonical_sha256(dict(receipt))
+        claimed = receipt.get("receipt_sha256")
+        body = dict(receipt)
+        body.pop("receipt_sha256", None)
+        digest = canonical_sha256(body)
         if (
-            not isinstance(digest, str)
-            or not digest.startswith("sha256:")
-            or len(digest) != 71
+            not isinstance(claimed, str)
+            or not claimed.startswith("sha256:")
+            or len(claimed) != 71
+            or claimed != digest
         ):
             return []
-        return [digest]
+        return [claimed]
     except (KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
         # No partial/malformed after-image is evidence of a provider receipt.
         return []
@@ -666,6 +670,7 @@ def _run_apply(
     source_fact_llm_call: Callable[[str], str] | None,
     stage_publish: Callable[..., dict[str, object] | None] | None,
     test_seal: Mapping[str, str] | None,
+    reload_deployed_authority: bool = False,
 ) -> dict[str, object]:
         source_attempt = ProviderAttemptStatus.NOT_ATTEMPTED
         source_receipts: list[str] = []
@@ -676,8 +681,7 @@ def _run_apply(
             nonlocal default_source_fact, source_attempt
             delegate = source_fact_llm_call
             if delegate is None:
-                # This callback is entered only from the locked APPLY transaction.
-                default_source_fact = default_source_fact or closure._default_source_fact_llm()
+                default_source_fact = default_source_fact or closure._default_source_fact_llm(runtime_root)
                 delegate = default_source_fact
             source_attempt = ProviderAttemptStatus.ATTEMPTED
             result = delegate(prompt)
@@ -773,7 +777,8 @@ def _run_apply(
             apply=True, repo_root=repo_root, runtime_root=runtime_root,
             source_fact_llm_call=tracked_source_fact, authority=normalized,
             _stage_publish=stage_publish or closure._stage_publish_draft,
-            _stage_observation=observation, _prejournal_failure=prejournal_failure)
+            _stage_observation=observation, _prejournal_failure=prejournal_failure,
+            _reload_deployed_authority=reload_deployed_authority)
 
 
 def run(mode: Mode, *, repo_root: Path, runtime_root: Path,
@@ -792,7 +797,7 @@ def run(mode: Mode, *, repo_root: Path, runtime_root: Path,
         return _run_apply(
             closure, repo_root=repo_root, runtime_root=runtime_root, normalized=normalized,
             source_fact_llm_call=source_fact_llm_call, stage_publish=stage_publish,
-            test_seal=_test_deployed_seal,
+            test_seal=_test_deployed_seal, reload_deployed_authority=authority is None,
         )
     if mode is Mode.PLAN:
         closure.validate_runtime(normalized, repo_root=repo_root, runtime_root=runtime_root)

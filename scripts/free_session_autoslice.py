@@ -223,6 +223,7 @@ def profile_tool(key: str) -> Path:
 
 
 BASE = Path(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice"))
+os.environ.setdefault("AUTOSLICE_BASE", str(BASE))
 # Ivan 2026-07-13: during the speaker data-accumulation phase every delivered
 # clip keeps the single host (李豆沙) subtitle style and speaker uncertainty
 # must never reject a delivery. "required"/"auto" stay available for the

@@ -544,7 +544,7 @@ cleanup() {
     rollback_ok=1
     if [ "$COMMITTED" -ne 1 ]; then
         if [ "$SWITCHED" -eq 1 ]; then
-            if ! ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
+            if ! ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/tick.lock" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
                 "$REMOTE_REPO" "$STAGE" "$BACKUP" "$OLD_COMMIT" "$COMMIT" <<'REMOTE_ROLLBACK'
 set -euo pipefail
 repo=$1
@@ -1271,10 +1271,10 @@ LOCAL_MANIFEST_PY
 DISABLED_TOUCHED=1
 # Stop new cron work before draining it.  The long-lived lease belongs to the
 # entire runner tick; runner.lock remains a short commit mutex inside Python.
-# Do not nest these waits: a deployment never holds tick.lock while waiting for
-# a manual runner commit lease, so lock order stays tick -> runner without a
-# deploy/tick mutual wait.
-ssh "$HOST" "touch '$DISABLED'; /usr/bin/flock -w 7200 '$REMOTE_BASE/tick.lock' true; /usr/bin/flock -w 7200 '$REMOTE_BASE/runner.lock' true"
+# Every swap/seal critical section owns the leases in fixed tick -> runner
+# order.  The outer flock stays held while the inner is acquired, so no manual
+# commit can enter between a drained tick and the deployment mutation.
+ssh "$HOST" "touch '$DISABLED'; exec /usr/bin/flock -w 7200 '$REMOTE_BASE/tick.lock' /usr/bin/flock -w 7200 '$REMOTE_BASE/runner.lock' true"
 ssh "$HOST" "test ! -e '$STAGE' && test ! -e '$BACKUP' && mkdir '$STAGE'"
 STAGE_CREATED=1
 
@@ -1463,7 +1463,7 @@ REMOTE_VALIDATE
 # (notably historical delivery media) stays in place. The remote trap rolls
 # back a partial component swap before releasing runner.lock.
 SWITCHED=1
-ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
+ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/tick.lock" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
     "$REMOTE_REPO" "$STAGE" "$BACKUP" "$COMMIT" <<'REMOTE_SWITCH'
 set -euo pipefail
 repo=$1
@@ -1714,7 +1714,7 @@ REMOTE_SWITCH
 
 # Install external entrypoints only from the already-switched committed tree.
 # Temp + rename avoids exposing a truncated executable to cron/manual callers.
-ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
+ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/tick.lock" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
     "$BACKUP" "$COMMIT" <<'REMOTE_EXTERNAL_INSTALL'
 set -euo pipefail
 backup=$1
@@ -2162,7 +2162,7 @@ PY_FRESH
 new_adapter_source=/opt/bilive/autoslice/repo/ops/recording/bililive_recorder_adapter.py
 host_adapter_path=/opt/bilive/recording/bililive_recorder_adapter.py
 watchdog_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/watchdog.lock /opt/bilive/autoslice/free_mount_watchdog.sh >> /opt/bilive/autoslice/logs/watchdog.log 2>&1'
-runner_cron='*/10 * * * * /usr/bin/flock -n /opt/bilive/autoslice/tick.lock env AUTOSLICE_BASE=/opt/bilive/autoslice python3 /opt/bilive/autoslice/repo/scripts/free_session_autoslice.py --once >> /opt/bilive/autoslice/logs/runner.log 2>&1'
+runner_cron='*/10 * * * * /usr/bin/flock -n /opt/bilive/autoslice/tick.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && AUTOSLICE_SPEAKER_MODE=uniform_host /usr/bin/python3 scripts/free_session_autoslice.py --once'\'' >> /opt/bilive/autoslice/logs/runner.log 2>&1'
 upload_fatal_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/upload-fatal-sentinel.lock /opt/bilive/autoslice/upload_fatal_sentinel.sh >> /opt/bilive/autoslice/logs/upload-fatal-sentinel.log 2>&1'
 timely_terms_cron='17 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/timely-terms.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_timely_terms.py --cache-dir /opt/bilive/autoslice/cache/timely-term-crawler --write /opt/bilive/autoslice/state/timely_terms.json'\'' >> /opt/bilive/autoslice/logs/timely-terms.log 2>&1'
 streamer_registry_cron='7 6 * * 0 /usr/bin/flock -n /opt/bilive/autoslice/streamer-registry.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_streamer_registry.py --cache-dir /opt/bilive/autoslice/cache/streamer-registry-crawler --write /opt/bilive/autoslice/state/streamer_registry.json'\'' >> /opt/bilive/autoslice/logs/streamer-registry.log 2>&1'
@@ -2404,7 +2404,7 @@ fi
 # bytes. The manifest is installed before DEPLOYED_COMMIT, so a crash between
 # the two atomic renames fails closed (commit mismatch); both files are restored
 # from the rollback tree on every local or remote failure path.
-ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
+ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/tick.lock" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
     "$REMOTE_REPO" "$BACKUP" "$COMMIT" <<'REMOTE_SEAL_DEPLOYMENT_IDENTITY'
 set -euo pipefail
 repo=$1

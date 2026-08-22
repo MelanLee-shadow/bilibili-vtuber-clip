@@ -8,17 +8,32 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_deploy_manages_runner_cron_with_tick_lock_not_runner_lock() -> None:
     deploy = (ROOT / "scripts" / "deploy_free_autoslice.sh").read_text(encoding="utf-8")
-    canonical = (
-        "runner_cron='*/10 * * * * /usr/bin/flock -n "
-        "/opt/bilive/autoslice/tick.lock env AUTOSLICE_BASE=/opt/bilive/autoslice "
-        "python3 /opt/bilive/autoslice/repo/scripts/free_session_autoslice.py --once "
-        ">> /opt/bilive/autoslice/logs/runner.log 2>&1'"
+    old_live_line = (
+        "*/10 * * * * /usr/bin/flock -n /opt/bilive/autoslice/runner.lock "
+        "/bin/bash -lc '\\''cd /opt/bilive/autoslice/repo && "
+        "AUTOSLICE_SPEAKER_MODE=uniform_host /usr/bin/python3 "
+        "scripts/free_session_autoslice.py --once'\\'' "
+        ">> /opt/bilive/autoslice/logs/runner.log 2>&1"
     )
-    assert canonical in deploy
+    migrated = old_live_line.replace("runner.lock", "tick.lock")
+    assert f"runner_cron='{migrated}'" in deploy
     assert '"scripts/free_session_autoslice.py:$runner_cron"' in deploy
     assert "grep -Fv 'scripts/free_session_autoslice.py'" in deploy
     assert 'grep -Fxq "$runner_cron"' in deploy
-    assert "runner.lock env AUTOSLICE_BASE=/opt/bilive/autoslice python3 " not in deploy
+    assert "runner.lock /bin/bash -lc" not in deploy
+    assert "AUTOSLICE_BASE=/opt/bilive/autoslice python3" not in deploy
+
+
+def test_deploy_critical_sections_hold_tick_while_acquiring_runner() -> None:
+    deploy = (ROOT / "scripts" / "deploy_free_autoslice.sh").read_text(encoding="utf-8")
+    nested = (
+        '/usr/bin/flock -w 7200 "$REMOTE_BASE/tick.lock" '
+        '/usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s --'
+    )
+    # rollback, tree swap, external install, and identity sealing all share the
+    # same concrete tick -> runner nesting rather than two released drains.
+    assert deploy.count(nested) == 4
+    assert "; /usr/bin/flock -w 7200 '$REMOTE_BASE/runner.lock' true" not in deploy
 
 
 def test_eval_and_watchdog_share_the_outer_tick_lock() -> None:

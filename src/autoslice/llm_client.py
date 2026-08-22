@@ -26,6 +26,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from src.autoslice.provider_slots import ProviderSlotBusy, ProviderSlotError, provider_slot
+
 LlmCall = Callable[[str], str]
 
 
@@ -48,14 +50,34 @@ class LlmConfig:
     # CPA proxy (503 auth_unavailable).  "chat" keeps the legacy behaviour.
     api_mode: str = "chat"  # "chat" | "responses"
     reasoning_effort: str | None = None  # responses mode only; None → "medium"
+    runtime_root: str | None = None  # optional runtime-local provider slot pool
 
 
 def build_llm_call(config: LlmConfig) -> LlmCall:
     if config.transport == "direct":
-        return lambda prompt: _call_direct(prompt, config)
+        return lambda prompt: _provider_dispatch(lambda: _call_direct(prompt, config), config.runtime_root)
     if config.transport == "command":
-        return lambda prompt: _call_command(prompt, config)
+        return lambda prompt: _provider_dispatch(lambda: _call_command(prompt, config), config.runtime_root)
     raise ValueError(f"unknown llm transport: {config.transport!r}")
+
+
+def _provider_dispatch(call: Callable[[], str], configured_root: str | None = None) -> str:
+    """Apply the shared process-level permit to real provider transports."""
+
+    root = configured_root or os.environ.get("AUTOSLICE_BASE")
+    if not root:
+        # Standalone tooling has no declared runtime to share.  Production
+        # runner/Qixi callers bind one explicitly; silently inventing /opt
+        # would turn unrelated local commands into a different runtime.
+        return call()
+    runtime_root = Path(root)
+    try:
+        with provider_slot(runtime_root):
+            return call()
+    except ProviderSlotBusy as exc:
+        raise LlmCallError("provider capacity is busy") from exc
+    except ProviderSlotError as exc:
+        raise LlmCallError("provider capacity is unavailable") from exc
 
 
 def extract_json_object(completion: str) -> dict[str, object]:

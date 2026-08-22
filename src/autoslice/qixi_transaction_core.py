@@ -8,6 +8,7 @@ import os
 import stat
 import tempfile
 import base64
+import threading
 from contextlib import contextmanager
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -16,6 +17,44 @@ from pathlib import Path
 
 class QixiTransactionCoreError(ValueError):
     """A fixed-lane transaction cannot establish exclusive ownership."""
+
+
+_LEASE_CAPABILITY = object()
+_lease_local = threading.local()
+
+
+class RunnerCommitLease:
+    """Opaque proof that this process owns one runtime's short commit mutex.
+
+    Construction is private to :func:`exclusive_runner_commit`; callers pass
+    the live lease to APIs that require a commit authority rather than treating
+    a lock path or a boolean as synchronization.
+    """
+
+    __slots__ = ("runtime_root", "lock_path", "device", "inode", "_capability")
+
+    def __init__(
+        self, *, runtime_root: Path, lock_path: Path, device: int, inode: int, capability: object,
+    ) -> None:
+        if capability is not _LEASE_CAPABILITY:
+            raise QixiTransactionCoreError("runner commit lease cannot be constructed")
+        self.runtime_root = runtime_root
+        self.lock_path = lock_path
+        self.device = device
+        self.inode = inode
+        self._capability = capability
+
+
+def require_runner_commit_lease(lease: RunnerCommitLease, *, runtime_root: Path) -> None:
+    """Reject a forged, released, or cross-runtime lease."""
+
+    if (
+        not isinstance(lease, RunnerCommitLease)
+        or lease._capability is not _LEASE_CAPABILITY
+        or lease.runtime_root != runtime_root
+        or getattr(_lease_local, "active", None) is not lease
+    ):
+        raise QixiTransactionCoreError("runner commit lease is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,8 +372,11 @@ def _unlink_owned(path: Path, *, device: int, inode: int, label: str) -> None:
 
 
 @contextmanager
-def exclusive_runner_lock(runtime_root: Path):
-    """Acquire the existing runner lock without accepting path replacement."""
+def exclusive_runner_commit(runtime_root: Path):
+    """Acquire one inode-validated, non-reentrant runner commit lease."""
+
+    if getattr(_lease_local, "active", None) is not None:
+        raise QixiTransactionCoreError("runner commit lease nesting is forbidden")
 
     lock = runtime_root / "runner.lock"
     _safe_parent(lock)
@@ -352,9 +394,28 @@ def exclusive_runner_lock(runtime_root: Path):
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise QixiTransactionCoreError("runner lock busy") from exc
-        yield
+        lease = RunnerCommitLease(
+            runtime_root=runtime_root,
+            lock_path=lock,
+            device=opened.st_dev,
+            inode=opened.st_ino,
+            capability=_LEASE_CAPABILITY,
+        )
+        _lease_local.active = lease
+        try:
+            yield lease
+        finally:
+            _lease_local.active = None
     finally:
         try:
             fcntl.flock(descriptor, fcntl.LOCK_UN)
         finally:
             os.close(descriptor)
+
+
+@contextmanager
+def exclusive_runner_lock(runtime_root: Path):
+    """Compatibility spelling for callers not yet upgraded to a lease value."""
+
+    with exclusive_runner_commit(runtime_root):
+        yield
