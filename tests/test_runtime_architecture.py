@@ -204,7 +204,7 @@ MODULE_DEBT_LEDGER = {
     # lease commit/replay 与 receipt sanitization 已在 d77a9b5、5ea498a、8959170
     # 落地，仍需同一 public-surface module 保留既有 CLI contract。该历史债务显式
     # 入账，后续另行拆解，不用压行规避。
-    "src/autoslice/qixi_post_correction_public_surface.py": 2_286,
+    "src/autoslice/qixi_post_correction_public_surface.py": 2_279,
     # 2026-07-31 +122：封面文案链修复（分行权威等级 + 锁定模式 + 缩略图合同背带
     # + max_lines 按合同封顶）。新增逻辑已抽成 _talk_locked_split /
     # _assert_talk_thumbnail_contract 两个模块级函数，_overlay_lidousha_cover_title

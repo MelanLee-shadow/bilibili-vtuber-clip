@@ -28,7 +28,10 @@ from src.autoslice.repository_asset_authority import (
     RepositoryAssetAuthorityError,
     require_repository_asset_authority,
 )
-from src.autoslice.story_contract import audit_story_artifact, build_story_contract
+from src.autoslice.story_contract import (
+    audit_story_artifact,
+    build_story_contract,
+)
 from src.autoslice.review_package_portable_evidence import rebuild_package_speaker_evidence
 from src.autoslice.qixi_post_correction_projection_paths import (
     QixiPostCorrectionPublicSurfaceError,
@@ -49,6 +52,7 @@ from src.autoslice.qixi_post_correction_projection_paths import (
     sha256_bytes as _file_sha256_from_bytes,
     source_cues as _source_cues,
     stage_public_surface_gate_callables as _stage_public_surface_gate_callables,
+    validate_source_fact_public_mirrors as _validate_source_fact_public_mirrors,
     validate_manual_title_projection as _validate_manual_title_projection,  # noqa: F401
     validate_replayed_cover as _validate_replayed_cover,  # noqa: F401
     validate_public_artifact_namespace_absent,
@@ -63,6 +67,10 @@ from src.autoslice.qixi_transaction_core import (
     journal_installed_snapshot as _core_journal_installed_snapshot,
     restore_owned_inode as _core_restore_owned_inode,
     stable_regular_snapshot as _core_stable_regular_snapshot,
+)
+from src.autoslice.qixi_terminal_cover_projection import (
+    bind_terminal_story_to_validated_cover,
+    validate_terminal_cover_story_projection_mirrors,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1000,28 +1008,24 @@ def _build_after_image(
     )
     assert prepared is not None
     staged_for_projection, referenced = prepared
+
     _canonicalize_stage_public_surfaces(
         staged,
         staged_publish,
         projected_record=staged_for_projection,
         projected_publish=staged_publish_for_projection,
     )
-
-    def cover_generation_mirrors() -> None:
-        projected_staging = staged_for_projection.get("publish_staging")
-        if (
-            not isinstance(projected_staging, Mapping)
-            or projected_staging.get("cover_generation")
-            != staged_publish_for_projection.get("cover_generation")
-        ):
-            raise QixiPostCorrectionPublicSurfaceError(
-                "canonical publish and returned public surfaces drift before projection"
-            )
-
+    bind_terminal_story_to_validated_cover(
+        projected_record=staged_for_projection,
+        projected_publish=staged_publish_for_projection,
+    )
     formal_gate(
         observation,
         "stage_projected_cover_generation_mirrors",
-        cover_generation_mirrors,
+        lambda: validate_terminal_cover_story_projection_mirrors(
+            projected_record=staged_for_projection,
+            projected_publish=staged_publish_for_projection,
+        ),
         error_type=QixiPostCorrectionPublicSurfaceError,
     )
 
@@ -1054,21 +1058,10 @@ def _build_after_image(
     rewritten_record["human_text_correction_manifest_path"] = str(inputs.artifact_paths["correction"])
     _assert_no_stage_locator(rewritten_record, stage_root)
     _assert_no_stage_locator(rewritten_publish, stage_root)
-    def source_fact_mirrors() -> None:
-        if (
-            rewritten_record.get("story_contract", {}).get("source_fact_review")
-            != rewritten_record.get("publish_staging", {}).get("source_fact_review")
-            or rewritten_publish.get("source_fact_review")
-            != rewritten_record.get("publish_staging", {}).get("source_fact_review")
-        ):
-            raise QixiPostCorrectionPublicSurfaceError(
-                "source-fact receipt is not identical across required mirrors"
-            )
-
     formal_gate(
         observation,
         "stage_projected_source_fact_mirrors",
-        source_fact_mirrors,
+        lambda: _validate_source_fact_public_mirrors(rewritten_record, rewritten_publish),
         error_type=QixiPostCorrectionPublicSurfaceError,
     )
     state: dict[str, object] | None = None

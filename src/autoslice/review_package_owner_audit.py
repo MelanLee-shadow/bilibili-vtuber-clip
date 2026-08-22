@@ -22,6 +22,9 @@ from src.autoslice.channel_profile import (
 from src.autoslice.producer_boundary_owner_contract import (
     validate_frozen_boundary_owner_contract,
 )
+from src.autoslice.qixi_terminal_reconciliation import (
+    validate_terminal_baseline_replay_reconciliation,
+)
 from src.autoslice.redelivery_boundary_projection import (
     AUTHORITY_CONFIG_KEY,
     MATERIALIZATION_SCHEMA_VERSION,
@@ -600,6 +603,8 @@ def _story_owner_set_valid(
     frozen_owner_keys: list[tuple[str, str]],
     story_start: int,
     story_end: int,
+    qixi_terminal_projection_authority: Mapping[str, object] | None = None,
+    qixi_delivery_start_ms: int | None = None,
 ) -> bool:
     expected: dict[tuple[str, str], list[dict[str, int]]] = {}
     valid = True
@@ -631,6 +636,36 @@ def _story_owner_set_valid(
                             chat_authority=chat_authority,
                         )
                     )
+                elif (
+                    owner_kind == "exact_read"
+                    and qixi_terminal_projection_authority is not None
+                    and isinstance(qixi_delivery_start_ms, int)
+                    and not isinstance(qixi_delivery_start_ms, bool)
+                    and validate_terminal_baseline_replay_reconciliation(
+                        row,
+                        baseline_audit=chat_authority.get(
+                            "redelivery_subtitle_baseline_audit"
+                        ),
+                        terminal_projection_authority=qixi_terminal_projection_authority,
+                        delivery_start_ms=qixi_delivery_start_ms,
+                    )
+                ):
+                    # The typed terminal replay retires the text surface but
+                    # expressly preserves its already-frozen boundary owner.
+                    # Continue through the ordinary owner identity/window
+                    # checks below instead of silently dropping this row.
+                    pass
+                elif (
+                    owner_kind == "exact_read"
+                    and isinstance(reconciliation, Mapping)
+                    and reconciliation.get("schema_version")
+                    == "qixi-terminal-baseline-replay-reconciliation.v1"
+                ):
+                    # A Qixi-shaped receipt cannot inherit the permissive
+                    # historical reconciliation path.  Without the
+                    # manifest-bound terminal authority and an exact replay,
+                    # it must fail rather than erase a frozen owner.
+                    return False
                 else:
                     continue
             if owner_kind == "entity_repair" and row.get("mode") == "exact_final_cpa_self_heal":
@@ -897,6 +932,7 @@ def _frozen_owner_contract_valid(
     truth_rows: list[dict[str, Any]],
     chat_authority: Mapping[str, object],
     record: Mapping[str, object],
+    qixi_terminal_projection_authority: Mapping[str, object] | None = None,
 ) -> tuple[bool, list[object] | None]:
     owners = frozen.get("owners") if isinstance(frozen, Mapping) else None
     owner_keys = [
@@ -949,6 +985,12 @@ def _frozen_owner_contract_valid(
         story_end=story_end,
         owner_scope=owner_scope,
     )
+    boundary_audit = record.get("boundary_audit")
+    delivery_start = (
+        boundary_audit.get("final_start_ms")
+        if isinstance(boundary_audit, Mapping)
+        else None
+    )
     return (
         bool(
             integrity_valid
@@ -961,6 +1003,8 @@ def _frozen_owner_contract_valid(
                 frozen_owner_keys=owner_keys,
                 story_start=story_start,
                 story_end=story_end,
+                qixi_terminal_projection_authority=qixi_terminal_projection_authority,
+                qixi_delivery_start_ms=delivery_start,
             )
             and isinstance(frozen, Mapping)
             and _retry_verification_valid(
@@ -1254,6 +1298,7 @@ def audit_source_truth_owner_attestations(
     record_path: Path | None,
     record: dict[str, Any],
     provenance: dict[str, Any] | None = None,
+    qixi_terminal_projection_authority: Mapping[str, object] | None = None,
 ) -> None:
     """Audit final text ownership separately from boundary ownership."""
 
@@ -1343,6 +1388,7 @@ def audit_source_truth_owner_attestations(
         truth_rows=truth_rows,
         chat_authority=chat_authority,
         record=record,
+        qixi_terminal_projection_authority=qixi_terminal_projection_authority,
     )
     if not frozen_valid:
         issue_adder(

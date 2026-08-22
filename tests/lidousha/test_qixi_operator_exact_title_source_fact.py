@@ -17,6 +17,9 @@ import src.autoslice.qixi_post_correction_projection_paths as projection_paths
 import src.autoslice.source_fact_staging as source_fact_staging
 from src.autoslice import qixi_post_correction_public_surface as public_surface
 from src.autoslice import qixi_post_correction_public_artifact_recovery as basename_recovery
+from src.autoslice import qixi_screenshot_direct_cover_repair as cover_repair
+from src.autoslice import qixi_terminal_evidence_refresh as terminal_refresh
+from src.autoslice.qixi_post_correction_sealed_replay import sealed_chat_authority_bytes
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.cover_punch_semantics import cover_text_requires_punch_for_thumbnail
 from scripts.build_lidousha_daily_review_manifest import (
@@ -409,8 +412,12 @@ def test_validate_receipt_accepts_only_bridge_returned_terminal_prechat(
         )
     )
     monkeypatch.setattr(authority_module, "load_authority", lambda *_args, **_kwargs: authority)
+    proof = authority_module._CommittedSuccessorProof(
+        sealed,
+        json.dumps(record).encode("utf-8"),
+    )
     monkeypatch.setattr(
-        authority_module, "_validate_committed_public_successor", lambda *_args: sealed,
+        authority_module, "_validate_committed_public_successor", lambda *_args: proof,
     )
     kwargs = {
         "selection_hook": str(record["story_contract"]["selection_hook"]),
@@ -426,6 +433,188 @@ def test_validate_receipt_accepts_only_bridge_returned_terminal_prechat(
     assert not authority_module.validate_receipt(
         review, sealed_chat_authority_bytes=sealed, **kwargs,
     )
+
+
+def test_successor_boundary_requires_the_exact_internal_terminal_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    authority, runtime = _runtime(tmp_path)
+    original = runtime["record"]
+    assert isinstance(original, dict)
+    story = original["story_contract"]
+    assert isinstance(story, dict)
+    review = authority_module.authorize(
+        consume_authority(
+            authority,
+            candidate_id=CANDIDATE_ID,
+            title=TITLE,
+            selection_hook=str(story["selection_hook"]),
+            final_transcript=str(runtime["transcript"]),
+            final_reviewed_srt_path=Path(str(runtime["srt_path"])),
+            record=original,
+            speaker_evidence=runtime["speaker"],
+        )
+    )
+    successor = copy.deepcopy(original)
+    successor["boundary_audit"] = {"terminal": "verified-successor"}
+    successor_story = successor["story_contract"]
+    assert isinstance(successor_story, dict)
+    successor_story["source_fact_review"] = review
+    binding = authority.document["source_binding"]
+    assert isinstance(binding, dict)
+    sealed_chat = Path(str(binding["chat_authority"]["path"])).read_bytes()
+    proof = authority_module._CommittedSuccessorProof(
+        sealed_chat,
+        json.dumps({"boundary_audit": successor["boundary_audit"]}).encode(),
+    )
+    monkeypatch.setattr(authority_module, "load_authority", lambda *_args, **_kwargs: authority)
+    monkeypatch.setattr(
+        authority_module, "_validate_committed_public_successor", lambda *_args: proof
+    )
+    kwargs = {
+        "selection_hook": str(story["selection_hook"]),
+        "title": TITLE,
+        "final_transcript": str(runtime["transcript"]),
+        "candidate_id": CANDIDATE_ID,
+        "final_reviewed_srt_path": Path(str(runtime["srt_path"])),
+        "record": successor,
+        "speaker_evidence": runtime["speaker"],
+        "repo_root": tmp_path,
+    }
+    assert authority_module.validate_receipt(review, **kwargs)
+
+    successor["boundary_audit"] = {"terminal": "current-drift"}
+    assert not authority_module.validate_receipt(review, **kwargs)
+    successor["boundary_audit"] = {"terminal": "verified-successor"}
+    assert not authority_module.validate_receipt(
+        review, verify_successor=False, sealed_chat_authority_bytes=sealed_chat, **kwargs
+    )
+    malformed = authority_module._CommittedSuccessorProof(sealed_chat, b"not-json")
+    monkeypatch.setattr(
+        authority_module, "_validate_committed_public_successor", lambda *_args: malformed
+    )
+    assert not authority_module.validate_receipt(review, **kwargs)
+    with pytest.raises(QixiOperatorExactTitleSourceFactError, match="SUCCESSOR_PROOF_INVALID"):
+        consume_authority(
+            authority,
+            candidate_id=CANDIDATE_ID,
+            title=TITLE,
+            selection_hook=str(story["selection_hook"]),
+            final_transcript=str(runtime["transcript"]),
+            final_reviewed_srt_path=Path(str(runtime["srt_path"])),
+            record=successor,
+            speaker_evidence=runtime["speaker"],
+            verify_sealed_before=False,
+            sealed_chat_authority_bytes=b"wrong-chat",
+            _trusted_successor=proof,
+        )
+
+
+def _committed_successor_document(tmp_path: Path) -> tuple[dict[str, object], dict[str, object], Path]:
+    """Minimal public authority binding for successor-source tests."""
+
+    payload = b"{}\n"
+    public_path = tmp_path / "public-authority.json"
+    public_path.write_bytes(payload)
+    sealed = {
+        "record": {"path": "record.json", "bytes": 0, "sha256": bytes_sha256(b"")},
+        "delivery_record": {"path": "delivery.json", "bytes": 0, "sha256": bytes_sha256(b"")},
+        "publish": {"path": "publish.json", "bytes": 0, "sha256": bytes_sha256(b"")},
+        "state": {"path": "state.json", "bytes": 0, "sha256": bytes_sha256(b""), "mode": 0o600},
+    }
+    public = {"authority_sha256": "sha256:" + "a" * 64, "sealed_before": sealed}
+    document = {
+        "source_binding": {
+            "public_surface_authority": {
+                "relative_path": public_path.name,
+                "bytes": len(payload),
+                "sha256": bytes_sha256(payload),
+                "authority_sha256": public["authority_sha256"],
+            }
+        },
+        "sealed_before": sealed,
+    }
+    journal_root = tmp_path / "journal"
+    journal_root.mkdir()
+    (journal_root / "final-receipt.json").write_text("{}\n", encoding="utf-8")
+    return document, public, journal_root
+
+
+def test_committed_successor_scopes_terminal_before_before_original_journal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document, public, journal_root = _committed_successor_document(tmp_path)
+    terminal_authority = tmp_path / terminal_refresh.AUTHORITY_PATH
+    terminal_authority.parent.mkdir(parents=True, exist_ok=True)
+    terminal_authority.write_text("{}\n", encoding="utf-8")
+    sealed = b'{"terminal":"before"}'
+    terminal_record = b'{"boundary_audit":{"terminal":true}}'
+    calls: list[str] = []
+    monkeypatch.setattr(authority_module, "require_repository_asset_authority", lambda **_kwargs: None)
+    monkeypatch.setattr(public_surface, "validate_authority", lambda _value: public)
+    monkeypatch.setattr(public_surface, "_journal_root_from_authority", lambda _authority: journal_root)
+
+    def load_journal(_root: Path, *, authority: object) -> dict[str, object]:
+        assert authority == public
+        calls.append("journal")
+        assert sealed_chat_authority_bytes() == sealed
+        return {"status": "COMMITTED"}
+
+    def replay(_journal: object, *, authority: object) -> None:
+        assert authority == public
+        calls.append("replay")
+        assert sealed_chat_authority_bytes() == sealed
+        raise public_surface.QixiPostCorrectionPublicSurfaceError("current target drift")
+
+    monkeypatch.setattr(public_surface, "_load_journal", load_journal)
+    monkeypatch.setattr(public_surface, "_postcommit_replay", replay)
+    monkeypatch.setattr(
+        terminal_refresh,
+        "committed_successor_snapshot_with_before",
+        lambda **_kwargs: (
+            {"chat": b"after", "record": terminal_record}, {"chat": sealed}
+        ),
+    )
+    monkeypatch.setattr(
+        basename_recovery, "validate_committed_successor", lambda _authority: None
+    )
+    monkeypatch.setattr(terminal_refresh, "validate_committed_refresh", lambda **_kwargs: None)
+
+    proof = authority_module._validate_committed_public_successor(tmp_path, document)
+    assert isinstance(proof, authority_module._CommittedSuccessorProof)
+    assert proof.sealed_chat_authority_bytes == sealed
+    assert proof.sealed_terminal_record_bytes == terminal_record
+    assert calls == ["journal", "replay"]
+
+
+def test_committed_successor_rejects_corrupt_original_journal_after_cover_bridge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document, public, journal_root = _committed_successor_document(tmp_path)
+    cover_authority = tmp_path / cover_repair.AUTHORITY_PATH
+    cover_authority.parent.mkdir(parents=True, exist_ok=True)
+    cover_authority.write_text("{}\n", encoding="utf-8")
+    sealed = b'{"terminal":"before"}'
+    monkeypatch.setattr(authority_module, "require_repository_asset_authority", lambda **_kwargs: None)
+    monkeypatch.setattr(public_surface, "validate_authority", lambda _value: public)
+    monkeypatch.setattr(public_surface, "_journal_root_from_authority", lambda _authority: journal_root)
+    monkeypatch.setattr(
+        cover_repair,
+        "committed_cover_successor_snapshot",
+        lambda **_kwargs: {
+            "sealed_chat_authority_bytes": sealed,
+            "record": b'{"boundary_audit":{}}',
+        },
+    )
+
+    def corrupt_journal(_root: Path, *, authority: object) -> dict[str, object]:
+        assert authority == public
+        assert sealed_chat_authority_bytes() == sealed
+        raise public_surface.QixiPostCorrectionPublicSurfaceError("receipt corrupt")
+
+    monkeypatch.setattr(public_surface, "_load_journal", corrupt_journal)
+    with pytest.raises(QixiOperatorExactTitleSourceFactError, match="POSTCOMMIT_PROOF_INVALID"):
+        authority_module._validate_committed_public_successor(tmp_path, document)
 
 
 def _preprovider_record(runtime: dict[str, object]) -> dict[str, object]:
@@ -1524,6 +1713,23 @@ def test_two_phase_postcommit_successor_replays_daily_and_package(
             "validate_committed_refresh",
             lambda *, repo_root: calls.append(repo_root),
         )
+        sealed_chat = Path(str(source["chat_authority"]["path"])).read_bytes()
+        snapshots: list[Path] = []
+
+        def terminal_snapshot(**kwargs: object) -> tuple[dict[str, bytes], dict[str, bytes]]:
+            repo_root = kwargs["repo_root"]
+            assert isinstance(repo_root, Path)
+            snapshots.append(repo_root)
+            return (
+                {"chat": b"terminal-after", "record": json.dumps(record_after).encode()},
+                {"chat": sealed_chat},
+            )
+
+        monkeypatch.setattr(
+            terminal_refresh,
+            "committed_successor_snapshot_with_before",
+            terminal_snapshot,
+        )
         assert (
             _validate_source_fact_receipts(
                 record_doc=record_after,
@@ -1534,10 +1740,11 @@ def test_two_phase_postcommit_successor_replays_daily_and_package(
             )
             == receipt["receipt_sha256"]
         )
-        assert calls == [repo]
+        assert snapshots == [repo]
+        assert calls == []
         monkeypatch.setattr(
             terminal_refresh,
-            "validate_committed_refresh",
+            "committed_successor_snapshot_with_before",
             lambda **_kwargs: (_ for _ in ()).throw(ValueError("terminal drift")),
         )
         with pytest.raises(DailyManifestError, match="invalid or stale"):

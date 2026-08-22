@@ -608,6 +608,24 @@ def canonicalize_stage_public_surfaces(
     projected_publish["cover_generation"] = copy.deepcopy(canonical_generation)
 
 
+def validate_source_fact_public_mirrors(
+    record: Mapping[str, object], publish: Mapping[str, object]
+) -> None:
+    """Require the sealed source-fact receipt on all projected public surfaces."""
+
+    story = record.get("story_contract")
+    staging = record.get("publish_staging")
+    if (
+        not isinstance(story, Mapping)
+        or not isinstance(staging, Mapping)
+        or story.get("source_fact_review") != staging.get("source_fact_review")
+        or publish.get("source_fact_review") != staging.get("source_fact_review")
+    ):
+        raise QixiPostCorrectionPublicSurfaceError(
+            "source-fact receipt is not identical across required mirrors"
+        )
+
+
 def stage_public_surface_gate_callables(
     staged: Mapping[str, object], staged_publish: Mapping[str, object]
 ) -> tuple[tuple[str, Callable[[], None]], ...]:

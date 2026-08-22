@@ -26,6 +26,7 @@ from src.autoslice.producer_boundary_owner_contract import (
 from src.autoslice.recovery_title_authority import build_recovery_publication_authorities
 from src.autoslice.review_package_source_fact_audit import audit_story_source_fact_receipt
 from src.autoslice.source_fact_review import review_and_repair_source_facts
+from src.autoslice.story_contract import cover_story_contract_binding
 from scripts import build_manual_review_manifest as manual_review_manifest
 from scripts.build_manual_review_manifest import DailyManifestError, build_manual
 from scripts.audit_lidousha_review_package import _audit_manual_corrected_same_bv_receipt
@@ -1199,12 +1200,16 @@ def test_current_terminal_projection_finalizes_with_real_redelivery_and_chat_hel
     ]
     chat = json.loads((target / "auto_113022_354_496.chat-authority.json").read_text())
     record = json.loads((package / f"{CID}.record.json").read_text())
+    publish = json.loads((package / f"{CID}.publish.json").read_text())
     assert chat["redelivery_subtitle_baseline_audit"]["status"] == "ALREADY_SATISFIED"
     assert chat["final_required_decision_count"] == 54
     assert chat["final_text_srt_path"] == str(package / f"{CID}.srt")
     assert record["human_text_correction_manifest_path"] == str(
         package / receipt["artifacts"]["correction"]["target"]
     )
+    expected_cover_binding = cover_story_contract_binding(record["story_contract"])
+    assert record["publish_staging"]["cover_generation"]["story_contract"] == expected_cover_binding
+    assert publish["cover_generation"]["story_contract"] == expected_cover_binding
     manual = build_manual(
         package,
         operator="fixture",
@@ -1271,6 +1276,7 @@ def test_current_terminal_projection_finalizes_with_real_redelivery_and_chat_hel
             package_root=package,
             qixi_repo_root=repo,
         )
+
     # The manifest binds the original receipt bytes; changing the one real
     # receipt must be caught independently by both downstream typed gates.
     (package / finalization.RECEIPT_FILENAME).write_text("{}", encoding="utf-8")
@@ -1294,6 +1300,46 @@ def test_current_terminal_projection_finalizes_with_real_redelivery_and_chat_hel
             candidate_id=CID,
             package_root=package,
             qixi_repo_root=repo,
+        )
+
+
+def test_current_terminal_projection_rejects_source_cover_generation_hash_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The terminal story rebind cannot excuse a changed sealed generation."""
+
+    repo, release, evidence, target = _write_current_lane_fixture(tmp_path)
+    context = finalization._prepare_execution_context(
+        repo_root=repo,
+        release_root=release,
+        evidence_root=evidence,
+        target=target,
+    )
+    load_object = finalization._load_object
+
+    def source_generation_drift(path: Path, *, label: str) -> dict[str, object]:
+        document = load_object(path, label=label)
+        if label in {"current record", "current record mirror"}:
+            generation = document["publish_staging"]["cover_generation"]
+            assert isinstance(generation, dict)
+            generation["final_cover_sha256"] = "sha256:" + "f" * 64
+        return document
+
+    monkeypatch.setattr(finalization, "_load_object", source_generation_drift)
+    with pytest.raises(
+        finalization.QixiCorrectedPackageError,
+        match="current record cover/title staging is invalid",
+    ):
+        finalization._after_image(
+            authority=context.authority,
+            artifacts=context.artifacts,
+            candidate_root=target,
+            release_mappings=context.release_mappings,
+            release_workspace_root=context.release_workspace_root,
+            evidence_mappings=context.evidence_mappings,
+            evidence_workspace_root=context.evidence_workspace_root,
+            repo_root=context.repo_root,
         )
 
 

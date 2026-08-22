@@ -45,6 +45,7 @@ from src.autoslice.qixi_current_terminal_audit_closure import (
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.producer_text_finalization import verify_chat_authority_final_surfaces
+from src.autoslice.story_contract import cover_story_contract_binding
 from src.autoslice.qixi_current_terminal_ass_repair import validate_current_ass_repair
 from src.autoslice.qixi_terminal_reconciliation import reconcile_terminal_baseline_replay_supersessions
 from src.autoslice.package_relocation_contract import (
@@ -1276,6 +1277,9 @@ def _project_documents(
     staging["recovery_publication_authority"] = publication
     staging["publish_json_path"] = str(_artifact_final_path(candidate_root, artifacts["publish"]))
     portable_cover = copy.deepcopy(dict(source_generation))
+    portable_cover["story_contract"] = cover_story_contract_binding(
+        dict(record.get("story_contract") or {})
+    )
     locator_updates = {
         "final_cover": artifacts["cover"],
         "pre_overlay_path": artifacts["cover_pre_overlay"],
@@ -1569,6 +1573,7 @@ def _project_current_terminal_documents(
     ):
         raise QixiCorrectedPackageError("current record cover/title staging is invalid")
     portable_cover = copy.deepcopy(dict(generation))
+    portable_cover["story_contract"] = cover_story_contract_binding(story_contract)
     for key, name in {
         "final_cover": "cover", "pre_overlay_path": "cover_pre_overlay",
         "ai_background": "cover_route_background", "reference_image": "cover_reference",

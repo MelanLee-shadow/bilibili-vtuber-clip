@@ -2,11 +2,59 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 from collections.abc import Mapping
 from typing import Any
 
 from src.autoslice.producer_text_finalization import normalize_chat_text
+
+
+def validate_terminal_baseline_replay_reconciliation(
+    row: object,
+    *,
+    baseline_audit: object,
+    terminal_projection_authority: object,
+    delivery_start_ms: int,
+) -> bool:
+    """Replay one Qixi terminal-baseline supersession without trusting it.
+
+    The journaled row is accepted only when removing its reconciliation and
+    rerunning the canonical producer-side derivation recreates *exactly* the
+    stored six-field receipt.  This is deliberately narrower than a generic
+    reconciliation validator: it is the sole receipt family emitted by the
+    terminal projection and still needs a separately validated manifest-bound
+    Qixi receipt at the package-audit call site.
+    """
+
+    if not isinstance(row, Mapping):
+        return False
+    reconciliation = row.get("reconciliation")
+    if not isinstance(reconciliation, Mapping) or set(reconciliation) != {
+        "schema_version",
+        "status",
+        "terminal_projection_authority_sha256",
+        "baseline_cue_indexes",
+        "before_payload_sha256",
+        "after_payload_sha256",
+    }:
+        return False
+    original = copy.deepcopy(dict(row))
+    original.pop("reconciliation", None)
+    replay = {
+        "redelivery_subtitle_baseline_audit": copy.deepcopy(baseline_audit),
+        "applied": [original],
+    }
+    try:
+        reconcile_terminal_baseline_replay_supersessions(
+            replay,
+            terminal_projection_authority=terminal_projection_authority,
+            delivery_start_ms=delivery_start_ms,
+        )
+    except (TypeError, ValueError):
+        return False
+    replayed = replay["applied"][0].get("reconciliation")
+    return isinstance(replayed, Mapping) and dict(replayed) == dict(reconciliation)
 
 
 def reconcile_terminal_baseline_replay_supersessions(

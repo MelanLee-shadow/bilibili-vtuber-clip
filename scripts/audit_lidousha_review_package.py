@@ -90,6 +90,9 @@ from src.autoslice.qixi_corrected_package_finalization import (  # noqa: E402
     QixiCorrectedPackageError,
     validate_manifest_bound_applied_receipt,
 )
+from src.autoslice.qixi_review_package_owner_bridge import (  # noqa: E402
+    manifest_bound_terminal_projection_authority,
+)
 
 
 DEFAULT_MAX_VISUAL_LINES = 2
@@ -1301,28 +1304,6 @@ def _audit_item_story_contract(
             )
 
 
-def _audit_source_truth_owner_attestations(
-    *,
-    issues: list[dict[str, Any]],
-    stem: str,
-    chat_authority_path: Path | None,
-    chat_authority: dict[str, Any],
-    record_path: Path | None,
-    record: dict[str, Any],
-    provenance: dict[str, Any] | None = None,
-) -> None:
-    audit_source_truth_owner_attestations(
-        issue_adder=_add_issue,
-        issues=issues,
-        stem=stem,
-        chat_authority_path=chat_authority_path,
-        chat_authority=chat_authority,
-        record_path=record_path,
-        record=record,
-        provenance=provenance,
-    )
-
-
 def _audit_final_review_attestation(
     *,
     issues: list[dict[str, Any]],
@@ -1823,6 +1804,10 @@ def audit_package(
         issues.extend(path_issues)
         record = _load_json(record_path) if record_path else {}
         chat_authority = _load_json(chat_authority_path) if chat_authority_path else {}
+        item_candidate_id = str(item.get("candidate_id") or "")
+        qixi_terminal_projection_authority = manifest_bound_terminal_projection_authority(
+            package_root=root, item=item, qixi_repo_root=qixi_repo_root
+        )
         ass_audit = audit_review_package_ass(
             root=root,
             item=item,
@@ -1882,7 +1867,8 @@ def audit_package(
         if story_contract_required and not is_song:
             provenance_path = _resolve(root, f"{stem}.provenance.json")
             provenance = _load_json(provenance_path) if provenance_path else None
-            _audit_source_truth_owner_attestations(
+            audit_source_truth_owner_attestations(
+                issue_adder=_add_issue,
                 issues=issues,
                 stem=stem,
                 chat_authority_path=chat_authority_path,
@@ -1890,6 +1876,7 @@ def audit_package(
                 record_path=record_path,
                 record=record,
                 provenance=provenance,
+                qixi_terminal_projection_authority=qixi_terminal_projection_authority,
             )
             _audit_final_review_attestation(
                 issues=issues,
@@ -1905,7 +1892,6 @@ def audit_package(
             if isinstance(story_contract, dict)
             else ""
         )
-        item_candidate_id = str(item.get("candidate_id") or "")
         _audit_item_recovery_publication_and_qixi_receipt(
             root=root,
             item=item,

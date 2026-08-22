@@ -21,6 +21,9 @@ from src.autoslice.repository_asset_authority import (
     repository_authority_expects_asset,
     require_repository_asset_authority,
 )
+from src.autoslice.qixi_post_correction_sealed_replay import (
+    sealed_chat_authority_replay,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -44,6 +47,14 @@ class Authority:
     document: dict[str, object]
     repo_path: Path
     file_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class _CommittedSuccessorProof:
+    """Opaque bridge output for one verified terminal successor chain."""
+
+    sealed_chat_authority_bytes: bytes
+    sealed_terminal_record_bytes: bytes
 
 
 def canonical_sha256(value: object) -> str:
@@ -448,12 +459,35 @@ def consume_authority(
     verify_sealed_before: bool = True,
     allow_preprovider_receipt_absent: bool = False,
     sealed_chat_authority_bytes: bytes | None = None,
+    _trusted_successor: _CommittedSuccessorProof | None = None,
 ) -> dict[str, object]:
     """Recheck the sealed preimage before any provider or cover can run."""
 
     document = validate_authority_document(authority.document)
     binding = dict(document["source_binding"])
     historical = dict(document["historical_provider_pass"])
+    trusted_successor_boundary_sha256: str | None = None
+    if _trusted_successor is not None:
+        if (
+            not isinstance(_trusted_successor, _CommittedSuccessorProof)
+            or verify_sealed_before
+            or sealed_chat_authority_bytes
+            != _trusted_successor.sealed_chat_authority_bytes
+        ):
+            raise QixiOperatorExactTitleSourceFactError(
+                "QIXI_OPERATOR_TITLE_SUCCESSOR_PROOF_INVALID"
+            )
+        terminal_record = _json_payload(
+            _trusted_successor.sealed_terminal_record_bytes,
+            label="SUCCESSOR_TERMINAL_RECORD",
+        )
+        terminal_boundary = terminal_record.get("boundary_audit")
+        if not isinstance(terminal_boundary, Mapping):
+            raise QixiOperatorExactTitleSourceFactError(
+                "QIXI_OPERATOR_TITLE_SUCCESSOR_BOUNDARY_INVALID"
+            )
+        trusted_successor_boundary_sha256 = canonical_sha256(terminal_boundary)
+    observed_boundary_sha256 = canonical_sha256(record.get("boundary_audit"))
     if (
         candidate_id != CANDIDATE_ID
         or title != document["approved_title"]["value"]
@@ -558,7 +592,11 @@ def consume_authority(
         != binding["clip_context_prompt_sha256"]
         or f"source_pieces: {_source_piece_prompt(binding['source_piece'])}"
         not in str(contract.get("clip_context_prompt") or "")
-        or canonical_sha256(record.get("boundary_audit")) != binding["boundary_audit_sha256"]
+        or observed_boundary_sha256
+        not in {
+            binding["boundary_audit_sha256"],
+            trusted_successor_boundary_sha256,
+        }
         or (
             contract.get("source_fact_review") not in expected_runtime_receipts
             and not preprovider_receipt_absent
@@ -615,7 +653,7 @@ def authorize(consumption: Mapping[str, object]) -> dict[str, object]:
 
 def _validate_committed_public_successor(
     repo_root: Path, document: Mapping[str, object],
-) -> bytes | None:
+) -> _CommittedSuccessorProof | None:
     """Replay the sealed Qixi public-surface closure through its canonical gate."""
 
     binding = dict(document["source_binding"])
@@ -647,14 +685,44 @@ def _validate_committed_public_successor(
         }
         if public_predecessor != sealed:
             raise ValueError("operator and public predecessor bindings differ")
+        # A terminal (and, optionally, cover) successor changes the live chat
+        # after the original public transaction.  Obtain its sealed terminal-
+        # before preimage *before* touching the original journal, then scope
+        # that exact payload through the after-image gate.  There is no
+        # mutable-current-chat fallback on either successor branch.
+        from src.autoslice import qixi_screenshot_direct_cover_repair as cover_repair
+        from src.autoslice import qixi_terminal_evidence_refresh as terminal_refresh
+
+        cover_authority = repo_root / cover_repair.AUTHORITY_PATH
+        terminal_authority = repo_root / terminal_refresh.AUTHORITY_PATH
+        sealed_chat: bytes | None = None
+        sealed_terminal_record: bytes | None = None
+        if os.path.lexists(cover_authority):
+            bridge = cover_repair.committed_cover_successor_snapshot(repo_root=repo_root)
+            sealed_chat = bridge.get("sealed_chat_authority_bytes")
+            sealed_terminal_record = bridge.get("record")
+            if not isinstance(sealed_chat, bytes) or not isinstance(sealed_terminal_record, bytes):
+                raise ValueError("cover successor did not return sealed terminal inputs")
+        elif os.path.lexists(terminal_authority):
+            terminal_after, terminal_before = terminal_refresh.committed_successor_snapshot_with_before(
+                repo_root=repo_root,
+                allow_verified_cover_successor=False,
+            )
+            sealed_chat = terminal_before.get("chat")
+            sealed_terminal_record = terminal_after.get("record")
+            if not isinstance(sealed_chat, bytes) or not isinstance(sealed_terminal_record, bytes):
+                raise ValueError("terminal successor did not return sealed inputs")
+
         root = public_surface._journal_root_from_authority(public_document)
-        journal = public_surface._load_journal(root, authority=public_document)
+        with sealed_chat_authority_replay(sealed_chat):
+            journal = public_surface._load_journal(root, authority=public_document)
         if journal is None or journal.get("status") != "COMMITTED":
             raise ValueError("committed public-surface journal is missing")
         if not (root / "final-receipt.json").is_file():
             raise ValueError("committed public-surface final receipt is missing")
         try:
-            public_surface._postcommit_replay(journal, authority=public_document)
+            with sealed_chat_authority_replay(sealed_chat):
+                public_surface._postcommit_replay(journal, authority=public_document)
             return None
         except public_surface.QixiPostCorrectionPublicSurfaceError:
             # The original journal remains the exact predecessor proof.  Its
@@ -664,18 +732,8 @@ def _validate_committed_public_successor(
                 validate_committed_successor,
             )
 
-            # A committed cover repair is a fourth, strictly sealed successor.
-            # Its bridge replays original→basename with terminal's exact
-            # before-chat image; never use the mutable current chat here.
-            from src.autoslice import qixi_screenshot_direct_cover_repair as cover_repair
-
-            cover_authority = repo_root / cover_repair.AUTHORITY_PATH
-            if os.path.lexists(cover_authority):
-                bridge = cover_repair.committed_cover_successor_snapshot(repo_root=repo_root)
-                sealed_chat = bridge.get("sealed_chat_authority_bytes")
-                if not isinstance(sealed_chat, bytes):
-                    raise ValueError("cover successor did not return sealed chat")
-                return sealed_chat
+            if sealed_chat is not None and sealed_terminal_record is not None:
+                return _CommittedSuccessorProof(sealed_chat, sealed_terminal_record)
 
             validate_committed_successor(public_document)
             # The terminal refresh is optional but, once its committed
@@ -683,8 +741,6 @@ def _validate_committed_public_successor(
             # third successor.  It cannot excuse a broken original→basename
             # replay (checked above), and its own replay must prove every
             # current after-image before source-fact acceptance proceeds.
-            from src.autoslice import qixi_terminal_evidence_refresh as terminal_refresh
-
             if (repo_root / terminal_refresh.AUTHORITY_PATH).is_file():
                 terminal_refresh.validate_committed_refresh(repo_root=repo_root)
     except (
@@ -732,10 +788,16 @@ def validate_receipt(
             # suppress a postcommit replay.  Only the sealed cover-successor
             # bridge may return one after proving its entire chain.
             return False
-        trusted_chat = (
+        successor_proof = (
             _validate_committed_public_successor(repo_root, document)
             if verify_successor else sealed_chat_authority_bytes
         )
+        if isinstance(successor_proof, _CommittedSuccessorProof):
+            trusted_chat = successor_proof.sealed_chat_authority_bytes
+        elif isinstance(successor_proof, bytes) or successor_proof is None:
+            trusted_chat = successor_proof
+        else:
+            return False
         expected_consumption = consume_authority(
             authority,
             candidate_id=candidate_id,
@@ -748,6 +810,11 @@ def validate_receipt(
             projected_receipt=review,
             verify_sealed_before=False,
             sealed_chat_authority_bytes=trusted_chat,
+            _trusted_successor=(
+                successor_proof
+                if isinstance(successor_proof, _CommittedSuccessorProof)
+                else None
+            ),
         )
         return (
             dict(review) == authorize(expected_consumption) and consumption == expected_consumption

@@ -11,10 +11,13 @@ import scripts.audit_lidousha_review_package as review_package_audit
 
 from scripts.audit_lidousha_review_package import (
     _audit_policy_fingerprint,
-    _audit_source_truth_owner_attestations,
+    _add_issue,
     _audit_story_bound_cover,
     _contained_package_artifact,
     audit_package,
+)
+from src.autoslice.review_package_owner_audit import (
+    audit_source_truth_owner_attestations,
 )
 from src.autoslice.boundary_semantic_review import (
     cue_grid_sha256,
@@ -42,6 +45,9 @@ from src.autoslice.review_package_boundary_contract import (
 from src.autoslice.producer_boundary_owner_contract import (
     freeze_required_boundary_owner_contract,
     frozen_boundary_owner_contract_sha256,
+)
+from src.autoslice.qixi_terminal_reconciliation import (
+    reconcile_terminal_baseline_replay_supersessions,
 )
 from src.autoslice.recovery_title_authority import (
     build_recovery_publication_authorities,
@@ -262,7 +268,8 @@ def test_optional_source_truth_does_not_require_final_owner_attestation():
         )
     }
 
-    _audit_source_truth_owner_attestations(
+    audit_source_truth_owner_attestations(
+        issue_adder=_add_issue,
         issues=issues,
         stem="optional",
         chat_authority_path=None,
@@ -275,7 +282,8 @@ def test_optional_source_truth_does_not_require_final_owner_attestation():
 
     chat["source_subtitle_truth_audit"]["applied"][0]["required"] = True
     required_issues: list[dict] = []
-    _audit_source_truth_owner_attestations(
+    audit_source_truth_owner_attestations(
+        issue_adder=_add_issue,
         issues=required_issues,
         stem="required",
         chat_authority_path=None,
@@ -333,6 +341,8 @@ def _owner_attestation_codes(
     truth_owner_overrides: dict | None = None,
     source_truth_audit_override: dict | None = None,
     chat_rows_by_key: dict[str, list[dict]] | None = None,
+    qixi_terminal_projection_authority: dict | None = None,
+    delivery_start_ms: int | None = None,
 ) -> set[str]:
     classified_truth_rows = []
     final_delivery_rows = 0
@@ -465,18 +475,22 @@ def _owner_attestation_codes(
             },
         }
     }
+    if delivery_start_ms is not None:
+        record["boundary_audit"]["final_start_ms"] = delivery_start_ms
     if record_candidate_id is not None:
         record["story_contract"] = {
             "candidate_id": record_candidate_id,
         }
     issues: list[dict] = []
-    _audit_source_truth_owner_attestations(
+    audit_source_truth_owner_attestations(
+        issue_adder=_add_issue,
         issues=issues,
         stem="owner-audit",
         chat_authority_path=None,
         chat_authority=chat,
         record_path=None,
         record=record,
+        qixi_terminal_projection_authority=qixi_terminal_projection_authority,
     )
     return {issue["code"] for issue in issues}
 
@@ -1013,6 +1027,82 @@ def test_exact_final_supersession_preserves_prior_frozen_boundary_owner():
         chat_rows_by_key=chat_rows,
     )
     assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in invalid_codes
+
+
+@pytest.mark.parametrize("drift", (None, "authority", "status", "cue", "owner"))
+def test_manifest_bound_qixi_terminal_replay_preserves_only_exact_frozen_owner(
+    drift: str,
+) -> None:
+    """A typed terminal replay cannot erase a frozen exact-read owner by itself."""
+
+    terminal_authority = {"authority_sha256": "sha256:" + "a" * 64}
+    row = {
+        "finding_id": "qixi-terminal-read",
+        "matched_start_ms": 1_000,
+        "matched_end_ms": 2_000,
+        "boundary_required": True,
+        "boundary_owner_id": "qixi-terminal-read",
+        "owner_eligible": True,
+        "exact_text": "旧字幕",
+        "final_verification_scope": "SUPERSEDED_BY_REDELIVERY_BASELINE",
+        "final_verification_scope_reason": (
+            "BOUNDARY_OWNER_REVERTED_BY_VERIFIED_BASELINE_REPLAY"
+        ),
+        "final_redelivery_baseline_revert": {
+            "before_payload": "旧字幕",
+            "after_payload": "新字幕",
+            "baseline_cue_indexes": [1],
+        },
+    }
+    baseline = {
+        "mappings": [
+            {
+                "baseline_cue_index": 1,
+                "start_ms": 1_000,
+                "end_ms": 2_000,
+                "text": "新字幕",
+                "final_owner_verified": True,
+            }
+        ]
+    }
+    chat_rows: dict[str, object] = {
+        "applied": [row],
+        "redelivery_subtitle_baseline_audit": baseline,
+    }
+    reconcile_terminal_baseline_replay_supersessions(
+        chat_rows,
+        terminal_projection_authority=terminal_authority,
+        delivery_start_ms=0,
+    )
+    reconciliation = row["reconciliation"]
+    assert isinstance(reconciliation, dict)
+    if drift == "authority":
+        reconciliation["terminal_projection_authority_sha256"] = "sha256:" + "b" * 64
+    elif drift == "status":
+        reconciliation["status"] = "FORGED"
+    elif drift == "cue":
+        reconciliation["baseline_cue_indexes"] = [2]
+    elif drift == "owner":
+        row["boundary_owner_id"] = "forged-owner"
+
+    frozen = _frozen_owner_fixture(
+        owners=[
+            _story_owner(
+                "exact_read", "qixi-terminal-read", start_ms=1_000, end_ms=2_000
+            )
+        ]
+    )
+    codes = _owner_attestation_codes(
+        truth_rows=[],
+        frozen=frozen,
+        chat_rows_by_key=chat_rows,
+        qixi_terminal_projection_authority=terminal_authority,
+        delivery_start_ms=0,
+    )
+    expected_missing = drift is not None
+    assert (
+        "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" in codes
+    ) is expected_missing
 
 
 @pytest.mark.parametrize(

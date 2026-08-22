@@ -44,6 +44,7 @@ from src.autoslice.publish_staging_paths import private_publish_path
 from src.autoslice.review_package_portable_evidence import rebuild_package_speaker_evidence
 from src.autoslice.review_package_source_fact_audit import audit_story_source_fact_receipt
 from src.autoslice.source_fact_review import review_and_repair_source_facts
+from src.autoslice.story_contract import cover_story_contract_binding
 from scripts.build_lidousha_daily_review_manifest import _validate_source_fact_receipts
 from scripts import finalize_qixi_post_correction_public_surface as closure_cli
 from scripts.finalize_qixi_post_correction_public_surface import _parse_args
@@ -1715,6 +1716,53 @@ def test_apply_projects_identical_source_fact_and_rejects_foreign_drift(tmp_path
     paths["publish"].write_bytes(b"foreign")
     with pytest.raises(closure.QixiPostCorrectionPublicSurfaceError, match="drift"):
         closure.finalize(apply=True, repo_root=repo, runtime_root=runtime, authority=authority, _stage_publish=_fake_stage)
+
+
+def test_apply_rebinds_validated_cover_generation_to_terminal_story_contract(
+    tmp_path: Path,
+) -> None:
+    """Terminal projection changes only the compact cover StoryContract view."""
+
+    repo, runtime, authority, paths = _fixture(tmp_path)
+    result = closure.finalize(
+        apply=True,
+        repo_root=repo,
+        runtime_root=runtime,
+        authority=authority,
+        _stage_publish=_fake_stage,
+    )
+    assert result["status"] == "APPLIED"
+    record = json.loads(paths["record"].read_text())
+    publish = json.loads(paths["publish"].read_text())
+    expected = cover_story_contract_binding(record["story_contract"])
+    assert record["publish_staging"]["cover_generation"]["story_contract"] == expected
+    assert publish["cover_generation"]["story_contract"] == expected
+
+
+def test_cover_story_contract_reprojection_never_excuses_source_hash_drift(
+    tmp_path: Path,
+) -> None:
+    repo, runtime, authority, paths = _fixture(tmp_path)
+    before = {
+        key: paths[key].read_bytes() for key in ("record", "delivery", "publish", "state")
+    }
+
+    def source_hash_drift(record: dict[str, object], **kwargs: object) -> dict[str, object]:
+        staged = _fake_stage(record, **kwargs)
+        generation = staged["publish_staging"]["cover_generation"]
+        assert isinstance(generation, dict)
+        generation["final_cover_sha256"] = "sha256:" + "f" * 64
+        return staged
+
+    with pytest.raises(closure.QixiPostCorrectionPublicSurfaceError):
+        closure.finalize(
+            apply=True,
+            repo_root=repo,
+            runtime_root=runtime,
+            authority=authority,
+            _stage_publish=source_hash_drift,
+        )
+    assert {key: paths[key].read_bytes() for key in before} == before
 
 
 def test_real_publish_stage_replays_manual_title_public_fields(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
