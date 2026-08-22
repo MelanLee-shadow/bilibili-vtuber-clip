@@ -10,6 +10,7 @@ import pytest
 
 from scripts.run_title_cover_joint_qc import build_joint_qc_receipt
 from src.autoslice import qixi_screenshot_direct_cover_repair as repair
+from src.autoslice import qixi_post_correction_projection_paths as projection_paths
 
 
 def _sha(value: object) -> str:
@@ -164,6 +165,86 @@ def test_fixed_full_dry_reuses_sealed_punch_without_punch_provider(
     assert repair.run_fixed_full_dry(repo_root=tmp_path, stage_root_parent=tmp_path) == {
         "status": "FULL_DRY_RUN_PASS"
     }
+
+
+def test_relocated_gate_seam_uses_projection_authority_and_reports_all_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert repair.replayed_cover_gate_callables is projection_paths.replayed_cover_gate_callables
+    called: list[str] = []
+
+    def fail(name: str):
+        def check() -> None:
+            called.append(name)
+            raise RuntimeError("private stage path must not escape")
+        return check
+
+    predicate_ids = tuple(repair._RELOCATED_GATE_REASON_CODES)
+    monkeypatch.setattr(
+        repair,
+        "replayed_cover_gate_callables",
+        lambda *_args, **_kwargs: tuple((name, fail(name)) for name in predicate_ids),
+    )
+    with pytest.raises(
+        repair.QixiScreenshotDirectCoverRepairError,
+        match="cover_route,cover_rendered_text_pixels,cover_final_host_identity,"
+        "cover_final_participant_identity,cover_punch_semantics,cover_materialized_hashes",
+    ) as raised:
+        repair._replay_relocated_cover_gates(
+            generation={}, story={}, package_root=Path("/official"), after={},
+        )
+    assert called == list(predicate_ids)
+    assert "private" not in str(raised.value)
+    assert "COVER_REPAIR_RELOCATED_MATERIALIZED_INVALID" in "".join(raised.value.__notes__)
+
+
+def test_relocated_generation_replays_materialized_paths_after_private_mapping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "private-stage"
+    root.mkdir()
+    final, pre_overlay = root / "final.png", root / "pre.png"
+    final.write_bytes(b"final-cover")
+    pre_overlay.write_bytes(b"pre-overlay")
+    authority = _authority(_generation(), b"old-cover", b"old-qc")
+    legacy = authority["legacy_cover"]
+    assert isinstance(legacy, dict)
+    legacy["final_cover"] = {
+        "path": "/opt/bilive/autoslice/out/final.cover.png",
+        "sha256": "sha256:" + hashlib.sha256(b"old-cover").hexdigest(),
+        "bytes": len(b"old-cover"),
+    }
+    authority["authority_sha256"] = _sha(
+        {key: value for key, value in authority.items() if key != "authority_sha256"}
+    )
+    generation = {
+        "method": "screenshot_direct",
+        "final_cover": str(final),
+        "final_cover_sha256": "sha256:" + hashlib.sha256(final.read_bytes()).hexdigest(),
+        "pre_overlay_path": str(pre_overlay),
+        "pre_overlay_sha256": "sha256:" + hashlib.sha256(pre_overlay.read_bytes()).hexdigest(),
+        "ai_background": str(pre_overlay),
+        "ai_background_sha256": "sha256:" + hashlib.sha256(pre_overlay.read_bytes()).hexdigest(),
+        "route_decision": {"required_participant_ids": []},
+        "cover_text_mode": "full",
+    }
+    relocated, sidecars = repair._relocate_private_generation(
+        authority=authority, root=root, generation=generation, cover_path=final,
+    )
+    monkeypatch.setattr(projection_paths, "validate_cover_route_decision", lambda *_a, **_k: True)
+    monkeypatch.setattr(projection_paths, "validate_rendered_text_pixel_evidence", lambda *_a, **_k: True)
+    monkeypatch.setattr(projection_paths, "validate_final_host_identity_verification", lambda *_a, **_k: True)
+    after = dict(sidecars)
+    after[Path(str(relocated["final_cover"]))] = final.read_bytes()
+    matrix = repair._replay_relocated_cover_gates(
+        generation=relocated,
+        story={},
+        package_root=Path(str(relocated["final_cover"])).parent,
+        after=after,
+    )
+    assert all(row["status"] == "PASS" for row in matrix)
+    assert Path(str(relocated["pre_overlay_path"])) in sidecars
+    assert Path(str(relocated["ai_background"])) in sidecars
 
 
 def test_joint_qc_callable_binds_staged_bytes_to_intended_logical_path(tmp_path) -> None:

@@ -26,6 +26,9 @@ from src.autoslice.cover_punch_semantics import (
     validate_cover_punch_semantic_review,
 )
 from src.autoslice.llm_client import LlmConfig, build_llm_call
+from src.autoslice.qixi_post_correction_projection_paths import (
+    replayed_cover_gate_callables,
+)
 from src.autoslice.qixi_transaction_core import (
     InstallCallbacks,
     QixiTransactionCoreError,
@@ -655,29 +658,72 @@ def _production_stage_cover(
         authority=authority, root=root, generation=preserved_generation, cover_path=staged,
     )
     logical_cover = str(authority_final_cover_path(authority))
-    try:
-        from src.autoslice.qixi_post_correction_public_surface import replayed_cover_gate_callables
-
-        after = dict(sidecars)
-        after[Path(logical_cover)] = snapshot.payload
-        for path_key in ("ai_background", "pre_overlay_path"):
-            reused = relocated.get(path_key)
-            if isinstance(reused, str) and Path(reused) not in after:
-                reused_snapshot = stable_regular_snapshot(
-                    Path(reused), label="cover repair reused materialized evidence",
-                )
-                if reused_snapshot is None:
-                    raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_AI_BACKGROUND_DRIFT")
-                after[Path(reused)] = reused_snapshot.payload
-        for _predicate, check in replayed_cover_gate_callables(
-            relocated, story=story, package_root=Path(logical_cover).parent, after=after,
-        ):
-            check()
-    except Exception as exc:
-        raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_RELOCATED_GATE_BLOCKED") from exc
+    after = dict(sidecars)
+    after[Path(logical_cover)] = snapshot.payload
+    for path_key in ("ai_background", "pre_overlay_path"):
+        reused = relocated.get(path_key)
+        if isinstance(reused, str) and Path(reused) not in after:
+            reused_snapshot = stable_regular_snapshot(
+                Path(reused), label="cover repair reused materialized evidence",
+            )
+            if reused_snapshot is None:
+                raise QixiScreenshotDirectCoverRepairError("COVER_REPAIR_AI_BACKGROUND_DRIFT")
+            after[Path(reused)] = reused_snapshot.payload
+    relocation_matrix = _replay_relocated_cover_gates(
+        generation=relocated,
+        story=story,
+        package_root=Path(logical_cover).parent,
+        after=after,
+    )
     return {"generation": relocated, "cover_path": staged, "sidecars": sidecars,
             "logical_cover_path": logical_cover,
-            "logical_qc_path": str(cover_repair_qc_target(authority))}
+            "logical_qc_path": str(cover_repair_qc_target(authority)),
+            "relocation_gate_matrix": relocation_matrix}
+
+
+_RELOCATED_GATE_REASON_CODES = {
+    "cover_route": "COVER_REPAIR_RELOCATED_ROUTE_INVALID",
+    "cover_rendered_text_pixels": "COVER_REPAIR_RELOCATED_PIXELS_INVALID",
+    "cover_final_host_identity": "COVER_REPAIR_RELOCATED_HOST_INVALID",
+    "cover_final_participant_identity": "COVER_REPAIR_RELOCATED_PARTICIPANT_INVALID",
+    "cover_punch_semantics": "COVER_REPAIR_RELOCATED_PUNCH_INVALID",
+    "cover_materialized_hashes": "COVER_REPAIR_RELOCATED_MATERIALIZED_INVALID",
+}
+
+
+def _replay_relocated_cover_gates(
+    *, generation: Mapping[str, object], story: Mapping[str, object],
+    package_root: Path, after: Mapping[Path, bytes],
+) -> list[dict[str, str]]:
+    """Run all independent post-relocation predicates without leaking paths."""
+
+    matrix: list[dict[str, str]] = []
+    for predicate_id, check in replayed_cover_gate_callables(
+        generation, story=story, package_root=package_root, after=after,
+    ):
+        try:
+            check()
+        except Exception:
+            matrix.append(
+                {
+                    "predicate_id": predicate_id,
+                    "status": "BLOCKED",
+                    "reason_code": _RELOCATED_GATE_REASON_CODES[predicate_id],
+                }
+            )
+        else:
+            matrix.append(
+                {"predicate_id": predicate_id, "status": "PASS", "reason_code": ""}
+            )
+    blocked = [row for row in matrix if row["status"] != "PASS"]
+    if blocked:
+        error = QixiScreenshotDirectCoverRepairError(
+            "COVER_REPAIR_RELOCATED_GATE_BLOCKED:"
+            + ",".join(row["predicate_id"] for row in blocked)
+        )
+        error.add_note(json.dumps({"schema_version": "qixi-cover-relocation-gates.v1", "predicates": matrix}, separators=(",", ":")))
+        raise error
+    return matrix
 
 
 def authority_final_cover_path(authority: Mapping[str, object]) -> Path:
