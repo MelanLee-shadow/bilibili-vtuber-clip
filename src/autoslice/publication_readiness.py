@@ -11,6 +11,7 @@ from pathlib import Path
 
 from scripts import authorized_upload
 from src.autoslice.publication_registry import load_publication_registry
+from src.autoslice import selection_support_override
 
 READY_TO_PREPARE = "READY_TO_PREPARE"
 NEEDS_PROVIDER = "NEEDS_PROVIDER"
@@ -41,6 +42,17 @@ _PACKAGED_COLLECTIONS = frozenset({"picks", "songs"})
 
 def _reason(code: str, role: str) -> dict[str, str]:
     return {"code": code, "evidence_role": role}
+
+
+def _load_state_for_readiness(path: Path | None) -> Mapping[str, object]:
+    """Read only the owning state map needed for a sealed local authority."""
+    if path is None:
+        return {}
+    try:
+        value = json.loads(_snapshot_regular(path, path.parent))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def _safe_path(path: Path, root: Path | None = None) -> Path:
@@ -523,7 +535,7 @@ def _category(reasons: set[str], *, serial: bool) -> str:
     if serial:
         return READY_FOR_SERIAL_UPLOAD
     groups = {
-        NEEDS_IVAN_TRUTH: {"HOLD_PENDING_REVIEW", "HUMAN_TRUTH_MISSING", "TITLE_AUTHORITY_REQUIRED"},
+        NEEDS_IVAN_TRUTH: {"HOLD_PENDING_REVIEW", "HUMAN_TRUTH_MISSING", "TITLE_AUTHORITY_REQUIRED", "SELECTION_SUPPORT_TERMINAL_BLOCKED"},
         STATE_DRIFT: {code for code in reasons if code.startswith(("STATE_", "PACKAGE_", "UPLOAD_"))},
         CODE_DEFECT: {"TYPED_RUNTIME_FAILURE"},
         NEEDS_PROVIDER: {"SOURCE_FACT_PROVIDER_MISSING", "COVER_QC_MISSING", "COVER_QC_INVALID"},
@@ -612,6 +624,21 @@ def build_readiness_graph(*, repository_root: Path, runtime_root: Path, registry
             reasons.add("SOURCE_FACT_PROVIDER_MISSING")
         if failure_stage in _CODE_FAILURE_STAGES:
             reasons.add("TYPED_RUNTIME_FAILURE")
+        owning_state = _load_state_for_readiness(state_path)
+        if (
+            lane == "talk"
+            and selection_support_override.terminal_selection_support_blocked(
+                pick,
+                candidate_id,
+                state=owning_state,
+                date=date,
+                runtime_root=runtime_root,
+            )
+            and not selection_support_override.selection_support_override_applies(
+                pick, state=owning_state, date=date, runtime_root=runtime_root
+            )
+        ):
+            reasons.add("SELECTION_SUPPORT_TERMINAL_BLOCKED")
         root = _package_root(runtime_root, date, candidate_id, pick)
         # Queued/backlog candidates are deliberately visible before a package
         # exists.  A package/audit/manifest replay is evidence about a finished

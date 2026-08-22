@@ -739,6 +739,24 @@ def prepare_historical_run_authority(
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_STATE_PREIMAGE_DRIFT")
     state = _parse_state(state_bytes_before)
     scope = _scope(state, date=date, candidate_ids=candidate_ids, now=initial_now)
+    # This is a pure, state-bound admission check.  It makes an exhausted
+    # selection-support verdict visible during dry-run rather than spending a
+    # provider slot after STARTED; import lazily to keep the two authorities
+    # independently loadable.
+    from src.autoslice.selection_support_override import (
+        SelectionSupportOverrideError,
+        historical_preflight as selection_support_preflight,
+    )
+    try:
+        selection_support_preflight(
+            state,
+            date=date,
+            candidate_ids=candidate_ids,
+            runtime_root=root,
+            now=initial_now,
+        )
+    except SelectionSupportOverrideError as exc:
+        raise HistoricalFastlaneAuthorityError(str(exc)) from exc
     source = _source_binding(
         recording_root, date=date, room_id=canonical_room_id,
         adapter_state_path=adapter_state_path, now=initial_now,

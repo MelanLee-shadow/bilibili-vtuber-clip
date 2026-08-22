@@ -378,6 +378,23 @@ source/state/deploy/adapter 漂移均拒绝重放；live=True/unknown 仍走普�
 - 这条窄门只修复已知候选的历史评分，不保证找回旧 recall 从未生成的候选。后者需要
   per-segment transactional rediscovery/reconciliation，不能把本门夸大成整场重新发现。
 
+### Terminal selection-support-only override
+
+- `REFRESH_HOOK_UNSUPPORTED` 的三次 terminal receipt 不是 provider 缺额，也不能被
+  `COVER_QC_MISSING` 掩盖；readiness 必须先报告 `SELECTION_SUPPORT_TERMINAL_BLOCKED /
+  NEEDS_IVAN_TRUTH`。它既不改旧 scorecard，也不把 terminal receipt 标成 `REFRESHED`。
+- 唯一的窄例外是 `scripts/authorize_selection_support_override.py` 生成的
+  `selection-support-only-authority.v1`：只接受 deployed review ruling 中同时出现该 CID
+  的 `修` 和 Ivan 的 conditional fastlane line，逐字绑定 current candidate/window/hook、
+  scorecard、完整 terminal receipt/self-seal/三次 history 与 terminal source-provenance、
+  state preimage、deployed seal 和 expiry。默认 dry-run；`--apply` 只在 `tick.lock → RunnerCommitLease` 下 PREPARED→COMMITTED
+  并精确 CAS state，永远 `upload_allowed=false`。
+- semantic refresh 只能在其他 scoped provider refresh targets 全部 settle 后、进入生产/交付前
+  消费一次已 staged 的 authority，留下独立
+  `selection-support-only-consumption.v1`，且保留原 scorecard 与 terminal receipt 字节语义。
+  authority/source/deploy/state/terminal drift、过期、重复消费或不相符 reason 一律拒绝；它
+  只释放 selection-support seam，标题、封面、package、human review 与 upload gates 不变。
+
 ## 修正 hook 后的独立 scorecard 重评分
 
 - 人工 source fact/专名修正若改变了 `selection_hook` 的叙事事实，原

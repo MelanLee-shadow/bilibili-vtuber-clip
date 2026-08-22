@@ -51,6 +51,7 @@ from src.autoslice.semantic_candidate_selector import (
     _SCORECARD_RUBRIC_BLOCK,
 )
 from src.autoslice.semantic_scorecard_refresh_receipt import ROW_RECEIPT_KEY
+from src.autoslice import selection_support_override
 
 
 REFRESH_RECEIPT_SCHEMA = "semantic-evidence-scorecard-refresh-receipt.v1"
@@ -477,6 +478,7 @@ def operator_scoped_chat_refresh_needed(
     state: Mapping[str, object],
     *,
     now: datetime | None = None,
+    runtime_root: Path | None = None,
 ) -> bool:
     """Pure work-flag probe, including quota-full named backlog rows."""
 
@@ -487,6 +489,14 @@ def operator_scoped_chat_refresh_needed(
     if duplicates:
         return True
     for collection, row in rows:
+        if selection_support_override.selection_support_override_applies(
+            row,
+            state=state,
+            date=date,
+            runtime_root=runtime_root or Path(_runner.BASE),
+            now=now,
+        ):
+            continue
         try:
             prepared = _prepare(collection, row)
         except RefreshPreparationError:
@@ -916,6 +926,7 @@ def refresh_operator_scoped_chat_scorecards(
     *,
     llm_call: Callable[[str], str] | None = None,
     now: datetime | None = None,
+    runtime_root: Path | None = None,
 ) -> int:
     """Refresh stale named queued cards, or return ``-N`` to block production."""
 
@@ -938,10 +949,21 @@ def refresh_operator_scoped_chat_scorecards(
         state["status"] = "semantic_chat_scorecard_refresh_blocked"
         return -len(duplicates)
 
+    root = runtime_root or Path(_runner.BASE)
     prepared_targets: list[PreparedRefresh] = []
     current_ids: list[str] = []
     blocked_ids: list[str] = []
+    staged_override_rows: list[dict[str, object]] = []
     for collection, row in rows:
+        if selection_support_override.selection_support_override_applies(
+            row, state=state, date=date, runtime_root=root, now=now
+        ):
+            # This is only a tentative current row until every other scoped
+            # refresh settles.  A one-use human authority must not disappear
+            # merely because an unrelated provider target is deferred/failed.
+            staged_override_rows.append(row)
+            current_ids.append(_candidate_id(row))
+            continue
         try:
             prepared = _prepare(collection, row)
         except RefreshPreparationError as exc:
@@ -1017,6 +1039,38 @@ def refresh_operator_scoped_chat_scorecards(
         )
         return -len(outstanding)
 
+    override_consumed: list[dict[str, object]] = []
+    for row in staged_override_rows:
+        try:
+            override_consumed.append(
+                selection_support_override.consume_in_memory(
+                    row, state=state, date=date, runtime_root=root, now=now
+                )
+            )
+        except selection_support_override.SelectionSupportOverrideError:
+            _write_run_receipt(
+                state,
+                date=date,
+                scope=scope,
+                status="BLOCKED_SELECTION_SUPPORT_OVERRIDE_DRIFT",
+                refreshed=refreshed_ids,
+                current=(),
+                blocked=(_candidate_id(row),),
+                deferred=(),
+                duplicates=(),
+            )
+            state["status"] = "semantic_chat_scorecard_refresh_blocked"
+            return -1
+    if override_consumed:
+        override_run = {
+            "schema_version": "selection-support-only-consumption-run.v1",
+            "recording_date": date,
+            "status": "COMPLETE_SELECTION_SUPPORT_ONLY",
+            "consumed": override_consumed,
+            "upload_allowed": False,
+        }
+        override_run["receipt_sha256"] = _canonical_sha256(override_run)
+        state["selection_support_override_consumption_run"] = override_run
     _write_run_receipt(
         state,
         date=date,
