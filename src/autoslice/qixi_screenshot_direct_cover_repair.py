@@ -49,8 +49,8 @@ AUTHORITY_PATH = Path(
 )
 CANDIDATE_ID = "auto_123655_771_844"
 RECORDING_DATE = "2026-08-17"
-PUNCH_ORIGINAL = ("宿敌也有女友感？",)
-PUNCH_CANDIDATES = ("关系居然分六类", "宿敌也在其中")
+PUNCH_ORIGINAL = ("女友感没有", "宿敌却有点亲密")
+PUNCH_CANDIDATES = ("女友感各论各的", "宿敌却有点亲密")
 PREFLIGHT_SCHEMA = "qixi-screenshot-direct-cover-repair-preflight.v1"
 PREFLIGHT_RECEIPT_SCHEMA = "qixi-screenshot-direct-cover-repair-preflight-receipt.v1"
 JOURNAL_SCHEMA = "qixi-screenshot-direct-cover-repair-journal.v1"

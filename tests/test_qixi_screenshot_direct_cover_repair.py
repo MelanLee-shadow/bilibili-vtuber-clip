@@ -12,6 +12,7 @@ from scripts.run_title_cover_joint_qc import build_joint_qc_receipt
 from src.autoslice import qixi_screenshot_direct_cover_repair as repair
 from src.autoslice import qixi_post_correction_projection_paths as projection_paths
 from src.autoslice.cover_generation import LidoushaCoverArtDirection
+from src.autoslice.cover_punch_semantics import PUNCH_LINE_MAX_EM, punch_line_em_width
 from src.autoslice.fixed_cover_stage import FixedCoverStageOptions, apply_approved_punch
 
 
@@ -113,6 +114,66 @@ def test_repaired_punch_is_only_from_fixed_candidate_pool() -> None:
         repair.require_repaired_punch(["任意新梗"])
 
 
+def test_committed_punch_receipt_binds_exact_revised_candidate_lines() -> None:
+    authority = json.loads((repair.ROOT / repair.AUTHORITY_PATH).read_text())
+    normalized = repair.validate_authority(authority)
+    receipt = normalized["punch_semantic_receipt"]
+    selection_hook = (
+        "弹幕追问小李有没有女友感，她却把彼此关系一路分成女儿、妈妈、主人、朋友、"
+        "赛博桌宠和宿敌，最后总结直播间向来各论各的。"
+    )
+    assert repair.PUNCH_ORIGINAL == ("女友感没有", "宿敌却有点亲密")
+    assert repair.PUNCH_CANDIDATES == ("女友感各论各的", "宿敌却有点亲密")
+    assert all(punch_line_em_width(line) <= PUNCH_LINE_MAX_EM for line in repair.PUNCH_CANDIDATES)
+    assert repair.sealed_punch_semantic_receipt(
+        normalized,
+        cover_text="小李有女友感吗？宿敌是否有点亲密了",
+        story_hook=selection_hook,
+    ) == receipt
+    with pytest.raises(repair.QixiScreenshotDirectCoverRepairError, match="PUNCH_REVIEW_INVALID"):
+        repair.sealed_punch_semantic_receipt(
+            normalized,
+            cover_text="小李有女友感吗？宿敌是否有点亲密了",
+            story_hook=selection_hook + "漂移",
+        )
+    assert receipt == {
+        "schema_version": "lidousha-cover-punch-semantic-review.v2",
+        "status": "REVISED",
+        "reason_code": None,
+        "original_punch": ["女友感没有", "宿敌却有点亲密"],
+        "final_punch": ["女友感各论各的", "宿敌却有点亲密"],
+        "stranger_can_infer_event": True,
+        "contains_concrete_subject": True,
+        "contains_action_or_conflict": True,
+        "no_fabricated_fact": True,
+        "story_summary": "面对女友感追问，小李把彼此关系分成多种身份，最后认为直播间向来各论各的，但宿敌又显得有点亲密。",
+        "click_motivation": "“女友感”与“宿敌亲密”形成反差，观众会想点开看她如何给这段关系分类。",
+        "cover_text_sha256": "28548aa9fe31bf86032f7f37a3b88fd666668ec78771e602c9dd3da7805d4390",
+        "story_hook_sha256": "2a06d384f069ddfea802abb3c208392460b500dfbc534258295319c5e7624221",
+        "request_sha256": "b5fc22c023ca4e1cdbbf2b4b5ef35b5b55dba3dbbf5ae0c7886e26f1c23a2627",
+        "response_sha256": "8b676cb4742d3382a8be829ea6fa77ff26ca9439893b89ae7d80b964d28c78bb",
+        "attempt_count": 1,
+        "attempts": [{
+            "attempt": 1,
+            "request_sha256": "b5fc22c023ca4e1cdbbf2b4b5ef35b5b55dba3dbbf5ae0c7886e26f1c23a2627",
+            "response_sha256": "8b676cb4742d3382a8be829ea6fa77ff26ca9439893b89ae7d80b964d28c78bb",
+            "model_status": "REVISE",
+            "validated_final_punch": ["女友感各论各的", "宿敌却有点亲密"],
+            "status": "ACCEPTED",
+        }],
+        "receipt_sha256": "sha256:4962146c3af3e94cd3bdbbe67d560d0b8d5029dbc639cd2724d3222cbed8242f",
+    }
+    tampered = copy.deepcopy(authority)
+    tampered_receipt = tampered["punch_semantic_receipt"]
+    assert isinstance(tampered_receipt, dict)
+    tampered_receipt["final_punch"] = ["未审计的文案"]
+    tampered["authority_sha256"] = _sha(
+        {key: value for key, value in tampered.items() if key != "authority_sha256"}
+    )
+    with pytest.raises(repair.QixiScreenshotDirectCoverRepairError, match="PUNCH_RECEIPT_INVALID"):
+        repair.validate_authority(tampered)
+
+
 def test_identity_landmark_exclusion_is_hash_bound_and_replayed() -> None:
     exclusion = {
         "schema_version": "lidousha-cover-identity-landmark-title-exclusion.v1",
@@ -173,8 +234,10 @@ def test_identity_landmark_exclusion_moves_fixed_title_below_ears(tmp_path) -> N
     )
     identity = evidence["identity_landmark_title_exclusion"]
     assert identity["status"] == "PASS"
-    assert identity["text_pixel_bbox"][1] >= exclusion["title_zone"][1]
-    assert identity["text_pixel_bbox"][1] >= exclusion["protected_bbox"][3]
+    x0, y0, x1, y1 = identity["text_pixel_bbox"]
+    zone_x0, zone_y0, zone_x1, zone_y1 = exclusion["title_zone"]
+    assert x0 >= zone_x0 and y0 >= zone_y0 and x1 <= zone_x1 and y1 <= zone_y1
+    assert y0 >= exclusion["protected_bbox"][3]
     broken = dict(exclusion)
     broken["background_sha256"] = "sha256:" + "0" * 64
     with pytest.raises(ValueError, match="IDENTITY_LANDMARK_EXCLUSION_INVALID"):

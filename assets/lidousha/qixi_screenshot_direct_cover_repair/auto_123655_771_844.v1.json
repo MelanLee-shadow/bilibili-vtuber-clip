@@ -5,26 +5,26 @@
   "runtime_root": "/opt/bilive/autoslice",
   "upload_enabled": false,
   "title": {"value": "【李豆沙】小李有女友感吗？宿敌是否有点亲密了", "sha256": "sha256:da31a09ec4473efc1579b48aeb9169c32be054735e87ef83042f265492ea784d"},
-  "punch_candidates": ["关系居然分六类", "宿敌也在其中"],
+  "punch_candidates": ["女友感各论各的", "宿敌却有点亲密"],
   "punch_semantic_receipt": {
     "schema_version": "lidousha-cover-punch-semantic-review.v2",
     "status": "REVISED",
     "reason_code": null,
-    "original_punch": ["宿敌也有女友感？"],
-    "final_punch": ["关系居然分六类", "宿敌也在其中"],
+    "original_punch": ["女友感没有", "宿敌却有点亲密"],
+    "final_punch": ["女友感各论各的", "宿敌却有点亲密"],
     "stranger_can_infer_event": true,
     "contains_concrete_subject": true,
     "contains_action_or_conflict": true,
     "no_fabricated_fact": true,
-    "story_summary": "小李把彼此关系分成女儿、妈妈、主人、朋友、赛博桌宠和宿敌六类，连宿敌也被纳入其中。",
-    "click_motivation": "关系分类离谱又反差，观众会想点开看宿敌为何也能和亲密关系并列。",
+    "story_summary": "面对女友感追问，小李把彼此关系分成多种身份，最后认为直播间向来各论各的，但宿敌又显得有点亲密。",
+    "click_motivation": "“女友感”与“宿敌亲密”形成反差，观众会想点开看她如何给这段关系分类。",
     "cover_text_sha256": "28548aa9fe31bf86032f7f37a3b88fd666668ec78771e602c9dd3da7805d4390",
     "story_hook_sha256": "2a06d384f069ddfea802abb3c208392460b500dfbc534258295319c5e7624221",
-    "request_sha256": "b935e0a74e31c5206d5c9ad21db2914c239d1064aaebaffaee3b72c95c4e3fe7",
-    "response_sha256": "95f0b4a241bf0457817f0aa8c3e6c39c399ff515bc08f718e3a9597cbf20bde1",
+    "request_sha256": "b5fc22c023ca4e1cdbbf2b4b5ef35b5b55dba3dbbf5ae0c7886e26f1c23a2627",
+    "response_sha256": "8b676cb4742d3382a8be829ea6fa77ff26ca9439893b89ae7d80b964d28c78bb",
     "attempt_count": 1,
-    "attempts": [{"attempt": 1, "request_sha256": "b935e0a74e31c5206d5c9ad21db2914c239d1064aaebaffaee3b72c95c4e3fe7", "response_sha256": "95f0b4a241bf0457817f0aa8c3e6c39c399ff515bc08f718e3a9597cbf20bde1", "model_status": "REVISE", "validated_final_punch": ["关系居然分六类", "宿敌也在其中"], "status": "ACCEPTED"}],
-    "receipt_sha256": "sha256:0c48b3fb0408cfcfaf0dc3497b32d3ff87bed463bf8c22f7e504f04bcdc8562c"
+    "attempts": [{"attempt": 1, "request_sha256": "b5fc22c023ca4e1cdbbf2b4b5ef35b5b55dba3dbbf5ae0c7886e26f1c23a2627", "response_sha256": "8b676cb4742d3382a8be829ea6fa77ff26ca9439893b89ae7d80b964d28c78bb", "model_status": "REVISE", "validated_final_punch": ["女友感各论各的", "宿敌却有点亲密"], "status": "ACCEPTED"}],
+    "receipt_sha256": "sha256:4962146c3af3e94cd3bdbbe67d560d0b8d5029dbc639cd2724d3222cbed8242f"
   },
   "identity_landmark_title_exclusion": {
     "schema_version": "lidousha-cover-identity-landmark-title-exclusion.v1",
@@ -66,5 +66,5 @@
     "publish": {"allowed": ["/cover_generation", "/cover_path", "/artifact_hashes/cover_sha256", "/title_cover_joint_qc"], "required": ["/cover_generation", "/cover_path", "/artifact_hashes/cover_sha256", "/title_cover_joint_qc"]},
     "state": {"allowed": ["/picks/*/cover_path", "/picks/*/cover_generation", "/picks/*/cover_sha256"], "required": ["/picks/*/cover_path", "/picks/*/cover_generation", "/picks/*/cover_sha256"]}
   },
-  "authority_sha256": "sha256:b840388257b5357ba859478b5e29fb4477a95aa166f28f8e79891acdf8824f32"
+  "authority_sha256": "sha256:eb04a9b79281be42c738bde31621121d98f9b777629a1b5250720d888c80dfe5"
 }
