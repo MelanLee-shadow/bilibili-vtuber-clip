@@ -18,6 +18,7 @@ from src.autoslice.qixi_post_correction_projection_paths import (
     replayed_cover_gate_callables,
 )
 from src.autoslice.qixi_post_correction_diagnostics import sha256_bytes
+from src.autoslice.qixi_post_correction_sealed_replay import sealed_chat_authority_bytes
 from src.autoslice.review_package_portable_evidence import rebuild_package_speaker_evidence
 from src.autoslice.source_fact_review import validate_source_fact_review
 
@@ -375,6 +376,7 @@ def gate_callables(closure: Any, context: AfterImageContext) -> tuple[AfterImage
             record=record,
             speaker_evidence=speaker_evidence,
             repo_root=closure.ROOT,
+            sealed_chat_authority_bytes=sealed_chat_authority_bytes(),
         ):
             _error(closure, "journal source-fact receipt replay drifts")
 

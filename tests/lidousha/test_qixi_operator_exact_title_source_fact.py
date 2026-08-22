@@ -333,6 +333,55 @@ def test_current_corrected_transcript_is_independent_from_historical_provider_pa
         validate_authority_document(historical_drift)
 
 
+def test_sealed_chat_replays_predecessor_after_a_terminal_chat_successor(
+    tmp_path: Path,
+) -> None:
+    """A terminal chat successor cannot rewrite predecessor source-fact truth."""
+
+    authority, runtime = _runtime(tmp_path)
+    binding = authority.document["source_binding"]
+    assert isinstance(binding, dict)
+    chat_descriptor = binding["chat_authority"]
+    assert isinstance(chat_descriptor, dict)
+    chat_path = Path(str(chat_descriptor["path"]))
+    sealed = chat_path.read_bytes()
+    # Production terminal successor shape: readable authority JSON with a
+    # different hash than the predecessor descriptor.
+    chat_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "chat-authority-audit.v2",
+                "status": "APPLIED_AND_VERIFIED",
+                "final_text_srt_sha256": "f" * 64,
+                "terminal_successor": True,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(QixiOperatorExactTitleSourceFactError, match="CHAT_DRIFT"):
+        _consume(authority, runtime)
+
+    record = runtime["record"]
+    assert isinstance(record, dict)
+    kwargs = {
+        "candidate_id": CANDIDATE_ID,
+        "title": TITLE,
+        "selection_hook": str(record["story_contract"]["selection_hook"]),
+        "final_transcript": str(runtime["transcript"]),
+        "final_reviewed_srt_path": Path(str(runtime["srt_path"])),
+        "record": record,
+        "speaker_evidence": runtime["speaker"],
+    }
+    assert consume_authority(
+        authority, sealed_chat_authority_bytes=sealed, **kwargs
+    )["status"] == "CONSUMED"
+    with pytest.raises(QixiOperatorExactTitleSourceFactError, match="CHAT_DRIFT"):
+        consume_authority(
+            authority, sealed_chat_authority_bytes=sealed + b"tampered", **kwargs
+        )
+
+
 def _preprovider_record(runtime: dict[str, object]) -> dict[str, object]:
     record = copy.deepcopy(runtime["record"])
     contract = copy.deepcopy(runtime["preprovider_contract"])

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import copy
+import base64
 from contextlib import nullcontext
 
 import pytest
@@ -924,6 +925,86 @@ def test_committed_projection_replay_rejects_tampered_receipt_journal_or_after_b
         paths["chat"].write_bytes(b"tampered")
     with pytest.raises(refresh.QixiTerminalEvidenceRefreshError, match="QIXI_TERMINAL_REFRESH"):
         refresh.apply_projection(authority=authority, before=before, after=after, apply=True)
+
+
+def test_terminal_predecessor_replay_uses_the_sealed_before_chat(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Terminal after-chat bytes must not replace predecessor receipt evidence."""
+
+    sealed_chat, terminal_chat = b'{"predecessor":true}\n', b'{"terminal":true}\n'
+    entries = [
+        {
+            "role": role,
+            "before_bytes_b64": base64.b64encode(
+                sealed_chat if role == "chat" else f"before-{role}".encode()
+            ).decode(),
+            "after_bytes_b64": base64.b64encode(
+                terminal_chat if role == "chat" else f"after-{role}".encode()
+            ).decode(),
+        }
+        for role in ("chat", "record", "delivery_record", "publish", "state")
+    ]
+    journal = {
+        "schema_version": "synthetic",
+        "status": "COMMITTED",
+        "candidate_id": refresh.CANDIDATE_ID,
+        "recording_date": refresh.RECORDING_DATE,
+        "authority_sha256": "sha256:" + "a" * 64,
+        "entries": entries,
+        "matrix": refresh._terminal_matrix(),
+        "journal_sha256": "sha256:" + "b" * 64,
+    }
+    journal_root = tmp_path / "terminal"
+    journal_root.mkdir()
+    (journal_root / "journal.json").write_bytes(refresh._json_bytes(journal))
+    (journal_root / "receipt.json").write_bytes(refresh._json_bytes(refresh._receipt_for(journal)))
+    predecessor = {}
+    for role in ("journal", "receipt"):
+        path = tmp_path / f"predecessor-{role}.json"
+        payload = b"sealed predecessor " + role.encode()
+        path.write_bytes(payload)
+        predecessor[role] = {
+            "path": str(path),
+            "bytes": len(payload),
+            "sha256": "sha256:" + hashlib.sha256(payload).hexdigest(),
+        }
+    public_asset = tmp_path / "public-authority.json"
+    public_asset.write_text("{}", encoding="utf-8")
+    authority = {
+        "authority_sha256": journal["authority_sha256"],
+        "predecessor_recovery": predecessor,
+        "preimage": {"record": {"path": str(tmp_path / "record.json")}},
+    }
+    monkeypatch.setattr(refresh, "load_authority", lambda _root: authority)
+    monkeypatch.setattr(refresh, "_refresh_root", lambda _authority: journal_root)
+    monkeypatch.setattr(refresh, "_validate_journal", lambda *_args, **_kwargs: {})
+    from src.autoslice import qixi_operator_exact_title_source_fact as source_fact
+    from src.autoslice import qixi_post_correction_public_artifact_recovery as recovery
+    from src.autoslice import qixi_post_correction_public_surface as public_surface
+
+    monkeypatch.setattr(
+        source_fact,
+        "load_authority",
+        lambda *_args, **_kwargs: type(
+            "TitleAuthority", (),
+            {"document": {"source_binding": {"public_surface_authority": {"relative_path": public_asset.name}}}}
+        )(),
+    )
+    monkeypatch.setattr(public_surface, "validate_authority", lambda _value: {"public": True})
+    observed: dict[str, object] = {}
+
+    def capture(_document, **kwargs):
+        observed.update(kwargs)
+        raise ValueError("stop after predecessor replay")
+
+    monkeypatch.setattr(recovery, "validate_committed_successor", capture)
+    with pytest.raises(refresh.QixiTerminalEvidenceRefreshError, match="PREDECESSOR_INVALID"):
+        refresh.validate_committed_refresh(repo_root=tmp_path)
+    assert observed == {
+        "sealed_chat_authority_bytes": sealed_chat,
+        "allow_terminal_successor": True,
+    }
 
 
 def test_refreshed_boundary_receipt_matches_the_exact_final_grid(tmp_path) -> None:

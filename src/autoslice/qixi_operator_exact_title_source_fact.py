@@ -142,6 +142,32 @@ def _check_file(descriptor: Mapping[str, object], *, label: str, mode: bool = Fa
     return payload
 
 
+def _check_sealed_payload(
+    descriptor: Mapping[str, object], *, label: str, payload: bytes | None
+) -> bytes:
+    """Accept only an exact sealed replacement for a bound runtime file.
+
+    A later, explicitly authorized transaction may replace the live chat
+    authority.  Predecessor receipt replay must still consume its own sealed
+    chat bytes, never a mutable successor.  The override is deliberately not
+    a general path or JSON escape hatch: it has to match the existing
+    repository authority descriptor byte-for-byte by length and digest.
+    """
+
+    if payload is None:
+        return _check_file(descriptor, label=label)
+    if (
+        not isinstance(payload, bytes)
+        or
+        len(payload) != descriptor["bytes"]
+        or bytes_sha256(payload) != descriptor["sha256"]
+    ):
+        raise QixiOperatorExactTitleSourceFactError(
+            f"QIXI_OPERATOR_TITLE_{label}_DRIFT"
+        )
+    return payload
+
+
 def _json_payload(payload: bytes, *, label: str) -> dict[str, object]:
     try:
         value = json.loads(payload)
@@ -421,6 +447,7 @@ def consume_authority(
     projected_receipt: Mapping[str, object] | None = None,
     verify_sealed_before: bool = True,
     allow_preprovider_receipt_absent: bool = False,
+    sealed_chat_authority_bytes: bytes | None = None,
 ) -> dict[str, object]:
     """Recheck the sealed preimage before any provider or cover can run."""
 
@@ -448,7 +475,14 @@ def consume_authority(
         _check_file(binding["correction"], label="CORRECTION"), label="CORRECTION"
     )
     context = _json_payload(_check_file(binding["clip_context"], label="CONTEXT"), label="CONTEXT")
-    chat = _json_payload(_check_file(binding["chat_authority"], label="CHAT"), label="CHAT")
+    chat = _json_payload(
+        _check_sealed_payload(
+            binding["chat_authority"],
+            label="CHAT",
+            payload=sealed_chat_authority_bytes,
+        ),
+        label="CHAT",
+    )
     reviewed_srt = binding["reviewed_srt"]
     correction_before_srt_sha256 = _bare_sha(
         correction.get("before_srt_sha256"), "CORRECTION_BEFORE_SRT"
@@ -660,6 +694,7 @@ def validate_receipt(
     speaker_evidence: object,
     repo_root: Path,
     verify_successor: bool = True,
+    sealed_chat_authority_bytes: bytes | None = None,
 ) -> bool:
     if candidate_id != CANDIDATE_ID or final_reviewed_srt_path is None or record is None:
         return False
@@ -686,6 +721,7 @@ def validate_receipt(
             speaker_evidence=speaker_evidence,
             projected_receipt=review,
             verify_sealed_before=False,
+            sealed_chat_authority_bytes=sealed_chat_authority_bytes,
         )
         if verify_successor:
             _validate_committed_public_successor(repo_root, document)
@@ -710,6 +746,7 @@ def validate_public_surface_receipt(
     speaker_evidence: object,
     repo_root: Path,
     verify_successor: bool = False,
+    sealed_chat_authority_bytes: bytes | None = None,
 ) -> bool:
     """Select the sealed Qixi replay without widening the generic validator."""
 
@@ -725,6 +762,7 @@ def validate_public_surface_receipt(
             speaker_evidence=speaker_evidence,
             repo_root=repo_root,
             verify_successor=verify_successor,
+            sealed_chat_authority_bytes=sealed_chat_authority_bytes,
         )
     return generic_validator(
         review,

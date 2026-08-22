@@ -27,6 +27,7 @@ from src.autoslice.qixi_post_correction_projection_paths import (
     public_artifact_root,
     sha256_bytes,
 )
+from src.autoslice.qixi_post_correction_sealed_replay import sealed_chat_authority_replay
 
 
 SCHEMA = "qixi-post-correction-public-artifact-basename-recovery.v1"
@@ -101,16 +102,20 @@ def _read_json(path: Path, *, label: str) -> dict[str, object]:
 
 
 def _source_journal(
-    authority: Mapping[str, object], *, require_live_after_image: bool
+    authority: Mapping[str, object],
+    *,
+    require_live_after_image: bool,
+    sealed_chat_authority_bytes: bytes | None = None,
 ) -> tuple[Path, dict[str, object], bytes]:
     root = surface._journal_root_from_authority(authority)
     journal_path = root / "journal.json"
     if not os.path.lexists(root):
         raise _error("basename recovery requires the committed public-surface journal")
     surface._private_journal_root(root, create=False)
-    journal = surface._validate_journal(
-        _read_json(journal_path, label="source journal"), authority=authority
-    )
+    with sealed_chat_authority_replay(sealed_chat_authority_bytes):
+        journal = surface._validate_journal(
+            _read_json(journal_path, label="source journal"), authority=authority
+        )
     if journal.get("status") != "COMMITTED":
         raise _error("basename recovery requires the committed public-surface journal")
     receipt = root / "final-receipt.json"
@@ -291,7 +296,12 @@ def _build_journal(authority: Mapping[str, object]) -> dict[str, object]:
     return journal
 
 
-def _validate_journal(value: object, *, authority: Mapping[str, object]) -> dict[str, object]:
+def _validate_journal(
+    value: object,
+    *,
+    authority: Mapping[str, object],
+    sealed_chat_authority_bytes: bytes | None = None,
+) -> dict[str, object]:
     if not isinstance(value, dict) or set(value) != _JOURNAL_KEYS:
         raise _error("basename recovery journal schema drifts")
     if (
@@ -303,7 +313,9 @@ def _validate_journal(value: object, *, authority: Mapping[str, object]) -> dict
     ):
         raise _error("basename recovery journal binding drifts")
     source_root, source, source_receipt = _source_journal(
-        authority, require_live_after_image=False
+        authority,
+        require_live_after_image=False,
+        sealed_chat_authority_bytes=sealed_chat_authority_bytes,
     )
     del source_root
     if value["source_journal_sha256"] != source["journal_sha256"] or value["source_final_receipt_sha256"] != _digest(source_receipt):
@@ -398,18 +410,34 @@ def _validate_successor_shape(
             raise _error("basename recovery successor projection drifts")
 
 
-def validate_committed_successor(authority: Mapping[str, object]) -> None:
+def validate_committed_successor(
+    authority: Mapping[str, object],
+    *,
+    sealed_chat_authority_bytes: bytes | None = None,
+    allow_terminal_successor: bool = False,
+) -> None:
     """Public, read-only replay of the only allowed basename-recovery successor."""
 
     normalized = surface.validate_authority(authority)
     root = _recovery_root(normalized)
-    journal = _load_existing(root, authority=normalized)
+    journal = _load_existing(
+        root,
+        authority=normalized,
+        sealed_chat_authority_bytes=sealed_chat_authority_bytes,
+    )
     if journal is None or journal.get("status") != "COMMITTED":
         raise _error("basename recovery committed journal is missing")
     receipt_path = root / "final-receipt.json"
     surface._require_regular(receipt_path, label="basename recovery receipt")
     if receipt_path.read_bytes() != surface._json_bytes(_receipt(journal)):
         raise _error("basename recovery receipt drifts")
+    if allow_terminal_successor:
+        # The terminal transaction owns the current JSON bytes and CAS replay.
+        # This predecessor still replays every formal gate through its sealed
+        # after-image above, including source-fact receipt validation, but must
+        # not reinterpret a verified terminal chat successor as predecessor
+        # drift.
+        return
     _postcommit_replay(journal, authority=normalized)
 
 
@@ -423,14 +451,23 @@ def _write_journal(root: Path, journal: dict[str, object], *, create: bool) -> N
         surface._atomic_replace(path, payload)
 
 
-def _load_existing(root: Path, *, authority: Mapping[str, object]) -> dict[str, object] | None:
+def _load_existing(
+    root: Path,
+    *,
+    authority: Mapping[str, object],
+    sealed_chat_authority_bytes: bytes | None = None,
+) -> dict[str, object] | None:
     if not os.path.lexists(root):
         return None
     _safe_root(root, create=False)
     journal_path = root / "journal.json"
     if not os.path.lexists(journal_path):
         raise _error("basename recovery journal is missing")
-    return _validate_journal(_read_json(journal_path, label="journal"), authority=authority)
+    return _validate_journal(
+        _read_json(journal_path, label="journal"),
+        authority=authority,
+        sealed_chat_authority_bytes=sealed_chat_authority_bytes,
+    )
 
 
 def _verify_preimage(entry: Mapping[str, object], *, label: str) -> None:

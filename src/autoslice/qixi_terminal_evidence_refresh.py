@@ -1611,30 +1611,6 @@ def validate_committed_refresh(*, repo_root: Path = ROOT) -> None:
     """Replay the fixed terminal-refresh successor after basename recovery."""
 
     authority = load_authority(repo_root)
-    predecessor = _require_mapping(authority["predecessor_recovery"], "PREDECESSOR")
-    for role in ("journal", "receipt"):
-        descriptor = _require_mapping(predecessor.get(role), "PREDECESSOR")
-        payload = _read_regular(Path(str(descriptor.get("path") or "")))
-        if len(payload) != descriptor.get("bytes") or "sha256:" + hashlib.sha256(payload).hexdigest() != descriptor.get("sha256"):
-            raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_PREDECESSOR_DRIFT")
-    try:
-        from src.autoslice.qixi_operator_exact_title_source_fact import load_authority as load_title_authority
-        from src.autoslice.qixi_post_correction_public_artifact_recovery import validate_committed_successor
-
-        title_authority = load_title_authority(CANDIDATE_ID, repo_root=repo_root)
-        if title_authority is None:
-            raise ValueError("title authority missing")
-        public = title_authority.document["source_binding"]["public_surface_authority"]
-        if not isinstance(public, Mapping):
-            raise ValueError("public authority binding missing")
-        # Recovery owns its public authority parser and journal semantics.
-        from src.autoslice import qixi_post_correction_public_surface as public_surface
-
-        public_payload = _read_regular(repo_root / str(public["relative_path"]))
-        public_document = public_surface.validate_authority(json.loads(public_payload))
-        validate_committed_successor(public_document)
-    except (OSError, ValueError, KeyError) as exc:
-        raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_PREDECESSOR_INVALID") from exc
     root = _refresh_root(authority)
     journal_path, receipt_path = root / "journal.json", root / "receipt.json"
     journal = _json_document(_read_regular(journal_path), "JOURNAL")
@@ -1652,10 +1628,41 @@ def validate_committed_refresh(*, repo_root: Path = ROOT) -> None:
             after[role] = base64.b64decode(str(row["after_bytes_b64"]), validate=True)
         except (ValueError, UnicodeEncodeError) as exc:
             raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_JOURNAL_SCHEMA_INVALID") from exc
-    _verify_committed_projection(root, journal, authority=authority, before=before, after=after)
+    _validate_journal(journal, authority=authority, before=before, after=after)
     receipt = _json_document(_read_regular(receipt_path), "RECEIPT")
     if receipt != _receipt_for(journal):
         raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_RECEIPT_DRIFT")
+    predecessor = _require_mapping(authority["predecessor_recovery"], "PREDECESSOR")
+    for role in ("journal", "receipt"):
+        descriptor = _require_mapping(predecessor.get(role), "PREDECESSOR")
+        payload = _read_regular(Path(str(descriptor.get("path") or "")))
+        if len(payload) != descriptor.get("bytes") or "sha256:" + hashlib.sha256(payload).hexdigest() != descriptor.get("sha256"):
+            raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_PREDECESSOR_DRIFT")
+    try:
+        from src.autoslice.qixi_operator_exact_title_source_fact import load_authority as load_title_authority
+        from src.autoslice.qixi_post_correction_public_artifact_recovery import validate_committed_successor
+
+        title_authority = load_title_authority(CANDIDATE_ID, repo_root=repo_root)
+        if title_authority is None:
+            raise ValueError("title authority missing")
+        public = title_authority.document["source_binding"]["public_surface_authority"]
+        if not isinstance(public, Mapping):
+            raise ValueError("public authority binding missing")
+        # The predecessor is replayed from its sealed after-image and the
+        # terminal's hash-bound *before* chat, never mutable successor bytes.
+        # Current live CAS remains exclusively below in the terminal replay.
+        from src.autoslice import qixi_post_correction_public_surface as public_surface
+
+        public_payload = _read_regular(repo_root / str(public["relative_path"]))
+        public_document = public_surface.validate_authority(json.loads(public_payload))
+        validate_committed_successor(
+            public_document,
+            sealed_chat_authority_bytes=before["chat"],
+            allow_terminal_successor=True,
+        )
+    except (OSError, ValueError, KeyError) as exc:
+        raise QixiTerminalEvidenceRefreshError("QIXI_TERMINAL_REFRESH_PREDECESSOR_INVALID") from exc
+    _verify_committed_projection(root, journal, authority=authority, before=before, after=after)
     current_chat = _json_document(after["chat"], "COMMITTED_CHAT")
     current_record = _json_document(after["record"], "COMMITTED_RECORD")
     current_delivery = _json_document(after["delivery_record"], "COMMITTED_DELIVERY")
