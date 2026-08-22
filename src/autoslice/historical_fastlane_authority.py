@@ -20,7 +20,13 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
+
+from ops.recording.bililive_recorder_adapter import (
+    AdapterError,
+    load_env_file,
+    query_room_status,
+)
 
 from src.autoslice.operator_processing_scope import (
     FAILED_PICK_RECOVERY_GRANT_SCHEMA,
@@ -32,7 +38,6 @@ from src.autoslice.producer_delivery_transaction import deployment_authority_bin
 from src.autoslice.qixi_transaction_core import (
     exclusive_runner_commit,
     require_runner_commit_lease,
-    stable_regular_snapshot,
 )
 from src.autoslice.runner_state_writeback import (
     read_exact_state_preimage,
@@ -51,6 +56,8 @@ _SHA_RX = re.compile(r"^sha256:[0-9a-f]{64}$")
 _COMMIT_RX = re.compile(r"^[0-9a-f]{40}$")
 _MAX_SCOPE_RENEWAL = timedelta(days=14)
 _MAX_HISTORICAL_RUN = timedelta(minutes=90)
+_ADAPTER_STATUS_MAX_AGE_SECONDS = 90.0
+_SMALL_DOCUMENT_MAX_BYTES = 4 * 1024 * 1024
 
 
 class HistoricalFastlaneAuthorityError(RuntimeError):
@@ -66,12 +73,95 @@ class ScopeRenewal:
     receipt: dict[str, object]
 
 
+@dataclass(frozen=True, slots=True)
+class RegularFingerprint:
+    """Stable streaming file observation; source bytes are never retained."""
+
+    path: Path
+    device: int
+    inode: int
+    mode: int
+    size: int
+    mtime_ns: int
+    ctime_ns: int
+    sha256: str
+
+
 def _canonical(value: object) -> bytes:
     return (json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
 
 def _sha(payload: bytes) -> str:
     return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _streaming_regular_fingerprint(path: Path, *, label: str) -> RegularFingerprint | None:
+    """Hash a regular file through O_NOFOLLOW without retaining its bytes."""
+
+    path = Path(path)
+    _safe_dir(path.parent)
+    try:
+        before = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise HistoricalFastlaneAuthorityError(f"HISTORICAL_FASTLANE_{label.upper()}_UNAVAILABLE") from exc
+    if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+        raise HistoricalFastlaneAuthorityError(f"HISTORICAL_FASTLANE_{label.upper()}_UNSAFE")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise HistoricalFastlaneAuthorityError(f"HISTORICAL_FASTLANE_{label.upper()}_UNSAFE") from exc
+    try:
+        opened = os.fstat(descriptor)
+        initial = (before.st_dev, before.st_ino, stat.S_IMODE(before.st_mode), before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+        current = (opened.st_dev, opened.st_ino, stat.S_IMODE(opened.st_mode), opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns)
+        if current != initial or not stat.S_ISREG(opened.st_mode):
+            raise HistoricalFastlaneAuthorityError(f"HISTORICAL_FASTLANE_{label.upper()}_DRIFT")
+        digest = hashlib.sha256()
+        while chunk := os.read(descriptor, 1024 * 1024):
+            digest.update(chunk)
+        after_fd = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    try:
+        after_path = os.lstat(path)
+    except OSError as exc:
+        raise HistoricalFastlaneAuthorityError(f"HISTORICAL_FASTLANE_{label.upper()}_DRIFT") from exc
+    final = (after_fd.st_dev, after_fd.st_ino, stat.S_IMODE(after_fd.st_mode), after_fd.st_size, after_fd.st_mtime_ns, after_fd.st_ctime_ns)
+    named = (after_path.st_dev, after_path.st_ino, stat.S_IMODE(after_path.st_mode), after_path.st_size, after_path.st_mtime_ns, after_path.st_ctime_ns)
+    if final != initial or named != initial or stat.S_ISLNK(after_path.st_mode) or not stat.S_ISREG(after_path.st_mode):
+        raise HistoricalFastlaneAuthorityError(f"HISTORICAL_FASTLANE_{label.upper()}_DRIFT")
+    return RegularFingerprint(path, *initial, "sha256:" + digest.hexdigest())
+
+
+def _read_small_regular(path: Path, *, fingerprint: RegularFingerprint, label: str) -> bytes:
+    """Read a bounded control document and prove it still matches a stream hash."""
+
+    if fingerprint.size > _SMALL_DOCUMENT_MAX_BYTES:
+        raise HistoricalFastlaneAuthorityError(f"HISTORICAL_FASTLANE_{label.upper()}_TOO_LARGE")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise HistoricalFastlaneAuthorityError(f"HISTORICAL_FASTLANE_{label.upper()}_UNSAFE") from exc
+    try:
+        opened = os.fstat(descriptor)
+        if (opened.st_dev, opened.st_ino, stat.S_IMODE(opened.st_mode), opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns) != (
+            fingerprint.device, fingerprint.inode, fingerprint.mode, fingerprint.size, fingerprint.mtime_ns, fingerprint.ctime_ns,
+        ):
+            raise HistoricalFastlaneAuthorityError(f"HISTORICAL_FASTLANE_{label.upper()}_DRIFT")
+        chunks: list[bytes] = []
+        while chunk := os.read(descriptor, 1024 * 1024):
+            chunks.append(chunk)
+    finally:
+        os.close(descriptor)
+    payload = b"".join(chunks)
+    observed = _streaming_regular_fingerprint(path, label=label)
+    if observed != fingerprint or _sha(payload) != fingerprint.sha256:
+        raise HistoricalFastlaneAuthorityError(f"HISTORICAL_FASTLANE_{label.upper()}_DRIFT")
+    return payload
 
 
 def _json_sha(value: object) -> str:
@@ -135,7 +225,10 @@ def _parse_state(payload: bytes) -> dict[str, object]:
     return value
 
 
-def _scope(state: Mapping[str, object], *, date: str, candidate_ids: tuple[str, ...], now: datetime) -> dict[str, object]:
+def _scope(
+    state: Mapping[str, object], *, date: str, candidate_ids: tuple[str, ...], now: datetime,
+    allow_expired: bool = False,
+) -> dict[str, object]:
     block = state.get(STATE_KEY)
     normalized, reason = _validate_grant(block)
     if normalized is None or reason != "OK":
@@ -154,7 +247,7 @@ def _scope(state: Mapping[str, object], *, date: str, candidate_ids: tuple[str, 
     ):
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SCOPE_MISMATCH")
     expires = _utc(str(normalized.get("expires_at") or ""))
-    if expires <= now:
+    if not allow_expired and expires <= now:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SCOPE_EXPIRED")
     return deepcopy(block)
 
@@ -252,7 +345,7 @@ def _create_only(path: Path, payload: bytes) -> None:
 
 
 def _replace_owned(path: Path, payload: bytes) -> None:
-    previous = stable_regular_snapshot(path, label="historical authority receipt")
+    previous = _streaming_regular_fingerprint(path, label="receipt")
     if previous is None or previous.mode != 0o600:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_RECEIPT_UNSAFE")
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
@@ -263,7 +356,7 @@ def _replace_owned(path: Path, payload: bytes) -> None:
         os.fsync(descriptor)
         os.close(descriptor)
         descriptor = -1
-        current = stable_regular_snapshot(path, label="historical authority receipt")
+        current = _streaming_regular_fingerprint(path, label="receipt")
         if current != previous:
             raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_RECEIPT_DRIFT")
         os.replace(temporary, path)
@@ -321,7 +414,7 @@ def prepare_scope_renewal(
     if before is None or _sha(before) != expected_state_sha256:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_STATE_PREIMAGE_DRIFT")
     state = _parse_state(before)
-    current = _scope(state, date=date, candidate_ids=candidate_ids, now=now)
+    current = _scope(state, date=date, candidate_ids=candidate_ids, now=now, allow_expired=True)
     after_state = deepcopy(state)
     renewed = deepcopy(current)
     renewed["grant_id"] = new_grant_id
@@ -387,11 +480,11 @@ def commit_scope_renewal(prepared: ScopeRenewal, *, runtime_root: Path) -> Path:
 
 
 def _load_scope_receipt(path: Path) -> dict[str, object]:
-    snapshot = stable_regular_snapshot(path, label="scope renewal receipt")
+    snapshot = _streaming_regular_fingerprint(path, label="scope_receipt")
     if snapshot is None or snapshot.mode != 0o600:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_RECEIPT_INVALID")
     try:
-        document = json.loads(snapshot.payload.decode("utf-8"))
+        document = json.loads(_read_small_regular(path, fingerprint=snapshot, label="scope_receipt").decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_RECEIPT_INVALID") from exc
     return _validate_self_bound(document, schema=SCOPE_RENEWAL_SCHEMA, fields=_SCOPE_FIELDS, field="receipt_sha256")
@@ -400,11 +493,85 @@ def _load_scope_receipt(path: Path) -> dict[str, object]:
 _RUN_FIELDS = frozenset({
     "schema_version", "status", "nonce", "recording_date", "attempt_limit", "expires_at",
     "runtime_root", "deployed_authority", "state_sha256", "scope_sha256", "source_binding",
-    "adapter_status_sha256", "direct_recorder_idle", "upload_allowed", "receipt_sha256",
+    "authorization_adapter_status_sha256", "authorization_adapter_observed_at_epoch",
+    "started_adapter_status_sha256", "started_adapter_observed_at_epoch",
+    "authorization_direct_recorder_checked_at_epoch", "started_direct_recorder_checked_at_epoch",
+    "direct_recorder_idle", "upload_allowed", "receipt_sha256",
 })
 
 
-def _source_binding(recording_root: Path, *, date: str, room_id: int) -> dict[str, object]:
+def _historical_date_only(date: str, *, now: datetime) -> None:
+    if not _DATE_RX.fullmatch(date):
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_DATE_INVALID")
+    utc_day = now.astimezone(timezone.utc).date().isoformat()
+    beijing_day = (now.astimezone(timezone(timedelta(hours=8))).date().isoformat())
+    if date >= utc_day or date >= beijing_day:
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_DATE_NOT_CLOSED")
+
+
+def _directory_entry(path: Path, *, relative: str) -> dict[str, object]:
+    try:
+        observed = os.lstat(path)
+    except OSError as exc:
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SOURCE_ENTRY_INVALID") from exc
+    if stat.S_ISLNK(observed.st_mode) or not stat.S_ISDIR(observed.st_mode):
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SOURCE_ENTRY_INVALID")
+    return {
+        "relative_path": relative, "type": "directory", "device": observed.st_dev,
+        "inode": observed.st_ino, "mode": stat.S_IMODE(observed.st_mode),
+        "mtime_ns": observed.st_mtime_ns, "ctime_ns": observed.st_ctime_ns,
+    }
+
+
+def _source_tree(date_dir: Path) -> list[dict[str, object]]:
+    """Bind every target-date node, including staging dirs, without payloads."""
+
+    entries: list[dict[str, object]] = []
+    directories: list[tuple[Path, dict[str, object]]] = []
+
+    def visit(path: Path, relative: str) -> None:
+        try:
+            observed = os.lstat(path)
+        except OSError as exc:
+            raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SOURCE_ENTRY_INVALID") from exc
+        if stat.S_ISLNK(observed.st_mode):
+            raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SOURCE_ENTRY_INVALID")
+        if stat.S_ISDIR(observed.st_mode):
+            entry = _directory_entry(path, relative=relative)
+            entries.append(entry)
+            directories.append((path, entry))
+            try:
+                children = sorted(path.iterdir(), key=lambda item: item.name)
+            except OSError as exc:
+                raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SOURCE_ENTRY_INVALID") from exc
+            for child in children:
+                child_relative = child.name if relative == "." else f"{relative}/{child.name}"
+                if child_relative.startswith("/") or "/../" in f"/{child_relative}/" or child_relative in {"", ".", ".."}:
+                    raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SOURCE_ENTRY_INVALID")
+                visit(child, child_relative)
+            return
+        if not stat.S_ISREG(observed.st_mode):
+            raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SOURCE_ENTRY_INVALID")
+        fingerprint = _streaming_regular_fingerprint(path, label="source")
+        if fingerprint is None:
+            raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SOURCE_ENTRY_INVALID")
+        entries.append({
+            "relative_path": relative, "type": "regular", "sha256": fingerprint.sha256,
+            "size": fingerprint.size, "device": fingerprint.device, "inode": fingerprint.inode,
+            "mode": fingerprint.mode, "mtime_ns": fingerprint.mtime_ns, "ctime_ns": fingerprint.ctime_ns,
+        })
+
+    visit(date_dir, ".")
+    for path, expected in reversed(directories):
+        if _directory_entry(path, relative=str(expected["relative_path"])) != expected:
+            raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SOURCE_PREIMAGE_DRIFT")
+    return entries
+
+
+def _source_binding(
+    recording_root: Path, *, date: str, room_id: int, adapter_state_path: Path,
+    now: datetime,
+) -> dict[str, object]:
     """Seal the complete admitted date tree, including closed FLVs.
 
     The normal runner's inventory audit remains the content gate.  This
@@ -413,58 +580,103 @@ def _source_binding(recording_root: Path, *, date: str, room_id: int) -> dict[st
     """
 
     root = _safe_dir(recording_root)
-    names = sorted(child.name for child in root.iterdir() if child.is_dir() and _DATE_RX.fullmatch(child.name))
-    if names != [date]:
-        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SOURCE_DATE_SET_INVALID")
+    _historical_date_only(date, now=now)
     date_dir = root / date
     _safe_dir(date_dir)
-    entries: list[dict[str, object]] = []
-    for child in sorted(date_dir.iterdir(), key=lambda item: item.name):
-        snapshot = stable_regular_snapshot(child, label="historical source")
-        if snapshot is None:
-            raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SOURCE_ENTRY_INVALID")
-        entries.append({
-            "name": child.name, "sha256": snapshot.sha256, "size": snapshot.size,
-            "device": snapshot.device, "inode": snapshot.inode, "mode": snapshot.mode,
-        })
+    entries = _source_tree(date_dir)
     if not entries:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SOURCE_EMPTY")
-    audit = audit_finalized_recording_inventory(date_dir, room_id=room_id)
+    if _streaming_regular_fingerprint(adapter_state_path, label="adapter_state") is None:
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_ADAPTER_STATE_UNAVAILABLE")
+    audit = audit_finalized_recording_inventory(
+        date_dir, room_id=room_id, adapter_state_path=adapter_state_path,
+    )
     if audit.get("can_select") is not True:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SOURCE_INVENTORY_BLOCKED")
     return {
         "recording_root": str(root), "date": date, "room_id": room_id, "entries": entries,
         "inventory_sha256": _json_sha(entries), "inventory_audit_sha256": _json_sha(audit),
+        "adapter_state_path": str(adapter_state_path.absolute()),
     }
 
 
-def _validate_source_binding(document: object, *, recording_root: Path, date: str, room_id: int) -> dict[str, object]:
-    if not isinstance(document, dict) or set(document) != {"recording_root", "date", "room_id", "entries", "inventory_sha256", "inventory_audit_sha256"}:
+def _validate_source_binding(
+    document: object, *, recording_root: Path, date: str, room_id: int,
+    adapter_state_path: Path, now: datetime,
+) -> dict[str, object]:
+    if not isinstance(document, dict) or set(document) != {
+        "recording_root", "date", "room_id", "entries", "inventory_sha256", "inventory_audit_sha256",
+        "adapter_state_path",
+    }:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SOURCE_BINDING_INVALID")
-    observed = _source_binding(recording_root, date=date, room_id=room_id)
+    observed = _source_binding(
+        recording_root, date=date, room_id=room_id,
+        adapter_state_path=adapter_state_path, now=now,
+    )
     if document != observed:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SOURCE_PREIMAGE_DRIFT")
     return observed
 
 
-def _adapter_snapshot(path: Path) -> str:
-    snapshot = stable_regular_snapshot(path, label="recorder adapter status")
+def _adapter_snapshot(path: Path, *, room_id: int, now: datetime) -> str:
+    snapshot = _streaming_regular_fingerprint(path, label="adapter_status")
     if snapshot is None:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_ADAPTER_STATUS_UNAVAILABLE")
     try:
-        document = json.loads(snapshot.payload.decode("utf-8"))
+        document = json.loads(_read_small_regular(path, fingerprint=snapshot, label="adapter_status").decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_ADAPTER_STATUS_INVALID") from exc
-    if not isinstance(document, dict) or document.get("service_reachable") is not True or document.get("streaming") is not False or document.get("recording") is not False or document.get("finalizing") is not False or document.get("error") not in (None, ""):
+    if not isinstance(document, dict):
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_ADAPTER_STATUS_INVALID")
+    try:
+        age = now.timestamp() - float(document.get("generated_at_epoch"))
+    except (TypeError, ValueError):
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_ADAPTER_STATUS_STALE")
+    if age < -300 or age > _ADAPTER_STATUS_MAX_AGE_SECONDS:
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_ADAPTER_STATUS_STALE")
+    if (
+        document.get("schema_version") != "recorder-neutral-status.v1"
+        or str(document.get("room_id")) != str(room_id)
+        or document.get("service_reachable") is not True
+        or document.get("streaming") is not False
+        or document.get("recording") is not False
+        or document.get("finalizing") is not False
+        or document.get("live_status") not in (0, False)
+        or document.get("error") not in (None, "")
+    ):
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_ADAPTER_NOT_CLEAN_IDLE")
     return snapshot.sha256
+
+
+def _direct_recorder_idle(*, endpoint: str, env_file: Path, room_id: int) -> None:
+    """Query BililiveRecorder directly; credentials never enter the receipt."""
+
+    before = _streaming_regular_fingerprint(env_file, label="recorder_env")
+    if before is None:
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_DIRECT_RECORDER_UNAVAILABLE")
+    environment = load_env_file(env_file)
+    if _streaming_regular_fingerprint(env_file, label="recorder_env") != before:
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_DIRECT_RECORDER_UNAVAILABLE")
+    try:
+        observed = query_room_status(
+            endpoint, room_id,
+            username=environment.get("BREC_HTTP_BASIC_USER", ""),
+            password=environment.get("BREC_HTTP_BASIC_PASS", ""),
+        )
+    except (AdapterError, OSError, ValueError) as exc:
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_DIRECT_RECORDER_UNAVAILABLE") from exc
+    if not isinstance(observed, Mapping):
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_DIRECT_RECORDER_UNAVAILABLE")
+    if observed.get("streaming") is not False or observed.get("recording") is not False:
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_DIRECT_RECORDER_NOT_IDLE")
 
 
 def prepare_historical_run_authority(
     *, runtime_root: Path, recording_root: Path, adapter_status_path: Path,
     date: str, candidate_ids: tuple[str, ...], nonce: str, expires_at: str,
-    expected_state_sha256: str, expected_authority: Mapping[str, str], direct_recorder_idle: bool, room_id: int,
-    now: datetime | None = None,
+    expected_state_sha256: str, expected_authority: Mapping[str, str], room_id: int,
+    adapter_state_path: Path, recorder_endpoint: str, recorder_env: Path,
+    now: datetime | None = None, clock: Callable[[], datetime] | None = None,
 ) -> tuple[Path, dict[str, object]]:
     """Render a one-time, disabled-only historical runner authority.
 
@@ -473,15 +685,14 @@ def prepare_historical_run_authority(
     """
 
     root = _runtime_root(runtime_root)
-    now = now or datetime.now(timezone.utc)
+    initial_now = now or (clock() if clock is not None else datetime.now(timezone.utc))
     if not _NONCE_RX.fullmatch(nonce) or not _DATE_RX.fullmatch(date) or not candidate_ids or len(set(candidate_ids)) != len(candidate_ids) or any(not _ID_RX.fullmatch(cid) for cid in candidate_ids):
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_RUN_ARGUMENT_INVALID")
+    _historical_date_only(date, now=initial_now)
     if not (root / "DISABLED").exists() or (root / "DISABLED").is_symlink():
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_DISABLED_REQUIRED")
-    if not direct_recorder_idle:
-        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_DIRECT_RECORDER_NOT_IDLE")
     expiry = _utc(expires_at)
-    if not now < expiry <= now + _MAX_HISTORICAL_RUN:
+    if not initial_now < expiry <= initial_now + _MAX_HISTORICAL_RUN:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_RUN_EXPIRY_INVALID")
     authority = deployment_authority_binding(root)
     if dict(expected_authority) != authority:
@@ -491,15 +702,31 @@ def prepare_historical_run_authority(
     if state_bytes_before is None or _sha(state_bytes_before) != expected_state_sha256:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_STATE_PREIMAGE_DRIFT")
     state = _parse_state(state_bytes_before)
-    scope = _scope(state, date=date, candidate_ids=candidate_ids, now=now)
-    source = _source_binding(recording_root, date=date, room_id=room_id)
-    adapter_sha = _adapter_snapshot(adapter_status_path)
+    scope = _scope(state, date=date, candidate_ids=candidate_ids, now=initial_now)
+    source = _source_binding(
+        recording_root, date=date, room_id=room_id,
+        adapter_state_path=adapter_state_path, now=initial_now,
+    )
+    observed_now = clock() if clock is not None else (now if now is not None else datetime.now(timezone.utc))
+    _historical_date_only(date, now=observed_now)
+    if expiry <= observed_now:
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_RUN_EXPIRED")
+    if _json_sha(_scope(state, date=date, candidate_ids=candidate_ids, now=observed_now)) != _json_sha(scope):
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SCOPE_PREIMAGE_DRIFT")
+    adapter_sha = _adapter_snapshot(adapter_status_path, room_id=room_id, now=observed_now)
+    _direct_recorder_idle(endpoint=recorder_endpoint, env_file=recorder_env, room_id=room_id)
     document = _self_bound({
         "schema_version": HISTORICAL_RUN_SCHEMA, "status": "PREPARED", "nonce": nonce,
         "recording_date": date, "attempt_limit": 1, "expires_at": expires_at,
         "runtime_root": str(root), "deployed_authority": authority,
         "state_sha256": _sha(state_bytes_before), "scope_sha256": _json_sha(scope),
-        "source_binding": source, "adapter_status_sha256": adapter_sha,
+        "source_binding": source,
+        "authorization_adapter_status_sha256": adapter_sha,
+        "authorization_adapter_observed_at_epoch": observed_now.timestamp(),
+        "started_adapter_status_sha256": None,
+        "started_adapter_observed_at_epoch": None,
+        "authorization_direct_recorder_checked_at_epoch": observed_now.timestamp(),
+        "started_direct_recorder_checked_at_epoch": None,
         "direct_recorder_idle": True, "upload_allowed": False,
     }, "receipt_sha256")
     return root / ".historical-autoslice-once" / f"{date}-{nonce}.json", document
@@ -520,11 +747,11 @@ def create_historical_run_authority(path: Path, document: Mapping[str, object]) 
 
 
 def _load_run_authority(path: Path) -> dict[str, object]:
-    snapshot = stable_regular_snapshot(path, label="historical run authority")
+    snapshot = _streaming_regular_fingerprint(path, label="run_receipt")
     if snapshot is None or snapshot.mode != 0o600:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_RUN_RECEIPT_INVALID")
     try:
-        document = json.loads(snapshot.payload.decode("utf-8"))
+        document = json.loads(_read_small_regular(path, fingerprint=snapshot, label="run_receipt").decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_RUN_RECEIPT_INVALID") from exc
     return _validate_run_authority(document)
@@ -540,8 +767,20 @@ def _validate_run_authority(document: object) -> dict[str, object]:
         or value.get("direct_recorder_idle") is not True
         or not isinstance(value.get("runtime_root"), str)
         or not isinstance(value.get("deployed_authority"), dict)
-        or any(not isinstance(value.get(key), str) or not _SHA_RX.fullmatch(value[key]) for key in ("state_sha256", "scope_sha256", "adapter_status_sha256"))
+        or any(not isinstance(value.get(key), str) or not _SHA_RX.fullmatch(value[key]) for key in ("state_sha256", "scope_sha256", "authorization_adapter_status_sha256"))
     ):
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_RUN_RECEIPT_INVALID")
+    if not isinstance(value.get("authorization_adapter_observed_at_epoch"), (int, float)) or isinstance(value.get("authorization_adapter_observed_at_epoch"), bool):
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_RUN_RECEIPT_INVALID")
+    if not isinstance(value.get("authorization_direct_recorder_checked_at_epoch"), (int, float)) or isinstance(value.get("authorization_direct_recorder_checked_at_epoch"), bool):
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_RUN_RECEIPT_INVALID")
+    started = value.get("status") in {"STARTED", "COMPLETED", "FAILED"}
+    if started:
+        if not isinstance(value.get("started_adapter_status_sha256"), str) or not _SHA_RX.fullmatch(value["started_adapter_status_sha256"]):
+            raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_RUN_RECEIPT_INVALID")
+        if any(not isinstance(value.get(key), (int, float)) or isinstance(value.get(key), bool) for key in ("started_adapter_observed_at_epoch", "started_direct_recorder_checked_at_epoch")):
+            raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_RUN_RECEIPT_INVALID")
+    elif value.get("started_adapter_status_sha256") is not None or value.get("started_adapter_observed_at_epoch") is not None or value.get("started_direct_recorder_checked_at_epoch") is not None:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_RUN_RECEIPT_INVALID")
     _utc(str(value.get("expires_at") or ""))
     return value
@@ -549,7 +788,8 @@ def _validate_run_authority(document: object) -> dict[str, object]:
 
 def load_and_start_historical_run(
     *, authority_path: Path, runtime_root: Path, recording_root: Path, adapter_status_path: Path,
-    now: datetime | None = None, room_id: int,
+    adapter_state_path: Path, recorder_endpoint: str, recorder_env: Path,
+    now: datetime | None = None, room_id: int, clock: Callable[[], datetime] | None = None,
 ) -> dict[str, object]:
     """Revalidate and atomically mark PREPARED -> STARTED before normal tick.
 
@@ -558,14 +798,14 @@ def load_and_start_historical_run(
     """
 
     root = _runtime_root(runtime_root)
-    now = now or datetime.now(timezone.utc)
+    initial_now = now or (clock() if clock is not None else datetime.now(timezone.utc))
     document = _load_run_authority(authority_path)
     namespace = _safe_dir(root / ".historical-autoslice-once", mode=0o700)
     if authority_path.parent != namespace or authority_path.name != f"{document['recording_date']}-{document['nonce']}.json":
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_NAMESPACE_INVALID")
     if document.get("runtime_root") != str(root) or document.get("status") != "PREPARED":
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_RUN_REPLAY_REFUSED")
-    if _utc(str(document["expires_at"])) <= now:
+    if _utc(str(document["expires_at"])) <= initial_now:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_RUN_EXPIRED")
     if not (root / "DISABLED").exists() or (root / "DISABLED").is_symlink():
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_DISABLED_REQUIRED")
@@ -577,18 +817,42 @@ def load_and_start_historical_run(
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_STATE_PREIMAGE_DRIFT")
     state = _parse_state(current)
     ids = tuple((state.get(STATE_KEY) or {}).get("candidate_ids") or ())
-    scope = _scope(state, date=date, candidate_ids=ids, now=now)
+    scope = _scope(state, date=date, candidate_ids=ids, now=initial_now)
     if _json_sha(scope) != document["scope_sha256"]:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SCOPE_PREIMAGE_DRIFT")
-    _validate_source_binding(document["source_binding"], recording_root=recording_root, date=date, room_id=room_id)
-    if _adapter_snapshot(adapter_status_path) != document["adapter_status_sha256"]:
-        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_ADAPTER_STATUS_DRIFT")
+    _validate_source_binding(
+        document["source_binding"], recording_root=recording_root, date=date, room_id=room_id,
+        adapter_state_path=adapter_state_path, now=initial_now,
+    )
+    observed_now = clock() if clock is not None else (now if now is not None else datetime.now(timezone.utc))
+    _historical_date_only(date, now=observed_now)
+    if _utc(str(document["expires_at"])) <= observed_now:
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_RUN_EXPIRED")
+    if not (root / "DISABLED").exists() or (root / "DISABLED").is_symlink():
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_DISABLED_REQUIRED")
+    if document.get("deployed_authority") != deployment_authority_binding(root):
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_DEPLOYMENT_DRIFT")
+    current = read_exact_state_preimage(_state_path(root, date), runtime_root=root)
+    if current is None or _sha(current) != document["state_sha256"]:
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_STATE_PREIMAGE_DRIFT")
+    state = _parse_state(current)
+    ids = tuple((state.get(STATE_KEY) or {}).get("candidate_ids") or ())
+    scope = _scope(state, date=date, candidate_ids=ids, now=observed_now)
+    if _json_sha(scope) != document["scope_sha256"]:
+        raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SCOPE_PREIMAGE_DRIFT")
+    started_adapter_sha = _adapter_snapshot(adapter_status_path, room_id=room_id, now=observed_now)
+    _direct_recorder_idle(endpoint=recorder_endpoint, env_file=recorder_env, room_id=room_id)
     with exclusive_runner_commit(root):
         current_document = _load_run_authority(authority_path)
         if current_document != document:
             raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_RUN_REPLAY_REFUSED")
         started = _self_bound(
-            {key: value for key, value in document.items() if key != "receipt_sha256"} | {"status": "STARTED"},
+            {key: value for key, value in document.items() if key != "receipt_sha256"} | {
+                "status": "STARTED",
+                "started_adapter_status_sha256": started_adapter_sha,
+                "started_adapter_observed_at_epoch": observed_now.timestamp(),
+                "started_direct_recorder_checked_at_epoch": observed_now.timestamp(),
+            },
             "receipt_sha256",
         )
         _replace_owned(authority_path, _canonical(started))

@@ -64,16 +64,20 @@
 `scripts/authorize_historical_autoslice_once.py`：两者默认 dry-run，前者只可把
 现有严格 `operator-processing-scope-grant.v2` 的 `grant_id` 与有界
 `expires_at` 以 raw-state CAS 续期，后者只可在 `DISABLED` **仍存在**、adapter
-clean-idle、direct recorder idle、完整且仅含目标日期的录制 inventory、deployed
-commit/authority、state 与 scope 全部重验后创建一次性 receipt。receipt 仅绑定哈希和
-JSON-pointer diff，不保存 Ivan 原话。
+clean-idle、direct recorder idle、完整的**目标日期**递归录制 tree（room root 可同时含
+其他日期）、canonical adapter-state disposition audit、deployed commit/authority、state 与
+scope 全部重验后创建一次性 receipt。目标日期必须早于 UTC 与北京当天；文件以流式 hash
+绑定，目录/路径/链接漂移均拒绝。receipt 仅绑定哈希和 JSON-pointer diff，不保存 Ivan 原话。
 
 实际启动仍是普通 runner：
 `free_session_autoslice.py --once --historical-authority <receipt>`。该 flag 只能
 与 `--once` 连用，外层持 `tick.lock`，再由普通 runner 的短
 `RunnerCommitLease` 跑既有 gates；cron 无此 flag，因此全局 `DISABLED` 不会被自动
-激活。receipt 在 provider 前耐久地推进到 `STARTED`，任何 crash 留下的 STARTED、过期、
-nonce 重用、source/state/deploy/adapter 漂移均拒绝重放；成功或失败只写 terminal receipt。
+激活。receipt 在 provider 前耐久地推进到 `STARTED`；START 时会在昂贵 source 重验后重新
+读取 fresh clean adapter status 并直接查询 recorder idle，记录第二份观察但不会把正常的
+heartbeat 字节变化误判为漂移。任何 crash 留下的 STARTED、过期、nonce 重用、
+source/state/deploy/adapter 漂移均拒绝重放；live=True/unknown 仍走普通 live hold，成功或
+失败只写 terminal receipt。
 它不授予上传（v2 scope 结构中也没有 `upload_allowed`），不改变 upload.lock 或任何
 发布 gate。
 

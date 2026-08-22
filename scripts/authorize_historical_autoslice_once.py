@@ -16,7 +16,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ops.recording.bililive_recorder_adapter import AdapterError, load_env_file, query_room_status  # noqa: E402
 from src.autoslice.historical_fastlane_authority import (  # noqa: E402
     HistoricalFastlaneAuthorityError,
     create_historical_run_authority,
@@ -25,23 +24,14 @@ from src.autoslice.historical_fastlane_authority import (  # noqa: E402
 from src.autoslice.producer_delivery_transaction import deployment_authority_binding  # noqa: E402
 
 
-def _direct_idle(*, endpoint: str, room: int, env_file: Path) -> bool:
-    env = load_env_file(env_file)
-    observed = query_room_status(
-        endpoint, room,
-        username=env.get("BREC_HTTP_BASIC_USER", ""),
-        password=env.get("BREC_HTTP_BASIC_PASS", ""),
-    )
-    return observed.get("streaming") is False and observed.get("recording") is False
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime-root", required=True, type=Path)
     parser.add_argument("--recording-root", required=True, type=Path)
     parser.add_argument("--adapter-status-path", required=True, type=Path)
-    parser.add_argument("--recorder-endpoint", required=True)
-    parser.add_argument("--recorder-env", required=True, type=Path)
+    parser.add_argument("--adapter-state-path", required=True, type=Path)
+    parser.add_argument("--recorder-endpoint", default="http://127.0.0.1:23566/graphql")
+    parser.add_argument("--recorder-env", default=Path("/opt/bilive/recorder.env"), type=Path)
     parser.add_argument("--room", required=True, type=int)
     parser.add_argument("--date", required=True)
     parser.add_argument("--candidate-id", action="append", required=True)
@@ -62,15 +52,15 @@ def main(argv: list[str] | None = None) -> int:
             adapter_status_path=args.adapter_status_path, date=args.date,
             candidate_ids=tuple(args.candidate_id), nonce=args.nonce,
             expires_at=args.expires_at, expected_state_sha256=args.expected_state_sha256,
-            expected_authority=authority,
-            direct_recorder_idle=_direct_idle(endpoint=args.recorder_endpoint, room=args.room, env_file=args.recorder_env),
-            room_id=args.room,
+            expected_authority=authority, room_id=args.room,
+            adapter_state_path=args.adapter_state_path,
+            recorder_endpoint=args.recorder_endpoint, recorder_env=args.recorder_env,
         )
         if args.apply:
             create_historical_run_authority(path, document)
         print(json.dumps({"dry_run": not args.apply, "authority_path": str(path), "authority": document}, ensure_ascii=False, sort_keys=True))
         return 0
-    except (HistoricalFastlaneAuthorityError, AdapterError, OSError) as exc:
+    except (HistoricalFastlaneAuthorityError, OSError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
 

@@ -281,6 +281,8 @@ RECORDER_STATUS_PATH = Path(os.environ.get("AUTOSLICE_RECORDER_STATUS_PATH", "/o
 RECORDER_ADAPTER_STATE_PATH = Path(
     os.environ.get("AUTOSLICE_RECORDER_ADAPTER_STATE_PATH", "/opt/bilive/recording/adapter-state.json")
 )
+HISTORICAL_RECORDER_ENDPOINT = "http://127.0.0.1:23566/graphql"
+HISTORICAL_RECORDER_ENV = Path("/opt/bilive/recorder.env")
 RECORDER_STATUS_MAX_AGE_SECONDS = int(os.environ.get("AUTOSLICE_RECORDER_STATUS_MAX_AGE_SECONDS", "180"))
 LIVE_WITHOUT_RECORDING_WARN_SECONDS = int(os.environ.get("AUTOSLICE_LIVE_WITHOUT_RECORDING_WARN_SECONDS", "1800"))
 BILIVE_ENV = Path("/opt/bilive/.env")
@@ -1132,10 +1134,14 @@ def recorder_live_status() -> bool | None:
     )
 
 
-def live_hold_recheck() -> bool:
+def live_hold_recheck(*, allow_eval_hold_override: bool = True) -> bool:
     """Positive-only mid-tick live gate (src.autoslice.live_gate)."""
 
-    return live_gate.positive_live_hold_recheck(RECORDER_STATUS_PATH, recorder_live_status, _live_hold_active)
+    return live_gate.positive_live_hold_recheck(
+        RECORDER_STATUS_PATH,
+        recorder_live_status,
+        lambda live: _live_hold_active(live, allow_eval_hold_override=allow_eval_hold_override),
+    )
 
 
 def live_determination_basis(live: bool | None) -> dict:
@@ -1773,7 +1779,7 @@ def write_heartbeat(body: str) -> None:
     _write_heartbeat(BASE, body)
 
 
-def _live_hold_active(live: bool | None, *, historical_authority: bool = False) -> bool:
+def _live_hold_active(live: bool | None, *, allow_eval_hold_override: bool = True) -> bool:
     """直播期间冻结处理（True/未知都冻结，fail-safe；src.autoslice.live_gate）。"""
 
     return live_gate.live_hold_active(
@@ -1781,12 +1787,12 @@ def _live_hold_active(live: bool | None, *, historical_authority: bool = False) 
         rec_root=REC_ROOT,
         list_dates=list_dates,
         log=log,
-        # The pre-existing isolated-eval switch remains confined to its own
-        # BASE.  Production historical work does not depend on it: only a
-        # validated explicit authority can set ``historical_authority``.
+        # A historical authority is deliberately *not* an ignore-hold token:
+        # only clean live=False reaches its normal tick.  The existing eval
+        # switch is retained solely for non-historical isolated bases.
         ignore_hold=(
-            historical_authority
-            or os.environ.get("AUTOSLICE_IGNORE_LIVE_HOLD", "") == "1"
+            allow_eval_hold_override
+            and os.environ.get("AUTOSLICE_IGNORE_LIVE_HOLD", "") == "1"
         ),
     )
 
@@ -1809,7 +1815,7 @@ def tick(*, historical_date: str | None = None) -> int:
         return 0
     live = recorder_live_status()
     basis = live_determination_basis(live)
-    if _live_hold_active(live, historical_authority=historical_date is not None):
+    if _live_hold_active(live, allow_eval_hold_override=historical_date is None):
         report = live_gate.live_hold_report(
             live,
             basis,
@@ -1829,7 +1835,12 @@ def tick(*, historical_date: str | None = None) -> int:
         # 2026-08-09: a marathon tick read `live` once at 09:40 and was still
         # producing at 11:40 — 37 minutes into a stream that began at 11:03.
         # A stale start-of-tick reading must not license hours of work.
-        if live_hold_recheck():
+        rechecked_live_hold = (
+            live_hold_recheck()
+            if historical_date is None
+            else live_hold_recheck(allow_eval_hold_override=False)
+        )
+        if rechecked_live_hold:
             deferred = list(dates[index:])
             log(f"room went LIVE mid-tick — deferring dates {' '.join(deferred)}")
             break
@@ -1882,7 +1893,9 @@ def main(argv: list[str] | None = None) -> int:
             with historical_exclusive_tick(BASE):
                 started = load_and_start_historical_run(
                     authority_path=args.historical_authority, runtime_root=BASE,
-                    recording_root=REC_ROOT, adapter_status_path=RECORDER_STATUS_PATH, room_id=ROOM,
+                    recording_root=REC_ROOT, adapter_status_path=RECORDER_STATUS_PATH,
+                    adapter_state_path=RECORDER_ADAPTER_STATE_PATH, room_id=ROOM,
+                    recorder_endpoint=HISTORICAL_RECORDER_ENDPOINT, recorder_env=HISTORICAL_RECORDER_ENV,
                 )
                 try:
                     result = tick(historical_date=str(started["recording_date"]))
