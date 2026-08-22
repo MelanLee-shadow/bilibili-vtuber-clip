@@ -15,13 +15,18 @@ def test_deploy_manages_runner_cron_with_tick_lock_not_runner_lock() -> None:
         "scripts/free_session_autoslice.py --once'\\'' "
         ">> /opt/bilive/autoslice/logs/runner.log 2>&1"
     )
-    migrated = old_live_line.replace("runner.lock", "tick.lock")
+    migrated = old_live_line.replace("runner.lock", "tick.lock").replace(
+        "AUTOSLICE_SPEAKER_MODE=uniform_host",
+        "AUTOSLICE_BASE=/opt/bilive/autoslice AUTOSLICE_SPEAKER_MODE=uniform_host",
+    )
     assert f"runner_cron='{migrated}'" in deploy
     assert '"scripts/free_session_autoslice.py:$runner_cron"' in deploy
     assert "grep -Fv 'scripts/free_session_autoslice.py'" in deploy
     assert 'grep -Fxq "$runner_cron"' in deploy
     assert "runner.lock /bin/bash -lc" not in deploy
-    assert "AUTOSLICE_BASE=/opt/bilive/autoslice python3" not in deploy
+    # This is the exact effective launcher: all provider-bearing children now
+    # receive the runtime root used by the shared cross-process slot pool.
+    assert "AUTOSLICE_BASE=/opt/bilive/autoslice AUTOSLICE_SPEAKER_MODE=uniform_host /usr/bin/python3" in deploy
 
 
 def test_deploy_critical_sections_hold_tick_while_acquiring_runner() -> None:

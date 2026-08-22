@@ -23,6 +23,21 @@ _PRECEDENCE = (NEEDS_IVAN_TRUTH, STATE_DRIFT, CODE_DEFECT, NEEDS_PROVIDER, READY
 _CODE_FAILURE_STAGES = frozenset({"invariant_violation", "runtime_code_defect"})
 _PROVIDER_FAILURE_STAGES = frozenset({"final_review_provider_budget_ledger", "source_fact_provider", "cover_provider"})
 
+# These are the live candidate projections, rather than the historical
+# superseded/rejection ledgers.  Keep this list aligned with the runner's
+# state schema: a readiness graph is useful only if it sees candidates before
+# they have become a package in ``picks`` / ``songs``.
+_ACTIVE_STATE_COLLECTIONS: tuple[tuple[str, str], ...] = (
+    ("pending_talk", "talk"),
+    ("talk_backlog", "talk"),
+    ("picks", "talk"),
+    ("pending_song", "song"),
+    ("song_backlog", "song"),
+    ("song_selection_backlog", "song"),
+    ("songs", "song"),
+)
+_PACKAGED_COLLECTIONS = frozenset({"picks", "songs"})
+
 
 def _reason(code: str, role: str) -> dict[str, str]:
     return {"code": code, "evidence_role": role}
@@ -108,8 +123,10 @@ def _load_json(path: Path, root: Path | None = None) -> Mapping[str, object]:
     return document
 
 
-def _state_rows(runtime_root: Path) -> tuple[list[tuple[Path, Mapping[str, object]]], list[dict[str, str]]]:
-    rows: list[tuple[Path, Mapping[str, object]]] = []
+def _state_rows(
+    runtime_root: Path,
+) -> tuple[list[tuple[Path, str, str, Mapping[str, object]]], list[dict[str, str]]]:
+    rows: list[tuple[Path, str, str, Mapping[str, object]]] = []
     problems: list[dict[str, str]] = []
     for path in sorted((runtime_root / "state").glob("????-??-??.json")):
         try:
@@ -117,15 +134,35 @@ def _state_rows(runtime_root: Path) -> tuple[list[tuple[Path, Mapping[str, objec
         except (OSError, ValueError, json.JSONDecodeError):
             problems.append(_reason("STATE_FILE_INVALID", str(path)))
             continue
-        for lane in ("picks", "songs"):
-            collection = document.get(lane, [])
+        for collection_name, lane in _ACTIVE_STATE_COLLECTIONS:
+            collection = document.get(collection_name, [])
             if not isinstance(collection, list):
-                problems.append(_reason("STATE_COLLECTION_INVALID", str(path)))
+                problems.append(_reason("STATE_COLLECTION_INVALID", f"{path}:{collection_name}"))
                 continue
             for pick in collection:
-                if isinstance(pick, Mapping) and str(pick.get("candidate_id") or "").strip():
-                    rows.append((path, pick))
+                candidate_id = (
+                    str(pick.get("candidate_id") or pick.get("cid") or "").strip()
+                    if isinstance(pick, Mapping)
+                    else ""
+                )
+                if not isinstance(pick, Mapping) or not candidate_id:
+                    problems.append(_reason("STATE_COLLECTION_INVALID", f"{path}:{collection_name}"))
+                    continue
+                rows.append((path, collection_name, lane, pick))
     return rows, problems
+
+
+def _candidate_id(pick: Mapping[str, object]) -> str:
+    return str(pick.get("candidate_id") or pick.get("cid") or "").strip()
+
+
+def _semantic_state_row(pick: Mapping[str, object], *, candidate_id: str, date: str) -> str:
+    """Canonicalize harmless ``cid``/date omissions before duplicate comparison."""
+    normalized = dict(pick)
+    normalized.pop("cid", None)
+    normalized["candidate_id"] = candidate_id
+    normalized["recording_date"] = str(pick.get("recording_date") or date)
+    return json.dumps(normalized, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
 
 
 def _package_root(runtime_root: Path, date: str, candidate_id: str, pick: Mapping[str, object]) -> Path | None:
@@ -350,19 +387,17 @@ def build_readiness_graph(*, repository_root: Path, runtime_root: Path, registry
         registry_valid = False
         graph_problems.append(_reason("PUBLICATION_REGISTRY_INVALID", "publication_registry"))
     indexed = {(str(row.get("candidate_id") or ""), str(row.get("recording_date") or "")): row for row in registry_rows if isinstance(row, Mapping)}
-    candidates: dict[tuple[str, str], tuple[Path | None, Mapping[str, object]]] = {}
+    candidates: dict[tuple[str, str], list[tuple[Path | None, str, str, Mapping[str, object]]]] = {}
     state_rows, state_problems = _state_rows(runtime_root)
     graph_problems.extend(state_problems)
-    for state_path, pick in state_rows:
-        key = (str(pick["candidate_id"]), str(pick.get("recording_date") or state_path.stem))
-        if key in candidates:
-            graph_problems.append(_reason("STATE_CANDIDATE_DUPLICATE", str(state_path)))
-        else:
-            candidates[key] = (state_path, pick)
+    for state_path, collection, lane, pick in state_rows:
+        candidate_id = _candidate_id(pick)
+        key = (candidate_id, str(pick.get("recording_date") or state_path.stem))
+        candidates.setdefault(key, []).append((state_path, collection, lane, pick))
     excluded = [{"candidate_id": key[0], "recording_date": key[1], "reason_code": "PUBLISHED_EXCLUDED"} for key, row in indexed.items() if row.get("status") == "published"]
     for key, row in indexed.items():
         if row.get("status") == "hold_pending_review" and key not in candidates:
-            candidates[key] = (None, row)
+            candidates[key] = [(None, "publication_registry", "unknown", row)]
     ledger = runtime_root / "reports/upload_ledger.jsonl"
     try:
         _, ledger_problems = ledger_reader(ledger)
@@ -371,16 +406,35 @@ def build_readiness_graph(*, repository_root: Path, runtime_root: Path, registry
     if ledger_problems:
         graph_problems.extend(_reason("UPLOAD_LEDGER_INVALID", "upload_ledger") for _ in ledger_problems)
     rows: list[dict[str, object]] = []
-    for (candidate_id, date), (state_path, pick) in sorted(candidates.items()):
+    for (candidate_id, date), sources in sorted(candidates.items()):
+        state_path, source_collection, lane, pick = sources[0]
         registry_row = indexed.get((candidate_id, date))
         if registry_row and registry_row.get("status") == "published":
             continue
         reasons: set[str] = set()
+        source_collections = list(dict.fromkeys(source[1] for source in sources))
+        state_sources = [
+            {"state_path": str(source_path), "source_collection": collection, "lane": source_lane}
+            for source_path, collection, source_lane, _row in sources
+            if source_path is not None
+        ]
+        if len(sources) > 1:
+            first = _semantic_state_row(pick, candidate_id=candidate_id, date=date)
+            if any(
+                source_lane != lane
+                or _semantic_state_row(row, candidate_id=candidate_id, date=date) != first
+                for _source_path, _collection, source_lane, row in sources[1:]
+            ):
+                reasons.add("STATE_CANDIDATE_CONFLICT")
         if registry_row and registry_row.get("status") == "hold_pending_review":
             reasons.add("HOLD_PENDING_REVIEW")
+        package_expected = any(
+            collection in _PACKAGED_COLLECTIONS
+            for _path, collection, _lane, _row in sources
+        )
         if state_path is None:
             reasons.add("HUMAN_TRUTH_MISSING")
-        else:
+        elif package_expected:
             if pick.get("status") != "review_ready" or pick.get("rc") != 0:
                 reasons.add("STATE_ROW_NOT_REVIEW_READY")
             if "bundle_lifecycle" in pick and pick.get("bundle_lifecycle") != "CURRENT":
@@ -399,10 +453,16 @@ def build_readiness_graph(*, repository_root: Path, runtime_root: Path, registry
         if failure_stage in _CODE_FAILURE_STAGES:
             reasons.add("TYPED_RUNTIME_FAILURE")
         root = _package_root(runtime_root, date, candidate_id, pick)
-        try:
-            package_reasons, dependencies, record_path = _inspect_package(root, candidate_id, date)
-        except Exception:
-            package_reasons, dependencies, record_path = {"PACKAGE_INSPECTION_EXCEPTION"}, {}, None
+        # Queued/backlog candidates are deliberately visible before a package
+        # exists.  A package/audit/manifest replay is evidence about a finished
+        # package, not a prerequisite for preparing one.
+        if root is None and not package_expected:
+            package_reasons, dependencies, record_path = set(), {}, None
+        else:
+            try:
+                package_reasons, dependencies, record_path = _inspect_package(root, candidate_id, date)
+            except Exception:
+                package_reasons, dependencies, record_path = {"PACKAGE_INSPECTION_EXCEPTION"}, {}, None
         reasons.update(package_reasons)
         if ledger_problems:
             reasons.add("LEDGER_SERIAL_BLOCKED")
@@ -435,5 +495,19 @@ def build_readiness_graph(*, repository_root: Path, runtime_root: Path, registry
                 reasons.add("REGISTRY_SERIAL_BLOCKED")
         except Exception:
             reasons.add("PACKAGE_MANIFEST_OR_LEDGER_EXCEPTION")
-        rows.append({"candidate_id": candidate_id, "recording_date": date, "category": _category(reasons, serial=serial), "reason_codes": sorted(reasons) or ["LOCAL_PREPARATION_AVAILABLE"], "dependencies": [str(state_path)] if state_path else ["publication_registry"], "package_dependencies": dependencies, "observational_only": True})
+        rows.append(
+            {
+                "candidate_id": candidate_id,
+                "recording_date": date,
+                "lane": lane,
+                "source_collection": source_collection,
+                "source_collections": source_collections,
+                "state_sources": state_sources,
+                "category": _category(reasons, serial=serial),
+                "reason_codes": sorted(reasons) or ["LOCAL_PREPARATION_AVAILABLE"],
+                "dependencies": [str(state_path)] if state_path else ["publication_registry"],
+                "package_dependencies": dependencies,
+                "observational_only": True,
+            }
+        )
     return {"schema_version": "publication-readiness-graph.v1", "observational_only": True, "precedence": list(_PRECEDENCE), "graph_blockers": graph_problems, "rows": rows, "excluded_published": excluded}

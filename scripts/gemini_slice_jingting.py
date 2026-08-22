@@ -41,6 +41,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.provider_slots import ProviderSlotTimeout, provider_wait_for_call, runtime_provider_slot
 
 CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
 
@@ -1107,8 +1108,9 @@ def gemini_correct(
         data=json.dumps(body).encode(),
         headers={"content-type": "application/json", "x-goog-api-key": key},
     )
-    with urllib.request.urlopen(req, timeout=180) as r:
-        d = json.load(r)
+    with runtime_provider_slot(timeout_seconds=provider_wait_for_call(180)):
+        with urllib.request.urlopen(req, timeout=180) as r:
+            d = json.load(r)
     cand = (d.get("candidates") or [{}])[0]
     parts = cand.get("content", {}).get("parts", [])
     return strip_markdown_fence("".join(p.get("text", "") for p in parts))
@@ -1362,14 +1364,24 @@ def run_agy(
     ]
     started = utc_now()
     try:
-        proc = subprocess.run(
-            cmd,
-            cwd=job_dir,
-            env=agy_subprocess_env(),
-            capture_output=True,
-            text=True,
-            timeout=effective_process_timeout,
-        )
+        with runtime_provider_slot(
+            timeout_seconds=provider_wait_for_call(effective_process_timeout)
+        ):
+            proc = subprocess.run(
+                cmd,
+                cwd=job_dir,
+                env=agy_subprocess_env(),
+                capture_output=True,
+                text=True,
+                timeout=effective_process_timeout,
+            )
+    except ProviderSlotTimeout as exc:
+        from src.autoslice.source_context_executor import AgyRunnerError
+
+        raise AgyRunnerError(
+            "AGY_TIMEOUT",
+            "provider capacity wait timed out before AGY dispatch",
+        ) from exc
     except subprocess.TimeoutExpired as exc:
         (job_dir / "agy.stdout").write_text(
             _subprocess_output_text(exc.stdout), encoding="utf-8"

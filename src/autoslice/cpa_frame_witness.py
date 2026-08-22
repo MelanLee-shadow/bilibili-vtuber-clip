@@ -15,6 +15,8 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
+from src.autoslice.provider_slots import ProviderSlotTimeout, provider_wait_for_call, runtime_provider_slot
+
 
 SCHEMA_VERSION = "cpa-frame-witness.v1"
 _UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
@@ -224,8 +226,9 @@ def _vision_qa(
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-            raw = response.read()
+        with runtime_provider_slot(timeout_seconds=provider_wait_for_call(timeout_seconds)):
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                raw = response.read()
         payload = json.loads(raw.decode("utf-8", errors="replace"))
         answer = payload.get("output_text")
         if not answer:
@@ -244,6 +247,13 @@ def _vision_qa(
             raise ValueError(
                 f"empty vision completion (status={payload.get('status')})"
             )
+    except ProviderSlotTimeout:
+        receipt.update(
+            status="UNAVAILABLE",
+            reason_code="VISION_PROVIDER_CAPACITY",
+            error="provider capacity wait timed out",
+        )
+        return receipt
     except Exception as exc:
         receipt.update(
             status="UNAVAILABLE",

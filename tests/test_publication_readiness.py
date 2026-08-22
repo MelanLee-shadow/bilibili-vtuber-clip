@@ -76,8 +76,109 @@ def test_production_shape_talk_song_hold_and_published_are_independent(tmp_path:
     rows = _rows(graph)
     assert rows["talk"]["category"] == READY_TO_PREPARE
     assert rows["song"]["category"] == READY_TO_PREPARE
+    assert rows["talk"]["lane"] == "talk"
+    assert rows["talk"]["source_collection"] == "picks"
+    assert rows["song"]["lane"] == "song"
+    assert rows["song"]["source_collection"] == "songs"
     assert rows["held"]["category"] == NEEDS_IVAN_TRUTH
     assert graph["excluded_published"] == [{"candidate_id": "public", "recording_date": "2026-08-18", "reason_code": "PUBLISHED_EXCLUDED"}]
+
+
+def test_pending_and_backlog_collections_are_read_only_preparation_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, runtime = _runtime(tmp_path)
+    state = {
+        "pending_talk": [{"cid": "talk-ready"}],
+        "talk_backlog": [
+            {"cid": "talk-provider", "failure_stage": "source_fact_provider"},
+            {"candidate_id": "talk-truth", "title_authority_error": "Ivan title needed"},
+        ],
+        "pending_song": [{"cid": "song-ready"}],
+        "song_backlog": [{"candidate_id": "song-provider", "failure_stage": "cover_provider"}],
+        "song_selection_backlog": [{"cid": "song-truth", "rejection_reason": "human review required"}],
+        "picks": [],
+        "songs": [],
+    }
+    (runtime / "state/2026-08-20.json").write_text(json.dumps(state))
+    from src.autoslice import publication_readiness
+
+    monkeypatch.setattr(
+        publication_readiness,
+        "_inspect_package",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("unpackaged candidate inspected")),
+    )
+    rows = _rows(
+        build_readiness_graph(
+            repository_root=repo,
+            runtime_root=runtime,
+            registry_loader=lambda *_a, **_k: _registry(),
+        )
+    )
+    assert rows["talk-ready"]["category"] == READY_TO_PREPARE
+    assert rows["talk-provider"]["category"] == NEEDS_PROVIDER
+    assert rows["talk-truth"]["category"] == NEEDS_IVAN_TRUTH
+    assert rows["song-ready"]["category"] == READY_TO_PREPARE
+    assert rows["song-provider"]["category"] == NEEDS_PROVIDER
+    assert rows["song-truth"]["category"] == NEEDS_IVAN_TRUTH
+    assert rows["talk-ready"]["lane"] == "talk"
+    assert rows["talk-ready"]["source_collection"] == "pending_talk"
+    assert rows["song-ready"]["lane"] == "song"
+    assert rows["song-ready"]["source_collection"] == "pending_song"
+    assert all("PACKAGE_ROOT_MISSING" not in row["reason_codes"] for row in rows.values())
+
+
+def test_consistent_candidate_sources_merge_but_conflicts_are_state_drift(tmp_path: Path) -> None:
+    repo, runtime = _runtime(tmp_path)
+    state = {
+        "pending_talk": [{"cid": "merged", "status": "queued"}, {"cid": "conflict", "opaque": "one"}],
+        "talk_backlog": [
+            {"candidate_id": "merged", "status": "queued"},
+            {"candidate_id": "conflict", "opaque": "two"},
+        ],
+    }
+    (runtime / "state/2026-08-20.json").write_text(json.dumps(state))
+    rows = _rows(
+        build_readiness_graph(
+            repository_root=repo,
+            runtime_root=runtime,
+            registry_loader=lambda *_a, **_k: _registry(),
+        )
+    )
+    assert rows["merged"]["category"] == READY_TO_PREPARE
+    assert rows["merged"]["source_collections"] == ["pending_talk", "talk_backlog"]
+    assert len(rows["merged"]["state_sources"]) == 2
+    assert rows["conflict"]["category"] == STATE_DRIFT
+    assert "STATE_CANDIDATE_CONFLICT" in rows["conflict"]["reason_codes"]
+
+
+def test_invalid_active_collection_is_a_fail_closed_graph_blocker(tmp_path: Path) -> None:
+    repo, runtime = _runtime(tmp_path)
+    (runtime / "state/2026-08-20.json").write_text(json.dumps({"pending_song": {"cid": "bad"}}))
+    graph = build_readiness_graph(
+        repository_root=repo,
+        runtime_root=runtime,
+        registry_loader=lambda *_a, **_k: _registry(),
+    )
+    assert {item["code"] for item in graph["graph_blockers"]} == {"STATE_COLLECTION_INVALID"}
+
+
+def test_rejected_or_historical_collections_do_not_expand_publish_candidates(tmp_path: Path) -> None:
+    repo, runtime = _runtime(tmp_path)
+    (runtime / "state/2026-08-20.json").write_text(
+        json.dumps(
+            {
+                "talk_below_confidence_threshold": [{"candidate_id": "rejected"}],
+                "talk_superseded_attempts": [{"candidate_id": "historical"}],
+            }
+        )
+    )
+    graph = build_readiness_graph(
+        repository_root=repo,
+        runtime_root=runtime,
+        registry_loader=lambda *_a, **_k: _registry(),
+    )
+    assert graph["rows"] == []
 
 
 def test_missing_truth_provider_and_typed_code_use_real_fields(tmp_path: Path) -> None:
@@ -190,7 +291,7 @@ def test_unresolved_ledger_blocks_only_serial_and_bad_state_does_not_hide_ready(
     _package(runtime, "2026-08-20", "other")
     (root / "ready.upload_manifest.json").write_text("{}")
     (runtime / "state/2026-08-19.json").write_text("{bad")
-    (runtime / "state/2026-08-20.json").write_text(json.dumps({"picks": [{"candidate_id": "ready", "status": "review_ready", "rc": 0}, {"candidate_id": "other", "status": "review_ready", "rc": 0}], "songs": [{"candidate_id": "ready", "status": "review_ready", "rc": 0}]}))
+    (runtime / "state/2026-08-20.json").write_text(json.dumps({"picks": [{"candidate_id": "ready", "status": "review_ready", "rc": 0}, {"candidate_id": "other", "status": "review_ready", "rc": 0}]}))
     def loader(_path: Path, **_kwargs: object) -> tuple[dict | None, list[str]]:
         return {"video": {"sha256": "sha256:video"}, "package_attestation": {"record": {"path": str(record)}}}, []
     graph = build_readiness_graph(repository_root=repo, runtime_root=runtime, registry_loader=lambda *_a, **_k: _registry(), manifest_loader=loader, ledger_checker=lambda *_a: ("unresolved", None, ["STARTED"]))
@@ -198,7 +299,7 @@ def test_unresolved_ledger_blocks_only_serial_and_bad_state_does_not_hide_ready(
     assert rows["ready"]["category"] == READY_TO_PREPARE
     assert "LEDGER_SERIAL_BLOCKED" in rows["ready"]["reason_codes"]
     assert rows["other"]["category"] == READY_TO_PREPARE
-    assert {item["code"] for item in graph["graph_blockers"]} == {"STATE_FILE_INVALID", "STATE_CANDIDATE_DUPLICATE"}
+    assert {item["code"] for item in graph["graph_blockers"]} == {"STATE_FILE_INVALID"}
 
 
 def test_invalid_registry_forbids_serial_but_keeps_local_prepare(tmp_path: Path) -> None:

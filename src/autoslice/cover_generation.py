@@ -37,9 +37,7 @@ from src.autoslice.cover_font_paths import (
     resolve_cover_fonts_dir,
     resolve_primary_cover_font,
 )
-from src.autoslice.cover_text_pixel_evidence import (
-    materialize_rendered_text_pixel_evidence,
-)
+from src.autoslice.cover_text_pixel_evidence import materialize_rendered_text_pixel_evidence
 from src.autoslice.cover_identity_landmark import exclusion_evidence, resolve_title_exclusion
 from src.autoslice.cover_title_rendering import (
     FEED_SAFE_X0,
@@ -47,6 +45,7 @@ from src.autoslice.cover_title_rendering import (
     materialize_title_layer_spec,
 )
 from src.autoslice.llm_client import LlmCall, extract_json_object
+from src.autoslice.provider_slots import provider_transport
 
 ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(ROOT)
@@ -1074,6 +1073,7 @@ def _normalize_cover_canvas(path: Path) -> tuple[int, int]:
         return img.size
 
 
+@provider_transport(timeout_result=lambda: {"status": "FAILED", "reason_code": "CPA_IMAGE_EDIT_PROVIDER_CAPACITY", "detail": "provider capacity wait timed out", "attempted_models": []})
 def _call_cpa_image_edit(
     *,
     base_url: str,

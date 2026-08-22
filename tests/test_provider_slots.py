@@ -10,7 +10,7 @@ import pytest
 from src.autoslice import llm_client
 from src.autoslice import qixi_post_correction_public_surface as qixi
 from src.autoslice import provider_slots
-from src.autoslice.provider_slots import ProviderSlotError, ProviderSlotTimeout, provider_slot, provider_wait_seconds
+from src.autoslice.provider_slots import ProviderSlotError, ProviderSlotTimeout, provider_slot, provider_wait_for_call, provider_wait_seconds, runtime_provider_slot
 from src.autoslice.qixi_transaction_core import exclusive_runner_commit
 
 
@@ -83,11 +83,27 @@ def test_provider_capacity_env_is_strict(tmp_path: Path, monkeypatch: pytest.Mon
             pass
 
 
-@pytest.mark.parametrize("value", ["0", "901", "not-an-int"])
+@pytest.mark.parametrize("value", ["0", "10801", "not-an-int"])
 def test_provider_wait_env_is_strict(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
     monkeypatch.setenv("AUTOSLICE_PROVIDER_WAIT_SECONDS", value)
-    with pytest.raises(ProviderSlotError, match="1 to 900"):
+    with pytest.raises(ProviderSlotError, match="1 to 10800"):
         provider_wait_seconds()
+
+
+def test_provider_wait_covers_all_configured_candidate_waves(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AUTOSLICE_PROVIDER_CONCURRENCY", "2")
+    monkeypatch.setenv("AUTOSLICE_PROVIDER_WAIT_SECONDS", "1")
+    # Five candidates under capacity two means the fifth may wait through
+    # three complete waves, not merely one currently occupied request.
+    assert provider_wait_for_call(1020) == 1020 * 3 + 60
+
+
+def test_live_canonical_runtime_never_silently_bypasses_pool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AUTOSLICE_BASE", raising=False)
+    monkeypatch.setattr(provider_slots, "_CANONICAL_PRODUCTION_ROOT", tmp_path)
+    (tmp_path / "repo").mkdir()
+    with runtime_provider_slot() as lease:
+        assert lease is not None
 
 
 def test_command_adapter_and_qixi_default_share_one_runtime_pool(

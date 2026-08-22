@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from src.autoslice import gemini_backup_policy
+from src.autoslice.provider_slots import ProviderSlotTimeout, provider_wait_for_call, runtime_provider_slot
 
 # --------------------------------------------------------------------------
 # 1. Binary resolution
@@ -153,6 +154,8 @@ EXPLICIT_AGY_QUOTA_RX = re.compile(
 def classify_agy_launch_error(exc: BaseException) -> str:
     """Separate "agy is not installed here" from "agy blew up"."""
 
+    if isinstance(exc, ProviderSlotTimeout):
+        return AGY_TIMEOUT
     if isinstance(exc, subprocess.TimeoutExpired):
         return AGY_TIMEOUT
     if isinstance(exc, FileNotFoundError):
@@ -284,8 +287,9 @@ def run_local_agy(
     if env is not None:
         kwargs["env"] = dict(env)
     try:
-        completed = runner(list(argv), **kwargs)
-    except (OSError, subprocess.TimeoutExpired) as exc:
+        with runtime_provider_slot(timeout_seconds=provider_wait_for_call(timeout)):
+            completed = runner(list(argv), **kwargs)
+    except (OSError, ProviderSlotTimeout, subprocess.TimeoutExpired) as exc:
         return AgyRun(
             completed=None,
             failure_category=classify_agy_launch_error(exc),
@@ -602,10 +606,12 @@ def generate_content(
             data=request_bytes,
             headers={"content-type": "application/json", "x-goog-api-key": key},
         )
-        with urllib.request.urlopen(
-            request, timeout=min(600, max(30, int(timeout_seconds)))
-        ) as response:
-            return json.load(response)
+        transport_timeout = min(600, max(30, int(timeout_seconds)))
+        with runtime_provider_slot(
+            timeout_seconds=provider_wait_for_call(transport_timeout)
+        ):
+            with urllib.request.urlopen(request, timeout=transport_timeout) as response:
+                return json.load(response)
 
     try:
         payload = post(body)

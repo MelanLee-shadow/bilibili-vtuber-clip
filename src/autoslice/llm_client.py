@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from src.autoslice.provider_slots import ProviderSlotError, ProviderSlotTimeout, provider_slot
+from src.autoslice.provider_slots import ProviderSlotError, ProviderSlotTimeout, runtime_provider_slot
 
 LlmCall = Callable[[str], str]
 
@@ -64,15 +64,8 @@ def build_llm_call(config: LlmConfig) -> LlmCall:
 def _provider_dispatch(call: Callable[[], str], configured_root: str | None = None) -> str:
     """Apply the shared process-level permit to real provider transports."""
 
-    root = configured_root or os.environ.get("AUTOSLICE_BASE")
-    if not root:
-        # Standalone tooling has no declared runtime to share.  Production
-        # runner/Qixi callers bind one explicitly; silently inventing /opt
-        # would turn unrelated local commands into a different runtime.
-        return call()
-    runtime_root = Path(root)
     try:
-        with provider_slot(runtime_root):
+        with runtime_provider_slot(runtime_root=configured_root):
             return call()
     except ProviderSlotTimeout as exc:
         raise LlmCallError("provider capacity wait timed out") from exc

@@ -15,8 +15,9 @@ import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import wraps
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Callable, Iterator, TypeVar
 
 
 class ProviderSlotError(RuntimeError):
@@ -41,6 +42,10 @@ class ProviderSlotLease:
 
 _thread_locks_guard = threading.Lock()
 _thread_locks: dict[tuple[int, int, int], threading.Lock] = {}
+_MAX_PROVIDER_CANDIDATES = 5
+_MAX_PROVIDER_QUEUE_SECONDS = 10800
+_CANONICAL_PRODUCTION_ROOT = Path("/opt/bilive/autoslice")
+_ProviderResult = TypeVar("_ProviderResult")
 
 
 def provider_capacity() -> int:
@@ -57,14 +62,90 @@ def provider_capacity() -> int:
 def provider_wait_seconds() -> float:
     """Return the configured bounded wait; never silently turn it into a retry loop."""
 
-    value = os.environ.get("AUTOSLICE_PROVIDER_WAIT_SECONDS", "600")
+    # AGY's normal 15m process budget plus its grace period is longer than the
+    # old 900s cap.  Keep the setting bounded, but do not make a healthy third
+    # candidate fail simply because two long-lived provider calls are active.
+    value = os.environ.get("AUTOSLICE_PROVIDER_WAIT_SECONDS", str(_MAX_PROVIDER_QUEUE_SECONDS))
     try:
         seconds = int(value)
     except ValueError as exc:
-        raise ProviderSlotError("provider wait must be an integer from 1 to 900 seconds") from exc
-    if not 1 <= seconds <= 900:
-        raise ProviderSlotError("provider wait must be an integer from 1 to 900 seconds")
+        raise ProviderSlotError("provider wait must be an integer from 1 to 10800 seconds") from exc
+    if not 1 <= seconds <= _MAX_PROVIDER_QUEUE_SECONDS:
+        raise ProviderSlotError("provider wait must be an integer from 1 to 10800 seconds")
     return float(seconds)
+
+
+def provider_wait_for_call(call_timeout_seconds: float, *, grace_seconds: float = 60.0) -> float:
+    """Return a bounded queue wait which cannot expire before a legal call.
+
+    Adapter-specific subprocess timeouts are local policy; this only makes the
+    shared permit wait long enough to accommodate one such call already in a
+    slot.  Calls longer than the globally bounded queue policy fail closed.
+    """
+    if (
+        not isinstance(call_timeout_seconds, (int, float))
+        or isinstance(call_timeout_seconds, bool)
+        or not isinstance(grace_seconds, (int, float))
+        or isinstance(grace_seconds, bool)
+        or call_timeout_seconds <= 0
+        or grace_seconds < 0
+    ):
+        raise ProviderSlotError("provider call timeout is unsafe")
+    waves = (_MAX_PROVIDER_CANDIDATES + provider_capacity() - 1) // provider_capacity()
+    required = float(call_timeout_seconds) * waves + float(grace_seconds)
+    if required > _MAX_PROVIDER_QUEUE_SECONDS:
+        raise ProviderSlotError("provider call timeout exceeds the 10800 second queue bound")
+    return max(provider_wait_seconds(), required)
+
+
+def configured_runtime_root() -> Path | None:
+    """Return the explicitly declared shared runtime, never an invented one."""
+    configured = os.environ.get("AUTOSLICE_BASE")
+    if configured:
+        return Path(configured)
+    # A live host must never silently skip permits because an older manual
+    # invocation omitted the variable.  Local development remains opt-in: it
+    # does not normally have this exact production runtime topology.
+    if _CANONICAL_PRODUCTION_ROOT.is_dir() and (_CANONICAL_PRODUCTION_ROOT / "repo").is_dir():
+        return _CANONICAL_PRODUCTION_ROOT
+    return None
+
+
+@contextmanager
+def runtime_provider_slot(
+    *,
+    runtime_root: Path | str | None = None,
+    timeout_seconds: float | None = None,
+) -> Iterator[ProviderSlotLease | None]:
+    """Permit provider transport for an explicit or canonical runtime root."""
+    resolved_root = Path(runtime_root) if runtime_root is not None else configured_runtime_root()
+    if resolved_root is None:
+        yield None
+        return
+    with provider_slot(resolved_root, timeout_seconds=timeout_seconds) as lease:
+        yield lease
+
+
+def provider_transport(
+    *, timeout_result: Callable[[], _ProviderResult] | None = None
+) -> Callable[[Callable[..., _ProviderResult]], Callable[..., _ProviderResult]]:
+    """Bind one transport function to one permit for its complete call."""
+
+    def decorate(call: Callable[..., _ProviderResult]) -> Callable[..., _ProviderResult]:
+        @wraps(call)
+        def dispatch(*args: Any, **kwargs: Any) -> _ProviderResult:
+            timeout = kwargs.get("timeout_seconds", 180.0)
+            try:
+                with runtime_provider_slot(timeout_seconds=provider_wait_for_call(timeout)):
+                    return call(*args, **kwargs)
+            except ProviderSlotTimeout:
+                if timeout_result is None:
+                    raise
+                return timeout_result()
+
+        return dispatch
+
+    return decorate
 
 
 def _safe_directory(path: Path) -> None:
