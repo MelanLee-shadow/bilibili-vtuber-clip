@@ -97,20 +97,22 @@ def test_readiness_graph_is_scoped_and_does_not_prepare(monkeypatch: pytest.Monk
     assert result["upload_allowed"] is False
 
 
-def test_readiness_graph_marks_sealed_rejected_talk_ready_to_prepare(
+def test_readiness_graph_normalizes_semantic_recall_stale_replay_to_prepare(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     runtime = tmp_path / "runtime"
     (runtime / "repo").mkdir(parents=True)
     (runtime / "state").mkdir()
     (runtime / "state" / "2026-08-14.json").write_text(json.dumps({"picks": [{
-        "cid": "one", "lane": "talk", "status": "candidate_rejected",
+        "cid": "one", "lane": "semantic_recall", "status": "candidate_rejected",
     }]}))
     monkeypatch.setattr(
         "src.autoslice.publication_readiness.build_readiness_graph",
         lambda **_kwargs: {"rows": [{
             "candidate_id": "one", "recording_date": "2026-08-14",
-            "category": "STATE_DRIFT", "reason_codes": ["STATE_ROW_NOT_REVIEW_READY"],
+            "category": "STATE_DRIFT", "reason_codes": [
+                "STATE_ROW_NOT_REVIEW_READY", "PACKAGE_ARTIFACT_HASH_DRIFT", "COVER_QC_MISSING",
+            ],
         }], "graph_blockers": []},
     )
     monkeypatch.setattr(cli, "build_replay_plan", lambda **_kwargs: SimpleNamespace(
@@ -124,6 +126,95 @@ def test_readiness_graph_marks_sealed_rejected_talk_ready_to_prepare(
         "baseline_sha256": "a" * 64,
     }
     assert row["generic_observation"]["category"] == "STATE_DRIFT"
+
+
+def test_readiness_graph_normalizes_only_selection_terminal_for_sharded_talk(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    runtime = tmp_path / "runtime"
+    (runtime / "repo").mkdir(parents=True)
+    (runtime / "state").mkdir()
+    (runtime / "state" / "2026-08-14.json").write_text(json.dumps({"picks": [{
+        "cid": "one", "lane": "semantic_recall_sharded", "status": "candidate_rejected",
+    }]}))
+    monkeypatch.setattr(
+        "src.autoslice.publication_readiness.build_readiness_graph",
+        lambda **_kwargs: {"rows": [{
+            "candidate_id": "one", "recording_date": "2026-08-14",
+            "category": "NEEDS_IVAN_TRUTH", "reason_codes": ["SELECTION_SUPPORT_TERMINAL_BLOCKED"],
+        }], "graph_blockers": []},
+    )
+    monkeypatch.setattr(cli, "build_replay_plan", lambda **_kwargs: SimpleNamespace(
+        baseline=SimpleNamespace(config={"sha256": "a" * 64}),
+    ))
+    row = cli._readiness_graph(runtime=runtime, date="2026-08-14", candidate_ids=[])["rows"][0]
+    assert row["category"] == "READY_TO_PREPARE"
+    assert row["generic_observation"] == {
+        "category": "NEEDS_IVAN_TRUTH", "reason_codes": ["SELECTION_SUPPORT_TERMINAL_BLOCKED"],
+    }
+
+
+@pytest.mark.parametrize(
+    ("lane", "category", "reasons"),
+    [
+        ("semantic_recall", "NEEDS_IVAN_TRUTH", ["HUMAN_TRUTH_MISSING"]),
+        ("talk", "NEEDS_IVAN_TRUTH", ["HOLD_PENDING_REVIEW"]),
+        ("song", "STATE_DRIFT", ["STATE_ROW_NOT_REVIEW_READY"]),
+    ],
+)
+def test_readiness_graph_never_normalizes_unowned_reason_or_song_lane(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, lane: str, category: str, reasons: list[str],
+) -> None:
+    runtime = tmp_path / "runtime"
+    (runtime / "repo").mkdir(parents=True)
+    (runtime / "state").mkdir()
+    (runtime / "state" / "2026-08-14.json").write_text(json.dumps({"picks": [{
+        "cid": "one", "lane": lane, "status": "candidate_rejected",
+    }]}))
+    monkeypatch.setattr(
+        "src.autoslice.publication_readiness.build_readiness_graph",
+        lambda **_kwargs: {"rows": [{
+            "candidate_id": "one", "recording_date": "2026-08-14",
+            "category": category, "reason_codes": reasons,
+        }], "graph_blockers": []},
+    )
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        cli, "build_replay_plan",
+        lambda **kwargs: calls.append(kwargs) or pytest.fail("unowned row must not build a replay plan"),
+    )
+    row = cli._readiness_graph(runtime=runtime, date="2026-08-14", candidate_ids=[])["rows"][0]
+    assert row["category"] == category
+    assert "generic_observation" not in row
+    assert calls == []
+
+
+def test_readiness_graph_keeps_stale_row_blocked_without_sealed_baseline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    runtime = tmp_path / "runtime"
+    (runtime / "repo").mkdir(parents=True)
+    (runtime / "state").mkdir()
+    (runtime / "state" / "2026-08-14.json").write_text(json.dumps({"picks": [{
+        "cid": "one", "lane": "semantic_recall", "status": "candidate_rejected",
+    }]}))
+    monkeypatch.setattr(
+        "src.autoslice.publication_readiness.build_readiness_graph",
+        lambda **_kwargs: {"rows": [{
+            "candidate_id": "one", "recording_date": "2026-08-14",
+            "category": "STATE_DRIFT", "reason_codes": ["STATE_ROW_NOT_REVIEW_READY"],
+        }], "graph_blockers": []},
+    )
+    monkeypatch.setattr(
+        cli, "build_replay_plan",
+        lambda **_kwargs: (_ for _ in ()).throw(cli.ReviewedBaselineReplayError("REPLAY_BASELINE_MISSING")),
+    )
+    row = cli._readiness_graph(runtime=runtime, date="2026-08-14", candidate_ids=[])["rows"][0]
+    assert row["category"] == "NEEDS_IVAN_TRUTH"
+    assert row["replay_readiness"] == {
+        "predicate": "SEALED_REVIEWED_BASELINE_REPLAY_READY", "status": "FAIL",
+        "reason_code": "REPLAY_BASELINE_MISSING",
+    }
 
 
 def test_full_package_prepare_overlaps_and_apply_rebinds_state_serially(

@@ -42,6 +42,13 @@ from src.autoslice.reviewed_baseline_replay_transaction import (
     cleanup_prepared_after_image_stage, commit_prepared_after_image, stream_binding,
 )
 
+_TALK_DISCOVERY_LANES = frozenset({"talk", "semantic_recall", "semantic_recall_sharded"})
+_REPLAY_OWNED_STALE_REASONS = frozenset({
+    "STATE_ROW_NOT_REVIEW_READY", "PACKAGE_ARTIFACT_HASH_DRIFT", "COVER_QC_MISSING",
+    "SELECTION_SUPPORT_TERMINAL_BLOCKED",
+})
+_REPLAY_NORMALIZABLE_CATEGORIES = frozenset({"STATE_DRIFT", "NEEDS_IVAN_TRUTH"})
+
 
 class _PrepareFailure(RuntimeError):
     def __init__(self, *, provider_attempted: bool, stage_manifest_sha256: str | None = None,
@@ -98,8 +105,10 @@ def _readiness_graph(*, runtime: Path, date: str, candidate_ids: list[str]) -> d
     # ``candidate_rejected`` is intentionally not upload-ready in the generic
     # graph.  It can nevertheless be legally schedulable for this separate
     # no-upload replay lane when all sealed baseline/old-record authority
-    # still builds an exact plan.  Do not hide a distinct provider/upload
-    # category: only supersede the rejected-row STATE_DRIFT observation.
+    # still builds an exact plan.  Discovery labels ``semantic_recall`` and
+    # ``semantic_recall_sharded`` are Talk lanes, not Song lanes.  This narrow
+    # normalization accepts only stale package observations owned by replay;
+    # it never hides a human, hold, ledger, or upload conflict.
     from src.autoslice.runner_state_writeback import read_exact_state_preimage
     raw = read_exact_state_preimage(runtime / "state" / f"{date}.json", runtime_root=runtime)
     try:
@@ -117,11 +126,19 @@ def _readiness_graph(*, runtime: Path, date: str, candidate_ids: list[str]) -> d
         row = dict(original)
         candidate_id = str(row.get("candidate_id") or "")
         pick = pick_by_cid.get(candidate_id)
+        reason_codes = original.get("reason_codes")
+        stale_reasons = (
+            isinstance(reason_codes, list)
+            and bool(reason_codes)
+            and all(isinstance(reason, str) for reason in reason_codes)
+            and set(reason_codes).issubset(_REPLAY_OWNED_STALE_REASONS)
+        )
         if (
-            row.get("category") == "STATE_DRIFT"
+            row.get("category") in _REPLAY_NORMALIZABLE_CATEGORIES
             and isinstance(pick, dict)
             and pick.get("status") == "candidate_rejected"
-            and str(pick.get("lane") or "talk").lower() == "talk"
+            and str(pick.get("lane") or "talk").lower() in _TALK_DISCOVERY_LANES
+            and stale_reasons
         ):
             try:
                 plan = build_replay_plan(
