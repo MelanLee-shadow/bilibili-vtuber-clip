@@ -225,6 +225,17 @@ def _parse_state(payload: bytes) -> dict[str, object]:
     return value
 
 
+def _state_terminal_newline(before: bytes, state: Mapping[str, object]) -> bytes:
+    """Accept only the two deployed state renderings and retain its ending."""
+
+    canonical = state_bytes(state)
+    if before == canonical:
+        return b""
+    if before == canonical + b"\n":
+        return b"\n"
+    raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_STATE_FORMAT_INVALID")
+
+
 def _scope(
     state: Mapping[str, object], *, date: str, candidate_ids: tuple[str, ...], now: datetime,
     allow_expired: bool = False,
@@ -414,13 +425,14 @@ def prepare_scope_renewal(
     if before is None or _sha(before) != expected_state_sha256:
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_STATE_PREIMAGE_DRIFT")
     state = _parse_state(before)
+    terminal_newline = _state_terminal_newline(before, state)
     current = _scope(state, date=date, candidate_ids=candidate_ids, now=now, allow_expired=True)
     after_state = deepcopy(state)
     renewed = deepcopy(current)
     renewed["grant_id"] = new_grant_id
     renewed["expires_at"] = expires_at
     after_state[STATE_KEY] = renewed
-    after = state_bytes(after_state)
+    after = state_bytes(after_state) + terminal_newline
     changes = [
         {"path": f"/{STATE_KEY}/grant_id", "before_sha256": _json_sha(current["grant_id"]), "after_sha256": _json_sha(new_grant_id)},
         {"path": f"/{STATE_KEY}/expires_at", "before_sha256": _json_sha(current["expires_at"]), "after_sha256": _json_sha(expires_at)},

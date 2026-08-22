@@ -25,6 +25,7 @@ from src.autoslice.historical_fastlane_authority import (
 from src.autoslice import historical_fastlane_authority as historical_module
 from src.autoslice.producer_delivery_transaction import deployment_authority_binding
 from src.autoslice.repository_asset_authority import DEPLOYED_AUTHORITY_MANIFEST_SCHEMA, _canonical_sha256
+from src.autoslice.runner_state_writeback import state_bytes
 
 
 DATE = "2026-08-14"
@@ -108,13 +109,44 @@ def test_scope_renewal_only_changes_grant_and_expiry_and_recovers(tmp_path: Path
     assert commit_scope_renewal(prepared, runtime_root=root) == prepared.receipt_path
 
 
+def test_scope_renewal_preserves_canonical_terminal_newline(tmp_path: Path):
+    root, _, _, _ = _runtime(tmp_path)
+    state_path = root / "state" / f"{DATE}.json"
+    before = state_path.read_bytes() + b"\n"
+    _write(state_path, before)
+    prepared = prepare_scope_renewal(
+        runtime_root=root, date=DATE, candidate_ids=IDS, new_grant_id="renewed-newline",
+        expires_at="2026-08-26T00:00:00Z", expected_state_sha256=_sha(before),
+        expected_authority=deployment_authority_binding(root), now=NOW,
+    )
+    expected = json.loads(before)
+    expected["operator_processing_scope"]["grant_id"] = "renewed-newline"
+    expected["operator_processing_scope"]["expires_at"] = "2026-08-26T00:00:00Z"
+    assert prepared.after == state_bytes(expected) + b"\n"
+    commit_scope_renewal(prepared, runtime_root=root)
+    assert state_path.read_bytes() == prepared.after
+
+
+def test_scope_renewal_refuses_noncanonical_state_whitespace(tmp_path: Path):
+    root, _, _, _ = _runtime(tmp_path)
+    state_path = root / "state" / f"{DATE}.json"
+    malformed_rendering = state_path.read_bytes().replace(b'\n  "pending_talk"', b'\n    "pending_talk"')
+    _write(state_path, malformed_rendering)
+    with pytest.raises(HistoricalFastlaneAuthorityError, match="STATE_FORMAT_INVALID"):
+        prepare_scope_renewal(
+            runtime_root=root, date=DATE, candidate_ids=IDS, new_grant_id="renewed-whitespace",
+            expires_at="2026-08-26T00:00:00Z", expected_state_sha256=_sha(malformed_rendering),
+            expected_authority=deployment_authority_binding(root), now=NOW,
+        )
+
+
 def test_scope_renewal_refuses_other_v2_shape_and_state_drift(tmp_path: Path):
     root, _, _, _ = _runtime(tmp_path)
     state_path = root / "state" / f"{DATE}.json"
     before = state_path.read_bytes()
     state = json.loads(before)
     state["operator_processing_scope"]["upload_allowed"] = False
-    _write(state_path, json.dumps(state).encode())
+    _write(state_path, state_bytes(state))
     with pytest.raises(HistoricalFastlaneAuthorityError, match="SCOPE_(MISMATCH|INVALID)"):
         prepare_scope_renewal(runtime_root=root, date=DATE, candidate_ids=IDS, new_grant_id="renewed-grant", expires_at="2026-08-26T00:00:00Z", expected_state_sha256=_sha(state_path.read_bytes()), expected_authority=deployment_authority_binding(root), now=NOW)
 
@@ -130,7 +162,7 @@ def test_scope_renewal_refuses_wrong_candidate_order_or_authorization_shape(tmp_
         )
     state = json.loads(state_path.read_text())
     state["operator_processing_scope"]["user_authorization"] = {"quote": "missing timestamp"}
-    _write(state_path, json.dumps(state).encode())
+    _write(state_path, state_bytes(state))
     with pytest.raises(HistoricalFastlaneAuthorityError, match="SCOPE_INVALID"):
         prepare_scope_renewal(
             runtime_root=root, date=DATE, candidate_ids=IDS, new_grant_id="renewed-grant",
@@ -221,7 +253,7 @@ def test_scope_renewal_can_replace_an_expired_v2_scope_but_runtime_cannot_consum
     state_path = root / "state" / f"{DATE}.json"
     state = json.loads(state_path.read_text())
     state["operator_processing_scope"]["expires_at"] = "2026-08-22T00:00:00Z"
-    _write(state_path, json.dumps(state).encode())
+    _write(state_path, state_bytes(state))
     prepared = prepare_scope_renewal(
         runtime_root=root, date=DATE, candidate_ids=IDS, new_grant_id="renewed-expired-v2",
         expires_at="2026-08-26T00:00:00Z", expected_state_sha256=_sha(state_path.read_bytes()),
