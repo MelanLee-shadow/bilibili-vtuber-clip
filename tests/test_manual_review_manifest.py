@@ -246,6 +246,7 @@ def test_manual_manifest_is_hash_bound_with_attestation(tmp_path: Path) -> None:
     manifest = build_manual(pkg, operator="operator-a", note="边界与字幕人工复核通过")
 
     assert manifest["schema_version"] == "lidousha-manual-review-manifest.v1"
+    assert manifest["status"] == "review_ready"
     assert manifest["upload_allowed"] is False
     assert manifest["manual_attestation"]["operator"] == "operator-a"
     assert manifest["date"] == "2026-08-02"
@@ -558,3 +559,12 @@ def test_manual_builder_projects_replayed_typed_qixi_receipt(
     assert item["manual_corrected_same_bv"] == inner
     assert item["manual_corrected_same_bv_receipt"] == "qixi-corrected-package-finalization.json"
     assert item["manual_corrected_same_bv_receipt_sha256"].startswith("sha256:")
+    assert manifest["status"] == (
+        "finished_review_package_no_upload_pending_human_review"
+    )
+    assert manifest["upload_allowed"] is False
+    assert manifest["exact_candidate_ids"] == [candidate_id]
+    assert manifest["selection_contract"] == {
+        "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+        "candidate_ids": [candidate_id],
+    }

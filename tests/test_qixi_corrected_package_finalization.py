@@ -1858,6 +1858,15 @@ def test_real_finalizer_receipt_wiring_through_manual_audit_and_final_human(
     assert manifest["items"][0]["manual_corrected_same_bv"] == receipt[
         "manual_corrected_same_bv"
     ]
+    assert manifest["status"] == (
+        "finished_review_package_no_upload_pending_human_review"
+    )
+    assert manifest["upload_allowed"] is False
+    assert manifest["exact_candidate_ids"] == [CID]
+    assert manifest["selection_contract"] == {
+        "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+        "candidate_ids": [CID],
+    }
     issues: list[dict] = []
     _audit_manual_corrected_same_bv_receipt(
         root=package, item=manifest["items"][0], issues=issues, stem="qixi", qixi_repo_root=repo

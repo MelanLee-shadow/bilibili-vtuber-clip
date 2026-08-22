@@ -454,11 +454,22 @@ def build_manual(
         "route_decision": cover_generation.get("route_decision"),
         "reference_authority": cover_generation.get("reference_authority"),
     }
+    finalized_qixi_same_bv = (
+        corrected_receipt is not None and corrected_receipt_path is not None
+    )
     manifest = {
         "schema_version": "lidousha-manual-review-manifest.v1",
         "generated_by": "build_manual_review_manifest.v1",
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "status": "review_ready",
+        # A legacy/manual package remains an operator review artifact.  The
+        # only exception is a Qixi package whose sealed finalizer receipt was
+        # replayed above and is embedded in its sole item: that exact closure
+        # may enter the still-no-upload final perceptual-review lane.
+        "status": (
+            "finished_review_package_no_upload_pending_human_review"
+            if finalized_qixi_same_bv
+            else "review_ready"
+        ),
         "candidate_id": candidate_id,
         "date": recording_date,
         "run_mode": "MANUAL_PRODUCE_REVIEW",
@@ -483,6 +494,16 @@ def build_manual(
         manifest["recovery_publication_authorities_by_candidate"] = {
             candidate_id: publication_authority
         }
+    if finalized_qixi_same_bv:
+        manifest.update(
+            {
+                "exact_candidate_ids": [candidate_id],
+                "selection_contract": {
+                    "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+                    "candidate_ids": [candidate_id],
+                },
+            }
+        )
     return manifest
 
 

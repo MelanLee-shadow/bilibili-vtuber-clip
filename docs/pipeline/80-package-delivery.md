@@ -325,7 +325,9 @@ prepare 工作。一个被阻候选不得阻断其它候选。
   封面的回放附件阻断已绑定的新封面，也不能沿用旧附件假装通过。
 - 重建的 recovery `review_manifest.json` 固定保持
   `status=finished_review_package_no_upload_pending_human_review` 与
-  `upload_allowed=false`。current package audit 只证明机器可确定的结构、hash、投影与政策闭包；
+  `upload_allowed=false`。手动 builder 只在已严格重放并把 typed
+  `manual_corrected_same_bv` receipt 嵌入 manifest item 的同一窄 Qixi 路径投影该状态；其余
+  legacy/manual 包仍为 `review_ready`。current package audit 只证明机器可确定的结构、hash、投影与政策闭包；
   它不能证明人已完整播放最终烧录 MP4、逐句对齐音频/静音、确认结尾闭合或看过最终封面。
   因此 audit `passed=true`、state `review_ready`、本地包覆盖或该 pending-human manifest
   都不能转写为人工通过，更不能自行改成发布许可。

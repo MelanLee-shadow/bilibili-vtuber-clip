@@ -958,6 +958,74 @@ def test_v2_template_binds_every_reviewed_byte_and_is_deliberately_incomplete(
         )
 
 
+def test_template_accepts_typed_qixi_finalized_manifest(
+    receipt_package: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A replayed Qixi item remains no-upload but can reach its evidence template."""
+
+    root = receipt_package["root"]
+    assert isinstance(root, Path)
+    manifest = receipt_package["manifest"]
+    assert isinstance(manifest, dict)
+    item = manifest["items"][0]
+    assert isinstance(item, dict)
+    candidate_id = item["candidate_id"]
+    assert isinstance(candidate_id, str)
+    inner = {
+        "schema_version": "manual-corrected-same-bv.v1",
+        "candidate_id": candidate_id,
+        "recovery_publication_authority": item["recovery_publication_authority"],
+        "approved_burned_video_sha256": _sha256(receipt_package["paths"]["video"]),
+        "approved_subtitle_sha256": _sha256(receipt_package["paths"]["subtitle"]),
+        "approved_cover_sha256": _sha256(receipt_package["paths"]["cover"]),
+    }
+    finalization_receipt = root / "qixi-corrected-package-finalization.json"
+    outer = {"manual_corrected_same_bv": inner}
+    _write_json(finalization_receipt, outer)
+    item.update(
+        {
+            "manual_corrected_same_bv": inner,
+            "manual_corrected_same_bv_receipt": finalization_receipt.name,
+            "manual_corrected_same_bv_receipt_sha256": _sha256(finalization_receipt),
+        }
+    )
+    _write_json(receipt_package["review_path"], manifest)
+
+    def replay(raw_item, *, candidate_id, package_root, repo_root=None):
+        if (
+            package_root != root
+            or candidate_id != item["candidate_id"]
+            or raw_item["manual_corrected_same_bv"] != inner
+            or raw_item["manual_corrected_same_bv_receipt"] != finalization_receipt.name
+            or raw_item["manual_corrected_same_bv_receipt_sha256"]
+            != _sha256(finalization_receipt)
+            or json.loads(finalization_receipt.read_text(encoding="utf-8")) != outer
+        ):
+            raise human_review.QixiCorrectedPackageError("typed receipt drift")
+        return True
+
+    monkeypatch.setattr(
+        human_review, "validate_manifest_bound_applied_receipt", replay
+    )
+    template = builder.build_evidence_template(
+        package_root=root,
+        package_audit_path=receipt_package["audit_path"],
+    )
+    assert template["bindings"]["review_manifest"]["path"] == "review_manifest.json"
+    assert template["items"][0]["candidate_id"] == candidate_id
+
+    finalization_receipt.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(
+        builder.FinalHumanReviewBuildError,
+        match="FINAL_HUMAN_REVIEW_MANUAL_CORRECTED_RECEIPT_INVALID",
+    ):
+        builder.build_evidence_template(
+            package_root=root,
+            package_audit_path=receipt_package["audit_path"],
+        )
+
+
 def test_template_refuses_review_point_beyond_final_media(
     receipt_package: dict[str, object],
 ) -> None:
