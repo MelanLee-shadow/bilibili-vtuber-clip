@@ -381,6 +381,45 @@ def test_deploy_connection_stub_bootstrap_is_receipt_bound_and_exact():
     assert "assert all(dispositions.get(path) == rows[path] for path in paths)" in external
 
 
+def test_deploy_adapter_runtime_wait_is_thirty_minutes_for_forward_and_rollback():
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    external = source.split("<<'REMOTE_EXTERNAL_INSTALL'\n", 1)[1].split(
+        "\nREMOTE_EXTERNAL_INSTALL", 1
+    )[0]
+    rollback = source.split("<<'REMOTE_ROLLBACK'\n", 1)[1].split(
+        "\nREMOTE_ROLLBACK", 1
+    )[0]
+    forward_wait = _embedded_shell_function(external, "wait_adapter_runtime")
+    rollback_wait = _embedded_shell_function(rollback, "wait_adapter_runtime")
+
+    for wait, validator in ((forward_wait, "PY_FRESH"), (rollback_wait, "PY_ROLLBACK_FRESH")):
+        assert "for _attempt in $(seq 1 360); do" in wait
+        assert "sleep 5" in wait
+        assert validator in wait
+
+
+def test_deploy_rollback_keeps_unknown_new_rebind_receipts_fail_closed(tmp_path):
+    now = time.time()
+    old_adapter_error = {
+        "generated_at_epoch": now,
+        "service_reachable": False,
+        "streaming": False,
+        "recording": False,
+        "finalizing": False,
+        # An old adapter does not know the newer policy, wraps its receipt
+        # rejection in this typed drift error, and must never report clean.
+        "error": "source disposition drift: source disposition identity rebind receipt is malformed",
+    }
+    rollback = _run_embedded_status_validator(
+        "PY_ROLLBACK_FRESH", tmp_path, old_adapter_error, str(now - 1), "0"
+    )
+    assert rollback.returncode == 0, rollback.stderr
+    forward = _run_embedded_status_validator(
+        "PY_ROLLBACK_FRESH", tmp_path, old_adapter_error, str(now - 1), "1"
+    )
+    assert forward.returncode != 0
+
+
 def test_deploy_adapter_hash_child_gate_is_strict_and_used_by_rollback(tmp_path):
     source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     external = source.split("<<'REMOTE_EXTERNAL_INSTALL'\n", 1)[1].split(

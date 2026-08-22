@@ -819,7 +819,11 @@ wait_adapter_runtime() {
     require_clean=$3
     bootstrap_receipt=${4:-}
     bootstrap_marker=${5:-}
-    for _attempt in $(seq 1 120); do
+    # A source-disposition rebind starts at most one bounded hash child per
+    # adapter cycle.  Twelve persisted rows therefore need longer than the
+    # former ten-minute probe window to converge after the restart.  This is
+    # still a hard thirty-minute cap, not an acceptance of a pending child.
+    for _attempt in $(seq 1 360); do
         if [ "$(docker inspect -f '{{.State.Status}}' bililive_adapter 2>/dev/null || true)" = running ] && \
            [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' bililive_adapter 2>/dev/null || true)" = healthy ] && \
            [ "$(docker inspect -f '{{index .Config.Cmd 0}}|{{index .Config.Cmd 1}}' bililive_adapter 2>/dev/null || true)" = 'python3|/state/bililive_recorder_adapter.py' ] && \
@@ -2177,7 +2181,9 @@ PY_BOOTSTRAP_POSTCONDITION
 wait_adapter_runtime() {
     restarted_after=$1
     expected_sha=$2
-    for _attempt in $(seq 1 120); do
+    # Keep the forward restart wait identical to rollback: rebind work is
+    # serialized by the adapter, and a clean status is still mandatory.
+    for _attempt in $(seq 1 360); do
         if [ "$(docker inspect -f '{{.State.Status}}' bililive_adapter 2>/dev/null || true)" = running ] && \
            [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' bililive_adapter 2>/dev/null || true)" = healthy ] && \
            [ "$(docker inspect -f '{{index .Config.Cmd 0}}|{{index .Config.Cmd 1}}' bililive_adapter 2>/dev/null || true)" = 'python3|/state/bililive_recorder_adapter.py' ] && \

@@ -255,7 +255,12 @@
   idle 查询必须全部通过，且安装前、重启前及 rollback 重启前容器内不得存在仍活着的
   `--identity-rebind-hash-child` 进程。普通 hash pending、timed-out child 等错误一律拒绝。
   新字节重启后仍须等到 fresh clean 状态、新 SHA 与健康检查全绿；rollback 只可回到
-  clean 或同一精确 preimage。该例外不得成为普通 deploy 或 live-query bypass。
+  clean 或同一精确 preimage。adapter runtime 收敛等待固定为最多 360 次、每次 5 秒
+  （30 分钟）：它容纳至多十二条已持久化 rebind 的串行 hash child，但每一轮仍要求
+  SHA、mount、idle 与 fresh clean status；超时、pending child 或任一 drift 都失败。
+  rollback 使用同一有界等待；若回退的旧 adapter 尚不理解新 receipt，它只能保留
+  `source disposition drift:` 的 fail-closed repair-idle 状态，绝不能把 receipt 当 clean。
+  该例外不得成为普通 deploy 或 live-query bypass。
 - 若旧 adapter 因严格 connection-stub gap 上限而留下 closed-finalization 错误，唯一
   bootstrap 例外是候选 adapter 在**不写 state/status/media**的 disposable container 中以
   `--prepare-connection-stub-bootstrap` 为每条显式 relative path 生成 O_EXCL receipt。receipt
