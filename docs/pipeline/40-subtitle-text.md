@@ -175,6 +175,11 @@ timeline 上重放已绑定的 semantic verdict；第 8 阶段直接物化 autho
   漂移、覆盖边界切半 cue、漏 cue、合并/拆分、歧义映射或二次真值失败一律拒发，禁止靠重掷
   模型碰运气。只有已由 `drop_cue` 删除、无法与旧稿一一配对的静音窗会从两边同时排除；不能
   因宽真值窗内“任一 cue 已出现 required_text”就掩盖同窗其他新误听。
+- `scripts/replay_reviewed_subtitle_baseline.py` 可对 failed rerun 的 old-record/current-recut
+  drift 构造 read-only predicate matrix，并只在 candidate-private stage 重建 old-record video、
+  reviewed SRT 与 baseline audit。该 stage 不是 package apply：speaker/ASS/burn、title/cover、
+  final review 和 package audit 仍须从完整 after-image 通过，之后才可经 state-last transaction
+  安装；不得用单独 SRT/MP4 或 private stage 覆盖 live package。
 - redelivery v2 在 coverage prefix/tail 唯一允许保留的 edge straddler，必须与**每一条**
   retained reviewed cue 都按半开区间零重叠；恰好边界相接的 0ms overlap 可披露为
   `BOUNDARY_STRADDLE_WITHOUT_REVIEWED_CUE_OVERLAP`。任何正重叠，包括 1ms，仍须报
