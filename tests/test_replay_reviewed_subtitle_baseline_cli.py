@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from scripts import replay_reviewed_subtitle_baseline as cli
+import scripts.replay_reviewed_subtitle_baseline as cli
+from src.autoslice.producer_speaker import SpeakerFinalizationBlockedError
 
 
 def test_success_matrix_has_unique_terminal_predicates() -> None:
@@ -109,6 +110,11 @@ def test_safe_reason_code_keeps_only_typed_codes() -> None:
     assert cli._safe_reason_code(RuntimeError("/private/provider stderr: token=secret")) == (
         "REPLAY_PREPARE_EXCEPTION"
     )
+    assert cli._safe_reason_code(
+        SpeakerFinalizationBlockedError(
+            "SPEAKER_FINALIZATION_BLOCKED: token=secret /private/provider stderr"
+        )
+    ) == "SPEAKER_FINALIZATION_BLOCKED"
 
 
 def test_safe_reason_code_extracts_only_allowlisted_system_exit_prefix() -> None:

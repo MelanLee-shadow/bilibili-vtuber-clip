@@ -47,6 +47,18 @@ ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(ROOT)
 
 
+class SpeakerFinalizationBlockedError(RuntimeError):
+    """A fail-closed speaker manifest rejected the private finalization."""
+
+    reason_code = "SPEAKER_FINALIZATION_BLOCKED"
+
+
+class SpeakerReviewRequiredError(RuntimeError):
+    """A valid bound speaker review manifest requires human adjudication."""
+
+    reason_code = "SPEAKER_REVIEW_REQUIRED"
+
+
 def profile_asset_file(key: str) -> Path:
     return CHANNEL_PROFILE.asset_file(key, repo_root=ROOT)
 
@@ -413,11 +425,11 @@ def run_speaker_finalizer(
                 and blocked_manifest.get("reason")
                 and valid_review_manifest(blocked_manifest)
             ):
-                raise RuntimeError(
+                raise SpeakerReviewRequiredError(
                     f"SPEAKER_REVIEW_REQUIRED: {blocked_manifest['reason']}"
                 )
             if blocked_manifest.get("status") == "BLOCKED" and blocked_manifest.get("reason"):
-                raise RuntimeError(
+                raise SpeakerFinalizationBlockedError(
                     f"SPEAKER_FINALIZATION_BLOCKED: {blocked_manifest['reason']}"
                 )
         raise RuntimeError(
@@ -443,11 +455,15 @@ def run_speaker_finalizer(
         )
     if manifest.get("status") == "SPEAKER_REVIEW_REQUIRED":
         if valid_review_manifest(manifest):
-            raise RuntimeError(f"SPEAKER_REVIEW_REQUIRED: {manifest.get('reason')}")
-        raise RuntimeError("SPEAKER_FINALIZATION_BLOCKED: invalid speaker review evidence")
+            raise SpeakerReviewRequiredError(
+                f"SPEAKER_REVIEW_REQUIRED: {manifest.get('reason')}"
+            )
+        raise SpeakerFinalizationBlockedError(
+            "SPEAKER_FINALIZATION_BLOCKED: invalid speaker review evidence"
+        )
     blocked = finalizer_manifest_block_reason(manifest, best_effort_guess=best_effort_guess)
     if blocked is not None:
-        raise RuntimeError(f"SPEAKER_FINALIZATION_BLOCKED: {blocked}")
+        raise SpeakerFinalizationBlockedError(f"SPEAKER_FINALIZATION_BLOCKED: {blocked}")
     expected = {
         output_srt_path: manifest.get("output_review_srt_sha256"),
         output_ass_path: manifest.get("output_ass_sha256"),

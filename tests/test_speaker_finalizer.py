@@ -8,6 +8,10 @@ import pytest
 from scripts.produce_slice_package import run_speaker_finalizer
 from scripts.apply_subtitle_text_overrides import TextCue
 
+from src.autoslice.producer_speaker import (
+    SpeakerFinalizationBlockedError,
+    SpeakerReviewRequiredError,
+)
 from src.autoslice.speaker_finalizer import (
     CAMPP_EMBEDDING_CACHE_SCHEMA,
     CAMPP_EMBEDDING_DIMENSION,
@@ -692,7 +696,10 @@ def test_runner_surfaces_blocked_manifest_reason_before_runtime_warnings(
         return subprocess.CompletedProcess([], 3, stdout="", stderr="ModelScope warning noise")
 
     monkeypatch.setattr("scripts.produce_slice_package.subprocess.run", fake_run)
-    with pytest.raises(RuntimeError, match="not enough Li Dousha clip anchors"):
+    with pytest.raises(
+        SpeakerFinalizationBlockedError,
+        match="not enough Li Dousha clip anchors",
+    ) as raised:
         run_speaker_finalizer(
             host="localhost",
             candidate_id="candidate",
@@ -704,6 +711,7 @@ def test_runner_surfaces_blocked_manifest_reason_before_runtime_warnings(
             work_dir=tmp_path / "work",
             speaker_python=tmp_path / "python",
         )
+    assert raised.value.reason_code == "SPEAKER_FINALIZATION_BLOCKED"
 
 
 def test_runner_surfaces_structured_speaker_review_status(tmp_path: Path, monkeypatch) -> None:
@@ -738,7 +746,10 @@ def test_runner_surfaces_structured_speaker_review_status(tmp_path: Path, monkey
         return subprocess.CompletedProcess([], 4, stdout="", stderr="warning noise")
 
     monkeypatch.setattr("scripts.produce_slice_package.subprocess.run", fake_run)
-    with pytest.raises(RuntimeError, match="SPEAKER_REVIEW_REQUIRED: singleton"):
+    with pytest.raises(
+        SpeakerReviewRequiredError,
+        match="SPEAKER_REVIEW_REQUIRED: singleton",
+    ) as raised:
         run_speaker_finalizer(
             host="localhost",
             candidate_id="candidate",
@@ -750,6 +761,7 @@ def test_runner_surfaces_structured_speaker_review_status(tmp_path: Path, monkey
             work_dir=tmp_path / "work",
             speaker_python=tmp_path / "python",
         )
+    assert raised.value.reason_code == "SPEAKER_REVIEW_REQUIRED"
 
 
 def test_runner_rejects_malformed_speaker_review_manifest(tmp_path: Path, monkeypatch) -> None:
