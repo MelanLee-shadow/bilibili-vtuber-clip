@@ -111,7 +111,16 @@
   后继 FLV 的旧 row
   没有历史 SHA-256，因此回执必须明确记录 legacy promotion：只沿用 path、稳定 stat、
   webhook file size、finalized ledger source size 及后继 MP4 历史 SHA 交叉绑定，不能宣称
-  后继 FLV 历史 hash 已匹配。另有且仅有一条 timestamp-only 恢复：后继 FLV 与 MP4
+  后继 FLV 历史 hash 已匹配。另有严格的混合重挂恢复：source/XML **仅**
+  `device`/`inode` 变化，而后继 FLV/MP4 **同时且仅** `device`/`inode` 与
+  `mtime_ns`/`ctime_ns` 变化时，四个 exact path 必须同属当前 FUSE；若已有前序回执，
+  portable mount 投影须是新的 epoch。复用相同 idle/deadline/PID-token/重试子进程，对 source、XML、
+  后继 MP4 三个有历史 SHA 的角色全字节重验，并在子进程前后重验四个当前指纹。成功只追加
+  `recording-source-fuse-identity-timestamp-rebind.v1 /
+  FUSE_REMOUNT_IDENTITY_AND_SUCCESSOR_MTIME_CTIME_REATTESTATION` 链式回执；它必须保留
+  后继 FLV 的无历史 SHA legacy promotion，以及 webhook size、finalized source size 和
+  后继 MP4 历史 SHA 约束，不能把当前后继 FLV hash 写成历史 hash。除此以外，唯一的
+  metadata 恢复是 timestamp-only：后继 FLV 与 MP4
   **两者**在同一当前 FUSE mount 上仅 `mtime_ns`/`ctime_ns` 漂移，source/XML 指纹不变，
   四个 path 及 size/mode/device/inode 全不变时，复用同一 idle/deadline/PID-token/重试子进程，
   对 source、XML、后继 MP4 三个有历史 SHA 的角色做全字节重验，并在子进程前后重验四个

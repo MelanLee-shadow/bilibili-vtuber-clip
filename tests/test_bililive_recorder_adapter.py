@@ -173,6 +173,21 @@ def _resign_disposition_after_simulated_remount(row: dict) -> None:
     row["canonical_integrity"]["canonical_json_sha256"] = adapter._canonical_json_sha256(unsigned)
 
 
+def _resign_disposition_after_simulated_mixed_remount(row: dict) -> None:
+    """Model CloudFS remount plus its successor metadata rewrite exactly."""
+
+    for binding in (row["source"], row["xml"]):
+        binding["device"] += 1
+        binding["inode"] += 1
+    for binding in (row["session"]["successor_source"], row["session"]["successor_mp4"]):
+        binding["mtime_ns"] -= 10
+        binding["ctime_ns"] -= 20
+        binding["device"] += 1
+        binding["inode"] += 1
+    unsigned = {key: value for key, value in row.items() if key != "canonical_integrity"}
+    row["canonical_integrity"]["canonical_json_sha256"] = adapter._canonical_json_sha256(unsigned)
+
+
 def _fuse_mount_identity(_path: Path) -> dict[str, object]:
     return {
         "mount_id": 77,
@@ -783,6 +798,104 @@ def test_connection_stub_fuse_remount_rebinds_once_then_stays_metadata_only(
             webhook_files=webhook_files,
             finalized=finalized,
             identity_rebinds=rebinds,
+        )
+
+
+def test_connection_stub_fuse_mixed_remount_reattests_historical_bytes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    _resign_disposition_after_simulated_mixed_remount(row)
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", _fuse_mount_identity)
+    receipts: list[dict] = []
+
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+        identity_rebinds=receipts,
+        identity_rebind_attestations=_identity_rebind_attestations(stub, successor),
+    )
+
+    assert len(receipts) == 1
+    receipt = receipts[0]
+    assert receipt["schema_version"] == "recording-source-fuse-identity-timestamp-rebind.v1"
+    assert receipt["policy"] == "FUSE_REMOUNT_IDENTITY_AND_SUCCESSOR_MTIME_CTIME_REATTESTATION"
+    assert receipt["changed_fields"] == adapter._MIXED_REBIND_CHANGED_FIELDS
+    assert receipt["current_bindings"]["successor_source"]["sha256"] is None
+    assert receipt["legacy_promotion"]["successor_source"] == {
+        "verification_basis": adapter._LEGACY_SUCCESSOR_SOURCE_BASIS,
+        "historical_sha256_available": False,
+        "historical_sha256": None,
+        "path": str(successor),
+        "size_bytes": successor.stat().st_size,
+        "mode": adapter._regular_file_fingerprint(successor)["mode"],
+        "webhook_file_size": webhook_files[f"2026-08-12/{successor.name}"]["file_size"],
+        "finalized_ledger_source_size": finalized[f"2026-08-12/{successor.name}"][
+            "source_size"
+        ],
+        "successor_mp4_historical_sha256": adapter.sha256_file(successor.with_suffix(".mp4")),
+    }
+    for role in ("source", "xml", "successor_source", "successor_mp4"):
+        assert receipt["previous_bindings"][role]["device"] != receipt["current_bindings"][role][
+            "device"
+        ]
+        assert receipt["previous_bindings"][role]["inode"] != receipt["current_bindings"][role][
+            "inode"
+        ]
+    for role in ("successor_source", "successor_mp4"):
+        assert receipt["previous_bindings"][role]["mtime_ns"] != receipt["current_bindings"][role][
+            "mtime_ns"
+        ]
+        assert receipt["previous_bindings"][role]["ctime_ns"] != receipt["current_bindings"][role][
+            "ctime_ns"
+        ]
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+        identity_rebinds=receipts,
+    )
+
+
+def test_connection_stub_fuse_mixed_remount_refuses_source_metadata_rewrite(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, _successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    _resign_disposition_after_simulated_mixed_remount(row)
+    row["source"]["mtime_ns"] -= 1
+    unsigned = {key: value for key, value in row.items() if key != "canonical_integrity"}
+    row["canonical_integrity"]["canonical_json_sha256"] = adapter._canonical_json_sha256(unsigned)
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", _fuse_mount_identity)
+
+    with pytest.raises(adapter.AdapterError, match="non-identity fingerprint drifted"):
+        adapter.validate_connection_stub_disposition(
+            stub,
+            row,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+            identity_rebinds=[],
         )
 
 

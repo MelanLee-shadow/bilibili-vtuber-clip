@@ -188,6 +188,14 @@ _FILE_STABLE_FINGERPRINT_KEYS = ("size_bytes", "mtime_ns", "ctime_ns", "mode")
 _DISPOSITION_FILE_ROLES = ("source", "xml", "successor_source", "successor_mp4")
 _TIMESTAMP_REBIND_ROLES = ("successor_source", "successor_mp4")
 _TIMESTAMP_REBIND_FIELDS = ("mtime_ns", "ctime_ns")
+_MIXED_REBIND_SCHEMA_VERSION = "recording-source-fuse-identity-timestamp-rebind.v1"
+_MIXED_REBIND_POLICY = "FUSE_REMOUNT_IDENTITY_AND_SUCCESSOR_MTIME_CTIME_REATTESTATION"
+_MIXED_REBIND_CHANGED_FIELDS = {
+    "source": ["device", "inode"],
+    "xml": ["device", "inode"],
+    "successor_source": ["mtime_ns", "ctime_ns", "device", "inode"],
+    "successor_mp4": ["mtime_ns", "ctime_ns", "device", "inode"],
+}
 _HISTORICAL_SHA_BASIS = "HISTORICAL_SHA256_MATCH"
 _LEGACY_SUCCESSOR_SOURCE_BASIS = "LEGACY_NO_PRIOR_SHA256_WEBHOOK_FINALIZED_LEDGER_STABLE_STAT"
 
@@ -446,10 +454,18 @@ def _validate_disposition_rebind_chain(
             receipt.get("schema_version") == SOURCE_DISPOSITION_TIMESTAMP_REBIND_SCHEMA_VERSION
             and receipt.get("policy") == SOURCE_DISPOSITION_TIMESTAMP_REBIND_POLICY
         )
-        expected_fields = base_receipt_fields | (
-            {"changed_fields"} if is_timestamp_rebind else set()
+        is_mixed_rebind = (
+            receipt.get("schema_version") == _MIXED_REBIND_SCHEMA_VERSION
+            and receipt.get("policy") == _MIXED_REBIND_POLICY
         )
-        if (not is_identity_rebind and not is_timestamp_rebind) or set(receipt) != expected_fields:
+        expected_fields = base_receipt_fields | (
+            {"changed_fields"} if is_timestamp_rebind or is_mixed_rebind else set()
+        )
+        if (
+            not is_identity_rebind
+            and not is_timestamp_rebind
+            and not is_mixed_rebind
+        ) or set(receipt) != expected_fields:
             raise AdapterError("source disposition identity rebind receipt is malformed")
         integrity = receipt.get("canonical_integrity")
         unsigned = {key: value for key, value in receipt.items() if key != "canonical_integrity"}
@@ -503,7 +519,7 @@ def _validate_disposition_rebind_chain(
                 )
             ):
                 raise AdapterError("source disposition identity rebind binding drifted")
-        else:
+        elif is_timestamp_rebind:
             assert is_timestamp_rebind
             if (
                 receipt.get("legacy_promotion") != _timestamp_rebind_legacy_contract(row, previous)
@@ -521,6 +537,19 @@ def _validate_disposition_rebind_chain(
                 )
             ):
                 raise AdapterError("source disposition timestamp rebind binding drifted")
+        else:
+            assert is_mixed_rebind
+            if (
+                receipt.get("legacy_promotion") != _timestamp_rebind_legacy_contract(row, previous)
+                or receipt.get("changed_fields") != changes
+                or changes != _MIXED_REBIND_CHANGED_FIELDS
+                or (
+                    previous_mount is not None
+                    and _portable_mount_identity(receipt.get("current_mount"))
+                    == _portable_mount_identity(previous_mount)
+                )
+            ):
+                raise AdapterError("source disposition mixed FUSE rebind binding drifted")
         previous = current
         previous_receipt_sha256 = _receipt_sha256(receipt)
         previous_mount = receipt["current_mount"]
@@ -563,6 +592,30 @@ def _prepare_disposition_identity_validation(
             return {"current": current, "pending_rebind": False}
         raise AdapterError("source disposition FUSE mount changed without file identity drift")
     changes = _changed_fingerprint_fields(effective, current)
+    mixed_rebind = changes == _MIXED_REBIND_CHANGED_FIELDS
+    if mixed_rebind:
+        current_mount = current_mount or _shared_fuse_mount_identity(paths.values())
+        if current_mount is None:
+            raise AdapterError(
+                "source disposition mixed drifted outside one shared FUSE mount"
+            )
+        if has_receipts and _portable_mount_identity(current_mount) == _portable_mount_identity(
+            previous_mount
+        ):
+            raise AdapterError("source disposition mixed drifted within one FUSE mount epoch")
+        if not isinstance(identity_rebinds, list):
+            raise AdapterError("source disposition FUSE rebind lacks a durable receipt ledger")
+        return {
+            "current": current,
+            "effective": effective,
+            "previous_receipt_sha256": previous_receipt_sha256,
+            "previous_mount": previous_mount,
+            "current_mount": current_mount,
+            "changed_fields": changes,
+            "rebind_schema_version": _MIXED_REBIND_SCHEMA_VERSION,
+            "rebind_policy": _MIXED_REBIND_POLICY,
+            "pending_rebind": True,
+        }
     timestamp_rebind = set(changes) == set(_TIMESTAMP_REBIND_ROLES) and all(
         fields and all(field in _TIMESTAMP_REBIND_FIELDS for field in fields)
         for fields in changes.values()
@@ -676,10 +729,13 @@ def _finish_disposition_identity_rebind(
         "changed_fields"
     ):
         raise AdapterError("source disposition changed-field projection drifted during rebind")
-    timestamp_rebind = (
+    metadata_rebind = (
         validation.get("rebind_schema_version")
         == SOURCE_DISPOSITION_TIMESTAMP_REBIND_SCHEMA_VERSION
         and validation.get("rebind_policy") == SOURCE_DISPOSITION_TIMESTAMP_REBIND_POLICY
+    ) or (
+        validation.get("rebind_schema_version") == _MIXED_REBIND_SCHEMA_VERSION
+        and validation.get("rebind_policy") == _MIXED_REBIND_POLICY
     )
     receipt: dict[str, Any] = {
         "schema_version": validation["rebind_schema_version"],
@@ -692,11 +748,11 @@ def _finish_disposition_identity_rebind(
         "current_bindings": current_bindings,
         "legacy_promotion": (
             _timestamp_rebind_legacy_contract(row, validation["effective"])
-            if timestamp_rebind
+            if metadata_rebind
             else _identity_rebind_legacy_contract()
         ),
     }
-    if timestamp_rebind:
+    if metadata_rebind:
         receipt["changed_fields"] = validation["changed_fields"]
     receipt["canonical_integrity"] = {
         "algorithm": "sha256",
