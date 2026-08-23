@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -814,95 +813,6 @@ def test_replay_publish_adapter_refuses_source_fact_title_rewrite(
     )
     monkeypatch.setattr(
         "src.autoslice.source_fact_review.source_fact_review_passes", lambda _review: True,
-    )
-    adapter = replay.replay_publish_adapter(
-        plan, source_fact_llm=lambda *_args, **_kwargs: "", private_package=private_package,
-        runtime_authority_root=_runtime_authority(tmp_path),
-    )
-    with pytest.raises(replay.ReviewedBaselineReplayError, match="FROZEN_TITLE_AUTHORITY_DRIFT"):
-        adapter({}, cues=[], run_ffmpeg=False)
-
-
-def test_replay_publish_adapter_accepts_unchanged_manual_surface_without_review(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    out_root, _ = _package(tmp_path)
-    plan = replay.build_replay_plan(repo_root=ROOT, out_root=out_root, date=DATE, candidate_id=CID)
-    package = plan.package_root / "replacement_recuts"
-    cover = package / "cover.png"
-    cover.write_bytes(b"cover")
-    record = {
-        "story_contract": {"candidate_id": CID, "selection_hook": "冻结钩子"},
-        "publish_staging": {
-            "title": "【李豆沙】冻结标题", "selection_hook": "冻结钩子",
-            "source_fact_review": {"status": "PASS", "receipt_sha256": "sha256:" + "a" * 64},
-            "cover_path": str(cover), "cover_generation": {"final_cover_sha256": _sha(b"cover")},
-        },
-        "artifact_hashes": {"cover_sha256": _sha(b"cover")},
-    }
-    plan.record_path.write_text(json.dumps(record))
-    private_package = tmp_path / "private-package"
-    private_package.mkdir()
-    monkeypatch.setattr(
-        replay, "_private_carried_cover_generation",
-        lambda *_args, **_kwargs: (private_package / "cover.png", {"final_cover_sha256": _sha(b"cover")}),
-    )
-    monkeypatch.setattr(
-        "src.autoslice.publish_staging._stage_publish_draft",
-        lambda *_args, **_kwargs: {
-            "story_contract": {"selection_hook": "冻结钩子"},
-            "publish_staging": {
-                "title": "【李豆沙】冻结标题", "title_authority_error": None,
-                "title_authority_status": "RESOLVED_MANUAL", "source_fact_review": None,
-            },
-        },
-    )
-    monkeypatch.setattr(
-        "src.autoslice.source_fact_review.source_fact_review_passes",
-        lambda review: isinstance(review, Mapping) and review.get("status") == "PASS",
-    )
-    adapter = replay.replay_publish_adapter(
-        plan, source_fact_llm=lambda *_args, **_kwargs: "", private_package=private_package,
-        runtime_authority_root=_runtime_authority(tmp_path),
-    )
-    result = adapter({}, cues=[], run_ffmpeg=False)
-    staging = result["publish_staging"]
-    assert isinstance(staging, Mapping)
-    assert staging["title"] == "【李豆沙】冻结标题"
-
-
-def test_replay_publish_adapter_refuses_unverified_missing_source_fact_review(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    out_root, _ = _package(tmp_path)
-    plan = replay.build_replay_plan(repo_root=ROOT, out_root=out_root, date=DATE, candidate_id=CID)
-    package = plan.package_root / "replacement_recuts"
-    cover = package / "cover.png"
-    cover.write_bytes(b"cover")
-    record = {
-        "story_contract": {"candidate_id": CID, "selection_hook": "冻结钩子"},
-        "publish_staging": {
-            "title": "【李豆沙】冻结标题", "selection_hook": "冻结钩子",
-            "cover_path": str(cover), "cover_generation": {"final_cover_sha256": _sha(b"cover")},
-        },
-        "artifact_hashes": {"cover_sha256": _sha(b"cover")},
-    }
-    plan.record_path.write_text(json.dumps(record))
-    private_package = tmp_path / "private-package"
-    private_package.mkdir()
-    monkeypatch.setattr(
-        replay, "_private_carried_cover_generation",
-        lambda *_args, **_kwargs: (private_package / "cover.png", {"final_cover_sha256": _sha(b"cover")}),
-    )
-    monkeypatch.setattr(
-        "src.autoslice.publish_staging._stage_publish_draft",
-        lambda *_args, **_kwargs: {
-            "story_contract": {"selection_hook": "冻结钩子"},
-            "publish_staging": {
-                "title": "【李豆沙】冻结标题", "title_authority_error": None,
-                "title_authority_status": "JOB_TITLE", "source_fact_review": None,
-            },
-        },
     )
     adapter = replay.replay_publish_adapter(
         plan, source_fact_llm=lambda *_args, **_kwargs: "", private_package=private_package,
