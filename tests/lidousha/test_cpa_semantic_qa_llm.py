@@ -285,6 +285,19 @@ def test_json_parse_retry_does_not_repeat_transport_or_nonparse_errors():
 
     calls = 0
 
+    def typed_transport(_prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        raise LlmJsonParseError("LLM_JSON_NO_OBJECT")
+
+    with pytest.raises(LlmJsonParseError):
+        call_and_extract_json_with_parse_retry(
+            "prompt", llm_call=typed_transport, extract_json=extract_json_object
+        )
+    assert calls == 1
+
+    calls = 0
+
     def valid_reply(_prompt: str) -> str:
         nonlocal calls
         calls += 1

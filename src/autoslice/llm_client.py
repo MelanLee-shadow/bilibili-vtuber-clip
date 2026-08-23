@@ -164,8 +164,9 @@ def call_and_extract_json_with_parse_retry(
     fail-closed at their owning gate.
     """
 
+    completion = llm_call(prompt)
     try:
-        return extract_json(llm_call(prompt))
+        return extract_json(completion)
     except LlmJsonParseError:
         return extract_json(llm_call(prompt))
 
