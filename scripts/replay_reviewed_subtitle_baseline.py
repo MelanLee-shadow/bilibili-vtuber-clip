@@ -58,6 +58,7 @@ _SAFE_EXCEPTION_TYPES = frozenset({
     "AssertionError", "AttributeError", "KeyError", "OSError", "RuntimeError", "TypeError", "ValueError",
 })
 _MAX_REVIEW_FLAGS_BYTES = 512 * 1024
+_SPEAKER_RUNTIME_RELATIVE = Path("venv-diar/bin/python")
 _SAFE_PROVIDER_CLASSES = frozenset({"quota", "service", "rejected", "unknown"})
 # A finalizer's SystemExit routinely appends a candidate-private path or an
 # adapter's diagnostic text.  Only these known *outer* families may cross the
@@ -731,7 +732,11 @@ def _prepare(plan, *, runtime: Path, stage_parent: Path, state_path: Path | None
     try:
         finalization = synthesize_replay_spec_and_finalize_private(
             plan, stage=stage, runtime_authority_root=runtime,
-            speaker_python=Path(sys.executable),
+            # The replay controller runs under the system interpreter, but the
+            # speaker finalizer requires the pinned ModelScope/CAM++ runtime.
+            # Binding this to the runtime root keeps full-dry/apply parity with
+            # normal production instead of silently using ``sys.executable``.
+            speaker_python=runtime / _SPEAKER_RUNTIME_RELATIVE,
             source_fact_llm=source_fact_llm,
             adapters=_adapters(), use_production_exact_final_reviewer=True,
             exact_final_text_adapters=_text_adapters(),

@@ -103,6 +103,34 @@ def test_prepare_records_only_an_actual_provider_callback(tmp_path: Path, monkey
     assert caught.value.reason_code == "REPLAY_FINALIZER_CHAT_AUTHORITY_DRIFT"
 
 
+def test_prepare_binds_pinned_speaker_runtime_not_controller_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = tmp_path / "record.json"
+    record.write_text("{}\n")
+    plan = SimpleNamespace(
+        date="2026-08-14", candidate_id="cid", record_path=record,
+        baseline=SimpleNamespace(config={"sha256": "a" * 64}),
+    )
+    parent = tmp_path / "private"
+    parent.mkdir(mode=0o700)
+    stage = parent / "candidate-stage"
+    stage.mkdir()
+    (stage / "stage.json").write_text("{}\n")
+    monkeypatch.setattr(cli, "stage_replay", lambda *_args, **_kwargs: {"stage": str(stage)})
+    monkeypatch.setattr(cli, "_production_llm_call", lambda **_kwargs: lambda _prompt: "{}")
+    captured: dict[str, object] = {}
+
+    def capture_runtime(*_args, **kwargs):
+        captured["speaker_python"] = kwargs["speaker_python"]
+        raise cli.ReviewedBaselineReplayError("REPLAY_FINALIZER_CHAT_AUTHORITY_DRIFT")
+
+    monkeypatch.setattr(cli, "synthesize_replay_spec_and_finalize_private", capture_runtime)
+    with pytest.raises(cli._PrepareFailure):
+        cli._prepare(plan, runtime=tmp_path, stage_parent=parent)
+    assert captured["speaker_python"] == tmp_path / "venv-diar/bin/python"
+
+
 def test_safe_reason_code_keeps_only_typed_codes() -> None:
     assert cli._safe_reason_code(cli.ReviewedBaselineReplayError("REPLAY_BASELINE_APPLICATION_FAILED")) == (
         "REPLAY_BASELINE_APPLICATION_FAILED"
