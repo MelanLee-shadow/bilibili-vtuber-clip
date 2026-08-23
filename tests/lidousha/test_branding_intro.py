@@ -17,6 +17,7 @@ from src.autoslice.branding_intro import (
     BRANDING_INTRO_SCHEMA,
     BRANDING_INTRO_SCHEMA_V2,
     BrandingIntroError,
+    _pick_intro,
     load_branding_intro_policy,
     policy_intros,
     prepend_branding_intro,
@@ -180,6 +181,11 @@ def test_env_switch(tmp_path, intro_media, monkeypatch):
     monkeypatch.setenv(BRANDING_INTRO_ENV_SWITCH, "")
     context = require_branding_intro(tmp_path)
     assert context is not None and context["intro_id"] == "test-intro-v1"
+
+
+def test_empty_intro_context_fails_closed_with_typed_error():
+    with pytest.raises(BrandingIntroError, match="no verified intro candidate"):
+        _pick_intro({}, "a" * 64)
 
 
 def test_media_hash_gate(tmp_path, intro_media):

@@ -527,6 +527,8 @@ def _pick_intro(
                 "media_path": context["media_path"],
                 "media_sha256": context["media_sha256"],
             }, None
+        if not candidates:
+            raise BrandingIntroError("no verified intro candidate in branding context")
         return candidates[0], None
     ids = [str(c["intro_id"]) for c in candidates]
     override = os.environ.get(BRANDING_INTRO_PICK_ENV, "").strip()

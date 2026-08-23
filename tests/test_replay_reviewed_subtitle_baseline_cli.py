@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-import scripts.replay_reviewed_subtitle_baseline as cli
+from scripts import replay_reviewed_subtitle_baseline as cli
+from src.autoslice.branding_intro import BrandingIntroError
 from src.autoslice.producer_speaker import SpeakerFinalizationBlockedError
 
 
@@ -143,6 +144,9 @@ def test_safe_reason_code_keeps_only_typed_codes() -> None:
             "SPEAKER_FINALIZATION_BLOCKED: token=secret /private/provider stderr"
         )
     ) == "SPEAKER_FINALIZATION_BLOCKED"
+    assert cli._safe_reason_code(
+        BrandingIntroError("no verified intro candidate in branding context")
+    ) == "REPLAY_BRANDING_AUTHORITY_BLOCKED"
 
 
 def test_safe_reason_code_extracts_only_allowlisted_system_exit_prefix() -> None:

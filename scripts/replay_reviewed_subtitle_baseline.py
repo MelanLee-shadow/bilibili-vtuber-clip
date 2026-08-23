@@ -36,6 +36,7 @@ from scripts.produce_slice_package import (
 from scripts.suggest_upload_tags import generate_upload_tags
 from src.autoslice.producer_package_finalization import ProducerFinalizationAdapters
 from src.autoslice.producer_text_pipeline import TextPipelineAdapters
+from src.autoslice.branding_intro import BrandingIntroError
 from src.autoslice.llm_client import LLM_JSON_PARSE_REASON_CODES
 from src.autoslice.reviewed_baseline_replay import (
     ReviewedBaselineReplayError, _canonical, _production_llm_call, _safe_directory, _sha,
@@ -109,6 +110,8 @@ def _safe_reason_code(exc: BaseException) -> str:
             ):
                 return prefix
         return "REPLAY_PREPARE_SYSTEM_EXIT"
+    if isinstance(exc, BrandingIntroError):
+        return "REPLAY_BRANDING_AUTHORITY_BLOCKED"
     value = getattr(exc, "reason_code", str(exc))
     if isinstance(value, str) and _SAFE_REASON_CODE.fullmatch(value):
         return value
