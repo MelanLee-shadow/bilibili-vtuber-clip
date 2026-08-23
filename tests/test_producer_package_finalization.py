@@ -96,6 +96,46 @@ def test_final_authority_persists_verified_baseline_owner_receipts(
     assert baseline_audit["mappings"][0]["final_owner_verified"] is True
 
 
+def test_final_authority_forwards_operator_text_ownership(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subtitle = tmp_path / "candidate.srt"
+    subtitle.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n人工审定词面\n",
+        encoding="utf-8",
+    )
+    captured: dict[str, object] = {}
+
+    def verify(*_args, **kwargs) -> bool:
+        captured.update(kwargs)
+        return True
+
+    monkeypatch.setattr(finalization, "verify_chat_authority_final_surfaces", verify)
+    ownership = {"schema_version": "operator_text_full_ownership.v1"}
+    finalization._verify_final_authority(
+        cid="candidate",
+        final_start=0,
+        final_end=1_000,
+        recut=finalization.FinalRecutArtifacts(
+            recut_dir=tmp_path,
+            media_path=tmp_path / "candidate.mp4",
+            subtitle_path=subtitle,
+            text_manifest_path=None,
+            text_manifest=None,
+            redelivery_baseline_audit_path=None,
+            redelivery_baseline_audit=None,
+        ),
+        speaker=finalization.SpeakerArtifacts(None, None, None, None),
+        chat_authority_audit={},
+        chat_authority_path=tmp_path / "candidate.chat-authority.json",
+        subtitle_regression_path=None,
+        operator_text_full_ownership=ownership,
+    )
+
+    assert captured["operator_text_full_ownership"] == ownership
+
+
 def test_deferred_exact_replay_requires_same_truth_id_reverification() -> None:
     audit = finalization._audit_deferred_exact_replay_reverification(
         pre_truth_audit=_deferred_exact_truth_audit(),

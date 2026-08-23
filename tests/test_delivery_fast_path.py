@@ -25,6 +25,9 @@ from src.autoslice.delivery_fast_path import (
     verify_transcript_entities,
 )
 from src.autoslice.final_review_auditor import audit_correction_mutation_authority
+from src.autoslice.producer_text_finalization import (
+    verify_chat_authority_final_surfaces,
+)
 from src.autoslice.truth_ownership_mutation_audit import audit_zero_mutation_correction_skip
 from src.autoslice.reviewed_subtitle_baseline_registry import (
     load_candidate_reviewed_subtitle_baseline,
@@ -110,6 +113,50 @@ def test_operator_text_ownership_skips_rewriters_without_claiming_speaker() -> N
     assert coverage["reviewed_text_cue_count"] == coverage["cue_count"] == 5
     assert coverage["changed_text_cue_count"] == 2
     assert coverage["speaker_ownership"] == "NOT_CLAIMED_TEXT_ONLY"
+
+
+def test_operator_text_ownership_supersedes_only_legacy_text_decisions() -> None:
+    ownership = resolve_operator_text_full_ownership(_operator_text_owned_spec())
+    assert ownership is not None
+    final_srt = "1\n00:00:00,000 --> 00:00:01,000\n人工审定词面\n"
+    audit = {
+        "applied": [{
+            "matched_start_ms": 0,
+            "matched_end_ms": 1_000,
+            "exact_text": "旧弹幕词面",
+        }],
+        "pending_text_overrides": [],
+    }
+
+    assert verify_chat_authority_final_surfaces(
+        audit,
+        final_text_srt=final_srt,
+        final_speaker_srt=final_srt,
+        delivery_start_ms=0,
+        delivery_end_ms=1_000,
+        operator_text_full_ownership=ownership,
+    )
+    assert audit["applied"][0]["final_verification_scope"] == (
+        "SUPERSEDED_BY_OPERATOR_REVIEWED_BASELINE"
+    )
+    assert audit["final_redelivery_baseline_owner_verification"]["status"] == (
+        "NOT_APPLICABLE"
+    )
+
+
+def test_operator_text_ownership_does_not_bypass_hard_surface_gates() -> None:
+    ownership = resolve_operator_text_full_ownership(_operator_text_owned_spec())
+    assert ownership is not None
+    final_srt = "1\n00:00:00,000 --> 00:00:01,000\nboku不对\n"
+
+    assert not verify_chat_authority_final_surfaces(
+        {"pending_text_overrides": []},
+        final_text_srt=final_srt,
+        final_speaker_srt=final_srt,
+        delivery_start_ms=0,
+        delivery_end_ms=1_000,
+        operator_text_full_ownership=ownership,
+    )
 
 
 def test_operator_pin_and_truth_lane_versions_are_not_interchangeable() -> None:

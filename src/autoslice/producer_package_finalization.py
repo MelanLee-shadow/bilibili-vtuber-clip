@@ -56,6 +56,7 @@ from src.autoslice.cover_text_pixel_evidence import (
     verify_rendered_text_pixel_artifacts,
 )
 from src.autoslice.cue_split_hygiene import merge_release_grade_cues
+from src.autoslice.delivery_fast_path import resolve_operator_text_full_ownership
 from src.autoslice.final_review_auditor import persist_review_audit
 from src.autoslice.final_review_contract import (
     EXACT_FINAL_CPA_SELF_HEAL_MAX_REPAIR_PASSES,
@@ -1934,7 +1935,7 @@ def _verify_final_authority(
     speaker: SpeakerArtifacts,
     chat_authority_audit: dict,
     chat_authority_path: Path,
-    subtitle_regression_path: Path | None,
+    subtitle_regression_path: Path | None, operator_text_full_ownership: Mapping[str, object] | None = None,
 ) -> AuthorityArtifacts:
     subtitle_path = recut.subtitle_path
     text_manifest = recut.text_manifest
@@ -1988,12 +1989,10 @@ def _verify_final_authority(
         delivery_start_ms=final_start,
     )
     final_authority_ok = pending_override_ok and verify_chat_authority_final_surfaces(
-        chat_authority_audit,
-        final_text_srt=final_text,
-        final_speaker_srt=final_speaker_text,
-        delivery_start_ms=final_start,
+        chat_authority_audit, final_text_srt=final_text,
+        final_speaker_srt=final_speaker_text, delivery_start_ms=final_start,
         delivery_end_ms=final_end,
-    )
+        operator_text_full_ownership=operator_text_full_ownership)
     # Final-owner verification annotates every reviewed-baseline mapping in
     # place.  Persist those post-verification bytes before the record hashes
     # and embeds the same object; otherwise the package contains a stale
@@ -2700,6 +2699,7 @@ def finalize_producer_package(
         chat_authority_audit=chat_authority_audit,
         chat_authority_path=chat_authority_path,
         subtitle_regression_path=subtitle_regression_path,
+        operator_text_full_ownership=resolve_operator_text_full_ownership(spec),
     )
     record = _build_and_burn_record(
         options=options,
