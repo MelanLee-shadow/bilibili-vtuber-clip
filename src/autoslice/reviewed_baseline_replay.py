@@ -749,15 +749,22 @@ def _reconstruct_structured_chat(
 def _production_llm_call(*, runtime_root: Path, effort: str) -> Callable[[str], str]:
     """Use the ordinary CPA command transport with the runtime slot pool."""
 
-    from src.autoslice.llm_client import LlmConfig, build_llm_call
+    from src.autoslice.llm_client import (
+        LlmConfig,
+        build_llm_call,
+        runtime_cpa_command_environment,
+    )
 
+    runtime = _safe_directory(runtime_root)
     return build_llm_call(LlmConfig(
         transport="command",
         command_template=(
             "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} "
             f"'gpt-5.6-sol gpt-5.5 gpt-5.4' {effort} 1"
         ),
-        timeout_seconds=600.0, runtime_root=str(_safe_directory(runtime_root)),
+        timeout_seconds=600.0,
+        runtime_root=str(runtime),
+        command_child_env=runtime_cpa_command_environment(runtime),
     ))
 
 

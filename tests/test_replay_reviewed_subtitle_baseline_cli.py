@@ -121,6 +121,55 @@ def test_safe_reason_code_extracts_only_allowlisted_system_exit_prefix() -> None
     )
 
 
+def test_generic_prepare_exception_keeps_only_internal_locus_and_no_message(tmp_path: Path) -> None:
+    def internal_value_error() -> None:
+        raise ValueError("token=secret /private/stage provider stderr")
+
+    try:
+        internal_value_error()
+    except ValueError as exc:
+        failure = cli._prepare_failure(exc=exc)
+    diagnostic = failure.exception_diagnostic
+    assert diagnostic is not None
+    assert diagnostic["exception_type"] == "ValueError"
+    assert diagnostic["exception_locus"]["module"] == "tests.test_replay_reviewed_subtitle_baseline_cli"
+    assert diagnostic["exception_locus"]["function"] == "internal_value_error"
+    assert "token=secret" not in json.dumps(diagnostic, sort_keys=True)
+    assert "/private/stage" not in json.dumps(diagnostic, sort_keys=True)
+
+    runtime = tmp_path / "runtime"
+    repo = runtime / "repo"
+    repo.mkdir(parents=True)
+    (repo / "DEPLOYED_COMMIT").write_text("a" * 40 + "\n")
+    (repo / "DEPLOYED_AUTHORITY_MANIFEST.json").write_text("{}\n")
+    plan = SimpleNamespace(
+        date="2026-08-14", candidate_id="cid", expected_video_sha256="sha256:" + "b" * 64,
+        baseline=SimpleNamespace(config={"sha256": "c" * 64}),
+    )
+    receipt_sha = cli._sanitized_failure_receipt(
+        runtime=runtime, plan=plan, matrix=[], provider_attempted=False,
+        exception_diagnostic=diagnostic,
+    )
+    receipt = next((runtime / "reports").rglob(receipt_sha.removeprefix("sha256:") + ".json"))
+    payload = receipt.read_text()
+    assert json.loads(payload)["exception_diagnostic"] == diagnostic
+    assert "token=secret" not in payload
+    assert "/private/stage" not in payload
+
+
+def test_generic_exception_drops_external_locus_and_typed_errors_stay_unchanged() -> None:
+    namespace: dict[str, object] = {}
+    exec(compile(
+        "def capture():\n    try:\n        raise ValueError('secret outside repository')\n    except ValueError as exc:\n        return exc\n",
+        "/tmp/untrusted-provider.py", "exec",
+    ), namespace)
+    external = namespace["capture"]()
+    assert isinstance(external, ValueError)
+    assert cli._generic_exception_diagnostic(external) == {"exception_type": "ValueError"}
+    typed = cli._prepare_failure(exc=cli.ReviewedBaselineReplayError("REPLAY_BASELINE_APPLICATION_FAILED"))
+    assert typed.exception_diagnostic is None
+
+
 def test_record_bound_authority_failures_get_their_own_predicate() -> None:
     assert cli._failure_predicate("REPLAY_FINALIZER_CHAT_AUTHORITY_DRIFT") == "RECORD_BOUND_CHAT_AUTHORITY"
     assert cli._failure_predicate("REPLAY_FINALIZER_CLIP_CONTEXT_PAYLOAD_DRIFT") == "RECORD_BOUND_CLIP_CONTEXT"
@@ -402,6 +451,35 @@ def test_main_returns_two_for_blocked_prepare_without_external_rc_wrapper(
     assert item["provider_failure_summary"] == {
         "provider_class": "service", "provider_status_codes": [408, 503],
     }
+
+
+def test_main_uses_same_closed_generic_diagnostic_in_item_and_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    parent = tmp_path / "private"
+    parent.mkdir(mode=0o700)
+    plan = SimpleNamespace(date="2026-08-14", candidate_id="cid", matrix=(), baseline=SimpleNamespace(config={"sha256": "a" * 64}))
+    diagnostic = {"exception_type": "ValueError", "exception_locus": {
+        "module": "src.autoslice.reviewed_baseline_replay", "function": "prepare", "line": 91,
+    }}
+    monkeypatch.setattr(cli, "_safe_directory", lambda path: Path(path))
+    monkeypatch.setattr(cli, "_runtime_gate", lambda _runtime: None)
+    monkeypatch.setattr(cli, "build_replay_plan", lambda **_kwargs: plan)
+    monkeypatch.setattr(cli, "_prepare", lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        cli._PrepareFailure(reason_code="REPLAY_PREPARE_EXCEPTION", provider_attempted=False,
+                            exception_diagnostic=diagnostic)
+    ))
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(cli, "_sanitized_failure_receipt", lambda **kwargs: captured.update(kwargs) or "sha256:" + "d" * 64)
+    assert cli.main([
+        "--full-dry-run", "--runtime-root", str(runtime), "--date", "2026-08-14",
+        "--candidate-id", "cid", "--private-stage-parent", str(parent),
+    ]) == 2
+    assert captured["exception_diagnostic"] == diagnostic
+    item = json.loads(capsys.readouterr().out)["candidates"][0]
+    assert item["exception_diagnostic"] == diagnostic
 
 
 def test_full_dry_receipt_carries_only_precise_review_flag_failures(

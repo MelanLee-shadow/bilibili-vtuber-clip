@@ -16,7 +16,9 @@ import os
 import re
 import stat
 import sys
+import traceback
 from pathlib import Path
+from typing import Mapping
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -51,6 +53,10 @@ _REPLAY_OWNED_STALE_REASONS = frozenset({
 })
 _REPLAY_NORMALIZABLE_CATEGORIES = frozenset({"STATE_DRIFT", "NEEDS_IVAN_TRUTH"})
 _SAFE_REASON_CODE = re.compile(r"[A-Z][A-Z0-9_]{2,159}\Z")
+_SAFE_EXCEPTION_TYPE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}\Z")
+_SAFE_EXCEPTION_TYPES = frozenset({
+    "AssertionError", "AttributeError", "KeyError", "OSError", "RuntimeError", "TypeError", "ValueError",
+})
 _MAX_REVIEW_FLAGS_BYTES = 512 * 1024
 _SAFE_PROVIDER_CLASSES = frozenset({"quota", "service", "rejected", "unknown"})
 # A finalizer's SystemExit routinely appends a candidate-private path or an
@@ -74,7 +80,8 @@ class _PrepareFailure(RuntimeError):
                  prepared_manifest_sha256: str | None = None,
                  provider_receipt_sha256s: tuple[str, ...] = (),
                  predicate_failures: tuple[tuple[str, str], ...] = (),
-                 provider_failure_summary: dict[str, object] | None = None) -> None:
+                 provider_failure_summary: dict[str, object] | None = None,
+                 exception_diagnostic: Mapping[str, object] | None = None) -> None:
         super().__init__(reason_code)
         self.reason_code = reason_code
         self.provider_attempted = provider_attempted
@@ -83,6 +90,7 @@ class _PrepareFailure(RuntimeError):
         self.provider_receipt_sha256s = provider_receipt_sha256s
         self.predicate_failures = predicate_failures
         self.provider_failure_summary = provider_failure_summary
+        self.exception_diagnostic = _closed_exception_diagnostic(exception_diagnostic)
 
 
 def _safe_reason_code(exc: BaseException) -> str:
@@ -104,6 +112,63 @@ def _safe_reason_code(exc: BaseException) -> str:
     if isinstance(value, str) and _SAFE_REASON_CODE.fullmatch(value):
         return value
     return "REPLAY_PREPARE_EXCEPTION"
+
+
+def _closed_exception_diagnostic(value: Mapping[str, object] | None) -> dict[str, object] | None:
+    """Accept only a bounded, repository-local generic exception locator."""
+
+    if not isinstance(value, Mapping) or set(value) - {"exception_type", "exception_locus"}:
+        return None
+    token = value.get("exception_type")
+    if not isinstance(token, str) or token not in _SAFE_EXCEPTION_TYPES or not _SAFE_EXCEPTION_TYPE.fullmatch(token):
+        return None
+    result: dict[str, object] = {"exception_type": token}
+    locus = value.get("exception_locus")
+    if locus is None:
+        return result
+    if not isinstance(locus, Mapping) or set(locus) != {"module", "function", "line"}:
+        return None
+    module, function, line = locus.get("module"), locus.get("function"), locus.get("line")
+    if (
+        not isinstance(module, str) or not 1 <= len(module) <= 240
+        or not all(part.isidentifier() for part in module.split("."))
+        or not isinstance(function, str) or not 1 <= len(function) <= 128 or not function.isidentifier()
+        or isinstance(line, bool) or not isinstance(line, int) or not 1 <= line <= 10_000_000
+    ):
+        return None
+    result["exception_locus"] = {"module": module, "function": function, "line": line}
+    return result
+
+
+def _generic_exception_diagnostic(exc: BaseException) -> dict[str, object] | None:
+    """Return the innermost safe in-repository locus for an untyped failure."""
+
+    if (
+        not isinstance(exc, Exception)
+        or isinstance(exc, ReviewedBaselineReplayError)
+        or _safe_reason_code(exc) != "REPLAY_PREPARE_EXCEPTION"
+        or type(exc).__name__ not in _SAFE_EXCEPTION_TYPES
+    ):
+        return None
+    diagnostic: dict[str, object] = {"exception_type": type(exc).__name__}
+    repository = ROOT.resolve()
+    for frame in reversed(traceback.extract_tb(exc.__traceback__)):
+        try:
+            relative = Path(frame.filename).resolve().relative_to(repository)
+        except (OSError, ValueError):
+            continue
+        if relative.suffix != ".py" or len(relative.parts) > 16:
+            continue
+        module_parts = (*relative.with_suffix("").parts,)
+        if not module_parts or not all(part.isidentifier() for part in module_parts):
+            continue
+        if not isinstance(frame.name, str) or not frame.name.isidentifier() or not 1 <= frame.lineno <= 10_000_000:
+            continue
+        diagnostic["exception_locus"] = {
+            "module": ".".join(module_parts), "function": frame.name, "line": frame.lineno,
+        }
+        break
+    return _closed_exception_diagnostic(diagnostic)
 
 
 def _args(argv: list[str] | None) -> argparse.Namespace:
@@ -422,6 +487,7 @@ def _prepare_failure(*, exc: BaseException, stage: Path | None = None, plan=None
         provider_attempted=False,
         predicate_failures=failures,
         provider_failure_summary=provider_failure_summary,
+        exception_diagnostic=_generic_exception_diagnostic(exc),
     )
 
 
@@ -470,7 +536,8 @@ def _sanitized_failure_receipt(*, runtime: Path, plan, matrix: list[dict[str, ob
                                 stage_manifest_sha256: str | None = None,
                                 prepared_manifest_sha256: str | None = None,
                                 provider_receipt_sha256s: tuple[str, ...] = (),
-                                provider_failure_summary: dict[str, object] | None = None) -> str:
+                                provider_failure_summary: dict[str, object] | None = None,
+                                exception_diagnostic: Mapping[str, object] | None = None) -> str:
     """Create one sealed diagnostic receipt without a path, prompt, or error text."""
 
     deployed = (runtime / "repo" / "DEPLOYED_COMMIT").read_text(encoding="utf-8").strip()
@@ -495,6 +562,9 @@ def _sanitized_failure_receipt(*, runtime: Path, plan, matrix: list[dict[str, ob
     summary = _provider_failure_summary(provider_failure_summary)
     if summary is not None:
         body["provider_failure_summary"] = summary
+    generic = _closed_exception_diagnostic(exception_diagnostic)
+    if generic is not None:
+        body["exception_diagnostic"] = generic
     body["receipt_sha256"] = "sha256:" + hashlib.sha256(_canon(body)).hexdigest()
     root = runtime
     for index, component in enumerate(("reports", "reviewed-baseline-replay-diagnostics", plan.date, plan.candidate_id)):
@@ -739,6 +809,9 @@ def main(argv: list[str] | None = None) -> int:
                         provider_failure_summary=_provider_failure_summary(
                             getattr(exc, "provider_failure_summary", None),
                         ),
+                        exception_diagnostic=_closed_exception_diagnostic(
+                            getattr(exc, "exception_diagnostic", None),
+                        ),
                     )
         result = {"schema_version": "reviewed-baseline-replay-run.v1",
                   "mode": "APPLY" if args.apply else "FULL_DRY_RUN",
@@ -754,6 +827,7 @@ def main(argv: list[str] | None = None) -> int:
                 prepared_sha = error.prepared_manifest_sha256
                 provider_hashes = error.provider_receipt_sha256s
                 provider_summary = error.provider_failure_summary
+                exception_diagnostic = _closed_exception_diagnostic(error.exception_diagnostic)
                 matrix = _matrix(plan, status="NOT_EVALUATED",
                                  failures=dict(error.predicate_failures) or {
                                      _failure_predicate(reason_code): reason_code,
@@ -763,11 +837,14 @@ def main(argv: list[str] | None = None) -> int:
                     stage_manifest_sha256=stage_sha, prepared_manifest_sha256=prepared_sha,
                     provider_receipt_sha256s=provider_hashes,
                     provider_failure_summary=provider_summary,
+                    exception_diagnostic=exception_diagnostic,
                 )
                 item = {"candidate_id": plan.candidate_id, "status": "BLOCKED",
                         "predicate_matrix": matrix, "diagnostic_receipt_sha256": receipt}
                 if provider_summary is not None:
                     item["provider_failure_summary"] = provider_summary
+                if exception_diagnostic is not None:
+                    item["exception_diagnostic"] = exception_diagnostic
                 result["candidates"].append(item)
                 continue
             stage, finalization, prepared_after, stage_sha, provider_hashes, provider_attempted = prepared[plan.candidate_id]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ import pytest
 import src.autoslice.redelivery_full_window_replay as full_window_replay
 import src.autoslice.reviewed_baseline_replay as replay
 import src.autoslice.reviewed_baseline_replay_authority as replay_authority
+from src.autoslice import llm_client
 from src.autoslice.repository_asset_authority import _canonical_sha256
 
 
@@ -73,6 +75,122 @@ def _runtime_authority(root: Path) -> Path:
     (repo / "DEPLOYED_COMMIT").write_text(commit + "\n")
     (repo / "DEPLOYED_AUTHORITY_MANIFEST.json").write_text(json.dumps(manifest))
     return runtime
+
+
+def _runtime_cpa_env(runtime: Path, payload: str) -> Path:
+    runtime.mkdir(parents=True, exist_ok=True)
+    path = runtime / "cpa.env"
+    path.write_text(payload, encoding="utf-8")
+    path.chmod(0o600)
+    return path
+
+
+def test_runtime_cpa_command_environment_is_private_and_child_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = tmp_path / "runtime"
+    _runtime_cpa_env(runtime, "\n".join((
+        "# ordinary config",
+        "GEMINI_PAID_BACKUP_DAILY_CAP",  # ignored before parsing
+        "export CPA_BASE_URL='https://runtime.example.test/v1'",
+        "CPA_API_KEY='runtime-secret'",
+        "",
+    )))
+    monkeypatch.setenv("CPA_BASE_URL", "https://ambient.invalid/v1")
+    monkeypatch.setenv("CPA_API_KEY", "ambient-secret")
+    monkeypatch.setenv("CPA_AMBIENT_EXTRA", "preserved-cpa-value")
+    monkeypatch.setenv("UNRELATED", "preserved")
+    child_env = llm_client.runtime_cpa_command_environment(runtime, _owner_uid=os.getuid())
+    assert child_env["CPA_BASE_URL"] == "https://runtime.example.test/v1"
+    assert child_env["CPA_API_KEY"] == "runtime-secret"
+    assert child_env["CPA_AMBIENT_EXTRA"] == "preserved-cpa-value"
+    assert child_env["UNRELATED"] == "preserved"
+    assert os.environ["CPA_BASE_URL"] == "https://ambient.invalid/v1"
+    assert os.environ["CPA_API_KEY"] == "ambient-secret"
+
+    observed: dict[str, object] = {}
+
+    def fake_run(command: list[str], **kwargs: object) -> object:
+        observed["env"] = kwargs["env"]
+        completion = next(Path(part) for part in command if part.endswith("completion.txt"))
+        completion.write_text("ok", encoding="utf-8")
+        return type("Completed", (), {"returncode": 0, "stderr": ""})()
+
+    monkeypatch.setattr(llm_client.subprocess, "run", fake_run)
+    config = llm_client.LlmConfig(
+        transport="command", command_template="echo {prompt_file} {completion_file}",
+        command_child_env=child_env,
+    )
+    assert "runtime-secret" not in repr(config)
+    assert llm_client._call_command("fixture", config) == "ok"
+    assert observed["env"] is child_env
+
+
+def test_runtime_cpa_command_environment_accepts_private_symlink_and_refuses_bad_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    authority = tmp_path / "authority" / "cpa.env"
+    authority.parent.mkdir()
+    authority.write_text("CPA_BASE_URL=https://runtime.example/v1\nCPA_API_KEY=secret\n", encoding="utf-8")
+    authority.chmod(0o600)
+    (runtime / "cpa.env").symlink_to(authority)
+    env = llm_client.runtime_cpa_command_environment(runtime, _owner_uid=os.getuid())
+    assert env["CPA_BASE_URL"] == "https://runtime.example/v1"
+
+    (runtime / "cpa.env").unlink()
+    cpa = _runtime_cpa_env(runtime, "CPA_BASE_URL=https://runtime.example/v1\nCPA_API_KEY=secret\n")
+    cpa.chmod(0o644)
+    with pytest.raises(llm_client.LlmRuntimeEnvironmentError, match="UNSAFE"):
+        llm_client.runtime_cpa_command_environment(runtime, _owner_uid=os.getuid())
+    cpa.chmod(0o600)
+    cpa.write_text("not even assignment\nCPA_BROKEN\n", encoding="utf-8")
+    with pytest.raises(llm_client.LlmRuntimeEnvironmentError, match="INVALID"):
+        llm_client.runtime_cpa_command_environment(runtime, _owner_uid=os.getuid())
+
+    cpa.write_text("CPA_BASE_URL=https://runtime.example/v1\nCPA_API_KEY=secret\n", encoding="utf-8")
+    real_read = llm_client.os.read
+    changed = False
+
+    def drift_read(descriptor: int, size: int) -> bytes:
+        nonlocal changed
+        payload = real_read(descriptor, size)
+        if not changed:
+            changed = True
+            cpa.write_text("CPA_BASE_URL=https://runtime.example/v1\nCPA_API_KEY=secret\n", encoding="utf-8")
+        return payload
+
+    monkeypatch.setattr(llm_client.os, "read", drift_read)
+    with pytest.raises(llm_client.LlmRuntimeEnvironmentError, match="UNSAFE"):
+        llm_client.runtime_cpa_command_environment(runtime, _owner_uid=os.getuid())
+
+
+def test_production_replay_llm_binds_runtime_cpa_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = tmp_path / "runtime"
+    _runtime_cpa_env(runtime, "CPA_BASE_URL=https://runtime.example/v1\nCPA_API_KEY=runtime-secret\n")
+    captured: dict[str, object] = {}
+
+    def fake_build(config: llm_client.LlmConfig):
+        captured["config"] = config
+        return lambda _prompt: "{}"
+
+    monkeypatch.setattr(llm_client, "build_llm_call", fake_build)
+    real_environment = llm_client.runtime_cpa_command_environment
+    monkeypatch.setattr(
+        llm_client, "runtime_cpa_command_environment",
+        lambda path: real_environment(path, _owner_uid=os.getuid()),
+    )
+    monkeypatch.setenv("CPA_BASE_URL", "https://ambient.invalid/v1")
+    call = replay._production_llm_call(runtime_root=runtime, effort="medium")
+    assert call("fixture") == "{}"
+    config = captured["config"]
+    assert isinstance(config, llm_client.LlmConfig)
+    assert config.command_child_env is not None
+    assert config.command_child_env["CPA_BASE_URL"] == "https://runtime.example/v1"
+    assert os.environ["CPA_BASE_URL"] == "https://ambient.invalid/v1"
 
 
 def test_plan_is_read_only_and_binds_canonical_v2_v3_assets(tmp_path: Path) -> None:
