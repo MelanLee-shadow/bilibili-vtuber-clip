@@ -1146,7 +1146,7 @@ def flatten_and_audit_private_replay(
     """
 
     from scripts.audit_lidousha_review_package import AUDIT_POLICY_EPOCH, audit_package
-    from scripts.build_manual_review_manifest import build_manual
+    from scripts.build_manual_review_manifest import DailyManifestError, build_manual
     from src.autoslice.producer_delivery_transaction import PreparedDelivery, _read_document
 
     candidate_id = plan.candidate_id
@@ -1247,6 +1247,13 @@ def flatten_and_audit_private_replay(
         _replace_private_artifact(source, target)
     try:
         manifest = build_manual(package, operator="Codex root", note="Reviewed-baseline replay private preflight; upload remains disabled.")
+    except DailyManifestError as exc:
+        reason_code = getattr(exc, "reason_code", None)
+        if isinstance(reason_code, str) and re.fullmatch(
+            r"SPEAKER_[A-Z0-9_]{2,159}", reason_code
+        ):
+            raise ReviewedBaselineReplayError(f"REPLAY_PRIVATE_MANIFEST_{reason_code}") from exc
+        raise ReviewedBaselineReplayError("REPLAY_PRIVATE_MANIFEST_BLOCKED") from exc
     except Exception as exc:
         raise ReviewedBaselineReplayError("REPLAY_PRIVATE_MANIFEST_BLOCKED") from exc
     manifest_path = package / "review_manifest.json"

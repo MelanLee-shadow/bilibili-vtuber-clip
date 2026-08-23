@@ -62,10 +62,17 @@ from src.autoslice.qixi_operator_exact_title_source_fact import (  # noqa: E402
 
 CHANNEL_PROFILE = load_channel_profile(ROOT)
 _SPEAKER_EVIDENCE_UNSET = object()
+_MANIFEST_REASON_CODE_RE = re.compile(r"[A-Z][A-Z0-9_]{2,159}\Z")
 
 
 class DailyManifestError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, reason_code: str | None = None) -> None:
+        self.reason_code = (
+            reason_code
+            if isinstance(reason_code, str) and _MANIFEST_REASON_CODE_RE.fullmatch(reason_code)
+            else None
+        )
+        super().__init__(message)
 
 
 def _sha256(path: Path) -> str:
@@ -497,7 +504,8 @@ def _rebuild_package_speaker_evidence(
         )
     except SpeakerEvidenceRejected as exc:
         raise DailyManifestError(
-            f"source-fact speaker evidence rejected: {exc.code}: {exc.detail}"
+            "source-fact speaker evidence rejected",
+            reason_code=exc.code,
         ) from exc
     except OSError as exc:
         raise DailyManifestError("source-fact package speaker evidence is unreadable") from exc

@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from scripts import replay_reviewed_subtitle_baseline as cli
+from scripts.build_lidousha_daily_review_manifest import DailyManifestError
 from src.autoslice.branding_intro import BrandingIntroError
 from src.autoslice.producer_speaker import SpeakerFinalizationBlockedError
 
@@ -147,6 +148,14 @@ def test_safe_reason_code_keeps_only_typed_codes() -> None:
     assert cli._safe_reason_code(
         BrandingIntroError("no verified intro candidate in branding context")
     ) == "REPLAY_BRANDING_AUTHORITY_BLOCKED"
+    assert cli._safe_reason_code(
+        cli.ReviewedBaselineReplayError(
+            "REPLAY_PRIVATE_MANIFEST_SPEAKER_GUESS_REQUIRES_HUMAN_REVIEW"
+        )
+    ) == "REPLAY_PRIVATE_MANIFEST_SPEAKER_GUESS_REQUIRES_HUMAN_REVIEW"
+    assert DailyManifestError(
+        "speaker evidence rejected", reason_code="SPEAKER_GUESS_REQUIRES_HUMAN_REVIEW"
+    ).reason_code == "SPEAKER_GUESS_REQUIRES_HUMAN_REVIEW"
 
 
 def test_safe_reason_code_extracts_only_allowlisted_system_exit_prefix() -> None:
