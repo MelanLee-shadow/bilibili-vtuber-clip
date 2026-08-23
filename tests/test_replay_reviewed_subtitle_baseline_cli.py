@@ -221,6 +221,40 @@ def test_prepare_retains_only_closed_provider_failure_summary(
     assert not stage.exists()
 
 
+def test_replay_provider_summary_keeps_only_allowlisted_json_parse_code(tmp_path: Path) -> None:
+    discovery = {
+        "provider_error_code": "LLM_JSON_NO_OBJECT",
+        "provider_detail": "token=secret /private/prompt completion",
+        "provider_class": "forged",
+        "provider_status_codes": [999],
+    }
+    assert cli._provider_failure_summary(discovery) == {
+        "provider_error_code": "LLM_JSON_NO_OBJECT",
+    }
+
+    runtime = tmp_path / "runtime"
+    repo = runtime / "repo"
+    repo.mkdir(parents=True)
+    (repo / "DEPLOYED_COMMIT").write_text("a" * 40 + "\n")
+    (repo / "DEPLOYED_AUTHORITY_MANIFEST.json").write_text("{}\n")
+    plan = SimpleNamespace(
+        date="2026-08-14", candidate_id="cid",
+        expected_video_sha256="sha256:" + "b" * 64,
+        baseline=SimpleNamespace(config={"sha256": "c" * 64}),
+    )
+    receipt_sha = cli._sanitized_failure_receipt(
+        runtime=runtime, plan=plan, matrix=[], provider_attempted=True,
+        provider_failure_summary=cli._provider_failure_summary(discovery),
+    )
+    receipt = next((runtime / "reports").rglob(receipt_sha.removeprefix("sha256:") + ".json"))
+    payload = receipt.read_text()
+    assert json.loads(payload)["provider_failure_summary"] == {
+        "provider_error_code": "LLM_JSON_NO_OBJECT",
+    }
+    assert "token=secret" not in payload
+    assert "/private/prompt" not in payload
+
+
 @pytest.mark.parametrize("discovery", [
     None,
     {"provider_class": "forged", "provider_status_codes": [503]},

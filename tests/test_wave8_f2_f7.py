@@ -16,6 +16,7 @@ from src.autoslice.pronoun_consistency import (
     CandidatePronounAuditError,
     discover_candidate_pronoun_findings,
 )
+from src.autoslice.llm_client import extract_json_object
 
 
 def _srt(*texts: str) -> str:
@@ -107,6 +108,40 @@ def test_f2_pristine_machine_occurrence_omission_fails_closed():
     assert raised.value.reason_code == (
         "CANDIDATE_PRONOUN_DECISION_COVERAGE_INVALID"
     )
+
+
+def test_pronoun_parse_retry_reuses_prompt_once_and_schema_failure_does_not_retry():
+    prompts: list[str] = []
+    replies = iter(["not an object", None])
+
+    def retrying_call(prompt: str) -> str:
+        prompts.append(prompt)
+        reply = next(replies)
+        return _keep_every_machine_occurrence(prompt) if reply is None else reply
+
+    findings, audit = discover_candidate_pronoun_findings(
+        F2_PRISTINE_MACHINE_SRT,
+        policy_text="policy",
+        candidate_context_text="context",
+        llm_call=retrying_call,
+        extract_json=extract_json_object,
+    )
+    assert findings == []
+    assert audit["status"] == "PASS"
+    assert len(prompts) == 2
+    assert prompts[0] == prompts[1]
+
+    calls: list[str] = []
+    with pytest.raises(CandidatePronounAuditError) as raised:
+        discover_candidate_pronoun_findings(
+            F2_PRISTINE_MACHINE_SRT,
+            policy_text="policy",
+            candidate_context_text="context",
+            llm_call=lambda prompt: calls.append(prompt) or '{"decisions":[]}',
+            extract_json=extract_json_object,
+        )
+    assert raised.value.reason_code == "CANDIDATE_PRONOUN_DECISION_COVERAGE_INVALID"
+    assert len(calls) == 1
 
 
 def test_f2_machine_gender_context_yields_bounded_single_and_plural_findings():

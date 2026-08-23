@@ -35,6 +35,25 @@ class LlmCallError(RuntimeError):
     pass
 
 
+LLM_JSON_PARSE_REASON_CODES = frozenset(
+    {
+        "LLM_JSON_NO_OBJECT",
+        "LLM_JSON_UNPARSEABLE_OBJECT",
+        "LLM_JSON_ROOT_INVALID",
+    }
+)
+
+
+class LlmJsonParseError(LlmCallError):
+    """A closed JSON-extraction failure, with no completion text attached."""
+
+    def __init__(self, reason_code: str) -> None:
+        if reason_code not in LLM_JSON_PARSE_REASON_CODES:
+            raise ValueError("unknown LLM JSON parse reason")
+        self.reason_code = reason_code
+        super().__init__(reason_code)
+
+
 @dataclass(frozen=True)
 class LlmConfig:
     transport: str  # "direct" | "command"
@@ -80,6 +99,8 @@ def extract_json_object(completion: str) -> dict[str, object]:
     object instead of trusting the whole completion to be JSON.
     """
 
+    if not isinstance(completion, str):
+        raise LlmJsonParseError("LLM_JSON_ROOT_INVALID")
     text = completion.strip()
     if text.startswith("```"):
         text = text.split("```", 2)[1] if text.count("```") >= 2 else text.strip("`")
@@ -113,11 +134,40 @@ def extract_json_object(completion: str) -> dict[str, object]:
                     try:
                         payload = json.loads(candidate)
                     except json.JSONDecodeError as exc:
-                        raise LlmCallError(f"completion contained unparseable JSON object: {exc}") from exc
+                        raise LlmJsonParseError(
+                            "LLM_JSON_UNPARSEABLE_OBJECT"
+                        ) from exc
                     if isinstance(payload, dict):
                         return payload
-                    raise LlmCallError("completion JSON was not an object")
-    raise LlmCallError("no JSON object found in completion")
+                    raise LlmJsonParseError("LLM_JSON_ROOT_INVALID")
+    if start is not None:
+        raise LlmJsonParseError("LLM_JSON_UNPARSEABLE_OBJECT")
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        raise LlmJsonParseError("LLM_JSON_NO_OBJECT") from None
+    if not isinstance(parsed, dict):
+        raise LlmJsonParseError("LLM_JSON_ROOT_INVALID")
+    raise LlmJsonParseError("LLM_JSON_NO_OBJECT")
+
+
+def call_and_extract_json_with_parse_retry(
+    prompt: str,
+    *,
+    llm_call: LlmCall,
+    extract_json: Callable[[str], object],
+) -> object:
+    """Call once, retrying exactly once only for a typed parse failure.
+
+    The same prompt is deliberately reused.  Transport failures and all
+    post-extraction schema/coverage validation stay single-attempt and
+    fail-closed at their owning gate.
+    """
+
+    try:
+        return extract_json(llm_call(prompt))
+    except LlmJsonParseError:
+        return extract_json(llm_call(prompt))
 
 
 def _call_direct(prompt: str, config: LlmConfig) -> str:

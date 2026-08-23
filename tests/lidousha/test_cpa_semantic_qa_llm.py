@@ -13,7 +13,14 @@ from src.autoslice.cpa_semantic_qa import (
     validate_cpa_semantic_response_payload,
     write_cpa_semantic_request_artifact,
 )
-from src.autoslice.llm_client import LlmCallError, LlmConfig, build_llm_call, extract_json_object
+from src.autoslice.llm_client import (
+    LlmCallError,
+    LlmConfig,
+    LlmJsonParseError,
+    build_llm_call,
+    call_and_extract_json_with_parse_retry,
+    extract_json_object,
+)
 
 
 def _request(tmp_path: Path) -> CpaSemanticQaRequest:
@@ -233,6 +240,63 @@ def test_extract_json_object_handles_fences_and_prose():
     assert extract_json_object(completion) == {"a": 1, "b": {"c": "x"}}
     with pytest.raises(LlmCallError):
         extract_json_object("没有对象")
+
+
+@pytest.mark.parametrize(
+    ("completion", "reason_code"),
+    [
+        ("没有对象", "LLM_JSON_NO_OBJECT"),
+        ('{"unterminated": ', "LLM_JSON_UNPARSEABLE_OBJECT"),
+        ("[]", "LLM_JSON_ROOT_INVALID"),
+    ],
+)
+def test_extract_json_object_raises_closed_parse_codes(completion, reason_code):
+    with pytest.raises(LlmJsonParseError) as raised:
+        extract_json_object(completion)
+    assert raised.value.reason_code == reason_code
+    assert str(raised.value) == reason_code
+    assert completion not in str(raised.value)
+
+
+def test_json_parse_retry_reuses_exact_prompt_once_then_returns_valid_object():
+    prompts: list[str] = []
+    replies = iter(["not json", '{"ok":true}'])
+
+    assert call_and_extract_json_with_parse_retry(
+        "exact prompt", llm_call=lambda prompt: prompts.append(prompt) or next(replies),
+        extract_json=extract_json_object,
+    ) == {"ok": True}
+    assert prompts == ["exact prompt", "exact prompt"]
+
+
+def test_json_parse_retry_does_not_repeat_transport_or_nonparse_errors():
+    calls = 0
+
+    def transport(_prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        raise LlmCallError("transport secret")
+
+    with pytest.raises(LlmCallError):
+        call_and_extract_json_with_parse_retry(
+            "prompt", llm_call=transport, extract_json=extract_json_object
+        )
+    assert calls == 1
+
+    calls = 0
+
+    def valid_reply(_prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        return '{"ok":true}'
+
+    with pytest.raises(ValueError):
+        call_and_extract_json_with_parse_retry(
+            "prompt",
+            llm_call=valid_reply,
+            extract_json=lambda _raw: (_ for _ in ()).throw(ValueError("schema")),
+        )
+    assert calls == 1
 
 
 def test_command_transport_end_to_end_via_script_main(tmp_path):

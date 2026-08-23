@@ -16,6 +16,10 @@ from collections import defaultdict
 from typing import Any, Callable, Mapping, Sequence
 
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.llm_client import (
+    LlmJsonParseError,
+    call_and_extract_json_with_parse_retry,
+)
 
 
 PRONOUN_AUDIT_SCHEMA = "candidate-pronoun-consistency-audit.v1"
@@ -163,9 +167,22 @@ def discover_candidate_pronoun_findings(
             occurrences, ensure_ascii=False, sort_keys=True
         ),
     )
+    completion = ""
+
+    def _call_and_retain_completion(request: str) -> str:
+        nonlocal completion
+        completion = llm_call(request)
+        return completion
+
     try:
-        completion = llm_call(prompt)
-        payload = extract_json(completion)
+        payload = call_and_extract_json_with_parse_retry(
+            prompt, llm_call=_call_and_retain_completion, extract_json=extract_json
+        )
+    except LlmJsonParseError as exc:
+        raise CandidatePronounAuditError(
+            "CANDIDATE_PRONOUN_PROVIDER_OR_JSON_UNAVAILABLE",
+            exc.reason_code,
+        ) from exc
     except Exception as exc:
         raise CandidatePronounAuditError(
             "CANDIDATE_PRONOUN_PROVIDER_OR_JSON_UNAVAILABLE",
