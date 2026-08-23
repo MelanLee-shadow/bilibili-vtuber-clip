@@ -917,6 +917,7 @@ def test_replay_publish_adapter_accepts_unchanged_manual_surface_without_review(
     staging = result["publish_staging"]
     assert isinstance(staging, Mapping)
     assert staging["title"] == "【李豆沙】冻结标题"
+    assert staging["source_fact_review"] == record["publish_staging"]["source_fact_review"]
 
 
 def test_replay_publish_adapter_refuses_unverified_missing_source_fact_review(

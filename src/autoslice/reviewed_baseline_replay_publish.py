@@ -87,6 +87,13 @@ def replay_publish_adapter(
             and old_staging.get("title") == title and old_hook == str(staged_story.get("selection_hook"))
         )
         if (
+            review is None
+            and source_fact_verified
+            and isinstance(old_review, Mapping)
+            and isinstance(staged_publish, dict)
+        ):
+            staged_publish["source_fact_review"] = dict(old_review)
+        if (
             not isinstance(staged_publish, Mapping)
             or staged_publish.get("title") != title
             or staged_publish.get("title_authority_error") is not None
