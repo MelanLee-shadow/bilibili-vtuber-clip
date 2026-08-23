@@ -8,6 +8,7 @@ import pytest
 
 from src.autoslice import producer_text_pipeline as pipeline
 from src.autoslice import producer_source_boundary_review as source_boundary_review
+from src.autoslice import reviewed_baseline_replay as replay
 from src.autoslice.boundary_semantic_review import (
     build_boundary_search_scope,
     cue_grid_sha256,
@@ -425,6 +426,29 @@ def test_source_only_boundary_authority_cannot_reach_final_delivery_gate():
         keyword for keyword in final_call.keywords if keyword.arg == "frozen_boundary_receipt"
     )
     assert ast.unparse(final_keyword.value) == "frozen_boundary_receipt"
+
+
+def test_replay_delivery_review_carries_source_only_boundary_witness():
+    """A source-only receipt seeds fresh delivery review without becoming final authority."""
+
+    replay_tree = ast.parse(inspect.getsource(replay.replay_exact_final_reviewer))
+    audit_call = next(
+        node
+        for node in ast.walk(replay_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "exact_delivery_correction_audit"
+    )
+    source_keyword = next(
+        keyword for keyword in audit_call.keywords if keyword.arg == "frozen_source_review"
+    )
+    assert ast.unparse(source_keyword.value) == "frozen_source_review"
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "load_boundary_review_authorities"
+        for node in ast.walk(replay_tree)
+    )
 
 
 def test_final_boundary_review_indexes_exact_post_authority_grid():

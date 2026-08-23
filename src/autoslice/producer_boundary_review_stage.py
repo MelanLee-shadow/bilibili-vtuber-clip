@@ -207,6 +207,7 @@ def exact_delivery_correction_audit(
     extract_json: Callable[[str], Any],
     disabled: bool = False,
     frozen_boundary_receipt: FrozenBoundaryReceipt | None = None,
+    frozen_source_review: FrozenBoundaryReview | None = None,
 ) -> dict[str, object]:
     """Replace the source review with an exact post-mutation delivery review."""
 
@@ -226,7 +227,11 @@ def exact_delivery_correction_audit(
         llm_call=llm_call,
         extract_json=extract_json,
         disabled=disabled,
-        frozen_review=matching_final_delivery_review(frozen_boundary_receipt, final_srt_text),
+        frozen_review=(
+            matching_final_delivery_review(frozen_boundary_receipt, final_srt_text)
+            if frozen_boundary_receipt is not None
+            else frozen_source_review
+        ),
         replay_audit=delivery_replay_audit,
     )
     result = dict(correction_audit)

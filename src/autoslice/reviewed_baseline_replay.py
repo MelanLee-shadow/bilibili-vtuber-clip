@@ -810,6 +810,7 @@ def replay_exact_final_reviewer(
     )
     from src.autoslice.llm_client import extract_json_object
     from src.autoslice.producer_boundary_review_stage import exact_delivery_correction_audit
+    from src.autoslice.frozen_source_boundary_receipt import load_boundary_review_authorities
     from src.autoslice.producer_text_pipeline import (
         TextPipelineAdapters, _final_review_structured_context,
         _run_exact_final_release_review,
@@ -820,6 +821,11 @@ def replay_exact_final_reviewer(
     ownership = resolve_operator_text_full_ownership(spec)
     if ownership is None:
         raise ReviewedBaselineReplayError("REPLAY_OPERATOR_TEXT_OWNERSHIP_INVALID")
+    _frozen_boundary_receipt, frozen_source_review = load_boundary_review_authorities(
+        spec,
+        candidate_id=plan.candidate_id,
+        current_owner_contract=ownership,
+    )
     pieces = spec.get("pieces")
     if not isinstance(pieces, list) or len(pieces) != 1 or not isinstance(pieces[0], Mapping):
         raise ReviewedBaselineReplayError("REPLAY_EXACT_FINAL_SPEC_INVALID")
@@ -884,6 +890,7 @@ def replay_exact_final_reviewer(
             boundary_max_forward_ms=int(spec.get("boundary_repair_extend_cap_ms", 30_000)),
             llm_call=boundary_call, extract_json=extract_json_object, disabled=False,
             frozen_boundary_receipt=None,
+            frozen_source_review=frozen_source_review,
         )
         findings, discovery = discover_priority_findings(
             final_srt_text, timeline_offset_ms=timeline_offset_ms,
