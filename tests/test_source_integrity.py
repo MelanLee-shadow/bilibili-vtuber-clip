@@ -556,6 +556,70 @@ def test_recording_inventory_rejects_reused_portable_rebind_chain_drift(tmp_path
     assert audit["status"] == "BLOCKED"
 
 
+def _typed_mixed_rebind(tmp_path, monkeypatch):
+    date_dir, stub, successor_mp4, state_path = _typed_connection_stub(tmp_path, monkeypatch)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    relative = f"{date_dir.name}/{stub.name}"
+    row = state["source_dispositions"][relative]
+    for binding in (row["source"], row["xml"]):
+        binding["device"] += 1
+        binding["inode"] += 1
+    for binding in (row["session"]["successor_source"], row["session"]["successor_mp4"]):
+        binding["mtime_ns"] -= 1
+        binding["ctime_ns"] -= 1
+        binding["device"] += 1
+        binding["inode"] += 1
+    unsigned = {key: value for key, value in row.items() if key != "canonical_integrity"}
+    row["canonical_integrity"]["canonical_json_sha256"] = adapter._canonical_json_sha256(unsigned)
+    receipt_mount = {
+        "mount_id": 77,
+        "major_minor": "0:67",
+        "root": "/",
+        "mount_point": "/adapter/Videos",
+        "filesystem_type": "fuse.cloudfs",
+        "mount_source": "CloudFS",
+    }
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", lambda _path: receipt_mount)
+    receipts: list[dict] = []
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=state["webhook_files"],
+        finalized=state["finalized"],
+        identity_rebinds=receipts,
+        identity_rebind_attestations={
+            "source": adapter._attest_regular_file(stub),
+            "xml": adapter._attest_regular_file(stub.with_suffix(".xml")),
+            "successor_mp4": adapter._attest_regular_file(successor_mp4),
+        },
+    )
+    state["source_disposition_identity_rebinds"] = {relative: receipts}
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    return date_dir, state_path, receipt_mount
+
+
+def test_recording_inventory_accepts_mixed_fuse_rebind_with_portable_mount_projection(
+    tmp_path,
+    monkeypatch,
+):
+    date_dir, state_path, receipt_mount = _typed_mixed_rebind(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        source_integrity,
+        "_mount_identity_for_path",
+        lambda _path: {**receipt_mount, "mount_id": 991, "mount_point": "/runner/Videos"},
+    )
+
+    audit = audit_finalized_recording_inventory(
+        date_dir,
+        room_id="123456",
+        adapter_state_path=state_path,
+    )
+
+    assert audit["status"] == "PASS"
+    assert audit["can_select"] is True
+
+
 def test_recording_inventory_blocks_finalized_playlist_without_mp4(tmp_path):
     date_dir = tmp_path / "2026-07-22"
     date_dir.mkdir()
