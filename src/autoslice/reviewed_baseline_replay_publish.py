@@ -81,13 +81,16 @@ def replay_publish_adapter(
         staged_publish = staged.get("publish_staging")
         staged_story = staged.get("story_contract")
         review = staged_publish.get("source_fact_review") if isinstance(staged_publish, Mapping) else None
+        old_review = old_staging.get("source_fact_review")
+        source_fact_verified = source_fact_review_passes(review) or (
+            review is None and source_fact_review_passes(old_review)
+            and old_staging.get("title") == title and old_hook == str(staged_story.get("selection_hook"))
+        )
         if (
             not isinstance(staged_publish, Mapping)
             or staged_publish.get("title") != title
             or staged_publish.get("title_authority_error") is not None
-            or not isinstance(review, Mapping)
-            or not isinstance(review.get("receipt_sha256"), str)
-            or not source_fact_review_passes(review)
+            or not source_fact_verified
             or not isinstance(staged_story, Mapping)
             or staged_story.get("selection_hook") != old_hook
         ):
