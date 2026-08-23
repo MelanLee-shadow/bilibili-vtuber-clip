@@ -36,8 +36,6 @@ from src.autoslice.exact_final_witness_authority import (
     build_self_heal_repair_receipt,
     valid_convergence_mutation_authority,
 )
-from src.autoslice.delivery_fast_path import resolve_operator_text_full_ownership
-from src.autoslice.operator_text_final_surface import apply_operator_text_final_surface_supersession
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.cover_reference_authority import (
     load_candidate_cover_reference,
@@ -1937,7 +1935,6 @@ def _verify_final_authority(
     chat_authority_audit: dict,
     chat_authority_path: Path,
     subtitle_regression_path: Path | None,
-    operator_text_full_ownership: Mapping[str, object] | None = None,
 ) -> AuthorityArtifacts:
     subtitle_path = recut.subtitle_path
     text_manifest = recut.text_manifest
@@ -1980,19 +1977,23 @@ def _verify_final_authority(
                 "FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED_AFTER_REDELIVERY: "
                 f"{chat_authority_path}"
             )
-    ownership_superseded = apply_operator_text_final_surface_supersession(
-        chat_authority_audit, ownership=operator_text_full_ownership,
-        final_text_srt=final_text, final_speaker_srt=final_speaker_text)
-    pending_override_ok = ownership_superseded or reconcile_pending_text_overrides(
-        chat_authority_audit, text_manifest, delivery_start_ms=final_start)
-    if not ownership_superseded:
-        reconcile_reviewed_text_override_conflicts(chat_authority_audit, text_manifest,
-                                                   delivery_start_ms=final_start)
-    final_authority_ok = pending_override_ok and (ownership_superseded or
-        verify_chat_authority_final_surfaces(
-            chat_authority_audit, final_text_srt=final_text,
-            final_speaker_srt=final_speaker_text, delivery_start_ms=final_start,
-            delivery_end_ms=final_end))
+    pending_override_ok = reconcile_pending_text_overrides(
+        chat_authority_audit,
+        text_manifest,
+        delivery_start_ms=final_start,
+    )
+    reconcile_reviewed_text_override_conflicts(
+        chat_authority_audit,
+        text_manifest,
+        delivery_start_ms=final_start,
+    )
+    final_authority_ok = pending_override_ok and verify_chat_authority_final_surfaces(
+        chat_authority_audit,
+        final_text_srt=final_text,
+        final_speaker_srt=final_speaker_text,
+        delivery_start_ms=final_start,
+        delivery_end_ms=final_end,
+    )
     # Final-owner verification annotates every reviewed-baseline mapping in
     # place.  Persist those post-verification bytes before the record hashes
     # and embeds the same object; otherwise the package contains a stale
@@ -2699,7 +2700,6 @@ def finalize_producer_package(
         chat_authority_audit=chat_authority_audit,
         chat_authority_path=chat_authority_path,
         subtitle_regression_path=subtitle_regression_path,
-        operator_text_full_ownership=resolve_operator_text_full_ownership(spec),
     )
     record = _build_and_burn_record(
         options=options,
