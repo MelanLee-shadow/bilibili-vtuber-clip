@@ -1229,10 +1229,6 @@ def test_synthesized_private_finalizer_uses_prepare_only_and_private_handle(
             "candidate_id": CID, "selection_hook": "钩子", "selection_scorecard": {"x": 1},
             "session_relation_authority": {"status": "BOUND"},
         },
-        "burned_preview": {"branding_intro": {
-            "status": "PREPENDED", "intro_id": "intro-a",
-            "intro_media_sha256": "a" * 64, "intro_offset_ms": 1234,
-        }},
         "artifact_hashes": {**record["artifact_hashes"], "chat_authority_audit_sha256": _sha(chat.read_bytes())},
     })
     record_path.write_text(json.dumps(record))
@@ -1335,8 +1331,6 @@ def test_synthesized_private_finalizer_uses_prepare_only_and_private_handle(
     stage = tmp_path / "private"
     stage.mkdir(mode=0o700)
     authority_root = _runtime_authority(tmp_path)
-    pinned_intro = {"intro_id": "intro-a", "recorded_delivery_binding": {}}
-    monkeypatch.setattr(replay, "_replay_branding_intro", lambda **_kwargs: pinned_intro)
     result = replay.synthesize_replay_spec_and_finalize_private(
         plan, stage=stage, runtime_authority_root=authority_root,
         speaker_python=Path("/usr/bin/python3"),
@@ -1348,7 +1342,6 @@ def test_synthesized_private_finalizer_uses_prepare_only_and_private_handle(
     assert calls["spec"]["delivery_name"] == f"钩子__{CID}"
     assert calls["options"].speaker_mode == "auto"
     assert calls["speaker_subtitle_style_id"] == "lidousha-speaker-sapphire-host-white-guest-v2"
-    assert calls["branding_intro"] is pinned_intro
     assert calls["spec"]["story_contract"]["session_relation_authority"] == {"status": "BOUND"}
     assert calls["spec"]["pieces"] == [{
         "remote_media": "/recording/source.flv", "start_ms": 1592760,
@@ -1449,43 +1442,4 @@ def test_private_finalizer_refuses_to_reuse_an_old_clean_review(
             plan, stage=stage, runtime_authority_root=_runtime_authority(tmp_path),
             speaker_python=Path("/usr/bin/python3"), source_fact_llm=lambda *_args: "",
             adapters=Adapters(), finalizer=lambda **_kwargs: 0,
-        )
-
-
-def test_private_finalizer_pins_existing_delivery_branding_context(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    recorded = {
-        "status": "PREPENDED", "intro_id": "intro-a",
-        "intro_media_sha256": "a" * 64, "intro_offset_ms": 1234,
-    }
-    current = {"candidates": [{"intro_id": "intro-a"}]}
-    pinned = {"intro_id": "intro-a", "recorded_delivery_binding": recorded}
-    monkeypatch.setattr(replay, "require_branding_intro", lambda _root: current)
-    monkeypatch.setattr(
-        replay, "pin_existing_delivery_intro",
-        lambda observed, binding: pinned if observed is current and binding is recorded else {},
-    )
-    assert replay._replay_branding_intro(
-        runtime_authority_root=Path("/runtime"), burned={"branding_intro": recorded}
-    ) is pinned
-
-
-def test_private_finalizer_refuses_missing_or_drifted_branding_authority(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    with pytest.raises(replay.ReviewedBaselineReplayError, match="BRANDING_AUTHORITY_MISSING"):
-        replay._replay_branding_intro(runtime_authority_root=Path("/runtime"), burned={})
-    monkeypatch.setattr(replay, "require_branding_intro", lambda _root: {})
-    monkeypatch.setattr(
-        replay, "pin_existing_delivery_intro",
-        lambda *_args: (_ for _ in ()).throw(RuntimeError("drift")),
-    )
-    with pytest.raises(replay.ReviewedBaselineReplayError, match="BRANDING_AUTHORITY_DRIFT"):
-        replay._replay_branding_intro(
-            runtime_authority_root=Path("/runtime"),
-            burned={"branding_intro": {
-                "status": "PREPENDED", "intro_id": "intro-a",
-                "intro_media_sha256": "a" * 64, "intro_offset_ms": 1234,
-            }},
         )
