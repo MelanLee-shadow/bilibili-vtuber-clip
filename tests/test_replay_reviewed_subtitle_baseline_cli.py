@@ -126,10 +126,13 @@ def test_record_bound_authority_failures_get_their_own_predicate() -> None:
     assert cli._failure_predicate("REPLAY_FINALIZER_CLIP_CONTEXT_PAYLOAD_DRIFT") == "RECORD_BOUND_CLIP_CONTEXT"
 
 
-def _review_flags(stage: Path, *, date: str = "2026-08-14", cid: str = "cid") -> Path:
+def _review_flags(
+    stage: Path, *, date: str = "2026-08-14", cid: str = "cid",
+    discovery: dict[str, object] | None = None,
+) -> Path:
     path = stage / "finalizer-runtime" / date / cid / f"{cid}.review-flags.json"
     path.parent.mkdir(parents=True)
-    path.write_text(json.dumps({
+    document: dict[str, object] = {
         "schema_version": "final-review-audit.v2",
         "status": "FLAGGED",
         "release_gate": "BLOCK",
@@ -139,7 +142,10 @@ def _review_flags(stage: Path, *, date: str = "2026-08-14", cid: str = "cid") ->
             "status": "BLOCK",
             "reason_codes": ["BOUNDARY_SEMANTIC_REVIEW_REQUIRED"],
         },
-    }) + "\n")
+    }
+    if discovery is not None:
+        document["discovery"] = discovery
+    path.write_text(json.dumps(document) + "\n")
     return path
 
 
@@ -176,6 +182,91 @@ def test_prepare_extracts_exact_final_review_flags_without_private_text(
     }
     assert "/private" not in json.dumps({"reason": failure.reason_code, "rows": failure.predicate_failures})
     assert not stage.exists()
+
+
+def test_prepare_retains_only_closed_provider_failure_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = tmp_path / "record.json"
+    record.write_text("{}\n")
+    plan = SimpleNamespace(
+        date="2026-08-14", candidate_id="cid", record_path=record,
+        baseline=SimpleNamespace(config={"sha256": "a" * 64}),
+    )
+    parent = tmp_path / "private"
+    parent.mkdir(mode=0o700)
+    stage = parent / "candidate-stage"
+    stage.mkdir()
+    (stage / "stage.json").write_text("{}\n")
+    _review_flags(stage, discovery={
+        "provider_class": "service",
+        "provider_status_codes": [503, 408, 503],
+        "provider_detail": "token=secret /private/stage prompt completion request-id",
+        "detail": "LlmCallError",
+    })
+    monkeypatch.setattr(cli, "stage_replay", lambda *_args, **_kwargs: {"stage": str(stage)})
+    monkeypatch.setattr(cli, "_production_llm_call", lambda **_kwargs: lambda _prompt: "{}")
+    monkeypatch.setattr(
+        cli, "synthesize_replay_spec_and_finalize_private",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(SystemExit("FINAL_REVIEW_RELEASE_BLOCKED: token=secret")),
+    )
+    with pytest.raises(cli._PrepareFailure) as caught:
+        cli._prepare(plan, runtime=tmp_path, stage_parent=parent)
+    failure = caught.value
+    assert failure.provider_failure_summary == {
+        "provider_class": "service", "provider_status_codes": [408, 503],
+    }
+    assert "token=secret" not in json.dumps(vars(failure), sort_keys=True)
+    assert "/private/stage" not in json.dumps(vars(failure), sort_keys=True)
+    assert not stage.exists()
+
+
+@pytest.mark.parametrize("discovery", [
+    None,
+    {"provider_class": "forged", "provider_status_codes": [503]},
+    {"provider_class": ["service"], "provider_status_codes": [503]},
+    {"provider_class": "service", "provider_status_codes": [99, 600]},
+    {"provider_class": "service", "provider_status_codes": [True]},
+    {"provider_class": "service", "provider_status_codes": "503"},
+])
+def test_review_flags_drops_invalid_provider_failure_summary(
+    tmp_path: Path, discovery: dict[str, object] | None,
+) -> None:
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    _review_flags(stage, discovery=discovery)
+    plan = SimpleNamespace(date="2026-08-14", candidate_id="cid")
+    failures, summary = cli._review_flags_diagnostics(stage=stage, plan=plan)
+    assert failures
+    assert summary is None
+
+
+def test_sanitized_receipt_drops_provider_detail_and_keeps_closed_summary(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    repo = runtime / "repo"
+    repo.mkdir(parents=True)
+    (repo / "DEPLOYED_COMMIT").write_text("a" * 40 + "\n")
+    (repo / "DEPLOYED_AUTHORITY_MANIFEST.json").write_text("{}\n")
+    plan = SimpleNamespace(
+        date="2026-08-14", candidate_id="cid", expected_video_sha256="sha256:" + "b" * 64,
+        baseline=SimpleNamespace(config={"sha256": "c" * 64}),
+    )
+    receipt_sha = cli._sanitized_failure_receipt(
+        runtime=runtime, plan=plan, matrix=[], provider_attempted=True,
+        provider_failure_summary={
+            "provider_class": "quota", "provider_status_codes": [429, 429],
+            "provider_detail": "token=secret /private/stage prompt completion",
+        },
+    )
+    receipt = next((runtime / "reports").rglob(receipt_sha.removeprefix("sha256:") + ".json"))
+    payload = receipt.read_text()
+    document = json.loads(payload)
+    assert document["provider_failure_summary"] == {
+        "provider_class": "quota", "provider_status_codes": [429],
+    }
+    assert "token=secret" not in payload
+    assert "/private/stage" not in payload
+    assert "prompt completion" not in payload
 
 
 @pytest.mark.parametrize("kind", ["malformed", "wrong-schema", "oversized", "symlink"])
@@ -230,7 +321,7 @@ def test_prepare_cleans_stage_when_review_flags_are_invalid(
     assert not stage.exists()
 
 
-def test_full_dry_failure_receipt_preserves_typed_prepare_reason(
+def test_main_returns_two_for_blocked_prepare_without_external_rc_wrapper(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
 ) -> None:
     runtime = tmp_path / "runtime"
@@ -248,6 +339,10 @@ def test_full_dry_failure_receipt_preserves_typed_prepare_reason(
     def fail_prepare(*_args: object, **_kwargs: object) -> object:
         raise cli._PrepareFailure(
             reason_code="REPLAY_BASELINE_APPLICATION_FAILED", provider_attempted=False,
+            provider_failure_summary={
+                "provider_class": "service", "provider_status_codes": [503, 408, 503],
+                "provider_detail": "token=secret /private/stage",
+            },
         )
 
     captured: dict[str, object] = {}
@@ -261,11 +356,18 @@ def test_full_dry_failure_receipt_preserves_typed_prepare_reason(
         "--candidate-id", "cid", "--private-stage-parent", str(parent),
     ]) == 2
     assert captured["provider_attempted"] is False
+    assert captured["provider_failure_summary"] == {
+        "provider_class": "service", "provider_status_codes": [408, 503],
+    }
     assert captured["matrix"][-1] == {
         "predicate": "PRIVATE_FINALIZATION", "status": "FAIL",
         "reason_code": "REPLAY_BASELINE_APPLICATION_FAILED",
     }
-    assert json.loads(capsys.readouterr().out)["candidates"][0]["status"] == "BLOCKED"
+    item = json.loads(capsys.readouterr().out)["candidates"][0]
+    assert item["status"] == "BLOCKED"
+    assert item["provider_failure_summary"] == {
+        "provider_class": "service", "provider_status_codes": [408, 503],
+    }
 
 
 def test_full_dry_receipt_carries_only_precise_review_flag_failures(

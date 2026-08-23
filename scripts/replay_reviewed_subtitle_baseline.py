@@ -51,6 +51,7 @@ _REPLAY_OWNED_STALE_REASONS = frozenset({
 _REPLAY_NORMALIZABLE_CATEGORIES = frozenset({"STATE_DRIFT", "NEEDS_IVAN_TRUTH"})
 _SAFE_REASON_CODE = re.compile(r"[A-Z][A-Z0-9_]{2,159}\Z")
 _MAX_REVIEW_FLAGS_BYTES = 512 * 1024
+_SAFE_PROVIDER_CLASSES = frozenset({"quota", "service", "rejected", "unknown"})
 # A finalizer's SystemExit routinely appends a candidate-private path or an
 # adapter's diagnostic text.  Only these known *outer* families may cross the
 # replay diagnostic boundary, and only as their all-caps prefix.
@@ -71,7 +72,8 @@ class _PrepareFailure(RuntimeError):
     def __init__(self, *, reason_code: str, provider_attempted: bool, stage_manifest_sha256: str | None = None,
                  prepared_manifest_sha256: str | None = None,
                  provider_receipt_sha256s: tuple[str, ...] = (),
-                 predicate_failures: tuple[tuple[str, str], ...] = ()) -> None:
+                 predicate_failures: tuple[tuple[str, str], ...] = (),
+                 provider_failure_summary: dict[str, object] | None = None) -> None:
         super().__init__(reason_code)
         self.reason_code = reason_code
         self.provider_attempted = provider_attempted
@@ -79,6 +81,7 @@ class _PrepareFailure(RuntimeError):
         self.prepared_manifest_sha256 = prepared_manifest_sha256
         self.provider_receipt_sha256s = provider_receipt_sha256s
         self.predicate_failures = predicate_failures
+        self.provider_failure_summary = provider_failure_summary
 
 
 def _safe_reason_code(exc: BaseException) -> str:
@@ -338,7 +341,24 @@ def _safe_reason_codes(value: object) -> tuple[str, ...]:
     return tuple(sorted({row for row in value if isinstance(row, str) and _SAFE_REASON_CODE.fullmatch(row)}))
 
 
-def _review_flags_predicate_failures(*, stage: Path, plan) -> tuple[tuple[str, str], ...]:
+def _provider_failure_summary(discovery: object) -> dict[str, object] | None:
+    """Return only the closed, non-text provider failure classification."""
+
+    if not isinstance(discovery, dict):
+        return None
+    provider_class = discovery.get("provider_class")
+    codes = discovery.get("provider_status_codes")
+    if not isinstance(provider_class, str) or provider_class not in _SAFE_PROVIDER_CLASSES or not isinstance(codes, list):
+        return None
+    if any(type(code) is not int or not 100 <= code <= 599 for code in codes):
+        return None
+    return {
+        "provider_class": provider_class,
+        "provider_status_codes": sorted(set(codes)),
+    }
+
+
+def _review_flags_diagnostics(*, stage: Path, plan) -> tuple[tuple[tuple[str, str], ...], dict[str, object] | None]:
     """Extract a tiny, path-free failure summary before private-stage cleanup.
 
     Review flags are optional diagnostics, never authority.  A malformed,
@@ -352,14 +372,14 @@ def _review_flags_predicate_failures(*, stage: Path, plan) -> tuple[tuple[str, s
     )
     document = _read_bound_small_json(path, label="REVIEW_FLAGS")
     if not isinstance(document, dict):
-        return ()
+        return (), None
     if (
         document.get("schema_version") != "final-review-audit.v2"
         or not isinstance(document.get("status"), str)
         or not _SAFE_REASON_CODE.fullmatch(str(document["status"]))
         or document.get("release_gate") != "BLOCK"
     ):
-        return ()
+        return (), None
     failures: dict[str, str] = {}
     boundary = document.get("boundary_semantic_review")
     if (
@@ -374,24 +394,32 @@ def _review_flags_predicate_failures(*, stage: Path, plan) -> tuple[tuple[str, s
     final_codes = _safe_reason_codes(document.get("reason_codes"))
     if final_codes:
         failures["EXACT_FINAL_RELEASE_REVIEW"] = final_codes[0]
-    return tuple(sorted(failures.items()))
+    return tuple(sorted(failures.items())), _provider_failure_summary(document.get("discovery"))
+
+
+def _review_flags_predicate_failures(*, stage: Path, plan) -> tuple[tuple[str, str], ...]:
+    """Compatibility wrapper for callers that require only gate rows."""
+
+    return _review_flags_diagnostics(stage=stage, plan=plan)[0]
 
 
 def _prepare_failure(*, exc: BaseException, stage: Path | None = None, plan=None) -> _PrepareFailure:
     """Build a sanitized per-candidate failure without preserving raw errors."""
 
     reason_code = _safe_reason_code(exc)
-    failures = (
-        _review_flags_predicate_failures(stage=stage, plan=plan)
+    flags_failures, provider_failure_summary = (
+        _review_flags_diagnostics(stage=stage, plan=plan)
         if stage is not None and plan is not None
-        else ()
+        else ((), None)
     )
+    failures = flags_failures
     if not failures:
         failures = ((_failure_predicate(reason_code), reason_code),)
     return _PrepareFailure(
         reason_code=reason_code,
         provider_attempted=False,
         predicate_failures=failures,
+        provider_failure_summary=provider_failure_summary,
     )
 
 
@@ -439,7 +467,8 @@ def _canon(value: object) -> bytes:
 def _sanitized_failure_receipt(*, runtime: Path, plan, matrix: list[dict[str, object]], provider_attempted: bool,
                                 stage_manifest_sha256: str | None = None,
                                 prepared_manifest_sha256: str | None = None,
-                                provider_receipt_sha256s: tuple[str, ...] = ()) -> str:
+                                provider_receipt_sha256s: tuple[str, ...] = (),
+                                provider_failure_summary: dict[str, object] | None = None) -> str:
     """Create one sealed diagnostic receipt without a path, prompt, or error text."""
 
     deployed = (runtime / "repo" / "DEPLOYED_COMMIT").read_text(encoding="utf-8").strip()
@@ -458,6 +487,12 @@ def _sanitized_failure_receipt(*, runtime: Path, plan, matrix: list[dict[str, ob
         "prepared_manifest_sha256": prepared_manifest_sha256,
         "provider_receipt_sha256s": list(provider_receipt_sha256s),
     }
+    # This is intentionally reconstructed through the same closed parser as
+    # review-flags input.  A caller cannot use a diagnostic object to smuggle
+    # provider text, request metadata, or filesystem paths into a receipt.
+    summary = _provider_failure_summary(provider_failure_summary)
+    if summary is not None:
+        body["provider_failure_summary"] = summary
     body["receipt_sha256"] = "sha256:" + hashlib.sha256(_canon(body)).hexdigest()
     root = runtime
     for index, component in enumerate(("reports", "reviewed-baseline-replay-diagnostics", plan.date, plan.candidate_id)):
@@ -699,6 +734,9 @@ def main(argv: list[str] | None = None) -> int:
                         prepared_manifest_sha256=getattr(exc, "prepared_manifest_sha256", None),
                         provider_receipt_sha256s=tuple(getattr(exc, "provider_receipt_sha256s", ())),
                         predicate_failures=tuple(getattr(exc, "predicate_failures", ())),
+                        provider_failure_summary=_provider_failure_summary(
+                            getattr(exc, "provider_failure_summary", None),
+                        ),
                     )
         result = {"schema_version": "reviewed-baseline-replay-run.v1",
                   "mode": "APPLY" if args.apply else "FULL_DRY_RUN",
@@ -713,6 +751,7 @@ def main(argv: list[str] | None = None) -> int:
                 stage_sha = error.stage_manifest_sha256
                 prepared_sha = error.prepared_manifest_sha256
                 provider_hashes = error.provider_receipt_sha256s
+                provider_summary = error.provider_failure_summary
                 matrix = _matrix(plan, status="NOT_EVALUATED",
                                  failures=dict(error.predicate_failures) or {
                                      _failure_predicate(reason_code): reason_code,
@@ -721,10 +760,13 @@ def main(argv: list[str] | None = None) -> int:
                     runtime=runtime, plan=plan, matrix=matrix, provider_attempted=provider_attempted,
                     stage_manifest_sha256=stage_sha, prepared_manifest_sha256=prepared_sha,
                     provider_receipt_sha256s=provider_hashes,
+                    provider_failure_summary=provider_summary,
                 )
-                result["candidates"].append({"candidate_id": plan.candidate_id,
-                                             "status": "BLOCKED", "predicate_matrix": matrix,
-                                             "diagnostic_receipt_sha256": receipt})
+                item = {"candidate_id": plan.candidate_id, "status": "BLOCKED",
+                        "predicate_matrix": matrix, "diagnostic_receipt_sha256": receipt}
+                if provider_summary is not None:
+                    item["provider_failure_summary"] = provider_summary
+                result["candidates"].append(item)
                 continue
             stage, finalization, prepared_after, stage_sha, provider_hashes, provider_attempted = prepared[plan.candidate_id]
             after = prepared_after.after
