@@ -57,6 +57,11 @@ STATE_SCHEMA = "vtuber-slice.community-name-state.v2"
 SNAPSHOT_SCHEMA = "vtuber-slice.community-names.v1"
 RULE_VERSION = "community-name-quorum.v2"
 SEMANTIC_PROMPT_VERSION = "community-relation-kind.v4"
+# Both CPA prompts carry independently grounded source material.  Keeping this
+# at four bounds a request to one quarter of the 16-card / ~156 KiB incident
+# observed in production (2026-08-20), while preserving a card's complete
+# evidence and letting a failed request leave only its own cards unreviewed.
+MAX_CPA_PROMPT_MEMBERS = 4
 OCCURRENCE_POLICY = "COMMUNITY_RELATION_EXISTS_NOT_CUE_OCCURRENCE_OR_MUTATION_AUTHORITY"
 RELATION_KINDS = frozenset({"alias_of", "fan_name_of", "meme_of", "associated_with"})
 _HTML_RX = re.compile(r"<[^>]{1,256}>")
@@ -178,7 +183,7 @@ def load_config(path) -> dict[str, Any]:  # noqa: ANN001 - accepts pathlib.Path 
         raise CommunityNameError("comment_discovery_video_limit is invalid")
     if not 1 <= int(payload["comments_per_video"]) <= 20:
         raise CommunityNameError("comments_per_video is invalid")
-    if not 1 <= int(payload["prompt_batch_member_limit"]) <= 32:
+    if not 1 <= int(payload["prompt_batch_member_limit"]) <= MAX_CPA_PROMPT_MEMBERS:
         raise CommunityNameError("prompt_batch_member_limit is invalid")
     if not 5 <= int(payload["prompt_rows_per_member"]) <= 100:
         raise CommunityNameError("prompt_rows_per_member is invalid")
