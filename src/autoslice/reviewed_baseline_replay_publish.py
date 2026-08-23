@@ -34,9 +34,18 @@ def replay_publish_adapter(
         title = old_staging.get("title")
         generation = old_staging.get("cover_generation")
         cover_path = old_staging.get("cover_path")
+        old_story = old.get("story_contract")
+        old_hook = old_staging.get("selection_hook") or (
+            old_story.get("selection_hook")
+            if isinstance(old_story, Mapping)
+            else None
+        )
         hashes = old.get("artifact_hashes")
         cover_sha = hashes.get("cover_sha256") if isinstance(hashes, Mapping) else None
-        if not all(isinstance(value, str) for value in (title, cover_path, cover_sha)) or not isinstance(generation, Mapping):
+        if not all(
+            isinstance(value, str)
+            for value in (title, cover_path, cover_sha, old_hook)
+        ) or not isinstance(generation, Mapping):
             raise replay.ReviewedBaselineReplayError("REPLAY_FROZEN_PUBLICATION_INVALID")
         cover = replay.regular_binding(Path(cover_path), label="COVER")
         if cover.sha256 != cover_sha or generation.get("final_cover_sha256") != cover_sha:
@@ -63,7 +72,7 @@ def replay_publish_adapter(
             dict(record), candidate_id=plan.candidate_id, title=title,
             cues=kwargs["cues"], run_ffmpeg=bool(kwargs.get("run_ffmpeg")),
             title_llm_call=None, art_direction_llm_call=None, skip_cover=False,
-            selection_hook=str(old_staging.get("selection_hook") or old.get("selection_hook") or ""),
+            selection_hook=old_hook,
             stage_cover=carry, source_fact_llm_call=source_fact_llm,
             private_artifact_root=None,
         )
@@ -71,10 +80,6 @@ def replay_publish_adapter(
             raise replay.ReviewedBaselineReplayError("REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT")
         staged_publish = staged.get("publish_staging")
         staged_story = staged.get("story_contract")
-        old_story = old.get("story_contract")
-        old_hook = old_staging.get("selection_hook") or (
-            old_story.get("selection_hook") if isinstance(old_story, Mapping) else None
-        )
         review = staged_publish.get("source_fact_review") if isinstance(staged_publish, Mapping) else None
         if (
             not isinstance(staged_publish, Mapping)

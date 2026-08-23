@@ -822,6 +822,54 @@ def test_replay_publish_adapter_refuses_source_fact_title_rewrite(
         adapter({}, cues=[], run_ffmpeg=False)
 
 
+def test_replay_publish_adapter_uses_story_contract_hook_when_staging_hook_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out_root, _ = _package(tmp_path)
+    plan = replay.build_replay_plan(repo_root=ROOT, out_root=out_root, date=DATE, candidate_id=CID)
+    package = plan.package_root / "replacement_recuts"
+    cover = package / "cover.png"
+    cover.write_bytes(b"cover")
+    hook = "故事闭环后明确切换话题"
+    record = {
+        "story_contract": {"candidate_id": CID, "selection_hook": hook},
+        "publish_staging": {
+            "title": "冻结标题", "cover_path": str(cover),
+            "cover_generation": {"final_cover_sha256": _sha(b"cover")},
+        },
+        "artifact_hashes": {"cover_sha256": _sha(b"cover")},
+    }
+    plan.record_path.write_text(json.dumps(record))
+    private_package = tmp_path / "private-package"
+    private_package.mkdir()
+    monkeypatch.setattr(
+        replay, "_private_carried_cover_generation",
+        lambda *_args, **_kwargs: (private_package / "cover.png", {"final_cover_sha256": _sha(b"cover")}),
+    )
+    seen: dict[str, object] = {}
+    def stage_publish(record, **kwargs):
+        seen["selection_hook"] = kwargs["selection_hook"]
+        return {
+            "story_contract": {"selection_hook": hook},
+            "publish_staging": {
+                "title": "冻结标题", "title_authority_error": None,
+                "source_fact_review": {"receipt_sha256": "sha256:" + "a" * 64},
+            },
+        }
+    monkeypatch.setattr("src.autoslice.publish_staging._stage_publish_draft", stage_publish)
+    monkeypatch.setattr("src.autoslice.source_fact_review.source_fact_review_passes", lambda _review: True)
+    adapter = replay.replay_publish_adapter(
+        plan, source_fact_llm=lambda *_args, **_kwargs: "", private_package=private_package,
+        runtime_authority_root=_runtime_authority(tmp_path),
+    )
+    result = adapter({}, cues=[], run_ffmpeg=False)
+    assert isinstance(result, dict)
+    story = result.get("story_contract")
+    assert isinstance(story, dict)
+    assert story.get("selection_hook") == hook
+    assert seen["selection_hook"] == hook
+
+
 def _record_bound_authority_fixture(tmp_path: Path) -> tuple[SimpleNamespace, Path, dict[str, object], Path, Path]:
     """Build a drifted candidate pair plus one exact portable record mirror."""
 
