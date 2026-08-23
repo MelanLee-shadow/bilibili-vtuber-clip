@@ -96,6 +96,81 @@ def test_final_authority_persists_verified_baseline_owner_receipts(
     assert baseline_audit["mappings"][0]["final_owner_verified"] is True
 
 
+def test_final_authority_honors_exhaustive_operator_text_ownership(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subtitle = tmp_path / "candidate.srt"
+    subtitle.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n审定字幕\n",
+        encoding="utf-8",
+    )
+    speaker = tmp_path / "candidate.speaker.srt"
+    speaker.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n【李豆沙】审定字幕\n",
+        encoding="utf-8",
+    )
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError(
+            "legacy chat/text-override owners must yield to exhaustive operator text"
+        )
+
+    monkeypatch.setattr(
+        finalization,
+        "verify_chat_authority_final_surfaces",
+        forbidden,
+    )
+    monkeypatch.setattr(
+        finalization,
+        "reconcile_pending_text_overrides",
+        forbidden,
+    )
+    monkeypatch.setattr(
+        finalization,
+        "reconcile_reviewed_text_override_conflicts",
+        forbidden,
+    )
+    chat: dict[str, object] = {"status": "APPLIED_AND_VERIFIED"}
+    ownership = {
+        "schema_version": "operator_text_full_ownership.v1",
+        "status": "OPERATOR_TEXT_FULL_OWNERSHIP",
+        "coverage": {"cue_count": 1},
+    }
+
+    result = finalization._verify_final_authority(
+        cid="candidate",
+        final_start=0,
+        final_end=1_000,
+        recut=finalization.FinalRecutArtifacts(
+            recut_dir=tmp_path,
+            media_path=tmp_path / "candidate.mp4",
+            subtitle_path=subtitle,
+            text_manifest_path=None,
+            text_manifest=None,
+            redelivery_baseline_audit_path=None,
+            redelivery_baseline_audit=None,
+        ),
+        speaker=finalization.SpeakerArtifacts(
+            manifest=None,
+            review_srt=speaker,
+            ass=None,
+            manifest_path=None,
+        ),
+        chat_authority_audit=chat,
+        chat_authority_path=tmp_path / "candidate.chat-authority.json",
+        subtitle_regression_path=None,
+        operator_text_full_ownership=ownership,
+    )
+
+    assert result == finalization.AuthorityArtifacts(None, None)
+    assert chat["final_status"] == "FINAL_ARTIFACTS_VERIFIED"
+    receipt = chat["operator_text_full_ownership_final_surface_supersession"]
+    assert isinstance(receipt, dict)
+    assert receipt["status"] == "SUPERSEDED_BY_OPERATOR_REVIEWED_BASELINE"
+    assert receipt["ownership"] == ownership
+
+
 def test_deferred_exact_replay_requires_same_truth_id_reverification() -> None:
     audit = finalization._audit_deferred_exact_replay_reverification(
         pre_truth_audit=_deferred_exact_truth_audit(),
