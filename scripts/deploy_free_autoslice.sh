@@ -314,7 +314,32 @@ for lock in tick.lock runner.lock upload.lock; do test -f "$base/$lock"; test ! 
 exec 9<>"$base/tick.lock"; /usr/bin/flock -n 9
 exec 8<>"$base/runner.lock"; /usr/bin/flock -n 8
 exec 7<>"$base/upload.lock"; /usr/bin/flock -n 7
-python3 - "$repo" "$expected_tree" "$commit" "$backup/repo.manifest.old.json" "$backup" <<'PY'
+test "$(cat "$guard/owner")" = "$owner"
+PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" <<'PY'
+import hashlib,json,stat,sys
+from pathlib import Path
+root=Path(sys.argv[1]); caches=[]
+for name in ('scripts','src','ops','assets','profiles','.agent','docs','cleanup_manifests'):
+ p=root/name
+ if not p.exists(): continue
+ for d in p.rglob('__pycache__'):
+  s=d.lstat()
+  if d.is_symlink() or not d.is_dir() or not stat.S_ISDIR(s.st_mode): raise SystemExit('unsafe bytecode cache dir')
+  rows=list(d.iterdir())
+  if not rows: raise SystemExit('empty bytecode cache')
+  for q in rows:
+   qs=q.lstat()
+   if q.is_symlink() or not q.is_file() or q.suffix != '.pyc' or not stat.S_ISREG(qs.st_mode): raise SystemExit('unsafe bytecode cache child')
+  caches.append((d, rows))
+receipt=[]
+for d,rows in caches:
+ for q in rows: receipt.append((q.relative_to(root).as_posix(),hashlib.sha256(q.read_bytes()).hexdigest()))
+print(json.dumps({'schema':'postcommit-bytecode-cache-cleanup.v1','count':len(receipt),'files':receipt},sort_keys=True,separators=(',',':')))
+for d,rows in sorted(caches,key=lambda x:len(x[0].parts),reverse=True):
+ for q in rows: q.unlink()
+ d.rmdir()
+PY
+PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" "$expected_tree" "$commit" "$backup/repo.manifest.old.json" "$backup" <<'PY'
 import hashlib,json,os,stat,sys
 from pathlib import Path
 root,expected,commit,old_manifest,backup=map(Path,sys.argv[1:])
@@ -344,7 +369,7 @@ for name in ('scripts','src','ops','assets','profiles','.agent','docs','cleanup_
   else: raise AssertionError(rel)
 assert prior == old
 PY
-python3 - "$repo" "$commit" <<'PY'
+PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" "$commit" <<'PY'
 import sys,json
 from pathlib import Path
 root=Path(sys.argv[1]); commit=sys.argv[2]; sys.path.insert(0,str(root))
@@ -362,6 +387,7 @@ cmp -s "$repo/scripts/clouddrive_upload_fatal_sentinel.sh" "$base/upload_fatal_s
 cmp -s "$repo/scripts/free_do_upload.sh" /opt/bilive/app/tmp_manual_upload/do_upload.sh
 cmp -s "$repo/ops/recording/bililive_recorder_adapter.py" /opt/bilive/recording/bililive_recorder_adapter.py
 test "$(md5sum "$repo/scripts/free_session_autoslice.py" | cut -d' ' -f1)" = "$expected_runner_md5"
+test "$(cat "$guard/owner")" = "$owner"
 rm -rf -- "$backup"
 test "$(cat "$guard/owner")" = "$owner"; rm -f -- "$guard/owner"; rmdir "$guard"
 REMOTE_POSTCOMMIT_GUARD_RECOVERY
