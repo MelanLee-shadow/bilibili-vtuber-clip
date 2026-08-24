@@ -2228,14 +2228,19 @@ def test_postcommit_guard_recovery_classifies_only_strict_stamp_relations(tmp_pa
     old = "b" * 40
     owner = f"{commit}-20260824T145737Z-1"
 
-    def classify(current: str, previous: str) -> subprocess.CompletedProcess[str]:
-        base = tmp_path / f"{current[:1]}-{previous[:1]}"
+    def classify(
+        current: str, previous: str | None
+    ) -> subprocess.CompletedProcess[str]:
+        base = tmp_path / f"{current[:1]}-{previous[:1] if previous else 'none'}"
         repo = base / "repo"
         backup = base / f"repo.rollback-{commit}"
         repo.mkdir(parents=True)
-        backup.mkdir()
         (repo / "DEPLOYED_COMMIT").write_text(current + " deployed\n", encoding="utf-8")
-        (backup / "DEPLOYED_COMMIT.old").write_text(previous + " deployed\n", encoding="utf-8")
+        if previous is not None:
+            backup.mkdir()
+            (backup / "DEPLOYED_COMMIT.old").write_text(
+                previous + " deployed\n", encoding="utf-8"
+            )
         return subprocess.run(
             ["bash", "-c", classifier, "kind", str(base), owner],
             text=True, capture_output=True, check=False,
@@ -2243,6 +2248,7 @@ def test_postcommit_guard_recovery_classifies_only_strict_stamp_relations(tmp_pa
 
     assert classify(commit, old).stdout.strip() == "POSTCOMMIT_SUCCESS_CLEANUP"
     assert classify(old, old).stdout.strip() == "PRECOMMIT_OR_ROLLBACK"
+    assert classify(commit, None).stdout.strip() == "POSTCOMMIT_GUARD_ONLY_CLEANUP"
     for current, previous in ((commit, commit), (old, commit), ("c" * 40, old)):
         assert classify(current, previous).returncode != 0
 
@@ -2392,3 +2398,169 @@ def test_postcommit_guard_recovery_executes_fixture_and_fails_closed(tmp_path):
     }.items():
         bad, _backup, _guard = run(label, mutate)
         assert bad.returncode != 0, label
+
+
+def test_guard_only_postcommit_recovery_executes_fixture_and_fails_closed(tmp_path):
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    remote = source.split(
+        "<<'REMOTE_GUARD_ONLY_POSTCOMMIT_GUARD_RECOVERY'\n", 1
+    )[1].split("\nREMOTE_GUARD_ONLY_POSTCOMMIT_GUARD_RECOVERY", 1)[0]
+    commit = "a" * 40
+    owner = f"{commit}-20260824T160229Z-1"
+
+    def inventory(path: Path) -> dict:
+        rows = {}
+        for name in (
+            "scripts", "src", "ops", "assets", "profiles", ".agent",
+            "docs", "cleanup_manifests", "AGENTS.md", "README.md",
+        ):
+            candidate = path / name
+            if not candidate.exists():
+                continue
+            for entry in (candidate, *candidate.rglob("*")):
+                details = entry.lstat()
+                relative = entry.relative_to(path).as_posix()
+                if entry.is_dir():
+                    rows[relative] = {"type": "dir", "mode": details.st_mode & 0o777}
+                elif entry.is_file():
+                    rows[relative] = {
+                        "type": "file",
+                        "mode": details.st_mode & 0o777,
+                        "sha256": hashlib.sha256(entry.read_bytes()).hexdigest(),
+                    }
+        return rows
+
+    def build(name: str):
+        root = tmp_path / name
+        base = root / "autoslice"
+        repo = base / "repo"
+        guard = base / "deploy.guard"
+        recording = root / "recording"
+        uploader = root / "uploader"
+        for directory in (
+            repo / "scripts",
+            repo / "src/autoslice",
+            repo / "ops/recording",
+            repo / "assets/lidousha",
+            recording,
+        ):
+            directory.mkdir(parents=True, exist_ok=True)
+        (repo / "src/__init__.py").touch()
+        (repo / "src/autoslice/__init__.py").touch()
+        (repo / "scripts/free_session_autoslice.py").write_text("runner\n")
+        (repo / "scripts/free_mount_watchdog.sh").write_text("watch\n")
+        (repo / "scripts/clouddrive_upload_fatal_sentinel.sh").write_text("sentinel\n")
+        (repo / "scripts/free_do_upload.sh").write_text("uploader\n")
+        (repo / "ops/recording/bililive_recorder_adapter.py").write_text("adapter\n")
+        (repo / "assets/lidousha/publication_registry.v1.json").write_text("{}")
+        (repo / "src/autoslice/repository_asset_authority.py").write_text(
+            "def build_deployed_authority_manifest(*,repo_root,deployed_commit,relative_paths):\n"
+            " return {'commit': deployed_commit}\n"
+        )
+        (repo / "DEPLOYED_COMMIT").write_text(commit + " deployed\n")
+        (repo / "DEPLOYED_AUTHORITY_MANIFEST.json").write_text(
+            json.dumps({"commit": commit})
+        )
+        guard.mkdir()
+        (guard / "owner").write_text(owner + "\n")
+        (base / "DISABLED").touch()
+        for lock in ("tick.lock", "runner.lock", "upload.lock"):
+            (base / lock).write_bytes((lock + " sentinel\n").encode())
+        for origin, destination in (
+            (repo / "scripts/free_mount_watchdog.sh", base / "free_mount_watchdog.sh"),
+            (repo / "scripts/clouddrive_upload_fatal_sentinel.sh", base / "upload_fatal_sentinel.sh"),
+            (repo / "scripts/free_do_upload.sh", uploader),
+            (repo / "ops/recording/bililive_recorder_adapter.py", recording / "bililive_recorder_adapter.py"),
+        ):
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(origin.read_bytes())
+        tree = hashlib.sha256(
+            json.dumps(
+                inventory(repo), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode()
+        ).hexdigest()
+        runner = hashlib.md5(
+            (repo / "scripts/free_session_autoslice.py").read_bytes()
+        ).hexdigest()
+        script = "flock() { return 0; }\n" + remote.replace(
+            "/usr/bin/flock", "flock"
+        ).replace("/opt/bilive/recording", str(recording)).replace(
+            "/opt/bilive/app/tmp_manual_upload/do_upload.sh", str(uploader)
+        )
+        return base, guard, script, tree, runner
+
+    def run(name: str, mutate=None, busy_fd=None, runner=""):
+        base, guard, script, tree, expected_runner = build(name)
+        if mutate:
+            mutate(base, guard)
+        if busy_fd is not None:
+            script = script.replace(f"flock -n {busy_fd}", "false")
+        result = subprocess.run(
+            ["bash", "-c", script, "guard-only", str(base), owner, tree, runner or expected_runner],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        return result, base, guard
+
+    def cache(base: Path) -> None:
+        directory = base / "repo/src/__pycache__"
+        directory.mkdir()
+        (directory / "x.pyc").write_bytes(b"cache")
+
+    good, base, guard = run("good", lambda b, _g: cache(b))
+    assert good.returncode == 0, good.stderr
+    assert not guard.exists()
+    assert not (base / "repo/src/__pycache__").exists()
+    for lock in ("tick.lock", "runner.lock", "upload.lock"):
+        assert (base / lock).read_bytes() == (lock + " sentinel\n").encode()
+
+    def symlink(path: Path) -> None:
+        saved = path.with_name(path.name + ".saved")
+        path.rename(saved)
+        path.symlink_to(saved.name)
+
+    def nonregular(path: Path) -> None:
+        path.unlink()
+        path.mkdir()
+
+    cases = {
+        "wrong-owner": lambda b, g: (g / "owner").write_text("b" * 40 + "-20260824T160229Z-1\n"),
+        "extra-guard": lambda _b, g: (g / "extra").touch(),
+        "backup-residue": lambda b, _g: (b / f"repo.rollback-{commit}").mkdir(),
+        "stage-residue": lambda b, _g: (b / f"repo.deploy-{commit}").mkdir(),
+        "foreign-residue": lambda b, _g: (b / "repo.rollback-foreign").mkdir(),
+        "stamp-drift": lambda b, _g: (b / "repo/DEPLOYED_COMMIT").write_text("b" * 40),
+        "stamp-link": lambda b, _g: symlink(b / "repo/DEPLOYED_COMMIT"),
+        "authority-drift": lambda b, _g: (b / "repo/DEPLOYED_AUTHORITY_MANIFEST.json").write_text("{}"),
+        "authority-link": lambda b, _g: symlink(b / "repo/DEPLOYED_AUTHORITY_MANIFEST.json"),
+        "disabled-link": lambda b, _g: symlink(b / "DISABLED"),
+        "auto-upload": lambda b, _g: (b / "AUTO_UPLOAD").touch(),
+        "auto-upload-link": lambda b, _g: (b / "AUTO_UPLOAD").symlink_to("missing"),
+        "tree-drift": lambda b, _g: (b / "repo/scripts/free_session_autoslice.py").write_text("drift"),
+        "stray-content": lambda b, _g: (b / "repo/src/untracked.txt").write_text("drift"),
+        "watchdog-drift": lambda b, _g: (b / "free_mount_watchdog.sh").write_text("drift"),
+        "sentinel-drift": lambda b, _g: (b / "upload_fatal_sentinel.sh").write_text("drift"),
+        "uploader-drift": lambda b, _g: (b.parent / "uploader").write_text("drift"),
+        "adapter-drift": lambda b, _g: (b.parent / "recording/bililive_recorder_adapter.py").write_text("drift"),
+        "cache-dir-link": lambda b, _g: (b / "repo/src/__pycache__").symlink_to("missing"),
+        "cache-pyc-link": lambda b, _g: (cache(b), symlink(b / "repo/src/__pycache__/x.pyc")),
+        "cache-nonpyc": lambda b, _g: (cache(b), (b / "repo/src/__pycache__/x.txt").write_text("x")),
+        "cache-empty": lambda b, _g: (b / "repo/src/__pycache__").mkdir(),
+        "stray-pyc": lambda b, _g: (b / "repo/src/stray.pyc").write_bytes(b"x"),
+    }
+    for name, mutate in cases.items():
+        failed, base, guard = run(name, mutate)
+        assert failed.returncode != 0, name
+        assert guard.exists() and (guard / "owner").exists(), name
+
+    for lock in ("tick.lock", "runner.lock", "upload.lock"):
+        failed, base, guard = run("link-" + lock, lambda b, _g, lock=lock: symlink(b / lock))
+        assert failed.returncode != 0 and guard.exists()
+        failed, base, guard = run("nonregular-" + lock, lambda b, _g, lock=lock: nonregular(b / lock))
+        assert failed.returncode != 0 and guard.exists()
+    for descriptor in (9, 8, 7):
+        failed, _base, guard = run("busy-" + str(descriptor), busy_fd=descriptor)
+        assert failed.returncode != 0 and guard.exists()
+    failed, _base, guard = run("runner-md5", runner="0" * 32)
+    assert failed.returncode != 0 and guard.exists()

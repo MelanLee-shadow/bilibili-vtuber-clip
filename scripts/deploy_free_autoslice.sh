@@ -256,17 +256,25 @@ REMOTE_PREBACKUP_GUARD_RECOVERY
     fi
     RECOVERY_KIND=$(ssh "$RECOVERY_HOST" bash -s -- /opt/bilive/autoslice "$RECOVERY_OWNER" <<'REMOTE_RECOVERY_KIND'
 set -euo pipefail
-base=$1; owner=$2; commit=${owner%%-*}; repo=$base/repo; backup=$base/repo.rollback-$commit
+base=$1; owner=$2; commit=${owner%%-*}; repo=$base/repo; backup=$base/repo.rollback-$commit; stage=$base/repo.deploy-$commit
 test -f "$repo/DEPLOYED_COMMIT"
 test ! -L "$repo/DEPLOYED_COMMIT"
+current=$(awk 'NR==1 {print $1}' "$repo/DEPLOYED_COMMIT")
+test "${#current}" -eq 40
+[[ "$current" != *[!0-9a-f]* ]]
+if [ -e "$backup" ] || [ -L "$backup" ] || [ -e "$stage" ] || [ -L "$stage" ]; then
 test -f "$backup/DEPLOYED_COMMIT.old"
 test ! -L "$backup/DEPLOYED_COMMIT.old"
-current=$(awk 'NR==1 {print $1}' "$repo/DEPLOYED_COMMIT"); old=$(awk 'NR==1 {print $1}' "$backup/DEPLOYED_COMMIT.old")
+old=$(awk 'NR==1 {print $1}' "$backup/DEPLOYED_COMMIT.old")
 test "${#old}" -eq 40
 [[ "$old" != *[!0-9a-f]* ]]
 if [ "$current" = "$commit" ] && [ "$old" != "$commit" ] && [ -n "$old" ]; then echo POSTCOMMIT_SUCCESS_CLEANUP
 elif [ "$current" = "$old" ] && [ "$current" != "$commit" ] && [ -n "$old" ]; then echo PRECOMMIT_OR_ROLLBACK
 else echo REFUSE_UNKNOWN_RECOVERY_RELATION; exit 1; fi
+else
+if [ "$current" = "$commit" ]; then echo POSTCOMMIT_GUARD_ONLY_CLEANUP
+else echo REFUSE_UNKNOWN_RECOVERY_RELATION; exit 1; fi
+fi
 REMOTE_RECOVERY_KIND
 )
     if [ "$RECOVERY_KIND" = POSTCOMMIT_SUCCESS_CLEANUP ]; then
@@ -398,6 +406,131 @@ test "$(cat "$guard/owner")" = "$owner"
 rm -rf -- "$backup"
 test "$(cat "$guard/owner")" = "$owner"; rm -f -- "$guard/owner"; rmdir "$guard"
 REMOTE_POSTCOMMIT_GUARD_RECOVERY
+    exit $?
+    fi
+    if [ "$RECOVERY_KIND" = POSTCOMMIT_GUARD_ONLY_CLEANUP ]; then
+    # The deploy completed and already removed its rollback/stage trees, but
+    # the final SSH disconnect stranded only the owner guard.  This path is
+    # intentionally narrower than rollback-backed postcommit cleanup: all
+    # managed bytes must still exactly equal the committed owner tree.
+    if git ls-tree -r --name-only "${RECOVERY_OWNER%%-*}" | grep -E '(^|/)__pycache__/|\.pyc$' >/dev/null; then
+        echo "REFUSE: owner commit tracks bytecode cache content" >&2
+        exit 1
+    fi
+    POSTCOMMIT_TREE_SHA=$(git archive --format=tar "${RECOVERY_OWNER%%-*}" \
+        scripts src ops assets profiles .agent docs cleanup_manifests AGENTS.md README.md \
+        | python3 -c 'import hashlib,json,stat,sys,tarfile; t=tarfile.open(fileobj=sys.stdin.buffer,mode="r|"); e={}; [e.update({m.name.rstrip("/"): {"type":"dir","mode":m.mode & ~0o022} if m.isdir() else {"type":"file","mode":m.mode & ~0o022,"sha256":hashlib.sha256(t.extractfile(m).read()).hexdigest()}}) for m in t if m.isdir() or m.isfile()]; print(hashlib.sha256(json.dumps(e,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()).hexdigest())')
+    POSTCOMMIT_RUNNER_MD5=$(git show "${RECOVERY_OWNER%%-*}:scripts/free_session_autoslice.py" | python3 -c 'import hashlib,sys; print(hashlib.md5(sys.stdin.buffer.read()).hexdigest())')
+    ssh "$RECOVERY_HOST" bash -s -- /opt/bilive/autoslice "$RECOVERY_OWNER" "$POSTCOMMIT_TREE_SHA" "$POSTCOMMIT_RUNNER_MD5" <<'REMOTE_GUARD_ONLY_POSTCOMMIT_GUARD_RECOVERY'
+set -euo pipefail
+base=$1; owner=$2; expected_tree=$3; expected_runner_md5=$4
+commit=${owner%%-*}; repo=$base/repo; backup=$base/repo.rollback-$commit; stage=$base/repo.deploy-$commit; guard=$base/deploy.guard
+test -d "$guard"
+test ! -L "$guard"
+test -f "$guard/owner"
+test ! -L "$guard/owner"
+test "$(cat "$guard/owner")" = "$owner"
+test "$(find "$guard" -mindepth 1 -maxdepth 1 -exec printf . \; | wc -c)" -eq 1
+test ! -e "$backup"
+test ! -L "$backup"
+test ! -e "$stage"
+test ! -L "$stage"
+if find "$base" -mindepth 1 -maxdepth 1 \( -name 'repo.rollback-*' -o -name 'repo.deploy-*' \) -print -quit | grep -q .; then
+    echo "REFUSE: deploy residue exists" >&2
+    exit 1
+fi
+test -f "$repo/DEPLOYED_COMMIT"
+test ! -L "$repo/DEPLOYED_COMMIT"
+current=$(awk 'NR==1 {print $1}' "$repo/DEPLOYED_COMMIT")
+test "${#current}" -eq 40
+[[ "$current" != *[!0-9a-f]* ]]
+test "$current" = "$commit"
+test -f "$repo/DEPLOYED_AUTHORITY_MANIFEST.json"
+test ! -L "$repo/DEPLOYED_AUTHORITY_MANIFEST.json"
+test -f "$base/DISABLED"
+test ! -L "$base/DISABLED"
+test ! -e "$base/AUTO_UPLOAD"
+test ! -L "$base/AUTO_UPLOAD"
+for lock in tick.lock runner.lock upload.lock; do
+    test -f "$base/$lock"
+    test ! -L "$base/$lock"
+done
+exec 9<>"$base/tick.lock"; /usr/bin/flock -n 9
+exec 8<>"$base/runner.lock"; /usr/bin/flock -n 8
+exec 7<>"$base/upload.lock"; /usr/bin/flock -n 7
+test "$(cat "$guard/owner")" = "$owner"
+PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" <<'PY'
+import hashlib,json,stat,sys
+from pathlib import Path
+root=Path(sys.argv[1]); caches=[]
+for name in ('scripts','src','ops','assets','profiles','.agent','docs','cleanup_manifests'):
+ p=root/name
+ if not p.exists(): continue
+ for q in p.rglob('*.pyc'):
+  if q.parent.name != '__pycache__': raise SystemExit('stray bytecode file')
+ for d in p.rglob('*'):
+  if d.name != '__pycache__': continue
+  s=d.lstat()
+  if d.is_symlink() or not d.is_dir() or not stat.S_ISDIR(s.st_mode): raise SystemExit('unsafe bytecode cache dir')
+  rows=list(d.iterdir())
+  if not rows: raise SystemExit('empty bytecode cache')
+  for q in rows:
+   qs=q.lstat()
+   if q.is_symlink() or not q.is_file() or q.suffix != '.pyc' or not stat.S_ISREG(qs.st_mode): raise SystemExit('unsafe bytecode cache child')
+  caches.append((d, rows))
+receipt=[]
+for d,rows in caches:
+ for q in rows: receipt.append((q.relative_to(root).as_posix(),hashlib.sha256(q.read_bytes()).hexdigest()))
+print(json.dumps({'schema':'postcommit-bytecode-cache-cleanup.v1','count':len(receipt),'files':receipt},sort_keys=True,separators=(',',':')))
+for d,rows in sorted(caches,key=lambda x:len(x[0].parts),reverse=True):
+ for q in rows: q.unlink()
+ d.rmdir()
+PY
+PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" "$expected_tree" "$commit" <<'PY'
+import hashlib,json,stat,sys
+from pathlib import Path
+root=Path(sys.argv[1]); expected=sys.argv[2]; commit=sys.argv[3]
+assert root.joinpath('DEPLOYED_COMMIT').read_text().split()[0] == commit
+entries={}
+for name in ('scripts','src','ops','assets','profiles','.agent','docs','cleanup_manifests','AGENTS.md','README.md'):
+ p=root/name
+ if not p.exists(): continue
+ for q in (p,*p.rglob('*')):
+  s=q.lstat(); rel=q.relative_to(root).as_posix(); mode=stat.S_IMODE(s.st_mode)
+  assert not q.is_symlink()
+  if q.is_dir(): entries[rel]={'type':'dir','mode':mode}
+  elif q.is_file(): entries[rel]={'type':'file','mode':mode,'sha256':hashlib.sha256(q.read_bytes()).hexdigest()}
+  else: raise AssertionError(rel)
+assert hashlib.sha256(json.dumps(entries,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()==expected
+PY
+PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" "$commit" <<'PY'
+import sys,json
+from pathlib import Path
+root=Path(sys.argv[1]); commit=sys.argv[2]; sys.path.insert(0,str(root))
+from src.autoslice.repository_asset_authority import build_deployed_authority_manifest
+manifest=json.loads((root/'DEPLOYED_AUTHORITY_MANIFEST.json').read_text())
+registry=root/'assets/lidousha/publication_registry.v1.json'; paths=[registry]
+if registry.is_symlink() or not registry.is_file(): raise SystemExit('unsafe publication registry')
+authority=root/'assets/lidousha'
+if authority.is_symlink() or not authority.is_dir(): raise SystemExit('unsafe authority tree')
+for p in authority.rglob('*'):
+ if p.is_symlink(): raise SystemExit('authority symlink')
+ if p.is_file() and p.suffix in {'.json','.srt'}: paths.append(p)
+assert manifest==build_deployed_authority_manifest(repo_root=root,deployed_commit=commit,relative_paths=[p.relative_to(root) for p in paths])
+PY
+for target in "$base/free_mount_watchdog.sh" "$base/upload_fatal_sentinel.sh" /opt/bilive/app/tmp_manual_upload/do_upload.sh /opt/bilive/recording/bililive_recorder_adapter.py; do
+    test -f "$target"
+    test ! -L "$target"
+done
+cmp -s "$repo/scripts/free_mount_watchdog.sh" "$base/free_mount_watchdog.sh"
+cmp -s "$repo/scripts/clouddrive_upload_fatal_sentinel.sh" "$base/upload_fatal_sentinel.sh"
+cmp -s "$repo/scripts/free_do_upload.sh" /opt/bilive/app/tmp_manual_upload/do_upload.sh
+cmp -s "$repo/ops/recording/bililive_recorder_adapter.py" /opt/bilive/recording/bililive_recorder_adapter.py
+test "$(md5sum "$repo/scripts/free_session_autoslice.py" | cut -d' ' -f1)" = "$expected_runner_md5"
+test "$(cat "$guard/owner")" = "$owner"
+rm -f -- "$guard/owner"
+rmdir "$guard"
+REMOTE_GUARD_ONLY_POSTCOMMIT_GUARD_RECOVERY
     exit $?
     fi
     test "$RECOVERY_KIND" = PRECOMMIT_OR_ROLLBACK
