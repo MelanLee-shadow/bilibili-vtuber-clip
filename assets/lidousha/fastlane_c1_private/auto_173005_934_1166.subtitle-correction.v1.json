@@ -30,10 +30,10 @@
     "drop": [9, 10, 11, 12, 13, 14, 22, 23, 26, 27, 28],
     "insert_after_source_cue": 19,
     "insertion": {
-      "start_ms": 96750,
-      "end_ms": 98050,
+      "start_ms": 91100,
+      "end_ms": 91900,
       "text": "来了",
-      "basis": "Ivan ruling location: about 01:37; retain the live Li Dousha reaction rather than watched-video dialogue."
+      "basis": "Ivan ruling location: about 01:37 on the public burn; C1's source SRT is main-delivery-local and Z1 contributes 5749ms, so this is 01:31.100–01:31.900 on the source grid."
     }
   }
 }

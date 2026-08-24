@@ -36,7 +36,7 @@ def test_c1_projection_preserves_every_live_cue_and_only_drops_watched_video() -
     assert "薇欧拉酱只是喜欢阿拉蕾酱而已" in text
     assert "主包给练舞室的姐姐们推荐" in text
     assert "daisukino ararei chan" in text
-    assert "00:01:36,750 --> 00:01:38,050\n来了" in text
+    assert "00:01:31,100 --> 00:01:31,900\n来了" in text
     for index in authority["cue_classification"]["watched_video_cues"]:
         assert f"cue-{index}" not in text
 
@@ -52,4 +52,5 @@ def test_c1_ass_projection_removes_watched_dialogue_and_inserts_live_reaction() 
     result = project_ass(ass, source, projected)
     assert "cue-9" not in result
     assert "薇欧拉酱只是喜欢阿拉蕾酱而已" in result
-    assert "0:01:36.75,0:01:38.05,Default,,0,0,0,,来了" in result
+    assert "0:01:31.10,0:01:31.90,Default,,0,0,0,,来了" in result
+    assert result.index("cue-19") < result.index("来了") < result.index("cue-20")
