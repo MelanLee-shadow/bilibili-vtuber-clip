@@ -222,6 +222,47 @@ def test_record_bound_authority_failures_get_their_own_predicate() -> None:
     assert cli._failure_predicate("REPLAY_FINALIZER_CLIP_CONTEXT_PAYLOAD_DRIFT") == "RECORD_BOUND_CLIP_CONTEXT"
 
 
+@pytest.mark.parametrize(
+    ("reason", "predicate"),
+    [
+        (
+            "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_SOURCE_FACT_REVIEW",
+            "SOURCE_FACT_REVIEW",
+        ),
+        (
+            "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_SOURCE_FACT_REVIEW_MISSING",
+            "SOURCE_FACT_REVIEW",
+        ),
+        (
+            "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_SOURCE_FACT_REVIEW_CPA_TEXT_REVIEW_CALL_FAILED",
+            "SOURCE_FACT_REVIEW",
+        ),
+        (
+            "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_STAGED_TITLE_MISMATCH",
+            "FROZEN_TITLE_AUTHORITY",
+        ),
+        (
+            "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_STORY_RESOLVED_HOOK_MISMATCH",
+            "FROZEN_TITLE_AUTHORITY",
+        ),
+        (
+            "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_TITLE_AUTHORITY_ERROR",
+            "FROZEN_TITLE_AUTHORITY",
+        ),
+    ],
+)
+def test_replay_title_surface_reasons_use_closed_predicate_mapping(
+    reason: str, predicate: str,
+) -> None:
+    assert cli._failure_predicate(reason) == predicate
+
+
+def test_replay_title_surface_reason_with_unrecognized_suffix_stays_private() -> None:
+    assert cli._failure_predicate(
+        "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_SOURCE_FACT_REVIEW:provider-secret"
+    ) == "PRIVATE_FINALIZATION"
+
+
 def _review_flags(
     stage: Path, *, date: str = "2026-08-14", cid: str = "cid",
     discovery: dict[str, object] | None = None,

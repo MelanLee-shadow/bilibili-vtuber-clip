@@ -10,6 +10,53 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 
+# These are deliberately closed, stable diagnostic codes.  The old generic
+# suffix is retained so existing negative contracts continue to reject the
+# replay, while the terminal predicate can identify the failing surface.
+REPLAY_FROZEN_SOURCE_FACT_REVIEW = (
+    "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_SOURCE_FACT_REVIEW"
+)
+REPLAY_FROZEN_STAGED_TITLE_MISMATCH = (
+    "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_STAGED_TITLE_MISMATCH"
+)
+REPLAY_FROZEN_STORY_RESOLVED_HOOK_MISMATCH = (
+    "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_STORY_RESOLVED_HOOK_MISMATCH"
+)
+REPLAY_FROZEN_TITLE_AUTHORITY_ERROR = (
+    "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_TITLE_AUTHORITY_ERROR"
+)
+REPLAY_FROZEN_SOURCE_FACT_REVIEW_MISSING = (
+    f"{REPLAY_FROZEN_SOURCE_FACT_REVIEW}_MISSING"
+)
+
+_SOURCE_FACT_REASON_CODES = {
+    "CPA_TEXT_REVIEW_INVALID",
+    "CPA_TEXT_REVIEW_UNAVAILABLE",
+    "CPA_TEXT_REVIEW_CALL_FAILED",
+    "CPA_SOURCE_FACT_REPAIR_CYCLE",
+    "CPA_SOURCE_FACT_REPAIR_EXHAUSTED",
+    "SOURCE_FACT_DETERMINISTIC_TEXT_NARROWING",
+    "SOURCE_FACT_ENTITY_CONTEXT_INVALID",
+    "SOURCE_FACT_INPUT_ENTITY_SURFACE_INVALID",
+    "SOURCE_FACT_REPAIRED_HOOK_SCORECARD_STALE",
+    "SOURCE_FACT_SPEAKER_EVIDENCE_INVALID",
+    "SOURCE_FACT_SUPPORTED_COMPRESSION_HEDGE_KEPT",
+    "SOURCE_FACT_TITLE_AUTHORITY_REQUIRED",
+}
+
+
+def _source_fact_failure_reason(review: object) -> str:
+    """Return a closed source-fact code without copying provider material."""
+
+    if review is None:
+        return REPLAY_FROZEN_SOURCE_FACT_REVIEW_MISSING
+    if isinstance(review, Mapping):
+        reason = review.get("reason_code")
+        if isinstance(reason, str) and reason in _SOURCE_FACT_REASON_CODES:
+            return f"{REPLAY_FROZEN_SOURCE_FACT_REVIEW}_{reason}"
+    return REPLAY_FROZEN_SOURCE_FACT_REVIEW
+
+
 def replay_publish_adapter(
     plan: object, *, source_fact_llm: Callable[..., object], private_package: Path,
     runtime_authority_root: Path,
@@ -110,13 +157,20 @@ def replay_publish_adapter(
             and isinstance(staged_publish, dict)
         ):
             staged_publish["source_fact_review"] = dict(old_review)
-        if (
-            staged_publish.get("title") != expected_title
-            or staged_publish.get("title_authority_error") is not None
-            or not source_fact_verified
-            or staged_story.get("selection_hook") != expected_hook
-        ):
-            raise replay.ReviewedBaselineReplayError("REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT")
+        # Source-fact is the highest-precedence diagnosis.  A failed fresh
+        # review often also leaves a title-authority error; reporting the
+        # latter would misroute the candidate into the title gate and hide the
+        # actual missing truth review.
+        if not source_fact_verified:
+            raise replay.ReviewedBaselineReplayError(_source_fact_failure_reason(review))
+        if staged_publish.get("title") != expected_title:
+            raise replay.ReviewedBaselineReplayError(REPLAY_FROZEN_STAGED_TITLE_MISMATCH)
+        if staged_story.get("selection_hook") != expected_hook:
+            raise replay.ReviewedBaselineReplayError(
+                REPLAY_FROZEN_STORY_RESOLVED_HOOK_MISMATCH
+            )
+        if staged_publish.get("title_authority_error") is not None:
+            raise replay.ReviewedBaselineReplayError(REPLAY_FROZEN_TITLE_AUTHORITY_ERROR)
         return dict(staged)
 
     return stage

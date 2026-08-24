@@ -61,6 +61,32 @@ _SAFE_EXCEPTION_TYPES = frozenset({
 _MAX_REVIEW_FLAGS_BYTES = 512 * 1024
 _SPEAKER_RUNTIME_RELATIVE = Path("venv-diar/bin/python")
 _SAFE_PROVIDER_CLASSES = frozenset({"quota", "service", "rejected", "unknown"})
+# Closed replay-adapter reason codes.  Keep this exact rather than accepting
+# arbitrary suffixes: provider/path/prompt text must never become a predicate.
+_REPLAY_TITLE_SURFACE_REASONS = {
+    "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_SOURCE_FACT_REVIEW": "SOURCE_FACT_REVIEW",
+    "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_SOURCE_FACT_REVIEW_MISSING": "SOURCE_FACT_REVIEW",
+    **{
+        f"REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_SOURCE_FACT_REVIEW_{code}": "SOURCE_FACT_REVIEW"
+        for code in (
+            "CPA_TEXT_REVIEW_INVALID",
+            "CPA_TEXT_REVIEW_UNAVAILABLE",
+            "CPA_TEXT_REVIEW_CALL_FAILED",
+            "CPA_SOURCE_FACT_REPAIR_CYCLE",
+            "CPA_SOURCE_FACT_REPAIR_EXHAUSTED",
+            "SOURCE_FACT_DETERMINISTIC_TEXT_NARROWING",
+            "SOURCE_FACT_ENTITY_CONTEXT_INVALID",
+            "SOURCE_FACT_INPUT_ENTITY_SURFACE_INVALID",
+            "SOURCE_FACT_REPAIRED_HOOK_SCORECARD_STALE",
+            "SOURCE_FACT_SPEAKER_EVIDENCE_INVALID",
+            "SOURCE_FACT_SUPPORTED_COMPRESSION_HEDGE_KEPT",
+            "SOURCE_FACT_TITLE_AUTHORITY_REQUIRED",
+        )
+    },
+    "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_STAGED_TITLE_MISMATCH": "FROZEN_TITLE_AUTHORITY",
+    "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_STORY_RESOLVED_HOOK_MISMATCH": "FROZEN_TITLE_AUTHORITY",
+    "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_TITLE_AUTHORITY_ERROR": "FROZEN_TITLE_AUTHORITY",
+}
 # A finalizer's SystemExit routinely appends a candidate-private path or an
 # adapter's diagnostic text.  Only these known *outer* families may cross the
 # replay diagnostic boundary, and only as their all-caps prefix.
@@ -340,6 +366,9 @@ _AFTER_IMAGE_PREDICATES = (
 
 
 def _failure_predicate(reason_code: str) -> str:
+    exact_replay_surface = _REPLAY_TITLE_SURFACE_REASONS.get(reason_code)
+    if exact_replay_surface is not None:
+        return exact_replay_surface
     if reason_code.startswith("REPLAY_FINALIZER_CHAT_AUTHORITY"):
         return "RECORD_BOUND_CHAT_AUTHORITY"
     if reason_code.startswith("REPLAY_FINALIZER_CLIP_CONTEXT"):

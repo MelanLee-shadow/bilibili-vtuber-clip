@@ -13,6 +13,7 @@ import pytest
 import src.autoslice.redelivery_full_window_replay as full_window_replay
 import src.autoslice.reviewed_baseline_replay as replay
 import src.autoslice.reviewed_baseline_replay_authority as replay_authority
+import src.autoslice.reviewed_baseline_replay_publish as replay_publish
 from src.autoslice import llm_client
 from src.autoslice.repository_asset_authority import _canonical_sha256
 
@@ -819,7 +820,10 @@ def test_replay_publish_adapter_refuses_source_fact_title_rewrite(
         plan, source_fact_llm=lambda *_args, **_kwargs: "", private_package=private_package,
         runtime_authority_root=_runtime_authority(tmp_path),
     )
-    with pytest.raises(replay.ReviewedBaselineReplayError, match="FROZEN_TITLE_AUTHORITY_DRIFT"):
+    with pytest.raises(
+        replay.ReviewedBaselineReplayError,
+        match="REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_STAGED_TITLE_MISMATCH",
+    ):
         adapter({}, cues=[], run_ffmpeg=False)
 
 
@@ -957,7 +961,10 @@ def test_replay_publish_adapter_refuses_unverified_missing_source_fact_review(
         plan, source_fact_llm=lambda *_args, **_kwargs: "", private_package=private_package,
         runtime_authority_root=_runtime_authority(tmp_path),
     )
-    with pytest.raises(replay.ReviewedBaselineReplayError, match="FROZEN_TITLE_AUTHORITY_DRIFT"):
+    with pytest.raises(
+        replay.ReviewedBaselineReplayError,
+        match="REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_SOURCE_FACT_REVIEW",
+    ):
         adapter({}, cues=[], run_ffmpeg=False)
 
 
@@ -1003,6 +1010,66 @@ def test_replay_publish_adapter_classifies_missing_staged_story_contract(
         runtime_authority_root=_runtime_authority(tmp_path),
     )
     with pytest.raises(replay.ReviewedBaselineReplayError, match="REPLAY_STORY_CONTRACT_MISSING"):
+        adapter({}, cues=[], run_ffmpeg=False)
+
+
+@pytest.mark.parametrize(
+    ("review", "title", "story_hook", "title_error", "expected"),
+    [
+        (None, "冻结标题", "冻结钩子", "provider_failed", replay_publish.REPLAY_FROZEN_SOURCE_FACT_REVIEW_MISSING),
+        ({"reason_code": "CPA_TEXT_REVIEW_CALL_FAILED"}, "冻结标题", "冻结钩子", None, "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_SOURCE_FACT_REVIEW_CPA_TEXT_REVIEW_CALL_FAILED"),
+        ({"status": "PASS"}, "错误标题", "冻结钩子", None, replay_publish.REPLAY_FROZEN_STAGED_TITLE_MISMATCH),
+        ({"status": "PASS"}, "冻结标题", "错误钩子", None, replay_publish.REPLAY_FROZEN_STORY_RESOLVED_HOOK_MISMATCH),
+        ({"status": "PASS"}, "冻结标题", "冻结钩子", "title_failed", replay_publish.REPLAY_FROZEN_TITLE_AUTHORITY_ERROR),
+    ],
+)
+def test_replay_publish_adapter_emits_typed_title_surface_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    review: dict[str, object] | None,
+    title: str,
+    story_hook: str,
+    title_error: str | None,
+    expected: str,
+) -> None:
+    out_root, _ = _package(tmp_path)
+    plan = replay.build_replay_plan(repo_root=ROOT, out_root=out_root, date=DATE, candidate_id=CID)
+    package = plan.package_root / "replacement_recuts"
+    cover = package / "cover.png"
+    cover.write_bytes(b"cover")
+    plan.record_path.write_text(json.dumps({
+        "story_contract": {"candidate_id": CID, "selection_hook": "冻结钩子"},
+        "publish_staging": {
+            "title": "冻结标题", "selection_hook": "冻结钩子", "cover_path": str(cover),
+            "cover_generation": {"final_cover_sha256": _sha(b"cover")},
+        },
+        "artifact_hashes": {"cover_sha256": _sha(b"cover")},
+    }))
+    private_package = tmp_path / "private-package"
+    private_package.mkdir()
+    monkeypatch.setattr(
+        replay, "_private_carried_cover_generation",
+        lambda *_args, **_kwargs: (private_package / "cover.png", {"final_cover_sha256": _sha(b"cover")}),
+    )
+    monkeypatch.setattr(
+        "src.autoslice.publish_staging._stage_publish_draft",
+        lambda *_args, **_kwargs: {
+            "story_contract": {"selection_hook": story_hook},
+            "publish_staging": {
+                "title": title, "title_authority_error": title_error,
+                "source_fact_review": review,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "src.autoslice.source_fact_review.source_fact_review_passes",
+        lambda value: isinstance(value, Mapping) and value.get("status") == "PASS",
+    )
+    adapter = replay.replay_publish_adapter(
+        plan, source_fact_llm=lambda *_args, **_kwargs: "", private_package=private_package,
+        runtime_authority_root=_runtime_authority(tmp_path),
+    )
+    with pytest.raises(replay.ReviewedBaselineReplayError, match=expected):
         adapter({}, cues=[], run_ffmpeg=False)
 
 
