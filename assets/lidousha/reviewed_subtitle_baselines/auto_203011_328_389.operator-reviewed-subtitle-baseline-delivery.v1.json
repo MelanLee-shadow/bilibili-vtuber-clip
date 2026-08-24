@@ -1,17 +1,17 @@
 {
   "schema_version": "operator-reviewed-subtitle-baseline-delivery.v1",
   "candidate_id": "auto_203011_328_389",
-  "authority": "Ivan 2026-08-19 exhaustive fastlane ruling #2; only cue 5 changes, with cue 21 explicitly frozen as direct response and cue 4 unchanged.",
+  "authority": "Claude raw line e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; content 0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b; exhaustive C2 fastlane repair.",
   "operator_authority": {
     "kind": "IVAN_OPERATOR",
     "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; raw JSONL line sha256 including LF e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; Ivan ruling #2: 0:14 exact 小豆老公；； 不是你老公; 1:04 is direct response to danmaku 小豆好吵（, fixed as the current reviewed direct-response text 小豆哪有好吵. Ivan later clarified that correcting all named fastlane errors authorizes direct upload."
   },
   "source_srt": {
-    "path": "/private/tmp/vtuber-slice-fastlane-c2-20260824/assets/lidousha/reviewed_subtitle_baselines/auto_203011_328_389.pipeline-diagnostic.srt",
+    "path": "/private/tmp/vtuber-slice-fastlane-c2-minimal-20260824/assets/lidousha/fastlane_c2_private/auto_203011_328_389.pipeline-diagnostic.srt",
     "sha256": "4122f3392a9531d200bf2cd6d6c10b1aeafd60d48f9b58553fdbfacc6ac4bcba"
   },
   "reviewed_srt": {
-    "path": "/private/tmp/vtuber-slice-fastlane-c2-20260824/assets/lidousha/reviewed_subtitle_baselines/auto_203011_328_389.reviewed.srt",
+    "path": "/private/tmp/vtuber-slice-fastlane-c2-minimal-20260824/assets/lidousha/fastlane_c2_private/auto_203011_328_389.reviewed.srt",
     "sha256": "3cb16000b1bb34f205ffd6db524e3a2874108666bb4b34d0b6902654900572c1"
   },
   "baseline_sha256": "3cb16000b1bb34f205ffd6db524e3a2874108666bb4b34d0b6902654900572c1",
@@ -47,10 +47,10 @@
       "sha256": "4122f3392a9531d200bf2cd6d6c10b1aeafd60d48f9b58553fdbfacc6ac4bcba"
     },
     "decision_ledger": {
-      "sha256": "e53a628fe4f9fc0f69314b3c9e0424842c3f473c7cb8050dc9018f3a685f4c92"
+      "sha256": "6a828000d812d297fac5dcce26480bbf400f9780fe56bd6ad414955759ed8586"
     },
     "diff_receipt": {
-      "sha256": "003c03ca6e00ad8b9a4c6a7ab14f192054e7547a0b07a6223b3841b083453e21"
+      "sha256": "58d7b703b989440cf525ea416efdc9dc40d19011936e3e9e44d79789a141dda5"
     }
   },
   "diagnostic_diff": {
@@ -58,7 +58,7 @@
     "candidate_id": "auto_203011_328_389",
     "pipeline_srt_sha256": "4122f3392a9531d200bf2cd6d6c10b1aeafd60d48f9b58553fdbfacc6ac4bcba",
     "release_truth_srt_sha256": "3cb16000b1bb34f205ffd6db524e3a2874108666bb4b34d0b6902654900572c1",
-    "decision_ledger_sha256": "e53a628fe4f9fc0f69314b3c9e0424842c3f473c7cb8050dc9018f3a685f4c92",
+    "decision_ledger_sha256": "6a828000d812d297fac5dcce26480bbf400f9780fe56bd6ad414955759ed8586",
     "cue_count": 22,
     "source_cue_count": 22,
     "release_cue_count": 22,

@@ -3,7 +3,7 @@
   "candidate_id": "auto_203011_328_389",
   "pipeline_srt_sha256": "4122f3392a9531d200bf2cd6d6c10b1aeafd60d48f9b58553fdbfacc6ac4bcba",
   "release_truth_srt_sha256": "3cb16000b1bb34f205ffd6db524e3a2874108666bb4b34d0b6902654900572c1",
-  "decision_ledger_sha256": "e53a628fe4f9fc0f69314b3c9e0424842c3f473c7cb8050dc9018f3a685f4c92",
+  "decision_ledger_sha256": "6a828000d812d297fac5dcce26480bbf400f9780fe56bd6ad414955759ed8586",
   "cue_count": 22,
   "source_cue_count": 22,
   "release_cue_count": 22,

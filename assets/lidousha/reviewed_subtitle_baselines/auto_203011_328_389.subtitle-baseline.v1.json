@@ -4,9 +4,9 @@
   "schema_version": "subtitle-redelivery-baseline.v2",
   "mode": "preserve_text_outside_source_truth",
   "exact_interval_replay": true,
-  "path": "auto_203011_328_389.reviewed.srt",
+  "path": "reviewed.srt",
   "sha256": "3cb16000b1bb34f205ffd6db524e3a2874108666bb4b34d0b6902654900572c1",
-  "authority": "Ivan 2026-08-19 exhaustive fastlane ruling #2; only cue 5 changes, with cue 21 explicitly frozen as direct response and cue 4 unchanged.",
+  "authority": "Claude raw line e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; content 0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b; exhaustive C2 fastlane repair.",
   "source_recording_basename": "22966160_20260813-20-30-11.mp4",
   "source_sha256": "b5a7861c7283914742783ccc740531d9a21bdf78da7f5b8f90a463cb9d7f209e",
   "absolute_source_start_ms": 318740,
@@ -15,8 +15,8 @@
     "schema_version": "operator-reviewed-text-full-ownership-pin.v3",
     "baseline_sha256": "3cb16000b1bb34f205ffd6db524e3a2874108666bb4b34d0b6902654900572c1",
     "pipeline_srt_sha256": "4122f3392a9531d200bf2cd6d6c10b1aeafd60d48f9b58553fdbfacc6ac4bcba",
-    "decision_ledger_sha256": "e53a628fe4f9fc0f69314b3c9e0424842c3f473c7cb8050dc9018f3a685f4c92",
-    "diagnostic_diff_sha256": "003c03ca6e00ad8b9a4c6a7ab14f192054e7547a0b07a6223b3841b083453e21",
+    "decision_ledger_sha256": "6a828000d812d297fac5dcce26480bbf400f9780fe56bd6ad414955759ed8586",
+    "diagnostic_diff_sha256": "58d7b703b989440cf525ea416efdc9dc40d19011936e3e9e44d79789a141dda5",
     "operator_authority": {
       "kind": "IVAN_OPERATOR",
       "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; raw JSONL line sha256 including LF e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; Ivan ruling #2: 0:14 exact 小豆老公；； 不是你老公; 1:04 is direct response to danmaku 小豆好吵（, fixed as the current reviewed direct-response text 小豆哪有好吵. Ivan later clarified that correcting all named fastlane errors authorizes direct upload."
@@ -36,15 +36,15 @@
     },
     "pipeline_diagnostic": {
       "sha256": "4122f3392a9531d200bf2cd6d6c10b1aeafd60d48f9b58553fdbfacc6ac4bcba",
-      "path": "auto_203011_328_389.pipeline-diagnostic.srt"
+      "path": "pipeline.srt"
     },
     "decision_ledger": {
-      "sha256": "e53a628fe4f9fc0f69314b3c9e0424842c3f473c7cb8050dc9018f3a685f4c92",
-      "path": "auto_203011_328_389.operator-decisions.v3.json"
+      "sha256": "6a828000d812d297fac5dcce26480bbf400f9780fe56bd6ad414955759ed8586",
+      "path": "decisions.json"
     },
     "diff_receipt": {
-      "sha256": "003c03ca6e00ad8b9a4c6a7ab14f192054e7547a0b07a6223b3841b083453e21",
-      "path": "auto_203011_328_389.operator-truth-diff.v2.json"
+      "sha256": "58d7b703b989440cf525ea416efdc9dc40d19011936e3e9e44d79789a141dda5",
+      "path": "diff.json"
     }
   }
 }
