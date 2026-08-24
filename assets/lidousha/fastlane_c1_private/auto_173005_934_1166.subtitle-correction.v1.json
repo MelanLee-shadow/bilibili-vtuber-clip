@@ -2,7 +2,7 @@
   "schema_version": "fastlane-c1-private-subtitle-correction.v1",
   "candidate_id": "auto_173005_934_1166",
   "recording_date": "2026-08-11",
-  "operator_authority": "Ivan exhaustive ruling: docs/reviews/2026-08-19-ivan-review-batch-rulings.md line 38; Claude line 947",
+  "operator_authority": "Ivan exhaustive C1 ruling; the formal adapter binds Claude raw JSONL line 947 and the candidate #1 semantic scope without relying on Markdown line numbers.",
   "title": "【李豆沙】经小李判断，薇欧拉对阿拉蕾就是铁暗恋！",
   "upload_allowed": false,
   "future_delivery_constraint": {

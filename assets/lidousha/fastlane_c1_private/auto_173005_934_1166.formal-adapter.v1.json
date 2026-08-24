@@ -1,0 +1,129 @@
+{
+  "schema_version": "fastlane-c1-formal-adapter-authority.v1",
+  "candidate_id": "auto_173005_934_1166",
+  "recording_date": "2026-08-11",
+  "title": "【李豆沙】经小李判断，薇欧拉对阿拉蕾就是铁暗恋！",
+  "correction_authority": {
+    "relative_path": "assets/lidousha/fastlane_c1_private/auto_173005_934_1166.subtitle-correction.v1.json",
+    "sha256": "sha256:432fd1b4a807da0bf75d5571e9177d43e110d70a9eefa9126c1185a390e39255"
+  },
+  "operator_ruling": {
+    "raw_line947_sha256": "sha256:e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa",
+    "candidate_id": "auto_173005_934_1166",
+    "candidate_scope_ordinal": 1,
+    "document_binding_mode": "RESEAL_AT_INTEGRATION",
+    "ivan_rereview_required": false,
+    "raw_payload_required_fragments": [
+      "0:46应该是薇欧拉酱",
+      "1:01左右的这一段",
+      "主包给",
+      "1:37李豆沙说了一句来了",
+      "2:00视频字幕不该出现",
+      "daisukino ararei chian",
+      "经小李判断，薇欧拉对阿拉蕾就是铁暗恋！"
+    ],
+    "ruling_document_required_fragments": [
+      "| 1 | 8/11 auto_173005_934_1166 薇欧拉 |",
+      "0:46 薇欧拉酱",
+      "1:01 视频内话语不做字幕",
+      "主包给",
+      "1:37 「来了」漏听",
+      "2:00 视频字幕不该有",
+      "daisukino ararei chan",
+      "标题:「经小李判断，薇欧拉对阿拉蕾就是铁暗恋！」",
+      "不需要 Ivan 再看片或再复审"
+    ]
+  },
+  "predecessor": {
+    "video": {
+      "filename": "auto_173005_934_1166.recut.mp4",
+      "sha256": "sha256:3ac98248a8fa3d3d3a02ea3a7e6045d68a7b5c29c1aa9af340ad5604e3158c08"
+    },
+    "srt": {
+      "filename": "auto_173005_934_1166.recut.srt",
+      "sha256": "sha256:1a668a899257407685c91629cc254918a594663af8b55cccb0932db16d0aa5d1"
+    },
+    "ass": {
+      "filename": "auto_173005_934_1166.recut.final-sapphire72.ass",
+      "sha256": "sha256:69defd7ff572a4e3c7c44fb8c2e62a5b9cd3dfdb5a6bcb97225253d13ac0a62f"
+    },
+    "record": {
+      "filename": "auto_173005_934_1166.record.json",
+      "sha256": "sha256:94faef824d8d7c8de78050d425c948aab6eb5c1373e56b538c0a308ec918b7c7"
+    },
+    "publish": {
+      "filename": "auto_173005_934_1166.recut.publish.json",
+      "sha256": "sha256:bd8a6ed73085af8edea7804eafa23260de72d3e7a32a9c22c5d4fe912e66b95d"
+    },
+    "cover": {
+      "filename": "auto_173005_934_1166.recut.burned-final-sapphire72.cover.png",
+      "sha256": "sha256:9a3636c47b6bfe808dfdd24cd9486788b6101e9260e1cdf8d98a3886942b980f"
+    },
+    "review_manifest": {
+      "filename": "review_manifest.json",
+      "sha256": "sha256:67b3f61175e6d5dec4d289652279cb55b31d2aae785d2bd293b7c91727825f9a"
+    }
+  },
+  "successor_grid": {
+    "source_cue_count": 36,
+    "live_source_cues": [1, 2, 3, 4, 5, 6, 7, 8, 15, 16, 17, 18, 19, 20, 21, 24, 25, 29, 30, 31, 32, 33, 34, 35, 36],
+    "watched_video_source_cues": [9, 10, 11, 12, 13, 14, 22, 23, 26, 27, 28],
+    "retained_live_cue_count": 25,
+    "watched_video_drop_count": 11,
+    "inserted_live_cue_count": 1,
+    "release_cue_count": 26,
+    "replacements": {
+      "6": "薇欧拉酱只是喜欢阿拉蕾酱而已",
+      "16": "主包给练舞室的姐姐们推荐",
+      "25": "daisukino ararei chan"
+    },
+    "insertion": {
+      "after_source_cue": 19,
+      "start_ms": 91100,
+      "end_ms": 91900,
+      "text": "来了"
+    }
+  },
+  "branding_intro": {
+    "intro_id": "huozi-lidousha-shiling-budui-weiaizuoyi-z1-v2",
+    "media_sha256": "sha256:bbd0c7e3b34d3d5af543bb8444861ab1e18f835c9252629480b2ec2fd34e7dc5",
+    "intro_offset_ms": 5749,
+    "manifest_relative_path": "assets/lidousha/intro/branding_intro.v1.json",
+    "manifest_sha256": "sha256:bee66d164b683451602ae3601d79d19175bc72b0d13257b3026ae2dc47ee06ef"
+  },
+  "public_identity": {
+    "snapshot_schema_version": "c1-same-bv-public-binding.v1",
+    "snapshot_sha256": "sha256:24723cae9edaa9eef039e043e5616f22138008294bdf8a33bdb2a3a7b3f04ef7",
+    "response_sha256": "979073cf4c92494b7952fcee48927b6a9f6f1b7f4f5a9fe996cc3683158794de",
+    "bvid": "BV1os8q61Eya",
+    "aid": 117132650155234,
+    "cid": 41126267272
+  },
+  "same_bv_delivery_constraint": {
+    "requires_same_bv_repair": true,
+    "forbid_new_bv": true,
+    "preserve_public_identity_and_metadata": true
+  },
+  "output_names": {
+    "video": "auto_173005_934_1166.recut.mp4",
+    "successor_srt": "auto_173005_934_1166.recut.srt",
+    "successor_ass": "auto_173005_934_1166.recut.final-sapphire72.ass",
+    "burned_final": "auto_173005_934_1166.recut.burned-final-speaker.mp4",
+    "materializer_receipt": "fastlane-c1-private-successor.v1.json",
+    "cover": "auto_173005_934_1166.recut.burned-final-sapphire72.cover.png",
+    "record": "auto_173005_934_1166.recut.c1-formal.record.json",
+    "publish": "auto_173005_934_1166.recut.c1-formal.publish.json",
+    "title": "auto_173005_934_1166.title.txt",
+    "public_identity": "c1.public-identity-and-metadata.v1.json",
+    "ruling_document": "ruling/2026-08-19-ivan-review-batch-rulings.md",
+    "ruling_seal": "c1.ruling-seal.v1.json",
+    "adapter_receipt": "c1.formal-adapter-receipt.v1.json",
+    "technical_template": "delegated-root-technical-review.template.v1.json",
+    "predecessor_srt": "predecessor/auto_173005_934_1166.recut.srt",
+    "predecessor_ass": "predecessor/auto_173005_934_1166.recut.final-sapphire72.ass",
+    "predecessor_record": "predecessor/auto_173005_934_1166.record.json",
+    "predecessor_publish": "predecessor/auto_173005_934_1166.recut.publish.json",
+    "predecessor_manifest": "predecessor/review_manifest.json"
+  },
+  "authority_sha256": "sha256:aa9e88eb43f04083a3a9896d0fd5aaf4f31559010af28d5272d1e46cb30069de"
+}

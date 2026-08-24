@@ -93,6 +93,10 @@ from src.autoslice.qixi_corrected_package_finalization import (  # noqa: E402
 from src.autoslice.qixi_review_package_owner_bridge import (  # noqa: E402
     manifest_bound_terminal_projection_authority,
 )
+from src.autoslice.fastlane_c1_formal_adapter import (  # noqa: E402
+    audit_fastlane_c1_formal_package,
+    is_fastlane_c1_formal_manifest,
+)
 
 
 DEFAULT_MAX_VISUAL_LINES = 2
@@ -278,6 +282,9 @@ def _audit_policy_fingerprint() -> str:
         ROOT / "src/autoslice/deterministic_text_surface_resolution.py",
         ROOT / "src/autoslice/publication_title_exception.py",
         ROOT / "src/autoslice/review_package_title_audit.py",
+        ROOT / "src/autoslice/fastlane_c1_formal_adapter.py",
+        ROOT / "assets/lidousha/fastlane_c1_private/auto_173005_934_1166.subtitle-correction.v1.json",
+        ROOT / "assets/lidousha/fastlane_c1_private/auto_173005_934_1166.formal-adapter.v1.json",
         ROOT / "src/autoslice/review_package_source_fact_audit.py",
         ROOT / "src/autoslice/source_fact_review.py",
         ROOT / "src/autoslice/cover_only_audit_scope.py",
@@ -1681,6 +1688,22 @@ def audit_package(
 
     if not manifest:
         _add_issue(issues, "MANIFEST_MISSING_OR_INVALID", path=manifest_path)
+        return _audit_result(root, issues)
+
+    # C1 is a deliberately closed successor of a deployed 36-cue package.
+    # It cannot be evaluated as a generic fresh StoryContract because its
+    # operator-approved text grid intentionally differs from the predecessor.
+    # The special path is selectable only by its exact private manifest schema;
+    # the adapter itself then hard-binds the one candidate, every source hash,
+    # public same-BV identity, cue partition, intro, and no-root-receipt state.
+    if is_fastlane_c1_formal_manifest(manifest):
+        for issue in audit_fastlane_c1_formal_package(root):
+            _add_issue(
+                issues,
+                issue.code,
+                path=issue.path,
+                detail=issue.detail,
+            )
         return _audit_result(root, issues)
 
     (
