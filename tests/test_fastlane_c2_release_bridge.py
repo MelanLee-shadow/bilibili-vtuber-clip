@@ -137,8 +137,10 @@ def test_c2_bridge_projects_strict_same_stem_package(monkeypatch, tmp_path):
     monkeypatch.setattr(bridge, "audit_fastlane_c2_formal_package", lambda _root: [])
     monkeypatch.setattr(bridge, "_validate_formal_audit", lambda _root: None)
     monkeypatch.setattr(bridge, "_validate_root_receipt", lambda *_args: None)
+    monkeypatch.setattr(bridge, "_validate_legacy_execution_contract", lambda *_args: None)
     bridge.build_release_package(
         formal_package=formal, ready_proposal=proposal, root_receipt=receipt, authorization=authorization,
+        legacy_proposal=receipt, legacy_execution_contract=receipt,
         out=out, tag_generator=_tags,
     )
     record = json.loads((out / bridge.RECORD_NAME).read_text())
@@ -158,7 +160,8 @@ def test_c2_bridge_rejects_final_artifact_drift(monkeypatch, tmp_path, target):
     monkeypatch.setattr(bridge, "audit_fastlane_c2_formal_package", lambda _root: [])
     monkeypatch.setattr(bridge, "_validate_formal_audit", lambda _root: None)
     monkeypatch.setattr(bridge, "_validate_root_receipt", lambda *_args: None)
-    bridge.build_release_package(formal_package=formal, ready_proposal=proposal, root_receipt=receipt, authorization=authorization, out=out, tag_generator=_tags)
+    monkeypatch.setattr(bridge, "_validate_legacy_execution_contract", lambda *_args: None)
+    bridge.build_release_package(formal_package=formal, ready_proposal=proposal, root_receipt=receipt, authorization=authorization, legacy_proposal=receipt, legacy_execution_contract=receipt, out=out, tag_generator=_tags)
     (out / target).write_bytes(b"drift")
     assert bridge.audit_fastlane_c2_release_package(out)[0]["code"] == "C2_RELEASE_CLOSURE_DRIFT"
 
@@ -171,10 +174,11 @@ def test_c2_bridge_rejects_authority_receipt_and_tag_drift(monkeypatch, tmp_path
     monkeypatch.setattr(bridge, "audit_fastlane_c2_formal_package", lambda _root: [])
     monkeypatch.setattr(bridge, "_validate_formal_audit", lambda _root: None)
     monkeypatch.setattr(bridge, "_validate_root_receipt", lambda *_args: None)
-    bridge.build_release_package(formal_package=formal, ready_proposal=proposal, root_receipt=receipt, authorization=authorization, out=out, tag_generator=_tags)
+    monkeypatch.setattr(bridge, "_validate_legacy_execution_contract", lambda *_args: None)
+    bridge.build_release_package(formal_package=formal, ready_proposal=proposal, root_receipt=receipt, authorization=authorization, legacy_proposal=receipt, legacy_execution_contract=receipt, out=out, tag_generator=_tags)
     record_path = out / bridge.RECORD_NAME
     record = json.loads(record_path.read_text())
-    record["story_contract"]["candidate_id"] = "other"
+    record["legacy_execution_contract"]["sha256"] = "sha256:" + "0" * 64
     record_path.write_text(json.dumps(record), encoding="utf-8")
     assert bridge.audit_fastlane_c2_release_package(out)[0]["code"] == "C2_RELEASE_CLOSURE_DRIFT"
 
@@ -192,7 +196,8 @@ def test_c2_bridge_rejects_receipt_authority_and_tags_drift(monkeypatch, tmp_pat
     monkeypatch.setattr(bridge, "audit_fastlane_c2_formal_package", lambda _root: [])
     monkeypatch.setattr(bridge, "_validate_formal_audit", lambda _root: None)
     monkeypatch.setattr(bridge, "_validate_root_receipt", lambda *_args: None)
-    bridge.build_release_package(formal_package=formal, ready_proposal=proposal, root_receipt=receipt, authorization=authorization, out=out, tag_generator=_tags)
+    monkeypatch.setattr(bridge, "_validate_legacy_execution_contract", lambda *_args: None)
+    bridge.build_release_package(formal_package=formal, ready_proposal=proposal, root_receipt=receipt, authorization=authorization, legacy_proposal=receipt, legacy_execution_contract=receipt, out=out, tag_generator=_tags)
     path = out / path_name
     value = json.loads(path.read_text())
     mutate(value)
@@ -211,5 +216,6 @@ def test_c2_bridge_rejects_non_c2_authorization(monkeypatch, tmp_path):
     monkeypatch.setattr(bridge, "audit_fastlane_c2_formal_package", lambda _root: [])
     monkeypatch.setattr(bridge, "_validate_formal_audit", lambda _root: None)
     monkeypatch.setattr(bridge, "_validate_root_receipt", lambda *_args: None)
+    monkeypatch.setattr(bridge, "_validate_legacy_execution_contract", lambda *_args: None)
     with pytest.raises(bridge.C2ReleaseBridgeError, match="authorization identity drift"):
-        bridge.build_release_package(formal_package=formal, ready_proposal=proposal, root_receipt=receipt, authorization=authorization, out=tmp_path / "out", tag_generator=_tags)
+        bridge.build_release_package(formal_package=formal, ready_proposal=proposal, root_receipt=receipt, authorization=authorization, legacy_proposal=receipt, legacy_execution_contract=receipt, out=tmp_path / "out", tag_generator=_tags)

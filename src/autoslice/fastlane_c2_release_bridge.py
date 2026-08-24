@@ -37,6 +37,8 @@ PUBLISH_NAME = f"{CID}.recut.burned-final-speaker.publish.json"
 FORMAL_DIR = "formal"
 AUTH_NAME = "c2.release-authorization.v1.json"
 ROOT_RECEIPT_NAME = "c2.root-technical-receipt.v1.json"
+LEGACY_PROPOSAL_NAME = "c2.legacy-recovery.proposal.v1.json"
+LEGACY_CONTRACT_NAME = "c2.legacy-execution-contract.v1.json"
 TAG_RECEIPT_NAME = "c2.tag-generation-receipt.v1.json"
 DIRECT_IVAN_LINES = {
     947: (
@@ -274,6 +276,17 @@ def _valid_tags(result: Mapping[str, object]) -> list[str]:
     return clean
 
 
+def _validate_legacy_execution_contract(formal: Path, proposal: Path, contract: Path, authorization: Path, receipt: Path) -> None:
+    from .fastlane_c2_legacy_recovery import validate_accepted_execution_contract, validate_proposal
+    _regular(proposal, "C2 legacy proposal")
+    _regular(contract, "C2 legacy execution contract")
+    try:
+        validate_proposal(_read_object(proposal, "C2 legacy proposal"), formal=formal, authorization=authorization, receipt=receipt)
+        validate_accepted_execution_contract(_read_object(contract, "C2 legacy execution contract"), proposal=proposal)
+    except ValueError as exc:
+        raise C2ReleaseBridgeError("C2 legacy execution contract rejected") from exc
+
+
 def _release_item() -> dict[str, object]:
     return {
         "candidate_id": CID,
@@ -297,12 +310,14 @@ def build_release_package(
     ready_proposal: Path,
     root_receipt: Path,
     authorization: Path,
+    legacy_proposal: Path,
+    legacy_execution_contract: Path,
     out: Path,
     tag_generator: Callable[..., dict] = generate_upload_tags,
 ) -> Path:
     """Create one private C2 projection.  It never calls upload or CPA image QC."""
-    formal_package, ready_proposal, root_receipt, authorization, out = (
-        formal_package.resolve(), ready_proposal.resolve(), root_receipt.resolve(), authorization.resolve(), out.resolve()
+    formal_package, ready_proposal, root_receipt, authorization, legacy_proposal, legacy_execution_contract, out = (
+        formal_package.resolve(), ready_proposal.resolve(), root_receipt.resolve(), authorization.resolve(), legacy_proposal.resolve(), legacy_execution_contract.resolve(), out.resolve()
     )
     if out.exists() or out.is_symlink():
         raise C2ReleaseBridgeError("C2 release package output already exists")
@@ -313,6 +328,7 @@ def build_release_package(
     ready_proposal = _receipt_bound_proposal(formal_package, ready_proposal, root_receipt)
     _validate_root_receipt(formal_package, ready_proposal, root_receipt)
     _validate_authorization(_read_object(authorization, "authorization"))
+    _validate_legacy_execution_contract(formal_package, legacy_proposal, legacy_execution_contract, authorization, root_receipt)
 
     _mkdir_create_only(out, "C2 release package output")
     try:
@@ -322,6 +338,8 @@ def build_release_package(
         _copy_regular(ready_proposal, out / proposal_name)
         _copy_regular(root_receipt, out / ROOT_RECEIPT_NAME)
         _copy_regular(authorization, out / AUTH_NAME)
+        _copy_regular(legacy_proposal, out / LEGACY_PROPOSAL_NAME)
+        _copy_regular(legacy_execution_contract, out / LEGACY_CONTRACT_NAME)
         _copy_regular(formal / NAMES["video"], out / VIDEO_NAME)
         _copy_regular(formal / NAMES["cover"], out / COVER_NAME)
         _copy_regular(formal / NAMES["srt"], out / SRT_NAME)
@@ -349,16 +367,7 @@ def build_release_package(
                 "ass_sha256": "sha256:" + sha256(formal / NAMES["ass"]),
             },
             "publish_staging": {"title": TITLE},
-            "story_contract": {
-                "schema_version": "lidousha-c2-release-story-projection.v1",
-                "candidate_id": CID,
-                "transcript_sha256": "sha256:" + sha256(out / SRT_NAME),
-                "formal_authority": {
-                    "formal_review_manifest_sha256": "sha256:" + sha256(formal / "review_manifest.json"),
-                    "correction_authority_sha256": "sha256:" + sha256(out / AUTH_NAME),
-                    "root_receipt_sha256": "sha256:" + sha256(out / ROOT_RECEIPT_NAME),
-                },
-            },
+            "legacy_execution_contract": _sha_entry(out / LEGACY_CONTRACT_NAME),
             "upload_tags": result,
             "c2_tag_generation_receipt": _sha_entry(out / TAG_RECEIPT_NAME),
         }
@@ -387,6 +396,7 @@ def build_release_package(
                 "correction_authority": _sha_entry(out / AUTH_NAME),
                 "root_receipt": _sha_entry(out / ROOT_RECEIPT_NAME),
                 "ready_proposal": _sha_entry(out / proposal_name),
+                "legacy_execution_contract": _sha_entry(out / LEGACY_CONTRACT_NAME),
             },
             "tag_generation": _sha_entry(out / TAG_RECEIPT_NAME),
         }
@@ -432,6 +442,8 @@ def audit_fastlane_c2_release_package(root: Path) -> list[dict[str, str]]:
         candidate_name = binding.get("path") if isinstance(binding, Mapping) else "__invalid__"
         proposal_path = _receipt_bound_proposal(formal, formal / candidate_name, receipt_path)
         _validate_root_receipt(formal, proposal_path, receipt_path)
+        legacy_proposal, legacy_contract = root / LEGACY_PROPOSAL_NAME, root / LEGACY_CONTRACT_NAME
+        _validate_legacy_execution_contract(formal, legacy_proposal, legacy_contract, auth_path, receipt_path)
         for name, formal_name in ((VIDEO_NAME, NAMES["video"]), (COVER_NAME, NAMES["cover"]), (SRT_NAME, NAMES["srt"])):
             _regular(root / name, name)
             if sha256(root / name) != sha256(formal / formal_name):
@@ -442,9 +454,8 @@ def audit_fastlane_c2_release_package(root: Path) -> list[dict[str, str]]:
         tag_receipt = _read_object(tags_receipt_path, "tag receipt")
         if record.get("candidate_id") != CID or record.get("recording_date") != DATE or record.get("upload_allowed") is not False:
             raise C2ReleaseBridgeError("C2 release record identity drift")
-        story = record.get("story_contract")
-        if not isinstance(story, Mapping) or story.get("candidate_id") != CID or story.get("transcript_sha256") != "sha256:" + sha256(root / SRT_NAME):
-            raise C2ReleaseBridgeError("C2 release StoryContract drift")
+        if record.get("legacy_execution_contract") != _sha_entry(legacy_contract) or "story_contract" in record:
+            raise C2ReleaseBridgeError("C2 legacy execution contract drift")
         if record.get("publish_staging") != {"title": TITLE}:
             raise C2ReleaseBridgeError("C2 release publish title drift")
         if publish.get("candidate_id") != CID or publish.get("title") != TITLE or (publish.get("cover_generation") or {}).get("final_cover_sha256") != sha256(root / COVER_NAME):
@@ -460,6 +471,7 @@ def audit_fastlane_c2_release_package(root: Path) -> list[dict[str, str]]:
             "correction_authority": auth_path,
             "root_receipt": receipt_path,
             "ready_proposal": proposal_path,
+            "legacy_execution_contract": legacy_contract,
         }
         if set(manifest.get("formal_source") or {}) != set(expected_source):
             raise C2ReleaseBridgeError("C2 formal source entry set drift")

@@ -29,6 +29,8 @@ def main() -> int:
     parser.add_argument("--ready-proposal", type=Path, required=True)
     parser.add_argument("--root-receipt", type=Path, required=True)
     parser.add_argument("--authorization", type=Path, required=True)
+    parser.add_argument("--legacy-proposal", type=Path, required=True)
+    parser.add_argument("--legacy-execution-contract", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     try:
@@ -37,6 +39,8 @@ def main() -> int:
             ready_proposal=args.ready_proposal,
             root_receipt=args.root_receipt,
             authorization=args.authorization,
+            legacy_proposal=args.legacy_proposal,
+            legacy_execution_contract=args.legacy_execution_contract,
             out=args.out,
         )
         audit = audit_package(out)
