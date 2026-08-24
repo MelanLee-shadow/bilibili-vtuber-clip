@@ -32,7 +32,12 @@ def _json(path: Path) -> dict[str, Any]:
 
 
 def is_fastlane_c2_formal_manifest(manifest: Mapping[str, object]) -> bool:
-    return manifest.get("schema_version") == SCHEMA and manifest.get("candidate_id") == CID
+    if manifest.get("candidate_id") != CID:
+        return False
+    if manifest.get("schema_version") == SCHEMA:
+        return True
+    from .fastlane_c2_release_bridge import is_fastlane_c2_release_manifest
+    return is_fastlane_c2_release_manifest(manifest)
 
 
 def visual_inventory(root: Path) -> list[dict[str, object]]:
@@ -62,6 +67,10 @@ def _issue(code: str, detail: str = "") -> dict[str, str]:
 
 def audit_fastlane_c2_formal_package(root: Path) -> list[dict[str, str]]:
     manifest = _json(root / "review_manifest.json")
+    from .fastlane_c2_release_bridge import is_fastlane_c2_release_manifest
+    if is_fastlane_c2_release_manifest(manifest):
+        from .fastlane_c2_release_bridge import audit_fastlane_c2_release_package
+        return audit_fastlane_c2_release_package(root)
     issues: list[dict[str, str]] = []
     required = {"schema_version", "candidate_id", "title", "upload_allowed", "artifacts", "record", "publish", "scope", "visual_evidence_inventory"}
     if set(manifest) != required or not is_fastlane_c2_formal_manifest(manifest) or manifest.get("title") != TITLE or manifest.get("upload_allowed") is not False or manifest.get("scope") != "C2_NAMED_FASTLANE_REPAIR_ONLY":

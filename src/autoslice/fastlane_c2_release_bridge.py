@@ -346,6 +346,8 @@ def build_release_package(
     legacy_proposal = _safe_input(legacy_proposal, "legacy proposal")
     legacy_execution_contract = _safe_input(legacy_execution_contract, "legacy execution contract")
     out = out.absolute()
+    for parent in out.parents:
+        _safe_directory(parent, "C2 release output parent")
     if out.exists() or out.is_symlink():
         raise C2ReleaseBridgeError("C2 release package output already exists")
     if audit_fastlane_c2_formal_package(formal_package):
