@@ -35,16 +35,48 @@ commit=${owner%%-*}
 guard=$base/deploy.guard
 backup=$base/repo.rollback-$commit
 stage=$base/repo.deploy-$commit
-test -d "$guard" && test ! -L "$guard"
-test -f "$guard/owner" && test ! -L "$guard/owner"
-test "$(cat "$guard/owner")" = "$owner"
-test "$(find "$guard" -mindepth 1 -maxdepth 1 -exec printf . \; | wc -c)" -eq 1
-if [ -e "$backup" ] || [ -L "$backup" ]; then
+refuse() { echo "REFUSE: $*" >&2; exit 1; }
+if [ ! -d "$guard" ] || [ -L "$guard" ]; then
+    refuse "deploy guard is missing, symlinked, or not a directory"
+fi
+if [ ! -f "$guard/owner" ] || [ -L "$guard/owner" ]; then
+    refuse "deploy guard owner is missing, symlinked, or not a regular file"
+fi
+if ! recorded_owner=$(cat "$guard/owner"); then
+    refuse "cannot read deploy guard owner"
+fi
+if [ "$recorded_owner" != "$owner" ]; then
+    refuse "deploy guard owner does not match requested owner"
+fi
+if ! guard_entries=$(find "$guard" -mindepth 1 -maxdepth 1 -exec printf . \; | wc -c); then
+    refuse "cannot enumerate deploy guard entries"
+fi
+if [ "$guard_entries" -ne 1 ]; then
+    refuse "deploy guard must contain exactly its owner file"
+fi
+if [ -L "$backup" ]; then
+    refuse "rollback tree is symlinked"
+fi
+if [ -e "$backup" ]; then
+    if [ ! -d "$backup" ]; then
+        refuse "rollback residue is not a directory"
+    fi
+    if [ -e "$stage" ] || [ -L "$stage" ]; then
+        refuse "rollback and staging residues coexist"
+    fi
     printf '%s\n' backup-present
     exit 0
 fi
-test -d "$stage"
-test ! -L "$stage"
+if [ ! -e "$stage" ] && [ ! -L "$stage" ]; then
+    printf '%s\n' no-residue
+    exit 0
+fi
+if [ -L "$stage" ]; then
+    refuse "staging residue is symlinked"
+fi
+if [ ! -d "$stage" ]; then
+    refuse "staging residue is not a directory"
+fi
 python3 - "$stage" <<'PY_PREBACKUP_STAGE_INVENTORY'
 import hashlib
 import json
@@ -79,7 +111,7 @@ print(json.dumps({"schema_version": "deploy-prebackup-stage-inventory.v1", "entr
 PY_PREBACKUP_STAGE_INVENTORY
 REMOTE_PREBACKUP_STAGE_PROBE
 )
-    if [ "$RECOVERY_STAGE_PROBE" != backup-present ]; then
+    if [ "$RECOVERY_STAGE_PROBE" != backup-present ] && [ "$RECOVERY_STAGE_PROBE" != no-residue ]; then
         RECOVERY_STAGE_ANALYSIS=$(python3 - "$RECOVERY_OWNER" "$RECOVERY_STAGE_PROBE" <<'PY_LOCAL_PREBACKUP_STAGE'
 import hashlib
 import io
@@ -257,11 +289,15 @@ REMOTE_PREBACKUP_GUARD_RECOVERY
     RECOVERY_KIND=$(ssh "$RECOVERY_HOST" bash -s -- /opt/bilive/autoslice "$RECOVERY_OWNER" <<'REMOTE_RECOVERY_KIND'
 set -euo pipefail
 base=$1; owner=$2; commit=${owner%%-*}; repo=$base/repo; backup=$base/repo.rollback-$commit; stage=$base/repo.deploy-$commit
-test -f "$repo/DEPLOYED_COMMIT"
-test ! -L "$repo/DEPLOYED_COMMIT"
+if [ ! -f "$repo/DEPLOYED_COMMIT" ] || [ -L "$repo/DEPLOYED_COMMIT" ]; then
+    echo "REFUSE: deployed commit stamp is missing, symlinked, or not a regular file" >&2
+    exit 1
+fi
 current=$(awk 'NR==1 {print $1}' "$repo/DEPLOYED_COMMIT")
-test "${#current}" -eq 40
-[[ "$current" != *[!0-9a-f]* ]]
+if [ "${#current}" -ne 40 ] || [[ "$current" = *[!0-9a-f]* ]]; then
+    echo "REFUSE: deployed commit stamp is not a lowercase 40-hex SHA" >&2
+    exit 1
+fi
 if [ -e "$backup" ] || [ -L "$backup" ] || [ -e "$stage" ] || [ -L "$stage" ]; then
 test -f "$backup/DEPLOYED_COMMIT.old"
 test ! -L "$backup/DEPLOYED_COMMIT.old"
@@ -273,7 +309,7 @@ elif [ "$current" = "$old" ] && [ "$current" != "$commit" ] && [ -n "$old" ]; th
 else echo REFUSE_UNKNOWN_RECOVERY_RELATION; exit 1; fi
 else
 if [ "$current" = "$commit" ]; then echo POSTCOMMIT_GUARD_ONLY_CLEANUP
-else echo REFUSE_UNKNOWN_RECOVERY_RELATION; exit 1; fi
+else echo REFUSE_UNKNOWN_RECOVERY_RELATION >&2; exit 1; fi
 fi
 REMOTE_RECOVERY_KIND
 )

@@ -2253,6 +2253,169 @@ def test_postcommit_guard_recovery_classifies_only_strict_stamp_relations(tmp_pa
         assert classify(current, previous).returncode != 0
 
 
+def test_recover_deploy_guard_top_level_routes_probe_tri_state(tmp_path):
+    """Exercise the CLI through fake SSH, rather than only its heredocs."""
+    commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+    ).strip()
+    owner = f"{commit}-20260824T160229Z-1"
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    fake_ssh = fake_bin / "ssh"
+    fake_ssh.write_text(
+        """#!/bin/bash
+set -euo pipefail
+host=$1
+shift
+if [ "$1" != bash ] || [ "$2" != -s ] || [ "$3" != -- ]; then
+    echo "fake ssh received unexpected invocation" >&2
+    exit 97
+fi
+shift 3
+remote_args=("$@")
+remote_args[0]=$FAKE_BASE
+payload=$(mktemp "$FAKE_TMP/ssh.XXXXXX")
+trap 'rm -f "$payload"' EXIT
+cat > "$payload"
+run_probe_or_classifier() {
+    sed "s|/opt/bilive/autoslice|$FAKE_BASE|g" "$payload" | bash -s -- "${remote_args[@]}"
+}
+if grep -Fq 'PY_PREBACKUP_STAGE_INVENTORY' "$payload"; then
+    run_probe_or_classifier
+elif grep -Fq 'POSTCOMMIT_GUARD_ONLY_CLEANUP' "$payload"; then
+    run_probe_or_classifier
+elif grep -Fq 'repo.manifest.old.json' "$payload"; then
+    printf 'postcommit\\n' >> "$FAKE_LOG"
+elif grep -Fq 'postcommit-bytecode-cache-cleanup.v1' "$payload"; then
+    printf 'guard-only\\n' >> "$FAKE_LOG"
+elif grep -Fq 'PY_PREBACKUP_RECOVER' "$payload"; then
+    printf 'prebackup\\n' >> "$FAKE_LOG"
+else
+    echo "fake ssh received unknown recovery body" >&2
+    exit 98
+fi
+""",
+        encoding="utf-8",
+    )
+    fake_ssh.chmod(0o755)
+    fake_git = fake_bin / "git"
+    fake_git.write_text(
+        """#!/bin/bash
+set -euo pipefail
+if [ "$1" = archive ] && [ -n "${FAKE_ARCHIVE:-}" ]; then
+    cat "$FAKE_ARCHIVE"
+else
+    PATH=$FAKE_REAL_PATH exec git "$@"
+fi
+""",
+        encoding="utf-8",
+    )
+    fake_git.chmod(0o755)
+    stage_archive = tmp_path / "valid-stage.tar"
+    with tarfile.open(stage_archive, mode="w:") as bundle:
+        directory = tarfile.TarInfo("scripts/")
+        directory.type = tarfile.DIRTYPE
+        directory.mode = 0o755
+        bundle.addfile(directory)
+        member = tarfile.TarInfo("scripts/ready.py")
+        member.mode = 0o644
+        member.size = len(b"ready\\n")
+        bundle.addfile(member, io.BytesIO(b"ready\\n"))
+
+    def extract_owner_stage(stage: Path) -> None:
+        stage.mkdir(parents=True)
+        stage.chmod(0o755)
+        with tarfile.open(stage_archive, mode="r:") as bundle:
+            for member in bundle:
+                path = stage / member.name
+                if member.isdir():
+                    path.mkdir(parents=True, exist_ok=True)
+                    path.chmod(member.mode & ~0o022)
+                else:
+                    assert member.isfile(), member.name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(bundle.extractfile(member).read())
+                    path.chmod(member.mode & ~0o022)
+
+    def build(
+        name: str,
+        *,
+        current: str = commit,
+        backup=False,
+        stage=False,
+        invalid_stage=False,
+    ):
+        root = tmp_path / name
+        base = root / "autoslice"
+        repo = base / "repo"
+        guard = base / "deploy.guard"
+        repo.mkdir(parents=True)
+        guard.mkdir()
+        (guard / "owner").write_text(owner + "\n", encoding="utf-8")
+        (repo / "DEPLOYED_COMMIT").write_text(current + " deployed\n", encoding="utf-8")
+        if backup:
+            rollback = base / f"repo.rollback-{commit}"
+            rollback.mkdir()
+            (rollback / "DEPLOYED_COMMIT.old").write_text(
+                "b" * 40 + " deployed\n", encoding="utf-8"
+            )
+        if stage:
+            extract_owner_stage(base / f"repo.deploy-{commit}")
+        if invalid_stage:
+            (base / f"repo.deploy-{commit}").write_text("x", encoding="utf-8")
+        return base, guard
+
+    def invoke(name: str, **kwargs):
+        base, guard = build(name, **kwargs)
+        log = tmp_path / f"{name}.ssh.log"
+        environment = {
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "FAKE_BASE": str(base),
+            "FAKE_LOG": str(log),
+            "FAKE_TMP": str(tmp_path),
+            "FAKE_REAL_PATH": os.environ["PATH"],
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+        if kwargs.get("stage"):
+            environment["FAKE_ARCHIVE"] = str(stage_archive)
+        result = subprocess.run(
+            [str(DEPLOY_SCRIPT), "--recover-deploy-guard", owner, "fake"],
+            cwd=ROOT,
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        return result, guard, log.read_text(encoding="utf-8") if log.exists() else ""
+
+    no_residue, guard, trace = invoke("no-residue")
+    assert no_residue.returncode == 0, no_residue.stderr
+    assert trace == "guard-only\n"
+    assert guard.is_dir()
+
+    foreign, guard, trace = invoke("foreign", current="b" * 40)
+    assert foreign.returncode != 0
+    assert "REFUSE_UNKNOWN_RECOVERY_RELATION" in foreign.stderr
+    assert trace == ""
+    assert guard.is_dir()
+
+    backed, guard, trace = invoke("backup", backup=True)
+    assert backed.returncode == 0, backed.stderr
+    assert trace == "postcommit\n"
+    assert guard.is_dir()
+
+    staged, guard, trace = invoke("stage", stage=True)
+    assert staged.returncode == 0, staged.stderr
+    assert trace == "prebackup\n"
+    assert guard.is_dir()
+
+    invalid_stage, guard, trace = invoke("invalid-stage", invalid_stage=True)
+    assert invalid_stage.returncode != 0
+    assert "REFUSE: staging residue is not a directory" in invalid_stage.stderr
+    assert guard.is_dir()
+
+
 def test_postcommit_guard_recovery_holds_runtime_locks_not_fuser_probe():
     source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     recovery = source.split("<<'REMOTE_POSTCOMMIT_GUARD_RECOVERY'\n", 1)[1].split(
