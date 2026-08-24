@@ -1,0 +1,52 @@
+{
+  "schema_version": "c6-line947-exhaustive-unchanged-boundary-authority-proposal.v1",
+  "accepted": true,
+  "candidate_id": "auto_120032_753_816",
+  "recording_date": "2026-08-14",
+  "boundary_change": false,
+  "provider_authorized": false,
+  "upload_authorized": false,
+  "line947_exhaustive_ruling": {
+    "ruling_line_sha256": "sha256:e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa",
+    "named_subtitle_cue": 17,
+    "exact_text": "哦，是昨天的视频。へぇ、なるほどね。",
+    "exact_title": "【李豆沙】弹幕写错《坏结果》，小李却只听过《大结果》",
+    "exact_cover_lines": ["弹幕错写坏结果", "小李只听过大结果"],
+    "unnamed_boundary_bytes": "FROZEN"
+  },
+  "frozen_delivery_binding": {
+    "reviewed_srt_sha256": "sha256:3cfcf2954c1d32a078e99aaff5585213b5edbbedd6db8f87d62097d06775ea77",
+    "source_media_sha256": "sha256:0f0770a9426c48fee5457cf9639a77e5a477f41ec806f4e4789e19c336e1aae5",
+    "source_interval": {
+      "absolute_start_ms": 753000,
+      "absolute_end_ms": 816000
+    },
+    "record_sha256": "sha256:04b64d9a1e19810948fa0f6cca90d132a4464cc518cdbb26ace9ed0f0876222f",
+    "candidate_media_sha256": "sha256:982e0fea91ef222302ec5cb30a965d0222164a87f4f3a3bc53e445048919de35",
+    "speaker_ass_sha256": "sha256:f78a94d7154fd538de45c4bde41e5d85eb5cf97c099d6e3666666f7dd754e63e",
+    "boundary_audit_sha256": "sha256:5231b6319b2bfa827ce3b404da7fcf3a7c33ea226314a0cfefde8195b1c5aec1",
+    "operator_decision_ledger_sha256": "sha256:ecef045ba999ca94f3afa58a57562ce728fd004e9dc0d03cec949e0f27f737f3"
+  },
+  "superseded_automated_continuation_receipt": {
+    "status": "PASS",
+    "review_scope": "source_full_window",
+    "recommended_end_cue_index": 35,
+    "recommended_end_ms": 86960,
+    "final_media_end_ms": 87360,
+    "disposition": "SUPERSEDED_FOR_THIS_CANDIDATE_ONLY_NOT_FALSIFIED"
+  },
+  "activation_contract": {
+    "requires_root_acceptance": true,
+    "requires_exact_candidate_date_source_interval_and_reviewed_srt_hash": true,
+    "only_supersedes_reason_codes": ["CONTENT_ANCHOR_COVERED_NOT_PROVEN", "CONTENT_ANCHOR_NOT_COVERED"],
+    "must_not_change_generic_boundary_gate": true,
+    "must_not_extend_or_shorten_boundary": true,
+    "must_not_authorize_provider_or_upload": true
+  },
+  "root_acceptance": {
+    "reviewed_by": "Codex root",
+    "reviewed_at": "2026-08-24T23:42:04Z",
+    "decision_basis": "Ivan line947 exhaustively named only cue17/title/cover for C6 and authorized direct fastlane upload; unnamed boundary bytes remain frozen; automated continuation is superseded for this candidate only, not falsified."
+  },
+  "canonical_self_hash": "sha256:7d38e745cc75330dbc324a395ef3192693c672709451a18c2c6ff3cfd3f45eea"
+}

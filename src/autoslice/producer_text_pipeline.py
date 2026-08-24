@@ -1958,7 +1958,7 @@ def run_text_pipeline(
             correction_audit=final_review_audit,
             source_final_start_ms=timeline_offset_ms,
             source_final_end_ms=source_final_end_ms,
-            candidate_id=cid,
+            candidate_id=cid, recording_date=str(spec.get("date") or ""),
             selection_hook=str(spec.get("selection_hook") or ""),
             selection_scorecard=spec.get("selection_scorecard"),
             structured_context=_final_review_structured_context(

@@ -8,6 +8,7 @@ import pytest
 
 from src.autoslice import producer_text_pipeline as pipeline
 from src.autoslice import producer_source_boundary_review as source_boundary_review
+from src.autoslice import qixi_terminal_evidence_refresh as qixi_refresh
 from src.autoslice import reviewed_baseline_replay as replay
 from src.autoslice.boundary_semantic_review import (
     build_boundary_search_scope,
@@ -426,6 +427,8 @@ def test_source_only_boundary_authority_cannot_reach_final_delivery_gate():
         keyword for keyword in final_call.keywords if keyword.arg == "frozen_boundary_receipt"
     )
     assert ast.unparse(final_keyword.value) == "frozen_boundary_receipt"
+    date_keyword = next(keyword for keyword in final_call.keywords if keyword.arg == "recording_date")
+    assert ast.unparse(date_keyword.value) == "str(spec.get('date') or '')"
 
 
 def test_replay_delivery_review_carries_source_only_boundary_witness():
@@ -443,12 +446,27 @@ def test_replay_delivery_review_carries_source_only_boundary_witness():
         keyword for keyword in audit_call.keywords if keyword.arg == "frozen_source_review"
     )
     assert ast.unparse(source_keyword.value) == "frozen_source_review"
+    date_keyword = next(keyword for keyword in audit_call.keywords if keyword.arg == "recording_date")
+    assert ast.unparse(date_keyword.value) == "plan.date"
     assert any(
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "load_boundary_review_authorities"
         for node in ast.walk(replay_tree)
     )
+
+
+def test_exact_delivery_review_callers_propagate_their_recording_date():
+    qixi_tree = ast.parse(inspect.getsource(qixi_refresh.refresh_terminal_evidence))
+    qixi_call = next(
+        node
+        for node in ast.walk(qixi_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "exact_delivery_correction_audit"
+    )
+    date_keyword = next(keyword for keyword in qixi_call.keywords if keyword.arg == "recording_date")
+    assert ast.unparse(date_keyword.value) == "RECORDING_DATE"
 
 
 def test_final_boundary_review_indexes_exact_post_authority_grid():

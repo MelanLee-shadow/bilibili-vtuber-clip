@@ -866,7 +866,7 @@ def replay_exact_final_reviewer(
             final_srt_text=final_srt_text, correction_audit=correction,
             source_final_start_ms=timeline_offset_ms,
             source_final_end_ms=source_final_end_ms,
-            candidate_id=plan.candidate_id,
+            candidate_id=plan.candidate_id, recording_date=plan.date,
             selection_hook=str(spec.get("selection_hook") or ""),
             selection_scorecard=spec.get("selection_scorecard"),
             structured_context=_final_review_structured_context(

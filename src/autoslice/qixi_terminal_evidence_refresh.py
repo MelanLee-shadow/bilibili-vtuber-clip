@@ -810,6 +810,7 @@ def refresh_terminal_evidence(
         source_final_start_ms=source_final_start_ms,
         source_final_end_ms=source_final_end_ms,
         candidate_id=CANDIDATE_ID,
+        recording_date=RECORDING_DATE,
         selection_hook=selection_hook,
         selection_scorecard=selection_scorecard,
         structured_context=structured_context,

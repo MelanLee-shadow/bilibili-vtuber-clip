@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -15,6 +16,7 @@ from src.autoslice.boundary_semantic_review import (
 from src.autoslice.boundary_source_context_coverage import (
     source_context_coverage_block,
 )
+from src.autoslice.c6_exhaustive_boundary_authority import apply_content_anchor_override
 from src.autoslice.frozen_boundary_receipt import (
     FrozenBoundaryReceipt,
     FrozenBoundaryReview,
@@ -141,6 +143,8 @@ def review_exact_delivery_boundary_semantics(
     disabled: bool = False,
     frozen_review: FrozenBoundaryReview | None = None,
     replay_audit: dict[str, object] | None = None,
+    delivery_srt_sha256: str | None = None,
+    recording_date: str | None = None,
 ) -> dict[str, object]:
     """Re-review and bind the exact delivery grid after every text mutation."""
 
@@ -180,6 +184,7 @@ def review_exact_delivery_boundary_semantics(
         source_final_start_ms=source_final_start_ms,
         source_final_end_ms=source_final_end_ms,
     )
+    review = apply_content_anchor_override(review, candidate_id, recording_date, (source_final_start_ms, source_final_end_ms), delivery_srt_sha256)
     review, _ = bind_final_semantic_endpoint(
         semantic_review=review,
         cues=final_cues,
@@ -208,6 +213,7 @@ def exact_delivery_correction_audit(
     disabled: bool = False,
     frozen_boundary_receipt: FrozenBoundaryReceipt | None = None,
     frozen_source_review: FrozenBoundaryReview | None = None,
+    recording_date: str | None = None,
 ) -> dict[str, object]:
     """Replace the source review with an exact post-mutation delivery review."""
 
@@ -219,6 +225,7 @@ def exact_delivery_correction_audit(
         source_final_start_ms=source_final_start_ms,
         source_final_end_ms=source_final_end_ms,
         candidate_id=candidate_id,
+        recording_date=recording_date,
         selection_hook=selection_hook,
         selection_scorecard=selection_scorecard,
         structured_context=structured_context,
@@ -233,6 +240,7 @@ def exact_delivery_correction_audit(
             else frozen_source_review
         ),
         replay_audit=delivery_replay_audit,
+        delivery_srt_sha256="sha256:" + hashlib.sha256(final_srt_text.encode("utf-8")).hexdigest(),
     )
     result = dict(correction_audit)
     result["boundary_semantic_review"] = delivery_review
