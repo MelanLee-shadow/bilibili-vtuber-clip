@@ -6,6 +6,7 @@
   "direct_ivan_lines": [
     {
       "line": 947,
+      "uuid": "555195ed-ec18-418d-a311-558f7e54291f",
       "timestamp": "2026-08-19T00:08:52.249Z",
       "raw_line_sha256": "sha256:e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa",
       "content_sha256": "sha256:0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b",
@@ -13,15 +14,19 @@
     },
     {
       "line": 1643,
+      "uuid": "b95d4356-7ad2-4481-b4a7-0b7afa3c35b9",
       "timestamp": "2026-08-19T04:06:54.376Z",
       "raw_line_sha256": "sha256:2269c653fa6be7fb0c20df98a7348d5f5c57176e3e41fe80eb13b85c39307609",
-      "quote": "不等人工节点，直接上传，七夕优先，查看 CI"
+      "content_sha256": "sha256:61e0ee6e0811fce540efc959d7468354bbd1633c271b140b8eed8ac44e8d010a",
+      "quote": "我要睡觉了，你不要再等人工节点了，今天晚上把我授权的快车道全部上传，不过优先七夕。另外，github CI run fail了你看下"
     },
     {
       "line": 1745,
+      "uuid": "a79d6670-88b1-43c3-a688-3c9615c1da51",
       "timestamp": "2026-08-19T04:46:25.889Z",
       "raw_line_sha256": "sha256:7f97b7f8b6a7ca9cad7f54e02836a185b41c5ea158d70cb31f0867a174f13329",
-      "quote": "七夕优先，其余随后"
+      "content_sha256": "sha256:f5d60aee9cc02d100ec6f2b660ade76f951e7b113fe0ae95397e1ca6d2cbbc69",
+      "quote": "继续任务，七夕优先上传，其余快车道随后"
     }
   ],
   "remaining_machine_gates": [
@@ -30,5 +35,8 @@
     "CPA title-cover joint QC for exact final title and cover",
     "authorized-upload manifest verify",
     "single serialized upload and public Creator section reconciliation"
-  ]
+  ],
+  "self_seal": {
+    "canonical_json_without_self_seal_sha256": "sha256:ba39a0b92fa3ebd5eaa5c6e60a0c72d7f873d041eb47e08038a387fc63b74c85"
+  }
 }

@@ -24,13 +24,16 @@ def _formal(tmp_path: Path) -> Path:
     return root
 
 
-def _receipt(path: Path, formal: Path) -> None:
+def _receipt(path: Path, formal: Path) -> Path:
+    proposal = formal / "ready-proposal.json"
+    proposal.write_text("{}", encoding="utf-8")
     payload = {
         "candidate_id": bridge.CID,
         "title": bridge.TITLE,
         "accepted": True,
         "reviewer": "Codex root",
         "reviewed_at": "2026-08-24T20:00:00+00:00",
+        "proposal": {"path": proposal.name, "bytes": proposal.stat().st_size, "sha256": "sha256:" + _sha(proposal)},
         "bindings": {
             "review_manifest_sha256": "sha256:" + _sha(formal / "review_manifest.json"),
             "package_audit_sha256": "sha256:" + _sha(formal / "package_audit.json"),
@@ -38,6 +41,7 @@ def _receipt(path: Path, formal: Path) -> None:
         },
     }
     path.write_text(json.dumps(payload), encoding="utf-8")
+    return proposal
 
 
 def _authorization(path: Path) -> None:
@@ -47,10 +51,26 @@ def _authorization(path: Path) -> None:
         "recording_date": bridge.DATE,
         "title": bridge.TITLE,
         "direct_ivan_lines": [
-            {"line": line, "quote": quote, "raw_line_sha256": digest}
-            for line, (digest, quote) in bridge.DIRECT_IVAN_LINES.items()
+            {
+                "line": line,
+                "uuid": uuid,
+                "timestamp": timestamp,
+                "raw_line_sha256": raw_sha,
+                "content_sha256": content_sha,
+                "quote": quote,
+            }
+            for line, (uuid, timestamp, raw_sha, content_sha, quote) in bridge.DIRECT_IVAN_LINES.items()
+        ],
+        "remaining_machine_gates": [
+            "accepted C2 root technical receipt bound to current formal audit and artifacts",
+            "current C2 release-package audit",
+            "CPA title-cover joint QC for exact final title and cover",
+            "authorized-upload manifest verify",
+            "single serialized upload and public Creator section reconciliation",
         ],
     }
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    payload["self_seal"] = {"canonical_json_without_self_seal_sha256": "sha256:" + hashlib.sha256(raw).hexdigest()}
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
@@ -64,15 +84,61 @@ def _tags(*_args, **_kwargs):
     }
 
 
+def _receipt_binding(path: Path, proposal: Path) -> None:
+    path.write_text(json.dumps({
+        "proposal": {"path": proposal.name, "bytes": proposal.stat().st_size, "sha256": "sha256:" + _sha(proposal)},
+    }), encoding="utf-8")
+
+
+def test_c2_receipt_requires_its_exact_self_bound_proposal(tmp_path):
+    formal = tmp_path / "formal"
+    formal.mkdir()
+    proposal = formal / "exact-proposal.json"
+    proposal.write_text("{}", encoding="utf-8")
+    other = formal / "other-proposal.json"
+    other.write_text("{}", encoding="utf-8")
+    receipt = tmp_path / "receipt.json"
+    _receipt_binding(receipt, proposal)
+    assert bridge._receipt_bound_proposal(formal, proposal, receipt) == proposal
+    with pytest.raises(bridge.C2ReleaseBridgeError, match="not receipt-bound"):
+        bridge._receipt_bound_proposal(formal, other, receipt)
+    proposal.write_text('{"drift":true}', encoding="utf-8")
+    with pytest.raises(bridge.C2ReleaseBridgeError, match="binding drift"):
+        bridge._receipt_bound_proposal(formal, proposal, receipt)
+
+
+def test_c2_authorization_asset_is_self_sealed_and_registry_hash_bound():
+    repo = Path(__file__).resolve().parents[1]
+    authorization = repo / "assets/lidousha/fastlane_c2_private/auto_203011_328_389.release-authorization.v1.json"
+    bridge._validate_authorization(json.loads(authorization.read_text(encoding="utf-8")))
+    registry = json.loads((repo / "assets/lidousha/publication_registry.v1.json").read_text(encoding="utf-8"))
+    row = next(item for item in registry["entries"] if item.get("candidate_id") == bridge.CID)
+    assert row["status"] == "released_for_upload"
+    assert row["release_authorization"] == {
+        "path": "assets/lidousha/fastlane_c2_private/auto_203011_328_389.release-authorization.v1.json",
+        "bytes": authorization.stat().st_size,
+        "sha256": "sha256:" + _sha(authorization),
+        "direct_ivan_lines": [947, 1643, 1745],
+        "remaining_machine_gates": [
+            "accepted C2 root technical receipt bound to current formal audit and artifacts",
+            "current C2 release-package audit",
+            "CPA title-cover joint QC for exact final title and cover",
+            "authorized-upload manifest verify",
+            "single serialized upload and public Creator section reconciliation",
+        ],
+    }
+
+
 def test_c2_bridge_projects_strict_same_stem_package(monkeypatch, tmp_path):
     formal = _formal(tmp_path)
     receipt, authorization, out = tmp_path / "receipt.json", tmp_path / "auth.json", tmp_path / "out"
-    _receipt(receipt, formal)
+    proposal = _receipt(receipt, formal)
     _authorization(authorization)
     monkeypatch.setattr(bridge, "audit_fastlane_c2_formal_package", lambda _root: [])
     monkeypatch.setattr(bridge, "_validate_formal_audit", lambda _root: None)
+    monkeypatch.setattr(bridge, "_validate_root_receipt", lambda *_args: None)
     bridge.build_release_package(
-        formal_package=formal, root_receipt=receipt, authorization=authorization,
+        formal_package=formal, ready_proposal=proposal, root_receipt=receipt, authorization=authorization,
         out=out, tag_generator=_tags,
     )
     record = json.loads((out / bridge.RECORD_NAME).read_text())
@@ -87,11 +153,12 @@ def test_c2_bridge_projects_strict_same_stem_package(monkeypatch, tmp_path):
 def test_c2_bridge_rejects_final_artifact_drift(monkeypatch, tmp_path, target):
     formal = _formal(tmp_path)
     receipt, authorization, out = tmp_path / "receipt.json", tmp_path / "auth.json", tmp_path / "out"
-    _receipt(receipt, formal)
+    proposal = _receipt(receipt, formal)
     _authorization(authorization)
     monkeypatch.setattr(bridge, "audit_fastlane_c2_formal_package", lambda _root: [])
     monkeypatch.setattr(bridge, "_validate_formal_audit", lambda _root: None)
-    bridge.build_release_package(formal_package=formal, root_receipt=receipt, authorization=authorization, out=out, tag_generator=_tags)
+    monkeypatch.setattr(bridge, "_validate_root_receipt", lambda *_args: None)
+    bridge.build_release_package(formal_package=formal, ready_proposal=proposal, root_receipt=receipt, authorization=authorization, out=out, tag_generator=_tags)
     (out / target).write_bytes(b"drift")
     assert bridge.audit_fastlane_c2_release_package(out)[0]["code"] == "C2_RELEASE_CLOSURE_DRIFT"
 
@@ -99,11 +166,12 @@ def test_c2_bridge_rejects_final_artifact_drift(monkeypatch, tmp_path, target):
 def test_c2_bridge_rejects_authority_receipt_and_tag_drift(monkeypatch, tmp_path):
     formal = _formal(tmp_path)
     receipt, authorization, out = tmp_path / "receipt.json", tmp_path / "auth.json", tmp_path / "out"
-    _receipt(receipt, formal)
+    proposal = _receipt(receipt, formal)
     _authorization(authorization)
     monkeypatch.setattr(bridge, "audit_fastlane_c2_formal_package", lambda _root: [])
     monkeypatch.setattr(bridge, "_validate_formal_audit", lambda _root: None)
-    bridge.build_release_package(formal_package=formal, root_receipt=receipt, authorization=authorization, out=out, tag_generator=_tags)
+    monkeypatch.setattr(bridge, "_validate_root_receipt", lambda *_args: None)
+    bridge.build_release_package(formal_package=formal, ready_proposal=proposal, root_receipt=receipt, authorization=authorization, out=out, tag_generator=_tags)
     record_path = out / bridge.RECORD_NAME
     record = json.loads(record_path.read_text())
     record["story_contract"]["candidate_id"] = "other"
@@ -119,11 +187,12 @@ def test_c2_bridge_rejects_authority_receipt_and_tag_drift(monkeypatch, tmp_path
 def test_c2_bridge_rejects_receipt_authority_and_tags_drift(monkeypatch, tmp_path, path_name, mutate):
     formal = _formal(tmp_path)
     receipt, authorization, out = tmp_path / "receipt.json", tmp_path / "auth.json", tmp_path / "out"
-    _receipt(receipt, formal)
+    proposal = _receipt(receipt, formal)
     _authorization(authorization)
     monkeypatch.setattr(bridge, "audit_fastlane_c2_formal_package", lambda _root: [])
     monkeypatch.setattr(bridge, "_validate_formal_audit", lambda _root: None)
-    bridge.build_release_package(formal_package=formal, root_receipt=receipt, authorization=authorization, out=out, tag_generator=_tags)
+    monkeypatch.setattr(bridge, "_validate_root_receipt", lambda *_args: None)
+    bridge.build_release_package(formal_package=formal, ready_proposal=proposal, root_receipt=receipt, authorization=authorization, out=out, tag_generator=_tags)
     path = out / path_name
     value = json.loads(path.read_text())
     mutate(value)
@@ -134,12 +203,13 @@ def test_c2_bridge_rejects_receipt_authority_and_tags_drift(monkeypatch, tmp_pat
 def test_c2_bridge_rejects_non_c2_authorization(monkeypatch, tmp_path):
     formal = _formal(tmp_path)
     receipt, authorization = tmp_path / "receipt.json", tmp_path / "auth.json"
-    _receipt(receipt, formal)
+    proposal = _receipt(receipt, formal)
     _authorization(authorization)
     payload = json.loads(authorization.read_text())
     payload["candidate_id"] = "other"
     authorization.write_text(json.dumps(payload), encoding="utf-8")
     monkeypatch.setattr(bridge, "audit_fastlane_c2_formal_package", lambda _root: [])
     monkeypatch.setattr(bridge, "_validate_formal_audit", lambda _root: None)
+    monkeypatch.setattr(bridge, "_validate_root_receipt", lambda *_args: None)
     with pytest.raises(bridge.C2ReleaseBridgeError, match="authorization identity drift"):
-        bridge.build_release_package(formal_package=formal, root_receipt=receipt, authorization=authorization, out=tmp_path / "out", tag_generator=_tags)
+        bridge.build_release_package(formal_package=formal, ready_proposal=proposal, root_receipt=receipt, authorization=authorization, out=tmp_path / "out", tag_generator=_tags)

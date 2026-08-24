@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
+import os
+import stat
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -39,16 +40,25 @@ ROOT_RECEIPT_NAME = "c2.root-technical-receipt.v1.json"
 TAG_RECEIPT_NAME = "c2.tag-generation-receipt.v1.json"
 DIRECT_IVAN_LINES = {
     947: (
+        "555195ed-ec18-418d-a311-558f7e54291f",
+        "2026-08-19T00:08:52.249Z",
         "sha256:e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa",
+        "sha256:0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b",
         "以上我说的所有内容修复后都可以走快车道上传，优先级顺序是我说时效性强的优先上传（=七夕），然后按顺序走快车道上传",
     ),
     1643: (
+        "b95d4356-7ad2-4481-b4a7-0b7afa3c35b9",
+        "2026-08-19T04:06:54.376Z",
         "sha256:2269c653fa6be7fb0c20df98a7348d5f5c57176e3e41fe80eb13b85c39307609",
-        "不等人工节点，直接上传，七夕优先，查看 CI",
+        "sha256:61e0ee6e0811fce540efc959d7468354bbd1633c271b140b8eed8ac44e8d010a",
+        "我要睡觉了，你不要再等人工节点了，今天晚上把我授权的快车道全部上传，不过优先七夕。另外，github CI run fail了你看下",
     ),
     1745: (
+        "a79d6670-88b1-43c3-a688-3c9615c1da51",
+        "2026-08-19T04:46:25.889Z",
         "sha256:7f97b7f8b6a7ca9cad7f54e02836a185b41c5ea158d70cb31f0867a174f13329",
-        "七夕优先，其余随后",
+        "sha256:f5d60aee9cc02d100ec6f2b660ade76f951e7b113fe0ae95397e1ca6d2cbbc69",
+        "继续任务，七夕优先上传，其余快车道随后",
     ),
 }
 
@@ -72,31 +82,102 @@ def _sha_entry(path: Path) -> dict[str, object]:
 
 
 def _regular(path: Path, label: str) -> None:
-    if not path.is_file() or path.is_symlink():
+    try:
+        mode = path.lstat().st_mode
+    except OSError as exc:
+        raise C2ReleaseBridgeError(f"{label} is missing or unsafe") from exc
+    if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
         raise C2ReleaseBridgeError(f"{label} is missing or unsafe")
+
+
+def _safe_directory(path: Path, label: str) -> None:
+    try:
+        mode = path.lstat().st_mode
+    except OSError as exc:
+        raise C2ReleaseBridgeError(f"{label} is missing or unsafe") from exc
+    if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+        raise C2ReleaseBridgeError(f"{label} is missing or unsafe")
+
+
+def _fsync_directory(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _mkdir_create_only(path: Path, label: str) -> None:
+    _safe_directory(path.parent, f"{label} parent")
+    try:
+        os.mkdir(path, 0o700)
+    except FileExistsError as exc:
+        raise C2ReleaseBridgeError(f"create-only directory already exists: {path}") from exc
+    _safe_directory(path, label)
+    _fsync_directory(path.parent)
 
 
 def _copy_regular(source: Path, destination: Path) -> None:
     _regular(source, str(source))
-    if destination.exists() or destination.is_symlink():
-        raise C2ReleaseBridgeError(f"create-only target already exists: {destination}")
-    shutil.copy2(source, destination)
+    _safe_directory(destination.parent, "copy target parent")
+    source_flags = os.O_RDONLY
+    destination_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        source_flags |= os.O_NOFOLLOW
+        destination_flags |= os.O_NOFOLLOW
+    source_fd = os.open(source, source_flags)
+    try:
+        destination_fd = os.open(destination, destination_flags, 0o600)
+    except FileExistsError as exc:
+        os.close(source_fd)
+        raise C2ReleaseBridgeError(f"create-only target already exists: {destination}") from exc
+    try:
+        with os.fdopen(source_fd, "rb", closefd=True) as input_file, os.fdopen(destination_fd, "wb", closefd=True) as output_file:
+            while chunk := input_file.read(1024 * 1024):
+                output_file.write(chunk)
+            output_file.flush()
+            os.fsync(output_file.fileno())
+    finally:
+        # fdopen owns successful descriptors; this only handles partial opens.
+        for fd in (source_fd, destination_fd):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+    _fsync_directory(destination.parent)
     if destination.is_symlink() or sha256(source) != sha256(destination):
         raise C2ReleaseBridgeError(f"copy hash drift: {source.name}")
+
+
+def _write_create_only_json(path: Path, value: Mapping[str, object]) -> None:
+    _safe_directory(path.parent, "JSON target parent")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(path, flags, 0o600)
+    except FileExistsError as exc:
+        raise C2ReleaseBridgeError(f"create-only target already exists: {path}") from exc
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(value, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    _fsync_directory(path.parent)
 
 
 def _copy_formal_tree(source: Path, destination: Path) -> None:
     if destination.exists() or destination.is_symlink():
         raise C2ReleaseBridgeError("formal target already exists")
+    _mkdir_create_only(destination, "formal target directory")
     for path in source.rglob("*"):
         relative = path.relative_to(source)
         if path.is_symlink():
             raise C2ReleaseBridgeError(f"formal source symlink: {relative}")
         target = destination / relative
         if path.is_dir():
-            target.mkdir(mode=0o700, parents=True, exist_ok=False)
+            _mkdir_create_only(target, "formal target directory")
         elif path.is_file():
-            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             _copy_regular(path, target)
         else:
             raise C2ReleaseBridgeError(f"formal source special file: {relative}")
@@ -111,20 +192,31 @@ def is_fastlane_c2_release_manifest(manifest: Mapping[str, object]) -> bool:
 
 
 def _validate_authorization(payload: Mapping[str, object]) -> None:
-    if (
-        payload.get("schema_version") != AUTH_SCHEMA
-        or payload.get("candidate_id") != CID
-        or payload.get("recording_date") != DATE
-        or payload.get("title") != TITLE
-    ):
+    required = {"schema_version", "candidate_id", "recording_date", "title", "direct_ivan_lines", "remaining_machine_gates", "self_seal"}
+    if set(payload) != required or any(payload.get(key) != value for key, value in {"schema_version": AUTH_SCHEMA, "candidate_id": CID, "recording_date": DATE, "title": TITLE}.items()):
         raise C2ReleaseBridgeError("C2 direct-upload authorization identity drift")
     lines = payload.get("direct_ivan_lines")
     if not isinstance(lines, list) or [row.get("line") for row in lines if isinstance(row, Mapping)] != list(DIRECT_IVAN_LINES):
         raise C2ReleaseBridgeError("C2 direct-upload authorization line set drift")
     for row in lines:
         expected = DIRECT_IVAN_LINES.get(row.get("line")) if isinstance(row, Mapping) else None
-        if not isinstance(row, Mapping) or expected is None or row.get("raw_line_sha256") != expected[0] or row.get("quote") != expected[1]:
+        if not isinstance(row, Mapping) or set(row) != {"line", "uuid", "timestamp", "raw_line_sha256", "content_sha256", "quote"} or expected is None or tuple(row.get(key) for key in ("uuid", "timestamp", "raw_line_sha256", "content_sha256", "quote")) != expected:
             raise C2ReleaseBridgeError("C2 direct-upload authorization evidence invalid")
+    gates = [
+        "accepted C2 root technical receipt bound to current formal audit and artifacts",
+        "current C2 release-package audit",
+        "CPA title-cover joint QC for exact final title and cover",
+        "authorized-upload manifest verify",
+        "single serialized upload and public Creator section reconciliation",
+    ]
+    if payload.get("remaining_machine_gates") != gates:
+        raise C2ReleaseBridgeError("C2 direct-upload authorization gate set drift")
+    seal = payload.get("self_seal")
+    unsigned = dict(payload)
+    unsigned.pop("self_seal", None)
+    canonical = json.dumps(unsigned, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    if seal != {"canonical_json_without_self_seal_sha256": "sha256:" + hashlib.sha256(canonical).hexdigest()}:
+        raise C2ReleaseBridgeError("C2 direct-upload authorization self seal drift")
 
 
 def _validate_formal_audit(formal: Path) -> None:
@@ -137,45 +229,42 @@ def _validate_formal_audit(formal: Path) -> None:
         raise C2ReleaseBridgeError("C2 formal package audit is not a current passing replay")
 
 
-def _root_receipt_input_interface(receipt: Mapping[str, object], formal: Path) -> None:
-    """Check only the bridge's input binding surface.
+def _validate_root_receipt(formal: Path, proposal: Path, receipt: Path) -> None:
+    """Mandatory C2 receipt replay; no local compatibility substitute exists."""
+    from .fastlane_c2_technical_receipt import validate_accepted_receipt
 
-    The C2 receipt builder and its authoritative schema validator are owned by
-    the C2 package worker.  This is intentionally not a second receipt
-    validator: it merely refuses to consume a receipt that cannot bind the
-    exact formal bytes this bridge projects.
-    """
-    if (
-        receipt.get("candidate_id") != CID
-        or receipt.get("title") != TITLE
-        or receipt.get("accepted") is not True
-        or receipt.get("reviewer") != "Codex root"
-        or not str(receipt.get("reviewed_at") or "").strip()
-    ):
-        raise C2ReleaseBridgeError("C2 root technical receipt input is not accepted for this formal package")
-    bindings = receipt.get("bindings")
-    if not isinstance(bindings, Mapping):
-        raise C2ReleaseBridgeError("C2 root technical receipt input has no bindings")
-    expected = {
-        "review_manifest_sha256": "sha256:" + sha256(formal / "review_manifest.json"),
-        "package_audit_sha256": "sha256:" + sha256(formal / "package_audit.json"),
-    }
-    if any(bindings.get(key) != value for key, value in expected.items()):
-        raise C2ReleaseBridgeError("C2 root technical receipt input formal binding drift")
-    artifacts = bindings.get("artifacts")
-    if not isinstance(artifacts, Mapping):
-        raise C2ReleaseBridgeError("C2 root technical receipt input lacks artifact bindings")
-    for role, name in NAMES.items():
-        entry = artifacts.get(role)
-        if not isinstance(entry, Mapping) or str(entry.get("sha256") or "").removeprefix("sha256:") != sha256(formal / name):
-            raise C2ReleaseBridgeError(f"C2 root technical receipt input {role} drift")
+    _regular(proposal, "C2 ready proposal")
+    _regular(receipt, "C2 root receipt")
+    try:
+        validate_accepted_receipt(formal, proposal, _read_object(receipt, "C2 root receipt"))
+    except ValueError as exc:
+        raise C2ReleaseBridgeError("C2 accepted root receipt rejected") from exc
+
+
+def _receipt_bound_proposal(formal: Path, supplied: Path, receipt: Path) -> Path:
+    """Resolve only the exact proposal self-bound by the accepted receipt."""
+    _regular(receipt, "C2 root receipt")
+    receipt_data = _read_object(receipt, "C2 root receipt")
+    binding = receipt_data.get("proposal")
+    if not isinstance(binding, Mapping) or set(binding) != {"path", "bytes", "sha256"}:
+        raise C2ReleaseBridgeError("C2 receipt proposal binding invalid")
+    name, byte_count, digest = binding["path"], binding["bytes"], binding["sha256"]
+    if not isinstance(name, str) or Path(name).name != name or not isinstance(byte_count, int) or not isinstance(digest, str):
+        raise C2ReleaseBridgeError("C2 receipt proposal binding unsafe")
+    bound = formal / name
+    _regular(bound, "C2 receipt-bound proposal")
+    if bound.stat().st_size != byte_count or digest != "sha256:" + sha256(bound):
+        raise C2ReleaseBridgeError("C2 receipt proposal binding drift")
+    if supplied.resolve() != bound.resolve():
+        raise C2ReleaseBridgeError("C2 supplied proposal is not receipt-bound proposal")
+    return bound
 
 
 def _valid_tags(result: Mapping[str, object]) -> list[str]:
     if result.get("status") not in {"OK", "OK_NO_LLM"}:
         raise C2ReleaseBridgeError("C2 tag generation failed")
     tags = result.get("final_tags")
-    if not isinstance(tags, list) or not tags or len(tags) > 12:
+    if not isinstance(tags, list) or not tags or len(tags) > 10:
         raise C2ReleaseBridgeError("C2 tag generation produced no valid tag line")
     clean = [str(tag).strip() for tag in tags]
     if any(not tag or len(tag) > 20 or any(c in tag for c in ",，\n\t") for tag in clean):
@@ -205,32 +294,32 @@ def _release_item() -> dict[str, object]:
 def build_release_package(
     *,
     formal_package: Path,
+    ready_proposal: Path,
     root_receipt: Path,
     authorization: Path,
     out: Path,
     tag_generator: Callable[..., dict] = generate_upload_tags,
-    receipt_validator: Callable[[Path], None] | None = None,
 ) -> Path:
     """Create one private C2 projection.  It never calls upload or CPA image QC."""
-    formal_package, root_receipt, authorization, out = (
-        formal_package.resolve(), root_receipt.resolve(), authorization.resolve(), out.resolve()
+    formal_package, ready_proposal, root_receipt, authorization, out = (
+        formal_package.resolve(), ready_proposal.resolve(), root_receipt.resolve(), authorization.resolve(), out.resolve()
     )
     if out.exists() or out.is_symlink():
         raise C2ReleaseBridgeError("C2 release package output already exists")
     if audit_fastlane_c2_formal_package(formal_package):
         raise C2ReleaseBridgeError("C2 source formal package is not current/passing")
     _validate_formal_audit(formal_package)
-    _regular(root_receipt, "root receipt")
     _regular(authorization, "authorization")
-    if receipt_validator is not None:
-        receipt_validator(root_receipt)
-    _root_receipt_input_interface(_read_object(root_receipt, "root receipt"), formal_package)
+    ready_proposal = _receipt_bound_proposal(formal_package, ready_proposal, root_receipt)
+    _validate_root_receipt(formal_package, ready_proposal, root_receipt)
     _validate_authorization(_read_object(authorization, "authorization"))
 
-    out.mkdir(mode=0o700, parents=True)
+    _mkdir_create_only(out, "C2 release package output")
     try:
         _copy_formal_tree(formal_package, out / FORMAL_DIR)
         formal = out / FORMAL_DIR
+        proposal_name = ready_proposal.name
+        _copy_regular(ready_proposal, out / proposal_name)
         _copy_regular(root_receipt, out / ROOT_RECEIPT_NAME)
         _copy_regular(authorization, out / AUTH_NAME)
         _copy_regular(formal / NAMES["video"], out / VIDEO_NAME)
@@ -247,7 +336,7 @@ def build_release_package(
             "engine_output": result,
             "final_tags": tags,
         }
-        (out / TAG_RECEIPT_NAME).write_text(json.dumps(tag_receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        _write_create_only_json(out / TAG_RECEIPT_NAME, tag_receipt)
         record = {
             "schema_version": "lidousha-c2-release-record.v1",
             "candidate_id": CID,
@@ -283,8 +372,8 @@ def build_release_package(
                 "formal_cover_reprojection_sha256": "sha256:" + sha256(formal / NAMES["cover_meta"]),
             },
         }
-        (out / RECORD_NAME).write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        (out / PUBLISH_NAME).write_text(json.dumps(publish, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        _write_create_only_json(out / RECORD_NAME, record)
+        _write_create_only_json(out / PUBLISH_NAME, publish)
         manifest = {
             "schema_version": SCHEMA,
             "candidate_id": CID,
@@ -297,10 +386,11 @@ def build_release_package(
                 "package_audit": _sha_entry(formal / "package_audit.json"),
                 "correction_authority": _sha_entry(out / AUTH_NAME),
                 "root_receipt": _sha_entry(out / ROOT_RECEIPT_NAME),
+                "ready_proposal": _sha_entry(out / proposal_name),
             },
             "tag_generation": _sha_entry(out / TAG_RECEIPT_NAME),
         }
-        (out / "review_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        _write_create_only_json(out / "review_manifest.json", manifest)
         problems = audit_fastlane_c2_release_package(out)
         if problems:
             raise C2ReleaseBridgeError("C2 release package validation failed: " + ",".join(row["code"] for row in problems))
@@ -331,12 +421,17 @@ def audit_fastlane_c2_release_package(root: Path) -> list[dict[str, str]]:
     if audit_fastlane_c2_formal_package(formal):
         return issue("C2_RELEASE_FORMAL_SOURCE_INVALID")
     try:
-        auth_path, receipt_path = root / AUTH_NAME, root / ROOT_RECEIPT_NAME
+        auth_path = root / AUTH_NAME
+        receipt_path = root / ROOT_RECEIPT_NAME
         _regular(auth_path, "authorization")
         _regular(receipt_path, "root receipt")
         _validate_formal_audit(formal)
         _validate_authorization(_read_object(auth_path, "authorization"))
-        _root_receipt_input_interface(_read_object(receipt_path, "root receipt"), formal)
+        receipt_data = _read_object(receipt_path, "root receipt")
+        binding = receipt_data.get("proposal")
+        candidate_name = binding.get("path") if isinstance(binding, Mapping) else "__invalid__"
+        proposal_path = _receipt_bound_proposal(formal, formal / candidate_name, receipt_path)
+        _validate_root_receipt(formal, proposal_path, receipt_path)
         for name, formal_name in ((VIDEO_NAME, NAMES["video"]), (COVER_NAME, NAMES["cover"]), (SRT_NAME, NAMES["srt"])):
             _regular(root / name, name)
             if sha256(root / name) != sha256(formal / formal_name):
@@ -364,6 +459,7 @@ def audit_fastlane_c2_release_package(root: Path) -> list[dict[str, str]]:
             "package_audit": formal / "package_audit.json",
             "correction_authority": auth_path,
             "root_receipt": receipt_path,
+            "ready_proposal": proposal_path,
         }
         if set(manifest.get("formal_source") or {}) != set(expected_source):
             raise C2ReleaseBridgeError("C2 formal source entry set drift")

@@ -390,15 +390,17 @@
       "note": "Ivan direct Claude JSONL line 947 candidate fact: 0:14「小豆老公；； 不是你老公」；1:04 是回应弹幕「小豆好吵（」，不是念出该弹幕；current title wrongly treats 小李 and 李豆沙 as two people; redo title/cover. The named fixes are complete and Ivan's line-947 fastlane condition is retained in assets/lidousha/fastlane_c2_private/auto_203011_328_389.release-authorization.v1.json. This release only removes the historical hold; current package audit, accepted C2 technical receipt, exact-title/cover CPA joint QC, authorized manifest verify, serialized upload, and public/Creator/section reconciliation remain mandatory.",
       "recording_date": "2026-08-13",
       "status": "released_for_upload",
-      "release_authorization": {
-        "path": "assets/lidousha/fastlane_c2_private/auto_203011_328_389.release-authorization.v1.json",
+  "release_authorization": {
+    "path": "assets/lidousha/fastlane_c2_private/auto_203011_328_389.release-authorization.v1.json",
+    "bytes": 2213,
+    "sha256": "sha256:eb117d898f199345f8d7ca6a732b2c9b814dbbd157a812f07bdbaa598f9a80a7",
         "direct_ivan_lines": [947, 1643, 1745],
         "remaining_machine_gates": [
-          "accepted C2 root technical receipt",
-          "current package audit",
-          "CPA title-cover joint QC",
-          "authorized manifest verify",
-          "serialized upload and public reconciliation"
+      "accepted C2 root technical receipt bound to current formal audit and artifacts",
+      "current C2 release-package audit",
+      "CPA title-cover joint QC for exact final title and cover",
+      "authorized-upload manifest verify",
+      "single serialized upload and public Creator section reconciliation"
         ]
       }
     },

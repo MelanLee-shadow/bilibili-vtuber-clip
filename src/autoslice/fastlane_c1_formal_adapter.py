@@ -1162,25 +1162,11 @@ def materialize_formal_private_package(
 
 def is_fastlane_formal_manifest(manifest: Mapping[str, object]) -> bool:
     from .fastlane_c2_formal_adapter import is_fastlane_c2_formal_manifest
-    from .fastlane_c2_release_bridge import is_fastlane_c2_release_manifest
-    return (
-        is_fastlane_c1_formal_manifest(manifest)
-        or is_fastlane_c2_formal_manifest(manifest)
-        or is_fastlane_c2_release_manifest(manifest)
-    )
+    return is_fastlane_c1_formal_manifest(manifest) or is_fastlane_c2_formal_manifest(manifest)
 
 
 def audit_fastlane_formal_package(root: Path, manifest: Mapping[str, object]) -> list[C1AuditIssue]:
     if is_fastlane_c1_formal_manifest(manifest):
         return audit_fastlane_c1_formal_package(root)
     from .fastlane_c2_formal_adapter import audit_fastlane_c2_formal_package
-    from .fastlane_c2_release_bridge import (
-        audit_fastlane_c2_release_package,
-        is_fastlane_c2_release_manifest,
-    )
-    issues = (
-        audit_fastlane_c2_release_package(root)
-        if is_fastlane_c2_release_manifest(manifest)
-        else audit_fastlane_c2_formal_package(root)
-    )
-    return [C1AuditIssue(item["code"], root, item.get("detail", "")) for item in issues]
+    return [C1AuditIssue(item["code"], root, item.get("detail", "")) for item in audit_fastlane_c2_formal_package(root)]
