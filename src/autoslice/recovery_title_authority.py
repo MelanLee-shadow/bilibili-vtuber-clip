@@ -465,6 +465,9 @@ def expected_recovery_publish_title(
 ) -> str:
     """Resolve the only permitted final title from a validated authority."""
 
+    if authority.get("schema_version") == "fastlane-c1-authorized-same-bv-projection.v1":
+        return str(authority["title"])
+
     title = str(authority["observed_public_title"])
     if authority["title_mode"] == "ivan_manual_override":
         return canonicalize_publish_title(title, lane="talk")
@@ -479,6 +482,22 @@ def validate_recovery_publication_authority(
     repo_root: Path = ROOT,
 ) -> dict[str, object]:
     """Replay one committed registry entry and bind title plus BV identity."""
+
+    # C1 is the one explicitly sealed fastlane formal package.  It is not a
+    # registry-shaped recovery record and must never be coerced into one.
+    if isinstance(value, Mapping) and value.get("schema_version") == "fastlane-c1-authorized-same-bv-projection.v1":
+        from src.autoslice.fastlane_c1_technical_receipt import (
+            C1TechnicalReceiptError,
+            validate_projection_authority,
+        )
+        try:
+            return validate_projection_authority(
+                value,
+                candidate_id=candidate_id,
+                expected_final_title=expected_final_title,
+            )
+        except C1TechnicalReceiptError as exc:
+            raise RecoveryTitleAuthorityError(str(exc)) from exc
 
     if (
         not isinstance(value, Mapping)

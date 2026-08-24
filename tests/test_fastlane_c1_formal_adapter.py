@@ -34,6 +34,7 @@ from src.autoslice.fastlane_c1_formal_adapter import (
     _verify_input,
     load_formal_authority,
 )
+from src.autoslice import fastlane_c1_technical_receipt as c1_receipt
 
 
 def _canonical(value: object) -> bytes:
@@ -262,3 +263,44 @@ def test_current_package_audit_rejects_an_arbitrary_c1_manifest(tmp_path: Path) 
     result = package_audit.audit_package(tmp_path)
     assert result["passed"] is False
     assert result["issues"][0]["code"] == "C1_FORMAL_MANIFEST_FIELDS_INVALID"
+
+
+def test_c1_public_metadata_projection_is_exactly_hash_and_order_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = c1_receipt.PUBLIC_METADATA_SEAL.read_bytes()
+    sealed = tmp_path / "seal.json"
+    sealed.write_bytes(original)
+    monkeypatch.setattr(c1_receipt, "PUBLIC_METADATA_SEAL", sealed)
+    projected = c1_receipt.public_metadata_projection()
+    assert projected["seal_sha256"] == c1_receipt.PUBLIC_METADATA_SEAL_SHA
+    assert projected["tags"] == list(c1_receipt.PUBLIC_TAGS)
+    assert projected["public_verify"]["sha256"] == c1_receipt.PUBLIC_VERIFY_SHA
+    for mutate in (
+        lambda value: value["tags"].append("extra"),
+        lambda value: value["tags"].pop(),
+        lambda value: value["tags"].reverse(),
+        lambda value: value["tags"].__setitem__(0, "wrong"),
+        lambda value: value["public_verify"].update(sha256="sha256:" + "0" * 64),
+        lambda value: value["public_identity"].update(bvid="BV1xxxxxxxxx"),
+    ):
+        value = json.loads(original)
+        mutate(value)
+        sealed.write_bytes(_canonical(value))
+        with pytest.raises(c1_receipt.C1TechnicalReceiptError, match="C1_PUBLIC_METADATA_SEAL_INVALID"):
+            c1_receipt.public_metadata_projection()
+    sealed.write_bytes(original)
+    assert c1_receipt.public_metadata_projection()["tags"][-1] == "上头"
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda value: value.update(candidate_id="other"),
+    lambda value: value.update(tags=list(reversed(value["tags"]))),
+    lambda value: value.update(bvid="BV1xxxxxxxxx"),
+    lambda value: value.update(extra=True),
+])
+def test_c1_projection_authority_rejects_non_c1_or_drifted_shapes(mutate) -> None:
+    authority = c1_receipt.projection_authority()
+    mutate(authority)
+    with pytest.raises(c1_receipt.C1TechnicalReceiptError, match="C1_AUTHORIZED_PROJECTION_INVALID"):
+        c1_receipt.validate_projection_authority(authority, candidate_id=CID, expected_final_title=TITLE)

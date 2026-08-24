@@ -19,6 +19,12 @@ ROOT_SHA = "sha256:20f007654235824c35b3bbe2f0af414c39a2b7a1855c0a7f7fd25fcd89eb0
 RULING = "ruling/2026-08-19-ivan-review-batch-rulings.md"
 RULING_SHA = "sha256:29bc6e523645ecfbd9dbf15a5bea912dd741a6dced0b54ca41d4f906cebfde49"
 PUBLIC_METADATA_SEAL = Path(__file__).resolve().parents[2] / "assets/lidousha/fastlane_c1_private/auto_173005_934_1166.public-metadata-seal.v1.json"
+PUBLIC_METADATA_SEAL_SHA = "sha256:7166d3fe01927c14f3446071fd4604cc0cfe944c646a150af7fdc088f5f845bb"
+PUBLIC_VERIFY_SHA = "sha256:14d1ba5bb648a87b6c4621b7d5e6ae852df5793c08c5f3d7a2fae04cb2dfe7bc"
+PUBLIC_TAGS = (
+    "李豆沙", "虚拟主播", "虚拟UP主", "直播切片", "梦限大",
+    "夢限大みゅーたいぷ", "BanG Dream", "邦多利", "磕CP", "上头",
+)
 SEALS = {"line947": {"raw_sha256": "sha256:e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa", "content_sha256": "sha256:0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b"}, "line1643": {"uuid": "b95d4356-7ad2-4481-b4a7-0b7afa3c35b9", "raw_sha256": "sha256:2269c653fa6be7fb0c20df98a7348d5f5c57176e3e41fe80eb13b85c39307609", "content_sha256": "sha256:61e0ee6e0811fce540efc959d7468354bbd1633c271b140b8eed8ac44e8d010a"}, "line1745": {"uuid": "a79d6670-88b1-43c3-a688-3c9615c1da51", "raw_sha256": "sha256:7f97b7f8b6a7ca9cad7f54e02836a185b41c5ea158d70cb31f0867a174f13329", "content_sha256": "sha256:f5d60aee9cc02d100ec6f2b660ade76f951e7b113fe0ae95397e1ca6d2cbbc69"}}
 
 class C1TechnicalReceiptError(ValueError): pass
@@ -32,9 +38,88 @@ def public_metadata_projection() -> dict[str, object]:
     identity = seal.get("public_identity") if isinstance(seal, Mapping) else None
     tags = seal.get("tags") if isinstance(seal, Mapping) else None
     verify = seal.get("public_verify") if isinstance(seal, Mapping) else None
-    if not isinstance(seal, Mapping) or (seal.get("schema_version"), seal.get("candidate_id"), seal.get("same_bv_only")) != ("fastlane-c1-public-metadata-seal.v1", CID, True) or not isinstance(identity, Mapping) or (identity.get("bvid"), identity.get("aid"), identity.get("cid"), identity.get("title")) != ("BV1os8q61Eya",117132650155234,41126267272,TITLE) or not isinstance(tags, list) or not tags or not all(isinstance(x, str) and x for x in tags) or not isinstance(verify, Mapping) or verify.get("schema_version") != "authorized-upload-public-verify.v2" or verify.get("status") != "VERIFIED_PUBLIC":
+    if not isinstance(seal, Mapping) or set(seal) != {"schema_version", "candidate_id", "public_identity", "public_verify", "tags", "same_bv_only"} or sha256_file(PUBLIC_METADATA_SEAL) != PUBLIC_METADATA_SEAL_SHA or (seal.get("schema_version"), seal.get("candidate_id"), seal.get("same_bv_only")) != ("fastlane-c1-public-metadata-seal.v1", CID, True) or not isinstance(identity, Mapping) or set(identity) != {"bvid", "aid", "cid", "title"} or (identity.get("bvid"), identity.get("aid"), identity.get("cid"), identity.get("title")) != ("BV1os8q61Eya",117132650155234,41126267272,TITLE) or tags != list(PUBLIC_TAGS) or not isinstance(verify, Mapping) or set(verify) != {"schema_version", "status", "sha256"} or (verify.get("schema_version"), verify.get("status"), verify.get("sha256")) != ("authorized-upload-public-verify.v2", "VERIFIED_PUBLIC", PUBLIC_VERIFY_SHA):
         raise C1TechnicalReceiptError("C1_PUBLIC_METADATA_SEAL_INVALID")
-    return {"identity": dict(identity), "tags": list(tags), "seal_sha256": sha256_file(PUBLIC_METADATA_SEAL), "public_verify": dict(verify)}
+    return {"identity": dict(identity), "tags": list(PUBLIC_TAGS), "seal_sha256": PUBLIC_METADATA_SEAL_SHA, "public_verify": dict(verify)}
+
+
+PROJECTION_SCHEMA = "fastlane-c1-authorized-same-bv-projection.v1"
+
+
+def projection_authority() -> dict[str, object]:
+    """The one C1-only recovery target accepted by the same-BV state machine."""
+    public = public_metadata_projection()
+    identity = public["identity"]
+    return {
+        "schema_version": PROJECTION_SCHEMA,
+        "candidate_id": CID,
+        "recording_date": "2026-08-11",
+        "formal_review_schema": "fastlane-c1-formal-private-review-manifest.v1",
+        "formal_authority_sha256": load_formal_authority()["authority_sha256"],
+        "public_metadata_seal_sha256": PUBLIC_METADATA_SEAL_SHA,
+        "public_verify_sha256": PUBLIC_VERIFY_SHA,
+        "bvid": identity["bvid"],
+        "aid": identity["aid"],
+        "cid": identity["cid"],
+        "title": identity["title"],
+        "tags": list(PUBLIC_TAGS),
+        "same_bv_only": True,
+    }
+
+
+def validate_projection_authority(value: object, *, candidate_id: str, expected_final_title: str | None = None) -> dict[str, object]:
+    expected = projection_authority()
+    if not isinstance(value, Mapping) or dict(value) != expected or candidate_id != CID or (expected_final_title is not None and expected_final_title != TITLE):
+        raise C1TechnicalReceiptError("C1_AUTHORIZED_PROJECTION_INVALID")
+    return expected
+
+
+def validate_authorized_projection_manifest(manifest: object, *, verify_audit: bool = True) -> None:
+    """Replay C1's non-generic same-BV manifest without relaxing v3 rules."""
+    required = {
+        "manifest_version", "schema_version", "artifact_id", "video", "cover", "title",
+        "description", "publish_policy", "season", "package_attestation", "authorization",
+        "created_at", "tags", "tags_source", "recovery_publication_authority",
+    }
+    if not isinstance(manifest, Mapping) or set(manifest) != required:
+        raise C1TechnicalReceiptError("C1_AUTHORIZED_MANIFEST_SCHEMA_INVALID")
+    authorization = manifest.get("authorization")
+    if manifest.get("manifest_version") != 3 or manifest.get("schema_version") != "authorized-upload-manifest.v3" or manifest.get("title") != TITLE or manifest.get("tags") != list(PUBLIC_TAGS) or manifest.get("tags_source") != "c1-public-metadata-seal.v1" or manifest.get("recovery_publication_authority") != projection_authority() or not isinstance(authorization, Mapping) or authorization.get("by") != "Ivan" or not isinstance(authorization.get("quote"), str) or "快车道上传" not in authorization["quote"]:
+        raise C1TechnicalReceiptError("C1_AUTHORIZED_MANIFEST_BINDING_INVALID")
+    attestation = manifest.get("package_attestation")
+    if not isinstance(attestation, Mapping) or set(attestation) != {"package_root", "review_manifest", "package_audit", "c1_technical_receipt"}:
+        raise C1TechnicalReceiptError("C1_AUTHORIZED_MANIFEST_ATTESTATION_INVALID")
+    root_text = attestation.get("package_root")
+    root = Path(str(root_text or ""))
+    if not isinstance(root_text, str) or not root.is_dir() or str(root.resolve()) != root_text:
+        raise C1TechnicalReceiptError("C1_AUTHORIZED_MANIFEST_ROOT_INVALID")
+    authority = load_formal_authority()
+    names = authority["output_names"]
+    expected_files = {
+        "review_manifest": "review_manifest.json",
+        "package_audit": "package_audit.json",
+        "c1_technical_receipt": "c1.technical-receipt.accepted.v1.json",
+    }
+    entries: dict[str, Path] = {}
+    for key, filename in expected_files.items():
+        entry = attestation.get(key)
+        if not isinstance(entry, Mapping) or set(entry) != {"path", "sha256", "bytes"}:
+            raise C1TechnicalReceiptError("C1_AUTHORIZED_MANIFEST_ATTESTATION_INVALID")
+        path = Path(str(entry.get("path") or ""))
+        if not path.is_file() or path.parent.resolve() != root.resolve() or path.name != filename or str(path.resolve()) != entry.get("path") or sha256_file(path)[7:] != entry.get("sha256") or path.stat().st_size != entry.get("bytes"):
+            raise C1TechnicalReceiptError("C1_AUTHORIZED_MANIFEST_ATTESTATION_INVALID")
+        entries[key] = path
+    bindings = closure(root, entries["package_audit"])
+    if verify_audit and not bindings["audit"]:
+        raise C1TechnicalReceiptError("C1_AUTHORIZED_MANIFEST_AUDIT_INVALID")
+    validate_completed(_read_json(entries["c1_technical_receipt"], label="TECHNICAL_RECEIPT"), root, entries["package_audit"])
+    for key, filename in (("video", names["burned_final"]), ("cover", names["cover"])):
+        entry = manifest.get(key)
+        if not isinstance(entry, Mapping) or set(entry) != {"path", "sha256", "bytes"}:
+            raise C1TechnicalReceiptError("C1_AUTHORIZED_MANIFEST_ARTIFACT_INVALID")
+        path = Path(str(entry.get("path") or ""))
+        if not path.is_file() or path.parent.resolve() != root.resolve() or path.name != filename or str(path.resolve()) != entry.get("path") or sha256_file(path)[7:] != entry.get("sha256") or path.stat().st_size != entry.get("bytes"):
+            raise C1TechnicalReceiptError("C1_AUTHORIZED_MANIFEST_ARTIFACT_INVALID")
 
 def _point_hash(value: Mapping[str, object]) -> str:
     raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -48,7 +133,14 @@ def _audit(root: Path, path: Path) -> dict[str, Any]:
     run = subprocess.run([sys.executable, str(script), str(root), "--json"], capture_output=True, text=True, check=False)
     try: current = json.loads(run.stdout)
     except json.JSONDecodeError as exc: raise C1TechnicalReceiptError("C1_AUDIT_REPLAY_FAILED") from exc
-    if run.returncode or saved != current or not current.get("passed") or current.get("blocking_issue_count") != 0: raise C1TechnicalReceiptError("C1_AUDIT_REPLAY_DRIFT")
+    # The accepted C1 audit was made in its isolated private package.  A
+    # copied formal package has an intentionally different absolute root, but
+    # no other audit input or result may change.  Keep this relocation rule
+    # private to C1; generic package-audit binding remains byte-for-byte.
+    saved_relocated, current_relocated = dict(saved), dict(current)
+    saved_relocated["root"] = str(root.resolve())
+    current_relocated["root"] = str(root.resolve())
+    if run.returncode or saved_relocated != current_relocated or not current.get("passed") or current.get("blocking_issue_count") != 0: raise C1TechnicalReceiptError("C1_AUDIT_REPLAY_DRIFT")
     return current
 
 def _direct_authority(root: Path) -> dict[str, object]:

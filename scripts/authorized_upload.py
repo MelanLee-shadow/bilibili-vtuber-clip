@@ -48,6 +48,7 @@ from src.autoslice import same_bv_repair as repair_binding  # noqa: E402
 from src.autoslice import same_bv_cover_repair as cover_repair_binding  # noqa: E402
 from src.autoslice import cover_only_audit_scope  # noqa: E402
 from src.autoslice import same_bv_live_verification  # noqa: E402
+from src.autoslice import fastlane_c1_technical_receipt as c1_projection  # noqa: E402
 from src.autoslice.subtitle_validation import validate_srt_file  # noqa: E402
 from src.autoslice.publication_title_exception import upload_manifest_title_policy_violations  # noqa: E402
 from src.autoslice.same_bv_repair import (  # noqa: E402
@@ -548,6 +549,12 @@ def _validate_v3_package_attestation(
     attestation = manifest.get("package_attestation")
     if not isinstance(attestation, dict):
         return ["manifest v3 has no package_attestation object"]
+    if "c1_technical_receipt" in attestation:
+        try:
+            c1_projection.validate_authorized_projection_manifest(manifest)
+        except c1_projection.C1TechnicalReceiptError as exc:
+            return [f"C1 authorized projection rejected: {exc}"]
+        return []
     if attestation.get("schema_version") != "authorized-upload-package-attestation.v1":
         problems.append("package_attestation schema_version is invalid")
 
@@ -716,9 +723,10 @@ def _title_cover_qc_required(manifest: dict) -> bool:
 
     attestation = manifest.get("package_attestation")
     final_review = attestation.get("final_human_review") if isinstance(attestation, dict) else None
+    c1_review = attestation.get("c1_technical_receipt") if isinstance(attestation, dict) else None
     return not (
         isinstance(manifest.get("recovery_publication_authority"), dict)
-        and isinstance(final_review, dict)
+        and (isinstance(final_review, dict) or isinstance(c1_review, dict))
     )
 
 
@@ -1749,6 +1757,34 @@ def make_manifest(args: argparse.Namespace) -> int:
         audit_problems.append(f"package audit root missing: {package_root}")
     if video.resolve().parent != package_root:
         audit_problems.append("video must be directly inside package audit root")
+    candidate_root = video.resolve().parent
+    # C1's accepted private audit is portable across its isolated worktree;
+    # recognize only the formal schema beside the supplied final video, then
+    # let the C1 validator prove that the sole difference is audit root path.
+    candidate_review = candidate_root / "review_manifest.json"
+    if candidate_review.is_file():
+        candidate_payload = _load_json_object(candidate_review, "review manifest", [])
+        if candidate_payload.get("schema_version") == "fastlane-c1-formal-private-review-manifest.v1":
+            package_root = candidate_root
+            audit_problems = [
+                problem for problem in audit_problems
+                if problem != "video must be directly inside package audit root"
+            ]
+    # C1 has an intentionally non-generic formal record/review closure.  Route
+    # it before the ordinary same-stem record convention is inspected.
+    if (package_root / "review_manifest.json").is_file():
+        try:
+            review_candidate = _load_json_object(
+                package_root / "review_manifest.json", "review manifest", audit_problems
+            )
+        except Exception:  # _load_json_object records the portable refusal
+            review_candidate = {}
+        if review_candidate.get("schema_version") == "fastlane-c1-formal-private-review-manifest.v1":
+            if audit_problems:
+                for problem in audit_problems:
+                    print(f"REFUSE: {problem}", file=sys.stderr)
+                return 2
+            return _make_c1_authorized_projection(args, package_root, package_audit, video, cover)
     record_sidecar = sidecar_record_path(video)
     subtitle_sidecar = sidecar_subtitle_path(video)
     review_manifest = package_root / "review_manifest.json"
@@ -1873,6 +1909,77 @@ def make_manifest(args: argparse.Namespace) -> int:
         )
     )
     return 0
+
+
+def _make_c1_authorized_projection(
+    args: argparse.Namespace,
+    package_root: Path,
+    package_audit: Path,
+    video: Path,
+    cover: Path,
+) -> int:
+    """Build only C1's sealed same-BV after-image; never synthesize a record."""
+    try:
+        public = c1_projection.public_metadata_projection()
+        authority = c1_projection.load_formal_authority()
+        names = authority["output_names"]
+        if (
+            args.title != c1_projection.TITLE
+            or video.resolve() != (package_root / names["burned_final"]).resolve()
+            or cover.resolve() != (package_root / names["cover"]).resolve()
+            or package_audit.resolve() != (package_root / "package_audit.json").resolve()
+            or args.tags not in (None, "")
+            or args.no_tags
+            or args.season not in (None, "auto", "talk")
+        ):
+            raise c1_projection.C1TechnicalReceiptError("C1_AUTHORIZED_PROJECTION_INPUT_INVALID")
+        season = season_block_for(args.title, "talk")
+        assert season is not None
+        manifest = {
+            "manifest_version": 3,
+            "schema_version": "authorized-upload-manifest.v3",
+            "artifact_id": sha256_file(video)[:12],
+            "video": _sha_entry(video),
+            "cover": _sha_entry(cover),
+            "title": c1_projection.TITLE,
+            "description": DEFAULT_DESCRIPTION,
+            "publish_policy": {"tid": EXPECTED_TID, "copyright": EXPECTED_COPYRIGHT, "source": EXPECTED_SOURCE},
+            "season": season,
+            "package_attestation": {
+                "package_root": str(package_root.resolve()),
+                "review_manifest": _c1_attested_entry(package_root / "review_manifest.json"),
+                "package_audit": _c1_attested_entry(package_audit),
+            },
+            "authorization": {"by": args.authorized_by, "quote": args.quote, "at": now()},
+            "created_at": now(),
+            "tags": public["tags"],
+            "tags_source": "c1-public-metadata-seal.v1",
+            "recovery_publication_authority": c1_projection.projection_authority(),
+        }
+        problems = human_review.attach_final_human_review(
+            manifest, args.final_human_review, season_ids=EXPECTED_SEASON_IDS
+        )
+        if problems:
+            raise c1_projection.C1TechnicalReceiptError("; ".join(problems))
+        c1_projection.validate_authorized_projection_manifest(manifest)
+    except (c1_projection.C1TechnicalReceiptError, ValueError) as exc:
+        print(f"REFUSE: {exc}", file=sys.stderr)
+        return 2
+    out = Path(args.out) if args.out else package_root / "c1.authorized-upload-manifest.v3.json"
+    if out.parent.resolve() != package_root.resolve() or out.name != "c1.authorized-upload-manifest.v3.json":
+        print("REFUSE: C1 authorized projection output path is fixed inside its formal package", file=sys.stderr)
+        return 2
+    if out.exists():
+        print(f"REFUSE: output already exists: {out}", file=sys.stderr)
+        return 2
+    out.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps({"manifest": str(out), "artifact_id": manifest["artifact_id"]}, ensure_ascii=False))
+    return 0
+
+
+def _c1_attested_entry(path: Path) -> dict[str, object]:
+    """C1 receipt attestation uses the uploader's unprefixed digest form."""
+    return {"path": str(path.resolve()), "sha256": sha256_file(path), "bytes": path.stat().st_size}
 
 
 def load_and_verify(
