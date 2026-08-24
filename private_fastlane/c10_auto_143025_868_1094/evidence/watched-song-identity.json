@@ -1,0 +1,10 @@
+{
+  "schema_version": "fastlane-c10-watched-song-evidence.v1",
+  "candidate_id": "auto_143025_868_1094",
+  "scope": "NAME_AND_ADAPTED_LYRIC_GROUNDING_ONLY",
+  "watched_video": "BV1wF411g7YT",
+  "canonical_song_source": "BV1sZ4y127KT",
+  "source_window": "00:00:41.490-00:02:23.260",
+  "rule": "The watched singing is not live speech. It is retained only to identify the adapted song; visible screen lyrics may ground adapted words and are not themselves a live-subtitle authority.",
+  "authority": "Ivan exact line-947 scope, relayed in the C10 task"
+}

@@ -1,0 +1,119 @@
+{
+  "schema_version": "lidousha-cover-rendered-text-pixels.v3",
+  "status": "PASS",
+  "final_cover_sha256": "sha256:128912d69bf31f3dac0223ba8d19332979f86a19e7d9a1f8e716e3ceae6cc000",
+  "pre_overlay_path": "/private/tmp/vtuber-slice-fastlane-c10-20260824/private_fastlane/c10_auto_143025_868_1094/cover/auto_143025_868_1094.private.cover-v2.pre-overlay.png",
+  "pre_overlay_sha256": "sha256:2d4e6ec526e625c60b6bb1034914ec6f9ea3bbfd21677d21485288f51b5b297d",
+  "canvas_size": [
+    1920,
+    1080
+  ],
+  "text_pixel_bbox": [
+    521,
+    134,
+    1356,
+    522
+  ],
+  "text_pixel_width": 835,
+  "text_pixel_height": 388,
+  "font_size": 180,
+  "font_file_name": "ZCOOLKuaiLe-Regular.ttf",
+  "font_file_sha256": "sha256:812a6fc1fe54b6d73a419245c32dfeba8aa33104d5be90d1cf6af082007cb71d",
+  "rendered_text": "前辈写的现在写不出",
+  "render_spec": {
+    "angle_degrees": 0.0,
+    "font_face_index": 0,
+    "font_file_name": "ZCOOLKuaiLe-Regular.ttf",
+    "font_file_sha256": "sha256:812a6fc1fe54b6d73a419245c32dfeba8aa33104d5be90d1cf6af082007cb71d",
+    "layer_size": [
+      900,
+      520
+    ],
+    "lines": [
+      {
+        "font_size": 180,
+        "outlines": [
+          {
+            "color": [
+              18,
+              36,
+              79
+            ],
+            "width": 15
+          },
+          {
+            "color": [
+              255,
+              255,
+              255
+            ],
+            "width": 8
+          }
+        ],
+        "segment_pad": 15,
+        "segments": [
+          {
+            "fill": [
+              255,
+              198,
+              41
+            ],
+            "text": "前辈写的"
+          }
+        ],
+        "x": 104.0,
+        "y": 42
+      },
+      {
+        "font_size": 180,
+        "outlines": [
+          {
+            "color": [
+              18,
+              36,
+              79
+            ],
+            "width": 15
+          },
+          {
+            "color": [
+              255,
+              255,
+              255
+            ],
+            "width": 8
+          }
+        ],
+        "segment_pad": 15,
+        "segments": [
+          {
+            "fill": [
+              255,
+              92,
+              138
+            ],
+            "text": "现在写不出"
+          }
+        ],
+        "x": 21.0,
+        "y": 241
+      }
+    ],
+    "rendered_layer_size": [
+      900,
+      520
+    ],
+    "schema_version": "lidousha-cover-title-render-spec.v1"
+  },
+  "render_spec_sha256": "sha256:2fbde67d6b5c7c57c0283e19fea4412ef586fc10483fc211accb75f48ed97b8c",
+  "overlay_position": {
+    "x": 510,
+    "y": 92
+  },
+  "mask_path": "/private/tmp/vtuber-slice-fastlane-c10-20260824/private_fastlane/c10_auto_143025_868_1094/cover/auto_143025_868_1094.private.cover-v2.title-mask.png",
+  "mask_sha256": "sha256:d201b091e9564f42dafe4ad6d50d76ffbf750e6a1aaec86f206a5b90d0619530",
+  "mask_nonzero_pixels": 230859,
+  "changed_pixel_count": 229608,
+  "changed_pixel_ratio": 0.9945811079490078,
+  "masked_final_pixels_sha256": "sha256:c4b61b731f40a79bfe5f4c12c633e30a40c19aa62c9d22697d7b3339bfef9dfa"
+}
