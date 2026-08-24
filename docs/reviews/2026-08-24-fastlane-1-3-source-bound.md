@@ -67,6 +67,32 @@ state、registry、候选包和 Bilibili public/Creator/section surface。
   `assets/lidousha/speaker_session_anchors/2026-07-09-220021.v1.json`。本次审计未固定可作为
   当前真相的远端 delivery path；不得由旧 BVID 或旧 registry 推断发布资格。
 
+## 私有人审 surfaces（session evidence only）
+
+以下绝对路径均位于 `/private/tmp`，是本次 session 的 review surface，不是真实持久 authority，
+不构成上传授权；三个 receipt template 当前均为 `PENDING`，所有 human judgement 仍为
+`null/PENDING`。
+
+- #1：`/private/tmp/fastlane-human-review-20260824/1-auto_173005_934_1166/`
+  - `video.mp4` SHA-256 `1bdb0e3278d291ef850299b9b7bde8011241c6ac5ad48faef4d274d69286de81`
+  - `shipped.srt` SHA-256 `1a668a899257407685c91629cc254918a594663af8b55cccb0932db16d0aa5d1`
+  - `cover.png` SHA-256 `9a3636c47b6bfe808dfdd24cd9486788b6101e9260e1cdf8d98a3886942b980f`
+  - `PROPOSED_NOT_FOR_APPLY.srt` SHA-256 `c5c861e5d4263653f7cd21ff07e2163d849d84cd4bca4c7b503fad9889682da9`；仅为 local proposal，不得当作修复或 apply 输入。
+- #2：`/private/tmp/fastlane-human-review-20260824/2-auto_203011_328_389/`
+  - `video.mp4` SHA-256 `6f6ddc92fddcca22d9b9818d5a0fae5a9bd61224712f1c0b7fa56ff5170039f6`
+  - `package.srt` SHA-256 `0f2dfaba23ac61fe1392e2f96d98b8c3c93738fc709cf7d9940a4e86f9286862`
+  - `cover.png` SHA-256 `ee887afa63b666dc36b68c7a90018c08743a464807445e418f4b3abe8beb1e1a`
+  - Ivan 必须逐项裁决：0:14 完整 `小豆老公；； 不是你老公` 的分隔/单 cue；1:04 对
+    `小豆好吵（` 的回应；title/cover 不把小李和李豆沙写成两人。
+- #3：`/private/tmp/fastlane-human-review-20260824/3-auto_220021_561_670/`
+  - `video.mp4` SHA-256 `46b8c838a97486ac399c9c415030d97cca8d1f1d42ae69546ceab0e9e8867a6e`
+  - `current-recut.srt` SHA-256 `dfb2d77f133100f32f76c4f94dd56dae55db6ab02afdbcdcc2ba5d67dccf5704`
+  - `non-release-speaker.srt` SHA-256 `cb4bcddf8aaecc8199ae1371ee5c85b3f9240c2dd6c617c9b92ad3c13d0b5118`
+  - 两个字幕 surface 的 mismatch 与 record stale hash `sha256:0c3a8349585d8d9bfd476eb1652f3baafbffeee362c0855f67c1271f3675e1cb` 均保持记录；未生成修复 SRT。
+
+这些私有文件只供 root/Ivan 完成人审和后续重新验证；receipt 通过也不会跳过 package、commit、
+authorized upload、same-BV 或 public/Creator/section readback gates。
+
 ## Ivan review checklist
 
 1. #1：确认 literal `主包给`、最终感知 receipt，以及是否进入 same-BV correction lane。
