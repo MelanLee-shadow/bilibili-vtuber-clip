@@ -580,7 +580,8 @@ def build_evidence_template(
                     f"duration={final_duration_ms}"
                 )
         expected_claims = _ordered_cover_claims(
-            record, candidate_id=candidate_id
+            record, candidate_id=candidate_id,
+            closure_claims=manifest_closure[candidate_id].get("expected_cover_claims"),
         )
         items.append(
             {
@@ -877,8 +878,12 @@ def _subtitle_points(
 
 
 def _ordered_cover_claims(
-    record: Mapping[str, object], *, candidate_id: str
+    record: Mapping[str, object], *, candidate_id: str, closure_claims: object = None
 ) -> list[tuple[str, str]]:
+    if closure_claims is not None:
+        if not isinstance(closure_claims, set) or not closure_claims:
+            raise FinalHumanReviewBuildError(f"{candidate_id} formal cover claims are invalid")
+        return sorted(closure_claims)
     try:
         claims = human_review._cover_story_claim_authority(  # noqa: SLF001
             record,
@@ -1016,7 +1021,10 @@ def build_receipt(
             raise FinalHumanReviewBuildError(
                 f"committed review contract has no candidate: {candidate_id}"
             )
-        expected_claims = _ordered_cover_claims(record, candidate_id=candidate_id)
+        expected_claims = _ordered_cover_claims(
+            record, candidate_id=candidate_id,
+            closure_claims=closure.get("expected_cover_claims"),
+        )
         if set(expected_claims) != set(closure.get("expected_cover_claims") or set()):
             raise FinalHumanReviewBuildError(
                 f"{candidate_id} cover claim projection drifted from canonical manifest closure"
