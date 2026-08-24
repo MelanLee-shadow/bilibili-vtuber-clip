@@ -896,6 +896,13 @@ def talk_failure_recovery_fingerprint(failure_kind: str | None, candidate_id: st
             profile_asset_file("voiceprint_profile"),
         )
     paths = [relative if isinstance(relative, Path) else REPO_ROOT / relative for relative in relatives]
+    # A sealed exhaustive reviewed baseline is a candidate-specific repair for
+    # subtitle-authority failures.  Include only its own hash-bound closure;
+    # an unrelated candidate baseline must not consume this retry's budget.
+    if failure_kind == "subtitle_authority":
+        reviewed_baseline = candidate_reviewed_subtitle_baseline(candidate_id)
+        if reviewed_baseline is not None:
+            paths.extend(reviewed_baseline.fingerprint_paths)
     override = candidate_text_override_path(candidate_id) if failure_kind == "subtitle_authority" else (
         candidate_speaker_override_path(candidate_id) if failure_kind in {"speaker_evidence", "runtime_prerequisite"} else None
     )

@@ -1,0 +1,50 @@
+{
+  "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
+  "candidate_id": "auto_130012_435_574",
+  "schema_version": "subtitle-redelivery-baseline.v2",
+  "mode": "preserve_text_outside_source_truth",
+  "exact_interval_replay": true,
+  "path": "auto_130012_435_574.reviewed.srt",
+  "sha256": "6903ce9acb826b5013ef09f26b70ca36f03718ec235ebc79ca65384584f77955",
+  "authority": "Ivan current fastlane authorization for 2026-08-15 candidate #12: revive and publish, repair danmaku 写姐 normalized to 解 by context, and identify/fix remaining evidenced small errors within this candidate only; durable mirror docs/reviews/2026-08-19-ivan-review-batch-rulings.md #12.",
+  "source_recording_basename": "22966160_20260815-13-00-12.mp4",
+  "source_sha256": "297cfb07b04b006ac76307ad0369af7160a62f64d04d315ddcfa7146d2625077",
+  "absolute_source_start_ms": 434920,
+  "absolute_source_end_ms": 603840,
+  "operator_text_full_ownership": {
+    "schema_version": "operator-reviewed-text-full-ownership-pin.v3",
+    "baseline_sha256": "6903ce9acb826b5013ef09f26b70ca36f03718ec235ebc79ca65384584f77955",
+    "pipeline_srt_sha256": "f6401ac0c5d9192d6c47052c7609d7dde9f3f050d662e9abcef9341ed8dc2b6c",
+    "decision_ledger_sha256": "92854b4f317e7e26e91a84198bec12dc095755ca2f66a2508b8c35dc6b448e89",
+    "diagnostic_diff_sha256": "1781b8eddf3ef4537e2e97911bac03de88d18f70983d3c51b41582944995d86d",
+    "operator_authority": {
+      "kind": "IVAN_OPERATOR",
+      "evidence_ref": "Ivan current fastlane authorization for 2026-08-15 candidate #12: revive and publish, repair danmaku 写姐 normalized to 解 by context, and identify/fix remaining evidenced small errors within this candidate only; durable mirror docs/reviews/2026-08-19-ivan-review-batch-rulings.md #12."
+    },
+    "source_cue_count": 59,
+    "release_cue_count": 59,
+    "changed_cue_count": 3,
+    "operator_exact_text_cue_count": 3,
+    "operator_unchanged_freeze_cue_count": 56,
+    "operator_drop_cue_count": 0,
+    "speaker_authority": "NOT_CLAIMED_TEXT_ONLY"
+  },
+  "operator_truth_lanes": {
+    "schema_version": "operator-reviewed-subtitle-truth-lanes.v2",
+    "release_truth": {
+      "srt_sha256": "6903ce9acb826b5013ef09f26b70ca36f03718ec235ebc79ca65384584f77955"
+    },
+    "pipeline_diagnostic": {
+      "sha256": "f6401ac0c5d9192d6c47052c7609d7dde9f3f050d662e9abcef9341ed8dc2b6c",
+      "path": "auto_130012_435_574.pipeline-diagnostic.srt"
+    },
+    "decision_ledger": {
+      "sha256": "92854b4f317e7e26e91a84198bec12dc095755ca2f66a2508b8c35dc6b448e89",
+      "path": "auto_130012_435_574.operator-decisions.v3.json"
+    },
+    "diff_receipt": {
+      "sha256": "1781b8eddf3ef4537e2e97911bac03de88d18f70983d3c51b41582944995d86d",
+      "path": "auto_130012_435_574.operator-truth-diff.v2.json"
+    }
+  }
+}

@@ -1,0 +1,254 @@
+{
+  "schema_version": "operator-reviewed-subtitle-decisions.v3",
+  "candidate_id": "auto_130012_435_574",
+  "report_scope": "EXHAUSTIVE",
+  "pipeline_srt_sha256": "f6401ac0c5d9192d6c47052c7609d7dde9f3f050d662e9abcef9341ed8dc2b6c",
+  "operator_authority": {
+    "kind": "IVAN_OPERATOR",
+    "evidence_ref": "Ivan current fastlane authorization for 2026-08-15 candidate #12: revive and publish, repair danmaku 写姐 normalized to 解 by context, and identify/fix remaining evidenced small errors within this candidate only; durable mirror docs/reviews/2026-08-19-ivan-review-batch-rulings.md #12."
+  },
+  "cue_decisions": [
+    {
+      "cue": 1,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 2,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 3,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 4,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 5,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 6,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 7,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 8,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 9,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 10,
+      "disposition": "OPERATOR_EXACT_TEXT",
+      "release_text": "不写姐是这个姐吗",
+      "decision_authority": "LEDGER_OPERATOR_AUTHORITY"
+    },
+    {
+      "cue": 11,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 12,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 13,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 14,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 15,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 16,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 17,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 18,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 19,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 20,
+      "disposition": "OPERATOR_EXACT_TEXT",
+      "release_text": "不是装不会写",
+      "decision_authority": "LEDGER_OPERATOR_AUTHORITY"
+    },
+    {
+      "cue": 21,
+      "disposition": "OPERATOR_EXACT_TEXT",
+      "release_text": "还写姐，不是装姐吗？",
+      "decision_authority": "LEDGER_OPERATOR_AUTHORITY"
+    },
+    {
+      "cue": 22,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 23,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 24,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 25,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 26,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 27,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 28,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 29,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 30,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 31,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 32,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 33,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 34,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 35,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 36,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 37,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 38,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 39,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 40,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 41,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 42,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 43,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 44,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 45,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 46,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 47,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 48,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 49,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 50,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 51,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 52,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 53,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 54,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 55,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 56,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 57,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 58,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 59,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    }
+  ]
+}

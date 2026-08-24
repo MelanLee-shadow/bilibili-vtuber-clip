@@ -11973,6 +11973,9 @@ def test_subtitle_authority_recovery_fingerprint_tracks_final_surface_verifier(
         if key == "subtitle_truth_ledger"
         else pytest.fail(f"unexpected profile asset: {key}"),
     )
+    monkeypatch.setattr(
+        runner, "candidate_reviewed_subtitle_baseline", lambda _candidate_id: None
+    )
     for relative in runner.subtitle_authority_recovery_relatives(ledger):
         path = relative if isinstance(relative, Path) else tmp_path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -12093,6 +12096,58 @@ def test_subtitle_authority_recovery_fingerprint_tracks_final_surface_verifier(
             != baseline
         )
         verifier.write_text(original, encoding="utf-8")
+
+
+def test_subtitle_authority_recovery_fingerprint_tracks_only_named_baseline(
+    tmp_path, monkeypatch
+):
+    """A sealed text baseline may wake its own held subtitle failure only."""
+
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    ledger = tmp_path / "assets/lidousha/subtitle-truth-ledger.json"
+    monkeypatch.setattr(
+        runner,
+        "profile_asset_file",
+        lambda key: ledger
+        if key == "subtitle_truth_ledger"
+        else pytest.fail(f"unexpected profile asset: {key}"),
+    )
+    for relative in runner.subtitle_authority_recovery_relatives(ledger):
+        path = relative if isinstance(relative, Path) else tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(str(relative), encoding="utf-8")
+
+    baseline_paths = tuple(
+        tmp_path / "assets/lidousha/reviewed_subtitle_baselines" / name
+        for name in ("candidate.subtitle-baseline.v1.json", "candidate.reviewed.srt")
+    )
+    for path in baseline_paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(path.name, encoding="utf-8")
+
+    class _Baseline:
+        fingerprint_paths = baseline_paths
+
+    monkeypatch.setattr(
+        runner,
+        "candidate_reviewed_subtitle_baseline",
+        lambda candidate_id: _Baseline() if candidate_id == "candidate" else None,
+    )
+    baseline = runner.talk_failure_recovery_fingerprint(
+        "subtitle_authority", "candidate"
+    )
+    other = runner.talk_failure_recovery_fingerprint(
+        "subtitle_authority", "other"
+    )
+    baseline_paths[1].write_text("corrected text", encoding="utf-8")
+    assert (
+        runner.talk_failure_recovery_fingerprint("subtitle_authority", "candidate")
+        != baseline
+    )
+    assert (
+        runner.talk_failure_recovery_fingerprint("subtitle_authority", "other")
+        == other
+    )
 
 
 def test_selected_boundary_repair_bypasses_filled_talk_quota(monkeypatch):
