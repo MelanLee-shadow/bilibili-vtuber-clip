@@ -117,6 +117,27 @@ def test_create_only_writer_handles_partial_and_zero_writes(tmp_path: Path, monk
     assert not (tmp_path / name).exists()
 
 
+def test_create_only_writer_preserves_concurrent_replacement_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    os.chmod(tmp_path, 0o700)
+    target = tmp_path / "race.json"
+    parent_fd, name = preflight_create_only_output(target)
+
+    def replace_then_zero(_fd: int, _data: bytes) -> int:
+        os.unlink(name, dir_fd=parent_fd)
+        target.write_bytes(b"replacement-bytes")
+        return 0
+
+    monkeypatch.setattr(os, "write", replace_then_zero)
+    try:
+        with pytest.raises(OSError, match="short write"):
+            write_receipt_create_only(parent_fd, name, {"a": 1})
+    finally:
+        os.close(parent_fd)
+    assert target.read_bytes() == b"replacement-bytes"
+
+
 def test_joint_qc_resolves_exact_same_stem_cover(tmp_path: Path) -> None:
     title = "【李豆沙】一条自动标题"
     candidate = "auto_test"

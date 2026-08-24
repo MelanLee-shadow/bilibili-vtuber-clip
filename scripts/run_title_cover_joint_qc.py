@@ -80,6 +80,7 @@ def write_receipt_create_only(parent_fd: int, name: str, receipt: dict) -> None:
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     fd = os.open(name, flags, 0o600, dir_fd=parent_fd)
+    created = os.fstat(fd)
     try:
         data = (json.dumps(receipt, ensure_ascii=False, indent=1) + "\n").encode()
         offset = 0
@@ -91,7 +92,15 @@ def write_receipt_create_only(parent_fd: int, name: str, receipt: dict) -> None:
         os.fsync(fd)
     except Exception:
         try:
-            os.unlink(name, dir_fd=parent_fd)
+            try:
+                current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+            except OSError:
+                # A concurrent unlink, replacement, or lstat failure cannot
+                # make the original write/fsync failure less important.
+                pass
+            else:
+                if (current.st_dev, current.st_ino) == (created.st_dev, created.st_ino):
+                    os.unlink(name, dir_fd=parent_fd)
         finally:
             raise
     finally:
