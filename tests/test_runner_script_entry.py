@@ -2474,6 +2474,18 @@ def test_guard_only_postcommit_recovery_executes_fixture_and_fails_closed(tmp_pa
         ):
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(origin.read_bytes())
+        guard.chmod(0o755)
+        (guard / "owner").chmod(0o600)
+        (repo / "DEPLOYED_COMMIT").chmod(0o644)
+        (repo / "DEPLOYED_AUTHORITY_MANIFEST.json").chmod(0o644)
+        (base / "DISABLED").chmod(0o644)
+        (base / "tick.lock").chmod(0o644)
+        (base / "runner.lock").chmod(0o644)
+        (base / "upload.lock").chmod(0o600)
+        (base / "free_mount_watchdog.sh").chmod(0o755)
+        (base / "upload_fatal_sentinel.sh").chmod(0o755)
+        uploader.chmod(0o700)
+        (recording / "bililive_recorder_adapter.py").chmod(0o755)
         tree = hashlib.sha256(
             json.dumps(
                 inventory(repo), ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -2482,33 +2494,67 @@ def test_guard_only_postcommit_recovery_executes_fixture_and_fails_closed(tmp_pa
         runner = hashlib.md5(
             (repo / "scripts/free_session_autoslice.py").read_bytes()
         ).hexdigest()
-        script = "flock() { return 0; }\n" + remote.replace(
+        script = "flock() { return 0; }\nmode() { stat -f '%Lp' \"$1\"; }\n" + remote.replace(
             "/usr/bin/flock", "flock"
-        ).replace("/opt/bilive/recording", str(recording)).replace(
+        ).replace("stat -c '%a'", "mode").replace(
+            "/opt/bilive/recording", str(recording)
+        ).replace(
             "/opt/bilive/app/tmp_manual_upload/do_upload.sh", str(uploader)
         )
         return base, guard, script, tree, runner
 
-    def run(name: str, mutate=None, busy_fd=None, runner=""):
+    def cache(base: Path) -> Path:
+        directory = base / "repo/src/__pycache__"
+        directory.mkdir()
+        path = directory / "x.pyc"
+        path.write_bytes(b"cache")
+        return path
+
+    def cache_digest(base: Path) -> str | None:
+        directory = base / "repo/src/__pycache__"
+        if not directory.is_dir():
+            return None
+        rows = [
+            (path.relative_to(directory).as_posix(), hashlib.sha256(path.read_bytes()).hexdigest())
+            for path in sorted(directory.glob("*.pyc"))
+        ]
+        return hashlib.sha256(json.dumps(rows, separators=(",", ":")).encode()).hexdigest()
+
+    def run(
+        name: str,
+        mutate=None,
+        busy_fd=None,
+        runner="",
+        with_cache=True,
+        delete_fail=False,
+        oversized_cache=False,
+    ):
         base, guard, script, tree, expected_runner = build(name)
+        if with_cache:
+            cache(base)
+        if oversized_cache:
+            directory = base / "repo/src/__pycache__"
+            for index in range(1024):
+                (directory / f"receipt-{index:04d}.pyc").write_bytes(b"cache")
         if mutate:
             mutate(base, guard)
+        before_cache = cache_digest(base)
         if busy_fd is not None:
             script = script.replace(f"flock -n {busy_fd}", "false")
+        if delete_fail:
+            script = script.replace(
+                "for path,_expected in files: path.unlink()",
+                "raise SystemExit('injected cache deletion failure')",
+            )
         result = subprocess.run(
             ["bash", "-c", script, "guard-only", str(base), owner, tree, runner or expected_runner],
             text=True,
             capture_output=True,
             check=False,
         )
-        return result, base, guard
+        return result, base, guard, before_cache
 
-    def cache(base: Path) -> None:
-        directory = base / "repo/src/__pycache__"
-        directory.mkdir()
-        (directory / "x.pyc").write_bytes(b"cache")
-
-    good, base, guard = run("good", lambda b, _g: cache(b))
+    good, base, guard, _cache_before = run("good")
     assert good.returncode == 0, good.stderr
     assert not guard.exists()
     assert not (base / "repo/src/__pycache__").exists()
@@ -2519,6 +2565,11 @@ def test_guard_only_postcommit_recovery_executes_fixture_and_fails_closed(tmp_pa
         saved = path.with_name(path.name + ".saved")
         path.rename(saved)
         path.symlink_to(saved.name)
+
+    def symlink_dir(path: Path) -> None:
+        saved = path.with_name(path.name + ".saved")
+        path.rename(saved)
+        path.symlink_to(saved.name, target_is_directory=True)
 
     def nonregular(path: Path) -> None:
         path.unlink()
@@ -2535,6 +2586,7 @@ def test_guard_only_postcommit_recovery_executes_fixture_and_fails_closed(tmp_pa
         "authority-drift": lambda b, _g: (b / "repo/DEPLOYED_AUTHORITY_MANIFEST.json").write_text("{}"),
         "authority-link": lambda b, _g: symlink(b / "repo/DEPLOYED_AUTHORITY_MANIFEST.json"),
         "disabled-link": lambda b, _g: symlink(b / "DISABLED"),
+        "disabled-content": lambda b, _g: (b / "DISABLED").write_text("not empty"),
         "auto-upload": lambda b, _g: (b / "AUTO_UPLOAD").touch(),
         "auto-upload-link": lambda b, _g: (b / "AUTO_UPLOAD").symlink_to("missing"),
         "tree-drift": lambda b, _g: (b / "repo/scripts/free_session_autoslice.py").write_text("drift"),
@@ -2543,24 +2595,56 @@ def test_guard_only_postcommit_recovery_executes_fixture_and_fails_closed(tmp_pa
         "sentinel-drift": lambda b, _g: (b / "upload_fatal_sentinel.sh").write_text("drift"),
         "uploader-drift": lambda b, _g: (b.parent / "uploader").write_text("drift"),
         "adapter-drift": lambda b, _g: (b.parent / "recording/bililive_recorder_adapter.py").write_text("drift"),
-        "cache-dir-link": lambda b, _g: (b / "repo/src/__pycache__").symlink_to("missing"),
-        "cache-pyc-link": lambda b, _g: (cache(b), symlink(b / "repo/src/__pycache__/x.pyc")),
-        "cache-nonpyc": lambda b, _g: (cache(b), (b / "repo/src/__pycache__/x.txt").write_text("x")),
-        "cache-empty": lambda b, _g: (b / "repo/src/__pycache__").mkdir(),
+        "cache-dir-link": lambda b, _g: symlink_dir(b / "repo/src/__pycache__"),
+        "cache-pyc-link": lambda b, _g: symlink(b / "repo/src/__pycache__/x.pyc"),
+        "cache-nonpyc": lambda b, _g: (b / "repo/src/__pycache__/x.txt").write_text("x"),
+        "cache-empty": lambda b, _g: (b / "repo/src/__pycache__/x.pyc").unlink(),
         "stray-pyc": lambda b, _g: (b / "repo/src/stray.pyc").write_bytes(b"x"),
     }
+    mode_paths = {
+        "guard-mode": (lambda b, g: g, 0o700),
+        "owner-mode": (lambda _b, g: g / "owner", 0o700),
+        "disabled-mode": (lambda b, _g: b / "DISABLED", 0o600),
+        "tick-mode": (lambda b, _g: b / "tick.lock", 0o600),
+        "runner-lock-mode": (lambda b, _g: b / "runner.lock", 0o600),
+        "upload-lock-mode": (lambda b, _g: b / "upload.lock", 0o644),
+        "commit-mode": (lambda b, _g: b / "repo/DEPLOYED_COMMIT", 0o600),
+        "authority-mode": (lambda b, _g: b / "repo/DEPLOYED_AUTHORITY_MANIFEST.json", 0o600),
+        "watchdog-mode": (lambda b, _g: b / "free_mount_watchdog.sh", 0o700),
+        "sentinel-mode": (lambda b, _g: b / "upload_fatal_sentinel.sh", 0o700),
+        "uploader-mode": (lambda b, _g: b.parent / "uploader", 0o755),
+        "adapter-mode": (lambda b, _g: b.parent / "recording/bililive_recorder_adapter.py", 0o700),
+    }
+    for name, (resolve, drift_mode) in mode_paths.items():
+        cases[name] = lambda b, g, resolve=resolve, drift_mode=drift_mode: resolve(
+            b, g
+        ).chmod(drift_mode)
     for name, mutate in cases.items():
-        failed, base, guard = run(name, mutate)
+        failed, base, guard, cache_before = run(name, mutate)
         assert failed.returncode != 0, name
         assert guard.exists() and (guard / "owner").exists(), name
+        if not name.startswith("cache-") and name != "stray-pyc":
+            assert cache_before == cache_digest(base), name
 
     for lock in ("tick.lock", "runner.lock", "upload.lock"):
-        failed, base, guard = run("link-" + lock, lambda b, _g, lock=lock: symlink(b / lock))
+        failed, base, guard, cache_before = run("link-" + lock, lambda b, _g, lock=lock: symlink(b / lock))
         assert failed.returncode != 0 and guard.exists()
-        failed, base, guard = run("nonregular-" + lock, lambda b, _g, lock=lock: nonregular(b / lock))
+        assert cache_before == cache_digest(base)
+        failed, base, guard, cache_before = run("nonregular-" + lock, lambda b, _g, lock=lock: nonregular(b / lock))
         assert failed.returncode != 0 and guard.exists()
+        assert cache_before == cache_digest(base)
     for descriptor in (9, 8, 7):
-        failed, _base, guard = run("busy-" + str(descriptor), busy_fd=descriptor)
+        failed, base, guard, cache_before = run("busy-" + str(descriptor), busy_fd=descriptor)
         assert failed.returncode != 0 and guard.exists()
-    failed, _base, guard = run("runner-md5", runner="0" * 32)
+        assert cache_before == cache_digest(base)
+    failed, base, guard, cache_before = run("runner-md5", runner="0" * 32)
     assert failed.returncode != 0 and guard.exists()
+    assert cache_before == cache_digest(base)
+    failed, base, guard, cache_before = run("delete-failure", delete_fail=True)
+    assert failed.returncode != 0 and guard.exists()
+    assert cache_before == cache_digest(base)
+    failed, base, guard, cache_before = run("oversized-cache", oversized_cache=True)
+    assert failed.returncode != 0 and guard.exists()
+    assert "bytecode cache receipt exceeds argv-safe bound" in failed.stderr
+    assert cache_before == cache_digest(base)
+    assert len(list((base / "repo/src/__pycache__").glob("*.pyc"))) == 1025

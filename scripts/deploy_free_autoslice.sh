@@ -427,8 +427,10 @@ base=$1; owner=$2; expected_tree=$3; expected_runner_md5=$4
 commit=${owner%%-*}; repo=$base/repo; backup=$base/repo.rollback-$commit; stage=$base/repo.deploy-$commit; guard=$base/deploy.guard
 test -d "$guard"
 test ! -L "$guard"
+test "$(stat -c '%a' "$guard")" = 755
 test -f "$guard/owner"
 test ! -L "$guard/owner"
+test "$(stat -c '%a' "$guard/owner")" = 600
 test "$(cat "$guard/owner")" = "$owner"
 test "$(find "$guard" -mindepth 1 -maxdepth 1 -exec printf . \; | wc -c)" -eq 1
 test ! -e "$backup"
@@ -441,66 +443,90 @@ if find "$base" -mindepth 1 -maxdepth 1 \( -name 'repo.rollback-*' -o -name 'rep
 fi
 test -f "$repo/DEPLOYED_COMMIT"
 test ! -L "$repo/DEPLOYED_COMMIT"
+test "$(stat -c '%a' "$repo/DEPLOYED_COMMIT")" = 644
 current=$(awk 'NR==1 {print $1}' "$repo/DEPLOYED_COMMIT")
 test "${#current}" -eq 40
 [[ "$current" != *[!0-9a-f]* ]]
 test "$current" = "$commit"
 test -f "$repo/DEPLOYED_AUTHORITY_MANIFEST.json"
 test ! -L "$repo/DEPLOYED_AUTHORITY_MANIFEST.json"
+test "$(stat -c '%a' "$repo/DEPLOYED_AUTHORITY_MANIFEST.json")" = 644
 test -f "$base/DISABLED"
 test ! -L "$base/DISABLED"
+test "$(stat -c '%a' "$base/DISABLED")" = 644
+test ! -s "$base/DISABLED"
 test ! -e "$base/AUTO_UPLOAD"
 test ! -L "$base/AUTO_UPLOAD"
-for lock in tick.lock runner.lock upload.lock; do
+for lock in tick.lock runner.lock; do
     test -f "$base/$lock"
     test ! -L "$base/$lock"
+    test "$(stat -c '%a' "$base/$lock")" = 644
 done
+test -f "$base/upload.lock"
+test ! -L "$base/upload.lock"
+test "$(stat -c '%a' "$base/upload.lock")" = 600
 exec 9<>"$base/tick.lock"; /usr/bin/flock -n 9
 exec 8<>"$base/runner.lock"; /usr/bin/flock -n 8
 exec 7<>"$base/upload.lock"; /usr/bin/flock -n 7
 test "$(cat "$guard/owner")" = "$owner"
-PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" <<'PY'
+# Freeze a strict cache receipt without deleting anything.  Every remaining
+# predicate below runs while these derived bytes still exist; a failed gate
+# therefore leaves both cache and guard untouched.
+CACHE_RECEIPT=$(PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" <<'PY'
 import hashlib,json,stat,sys
 from pathlib import Path
-root=Path(sys.argv[1]); caches=[]
+root=Path(sys.argv[1]); dirs=[]; files=[]
 for name in ('scripts','src','ops','assets','profiles','.agent','docs','cleanup_manifests'):
  p=root/name
  if not p.exists(): continue
- for q in p.rglob('*.pyc'):
+ for q in sorted(p.rglob('*.pyc')):
   if q.parent.name != '__pycache__': raise SystemExit('stray bytecode file')
- for d in p.rglob('*'):
-  if d.name != '__pycache__': continue
+ for d in sorted(p.rglob('__pycache__')):
   s=d.lstat()
   if d.is_symlink() or not d.is_dir() or not stat.S_ISDIR(s.st_mode): raise SystemExit('unsafe bytecode cache dir')
-  rows=list(d.iterdir())
+  rows=sorted(d.iterdir())
   if not rows: raise SystemExit('empty bytecode cache')
+  dirs.append(d.relative_to(root).as_posix())
   for q in rows:
    qs=q.lstat()
    if q.is_symlink() or not q.is_file() or q.suffix != '.pyc' or not stat.S_ISREG(qs.st_mode): raise SystemExit('unsafe bytecode cache child')
-  caches.append((d, rows))
-receipt=[]
-for d,rows in caches:
- for q in rows: receipt.append((q.relative_to(root).as_posix(),hashlib.sha256(q.read_bytes()).hexdigest()))
-print(json.dumps({'schema':'postcommit-bytecode-cache-cleanup.v1','count':len(receipt),'files':receipt},sort_keys=True,separators=(',',':')))
-for d,rows in sorted(caches,key=lambda x:len(x[0].parts),reverse=True):
- for q in rows: q.unlink()
- d.rmdir()
+   files.append({'path':q.relative_to(root).as_posix(),'sha256':hashlib.sha256(q.read_bytes()).hexdigest()})
+print(json.dumps({'schema':'postcommit-bytecode-cache-cleanup.v1','dirs':dirs,'files':files},sort_keys=True,separators=(',',':')))
 PY
-PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" "$expected_tree" "$commit" <<'PY'
+)
+# The command substitution above strips Python's terminal newline.  A bash
+# here-string adds one byte back without placing this JSON in an argv entry;
+# remove that synthetic byte while measuring under the byte-oriented C locale.
+CACHE_RECEIPT_BYTES=$(LC_ALL=C wc -c <<<"$CACHE_RECEIPT")
+CACHE_RECEIPT_BYTES=$((CACHE_RECEIPT_BYTES - 1))
+if [ "$CACHE_RECEIPT_BYTES" -gt 65536 ]; then
+    echo "REFUSE: bytecode cache receipt exceeds argv-safe bound" >&2
+    exit 1
+fi
+PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" "$expected_tree" "$commit" "$CACHE_RECEIPT" <<'PY'
 import hashlib,json,stat,sys
 from pathlib import Path
-root=Path(sys.argv[1]); expected=sys.argv[2]; commit=sys.argv[3]
+root=Path(sys.argv[1]); expected=sys.argv[2]; commit=sys.argv[3]; receipt=json.loads(sys.argv[4])
+assert receipt.get('schema') == 'postcommit-bytecode-cache-cleanup.v1'
+dirs=set(receipt.get('dirs') or []); files={row['path']:row['sha256'] for row in receipt.get('files') or []}
+assert len(files) == len(receipt.get('files') or [])
 assert root.joinpath('DEPLOYED_COMMIT').read_text().split()[0] == commit
-entries={}
+entries={}; seen_dirs=set(); seen_files=set()
 for name in ('scripts','src','ops','assets','profiles','.agent','docs','cleanup_manifests','AGENTS.md','README.md'):
  p=root/name
  if not p.exists(): continue
  for q in (p,*p.rglob('*')):
   s=q.lstat(); rel=q.relative_to(root).as_posix(); mode=stat.S_IMODE(s.st_mode)
   assert not q.is_symlink()
+  if rel in dirs:
+   assert q.is_dir(); seen_dirs.add(rel); continue
+  if rel in files:
+   assert q.is_file() and hashlib.sha256(q.read_bytes()).hexdigest() == files[rel]; seen_files.add(rel); continue
+  assert not any(rel.startswith(directory + '/') for directory in dirs)
   if q.is_dir(): entries[rel]={'type':'dir','mode':mode}
   elif q.is_file(): entries[rel]={'type':'file','mode':mode,'sha256':hashlib.sha256(q.read_bytes()).hexdigest()}
   else: raise AssertionError(rel)
+assert seen_dirs == dirs and seen_files == set(files)
 assert hashlib.sha256(json.dumps(entries,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()==expected
 PY
 PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" "$commit" <<'PY'
@@ -522,11 +548,54 @@ for target in "$base/free_mount_watchdog.sh" "$base/upload_fatal_sentinel.sh" /o
     test -f "$target"
     test ! -L "$target"
 done
+test "$(stat -c '%a' "$base/free_mount_watchdog.sh")" = 755
+test "$(stat -c '%a' "$base/upload_fatal_sentinel.sh")" = 755
+test "$(stat -c '%a' /opt/bilive/app/tmp_manual_upload/do_upload.sh)" = 700
+test "$(stat -c '%a' /opt/bilive/recording/bililive_recorder_adapter.py)" = 755
 cmp -s "$repo/scripts/free_mount_watchdog.sh" "$base/free_mount_watchdog.sh"
 cmp -s "$repo/scripts/clouddrive_upload_fatal_sentinel.sh" "$base/upload_fatal_sentinel.sh"
 cmp -s "$repo/scripts/free_do_upload.sh" /opt/bilive/app/tmp_manual_upload/do_upload.sh
 cmp -s "$repo/ops/recording/bililive_recorder_adapter.py" /opt/bilive/recording/bililive_recorder_adapter.py
 test "$(md5sum "$repo/scripts/free_session_autoslice.py" | cut -d' ' -f1)" = "$expected_runner_md5"
+test "$(cat "$guard/owner")" = "$owner"
+# Every pre-delete predicate has now passed.  Revalidate the frozen receipt in
+# full before the first unlink so an intervening cache drift cannot cause a
+# partial cleanup; a deletion error intentionally leaves the owner guard.
+PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" "$CACHE_RECEIPT" <<'PY'
+import hashlib,json,stat,sys
+from pathlib import Path
+root=Path(sys.argv[1]); receipt=json.loads(sys.argv[2])
+assert receipt.get('schema') == 'postcommit-bytecode-cache-cleanup.v1'
+dirs=[root / item for item in receipt.get('dirs') or []]
+files=[(root / row['path'], row['sha256']) for row in receipt.get('files') or []]
+assert len({path for path,_hash in files}) == len(files)
+for directory in dirs:
+ s=directory.lstat(); assert not directory.is_symlink() and directory.is_dir() and stat.S_ISDIR(s.st_mode)
+for path,expected in files:
+ s=path.lstat(); assert not path.is_symlink() and path.is_file() and stat.S_ISREG(s.st_mode)
+ assert path.parent in dirs and path.suffix == '.pyc'
+ assert hashlib.sha256(path.read_bytes()).hexdigest() == expected
+print(json.dumps(receipt,sort_keys=True,separators=(',',':')))
+for path,_expected in files: path.unlink()
+for directory in sorted(dirs,key=lambda item:len(item.parts),reverse=True): directory.rmdir()
+PY
+PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" "$expected_tree" "$commit" <<'PY'
+import hashlib,json,stat,sys
+from pathlib import Path
+root=Path(sys.argv[1]); expected=sys.argv[2]; commit=sys.argv[3]
+assert root.joinpath('DEPLOYED_COMMIT').read_text().split()[0] == commit
+entries={}
+for name in ('scripts','src','ops','assets','profiles','.agent','docs','cleanup_manifests','AGENTS.md','README.md'):
+ p=root/name
+ if not p.exists(): continue
+ for q in (p,*p.rglob('*')):
+  s=q.lstat(); rel=q.relative_to(root).as_posix(); mode=stat.S_IMODE(s.st_mode)
+  assert not q.is_symlink()
+  if q.is_dir(): entries[rel]={'type':'dir','mode':mode}
+  elif q.is_file(): entries[rel]={'type':'file','mode':mode,'sha256':hashlib.sha256(q.read_bytes()).hexdigest()}
+  else: raise AssertionError(rel)
+assert hashlib.sha256(json.dumps(entries,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()==expected
+PY
 test "$(cat "$guard/owner")" = "$owner"
 rm -f -- "$guard/owner"
 rmdir "$guard"
