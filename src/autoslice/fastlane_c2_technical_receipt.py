@@ -187,9 +187,12 @@ def make_accepted_receipt(root: Path, proposal_path: Path, reviewed_at: str, dec
     }
 
 
-def validate_accepted_receipt(root: Path, proposal_path: Path, receipt: Mapping[str, Any]) -> None:
+def validate_accepted_receipt(root: Path, proposal_path: Path, receipt: Mapping[str, Any], *, allow_audit_root_relocation: bool = False) -> None:
     _package_root(root)
-    _replay_current_audit(root)
+    if allow_audit_root_relocation:
+        _replay_current_audit(root, allow_root_relocation=True)
+    else:
+        _replay_current_audit(root)
     required = {"schema_version", "candidate_id", "title", "accepted", "upload_allowed", "scope", "reviewer_kind", "reviewed_by", "reviewed_at", "decision_basis", "proposal", "bindings", "required_root_checks", "non_authorizations"}
     if set(receipt) != required:
         raise ValueError("accepted receipt field set drift")
@@ -238,7 +241,7 @@ def write_create_only_json(path: Path, value: Mapping[str, Any]) -> None:
         os.close(directory_fd)
 
 
-def _replay_current_audit(root: Path) -> None:
+def _replay_current_audit(root: Path, *, allow_root_relocation: bool = False) -> None:
     _package_root(root)
     audit_path = root / "package_audit.json"
     _regular(audit_path)
@@ -254,5 +257,11 @@ def _replay_current_audit(root: Path) -> None:
         current, saved = json.loads(run.stdout), _read_json(audit_path)
     except json.JSONDecodeError as exc:
         raise ValueError(f"C2_AUDIT_REPLAY_DRIFT: {exc}") from exc
-    if run.returncode or current != saved or current.get("passed") is not True or current.get("blocking_issue_count") != 0:
+    matches = current == saved
+    if allow_root_relocation:
+        saved_root, current_root = saved.get("root"), current.get("root")
+        current_cmp, saved_cmp = dict(current), dict(saved)
+        current_cmp.pop("root", None); saved_cmp.pop("root", None)
+        matches = (isinstance(saved_root, str) and Path(saved_root).is_absolute() and bool(saved_root) and current_root == str(root.absolute()) and current_cmp == saved_cmp)
+    if run.returncode or not matches or current.get("passed") is not True or current.get("blocking_issue_count") != 0:
         raise ValueError("C2_AUDIT_REPLAY_DRIFT")

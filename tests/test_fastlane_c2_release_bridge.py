@@ -98,7 +98,7 @@ def test_c2_receipt_requires_its_exact_self_bound_proposal(tmp_path):
     proposal.write_text("{}", encoding="utf-8")
     other = formal / "other-proposal.json"
     other.write_text("{}", encoding="utf-8")
-    receipt = tmp_path / "receipt.json"
+    receipt = tmp_path / bridge.ROOT_RECEIPT_NAME
     _receipt_binding(receipt, proposal)
     assert bridge._receipt_bound_proposal(formal, proposal, receipt) == proposal
     with pytest.raises(bridge.C2ReleaseBridgeError, match="not receipt-bound"):
@@ -146,7 +146,7 @@ def test_c2_legacy_execution_envelope_rejects_any_signature_surface_drift(tmp_pa
 
 def test_c2_bridge_projects_strict_same_stem_package(monkeypatch, tmp_path):
     formal = _formal(tmp_path)
-    receipt, authorization, out = tmp_path / "receipt.json", tmp_path / "auth.json", tmp_path / "out"
+    receipt, authorization, out = tmp_path / bridge.ROOT_RECEIPT_NAME, tmp_path / bridge.AUTH_NAME, tmp_path / "out"
     proposal = _receipt(receipt, formal)
     _authorization(authorization)
     monkeypatch.setattr(bridge, "audit_fastlane_c2_formal_package", lambda _root: [])
@@ -169,7 +169,7 @@ def test_c2_bridge_projects_strict_same_stem_package(monkeypatch, tmp_path):
 @pytest.mark.parametrize("target", [bridge.VIDEO_NAME, bridge.SRT_NAME, bridge.COVER_NAME])
 def test_c2_bridge_rejects_final_artifact_drift(monkeypatch, tmp_path, target):
     formal = _formal(tmp_path)
-    receipt, authorization, out = tmp_path / "receipt.json", tmp_path / "auth.json", tmp_path / "out"
+    receipt, authorization, out = tmp_path / bridge.ROOT_RECEIPT_NAME, tmp_path / bridge.AUTH_NAME, tmp_path / "out"
     proposal = _receipt(receipt, formal)
     _authorization(authorization)
     monkeypatch.setattr(bridge, "audit_fastlane_c2_formal_package", lambda _root: [])
@@ -183,7 +183,7 @@ def test_c2_bridge_rejects_final_artifact_drift(monkeypatch, tmp_path, target):
 
 def test_c2_bridge_rejects_authority_receipt_and_tag_drift(monkeypatch, tmp_path):
     formal = _formal(tmp_path)
-    receipt, authorization, out = tmp_path / "receipt.json", tmp_path / "auth.json", tmp_path / "out"
+    receipt, authorization, out = tmp_path / bridge.ROOT_RECEIPT_NAME, tmp_path / bridge.AUTH_NAME, tmp_path / "out"
     proposal = _receipt(receipt, formal)
     _authorization(authorization)
     monkeypatch.setattr(bridge, "audit_fastlane_c2_formal_package", lambda _root: [])
@@ -205,7 +205,7 @@ def test_c2_bridge_rejects_authority_receipt_and_tag_drift(monkeypatch, tmp_path
 ])
 def test_c2_bridge_rejects_receipt_authority_and_tags_drift(monkeypatch, tmp_path, path_name, mutate):
     formal = _formal(tmp_path)
-    receipt, authorization, out = tmp_path / "receipt.json", tmp_path / "auth.json", tmp_path / "out"
+    receipt, authorization, out = tmp_path / bridge.ROOT_RECEIPT_NAME, tmp_path / bridge.AUTH_NAME, tmp_path / "out"
     proposal = _receipt(receipt, formal)
     _authorization(authorization)
     monkeypatch.setattr(bridge, "audit_fastlane_c2_formal_package", lambda _root: [])
@@ -222,7 +222,7 @@ def test_c2_bridge_rejects_receipt_authority_and_tags_drift(monkeypatch, tmp_pat
 
 def test_c2_bridge_rejects_non_c2_authorization(monkeypatch, tmp_path):
     formal = _formal(tmp_path)
-    receipt, authorization = tmp_path / "receipt.json", tmp_path / "auth.json"
+    receipt, authorization = tmp_path / bridge.ROOT_RECEIPT_NAME, tmp_path / bridge.AUTH_NAME
     proposal = _receipt(receipt, formal)
     _authorization(authorization)
     payload = json.loads(authorization.read_text())

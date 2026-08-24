@@ -33,13 +33,15 @@ def make_proposal(formal: Path, authorization: Path, receipt: Path) -> dict[str,
     from scripts.audit_lidousha_review_package import audit_package
     saved = json.loads((formal / "package_audit.json").read_text(encoding="utf-8"))
     current = audit_package(formal)
-    if current != saved or current.get("passed") is not True or current.get("blocking_issue_count") != 0:
+    current_cmp, saved_cmp = dict(current), dict(saved)
+    current_cmp.pop("root", None); saved_cmp.pop("root", None)
+    if current_cmp != saved_cmp or not isinstance(saved.get("root"), str) or not Path(str(saved["root"])).is_absolute() or current.get("root") != str(formal.absolute()) or current.get("passed") is not True or current.get("blocking_issue_count") != 0:
         raise ValueError("C2 formal audit replay drift")
     receipt_data = json.loads(receipt.read_text(encoding="utf-8"))
     proposal_binding = receipt_data.get("proposal")
     if not isinstance(proposal_binding, Mapping) or not isinstance(proposal_binding.get("path"), str):
         raise ValueError("C2 technical receipt proposal binding absent")
-    validate_accepted_receipt(formal, formal / proposal_binding["path"], receipt_data)
+    validate_accepted_receipt(formal, formal / proposal_binding["path"], receipt_data, allow_audit_root_relocation=True)
     cue_graph = json.loads((formal / "cue-graph.v1.json").read_text(encoding="utf-8"))
     rows = cue_graph.get("rows")
     if not isinstance(rows, list) or len(rows) < 21 or rows[4] != {"cue": 5, "time": "00:00:08,720 --> 00:00:11,240", "before": "是刚吗？小豆老公不是你老公", "after": "小豆老公；； 不是你老公", "disposition": "OPERATOR_REPAIR"} or rows[20].get("after") != "小豆哪有好吵":

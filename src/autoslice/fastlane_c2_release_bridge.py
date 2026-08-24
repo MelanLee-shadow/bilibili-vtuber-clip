@@ -35,8 +35,8 @@ COVER_NAME = f"{CID}.recut.burned-final-speaker.cover.png"
 RECORD_NAME = f"{CID}.recut.burned-final-speaker.record.json"
 PUBLISH_NAME = f"{CID}.recut.burned-final-speaker.publish.json"
 FORMAL_DIR = "formal"
-AUTH_NAME = "c2.release-authorization.v1.json"
-ROOT_RECEIPT_NAME = "c2.root-technical-receipt.v1.json"
+AUTH_NAME = "auto_203011_328_389.release-authorization.v1.json"
+ROOT_RECEIPT_NAME = "c2.root-technical-receipt.accepted.decode-scope.v1.json"
 LEGACY_PROPOSAL_NAME = "c2.legacy-recovery.proposal.v1.json"
 LEGACY_CONTRACT_NAME = "c2.legacy-execution-contract.v1.json"
 TAG_RECEIPT_NAME = "c2.tag-generation-receipt.v1.json"
@@ -250,7 +250,12 @@ def _validate_formal_audit(formal: Path) -> None:
 
     saved = _read_object(formal / "package_audit.json", "C2 formal package audit")
     current = audit_package(formal)
-    if current != saved or current.get("passed") is not True or current.get("blocking_issue_count") != 0:
+    # A copied formal tree necessarily relocates only audit.root; every other
+    # audited field remains byte-for-byte identical.
+    current_cmp, saved_cmp = dict(current), dict(saved)
+    current_cmp.pop("root", None)
+    saved_cmp.pop("root", None)
+    if current_cmp != saved_cmp or current.get("passed") is not True or current.get("blocking_issue_count") != 0:
         raise C2ReleaseBridgeError("C2 formal package audit is not a current passing replay")
 
 
@@ -261,7 +266,7 @@ def _validate_root_receipt(formal: Path, proposal: Path, receipt: Path) -> None:
     _regular(proposal, "C2 ready proposal")
     _regular(receipt, "C2 root receipt")
     try:
-        validate_accepted_receipt(formal, proposal, _read_object(receipt, "C2 root receipt"))
+        validate_accepted_receipt(formal, proposal, _read_object(receipt, "C2 root receipt"), allow_audit_root_relocation=True)
     except ValueError as exc:
         raise C2ReleaseBridgeError("C2 accepted root receipt rejected") from exc
 
@@ -356,6 +361,8 @@ def build_release_package(
         raise C2ReleaseBridgeError("C2 source formal package is not current/passing")
     _validate_formal_audit(formal_package)
     _regular(authorization, "authorization")
+    if authorization.name != AUTH_NAME or root_receipt.name != ROOT_RECEIPT_NAME:
+        raise C2ReleaseBridgeError("C2 source authority basename drift")
     ready_proposal = _receipt_bound_proposal(formal_package, ready_proposal, root_receipt)
     _validate_root_receipt(formal_package, ready_proposal, root_receipt)
     _validate_authorization(_read_object(authorization, "authorization"))
