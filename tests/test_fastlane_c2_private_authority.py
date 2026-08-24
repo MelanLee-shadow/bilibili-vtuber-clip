@@ -116,3 +116,88 @@ def test_c2_runner_cannot_open_generic_apply_or_other_candidate():
         c2_runner(["--plan", "--date", DATE, "--candidate-id"])
     with pytest.raises(SystemExit, match="C2_PRIVATE_REPLAY_DATE_INVALID"):
         c2_runner(["--plan", "--date", "--candidate-id", CID, "--runtime-root", "/private/x"])
+
+
+def _provenance_fixture(tmp_path: Path):
+    runtime = tmp_path / "runtime"; candidate = runtime / "out" / DATE / CID
+    recuts = candidate / "replacement_recuts"; recuts.mkdir(parents=True)
+    padded = candidate / "padded_318740_437660.mp4"; piece = candidate / "piece_0_318740_437660.mp4"
+    final = recuts / f"{CID}.recut.mp4"
+    padded.write_bytes(b"source"); piece.write_bytes(b"source"); final.write_bytes(b"final")
+    old = tmp_path / "previous" / "out" / DATE / CID
+    old_recuts = old / "replacement_recuts"
+    document = {
+        "final_recut": {"output_path": str(old_recuts / final.name), "output_sha256": hashlib.sha256(b"final").hexdigest(),
+                        "source_path": str(old / padded.name), "source_sha256": hashlib.sha256(b"source").hexdigest()},
+        "padded": {"output_path": str(old / padded.name), "output_sha256": hashlib.sha256(b"source").hexdigest(),
+                   "inputs": [{"path": str(old / piece.name), "sha256": hashlib.sha256(b"source").hexdigest()}]},
+        "source_piece": {"output_path": str(old / piece.name), "output_sha256": hashlib.sha256(b"source").hexdigest(),
+                         "source_path": "/recordings/exact-source.mp4", "source_sha256": "a" * 64},
+    }
+    provenance = recuts / f"{CID}.recut.provenance.json"
+    provenance.write_text(json.dumps(document), encoding="utf-8")
+    return runtime, recuts, provenance, document
+
+
+def test_c2_private_provenance_projects_exact_five_current_locators(tmp_path):
+    runtime, recuts, provenance, _ = _provenance_fixture(tmp_path)
+    target = c2.materialize_c2_private_provenance(runtime_root=runtime, candidate_id=CID, date=DATE)
+    assert target == provenance
+    document = json.loads(target.read_text())
+    candidate = runtime / "out" / DATE / CID
+    assert document["final_recut"]["output_path"] == str(recuts / f"{CID}.recut.mp4")
+    assert document["final_recut"]["source_path"] == str(candidate / "padded_318740_437660.mp4")
+    assert document["padded"]["inputs"][0]["path"] == str(candidate / "piece_0_318740_437660.mp4")
+    assert document["padded"]["output_path"] == str(candidate / "padded_318740_437660.mp4")
+    assert document["source_piece"]["output_path"] == str(candidate / "piece_0_318740_437660.mp4")
+    receipt = json.loads((recuts / f"{CID}.recut.provenance.c2-private-projection-receipt.json").read_text())
+    assert receipt["allowed_pointers"] == list(c2._C2_PROVENANCE_POINTERS)
+    assert len(receipt["rows"]) == 5
+    assert all(row["new"]["path"].startswith(str(candidate)) for row in receipt["rows"])
+    assert c2.materialize_c2_private_provenance(runtime_root=runtime, candidate_id=CID, date=DATE) == target
+
+
+@pytest.mark.parametrize("kind", ["stale_previous_root", "extra_pointer", "hash_mismatch"])
+def test_c2_private_provenance_rejects_invalid_preimage(tmp_path, kind):
+    runtime, _recuts, provenance, document = _provenance_fixture(tmp_path)
+    if kind == "stale_previous_root":
+        document["padded"]["output_path"] = str(tmp_path / "other" / "padded_318740_437660.mp4")
+        expected = "C2_PRIVATE_PROVENANCE_STALE_PREVIOUS_ROOT"
+    elif kind == "extra_pointer":
+        document["final_recut"]["unexpected_path"] = "/unexpected"
+        expected = "C2_PRIVATE_PROVENANCE_EXTRA_POINTER"
+    else:
+        document["final_recut"]["source_sha256"] = "f" * 64
+        expected = "C2_PRIVATE_PROVENANCE_TARGET_HASH_MISMATCH"
+    provenance.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(ValueError, match=expected):
+        c2.materialize_c2_private_provenance(runtime_root=runtime, candidate_id=CID, date=DATE)
+
+
+def test_c2_private_provenance_rejects_symlink_escape_and_wrong_scope(tmp_path):
+    runtime, recuts, _provenance, _document = _provenance_fixture(tmp_path)
+    final = recuts / f"{CID}.recut.mp4"; final.unlink(); final.symlink_to(tmp_path / "outside.mp4")
+    with pytest.raises(ValueError, match="C2_PRIVATE_PROVENANCE_TARGET_UNSAFE"):
+        c2.materialize_c2_private_provenance(runtime_root=runtime, candidate_id=CID, date=DATE)
+    with pytest.raises(ValueError, match="C2_PRIVATE_PROVENANCE_CANDIDATE_SCOPE_INVALID"):
+        c2.materialize_c2_private_provenance(runtime_root=runtime, candidate_id="other", date=DATE)
+    with pytest.raises(ValueError, match="C2_PRIVATE_PROVENANCE_CANDIDATE_SCOPE_INVALID"):
+        c2.materialize_c2_private_provenance(runtime_root=runtime, candidate_id=CID, date="2026-08-14")
+
+
+def test_c2_private_provenance_rejects_candidate_directory_symlink(tmp_path):
+    runtime, _recuts, _provenance, _document = _provenance_fixture(tmp_path)
+    candidate = runtime / "out" / DATE / CID
+    moved = tmp_path / "outside-candidate"; candidate.rename(moved); candidate.symlink_to(moved, target_is_directory=True)
+    with pytest.raises(ValueError, match="C2_PRIVATE_PROVENANCE_CANDIDATE_UNSAFE"):
+        c2.materialize_c2_private_provenance(runtime_root=runtime, candidate_id=CID, date=DATE)
+
+
+def test_c2_private_provenance_rejects_stale_completed_projection_root(tmp_path):
+    runtime, recuts, _provenance, _document = _provenance_fixture(tmp_path)
+    c2.materialize_c2_private_provenance(runtime_root=runtime, candidate_id=CID, date=DATE)
+    receipt_path = recuts / f"{CID}.recut.provenance.c2-private-projection-receipt.json"
+    receipt = json.loads(receipt_path.read_text()); receipt["runtime_root"] = str(tmp_path / "previous-runtime")
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    with pytest.raises(ValueError, match="C2_PRIVATE_PROVENANCE_STALE_PREVIOUS_ROOT"):
+        c2.materialize_c2_private_provenance(runtime_root=runtime, candidate_id=CID, date=DATE)

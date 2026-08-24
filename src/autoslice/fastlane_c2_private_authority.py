@@ -7,6 +7,10 @@ only as comparison expectations while denying every non-private file read.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import os
+import stat
 from dataclasses import is_dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -20,6 +24,236 @@ from src.autoslice.reviewed_baseline_replay_authority import (
 
 C2_CANDIDATE_ID = "auto_203011_328_389"
 C2_RECORDING_DATE = "2026-08-13"
+_C2_PROVENANCE_POINTERS = (
+    "/final_recut/output_path",
+    "/final_recut/source_path",
+    "/padded/inputs/0/path",
+    "/padded/output_path",
+    "/source_piece/output_path",
+)
+
+
+def _c2_error(code: str) -> ValueError:
+    return ValueError(code)
+
+
+def _regular(path: Path, *, label: str) -> tuple[Path, str, int]:
+    """Bind one C2-private regular file without following a symlink."""
+
+    candidate = Path(path).absolute()
+    try:
+        observed = os.lstat(candidate)
+    except OSError as exc:
+        raise _c2_error(f"C2_PRIVATE_PROVENANCE_{label}_MISSING") from exc
+    if stat.S_ISLNK(observed.st_mode) or not stat.S_ISREG(observed.st_mode):
+        raise _c2_error(f"C2_PRIVATE_PROVENANCE_{label}_UNSAFE")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(candidate, flags)
+        try:
+            opened = os.fstat(descriptor)
+            if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (observed.st_dev, observed.st_ino):
+                raise _c2_error(f"C2_PRIVATE_PROVENANCE_{label}_DRIFT")
+            digest = hashlib.sha256()
+            while block := os.read(descriptor, 1024 * 1024):
+                digest.update(block)
+        finally:
+            os.close(descriptor)
+        after = os.lstat(candidate)
+    except OSError as exc:
+        raise _c2_error(f"C2_PRIVATE_PROVENANCE_{label}_UNSAFE") from exc
+    if (
+        stat.S_ISLNK(after.st_mode)
+        or not stat.S_ISREG(after.st_mode)
+        or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+        != (observed.st_dev, observed.st_ino, observed.st_size, observed.st_mtime_ns, observed.st_ctime_ns)
+    ):
+        raise _c2_error(f"C2_PRIVATE_PROVENANCE_{label}_DRIFT")
+    return candidate, digest.hexdigest(), observed.st_size
+
+
+def _json_object(path: Path, *, label: str) -> tuple[dict[str, Any], str, int]:
+    bound, digest, size = _regular(path, label=label)
+    try:
+        value = json.loads(bound.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise _c2_error(f"C2_PRIVATE_PROVENANCE_{label}_INVALID") from exc
+    if not isinstance(value, dict):
+        raise _c2_error(f"C2_PRIVATE_PROVENANCE_{label}_INVALID")
+    return value, digest, size
+
+
+def _private_root(runtime_root: Path) -> Path:
+    root = Path(runtime_root).absolute()
+    cursor = Path(root.anchor)
+    try:
+        for part in root.parts[1:]:
+            cursor /= part
+            info = os.lstat(cursor)
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                raise OSError("unsafe runtime component")
+    except OSError as exc:
+        raise _c2_error("C2_PRIVATE_PROVENANCE_RUNTIME_UNSAFE") from exc
+    return root
+
+
+def _inside(path: Path, root: Path, *, label: str) -> Path:
+    candidate = Path(path).absolute()
+    if not candidate.is_relative_to(root):
+        raise _c2_error(f"C2_PRIVATE_PROVENANCE_{label}_ESCAPES_RUNTIME")
+    return candidate
+
+
+def _private_directory(path: Path, root: Path, *, label: str) -> Path:
+    candidate = _inside(path, root, label=label)
+    cursor = root
+    try:
+        for part in candidate.relative_to(root).parts:
+            cursor /= part
+            info = os.lstat(cursor)
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                raise OSError("unsafe private directory")
+    except OSError as exc:
+        raise _c2_error(f"C2_PRIVATE_PROVENANCE_{label}_UNSAFE") from exc
+    return candidate
+
+
+def _sha_field(value: object, *, label: str) -> str:
+    if not isinstance(value, str) or len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+        raise _c2_error(f"C2_PRIVATE_PROVENANCE_{label}_HASH_INVALID")
+    return value
+
+
+def _path_field(section: Mapping[str, Any], key: str, *, label: str) -> Path:
+    value = section.get(key)
+    if not isinstance(value, str) or not Path(value).is_absolute():
+        raise _c2_error(f"C2_PRIVATE_PROVENANCE_{label}_INVALID")
+    return Path(value)
+
+
+def _write_create_only(path: Path, payload: bytes) -> None:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        view = memoryview(payload)
+        while view:
+            count = os.write(descriptor, view)
+            if count <= 0:
+                raise _c2_error("C2_PRIVATE_PROVENANCE_WRITE_FAILED")
+            view = view[count:]
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def materialize_c2_private_provenance(*, runtime_root: Path, candidate_id: str, date: str) -> Path:
+    """Create the C2-only current-runtime provenance projection.
+
+    The copied predecessor provenance is retained under a non-discoverable
+    preimage name.  The generic replay sees exactly one ``*.recut.provenance``
+    file, while the receipt binds every permitted locator rewrite and its
+    concrete private byte binding.
+    """
+
+    if candidate_id != C2_CANDIDATE_ID or date != C2_RECORDING_DATE:
+        raise _c2_error("C2_PRIVATE_PROVENANCE_CANDIDATE_SCOPE_INVALID")
+    runtime = _private_root(runtime_root)
+    candidate_root = _private_directory(runtime / "out" / date / candidate_id, runtime, label="CANDIDATE")
+    recut_root = _private_directory(candidate_root / "replacement_recuts", candidate_root, label="RECUT")
+    target = recut_root / f"{candidate_id}.recut.provenance.json"
+    receipt = recut_root / f"{candidate_id}.recut.provenance.c2-private-projection-receipt.json"
+
+    # A completed private projection is immutable.  It must be verified, never
+    # overwritten merely because a subsequent invocation has a different root.
+    if receipt.exists():
+        document, _, _ = _json_object(receipt, label="RECEIPT")
+        if (
+            document.get("runtime_root") != str(runtime)
+            or document.get("candidate_id") != candidate_id
+            or document.get("date") != date
+            or document.get("allowed_pointers") != list(_C2_PROVENANCE_POINTERS)
+        ):
+            raise _c2_error("C2_PRIVATE_PROVENANCE_STALE_PREVIOUS_ROOT")
+        projected, projected_sha, _ = _json_object(target, label="PROJECTED")
+        if document.get("projected_provenance_sha256") != "sha256:" + projected_sha:
+            raise _c2_error("C2_PRIVATE_PROVENANCE_PROJECTED_DRIFT")
+        return target
+    if not target.exists() or target.is_symlink():
+        raise _c2_error("C2_PRIVATE_PROVENANCE_PREIMAGE_MISSING")
+    provenance, preimage_sha, preimage_bytes = _json_object(target, label="PREIMAGE")
+    final, padded, source_piece = (provenance.get(key) for key in ("final_recut", "padded", "source_piece"))
+    if not all(isinstance(value, Mapping) for value in (final, padded, source_piece)):
+        raise _c2_error("C2_PRIVATE_PROVENANCE_INVALID")
+    if set(key for key in final if key.endswith("path")) != {"output_path", "source_path"}:
+        raise _c2_error("C2_PRIVATE_PROVENANCE_EXTRA_POINTER")
+    if set(key for key in padded if key.endswith("path")) != {"output_path"}:
+        raise _c2_error("C2_PRIVATE_PROVENANCE_EXTRA_POINTER")
+    inputs = padded.get("inputs")
+    if not isinstance(inputs, list) or len(inputs) != 1 or not isinstance(inputs[0], Mapping) or set(key for key in inputs[0] if key.endswith("path")) != {"path"}:
+        raise _c2_error("C2_PRIVATE_PROVENANCE_EXTRA_POINTER")
+    if set(key for key in source_piece if key.endswith("path")) != {"output_path", "source_path"}:
+        raise _c2_error("C2_PRIVATE_PROVENANCE_EXTRA_POINTER")
+    old_final_output = _path_field(final, "output_path", label="FINAL_OUTPUT_PATH")
+    old_padded = _path_field(final, "source_path", label="FINAL_SOURCE_PATH")
+    old_input = _path_field(inputs[0], "path", label="PADDED_INPUT_PATH")
+    old_padded_output = _path_field(padded, "output_path", label="PADDED_OUTPUT_PATH")
+    old_piece = _path_field(source_piece, "output_path", label="PIECE_OUTPUT_PATH")
+    if old_padded != old_padded_output or old_input != old_piece:
+        raise _c2_error("C2_PRIVATE_PROVENANCE_STALE_PREVIOUS_ROOT")
+    final_output = recut_root / f"{candidate_id}.recut.mp4"
+    padded_target = candidate_root / old_padded.name
+    piece_target = candidate_root / old_piece.name
+    if (
+        old_final_output.name != final_output.name
+        or not old_padded.name.startswith("padded_")
+        or not old_piece.name.startswith("piece_")
+    ):
+        raise _c2_error("C2_PRIVATE_PROVENANCE_STALE_PREVIOUS_ROOT")
+    bindings = {
+        "/final_recut/output_path": (final_output, _sha_field(final.get("output_sha256"), label="FINAL_OUTPUT")),
+        "/final_recut/source_path": (padded_target, _sha_field(final.get("source_sha256"), label="FINAL_SOURCE")),
+        "/padded/inputs/0/path": (piece_target, _sha_field(inputs[0].get("sha256"), label="PADDED_INPUT")),
+        "/padded/output_path": (padded_target, _sha_field(padded.get("output_sha256"), label="PADDED_OUTPUT")),
+        "/source_piece/output_path": (piece_target, _sha_field(source_piece.get("output_sha256"), label="PIECE_OUTPUT")),
+    }
+    rows = []
+    for pointer, (path, expected_sha) in bindings.items():
+        _inside(path, candidate_root, label="TARGET")
+        bound, actual_sha, bytes_count = _regular(path, label="TARGET")
+        if actual_sha != expected_sha:
+            raise _c2_error("C2_PRIVATE_PROVENANCE_TARGET_HASH_MISMATCH")
+        rows.append({"pointer": pointer, "old": {"path": str({
+            "/final_recut/output_path": old_final_output, "/final_recut/source_path": old_padded,
+            "/padded/inputs/0/path": old_input, "/padded/output_path": old_padded_output,
+            "/source_piece/output_path": old_piece,
+        }[pointer])}, "new": {"path": str(bound), "sha256": "sha256:" + actual_sha, "bytes": bytes_count}})
+    preimage = recut_root / f"{candidate_id}.recut.provenance.preimage.{preimage_sha}.json"
+    if preimage.exists():
+        raise _c2_error("C2_PRIVATE_PROVENANCE_PREIMAGE_EXISTS")
+    os.replace(target, preimage)
+    try:
+        final = dict(final); padded = dict(padded); source_piece = dict(source_piece); inputs = [dict(inputs[0])]
+        final["output_path"], final["source_path"] = str(final_output), str(padded_target)
+        inputs[0]["path"], padded["inputs"], padded["output_path"] = str(piece_target), inputs, str(padded_target)
+        source_piece["output_path"] = str(piece_target)
+        projected = dict(provenance); projected.update({"final_recut": final, "padded": padded, "source_piece": source_piece})
+        projected_bytes = (json.dumps(projected, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+        _write_create_only(target, projected_bytes)
+        projected_sha = hashlib.sha256(projected_bytes).hexdigest()
+        document = {
+            "schema_version": "c2-private-runtime-provenance-projection.v1", "scope": "PRIVATE_NO_UPLOAD",
+            "runtime_root": str(runtime), "candidate_id": candidate_id, "date": date,
+            "allowed_pointers": list(_C2_PROVENANCE_POINTERS),
+            "source_provenance": {"path": str(preimage), "sha256": "sha256:" + preimage_sha, "bytes": preimage_bytes},
+            "projected_provenance": {"path": str(target), "sha256": "sha256:" + projected_sha, "bytes": len(projected_bytes)},
+            "projected_provenance_sha256": "sha256:" + projected_sha, "padded_sha256": "sha256:" + bindings["/final_recut/source_path"][1],
+            "rows": rows,
+        }
+        _write_create_only(receipt, (json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8"))
+    except BaseException:
+        # The preimage remains authoritative and the failed target is never a
+        # valid generic input; recovery must inspect this private-only state.
+        raise
+    return target
 
 
 def _canonical_locator_root(*, plan: Any, record: Mapping[str, object]) -> Path:
