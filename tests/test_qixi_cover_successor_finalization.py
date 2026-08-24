@@ -157,6 +157,59 @@ def test_private_output_parent_rejects_symlink_and_wrong_mode(tmp_path: Path) ->
         successor._private_output_parent(link)
 
 
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "replacement_recuts/verification/final-human-review-evidence.v2.json",
+        "replacement_recuts/verification/final-human-review.json",
+        "replacement_recuts/verification/.final-human-review-evidence.v2.json.tmp.1234."
+        + "a" * 32,
+        "replacement_recuts/verification/.final-human-review.json.tmp.9876."
+        + "b" * 32,
+    ],
+)
+def test_snapshot_ignores_only_canonical_final_human_sidecars_and_temps(
+    tmp_path: Path, relative: str
+) -> None:
+    _write(tmp_path / "replacement_recuts" / "frozen.bin", b"frozen")
+    baseline = successor._snapshot(tmp_path)
+    _write(tmp_path / relative, b"dynamic final human review output")
+    assert successor._snapshot(tmp_path) == baseline
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "replacement_recuts/verification/unrelated.json",
+        "replacement_recuts/verification/.final-human-review.json.tmp.0." + "a" * 32,
+        "replacement_recuts/verification/.final-human-review.json.tmp.12." + "A" * 32,
+        "replacement_recuts/verification/.final-human-review-evidence.v2.json.tmp.12."
+        + "a" * 31,
+        "replacement_recuts/verification/.other.json.tmp.12." + "a" * 32,
+    ],
+)
+def test_snapshot_keeps_unknown_or_malformed_final_human_files_in_closure(
+    tmp_path: Path, relative: str
+) -> None:
+    _write(tmp_path / "replacement_recuts" / "frozen.bin", b"frozen")
+    baseline = successor._snapshot(tmp_path)
+    _write(tmp_path / relative, b"must change closure")
+    assert successor._snapshot(tmp_path) != baseline
+
+
+def test_snapshot_rejects_final_human_symlink_and_special_file(tmp_path: Path) -> None:
+    verification = tmp_path / "replacement_recuts" / "verification"
+    verification.mkdir(parents=True)
+    (verification / "final-human-review.json").symlink_to(tmp_path / "missing.json")
+    with pytest.raises(successor.QixiCoverSuccessorError, match="symlink"):
+        successor._snapshot(tmp_path)
+
+    (verification / "final-human-review.json").unlink()
+    os.mkfifo(verification / "final-human-review-evidence.v2.json")
+    with pytest.raises(successor.QixiCoverSuccessorError, match="non-regular"):
+        successor._snapshot(tmp_path)
+
+
 def test_receipt_replay_rejects_path_hash_schema_candidate_and_upload_drift(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

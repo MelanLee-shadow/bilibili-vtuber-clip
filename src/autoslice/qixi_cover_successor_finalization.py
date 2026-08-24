@@ -11,6 +11,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import tempfile
@@ -76,6 +77,18 @@ _PROVENANCE_NAMES = {
     **{key: value for key, value in _TRIAL_NAMES.items() if key != "identity"},
     "identity": "qixi-cpa-redraw.host-identity-witness.provenance.json",
 }
+
+_FINAL_HUMAN_REVIEW_SIDECARS = frozenset(
+    {
+        "replacement_recuts/verification/final-human-review-evidence.v2.json",
+        "replacement_recuts/verification/final-human-review.json",
+    }
+)
+_FINAL_HUMAN_REVIEW_TEMP = re.compile(
+    r"replacement_recuts/verification/\."
+    r"(?:final-human-review-evidence\.v2\.json|final-human-review\.json)"
+    r"\.tmp\.[1-9][0-9]*\.[0-9a-f]{32}\Z"
+)
 
 
 class QixiCoverSuccessorError(ValueError):
@@ -232,7 +245,7 @@ def seal_private_successor_tree(root: Path) -> None:
 
 
 def _snapshot(root: Path) -> dict[str, str]:
-    """Freeze every preimage byte except the expressly replaced cover surface."""
+    """Freeze every preimage byte except the sealed cover/review outputs."""
 
     ignored = {
         f"replacement_recuts/{CANDIDATE_ID}.cover.png",
@@ -252,8 +265,14 @@ def _snapshot(root: Path) -> dict[str, str]:
         info = os.lstat(item)
         if stat.S_ISLNK(info.st_mode):
             raise QixiCoverSuccessorError("preimage/package contains a symlink")
-        if stat.S_ISREG(info.st_mode) and (
+        if stat.S_ISDIR(info.st_mode):
+            continue
+        if not stat.S_ISREG(info.st_mode):
+            raise QixiCoverSuccessorError("preimage/package contains a non-regular entry")
+        if (
             relative not in ignored
+            and relative not in _FINAL_HUMAN_REVIEW_SIDECARS
+            and not _FINAL_HUMAN_REVIEW_TEMP.fullmatch(relative)
             and not relative.startswith("replacement_recuts/evidence/qixi-cover-successor/")
         ):
             hashes[relative] = _sha(item)
