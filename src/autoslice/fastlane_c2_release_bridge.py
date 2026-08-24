@@ -299,7 +299,7 @@ def _valid_tags(result: Mapping[str, object]) -> list[str]:
     return clean
 
 
-def _validate_legacy_execution_contract(formal: Path, proposal: Path, contract: Path, authorization: Path, receipt: Path) -> None:
+def _validate_legacy_execution_contract(formal: Path, proposal: Path, contract: Path, authorization: Path, receipt: Path, *, expected_reviewed_at: str | None = None, expected_decision_basis: str | None = None) -> None:
     from .fastlane_c2_legacy_recovery import validate_accepted_execution_contract, validate_proposal
     _regular(proposal, "C2 legacy proposal")
     _regular(contract, "C2 legacy execution contract")
@@ -307,7 +307,7 @@ def _validate_legacy_execution_contract(formal: Path, proposal: Path, contract: 
         raise C2ReleaseBridgeError("C2 legacy input basename drift")
     try:
         validate_proposal(_read_object(proposal, "C2 legacy proposal"), formal=formal, authorization=authorization, receipt=receipt)
-        validate_accepted_execution_contract(_read_object(contract, "C2 legacy execution contract"), proposal=proposal)
+        validate_accepted_execution_contract(_read_object(contract, "C2 legacy execution contract"), proposal=proposal, expected_reviewed_at=expected_reviewed_at, expected_decision_basis=expected_decision_basis)
     except ValueError as exc:
         raise C2ReleaseBridgeError("C2 legacy execution contract rejected") from exc
 

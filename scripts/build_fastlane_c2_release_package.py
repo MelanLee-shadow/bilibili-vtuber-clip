@@ -7,6 +7,7 @@ call CPA title/cover QC, modify registry/runtime state, or upload media.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
