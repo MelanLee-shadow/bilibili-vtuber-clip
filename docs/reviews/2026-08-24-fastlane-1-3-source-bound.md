@@ -27,8 +27,11 @@ state、registry、候选包和 Bilibili public/Creator/section surface。
 
 ## #2：2026-08-13 / `auto_203011_328_389`
 
-- `confirmed`：state/registry 分别为 `hold_pending_review` / `QUEUED_SELECTED_REPAIR`；本次
-  authority 范围内没有 local BVID。
+- `confirmed`：`/opt/bilive/autoslice/state/2026-08-13.json` 的 pick 本身为
+  `status=candidate_rejected`、`rejected_status=failed`；独立的
+  `held_current_talk_rerender_receipts` entry 为 `status=QUEUED_SELECTED_REPAIR`，其
+  `publication_hold_binding.status=hold_pending_review`；publication registry entry 也为
+  `status=hold_pending_review`。本次 authority 范围内没有 local BVID。
 - `confirmed` Ivan exact decisions：0:14 为 `小豆老公；； 不是你老公`；1:04 是对
   `小豆好吵（` 的 response；title/cover 不得把小李与李豆沙拆开。
 - `blocker`：current formal SRT/title 尚未闭合上述三项；deployed override 仅改
@@ -44,8 +47,12 @@ state、registry、候选包和 Bilibili public/Creator/section surface。
 
 ## #3：2026-08-13 / `auto_220021_561_670`
 
-- `confirmed`：本次 authority 范围内无 local BVID evidence；current recut SRT SHA 前缀为
-  `dfb2d77…`，delivery 为 `uniform_host`，且包含 watched-video English。
+- `confirmed`：本次 authority 范围内无 local BVID evidence；current recut SRT SHA 为
+  `dfb2d77f133100f32f76c4f94dd56dae55db6ab02afdbcdcc2ba5d67dccf5704`，non-release speaker
+  SRT SHA 为 `cb4bcddf8aaecc8199ae1371ee5c85b3f9240c2dd6c617c9b92ad3c13d0b5118`；delivery 为
+  `uniform_host`，且包含 watched-video English。record `artifact_hashes.subtitle_sha256`
+  仍是 stale/different `sha256:0c3a8349585d8d9bfd476eb1652f3baafbffeee362c0855f67c1271f3675e1cb`，
+  与 current recut 不匹配。
 - `blocker`：non-release speaker SRT 写 `青兰`，delivery 写 `星兰`；Ivan 必须决定 exact
   host-vs-video spans、被吞掉的 host words，并以 danmaku+crawler sources 绑定
   `恋死→星兰`。现有 cue-6 override 是 unrelated/narrow，不能关闭这些问题；upload false。
