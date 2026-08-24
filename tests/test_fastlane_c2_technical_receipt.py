@@ -1,6 +1,7 @@
 import json
 import pytest
 
+import src.autoslice.fastlane_c2_technical_receipt as technical_receipt
 from src.autoslice.fastlane_c2_formal_adapter import NAMES, TITLE, visual_inventory
 from src.autoslice.fastlane_c2_technical_receipt import (
     READY,
@@ -31,6 +32,11 @@ def _write(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+@pytest.fixture
+def no_external_audit(monkeypatch):
+    monkeypatch.setattr(technical_receipt, "_replay_current_audit", lambda root: None)
+
+
 def test_c2_ready_proposal_rejects_stale_status_and_binding_drifts(tmp_path):
     root = _package(tmp_path)
     proposal = _proposal(root)
@@ -54,7 +60,7 @@ def test_c2_ready_proposal_rejects_stale_status_and_binding_drifts(tmp_path):
         validate_ready_proposal(root, changed)
 
 
-def test_c2_accepted_receipt_rejects_identity_reviewer_timestamp_and_scope_drifts(tmp_path):
+def test_c2_accepted_receipt_rejects_identity_reviewer_timestamp_and_scope_drifts(tmp_path, no_external_audit):
     root = _package(tmp_path)
     proposal_path = root / "ready.proposal.json"
     _write(proposal_path, _proposal(root))
@@ -76,7 +82,7 @@ def test_c2_accepted_receipt_rejects_identity_reviewer_timestamp_and_scope_drift
         validate_accepted_receipt(root, proposal_path, receipt)
 
 
-def test_c2_accepted_materializer_is_create_only_and_rejects_symlink_proposal(tmp_path):
+def test_c2_accepted_materializer_is_create_only_and_rejects_symlink_proposal(tmp_path, no_external_audit):
     root = _package(tmp_path)
     proposal_path = root / "ready.proposal.json"
     _write(proposal_path, _proposal(root))
@@ -89,3 +95,36 @@ def test_c2_accepted_materializer_is_create_only_and_rejects_symlink_proposal(tm
     link.symlink_to(proposal_path)
     with pytest.raises(ValueError):
         make_accepted_receipt(root, link, "2026-08-24T22:00:00+00:00", "Root decision.")
+
+
+def test_c2_validator_rejects_audit_replay_drift_and_unsafe_package_paths(tmp_path, monkeypatch):
+    root = _package(tmp_path)
+    proposal_path = root / "ready.proposal.json"
+    _write(proposal_path, _proposal(root))
+    receipt = make_accepted_receipt(root, proposal_path, "2026-08-24T22:00:00+00:00", "Root decision.")
+    monkeypatch.setattr(technical_receipt, "_replay_current_audit", lambda package: (_ for _ in ()).throw(ValueError("C2_AUDIT_REPLAY_DRIFT")))
+    with pytest.raises(ValueError, match="C2_AUDIT_REPLAY_DRIFT"):
+        validate_accepted_receipt(root, proposal_path, receipt)
+    monkeypatch.setattr(technical_receipt, "_replay_current_audit", lambda package: None)
+    manifest = root / "review_manifest.json"
+    replacement = root / "manifest-real.json"
+    manifest.rename(replacement)
+    manifest.symlink_to(replacement)
+    with pytest.raises(ValueError):
+        validate_ready_proposal(root, json.loads(proposal_path.read_text(encoding="utf-8")))
+    other = _package(tmp_path / "other")
+    audit = other / "package_audit.json"
+    audit_replacement = other / "audit-real.json"
+    audit.rename(audit_replacement)
+    audit.symlink_to(audit_replacement)
+    with pytest.raises(ValueError):
+        make_ready_proposal(other, {"passed": True, "blocking_issue_count": 0, "policy_fingerprint": "sha256:fresh"})
+
+
+def test_c2_create_only_rejects_symlink_parent(tmp_path):
+    real_parent = tmp_path / "real"
+    real_parent.mkdir()
+    linked_parent = tmp_path / "linked"
+    linked_parent.symlink_to(real_parent, target_is_directory=True)
+    with pytest.raises(ValueError):
+        write_create_only_json(linked_parent / "receipt.json", {"x": 1})

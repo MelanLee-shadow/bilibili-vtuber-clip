@@ -4,6 +4,9 @@ from __future__ import annotations
 from datetime import datetime
 import json
 import os
+import stat
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -33,19 +36,42 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _regular(path: Path) -> None:
-    if not path.is_file() or path.is_symlink():
+    try:
+        mode = path.lstat().st_mode
+    except OSError as exc:
+        raise ValueError(f"regular non-symlink file required: {path}") from exc
+    if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
         raise ValueError(f"regular non-symlink file required: {path}")
 
 
+def _safe_directory(path: Path) -> None:
+    try:
+        mode = path.lstat().st_mode
+    except OSError as exc:
+        raise ValueError(f"existing non-symlink directory required: {path}") from exc
+    if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+        raise ValueError(f"existing non-symlink directory required: {path}")
+
+
+def _package_root(root: Path) -> None:
+    _safe_directory(root)
+
+
 def _binding(root: Path, current_audit: Mapping[str, Any]) -> dict[str, Any]:
-    manifest = _read_json(root / "review_manifest.json")
+    _package_root(root)
+    manifest_path, audit_path = root / "review_manifest.json", root / "package_audit.json"
+    _regular(manifest_path)
+    _regular(audit_path)
+    for name in NAMES.values():
+        _regular(root / name)
+    manifest = _read_json(manifest_path)
     artifacts = {
         key: {"path": name, "sha256": "sha256:" + sha256(root / name)}
         for key, name in NAMES.items()
     }
     return {
-        "review_manifest_sha256": "sha256:" + sha256(root / "review_manifest.json"),
-        "package_audit_sha256": "sha256:" + sha256(root / "package_audit.json"),
+        "review_manifest_sha256": "sha256:" + sha256(manifest_path),
+        "package_audit_sha256": "sha256:" + sha256(audit_path),
         "audit_policy_fingerprint": current_audit["policy_fingerprint"],
         "artifacts": artifacts,
         "visual_evidence_inventory": manifest["visual_evidence_inventory"],
@@ -71,16 +97,20 @@ def make_ready_proposal(root: Path, current_audit: Mapping[str, Any]) -> dict[st
 
 
 def _validate_bindings(root: Path, bindings: object) -> None:
+    _package_root(root)
     if not isinstance(bindings, Mapping):
         raise ValueError("receipt bindings must be an object")
     required = {"review_manifest_sha256", "package_audit_sha256", "audit_policy_fingerprint", "artifacts", "visual_evidence_inventory"}
     if set(bindings) != required:
         raise ValueError("receipt binding field set drift")
-    if bindings["review_manifest_sha256"] != "sha256:" + sha256(root / "review_manifest.json"):
+    manifest_path, audit_path = root / "review_manifest.json", root / "package_audit.json"
+    _regular(manifest_path)
+    _regular(audit_path)
+    if bindings["review_manifest_sha256"] != "sha256:" + sha256(manifest_path):
         raise ValueError("review manifest binding drift")
-    if bindings["package_audit_sha256"] != "sha256:" + sha256(root / "package_audit.json"):
+    if bindings["package_audit_sha256"] != "sha256:" + sha256(audit_path):
         raise ValueError("package audit binding drift")
-    package_audit = _read_json(root / "package_audit.json")
+    package_audit = _read_json(audit_path)
     if (
         package_audit.get("passed") is not True
         or package_audit.get("blocking_issue_count") != 0
@@ -95,7 +125,7 @@ def _validate_bindings(root: Path, bindings: object) -> None:
         _regular(path)
         if artifacts[key] != {"path": name, "sha256": "sha256:" + sha256(path)}:
             raise ValueError(f"artifact binding drift: {key}")
-    manifest = _read_json(root / "review_manifest.json")
+    manifest = _read_json(manifest_path)
     inventory = bindings["visual_evidence_inventory"]
     if inventory != manifest.get("visual_evidence_inventory") or inventory != visual_inventory(root):
         raise ValueError("visual evidence inventory drift")
@@ -129,6 +159,7 @@ def _validate_timestamp(value: object) -> str:
 
 
 def make_accepted_receipt(root: Path, proposal_path: Path, reviewed_at: str, decision_basis: str) -> dict[str, Any]:
+    _package_root(root)
     _regular(proposal_path)
     proposal = _read_json(proposal_path)
     validate_ready_proposal(root, proposal)
@@ -157,6 +188,8 @@ def make_accepted_receipt(root: Path, proposal_path: Path, reviewed_at: str, dec
 
 
 def validate_accepted_receipt(root: Path, proposal_path: Path, receipt: Mapping[str, Any]) -> None:
+    _package_root(root)
+    _replay_current_audit(root)
     required = {"schema_version", "candidate_id", "title", "accepted", "upload_allowed", "scope", "reviewer_kind", "reviewed_by", "reviewed_at", "decision_basis", "proposal", "bindings", "required_root_checks", "non_authorizations"}
     if set(receipt) != required:
         raise ValueError("accepted receipt field set drift")
@@ -182,10 +215,17 @@ def validate_accepted_receipt(root: Path, proposal_path: Path, receipt: Mapping[
 
 
 def write_create_only_json(path: Path, value: Mapping[str, Any]) -> None:
-    if path.exists() or path.is_symlink():
+    _safe_directory(path.parent)
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        pass
+    else:
         raise FileExistsError("refusing to overwrite accepted C2 technical receipt")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(path, flags, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         json.dump(value, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
@@ -196,3 +236,23 @@ def write_create_only_json(path: Path, value: Mapping[str, Any]) -> None:
         os.fsync(directory_fd)
     finally:
         os.close(directory_fd)
+
+
+def _replay_current_audit(root: Path) -> None:
+    _package_root(root)
+    audit_path = root / "package_audit.json"
+    _regular(audit_path)
+    auditor = Path(__file__).resolve().parents[2] / "scripts" / "audit_lidousha_review_package.py"
+    _regular(auditor)
+    run = subprocess.run(
+        [sys.executable, str(auditor), "--json", str(root)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    try:
+        current, saved = json.loads(run.stdout), _read_json(audit_path)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"C2_AUDIT_REPLAY_DRIFT: {exc}") from exc
+    if run.returncode or current != saved or current.get("passed") is not True or current.get("blocking_issue_count") != 0:
+        raise ValueError("C2_AUDIT_REPLAY_DRIFT")

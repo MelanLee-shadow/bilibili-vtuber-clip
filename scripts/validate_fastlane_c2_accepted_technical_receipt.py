@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from src.autoslice.fastlane_c2_technical_receipt import validate_accepted_receipt
+from src.autoslice.fastlane_c2_technical_receipt import _regular, validate_accepted_receipt
 
 
 def main() -> int:
@@ -19,7 +19,9 @@ def main() -> int:
     parser.add_argument("--proposal", type=Path, required=True)
     parser.add_argument("--receipt", type=Path, required=True)
     args = parser.parse_args()
-    validate_accepted_receipt(args.package.resolve(), args.proposal.resolve(), json.loads(args.receipt.read_text(encoding="utf-8")))
+    receipt = args.receipt.absolute()
+    _regular(receipt)
+    validate_accepted_receipt(args.package.absolute(), args.proposal.absolute(), json.loads(receipt.read_text(encoding="utf-8")))
     return 0
 
 
