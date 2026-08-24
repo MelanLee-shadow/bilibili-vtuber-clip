@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from src.autoslice import fastlane_c1_technical_receipt as c1_receipt
+import src.autoslice.same_bv_repair as same_bv
 from src.autoslice.fastlane_c1_formal_adapter import CID, SIX_NAMED_POINTS, TITLE
 from src.autoslice.final_human_review import replay_final_human_review_attestation
 
@@ -128,3 +129,107 @@ def test_same_bv_attestation_dispatches_only_c1_formal_receipt(tmp_path, monkeyp
         "package_audit": bind(audit), "c1_technical_receipt": bind(receipt_path),
     }}
     assert replay_final_human_review_attestation(manifest)["c1_technical_receipt"]["path"] == str(receipt_path.resolve())
+
+
+def _c1_plan(root, audit, receipt_path, authority):
+    """A minimal real-shaped C1 plan for same-BV attestation replay."""
+    def entry(path):
+        return {
+            "path": str(path.resolve()),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "bytes": path.stat().st_size,
+        }
+
+    names = c1_receipt.load_formal_authority()["output_names"]
+    bound_manifest = root / "bound-manifest.json"
+    _write_json(bound_manifest, {})
+    return {
+        "schema_version": same_bv.PLAN_SCHEMA,
+        "plan_id": "c1-plan",
+        "bvid": authority["bvid"],
+        "manifest": entry(bound_manifest),
+        "replacement": {
+            "video": entry(root / names["burned_final"]),
+            "cover": entry(root / names["cover"]),
+        },
+        "recovery_publication_authority": copy.deepcopy(authority),
+        "package_attestation": {
+            "package_root": str(root.resolve()),
+            "review_manifest": entry(root / "review_manifest.json"),
+            "package_audit": entry(audit),
+            "c1_technical_receipt": entry(receipt_path),
+        },
+        "season": {"season_id": 8383206, "section_id": 9320779},
+        "target_metadata": {"title": TITLE},
+        "before": {"creator": {"videos": [{"cid": authority["cid"]}]}},
+    }
+
+
+def test_c1_plan_attestation_replay_keeps_canonical_plan_authority(
+    tmp_path, monkeypatch
+):
+    root, audit = package(tmp_path, monkeypatch)
+    receipt_path = root / "c1.receipt.json"
+    _write_json(receipt_path, _accepted_receipt(root, audit))
+    authority = {
+        "candidate_id": CID,
+        "bvid": "BV1os8q61Eya",
+        "cid": 41126267272,
+    }
+
+    def validate(value, *, candidate_id, expected_final_title=None):
+        if value != authority or candidate_id != CID or expected_final_title != TITLE:
+            raise same_bv.RecoveryTitleAuthorityError("C1 plan authority drift")
+        return copy.deepcopy(authority)
+
+    monkeypatch.setattr(same_bv, "validate_recovery_publication_authority", validate)
+    plan = _c1_plan(root, audit, receipt_path, authority)
+    same_bv.validate_plan(plan)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["missing_authority", "non_mapping_authority", "authority_drift"],
+)
+def test_c1_plan_attestation_rejects_missing_non_mapping_or_drifted_authority(
+    tmp_path, monkeypatch, mutation
+):
+    root, audit = package(tmp_path, monkeypatch)
+    receipt_path = root / "c1.receipt.json"
+    _write_json(receipt_path, _accepted_receipt(root, audit))
+    authority = {"candidate_id": CID, "bvid": "BV1os8q61Eya", "cid": 41126267272}
+    monkeypatch.setattr(
+        same_bv,
+        "validate_recovery_publication_authority",
+        lambda value, **_kwargs: (_ for _ in ()).throw(
+            same_bv.RecoveryTitleAuthorityError("C1 plan authority invalid")
+        ) if value != authority else copy.deepcopy(authority),
+    )
+    plan = _c1_plan(root, audit, receipt_path, authority)
+    if mutation == "missing_authority":
+        plan.pop("recovery_publication_authority")
+    elif mutation == "non_mapping_authority":
+        plan["recovery_publication_authority"] = "not-a-mapping"
+    else:
+        plan["recovery_publication_authority"]["bvid"] = "BV1tTg46UE3y"
+    with pytest.raises(same_bv.PlanInvalid, match="recovery_publication_authority|FINAL_HUMAN_REVIEW_C1_RECOVERY_REQUIRED"):
+        same_bv.validate_plan(plan)
+
+
+@pytest.mark.parametrize("drifted", ["receipt", "audit"])
+def test_c1_plan_attestation_rejects_receipt_or_audit_drift(
+    tmp_path, monkeypatch, drifted
+):
+    root, audit = package(tmp_path, monkeypatch)
+    receipt_path = root / "c1.receipt.json"
+    _write_json(receipt_path, _accepted_receipt(root, audit))
+    authority = {"candidate_id": CID, "bvid": "BV1os8q61Eya", "cid": 41126267272}
+    monkeypatch.setattr(
+        same_bv,
+        "validate_recovery_publication_authority",
+        lambda value, **_kwargs: copy.deepcopy(authority) if value == authority else (_ for _ in ()).throw(same_bv.RecoveryTitleAuthorityError("C1 plan authority invalid")),
+    )
+    plan = _c1_plan(root, audit, receipt_path, authority)
+    (receipt_path if drifted == "receipt" else audit).write_text("{}", encoding="utf-8")
+    with pytest.raises(same_bv.PlanInvalid, match="FINAL_HUMAN_REVIEW_ATTESTED_FILE_(HASH|SIZE)_DRIFT"):
+        same_bv.validate_plan(plan)

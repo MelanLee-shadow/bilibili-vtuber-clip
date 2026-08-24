@@ -1166,7 +1166,7 @@ def validate_plan(
     else:
         try:
             replayed_plan_attestation = _final_human_review_attestation(
-                {"package_attestation": plan_package_attestation}
+                {"package_attestation": plan_package_attestation, **({"recovery_publication_authority": validated_plan_authority} if isinstance(validated_plan_authority, Mapping) else {})}
             )
         except PlanInvalid as exc:
             problems.append(str(exc))
