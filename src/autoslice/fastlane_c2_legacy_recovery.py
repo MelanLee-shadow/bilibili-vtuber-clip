@@ -94,7 +94,7 @@ def make_accepted_execution_contract(*, proposal: Path, reviewed_at: str, decisi
     return value
 
 
-def validate_accepted_execution_contract(value: Mapping[str, Any], *, proposal: Path) -> None:
+def validate_accepted_execution_contract(value: Mapping[str, Any], *, proposal: Path, expected_reviewed_at: str | None = None, expected_decision_basis: str | None = None) -> None:
     """Acceptance envelope only; it cannot recreate a producer StoryContract."""
     required = {"schema_version", "candidate_id", "accepted", "upload_allowed", "reviewer_kind", "reviewed_by", "reviewed_at", "decision_basis", "proposal", "self_seal"}
     if set(value) != required or value.get("schema_version") != ACCEPTED_SCHEMA or value.get("candidate_id") != CID or value.get("accepted") is not True or value.get("upload_allowed") is not False or value.get("reviewer_kind") != "delegated_root_agent" or value.get("reviewed_by") != "Codex root" or not isinstance(value.get("reviewed_at"), str) or not value["reviewed_at"].strip() or not isinstance(value.get("decision_basis"), str) or not value["decision_basis"].strip():
@@ -105,6 +105,10 @@ def validate_accepted_execution_contract(value: Mapping[str, Any], *, proposal: 
         raise ValueError("C2 legacy execution timestamp invalid") from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError("C2 legacy execution timestamp lacks timezone")
+    if expected_reviewed_at is not None and value["reviewed_at"] != expected_reviewed_at:
+        raise ValueError("C2 legacy execution timestamp authority drift")
+    if expected_decision_basis is not None and value["decision_basis"] != expected_decision_basis:
+        raise ValueError("C2 legacy execution decision authority drift")
     expected = {"path": proposal.name, "bytes": proposal.stat().st_size, "sha256": "sha256:" + sha256(proposal)}
     if value.get("proposal") != expected:
         raise ValueError("C2 legacy execution proposal binding drift")
