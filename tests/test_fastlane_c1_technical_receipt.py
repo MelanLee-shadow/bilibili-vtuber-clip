@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 from scripts.audit_lidousha_review_package import audit_package
 from src.autoslice.fastlane_c1_technical_receipt import C1TechnicalReceiptError, template, validate_completed
+from src.autoslice.final_human_review import replay_final_human_review_attestation
 
 ROOT=Path(__file__).resolve().parents[1]
 SOURCE=Path('/private/tmp/vtuber-slice-fastlane-c1-minimal-20260824/.private/c1-formal-private-v7-bf5dd845-20260824')
@@ -20,3 +21,9 @@ def test_completed_requires_exact_six_passes_and_root_identity(tmp_path):
  assert validate_completed(value,p,a)['accepted'] is True
  value['six_named_points'][0]['verdict']='FAIL'
  with pytest.raises(C1TechnicalReceiptError,match='POINT'): validate_completed(value,p,a)
+def test_same_bv_attestation_dispatches_only_c1_formal_receipt(tmp_path):
+ p,a=package(tmp_path); receipt=template(p,a); receipt.update(status='ACCEPTED_FOR_SAME_BV_TECHNICAL',accepted=True,reviewed_by='Codex root',reviewed_at='2026-08-24T00:00:00+00:00')
+ for row in receipt['six_named_points']: row.update(verdict='PASS',evidence='root evidence point projection')
+ r=p/'c1.receipt.json'; r.write_text(json.dumps(receipt)); bind=lambda x:{'path':str(x.resolve()),'sha256':__import__('hashlib').sha256(x.read_bytes()).hexdigest(),'bytes':x.stat().st_size}
+ manifest={'package_attestation':{'package_root':str(p.resolve()),'review_manifest':bind(p/'review_manifest.json'),'package_audit':bind(a),'c1_technical_receipt':bind(r)}}
+ assert replay_final_human_review_attestation(manifest)['c1_technical_receipt']['path']==str(r.resolve())
