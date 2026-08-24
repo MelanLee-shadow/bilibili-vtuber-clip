@@ -137,7 +137,7 @@ def test_final_authority_forwards_operator_text_ownership(
 
 
 def test_deferred_exact_replay_requires_same_truth_id_reverification() -> None:
-    audit = finalization._audit_deferred_exact_replay_reverification(
+    audit = full_window_replay._audit_deferred_exact_replay_reverification(
         pre_truth_audit=_deferred_exact_truth_audit(),
         baseline_audit={
             "status": "APPLIED",
@@ -159,7 +159,7 @@ def test_deferred_reviewed_restore_requires_same_truth_id_reverification() -> No
     pre["deferred_strategy"] = (
         "reviewed_text_restore_then_reapply_source_truth"
     )
-    audit = finalization._audit_deferred_exact_replay_reverification(
+    audit = full_window_replay._audit_deferred_exact_replay_reverification(
         pre_truth_audit=pre,
         baseline_audit={
             "status": "APPLIED",
@@ -175,7 +175,7 @@ def test_deferred_reviewed_restore_requires_same_truth_id_reverification() -> No
 
 
 def test_deferred_exact_replay_rejects_missing_truth_id() -> None:
-    audit = finalization._audit_deferred_exact_replay_reverification(
+    audit = full_window_replay._audit_deferred_exact_replay_reverification(
         pre_truth_audit=_deferred_exact_truth_audit(),
         baseline_audit={
             "status": "APPLIED",
@@ -210,7 +210,7 @@ def test_deferred_replay_does_not_require_post_boundary_context_witness() -> Non
             "source_end_ms": 2_064_990,
         },
     ]
-    audit = finalization._audit_deferred_exact_replay_reverification(
+    audit = full_window_replay._audit_deferred_exact_replay_reverification(
         pre_truth_audit=pre,
         baseline_audit={
             "status": "APPLIED",
@@ -244,7 +244,7 @@ def test_deferred_replay_passes_when_only_failure_is_post_boundary_context() -> 
             "source_end_ms": 2_064_990,
         }
     ]
-    audit = finalization._audit_deferred_exact_replay_reverification(
+    audit = full_window_replay._audit_deferred_exact_replay_reverification(
         pre_truth_audit=pre,
         baseline_audit={
             "status": "APPLIED",
@@ -283,7 +283,7 @@ def test_deferred_replay_treats_ordinary_post_context_truth_as_context_only() ->
             "source_end_ms": 2_064_990,
         }
     ]
-    audit = finalization._audit_deferred_exact_replay_reverification(
+    audit = full_window_replay._audit_deferred_exact_replay_reverification(
         pre_truth_audit=pre,
         baseline_audit={
             "status": "APPLIED",
@@ -327,7 +327,7 @@ def test_deferred_replay_rejects_truth_straddling_final_interval(
             "source_end_ms": source_end_ms,
         }
     ]
-    audit = finalization._audit_deferred_exact_replay_reverification(
+    audit = full_window_replay._audit_deferred_exact_replay_reverification(
         pre_truth_audit=pre,
         baseline_audit={
             "status": "APPLIED",
@@ -354,7 +354,7 @@ def test_deferred_replay_rejects_truth_straddling_final_interval(
 def test_deferred_replay_rejects_empty_failure_requirement() -> None:
     pre = _deferred_exact_truth_audit()
     pre["failures"] = []
-    audit = finalization._audit_deferred_exact_replay_reverification(
+    audit = full_window_replay._audit_deferred_exact_replay_reverification(
         pre_truth_audit=pre,
         baseline_audit={
             "status": "APPLIED",
@@ -380,7 +380,7 @@ def test_deferred_replay_keeps_overlapping_next_topic_truth_required() -> None:
             "source_end_ms": 2_058_000,
         }
     ]
-    audit = finalization._audit_deferred_exact_replay_reverification(
+    audit = full_window_replay._audit_deferred_exact_replay_reverification(
         pre_truth_audit=pre,
         baseline_audit={
             "status": "APPLIED",

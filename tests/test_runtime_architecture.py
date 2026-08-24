@@ -277,7 +277,9 @@ MODULE_DEBT_LEDGER = {
     # 只涨了 5 行 import/rationale + 5 行调用点。
     # 2026-08-22 净 -24：exact v2 full-window replay、审计投影与临时文件
     # 清理抽到 redelivery_full_window_replay.py；锁定实测净拆解收益。
-    "src/autoslice/producer_package_finalization.py": 2_745,
+    # 2026-08-24 净 -111：C12 的私有 finalizer 协调、投影后文本权威和
+    # deferred exact-replay receipt 分别收束到窄模块，避免 producer 回涨。
+    "src/autoslice/producer_package_finalization.py": 2_634,
     # 2026-07-31 +40：同上（SC 发送者 deferral）。
     # 2026-08-08 +7：会话内重述修复接线（Ivan 2026-08-08 当日指令，
     # docs/reviews/2026-08-08-restatement-repair-design.md §4）——会话内

@@ -58,6 +58,7 @@ def exact_full_window_replay_enabled(
     )
 
 
+
 def _require_v3_time_domain_binding(
     config: Mapping[str, object], binding: V2RedeliverySourceBinding | None
 ) -> str | None:
@@ -87,6 +88,170 @@ def _require_v3_time_domain_binding(
         return time_domain
     except RedeliveryTimeDomainError as exc:
         raise FullWindowReplayError(str(exc)) from exc
+
+def _audit_deferred_exact_replay_reverification(
+    *,
+    pre_truth_audit: Mapping[str, object],
+    baseline_audit: Mapping[str, object],
+    post_truth_audit: Mapping[str, object] | None,
+) -> dict[str, object]:
+    """Prove an early cue-shape deferral reached its promised late authority."""
+
+    strategy = pre_truth_audit.get("deferred_strategy")
+    result: dict[str, object] = {
+        "schema_version": "deferred-exact-replay-reverification.v1",
+        "status": "NOT_REQUIRED",
+        "deferred_strategy": strategy,
+        "required_truth_ids": [],
+        "context_only_truth_ids": [],
+        "straddling_truth_ids": [],
+        "reverified_truth_ids": [],
+        "missing_truth_ids": [],
+    }
+    supported_strategies = {
+        "exact_reviewed_interval_replay_then_reapply_source_truth",
+        "reviewed_text_restore_then_reapply_source_truth",
+    }
+    if strategy not in supported_strategies:
+        return result
+
+    current_source_interval = baseline_audit.get("current_source_interval")
+    if isinstance(current_source_interval, Mapping):
+        final_source_start_ms = current_source_interval.get(
+            "absolute_source_start_ms"
+        )
+        final_source_end_ms = current_source_interval.get(
+            "absolute_source_end_ms"
+        )
+    else:
+        final_source_start_ms = final_source_end_ms = None
+    final_interval_valid = bool(
+        isinstance(final_source_start_ms, int)
+        and not isinstance(final_source_start_ms, bool)
+        and isinstance(final_source_end_ms, int)
+        and not isinstance(final_source_end_ms, bool)
+        and final_source_end_ms > final_source_start_ms
+    )
+    required_ids: list[str] = []
+    context_only_ids: list[str] = []
+    straddling_ids: list[str] = []
+    for row in pre_truth_audit.get("failures") or []:
+        if not isinstance(row, Mapping):
+            continue
+        truth_id = str(row.get("truth_id") or "")
+        if not truth_id:
+            continue
+        source_start_ms = row.get("source_start_ms")
+        source_end_ms = row.get("source_end_ms")
+        source_interval_valid = bool(
+            isinstance(source_start_ms, int)
+            and not isinstance(source_start_ms, bool)
+            and isinstance(source_end_ms, int)
+            and not isinstance(source_end_ms, bool)
+            and source_end_ms > source_start_ms
+        )
+        if not (final_interval_valid and source_interval_valid):
+            required_ids.append(truth_id)
+            continue
+        wholly_outside = bool(
+            source_end_ms <= final_source_start_ms
+            or source_start_ms >= final_source_end_ms
+        )
+        wholly_inside = bool(
+            final_source_start_ms <= source_start_ms
+            and source_end_ms <= final_source_end_ms
+        )
+        if wholly_outside:
+            context_only_ids.append(truth_id)
+        elif wholly_inside:
+            required_ids.append(truth_id)
+        else:
+            straddling_ids.append(truth_id)
+    required_ids = sorted(set(required_ids))
+    straddling_ids = sorted(set(straddling_ids))
+    # A duplicated truth id is context-only only if every occurrence is wholly
+    # outside. Any inside or straddling occurrence keeps it out of that class.
+    context_only_ids = sorted(
+        set(context_only_ids) - set(required_ids) - set(straddling_ids)
+    )
+    result["required_truth_ids"] = required_ids
+    result["context_only_truth_ids"] = context_only_ids
+    result["straddling_truth_ids"] = straddling_ids
+    if straddling_ids:
+        result["status"] = "FAILED"
+        result["reason_code"] = (
+            "DEFERRED_TRUTH_STRADDLES_FINAL_DELIVERY"
+        )
+        return result
+    exact_strategy = (
+        strategy
+        == "exact_reviewed_interval_replay_then_reapply_source_truth"
+    )
+    baseline_strategy_ok = (
+        baseline_audit.get("application_strategy")
+        == "exact_reviewed_interval_replay"
+        if exact_strategy
+        else baseline_audit.get("status")
+        in {"APPLIED", "ALREADY_SATISFIED"}
+    )
+    post_truth_ok = bool(
+        isinstance(post_truth_audit, Mapping)
+        and post_truth_audit.get("status")
+        in {"APPLIED", "ALREADY_SATISFIED", "NO_RELEVANT_INTERVAL"}
+    )
+    if not baseline_strategy_ok or not post_truth_ok:
+        result["status"] = "FAILED"
+        result["reason_code"] = (
+            "EXACT_REPLAY_OR_POST_TRUTH_AUTHORITY_MISSING"
+        )
+        return result
+    if not required_ids:
+        if context_only_ids:
+            result["status"] = "PASS"
+            result["reason_code"] = (
+                "ALL_DEFERRED_TRUTH_CONTEXT_ONLY_OUTSIDE_FINAL_DELIVERY"
+            )
+            return result
+        result["status"] = "FAILED"
+        result["reason_code"] = "DEFERRED_TRUTH_REQUIREMENT_EMPTY"
+        return result
+
+    reverified_ids = sorted(
+        {
+            str(row.get("truth_id"))
+            for key in ("applied", "satisfied")
+            for row in (post_truth_audit.get(key) or [])
+            if isinstance(row, Mapping) and str(row.get("truth_id") or "")
+        }
+    )
+    missing_ids = sorted(set(required_ids) - set(reverified_ids))
+    result["reverified_truth_ids"] = reverified_ids
+    result["missing_truth_ids"] = missing_ids
+    if missing_ids:
+        result["status"] = "FAILED"
+        result["reason_code"] = "DEFERRED_TRUTH_ID_NOT_REVERIFIED"
+    else:
+        result["status"] = "PASS"
+    return result
+
+
+def attach_deferred_exact_replay_reverification(
+    *,
+    baseline_audit: dict[str, object],
+    pre_truth_audit: Mapping[str, object],
+    post_truth_audit: Mapping[str, object] | None,
+    deferred_audit: dict[str, object] | None,
+) -> dict[str, object]:
+    """Attach the one deferred replay receipt before its baseline is written."""
+
+    audit = deferred_audit or _audit_deferred_exact_replay_reverification(
+        pre_truth_audit=pre_truth_audit,
+        baseline_audit=baseline_audit,
+        post_truth_audit=post_truth_audit,
+    )
+    baseline_audit["deferred_exact_replay_reverification"] = audit
+    return audit
+
 
 
 def translate_final_local_protected_windows(

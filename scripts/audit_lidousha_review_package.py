@@ -268,6 +268,7 @@ def _audit_policy_fingerprint() -> str:
         ROOT / "src/autoslice/review_package_boundary_contract.py",
         ROOT / "src/autoslice/review_package_boundary_validators.py",
         ROOT / "src/autoslice/review_package_owner_audit.py",
+        ROOT / "src/autoslice/review_package_owner_audit_c12_supersession.py",
         ROOT / "src/autoslice/review_package_portable_evidence.py",
         ROOT / "src/autoslice/candidate_entity_projection.py",
         ROOT / "src/autoslice/candidate_public_text_surface_authority.py",
@@ -1887,8 +1888,8 @@ def audit_package(
                 stem=stem,
                 chat_authority_path=chat_authority_path,
                 chat_authority=chat_authority,
-                record_path=record_path,
-                record=record,
+                record_path=record_path, record=record,
+                subtitle_path=subtitle_path,
                 provenance=provenance,
                 qixi_terminal_projection_authority=qixi_terminal_projection_authority,
             )

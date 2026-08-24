@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import json
+import copy
 import hashlib
+import json
 from pathlib import Path
 
 from PIL import Image
@@ -1335,6 +1336,327 @@ def test_source_truth_audit_must_bind_current_successful_ledger(
     assert "SOURCE_TRUTH_AUDIT_MISSING_OR_INVALID" in codes
 
 
+def _c12_prefixed_sha256(payload: bytes) -> str:
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _c12_canonical_sha256(value: object) -> str:
+    return _c12_prefixed_sha256(
+        (
+            json.dumps(
+                value,
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+    )
+
+
+def _seal_c12_owner_fixture(fixture: dict) -> None:
+    speaker_path = fixture["speaker_path"]
+    record_path = fixture["record_path"]
+    speaker = fixture["speaker"]
+    record = fixture["record"]
+    speaker_path.write_text(
+        json.dumps(speaker, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    record["speaker_finalization"] = copy.deepcopy(speaker)
+    record["speaker_finalization_manifest_sha256"] = _c12_prefixed_sha256(
+        speaker_path.read_bytes()
+    )
+    record_path.write_text(
+        json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _c12_owner_fixture(tmp_path: Path) -> dict:
+    """A package-shaped C12 post-redelivery authority, not a generic shortcut."""
+
+    candidate_id = "auto_130012_435_574"
+    subtitle_path = tmp_path / f"{candidate_id}.final.srt"
+    subtitle_path.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n写姐\n",
+        encoding="utf-8",
+    )
+    final_sha = _c12_prefixed_sha256(subtitle_path.read_bytes())
+    baseline = json.loads(
+        (
+            REPO_ROOT
+            / "assets/lidousha/reviewed_subtitle_baselines"
+            / f"{candidate_id}.subtitle-baseline.v1.json"
+        ).read_text(encoding="utf-8")
+    )
+    ownership = baseline["operator_text_full_ownership"]
+    old_record_sha = "sha256:" + "a" * 64
+    projection_receipt_sha = "sha256:" + "b" * 64
+    marker = {
+        "schema_version": "reviewed-baseline-replay-c12-operator-text-supersession.v1",
+        "candidate_id": candidate_id,
+        "record_sha256": old_record_sha,
+        "delivery_projection_receipt_sha256": projection_receipt_sha,
+        "baseline_sha256": "sha256:" + baseline["sha256"],
+        "pipeline_diagnostic_sha256": "sha256:" + ownership["pipeline_srt_sha256"],
+        "decision_ledger_sha256": "sha256:" + ownership["decision_ledger_sha256"],
+        "diagnostic_diff_sha256": "sha256:" + ownership["diagnostic_diff_sha256"],
+        "source_cue_count": 59,
+        "release_cue_count": 59,
+        "operator_exact_text_cue_count": 3,
+        "operator_unchanged_freeze_cue_count": 56,
+        "operator_drop_cue_count": 0,
+        "final_delivery_srt_sha256": final_sha,
+        "source_truth_reapplication_allowed": False,
+    }
+    historical_truth = _truth_row(
+        "historical-source-truth-row", start_ms=1_000, end_ms=2_000
+    )
+    pre_truth_audit = _source_truth_audit_fixture(applied=[historical_truth])
+    post_truth_audit = {
+        "schema_version": "source-subtitle-truth-reapplication-supersession.v1",
+        "status": "SUPERSEDED_BY_OPERATOR_TEXT_FULL_OWNERSHIP",
+        "candidate_id": candidate_id,
+        "reapplication_attempted": False,
+        "source_truth_reapplication_allowed": False,
+        "pre_redelivery_audit_sha256": _c12_canonical_sha256(pre_truth_audit),
+        "preexisting_truth_row_count": 1,
+        "superseded_truth_ids": ["historical-source-truth-row"],
+        "operator_text_full_ownership": marker,
+        "final_delivery_srt_sha256": final_sha,
+        "applied": [],
+        "satisfied": [],
+        "failures": [],
+        "baseline_sha256": marker["baseline_sha256"],
+    }
+    baseline_audit = {
+        "status": "APPLIED",
+        "application_strategy": "exact_reviewed_interval_replay",
+        "exact_replay_then_final_crop": True,
+        "source_truth_reapplication": post_truth_audit,
+        "operator_text_full_ownership_supersession": copy.deepcopy(marker),
+        "baseline_sha256": baseline["sha256"],
+        "expected_baseline_sha256": baseline["sha256"],
+        "post_source_truth_output_sha256": final_sha.removeprefix("sha256:"),
+        "full_release_delivery_projection": {
+            "schema_version": "reviewed-baseline-full-release-delivery-projection.v2",
+            "receipt_sha256": projection_receipt_sha,
+            "full_release_cue_count": 59,
+            "final_delivery_cue_count": 1,
+        },
+    }
+    successor = {
+        "schema_version": "reviewed-baseline-text-only-speaker-successor.v1",
+        "candidate_id": candidate_id,
+        "old_record_sha256": old_record_sha,
+        "old_diagnostic_sha256": marker["pipeline_diagnostic_sha256"],
+        "reviewed_baseline_sha256": marker["baseline_sha256"],
+        "operator_ledger_sha256": marker["decision_ledger_sha256"],
+        "operator_truth_diff_sha256": marker["diagnostic_diff_sha256"],
+        "new_plain_srt_sha256": final_sha,
+        "delivery_projection_receipt_sha256": projection_receipt_sha,
+        "input_grid_mode": "FINAL_DELIVERY_PROJECTION",
+        "speaker_labels_inherited": True,
+        "speaker_label_mutation_authorized": False,
+    }
+    frozen = _frozen_owner_fixture(
+        owners=[_truth_owner(historical_truth)], candidate_id=candidate_id
+    )
+    owners = frozen["owners"]
+    speaker_path = tmp_path / f"{candidate_id}.speaker-finalization.json"
+    record_path = tmp_path / f"{candidate_id}.record.json"
+    record = {
+        "story_contract": {"candidate_id": candidate_id},
+        "artifact_hashes": {"subtitle_sha256": final_sha},
+        "speaker_finalization_manifest_path": speaker_path.name,
+        "speaker_finalization_manifest_sha256": None,
+        "speaker_finalization": None,
+        "boundary_audit": {
+            "final_start_ms": 0,
+            "final_end_ms": 4_000,
+            "frozen_required_boundary_owner_count": len(owners),
+            "frozen_required_boundary_owners": owners,
+            "required_boundary_owner_verification": {
+                "status": "PASS",
+                "failures": [],
+            },
+            "delivery_coverage_verification": {"status": "PASS", "failure": None},
+        },
+    }
+    chat = {
+        "source_subtitle_truth_audit": post_truth_audit,
+        "source_subtitle_truth_pre_redelivery_audit": pre_truth_audit,
+        "source_subtitle_truth_post_redelivery_audit": post_truth_audit,
+        "redelivery_subtitle_baseline_audit": baseline_audit,
+        "final_source_truth_owner_verification": {
+            "status": "PASS",
+            "final_delivery_interval": {
+                "timeline": "padded_source_local_ms",
+                "interval_semantics": "half_open",
+                "start_ms": 0,
+                "end_ms": 4_000,
+            },
+            "required_truth_row_count": 0,
+            "required_truth_ids": [],
+            "context_only_truth_row_count": 0,
+            "context_only_truth_ids": [],
+            "context_only_truth_evidence": [],
+            "optional_truth_row_count": 0,
+            "straddling_truth_row_count": 0,
+            "required_window_count": 0,
+            "failures": [],
+        },
+        "final_redelivery_baseline_owner_verification": {
+            "status": "PASS",
+            "required_mapping_count": 1,
+        },
+        "final_required_legacy_decision_count": 0,
+        "final_required_source_truth_owner_count": 0,
+        "final_required_redelivery_baseline_owner_count": 1,
+        "final_required_decision_count": 1,
+        "final_boundary_required_exclusion_count": 0,
+        "frozen_boundary_owner_contract": frozen,
+        "final_text_srt_sha256": final_sha.removeprefix("sha256:"),
+        "final_output_srt_sha256": final_sha.removeprefix("sha256:"),
+    }
+    fixture = {
+        "chat": chat,
+        "record": record,
+        "speaker": {"reviewed_baseline_text_only_successor": successor},
+        "subtitle_path": subtitle_path,
+        "record_path": record_path,
+        "speaker_path": speaker_path,
+    }
+    _seal_c12_owner_fixture(fixture)
+    return fixture
+
+
+def _c12_owner_audit_codes(fixture: dict) -> set[str]:
+    issues: list[dict] = []
+    audit_source_truth_owner_attestations(
+        issue_adder=_add_issue,
+        issues=issues,
+        stem="auto_130012_435_574",
+        chat_authority_path=None,
+        chat_authority=fixture["chat"],
+        record_path=fixture["record_path"],
+        record=fixture["record"],
+        subtitle_path=fixture["subtitle_path"],
+    )
+    return {issue["code"] for issue in issues}
+
+
+def test_c12_source_truth_supersession_is_a_zero_current_owner_package_consumer(
+    tmp_path: Path,
+) -> None:
+    fixture = _c12_owner_fixture(tmp_path)
+
+    assert _c12_owner_audit_codes(fixture) == set()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "schema",
+        "status",
+        "extra_field",
+        "record_hash",
+        "projection_receipt_hash",
+        "truth_graph_hash",
+        "final_srt_hash",
+        "baseline_marker",
+        "preexisting_count",
+    ),
+)
+def test_c12_source_truth_supersession_rejects_unsealed_package_bindings(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    fixture = _c12_owner_fixture(tmp_path)
+    post = fixture["chat"]["source_subtitle_truth_audit"]
+    baseline = fixture["chat"]["redelivery_subtitle_baseline_audit"]
+    successor = fixture["speaker"]["reviewed_baseline_text_only_successor"]
+    if mutation == "schema":
+        post["schema_version"] = "source-subtitle-truth-reapplication-supersession.v0"
+    elif mutation == "status":
+        post["status"] = "APPLIED"
+    elif mutation == "extra_field":
+        post["unexpected"] = "forged"
+    elif mutation == "record_hash":
+        successor["old_record_sha256"] = "sha256:" + "c" * 64
+        _seal_c12_owner_fixture(fixture)
+    elif mutation == "projection_receipt_hash":
+        successor["delivery_projection_receipt_sha256"] = "sha256:" + "d" * 64
+        _seal_c12_owner_fixture(fixture)
+    elif mutation == "truth_graph_hash":
+        post["operator_text_full_ownership"]["pipeline_diagnostic_sha256"] = (
+            "sha256:" + "e" * 64
+        )
+        baseline["operator_text_full_ownership_supersession"][
+            "pipeline_diagnostic_sha256"
+        ] = "sha256:" + "e" * 64
+    elif mutation == "final_srt_hash":
+        fixture["subtitle_path"].write_text(
+            "1\n00:00:00,000 --> 00:00:01,000\n篡改\n",
+            encoding="utf-8",
+        )
+    elif mutation == "baseline_marker":
+        post["operator_text_full_ownership"]["operator_drop_cue_count"] = 1
+        baseline["operator_text_full_ownership_supersession"][
+            "operator_drop_cue_count"
+        ] = 1
+    else:
+        post["preexisting_truth_row_count"] = 2
+
+    assert "SOURCE_TRUTH_AUDIT_MISSING_OR_INVALID" in _c12_owner_audit_codes(fixture)
+
+
+def test_c12_source_truth_supersession_rejects_identical_schema_for_non_c12(
+    tmp_path: Path,
+) -> None:
+    fixture = _c12_owner_fixture(tmp_path)
+    other_candidate = "auto_130012_435_575"
+    post = fixture["chat"]["source_subtitle_truth_audit"]
+    post["candidate_id"] = other_candidate
+    post["operator_text_full_ownership"]["candidate_id"] = other_candidate
+    fixture["chat"]["redelivery_subtitle_baseline_audit"][
+        "operator_text_full_ownership_supersession"
+    ]["candidate_id"] = other_candidate
+    fixture["record"]["story_contract"]["candidate_id"] = other_candidate
+    fixture["speaker"]["reviewed_baseline_text_only_successor"][
+        "candidate_id"
+    ] = other_candidate
+    _seal_c12_owner_fixture(fixture)
+
+    assert "SOURCE_TRUTH_AUDIT_MISSING_OR_INVALID" in _c12_owner_audit_codes(fixture)
+
+
+def test_c12_supersession_keeps_redelivery_owner_and_decision_coverage_required(
+    tmp_path: Path,
+) -> None:
+    fixture = _c12_owner_fixture(tmp_path)
+    fixture["chat"]["final_redelivery_baseline_owner_verification"][
+        "required_mapping_count"
+    ] = 0
+
+    codes = _c12_owner_audit_codes(fixture)
+    assert "REDELIVERY_BASELINE_FINAL_OWNER_ATTESTATION_MISSING" in codes
+    assert "FINAL_AUTHORITY_DECISION_COVERAGE_EMPTY" in codes
+
+
+def test_ordinary_source_truth_audit_keeps_its_existing_owner_contract() -> None:
+    row = _truth_row("ordinary-source-truth", start_ms=1_000, end_ms=2_000)
+
+    codes = _owner_attestation_codes(
+        truth_rows=[row],
+        frozen=_frozen_owner_fixture(owners=[_truth_owner(row)]),
+    )
+    assert "SOURCE_TRUTH_AUDIT_MISSING_OR_INVALID" not in codes
+    assert "FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID" not in codes
+
+
 def test_owner_scope_candidate_id_must_match_packaged_story_contract():
     frozen = _frozen_owner_fixture(candidate_id="candidate-a")
 
@@ -1359,6 +1681,7 @@ def test_owner_scope_candidate_id_must_match_packaged_story_contract():
         "src/autoslice/candidate_entity_projection.py",
         "src/autoslice/reviewed_subtitle_baseline_registry.py",
         "src/autoslice/review_package_owner_audit.py",
+        "src/autoslice/review_package_owner_audit_c12_supersession.py",
         "assets/lidousha/subtitle_truth_ledger.v1.json",
     ],
 )

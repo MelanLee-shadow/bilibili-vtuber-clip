@@ -99,14 +99,14 @@ from src.autoslice.chat_authority_ownership import (
 )
 from src.autoslice.redelivery_full_window_replay import (
     FullWindowReplayError,
+    attach_deferred_exact_replay_reverification,
     replay_baseline_for_final_recut,
 )
 from src.autoslice.reviewed_baseline_replay_c12_projection import (
     C12FinalDeliveryProjection,
-    C12FinalDeliveryProjectionError,
-    c12_source_truth_reapplication_supersession,
-    replay_c12_final_delivery_projection,
-    validate_c12_final_delivery_bytes,
+    replay_c12_final_delivery_and_supersede_source_truth,
+    require_c12_baseline_config,
+    require_c12_final_delivery_bytes,
 )
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
@@ -449,150 +449,11 @@ def _rebase_source_truth_audit_to_padded(
     return rebased
 
 
-def _audit_deferred_exact_replay_reverification(
-    *,
-    pre_truth_audit: Mapping[str, object],
-    baseline_audit: Mapping[str, object],
-    post_truth_audit: Mapping[str, object] | None,
-) -> dict[str, object]:
-    """Prove an early cue-shape deferral reached its promised late authority."""
-
-    strategy = pre_truth_audit.get("deferred_strategy")
-    result: dict[str, object] = {
-        "schema_version": "deferred-exact-replay-reverification.v1",
-        "status": "NOT_REQUIRED",
-        "deferred_strategy": strategy,
-        "required_truth_ids": [],
-        "context_only_truth_ids": [],
-        "straddling_truth_ids": [],
-        "reverified_truth_ids": [],
-        "missing_truth_ids": [],
-    }
-    supported_strategies = {
-        "exact_reviewed_interval_replay_then_reapply_source_truth",
-        "reviewed_text_restore_then_reapply_source_truth",
-    }
-    if strategy not in supported_strategies:
-        return result
-
-    current_source_interval = baseline_audit.get("current_source_interval")
-    if isinstance(current_source_interval, Mapping):
-        final_source_start_ms = current_source_interval.get(
-            "absolute_source_start_ms"
-        )
-        final_source_end_ms = current_source_interval.get(
-            "absolute_source_end_ms"
-        )
-    else:
-        final_source_start_ms = final_source_end_ms = None
-    final_interval_valid = bool(
-        isinstance(final_source_start_ms, int)
-        and not isinstance(final_source_start_ms, bool)
-        and isinstance(final_source_end_ms, int)
-        and not isinstance(final_source_end_ms, bool)
-        and final_source_end_ms > final_source_start_ms
+def _write_redelivery_baseline_audit(path: Path, audit: Mapping[str, object]) -> None:
+    path.write_text(
+        json.dumps(audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
-    required_ids: list[str] = []
-    context_only_ids: list[str] = []
-    straddling_ids: list[str] = []
-    for row in pre_truth_audit.get("failures") or []:
-        if not isinstance(row, Mapping):
-            continue
-        truth_id = str(row.get("truth_id") or "")
-        if not truth_id:
-            continue
-        source_start_ms = row.get("source_start_ms")
-        source_end_ms = row.get("source_end_ms")
-        source_interval_valid = bool(
-            isinstance(source_start_ms, int)
-            and not isinstance(source_start_ms, bool)
-            and isinstance(source_end_ms, int)
-            and not isinstance(source_end_ms, bool)
-            and source_end_ms > source_start_ms
-        )
-        if not (final_interval_valid and source_interval_valid):
-            required_ids.append(truth_id)
-            continue
-        wholly_outside = bool(
-            source_end_ms <= final_source_start_ms
-            or source_start_ms >= final_source_end_ms
-        )
-        wholly_inside = bool(
-            final_source_start_ms <= source_start_ms
-            and source_end_ms <= final_source_end_ms
-        )
-        if wholly_outside:
-            context_only_ids.append(truth_id)
-        elif wholly_inside:
-            required_ids.append(truth_id)
-        else:
-            straddling_ids.append(truth_id)
-    required_ids = sorted(set(required_ids))
-    straddling_ids = sorted(set(straddling_ids))
-    # A duplicated truth id is context-only only if every occurrence is wholly
-    # outside. Any inside or straddling occurrence keeps it out of that class.
-    context_only_ids = sorted(
-        set(context_only_ids) - set(required_ids) - set(straddling_ids)
-    )
-    result["required_truth_ids"] = required_ids
-    result["context_only_truth_ids"] = context_only_ids
-    result["straddling_truth_ids"] = straddling_ids
-    if straddling_ids:
-        result["status"] = "FAILED"
-        result["reason_code"] = (
-            "DEFERRED_TRUTH_STRADDLES_FINAL_DELIVERY"
-        )
-        return result
-    exact_strategy = (
-        strategy
-        == "exact_reviewed_interval_replay_then_reapply_source_truth"
-    )
-    baseline_strategy_ok = (
-        baseline_audit.get("application_strategy")
-        == "exact_reviewed_interval_replay"
-        if exact_strategy
-        else baseline_audit.get("status")
-        in {"APPLIED", "ALREADY_SATISFIED"}
-    )
-    post_truth_ok = bool(
-        isinstance(post_truth_audit, Mapping)
-        and post_truth_audit.get("status")
-        in {"APPLIED", "ALREADY_SATISFIED", "NO_RELEVANT_INTERVAL"}
-    )
-    if not baseline_strategy_ok or not post_truth_ok:
-        result["status"] = "FAILED"
-        result["reason_code"] = (
-            "EXACT_REPLAY_OR_POST_TRUTH_AUTHORITY_MISSING"
-        )
-        return result
-    if not required_ids:
-        if context_only_ids:
-            result["status"] = "PASS"
-            result["reason_code"] = (
-                "ALL_DEFERRED_TRUTH_CONTEXT_ONLY_OUTSIDE_FINAL_DELIVERY"
-            )
-            return result
-        result["status"] = "FAILED"
-        result["reason_code"] = "DEFERRED_TRUTH_REQUIREMENT_EMPTY"
-        return result
-
-    reverified_ids = sorted(
-        {
-            str(row.get("truth_id"))
-            for key in ("applied", "satisfied")
-            for row in (post_truth_audit.get(key) or [])
-            if isinstance(row, Mapping) and str(row.get("truth_id") or "")
-        }
-    )
-    missing_ids = sorted(set(required_ids) - set(reverified_ids))
-    result["reverified_truth_ids"] = reverified_ids
-    result["missing_truth_ids"] = missing_ids
-    if missing_ids:
-        result["status"] = "FAILED"
-        result["reason_code"] = "DEFERRED_TRUTH_ID_NOT_REVERIFIED"
-    else:
-        result["status"] = "PASS"
-    return result
 
 
 def _materialize_final_recut(
@@ -614,11 +475,8 @@ def _materialize_final_recut(
     reviewed_baseline_replay_c12_projection: C12FinalDeliveryProjection | None = None,
 ) -> FinalRecutArtifacts:
     baseline_config = spec.get("subtitle_redelivery_baseline")
-    if (
-        reviewed_baseline_replay_c12_projection is not None
-        and not isinstance(baseline_config, Mapping)
-    ):
-        raise SystemExit("REPLAY_C12_PRIVATE_PROJECTION_BASELINE_MISSING")
+    if reviewed_baseline_replay_c12_projection is not None:
+        baseline_config = require_c12_baseline_config(baseline_config)
     try:
         v2_source_binding = resolve_v2_redelivery_source_binding(
             spec=spec,
@@ -710,25 +568,29 @@ def _materialize_final_recut(
         )
         if isinstance(raw_baseline_path, str) and Path(raw_baseline_path).is_absolute():
             replay_spec_parent = Path(raw_baseline_path).parent
-        try:
-            if reviewed_baseline_replay_c12_projection is not None:
-                # C12's attested baseline starts at the old record boundary
-                # and retains reviewed tail context.  The ordinary source-piece
-                # replay intentionally rejects that two-grid geometry, so only
-                # the private, candidate-locked adapter may consume it.
-                output_text, redelivery_baseline_audit = (
-                    replay_c12_final_delivery_projection(
-                        projection=reviewed_baseline_replay_c12_projection,
-                        config=baseline_config,
-                        cid=cid,
-                        final_start_ms=final_start,
-                        final_end_ms=final_end,
-                        binding=v2_source_binding,
-                        subtitle_path=subtitle_path,
-                        write_source_range_srt=adapters.write_source_range_srt,
-                    )
-                )
-            else:
+        post_baseline_truth_audit: Mapping[str, object] | None = None
+        deferred_exact_replay_audit: dict[str, object] | None = None
+        if reviewed_baseline_replay_c12_projection is not None:
+            (
+                output_text,
+                redelivery_baseline_audit,
+                post_baseline_truth_audit,
+                deferred_exact_replay_audit,
+            ) = replay_c12_final_delivery_and_supersede_source_truth(
+                projection=reviewed_baseline_replay_c12_projection,
+                config=baseline_config,
+                cid=cid,
+                final_start_ms=final_start,
+                final_end_ms=final_end,
+                binding=v2_source_binding,
+                subtitle_path=subtitle_path,
+                write_source_range_srt=adapters.write_source_range_srt,
+                pre_truth_audit=truth_audit,
+                source_truth_reapply=truth_reapply,
+                chat_authority_audit=chat_authority_audit,
+            )
+        else:
+            try:
                 output_text, redelivery_baseline_audit = replay_baseline_for_final_recut(
                     truth_audit=truth_audit,
                     recut_dir=recut_dir,
@@ -743,123 +605,73 @@ def _materialize_final_recut(
                     write_source_range_srt=adapters.write_source_range_srt,
                     recording_date=str(spec.get("date") or ""),
                 )
-        except (FullWindowReplayError, C12FinalDeliveryProjectionError) as exc:
-            raise SystemExit(str(exc)) from exc
-        redelivery_baseline_audit_path = (
-            recut_dir / f"{cid}.redelivery-baseline.json"
-        )
+            except FullWindowReplayError as exc:
+                raise SystemExit(str(exc)) from exc
+        redelivery_baseline_audit_path = recut_dir / f"{cid}.redelivery-baseline.json"
         final_truth_failed = False
         final_title_failed = False
-        post_baseline_truth_audit: Mapping[str, object] | None = None
-        deferred_exact_replay_audit: dict[str, object] | None = None
-        if redelivery_baseline_audit["status"] != "FAILED" and truth_reapply:
-            if reviewed_baseline_replay_c12_projection is not None:
-                # C12 alone has a v3 exhaustive operator pin over the 59-cue
-                # reviewed graph.  Once the sealed stage crop is byte-identical,
-                # a historical source-truth row is not allowed to re-enter and
-                # silently mutate any of the 56 frozen or three exact cues.
-                try:
-                    (
+        if (
+            reviewed_baseline_replay_c12_projection is None
+            and redelivery_baseline_audit["status"] != "FAILED"
+            and truth_reapply
+        ):
+            ledger_raw = truth_audit.get("ledger_path")
+            if not isinstance(ledger_raw, str) or not ledger_raw:
+                raise SystemExit("REDELIVERY_SOURCE_TRUTH_LEDGER_PATH_MISSING")
+            trimmed_spec, trimmed_durations = _trim_spec_to_final_timeline(
+                spec,
+                final_start=final_start,
+                final_end=final_end,
+            )
+            output_text, post_baseline_truth_audit = apply_source_subtitle_truth(
+                output_text,
+                spec=trimmed_spec,
+                durations=trimmed_durations,
+                ledger_path=Path(ledger_raw),
+            )
+            post_baseline_truth_audit["timeline_basis"] = "final_delivery"
+            post_baseline_truth_audit["reapplied_after_redelivery_baseline"] = True
+            redelivery_baseline_audit["source_truth_reapplication"] = (
+                post_baseline_truth_audit
+            )
+            final_truth_failed = post_baseline_truth_audit["status"] == "FAILED"
+            if chat_authority_audit is not None:
+                chat_authority_audit[
+                    "source_subtitle_truth_pre_redelivery_audit"
+                ] = deepcopy(truth_audit)
+                chat_authority_audit[
+                    "source_subtitle_truth_post_redelivery_audit"
+                ] = deepcopy(post_baseline_truth_audit)
+                chat_authority_audit["source_subtitle_truth_audit"] = (
+                    _rebase_source_truth_audit_to_padded(
                         post_baseline_truth_audit,
-                        deferred_exact_replay_audit,
-                    ) = c12_source_truth_reapplication_supersession(
-                        projection=reviewed_baseline_replay_c12_projection,
-                        config=baseline_config,
-                        cid=cid,
-                        output_text=output_text,
-                        baseline_audit=redelivery_baseline_audit,
-                        pre_truth_audit=truth_audit,
+                        final_start=final_start,
                     )
-                except C12FinalDeliveryProjectionError as exc:
-                    raise SystemExit(str(exc)) from exc
-                redelivery_baseline_audit["source_truth_reapplication"] = (
-                    post_baseline_truth_audit
                 )
-                if chat_authority_audit is not None:
-                    chat_authority_audit[
-                        "source_subtitle_truth_pre_redelivery_audit"
-                    ] = deepcopy(truth_audit)
-                    chat_authority_audit[
-                        "source_subtitle_truth_post_redelivery_audit"
-                    ] = deepcopy(post_baseline_truth_audit)
-                    chat_authority_audit["source_subtitle_truth_audit"] = (
-                        deepcopy(post_baseline_truth_audit)
-                    )
-            else:
-                ledger_raw = truth_audit.get("ledger_path")
-                if not isinstance(ledger_raw, str) or not ledger_raw:
-                    raise SystemExit("REDELIVERY_SOURCE_TRUTH_LEDGER_PATH_MISSING")
-                trimmed_spec, trimmed_durations = _trim_spec_to_final_timeline(
-                    spec,
-                    final_start=final_start,
-                    final_end=final_end,
-                )
-                output_text, post_baseline_truth_audit = apply_source_subtitle_truth(
-                    output_text,
-                    spec=trimmed_spec,
-                    durations=trimmed_durations,
-                    ledger_path=Path(ledger_raw),
-                )
-                post_baseline_truth_audit["timeline_basis"] = "final_delivery"
-                post_baseline_truth_audit["reapplied_after_redelivery_baseline"] = True
-                redelivery_baseline_audit["source_truth_reapplication"] = (
-                    post_baseline_truth_audit
-                )
-                final_truth_failed = post_baseline_truth_audit["status"] == "FAILED"
-                if chat_authority_audit is not None:
-                    chat_authority_audit[
-                        "source_subtitle_truth_pre_redelivery_audit"
-                    ] = deepcopy(truth_audit)
-                    chat_authority_audit[
-                        "source_subtitle_truth_post_redelivery_audit"
-                    ] = deepcopy(post_baseline_truth_audit)
-                    chat_authority_audit["source_subtitle_truth_audit"] = (
-                        _rebase_source_truth_audit_to_padded(
-                            post_baseline_truth_audit,
-                            final_start=final_start,
-                        )
-                    )
-                output_text, final_title_audit = apply_title_mark_balance_guard(
-                    output_text
-                )
-                final_title_failed = (
-                    final_title_audit["status"]
-                    == "UNRESOLVED_COMPLEX_IMBALANCE"
-                )
-                if chat_authority_audit is not None:
-                    chat_authority_audit["final_title_mark_balance_audit"] = (
-                        final_title_audit
-                    )
-                    chat_authority_audit["final_output_srt_sha256"] = hashlib.sha256(
-                        output_text.encode("utf-8")
-                    ).hexdigest()
-                redelivery_baseline_audit["post_source_truth_output_sha256"] = (
-                    hashlib.sha256(output_text.encode("utf-8")).hexdigest()
-                )
-            if reviewed_baseline_replay_c12_projection is not None:
-                redelivery_baseline_audit["post_source_truth_output_sha256"] = (
-                    hashlib.sha256(output_text.encode("utf-8")).hexdigest()
-                )
-        if deferred_exact_replay_audit is None:
-            deferred_exact_replay_audit = (
-                _audit_deferred_exact_replay_reverification(
-                    pre_truth_audit=truth_audit,
-                    baseline_audit=redelivery_baseline_audit,
-                    post_truth_audit=post_baseline_truth_audit,
-                )
+            output_text, final_title_audit = apply_title_mark_balance_guard(
+                output_text
             )
-        redelivery_baseline_audit[
-            "deferred_exact_replay_reverification"
-        ] = deferred_exact_replay_audit
-        redelivery_baseline_audit_path.write_text(
-            json.dumps(
-                redelivery_baseline_audit,
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
+            final_title_failed = (
+                final_title_audit["status"] == "UNRESOLVED_COMPLEX_IMBALANCE"
             )
-            + "\n",
-            encoding="utf-8",
+            if chat_authority_audit is not None:
+                chat_authority_audit["final_title_mark_balance_audit"] = (
+                    final_title_audit
+                )
+                chat_authority_audit["final_output_srt_sha256"] = hashlib.sha256(
+                    output_text.encode("utf-8")
+                ).hexdigest()
+            redelivery_baseline_audit["post_source_truth_output_sha256"] = (
+                hashlib.sha256(output_text.encode("utf-8")).hexdigest()
+            )
+        deferred_exact_replay_audit = attach_deferred_exact_replay_reverification(
+            baseline_audit=redelivery_baseline_audit,
+            pre_truth_audit=truth_audit,
+            post_truth_audit=post_baseline_truth_audit,
+            deferred_audit=deferred_exact_replay_audit,
+        )
+        _write_redelivery_baseline_audit(
+            redelivery_baseline_audit_path, redelivery_baseline_audit
         )
         if chat_authority_audit is not None:
             chat_authority_audit["redelivery_subtitle_baseline_audit"] = (
@@ -892,9 +704,7 @@ def _materialize_final_recut(
     # so no late authority branch can resurrect <300ms or non-exempt one-CJK
     # cues (2026-07-22 1863: 「哦」/「行」).
     final_text = subtitle_path.read_text(encoding="utf-8")
-    final_text, final_release_grade_merge_rows = merge_release_grade_cues(
-        final_text
-    )
+    final_text, final_release_grade_merge_rows = merge_release_grade_cues(final_text)
     # A hash-bound reviewed baseline is deliberately allowed to restore old
     # wording late. Re-assert the Japanese native-script presentation policy
     # after that replay so a legacy boku/ore/atashi/wakuwaku surface cannot
@@ -903,19 +713,12 @@ def _materialize_final_recut(
         normalize_japanese_native_script_surfaces(final_text)
     )
     if reviewed_baseline_replay_c12_projection is not None:
-        # The C12 capability is an operator-owned text freeze, not merely a
-        # different coordinate adapter.  Check before this common late-hygiene
-        # branch writes anything so a future text mutator fails without
-        # overwriting the sealed stage delivery.
-        try:
-            validate_c12_final_delivery_bytes(
-                projection=reviewed_baseline_replay_c12_projection,
-                config=baseline_config,
-                cid=cid,
-                output_text=final_text,
-            )
-        except C12FinalDeliveryProjectionError as exc:
-            raise SystemExit(str(exc)) from exc
+        require_c12_final_delivery_bytes(
+            projection=reviewed_baseline_replay_c12_projection,
+            config=baseline_config,
+            cid=cid,
+            output_text=final_text,
+        )
     if (
         final_release_grade_merge_rows
         or final_japanese_native_script_audit["status"] == "APPLIED"
@@ -939,15 +742,8 @@ def _materialize_final_recut(
                 "post_release_grade_output_sha256"
             ] = hashlib.sha256(final_text.encode("utf-8")).hexdigest()
             assert redelivery_baseline_audit_path is not None
-            redelivery_baseline_audit_path.write_text(
-                json.dumps(
-                    redelivery_baseline_audit,
-                    ensure_ascii=False,
-                    indent=2,
-                    sort_keys=True,
-                )
-                + "\n",
-                encoding="utf-8",
+            _write_redelivery_baseline_audit(
+                redelivery_baseline_audit_path, redelivery_baseline_audit
             )
     elif chat_authority_audit is not None:
         chat_authority_audit[

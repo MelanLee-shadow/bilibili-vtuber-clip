@@ -14,6 +14,7 @@ import json
 import os
 import re
 import stat
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -963,3 +964,101 @@ def replay_c12_final_delivery_projection(
     if _sha(_regular_bytes(subtitle_path, code="SUBTITLE_TARGET_INVALID")) != projection.stage_srt_sha256:
         _fail("SUBTITLE_TARGET_INVALID")
     return output_text, audit
+
+
+def require_c12_baseline_config(config: object) -> Mapping[str, object]:
+    """Reject a projection before any generic replay can consume no baseline."""
+
+    if not isinstance(config, Mapping):
+        raise SystemExit("REPLAY_C12_PRIVATE_PROJECTION_BASELINE_MISSING")
+    return config
+
+
+def replay_c12_final_delivery_and_supersede_source_truth(
+    *,
+    projection: C12FinalDeliveryProjection,
+    config: Mapping[str, object],
+    cid: str,
+    final_start_ms: int,
+    final_end_ms: int,
+    binding: V2RedeliverySourceBinding | None,
+    subtitle_path: Path,
+    write_source_range_srt: Callable[..., None],
+    pre_truth_audit: Mapping[str, object],
+    source_truth_reapply: bool,
+    chat_authority_audit: dict | None,
+) -> tuple[
+    str,
+    dict[str, Any],
+    Mapping[str, object] | None,
+    dict[str, object] | None,
+]:
+    """Run C12's only baseline-and-text authority transition.
+
+    Unlike the ordinary source-truth path, this capability never invokes a
+    text mutator after the 59-cue operator-owned delivery is sealed.  It
+    records the historical rows as superseded only after the exact crop and
+    all marker bindings validate.
+    """
+
+    try:
+        output_text, baseline_audit = replay_c12_final_delivery_projection(
+            projection=projection,
+            config=config,
+            cid=cid,
+            final_start_ms=final_start_ms,
+            final_end_ms=final_end_ms,
+            binding=binding,
+            subtitle_path=subtitle_path,
+            write_source_range_srt=write_source_range_srt,
+        )
+        post_truth_audit: Mapping[str, object] | None = None
+        deferred_audit: dict[str, object] | None = None
+        if baseline_audit.get("status") != "FAILED" and source_truth_reapply:
+            post_truth_audit, deferred_audit = (
+                c12_source_truth_reapplication_supersession(
+                    projection=projection,
+                    config=config,
+                    cid=cid,
+                    output_text=output_text,
+                    baseline_audit=baseline_audit,
+                    pre_truth_audit=pre_truth_audit,
+                )
+            )
+            baseline_audit["source_truth_reapplication"] = post_truth_audit
+            if chat_authority_audit is not None:
+                chat_authority_audit[
+                    "source_subtitle_truth_pre_redelivery_audit"
+                ] = deepcopy(pre_truth_audit)
+                chat_authority_audit[
+                    "source_subtitle_truth_post_redelivery_audit"
+                ] = deepcopy(post_truth_audit)
+                chat_authority_audit["source_subtitle_truth_audit"] = deepcopy(
+                    post_truth_audit
+                )
+            baseline_audit["post_source_truth_output_sha256"] = hashlib.sha256(
+                output_text.encode("utf-8")
+            ).hexdigest()
+    except C12FinalDeliveryProjectionError as exc:
+        raise SystemExit(str(exc)) from exc
+    return output_text, baseline_audit, post_truth_audit, deferred_audit
+
+
+def require_c12_final_delivery_bytes(
+    *,
+    projection: C12FinalDeliveryProjection,
+    config: Mapping[str, object],
+    cid: str,
+    output_text: str,
+) -> None:
+    """Keep C12's shared late-hygiene phase from writing a text mutation."""
+
+    try:
+        validate_c12_final_delivery_bytes(
+            projection=projection,
+            config=config,
+            cid=cid,
+            output_text=output_text,
+        )
+    except C12FinalDeliveryProjectionError as exc:
+        raise SystemExit(str(exc)) from exc

@@ -19,6 +19,11 @@ from src.autoslice.boundary_semantic_review import (
 from src.autoslice.channel_profile import (
     load_channel_profile as _load_channel_profile,
 )
+from src.autoslice.review_package_owner_audit_c12_supersession import (
+    C12_SOURCE_TRUTH_SUPERSESSION_SCHEMA,
+    c12_source_truth_supersession_valid,
+    c12_zero_current_source_owner_receipt_valid,
+)
 from src.autoslice.producer_boundary_owner_contract import (
     validate_frozen_boundary_owner_contract,
 )
@@ -309,9 +314,21 @@ def _source_truth_audit_valid(
     truth_audit: object,
     *,
     provenance: object = None,
+    chat_authority: Mapping[str, object] | None = None,
+    record: Mapping[str, object] | None = None,
+    record_path: Path | None = None,
+    subtitle_path: Path | None = None,
 ) -> bool:
     if not isinstance(truth_audit, Mapping):
         return False
+    if truth_audit.get("schema_version") == C12_SOURCE_TRUTH_SUPERSESSION_SCHEMA:
+        return c12_source_truth_supersession_valid(
+            truth_audit,
+            chat_authority=chat_authority,
+            record=record,
+            record_path=record_path,
+            subtitle_path=subtitle_path,
+        )
     applied = truth_audit.get("applied")
     satisfied = truth_audit.get("satisfied")
     failures = truth_audit.get("failures")
@@ -541,7 +558,23 @@ def _source_truth_owner_set_valid(
     story_start: int,
     story_end: int,
     owner_scope: Mapping[str, object] | None,
+    superseded_truth_ids: frozenset[str] | None = None,
 ) -> bool:
+    frozen_ids = {
+        owner_id
+        for owner_kind, owner_id in frozen_owner_keys
+        if owner_kind == "source_subtitle_truth"
+    }
+    if superseded_truth_ids is not None:
+        # C12's sealed v3 full-text operator pin retires only the historical
+        # source-truth *text* owner set.  Its old frozen boundary owners remain
+        # in the immutable geometry contract, but are zero current delivery
+        # owners and must each be named by the sealed pre-redelivery audit.
+        return bool(
+            scope_valid
+            and not truth_rows
+            and frozen_ids.issubset(superseded_truth_ids)
+        )
     valid = scope_valid
     expected_ids: set[str] = set()
     seen_ids: set[str] = set()
@@ -588,11 +621,6 @@ def _source_truth_owner_set_valid(
             and _normalized_windows(owner.get("local_windows")) == windows
         ):
             valid = False
-    frozen_ids = {
-        owner_id
-        for owner_kind, owner_id in frozen_owner_keys
-        if owner_kind == "source_subtitle_truth"
-    }
     return valid and frozen_ids == expected_ids
 
 
@@ -932,6 +960,7 @@ def _frozen_owner_contract_valid(
     truth_rows: list[dict[str, Any]],
     chat_authority: Mapping[str, object],
     record: Mapping[str, object],
+    superseded_truth_ids: frozenset[str] | None = None,
     qixi_terminal_projection_authority: Mapping[str, object] | None = None,
 ) -> tuple[bool, list[object] | None]:
     owners = frozen.get("owners") if isinstance(frozen, Mapping) else None
@@ -984,6 +1013,7 @@ def _frozen_owner_contract_valid(
         story_start=story_start,
         story_end=story_end,
         owner_scope=owner_scope,
+        superseded_truth_ids=superseded_truth_ids,
     )
     boundary_audit = record.get("boundary_audit")
     delivery_start = (
@@ -1297,6 +1327,7 @@ def audit_source_truth_owner_attestations(
     chat_authority: dict[str, Any],
     record_path: Path | None,
     record: dict[str, Any],
+    subtitle_path: Path | None = None,
     provenance: dict[str, Any] | None = None,
     qixi_terminal_projection_authority: Mapping[str, object] | None = None,
 ) -> None:
@@ -1304,7 +1335,15 @@ def audit_source_truth_owner_attestations(
 
     truth_audit_raw = chat_authority.get("source_subtitle_truth_audit")
     truth_audit = truth_audit_raw if isinstance(truth_audit_raw, dict) else {}
-    if not _source_truth_audit_valid(truth_audit_raw, provenance=provenance):
+    truth_audit_valid = _source_truth_audit_valid(
+        truth_audit_raw,
+        provenance=provenance,
+        chat_authority=chat_authority,
+        record=record,
+        record_path=record_path,
+        subtitle_path=subtitle_path,
+    )
+    if not truth_audit_valid:
         issue_adder(
             issues,
             "SOURCE_TRUTH_AUDIT_MISSING_OR_INVALID",
@@ -1323,11 +1362,28 @@ def audit_source_truth_owner_attestations(
         for row in truth_audit.get(key) or []
         if isinstance(row, dict) and row.get("required") is False
     ]
-    if not _final_truth_owner_receipt_valid(
+    c12_superseded_truth_ids: frozenset[str] | None = None
+    c12_supersession = bool(
+        truth_audit_valid
+        and truth_audit.get("schema_version") == C12_SOURCE_TRUTH_SUPERSESSION_SCHEMA
+    )
+    if c12_supersession:
+        identifiers = truth_audit.get("superseded_truth_ids")
+        if isinstance(identifiers, list) and all(
+            isinstance(identifier, str) for identifier in identifiers
+        ):
+            c12_superseded_truth_ids = frozenset(identifiers)
+    truth_owner_valid = _final_truth_owner_receipt_valid(
         truth_owner=chat_authority.get("final_source_truth_owner_verification"),
         truth_rows=truth_rows,
         optional_truth_row_count=len(optional_rows),
-    ):
+    ) and (
+        not c12_supersession
+        or c12_zero_current_source_owner_receipt_valid(
+            chat_authority.get("final_source_truth_owner_verification")
+        )
+    )
+    if not truth_owner_valid:
         issue_adder(
             issues,
             "SOURCE_TRUTH_FINAL_OWNER_ATTESTATION_MISSING",
@@ -1388,6 +1444,7 @@ def audit_source_truth_owner_attestations(
         truth_rows=truth_rows,
         chat_authority=chat_authority,
         record=record,
+        superseded_truth_ids=c12_superseded_truth_ids,
         qixi_terminal_projection_authority=qixi_terminal_projection_authority,
     )
     if not frozen_valid:
