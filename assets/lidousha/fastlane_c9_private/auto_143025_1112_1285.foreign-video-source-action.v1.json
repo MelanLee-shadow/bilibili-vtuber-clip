@@ -19,6 +19,33 @@
     {"seek_ms": 120000, "frame_md5": "cbe9ebbdeafd47ed30461059f2ff5a63", "fact": "Watched-video layout remains active."}
   ],
   "audio_source_basis": "The retained speaker-final analysis has a single guest cluster for the complete-IN_VIDEO cue set. This receipt does not elevate its labels alone: the labels are used only where the local visual playback window is active and no host-labelled subwindow occurs.",
+  "drop_rows": [
+    {"cue":10,"start_ms":25080,"end_ms":27570,"speaker_final_pointer":"analysis.subcue_mixed_overlap.cue_windows[source_cue=10]","windows":"25080-25910:guest;25910-26740:unresolved;26740-27570:unresolved","no_host_overlap":true,"playback_frames":[26,30,34]},
+    {"cue":11,"start_ms":28010,"end_ms":30490,"speaker_final_pointer":"analysis.subcue_mixed_overlap.cue_windows[source_cue=11]","windows":"28010-30490:guest","no_host_overlap":true,"playback_frames":[26,30,34]},
+    {"cue":12,"start_ms":30490,"end_ms":34290,"speaker_final_pointer":"analysis.subcue_mixed_overlap.cue_windows[source_cue=12]","windows":"30490-33340:guest;33340-34290:unresolved","no_host_overlap":true,"playback_frames":[26,30,34]},
+    {"cue":13,"start_ms":34290,"end_ms":35590,"speaker_final_pointer":"final_decisions[source_index=13]","windows":"34290-35590:guest","no_host_overlap":true,"playback_frames":[26,30,34]},
+    {"cue":15,"start_ms":37470,"end_ms":39670,"speaker_final_pointer":"analysis.subcue_mixed_overlap.cue_windows[source_cue=15]","windows":"37470-39670:guest","no_host_overlap":true,"playback_frames":[38,46,54]},
+    {"cue":16,"start_ms":39670,"end_ms":41110,"speaker_final_pointer":"analysis.subcue_mixed_overlap.cue_windows[source_cue=16]","windows":"39670-41110:guest","no_host_overlap":true,"playback_frames":[38,46,54]},
+    {"cue":17,"start_ms":41360,"end_ms":42960,"speaker_final_pointer":"analysis.subcue_mixed_overlap.cue_windows[source_cue=17]","windows":"41360-42960:guest","no_host_overlap":true,"playback_frames":[38,46,54]},
+    {"cue":18,"start_ms":42960,"end_ms":45960,"speaker_final_pointer":"analysis.subcue_mixed_overlap.cue_windows[source_cue=18]","windows":"42960-45960:guest","no_host_overlap":true,"playback_frames":[38,46,54]},
+    {"cue":19,"start_ms":46000,"end_ms":48840,"speaker_final_pointer":"analysis.subcue_mixed_overlap.cue_windows[source_cue=19]","windows":"46000-48840:guest","no_host_overlap":true,"playback_frames":[38,46,54]},
+    {"cue":20,"start_ms":50250,"end_ms":54190,"speaker_final_pointer":"analysis.subcue_mixed_overlap.cue_windows[source_cue=20]","windows":"50250-54190:guest","no_host_overlap":true,"playback_frames":[38,46,54]},
+    {"cue":21,"start_ms":54190,"end_ms":55190,"speaker_final_pointer":"final_decisions[source_index=21]","windows":"54190-55190:guest","no_host_overlap":true,"playback_frames":[38,46,54]},
+    {"cue":28,"start_ms":69740,"end_ms":70380,"speaker_final_pointer":"final_decisions[source_index=28]","windows":"69740-70380:guest","no_host_overlap":true,"playback_frames":[70,74,77]},
+    {"cue":29,"start_ms":70380,"end_ms":71800,"speaker_final_pointer":"analysis.subcue_mixed_overlap.cue_windows[source_cue=29]","windows":"70380-71800:guest","no_host_overlap":true,"playback_frames":[70,74,77]},
+    {"cue":30,"start_ms":71800,"end_ms":73140,"speaker_final_pointer":"final_decisions[source_index=30]","windows":"71800-73140:guest","no_host_overlap":true,"playback_frames":[70,74,77]},
+    {"cue":31,"start_ms":73140,"end_ms":74420,"speaker_final_pointer":"final_decisions[source_index=31]","windows":"73140-74420:guest","no_host_overlap":true,"playback_frames":[70,74,77]},
+    {"cue":32,"start_ms":74910,"end_ms":77990,"speaker_final_pointer":"analysis.subcue_mixed_overlap.cue_windows[source_cue=32]","windows":"74910-75680:unresolved;75680-77990:guest","no_host_overlap":true,"playback_frames":[70,74,77]},
+    {"cue":36,"start_ms":87870,"end_ms":91890,"speaker_final_pointer":"analysis.subcue_mixed_overlap.cue_windows[source_cue=36]","windows":"87870-91890:guest","no_host_overlap":true,"playback_frames":[88,96,104]},
+    {"cue":37,"start_ms":91890,"end_ms":93230,"speaker_final_pointer":"final_decisions[source_index=37]","windows":"91890-93230:guest","no_host_overlap":true,"playback_frames":[88,96,104]},
+    {"cue":38,"start_ms":94370,"end_ms":96730,"speaker_final_pointer":"analysis.subcue_mixed_overlap.cue_windows[source_cue=38]","windows":"94370-96730:guest","no_host_overlap":true,"playback_frames":[88,96,104]},
+    {"cue":39,"start_ms":96730,"end_ms":99690,"speaker_final_pointer":"analysis.subcue_mixed_overlap.cue_windows[source_cue=39]","windows":"96730-98210:guest;98210-98950:unresolved;98950-99690:guest","no_host_overlap":true,"playback_frames":[88,96,104]},
+    {"cue":40,"start_ms":100170,"end_ms":101290,"speaker_final_pointer":"final_decisions[source_index=40]","windows":"100170-101290:guest","no_host_overlap":true,"playback_frames":[88,96,104]},
+    {"cue":41,"start_ms":101540,"end_ms":103740,"speaker_final_pointer":"analysis.subcue_mixed_overlap.cue_windows[source_cue=41]","windows":"101540-103740:guest","no_host_overlap":true,"playback_frames":[88,96,104]},
+    {"cue":42,"start_ms":103740,"end_ms":105640,"speaker_final_pointer":"analysis.subcue_mixed_overlap.cue_windows[source_cue=42]","windows":"103740-105640:guest","no_host_overlap":true,"playback_frames":[88,96,104]},
+    {"cue":46,"start_ms":110160,"end_ms":114770,"speaker_final_pointer":"analysis.subcue_mixed_overlap.cue_windows[source_cue=46]","windows":"110160-112465:guest;112465-113617:unresolved;113617-114770:guest","no_host_overlap":true,"playback_frames":[110,118,124]},
+    {"cue":50,"start_ms":121850,"end_ms":124330,"speaker_final_pointer":"analysis.subcue_mixed_overlap.cue_windows[source_cue=50]","windows":"121850-124330:guest","no_host_overlap":true,"playback_frames":[110,118,124]}
+  ],
   "complete_in_video_source_cues": [10, 11, 12, 13, 15, 16, 17, 18, 19, 20, 21, 28, 29, 30, 31, 32, 36, 37, 38, 39, 40, 41, 42, 46, 50],
   "unresolved_or_mixed_source_cues": [5, 35, 44, 47, 48, 49, 52],
   "frozen_source_cues": [1, 2, 3, 4, 5, 6, 7, 8, 9, 14, 22, 23, 24, 25, 26, 27, 33, 34, 35, 43, 44, 45, 47, 48, 49, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66],
@@ -29,5 +56,5 @@
     "reviewed_srt_sha256": "sha256:f436e1913b8eb2bd948c37b18bce9c2a9970dd9be07cf114f309a9c162c2b51b"
   },
   "mixed_cue_policy": "No sub-cue edit is emitted. Cues 5, 47, 48, 49, and 52 have mixed host/guest windows; cues 35 and 44 are brief guest-labelled interjections without a reliable source split. They remain frozen rather than being whole-cue drops.",
-  "self_sha256": "sha256:587ecd4735789b5164a9a31bb64f17f3592c56c6d25a727895f676fa8fe8c7e6"
+  "self_sha256": "sha256:9c9fbd639ae4b6f70a5cafabf98179579f9e8c69c26c3ab2545529c32ed4f1e7"
 }

@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE = ROOT / "assets/lidousha/fastlane_c9_private"
 RECEIPT = BASE / "auto_143025_1112_1285.foreign-video-source-action.v1.json"
 SRT = BASE / "auto_143025_1112_1285.reviewed.srt"
+SOURCE_SRT = BASE / "auto_143025_1112_1285.source.speaker-final.srt"
 
 
 def _canonical_sha256(document: dict) -> str:
@@ -18,6 +19,10 @@ def _canonical_sha256(document: dict) -> str:
     unsigned.pop("self_sha256")
     data = json.dumps(unsigned, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def _blocks(path: Path) -> list[list[str]]:
+    return [block.splitlines() for block in path.read_text(encoding="utf-8").strip().split("\n\n") if block]
 
 
 def test_c9_source_action_projection_is_exhaustive_and_preserves_uncertain_cues() -> None:
@@ -28,6 +33,10 @@ def test_c9_source_action_projection_is_exhaustive_and_preserves_uncertain_cues(
 
     assert receipt["candidate_id"] == "auto_143025_1112_1285"
     assert receipt["upload"] is False
+    rows = receipt["drop_rows"]
+    assert [row["cue"] for row in rows] == dropped
+    assert all(row["no_host_overlap"] is True for row in rows)
+    assert all("host" not in row["windows"] for row in rows)
     assert set(dropped).isdisjoint(frozen)
     assert sorted(dropped + frozen) == list(range(1, 67))
     assert set(unresolved).issubset(frozen)
@@ -35,9 +44,24 @@ def test_c9_source_action_projection_is_exhaustive_and_preserves_uncertain_cues(
     assert receipt["exhaustive_projection"]["reviewed_cue_count"] == 66 - len(dropped)
     assert receipt["self_sha256"] == _canonical_sha256(receipt)
 
-    blocks = [block for block in SRT.read_text(encoding="utf-8").strip().split("\n\n") if block]
-    assert len(blocks) == 41
-    assert [int(block.splitlines()[0]) for block in blocks] == list(range(1, 42))
+    source_blocks = _blocks(SOURCE_SRT)
+    reviewed_blocks = _blocks(SRT)
+    assert "sha256:" + hashlib.sha256(SOURCE_SRT.read_bytes()).hexdigest() == receipt["source_binding"]["speaker_final_srt_sha256"]
+    assert len(source_blocks) == 66
+    assert [int(block[0]) for block in source_blocks] == list(range(1, 67))
+    source_by_index = {int(block[0]): block for block in source_blocks}
+    for row in rows:
+        timing = source_by_index[row["cue"]][1]
+        start, end = timing.split(" --> ")
+        def milliseconds(value: str) -> int:
+            hour, minute, second_ms = value.split(":")
+            second, millisecond = second_ms.split(",")
+            return ((int(hour) * 60 + int(minute)) * 60 + int(second)) * 1000 + int(millisecond)
+        assert (row["start_ms"], row["end_ms"]) == (milliseconds(start), milliseconds(end))
+    assert len(reviewed_blocks) == 41
+    assert [int(block[0]) for block in reviewed_blocks] == list(range(1, 42))
+    expected = [block[1:] for block in source_blocks if int(block[0]) not in dropped]
+    assert [block[1:] for block in reviewed_blocks] == expected
     assert "正在看这个哦哈" not in SRT.read_text(encoding="utf-8")
     assert "就是有点影响到。哇，好漂亮" in SRT.read_text(encoding="utf-8")
     assert "这哦不，不止任何人" in SRT.read_text(encoding="utf-8")

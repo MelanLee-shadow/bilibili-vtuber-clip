@@ -9,6 +9,14 @@ burned preview（`af7d5d1c7107a950e63029872454a685af48e246df619cbca445e298e9470f
 持续可见；84s 的内嵌画面实际带有自身字幕。所有 frame MD5、输入 SHA 与决策集合均封存在
 `foreign-video-source-action.v1.json`。
 
+可视证据 contact sheet 为
+[`c9-watched-video-clusters-contact.jpg`](evidence/2026-08-24-fastlane-c9/c9-watched-video-clusters-contact.jpg)，
+SHA-256 `b966094f8b23aeafbc885933ec3cf02e85ee22c13ac11388b99b651541a1daf2`；相同 15 帧的 extraction
+timestamp/framemd5 receipt 是
+[`frame-md5.txt`](evidence/2026-08-24-fastlane-c9/frame-md5.txt)，SHA-256
+`d07c75104f8de99ace5bab70df95272484259bdc9aba1112c5fc6c63edeee78f`。每个 drop row 都绑定一个
+start/mid/end cluster 与 speaker-final 的 exact JSON pointer/windows；没有 host-labelled subwindow。
+
 仅 25 个完整、单一 guest-audio cue 被标为 `IN_VIDEO` 并弃掉：10--13、15--21、28--32、36--42、46、50。
 其余 41 cue 字节冻结。特别地，5、47--49、52 有 host/guest 混合窗口，35/44 是短 guest-labelled
 回应但无法可靠来源拆分，均维持 `UNCERTAIN`，没有整条删除。
