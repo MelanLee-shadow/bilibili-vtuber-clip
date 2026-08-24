@@ -28,7 +28,15 @@ def closure(root:Path,audit_path:Path)->dict[str,Any]:
  artifacts={k:{"path":str(names[n]),"sha256":sha256_file(_contained(root,str(names[n]),label=k.upper()))} for k,n in {"video":"burned_final","subtitle":"successor_srt","cover":"cover"}.items()}
  return {"formal_authority_sha256":au["authority_sha256"],"root_evidence_sha256":ROOT_SHA,"audit":{"path":audit_path.name,"sha256":sha256_file(audit_path),"policy_fingerprint":a["policy_fingerprint"]},"artifacts":artifacts,"publication_target":{"bvid":"BV1os8q61Eya","aid":117132650155234,"cid":41126267272,"title":TITLE}}
 def template(root:Path,audit_path:Path)->dict[str,Any]:
- return {"schema_version":SCHEMA,"candidate_id":CID,"status":"TECHNICAL_REVIEW_REQUIRED","accepted":False,"reviewed_by":None,"reviewed_at":None,"upload_allowed":False,"bindings":closure(root,audit_path),"six_named_points":[{"point_id":x["point_id"],"expectation":x["expected"],"verdict":None,"evidence":None} for x in SIX_NAMED_POINTS]}
+ base=closure(root,audit_path); evidence=_read_json(_contained(root,ROOT_EVIDENCE,label="ROOT_EVIDENCE"),label="ROOT_EVIDENCE")
+ points={row.get("point_id"):row for row in evidence["points"] if isinstance(row,Mapping)}
+ rows=[]
+ for x in SIX_NAMED_POINTS:
+  point=points.get(x["point_id"])
+  if not isinstance(point,Mapping) or point.get("expected")!=x["expected"]: raise C1TechnicalReceiptError("C1_ROOT_EVIDENCE_POINT_DRIFT")
+  digest=hashlib.sha256(json.dumps(point,ensure_ascii=False,sort_keys=True,separators=(",",":" )).encode()).hexdigest()
+  rows.append({"point_id":x["point_id"],"expectation":x["expected"],"verdict":None,"evidence":None,"root_evidence_point_sha256":"sha256:"+digest})
+ return {"schema_version":SCHEMA,"candidate_id":CID,"status":"TECHNICAL_REVIEW_REQUIRED","accepted":False,"reviewed_by":None,"reviewed_at":None,"upload_allowed":False,"bindings":base,"six_named_points":rows}
 def validate_completed(value:object,root:Path,audit_path:Path)->dict[str,Any]:
  if not isinstance(value,Mapping) or set(value)!={"schema_version","candidate_id","status","accepted","reviewed_by","reviewed_at","upload_allowed","bindings","six_named_points"}: raise C1TechnicalReceiptError("C1_RECEIPT_SCHEMA_INVALID")
  expected=template(root,audit_path)
@@ -36,5 +44,5 @@ def validate_completed(value:object,root:Path,audit_path:Path)->dict[str,Any]:
  points=value.get("six_named_points")
  if not isinstance(points,list) or len(points)!=6: raise C1TechnicalReceiptError("C1_RECEIPT_POINT_SET_INVALID")
  for raw, base in zip(points,expected["six_named_points"],strict=True):
-  if not isinstance(raw,Mapping) or set(raw)!={"point_id","expectation","verdict","evidence"} or raw.get("point_id")!=base["point_id"] or raw.get("expectation")!=base["expectation"] or raw.get("verdict")!="PASS" or not isinstance(raw.get("evidence"),str) or len(raw["evidence"].strip())<12: raise C1TechnicalReceiptError("C1_RECEIPT_POINT_INVALID")
+  if not isinstance(raw,Mapping) or set(raw)!={"point_id","expectation","verdict","evidence","root_evidence_point_sha256"} or raw.get("point_id")!=base["point_id"] or raw.get("expectation")!=base["expectation"] or raw.get("root_evidence_point_sha256")!=base["root_evidence_point_sha256"] or raw.get("verdict")!="PASS" or raw.get("evidence")!=base["root_evidence_point_sha256"]: raise C1TechnicalReceiptError("C1_RECEIPT_POINT_INVALID")
  return dict(value)
