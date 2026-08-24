@@ -4,6 +4,17 @@
 `scripts/authorized_upload.py`；`.agent/skills/bilive-autoslice-publish/SKILL.md`
 只提供操作顺序，不得另立规则。
 
+## 快车道授权与串行发布边界
+
+对 Claude line 947 穷举批次，候选点名错误修复完成即使用本页既有 package、manifest、
+audit、授权和公开验收门进入上传；不新增 Ivan 二次看片/复审。Qixi-first，随后按批次原
+顺序。candidate-private prepare/package/QC 可并行；transcription/AGY 之后仅 bounded per-cue
+short calls 彼此并行，待字幕、媒体和标题输入冻结后 burn 与 cover 可并行；commit lease、formal state+journal、same-BV apply、upload mutation 与 queue
+advancement 必须串行。mutation 完成后 public/Creator/section 三个 read-only probes 可并行，
+但 joint acceptance 是屏障，三面收敛前不得释放下一候选。workflow 病因修复可并行推进，但
+不能改写 artifact release critical path 或重新引入 Ivan review node。`review_ready` 不是
+publication 状态。
+
 ## Readiness graph 不授权发布
 
 固定 no-arg 的 scripts/publication_readiness_graph.py 只能读 canonical registry/runtime

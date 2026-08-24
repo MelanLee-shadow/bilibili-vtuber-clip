@@ -1,5 +1,14 @@
 # 2026-08-24 快车道来源与 live readiness 快照
 
+> **Supersession note（当前执行必读）：** 本页是 8/24 早期 session 的 source/live
+> snapshot；其中任何 `PENDING`、旧 hash、旧 readiness 或“等待 Ivan review”的表述都只
+> 保留历史事实，不构成当前阻塞，也不能覆盖 Claude JSONL line 947 的穷举快车道授权。
+> 当前批次固定为 21 条（18 talk + 3 song）：每片只修该片点名错误即可直接上传，**不需要
+> Ivan 二次看片/复审**；#12/#13 的“其他小错自己识别/顺手修”属于该片明示范围，未点名
+> 内容仍冻结。Qixi-first 后按原审片顺序。delegated Codex root exact-byte/perceptual
+> receipt 只是技术追溯/验收，不是 Ivan rereview；实现、打包和上传由 worker 执行，root
+> 负责规划、审查、验收和发布批准。
+
 本文件把 Claude 对话中的快车道命令、2026-08-19 批次裁定，以及 2026-08-24 在
 `free` 上的只读核对固化为一个可复核的 source-bound ledger。它不是上传授权、不是
 状态写入，也不是对未来状态的承诺；runtime、公开态和候选产物会漂移，使用前必须重新
@@ -72,9 +81,9 @@ public view API 交叉读取；无 BVID 不是“从未发布”的证明，只�
 | 2 | `2026-08-13/auto_203011_328_389` / talk | `confirmed`: state pick `candidate_rejected/failed`；rerender receipt `QUEUED_SELECTED_REPAIR` + publication hold `hold_pending_review`；registry `hold_pending_review`；无 local BVID | selected-final-review recovery、subtitle override | `blocker`: 0:14、1:04、title/cover identity 三项 ruling 未在 current formal SRT/title/package 闭合；deployed override unrelated，provider/upload false。详见 [#1–#3 dossier](2026-08-24-fastlane-1-3-source-bound.md)。 |
 | 3 | `2026-08-13/auto_220021_561_670` / talk | `confirmed`: 无 local BVID evidence；current recut SRT SHA `dfb2d77f133100f32f76c4f94dd56dae55db6ab02afdbcdcc2ba5d67dccf5704`；record subtitle hash stale/different | selected-final-review recovery、subtitle override | `blocker`: host/video 声音边界、`青兰`/`星兰` 与 `恋死→星兰` source binding 未闭合；cover downstream blocker 仍存在。详见 [#1–#3 dossier](2026-08-24-fastlane-1-3-source-bound.md)。 |
 | 4 | `auto_113028_1602_1698` / talk | `confirmed`: 无当前公开 BVID；`5f90525` full-dry 一次 | operator reviewed subtitle baseline v2 | `confirmed`: `READY_TO_COMMIT`，`rc=0`，`upload_allowed=false` 仅因全局上传门；speaker `READY`、guess `null`。尚未 apply/upload。 |
-| 5 | `auto_113028_1271_1328` / talk | `confirmed`: 无当前公开 BVID；`18291ae` full-dry 一次 | operator reviewed subtitle baseline v2 | `blocker`: stale binding 已越过，当前为 speaker guess requires human review；`upload_allowed=false`。 |
+| 5 | `auto_113028_1271_1328` / talk | `confirmed`: 该 snapshot 无公开 BVID；`18291ae` full-dry 一次 | operator reviewed subtitle baseline v2 | `historical blocker`: stale binding 已越过；当时记录为 speaker-guess technical closure 未闭合，`upload_allowed=false`。 |
 | 6 | `auto_120032_753_816` / talk | `confirmed`: 无当前公开 BVID；`18291ae` full-dry 一次 | reviewed baseline v2、public-text authority | `blocker`: exact delivery boundary `CONTENT_ANCHOR_NOT_COVERED` / final-boundary semantic block；`upload_allowed=false`。 |
-| 7 | `auto_123036_727_785` / talk | `confirmed`: 无当前公开 BVID；`18291ae` full-dry 一次 | reviewed baseline v2 | `blocker`: stale binding 已越过，当前为 speaker guess requires human review；`upload_allowed=false`。 |
+| 7 | `auto_123036_727_785` / talk | `confirmed`: 该 snapshot 无公开 BVID；`18291ae` full-dry 一次 | reviewed baseline v2 | `historical blocker`: stale binding 已越过；当时记录为 speaker-guess technical closure 未闭合，`upload_allowed=false`。 |
 | 7b | `auto_130040_201_255` / talk | `confirmed`: 无当前公开 BVID | 未发现当前 repair authority | `blocker`: content-boundary 终审拒；需复活、重新冻结 truth。 |
 | 8 | `songvis_130040_670` / song | `confirmed`: `BV1fr8P6REDP`；public + Creator + section 均 `VERIFIED_PUBLIC` | live public/Creator/section readback | `confirmed`: 已是公开态；从本轮 pending queue 移除，不重复上传。 |
 | 9 | `auto_143025_1112_1285` / talk | `confirmed`: 无当前公开 BVID | 未发现当前 reviewed baseline/repair authority | `blocker`: 视频内字幕边界与灰泽修复未闭合。 |
@@ -82,26 +91,28 @@ public view API 交叉读取；无 BVID 不是“从未发布”的证明，只�
 | 11 | `song_130012_1163` / song | `confirmed`: fresh public `BV1pW8E6eEq5`, AID `117120855709245`, CID `41058045650`；runtime registry 与 completed ledger 对齐 | public view + registry/ledger | `historical-public-only`: 本轮未 fresh 读取 Creator/exact section；旧公开稿不得重传。 |
 | 12 | `auto_130012_435_574` / talk | `confirmed`: `BLOCKED_TERMINAL`, `REFRESH_HOOK_UNSUPPORTED`，无公开 BVID | revival/repair authority 未发现 | `blocker`: chat-authority 拒；需复活+修+发，当前不上传。 |
 | 13 | `auto_123008_1017_1114` / talk | `confirmed`: current `candidate_rejected`, `rc=1`, `failure_recoverable=false`，无公开 BVID | subtitle authority unresolved | `blocker`: 人工真值须裁决 `おめでとう`（声学候选 `ありがとう`）；不得以旧“可恢复”说法替代当前终态。 |
-| 14 | `auto_120026_125_253` / talk | `confirmed`: `boundary_semantic` failure，`failure_recoverable=false`，无公开 BVID；AI cover required | boundary/source-fact + cover authority 未闭合 | `blocker`: 需授权复活、边界/字幕人审及 AI cover；不上传。 |
-| 15 | `auto_123655_771_844` / talk | `confirmed`: fresh public + Creator `BV133816tEiN`, AID `117138287300220`, CID `41157069221` | public/Creator readback；section 未独立 fresh read | `historical-public-only/blocker`: 旧稿不得重传；若修，只能 same-BV，需新 scope、包、人审和授权链。 |
+| 14 | `auto_120026_125_253` / talk | `confirmed`: 该 snapshot 在 `boundary_semantic` failure，`failure_recoverable=false`，无公开 BVID；AI cover required | boundary/source-fact + cover authority 未闭合 | `historical blocker`: 当时记录需授权复活、边界/字幕 technical closure 及 AI cover；不上传。 |
+| 15 | `auto_123655_771_844` / talk | `confirmed`: 该 snapshot fresh public + Creator `BV133816tEiN`, AID `117138287300220`, CID `41157069221` | public/Creator readback；section 未独立 fresh read | `historical-public-only/blocker`: 旧稿不得重传；若修，只能 same-BV，需新 scope、包、technical receipt 和授权链。 |
 | 16 | `auto_123655_1613_1676` / talk | `confirmed`: 无 verified BVID；当前 replacement package bytes 与 record 声明漂移 | source-fact/story-contract authority 未闭合 | `blocker`: 仅 locator；不得 review/package/transfer，先重生成 coherent package。 |
-| 17 | `auto_113022_260_324` / talk | `confirmed`: `candidate_rejected/FLAGGED`, `rc=1`, `failure_recoverable=false`；replacement package bytes 与 record 漂移，无 BVID | recovery + subtitle authority 未闭合 | `blocker`: 仅 locator；需 recovery authority、重生成包及 cover/QC/人审，不得错误 transfer。 |
+| 17 | `auto_113022_260_324` / talk | `confirmed`: 该 snapshot 为 `candidate_rejected/FLAGGED`, `rc=1`, `failure_recoverable=false`；replacement package bytes 与 record 漂移，无 BVID | recovery + subtitle authority 未闭合 | `historical blocker`: 仅 locator；当时记录需 recovery authority、重生成包及 cover/QC/technical receipt，不得错误 transfer。 |
 | 18 | `auto_143702_0_53` / talk | `confirmed`: fresh public + Creator + exact section `9320779` 一致：`BV1Pi8P6FEzS`, AID `117130183840023`, CID `41111389163`, state `0` | 三面 live readback | `historical-public-only`: 旧公开稿不得重传；新修复须另走 same-BV 链。 |
-| 19 | `auto_113022_354_496` / talk/Qixi | `confirmed`: fresh public + Creator + exact section `9320779` 一致：`BV1Ud8F6fECS`, AID `117126140527747`, CID `41087534673`; Qixi queue head | successor package + pending human review | `blocker`: successor video/SRT/cover hashes已冻结但实际人审仍 `PENDING`；不得 same-BV apply/upload/宣称闭环。 |
+| 19 | `auto_113022_354_496` / talk/Qixi | `confirmed`: fresh public + Creator + exact section `9320779` 一致：`BV1Ud8F6fECS`, AID `117126140527747`, CID `41087534673`; Qixi queue head | successor package + delegated-root technical receipt | 历史 snapshot 当时为 pending template；当前不要求 Ivan 二次复审，仍须按既有 package/same-BV 技术门和真实 live readback 闭环。 |
 | 20 | `song_133654_1170` / song | `confirmed`: fresh public + Creator + exact song section `9364628` 一致：`BV1Cn8E6iEf8`, AID `117120822222716`, CID `41057781970`, state `0` | 三面 live readback | `historical-public-only`: 旧公开稿不得重传；任何修复只走 same-BV。 |
 
 ## 4. Next wave
 
-1. **Qixi**：完成真实最终播放/感知复核并生成 hash-bound human receipt；receipt 之前保持
-   upload、same-BV apply 和 public closure 冻结。
+1. **Qixi**：由 delegated Codex root 对最终字节完成 hash-bound exact-byte/perceptual
+   technical receipt；不把该 receipt 变成 Ivan 二次复审。receipt/package/same-BV 技术门
+   和真实 live readback 仍须完成后，才能宣称 public closure。
 2. **C4**：已在 `5f90525` 部署并完成一次 no-write full-dry，达到
-   `READY_TO_COMMIT`；仍禁止绕过显式 commit lease、最终人审与上传门。**C5/C7** 当前补
-   真实人审 speaker/source-fact receipt，**C6** 补 boundary 人审 receipt。禁止盲重试旧
+   `READY_TO_COMMIT`；仍禁止绕过显式 commit lease、package/audit 与上传门。**C5/C7** 当时
+   记录为缺 speaker/source-fact technical closure，**C6** 当时记录为缺 boundary technical
+   closure；当前执行以 line947 truth 和 delegated-root receipt 为准。禁止盲重试旧
    stage/旧 receipt。
 3. **候选 #4/#5**：在独立 private stage 并行 prepare/package/QC；只产生候选私有产物，
    不写 formal state/journal，不调用上传器，等待最终标题/封面和授权 manifest。
 4. **#1–#3 与 7b/#9/#10**：先按 [#1–#3 source-bound dossier](2026-08-24-fastlane-1-3-source-bound.md)
-   完成 Ivan truth、exact correction 和 review receipt；之后仍须重新跑后续 package/commit/upload/public
+   按 line947 truth 完成 exact correction 和 delegated-root technical receipt；之后仍须重新跑后续 package/commit/upload/public
    gates。其余候选按表顺序补齐复活 authority、song package/registry 缺口或
    same-BV 证据；对已存在 BVID 的候选重新核对当前 Creator/public/section，不把旧 BV、旧
    registry、`review_ready` 或 overnight report 当作本轮发布完成。
@@ -136,9 +147,10 @@ private evidence，不能当作持久最终 authority；后续必须把 receipt 
 `/opt/bilive/autoslice/private-fastlane-preflight/c6-auto_120032_753_816-18291ae669af5f22394673655691395e5555e56b-20260824T052920Z/`、
 `/opt/bilive/autoslice/private-fastlane-preflight/c7-auto_123036_727_785-18291ae669af5f22394673655691395e5555e56b-20260824T052932Z/`。
 
-C5/C7 的旧 stale source-fact binding 因新 successor carry 已不再是当前阻塞；对这两个候选，
-当前阻塞是 speaker guess 必须由人审闭合。C6 的阻塞已推进到 exact delivery boundary，仍
-需要其余人审/边界证据。C4 的 `b6e87cd` local actual-media reconciliation 已 PASS：
+C5/C7 的旧 stale source-fact binding 因新 successor carry 已不再是该历史 snapshot 的阻塞；
+该 snapshot 对这两个候选记录的是 speaker guess technical closure 尚未闭合。C6 的记录已
+推进到 exact delivery boundary，仍缺其余 technical boundary evidence。C4 的 `b6e87cd`
+local actual-media reconciliation 已 PASS：
 canonical `stage_replay` produced media SHA `0f5ee52f…6075`，stage manifest SHA
 `7c58e33d…dc76`；private successor produced 20 cues，drops `8/12/13/14`，只改变
 old cue 3；speaker SRT SHA `848d02…c43c`，ASS SHA `50eaa0…10f4`，manifest SHA
@@ -147,8 +159,8 @@ unchanged。此前 `abb211…` helper attempt 是错误路径证据，已丢弃�
 上述 successor 状态是旧历史快照；随后已进入 `5f90525` canonical deploy，并由第 6 节的
 C4 live full-dry readback 取代。该历史段落不构成当前 C4 阻塞或当前部署结论。
 
-本地 human-review surfaces（均为当前 session worktree 的私有证据，状态为 `PENDING`
-真实人审 receipt，不是 publication authority）：
+本地 human-review surfaces（均为当时 session worktree 的私有证据，状态为 `PENDING`
+模板/诊断，不是 publication authority，也不是当前 Ivan 人工待办）：
 
 - C5：`/private/tmp/fastlane-human-review-20260824/c5-auto_113028_1271_1328/`，模板 `review-template.v1.json`（PENDING），SHA-256 `6d37980362cf6a5aaef1be25ca19447e5e87a9f4c27c47f086202bfdfba28614`；reviewed SRT SHA-256 `9f33f247deb405b409d50f294bbfab08db7d5f43086241dd736fac0498faf64b`；raw receipt evidence SHA `6d1f…fc819`。
 - C6：`/private/tmp/fastlane-human-review-20260824/c6-auto_120032_753_816/`，模板 `boundary-human-review.pending.json`（PENDING），SHA-256 `5223f013ab71323d7c244c902cb237dada1d4a968093225fec09edd69a51e525`；diagnostic raw SHA `b9906bf04aea266518e9c5e8b62069c63c3ca94b235a8f3c7db9c1ec042e66e9`。
@@ -156,13 +168,14 @@ C4 live full-dry readback 取代。该历史段落不构成当前 C4 阻塞或�
 
 7b、#9、#10 仍只有 private prep/package locator，不构成 publication authority：
 
-- 7b `auto_130040_201_255`：`/private/tmp/fastlane-prep-20260824/7b-auto_130040_201_255/`；live content-boundary failed，`BLOCKED_AI_COVER_REQUIRED`，host identity unverified，text authority pending Ivan；背景候选 `REVIEW_REQUIRED`。
-- #9 `auto_143025_1112_1285`：`/private/tmp/fastlane-prep-20260824/9-auto_143025_1112_1285/`；live state failed，5400s timeout 仅为 reported evidence；缺 human video-voice truth；record 的 `artifact_hashes.subtitle_sha256` 为 `4b0402…`，当前 `recut.srt` SHA 为 `3327cb186ba44785df255c544e5e7ac1ce989a3872ccb91958a7b43ba77823c7`，存在 mismatch。
-- #10 `auto_143025_868_1094`：`/private/tmp/fastlane-prep-20260824/10-auto_143025_868_1094/`；live `candidate_rejected`（`subtitle_authority` / `final_review_findings`），三项 human review pending；record video SHA `185f…` 与当前 `4fc060…` 漂移；cover subject QC `PASS`。
+- 7b `auto_130040_201_255`：`/private/tmp/fastlane-prep-20260824/7b-auto_130040_201_255/`；该 snapshot 的 content-boundary failed，`BLOCKED_AI_COVER_REQUIRED`，host identity unverified，text authority 当时 pending；背景候选 `REVIEW_REQUIRED`，当前应按 line947 truth 处理。
+- #9 `auto_143025_1112_1285`：`/private/tmp/fastlane-prep-20260824/9-auto_143025_1112_1285/`；该 snapshot 的 state failed，5400s timeout 仅为 reported evidence；缺 video-voice technical truth；record 的 `artifact_hashes.subtitle_sha256` 为 `4b0402…`，当时 `recut.srt` SHA 为 `3327cb186ba44785df255c544e5e7ac1ce989a3872ccb91958a7b43ba77823c7`，存在 mismatch。
+- #10 `auto_143025_868_1094`：`/private/tmp/fastlane-prep-20260824/10-auto_143025_868_1094/`；该 snapshot 记录 `candidate_rejected`（`subtitle_authority` / `final_review_findings`），三项 technical review 当时 pending；record video SHA `185f…` 与当时 `4fc060…` 漂移；cover subject QC `PASS`。
 
 发布顺序不变：Qixi-first，然后按 ruling table 原序；candidate-private prepare/package/QC
 可以并行，但 publication、same-BV apply 和 uploader 不能并行跳过队列。Qixi
-`auto_113022_354_496` 仍需真实 human receipt，当前 successor 仍 `no upload`。
+`auto_113022_354_496` 当时 successor 仍 `no upload`；该历史 pending template 不构成
+当前 Ivan 复审要求，当前执行改由 delegated-root technical receipt 与既有发布门决定。
 
 ## 6. 最新 live acceptance：5f90525
 
@@ -192,11 +205,12 @@ successor mismatch 阻断；4e5 修复了 24→20→17 projection 并到达 spea
 hash 校验；5f90525 的 live `READY_TO_COMMIT` 结果是该 schema 修复已在运行面得到确认。
 这里不把 4e5 的分支细节写成未经独立 readback 的 exact deploy 事实。
 
-当前已知 blocker 仍为：Qixi 缺真实最终感知人审 receipt；C5/C7 缺 speaker/source-fact
-人审 receipt；C6 缺 boundary 人审 receipt；7b、#9、#10 仍为 private prep，#8 已公开并从
-pending queue 移除。上述 blocker 通过后仍须重新执行后续 package、commit、upload 与
-public/Creator/section readback gates；`READY_TO_COMMIT` 不是 publication 完成，也不暗示
-人审通过后必然可发。
+该历史 snapshot 记录的 technical blockers 为：Qixi 缺 delegated-root final-byte
+exact/perceptual receipt；C5/C7 缺 speaker/source-fact technical closure；C6 缺 boundary
+technical evidence；7b、#9、#10 仍为 private prep，#8 已公开并从 pending queue 移除。上述
+历史记录不构成当前 runtime 结论；当前执行仍须按 line947 truth 重新读取候选包，并重新执行
+package、commit、upload 与 public/Creator/section readback gates。`READY_TO_COMMIT` 不是
+publication 完成。
 
 ## 7. 2026-08-24 fresh live readback：#11–#20（wave evidence）
 
@@ -211,11 +225,12 @@ public/Creator/section readback gates；`READY_TO_COMMIT` 不是 publication 完
   Creator 或 exact section，因此不能过报为三面确认。既有公开稿不重传。
 - **#12**：当前为 `BLOCKED_TERMINAL` / `REFRESH_HOOK_UNSUPPORTED`，无 BVID；需要有明确
   revival authority 后再修复、审包和发布。
-- **#13**：当前 candidate 为 `candidate_rejected`，`rc=1`，`failure_recoverable=false`。
-  `おめでとう` 与声学提出的 `ありがとう` 仍需人工真值裁决；旧的“可恢复”描述不构成当前
-  authority。
-- **#14**：当前在 `boundary_semantic` 失败，`failure_recoverable=false`，且 cover route
-  为 `BLOCKED_AI_COVER_REQUIRED`；边界/字幕、人审和 AI cover 均未闭合。
+- **#13**：该 wave snapshot 的 candidate 为 `candidate_rejected`，`rc=1`，
+  `failure_recoverable=false`。当时记录 `おめでとう` 与声学提出的 `ありがとう` 需人工
+  真值裁决；这段历史观察不覆盖 line947 truth，旧的“可恢复”描述也不构成 authority。
+- **#14**：该 wave snapshot 在 `boundary_semantic` 失败，`failure_recoverable=false`，且
+  cover route 为 `BLOCKED_AI_COVER_REQUIRED`；当时记录的边界/字幕 technical closure 与
+  AI cover 均未闭合。
 - **#15**：fresh public + Creator 确认 `BV133816tEiN` / AID `117138287300220` /
   CID `41157069221`，但 current section membership 在该 wave 未独立 fresh read。任何后续
   修复只准 same-BV；不得 normal upload。
@@ -247,11 +262,14 @@ public/Creator/section readback gates；`READY_TO_COMMIT` 不是 publication 完
   `/private/tmp/qixi-root-review-surface-20260824/` 的 record/audit/review-manifest sidecars
   `26eeeb6c…` / `1b92983e…` / `6ea8c5e1…` 是 mixed diagnostic surface，
   `REJECTED_FOR_SIGNING`，仅保留诊断，不应误称为 canonical 成品缺陷。实际 final human review
-  仍为 `PENDING` template（不是 receipt），所以不得 same-BV apply、upload 或宣称修复闭环。
+  当时仍为 `PENDING` template（不是 receipt）；这是历史 session 状态，不再转化为 Ivan 二次
+  复审节点。same-BV apply、upload 和修复闭环仍须满足既有 technical receipt、package、
+  授权 manifest 与 live readback gates。
 - **#20**：fresh public、Creator 与 exact song section `9364628` 三面一致：
   `BV1Cn8E6iEf8` / AID `117120822222716` / CID `41057781970` / state `0`。这是旧公开稿，
   不是本轮新发布，不重传；任何后续更正只走 same-BV。
 
 结论：这些 readback 证明的是当前公开/阻塞面，不是本轮发布完成；旧公开不得重传，
-`review_ready`、历史 ruling 或 pending template 均不能替代真实人审、package audit、
-authorized manifest、same-BV/上传和 public/Creator/section 复核链。
+`review_ready`、历史 ruling 或 pending template 均不能替代 delegated-root exact-byte/
+perceptual technical receipt、package audit、authorized manifest、same-BV/上传和
+public/Creator/section 复核链；这些历史记录不重新引入 Ivan review node。

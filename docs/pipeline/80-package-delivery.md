@@ -2,6 +2,18 @@
 
 本文件是打包步骤的**分步权威**。入口：`src/autoslice/producer_package_finalization.py`。
 
+## 快车道与提速边界
+
+Claude line 947 已穷举授权的快车道候选，在该候选点名错误修完后直接进入既有 package/
+upload gates，不再插入 Ivan 二次看片/复审；#12/#13 的“其他小错自己识别/顺手修”仅在
+各自候选范围内有效，未点名内容冻结。artifact release critical path 可将不同候选的
+private prepare/package/QC 并行；同一候选的 transcription/AGY 之后，仅 bounded per-cue
+short calls 彼此并行；待字幕、媒体和标题输入冻结后，burn 与 cover 可并行。commit lease、formal state+journal、same-BV apply、
+upload mutation 与 queue advancement 必须串行；同一候选 mutation 完成后，public/Creator/
+section 三个 read-only probes 可以并行，但 joint acceptance 是屏障，三面收敛前不得释放
+下一候选。全局 workflow 病因修复可并行，但不成为重新人工审片的节点；Qixi-first，随后按
+批次原顺序，`review_ready` 仍不等于 publication。
+
 ## Qixi public-surface 的固定模式与 readiness
 
 候选专属 Qixi closure 只接受固定 CLI mode：默认/--plan 是浅只读 preflight，--diagnose

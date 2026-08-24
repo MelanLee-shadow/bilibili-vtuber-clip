@@ -23,7 +23,9 @@
    `free:/opt/bilive/autoslice/{repo,state,out,reports}` 与 B 站公开/创作中心面。
 
 提速并行设计的历史证据与当前映射见 [source-bound review](../reviews/2026-08-23-pipeline-speedup-source-bound.md)；
-该页仅作 provenance/入口，不增加分步规则。
+该页仅作 provenance/入口，不增加分步规则；并行与发布边界见 [80-package-delivery.md](80-package-delivery.md)、
+[90-publish.md](90-publish.md) 及上述 speedup source-bound 文档。这里不写死任何当前
+runtime 状态。
 
 | 步 | 文件 | 职责 | 代码入口 |
 |---|---|---|---|
