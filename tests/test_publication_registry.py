@@ -245,15 +245,6 @@ def test_committed_registry_loads_and_lists_the_incident():
                 "exact title「熊猫头要一本正经的新增‘熊今饭’环节了」",
             ),
         ),
-        (
-            "2026-08-13",
-            "auto_203011_328_389",
-            (
-                "0:14「小豆老公；； 不是你老公」",
-                "1:04 是回应弹幕「小豆好吵（」，不是念出该弹幕",
-                "current title wrongly treats 小李 and 李豆沙 as two people; redo title/cover.",
-            ),
-        ),
     ),
 )
 def test_committed_whole_clip_rerun_holds_uniquely_block_upload_and_cover_maintenance(
@@ -278,6 +269,40 @@ def test_committed_whole_clip_rerun_holds_uniquely_block_upload_and_cover_mainte
     assert cover_maintenance_block_reason(
         candidate_id, recording_date=recording_date, registry=registry
     )
+
+
+def test_committed_c2_release_is_unique_and_retains_machine_gates():
+    registry = load_publication_registry()
+    rows = [
+        row
+        for row in registry["entries"]
+        if row["recording_date"] == "2026-08-13"
+        and row["candidate_id"] == "auto_203011_328_389"
+    ]
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["status"] == "released_for_upload"
+    assert row["release_authorization"] == {
+        "path": (
+            "assets/lidousha/fastlane_c2_private/"
+            "auto_203011_328_389.release-authorization.v1.json"
+        ),
+        "bytes": 2200,
+        "sha256": "sha256:6eb5130f7c04524e549545fd44b6e3a951fef49ab479d7f82c0baae0bb4bd336",
+        "direct_ivan_lines": [947, 1643, 1745],
+        "remaining_machine_gates": [
+            "accepted C2 root technical receipt bound to current formal audit and artifacts",
+            "current C2 release-package audit",
+            "CPA title-cover joint QC for exact final title and cover",
+            "authorized-upload manifest verify",
+            "single serialized upload and public Creator section reconciliation",
+        ],
+    }
+    # Releasing the historical hold is not a publication or upload completion.
+    assert row["status"] != "published"
+    assert "bvid" not in row
+    assert "publication_reconciliation" not in row
 
 
 def test_manifest_gate_reads_attested_record(tmp_path):

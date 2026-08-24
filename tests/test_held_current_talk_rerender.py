@@ -37,7 +37,6 @@ NEW_FP = "sha256:" + "2" * 64
     ("recording_date", "candidate_id"),
     (
         ("2026-08-17", "auto_123655_1613_1676"),
-        ("2026-08-13", "auto_203011_328_389"),
     ),
 )
 def test_committed_whole_clip_rerun_holds_are_unique_held_current_bindings(
