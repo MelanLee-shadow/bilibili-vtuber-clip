@@ -320,17 +320,17 @@ def test_c12_attested_final_interval_is_accepted_without_widening_to_padded_sour
         padded_start_ms=425_180,
         padded_end_ms=622_370,
         final_start_ms=9_740,
-        final_end_ms=178_660,
+        final_end_ms=155_850,
         error=replay.ReviewedBaselineReplayError,
-    ) == (434_920, 603_840)
-    config["absolute_source_end_ms"] += 1
+    ) == (434_920, 603_840, 0, 146_110)
+    config["absolute_source_start_ms"] += 1
     with pytest.raises(replay.ReviewedBaselineReplayError, match="BASELINE_ATTESTED_INTERVAL_DRIFT"):
         replay.baseline_application_interval(
             config=config,
             padded_start_ms=425_180,
             padded_end_ms=622_370,
             final_start_ms=9_740,
-            final_end_ms=178_660,
+            final_end_ms=155_850,
             error=replay.ReviewedBaselineReplayError,
         )
 
