@@ -1746,6 +1746,14 @@ def test_synthesized_private_finalizer_uses_prepare_only_and_private_handle(
         "end_ms": 1746900, "source_media_sha256": "sha256:" + "1" * 64,
     }]
     assert calls["sanitized"]
+    # C4 has 24 diagnostic cues but only 20 sealed release cues (four
+    # operator drops). The finalizer/addressee-facing input must be release
+    # truth, never the diagnostic source grid.
+    diagnostic = plan.baseline.config["operator_truth_lanes"]["pipeline_diagnostic"]
+    diagnostic_path = plan.baseline.manifest_path.parent / str(diagnostic["path"])
+    assert len(calls["sanitized"]) == 20
+    assert len(calls["sanitized"]) < diagnostic_path.read_text(encoding="utf-8").count("\n\n") + 1
+    assert calls["sanitized"][2].text == "见面发现，あれ？"
     assert max(cue.source_end_ms for cue in calls["sanitized"]) < 200000
     assert calls["padded_provenance_path"] == plan.padded_path.with_suffix(".provenance.json")
     assert result.prepared_manifest.is_relative_to(result.private_runtime_root)

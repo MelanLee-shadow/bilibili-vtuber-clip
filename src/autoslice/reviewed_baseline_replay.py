@@ -1005,11 +1005,15 @@ def synthesize_replay_spec_and_finalize_private(
     out_root.mkdir(parents=True, mode=0o700)
     _copy_private_artifact(chat.path, out_root / f"{plan.candidate_id}.chat-authority.json")
     _copy_private_artifact(clip.path, out_root / f"{plan.candidate_id}.clip-context.json")
-    diagnostic = plan.baseline.config["operator_truth_lanes"]["pipeline_diagnostic"]
-    diagnostic_path = plan.baseline.manifest_path.parent / str(diagnostic["path"])
-    diagnostic_text = _read_small_bytes(regular_binding(diagnostic_path, label="PIPELINE_DIAGNOSTIC"), label="PIPELINE_DIAGNOSTIC").decode("utf-8")
+    # Source-fact/addressee evaluation must receive the same sealed release
+    # grid that the successor materializes.  The diagnostic grid can contain
+    # explicit operator drops and is therefore not a valid release transcript.
+    release_text = _read_small_bytes(
+        regular_binding(plan.baseline.baseline_path, label="RELEASE_TRUTH"),
+        label="RELEASE_TRUTH",
+    ).decode("utf-8")
     source_cues = _fresh_srt_to_source_cues(
-        diagnostic_text, window_start_ms=0,
+        release_text, window_start_ms=0,
         duration_ms=spec_piece["end_ms"] - spec_piece["start_ms"],
     )
     final_start = plan.local_start_ms
