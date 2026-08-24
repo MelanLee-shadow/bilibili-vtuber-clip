@@ -18,9 +18,23 @@ ROOT_EVIDENCE = "c1.root-review-evidence.v1.json"
 ROOT_SHA = "sha256:20f007654235824c35b3bbe2f0af414c39a2b7a1855c0a7f7fd25fcd89eb0ca9"
 RULING = "ruling/2026-08-19-ivan-review-batch-rulings.md"
 RULING_SHA = "sha256:29bc6e523645ecfbd9dbf15a5bea912dd741a6dced0b54ca41d4f906cebfde49"
+PUBLIC_METADATA_SEAL = Path(__file__).resolve().parents[2] / "assets/lidousha/fastlane_c1_private/auto_173005_934_1166.public-metadata-seal.v1.json"
 SEALS = {"line947": {"raw_sha256": "sha256:e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa", "content_sha256": "sha256:0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b"}, "line1643": {"uuid": "b95d4356-7ad2-4481-b4a7-0b7afa3c35b9", "raw_sha256": "sha256:2269c653fa6be7fb0c20df98a7348d5f5c57176e3e41fe80eb13b85c39307609", "content_sha256": "sha256:61e0ee6e0811fce540efc959d7468354bbd1633c271b140b8eed8ac44e8d010a"}, "line1745": {"uuid": "a79d6670-88b1-43c3-a688-3c9615c1da51", "raw_sha256": "sha256:7f97b7f8b6a7ca9cad7f54e02836a185b41c5ea158d70cb31f0867a174f13329", "content_sha256": "sha256:f5d60aee9cc02d100ec6f2b660ade76f951e7b113fe0ae95397e1ca6d2cbbc69"}}
 
 class C1TechnicalReceiptError(ValueError): pass
+
+def public_metadata_projection() -> dict[str, object]:
+    """Return the one sealed, current-public metadata after-image for C1."""
+    try:
+        seal = json.loads(PUBLIC_METADATA_SEAL.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise C1TechnicalReceiptError("C1_PUBLIC_METADATA_SEAL_INVALID") from exc
+    identity = seal.get("public_identity") if isinstance(seal, Mapping) else None
+    tags = seal.get("tags") if isinstance(seal, Mapping) else None
+    verify = seal.get("public_verify") if isinstance(seal, Mapping) else None
+    if not isinstance(seal, Mapping) or (seal.get("schema_version"), seal.get("candidate_id"), seal.get("same_bv_only")) != ("fastlane-c1-public-metadata-seal.v1", CID, True) or not isinstance(identity, Mapping) or (identity.get("bvid"), identity.get("aid"), identity.get("cid"), identity.get("title")) != ("BV1os8q61Eya",117132650155234,41126267272,TITLE) or not isinstance(tags, list) or not tags or not all(isinstance(x, str) and x for x in tags) or not isinstance(verify, Mapping) or verify.get("schema_version") != "authorized-upload-public-verify.v2" or verify.get("status") != "VERIFIED_PUBLIC":
+        raise C1TechnicalReceiptError("C1_PUBLIC_METADATA_SEAL_INVALID")
+    return {"identity": dict(identity), "tags": list(tags), "seal_sha256": sha256_file(PUBLIC_METADATA_SEAL), "public_verify": dict(verify)}
 
 def _point_hash(value: Mapping[str, object]) -> str:
     raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
