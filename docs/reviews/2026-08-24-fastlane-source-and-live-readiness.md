@@ -51,9 +51,9 @@ public view API 交叉读取；无 BVID 不是“从未发布”的证明，只�
 
 | # | candidate / lane | 当前可验证状态 | baseline / repair authority | readiness 标记与最短结论 |
 |---:|---|---|---|---|
-| 1 | `auto_173005_934_1166` / talk | `confirmed`: public `BV1os8q61Eya`, AID `117132650155234`, CID `41126267272` | source-fact refresh、cover recovery、public-text authority | `unknown/blocker`: 旧公开稿不等于本轮修复完成；需重新冻结修复包与 same-BV 证据。 |
-| 2 | `auto_203011_328_389` / talk | `confirmed`: 无当前公开 BVID | selected-final-review recovery、subtitle override | `blocker`: 拔智齿标题/字幕真值与最终 package 未闭合；需 Ivan truth。 |
-| 3 | `auto_220021_561_670` / talk | `confirmed`: 无当前公开 BVID | selected-final-review recovery、subtitle override | `blocker`: 视频内人声/弹幕专名修复未闭合；需 Ivan truth。 |
+| 1 | `2026-08-11/auto_173005_934_1166` / talk | `confirmed`: public `BV1os8q61Eya`, AID `117132650155234`, CID `41126267272`；Creator/section fresh listing 未确认 | source-fact refresh、cover recovery、public-text authority | `blocker`: ruling 要求 `主包给`，shipped SRT 仍 `主播给`；normal upload forbidden，无 human/same-BV receipt。详见 [#1–#3 dossier](2026-08-24-fastlane-1-3-source-bound.md)。 |
+| 2 | `2026-08-13/auto_203011_328_389` / talk | `confirmed`: state `hold_pending_review`、registry `QUEUED_SELECTED_REPAIR`；无 local BVID | selected-final-review recovery、subtitle override | `blocker`: 0:14、1:04、title/cover identity 三项 ruling 未在 current formal SRT/title/package 闭合；deployed override unrelated，provider/upload false。详见 [#1–#3 dossier](2026-08-24-fastlane-1-3-source-bound.md)。 |
+| 3 | `2026-08-13/auto_220021_561_670` / talk | `confirmed`: 无 local BVID evidence；current recut SRT `dfb2d77…` | selected-final-review recovery、subtitle override | `blocker`: host/video 声音边界、`青兰`/`星兰` 与 `恋死→星兰` source binding 未闭合；cover downstream blocker 仍存在。详见 [#1–#3 dossier](2026-08-24-fastlane-1-3-source-bound.md)。 |
 | 4 | `auto_113028_1602_1698` / talk | `confirmed`: 无当前公开 BVID；`5f90525` full-dry 一次 | operator reviewed subtitle baseline v2 | `confirmed`: `READY_TO_COMMIT`，`rc=0`，`upload_allowed=false` 仅因全局上传门；speaker `READY`、guess `null`。尚未 apply/upload。 |
 | 5 | `auto_113028_1271_1328` / talk | `confirmed`: 无当前公开 BVID；`18291ae` full-dry 一次 | operator reviewed subtitle baseline v2 | `blocker`: stale binding 已越过，当前为 speaker guess requires human review；`upload_allowed=false`。 |
 | 6 | `auto_120032_753_816` / talk | `confirmed`: 无当前公开 BVID；`18291ae` full-dry 一次 | reviewed baseline v2、public-text authority | `blocker`: exact delivery boundary `CONTENT_ANCHOR_NOT_COVERED` / final-boundary semantic block；`upload_allowed=false`。 |
@@ -83,7 +83,9 @@ public view API 交叉读取；无 BVID 不是“从未发布”的证明，只�
    stage/旧 receipt。
 3. **候选 #4/#5**：在独立 private stage 并行 prepare/package/QC；只产生候选私有产物，
    不写 formal state/journal，不调用上传器，等待最终标题/封面和授权 manifest。
-4. **7b/#9/#10 与其余候选**：按表顺序补齐 Ivan truth、复活 authority、song package/registry 缺口或
+4. **#1–#3 与 7b/#9/#10**：先按 [#1–#3 source-bound dossier](2026-08-24-fastlane-1-3-source-bound.md)
+   完成 Ivan truth、exact correction 和 review receipt；之后仍须重新跑后续 package/commit/upload/public
+   gates。其余候选按表顺序补齐复活 authority、song package/registry 缺口或
    same-BV 证据；对已存在 BVID 的候选重新核对当前 Creator/public/section，不把旧 BV、旧
    registry、`review_ready` 或 overnight report 当作本轮发布完成。
 
