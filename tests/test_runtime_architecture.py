@@ -139,7 +139,9 @@ MODULE_DEBT_LEDGER = {
     # 审计器加入包审计 policy fingerprint，防实现漂移而指纹不变。
     # 2026-08-02 +6：简介第一行固定项目署名常量（Ivan 8/3 指令：默认带
     # 项目名+网址；OSS 同步为署名+env 频道行）。
-    "scripts/authorized_upload.py": 2_866,
+    # 2026-08-24：cover-only CLI orchestration extracted into its own bounded
+    # module; retain the exact lower bound so this entrypoint cannot regrow.
+    "scripts/authorized_upload.py": 2_841,
     # 2026-08-01 新记：OSS 发布整备（Ivan 授权）把导出器扩成改名/patch/模板引擎；
     # 私库专用构建工具，导出时自剥离，不进 OSS 面。
     # 2026-08-02 +55：二轮测试修复（骨架逐键摘除治 governance:{} 必炸类、

@@ -94,8 +94,7 @@ from src.autoslice.qixi_review_package_owner_bridge import (  # noqa: E402
     manifest_bound_terminal_projection_authority,
 )
 from src.autoslice.fastlane_c1_formal_adapter import (  # noqa: E402
-    audit_fastlane_c1_formal_package,
-    is_fastlane_c1_formal_manifest,
+    audit_fastlane_c1_formal_manifest,
 )
 
 
@@ -1672,7 +1671,6 @@ def audit_package(
     manifest_path = root / "review_manifest.json"
     manifest = _load_json(manifest_path)
     issues: list[dict[str, Any]] = []
-
     try:
         load_selected_selection_calibration_policy()
     except SelectionCalibrationPolicyError as exc:
@@ -1689,21 +1687,8 @@ def audit_package(
     if not manifest:
         _add_issue(issues, "MANIFEST_MISSING_OR_INVALID", path=manifest_path)
         return _audit_result(root, issues)
-
-    # C1 is a deliberately closed successor of a deployed 36-cue package.
-    # It cannot be evaluated as a generic fresh StoryContract because its
-    # operator-approved text grid intentionally differs from the predecessor.
-    # The special path is selectable only by its exact private manifest schema;
-    # the adapter itself then hard-binds the one candidate, every source hash,
-    # public same-BV identity, cue partition, intro, and no-root-receipt state.
-    if is_fastlane_c1_formal_manifest(manifest):
-        for issue in audit_fastlane_c1_formal_package(root):
-            _add_issue(
-                issues,
-                issue.code,
-                path=issue.path,
-                detail=issue.detail,
-            )
+    if (c1_issues := audit_fastlane_c1_formal_manifest(root, manifest)) is not None:
+        issues.extend(c1_issues)
         return _audit_result(root, issues)
 
     (
@@ -1720,7 +1705,6 @@ def audit_package(
         manifest_path=manifest_path,
         issues=issues,
     )
-
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -1743,7 +1727,6 @@ def audit_package(
             publish_path = _resolve(root, item.get("publish_json") or item.get("publish"))
             title_txt_path = _resolve(root, item.get("title_txt") or item.get("title_path"))
         evidence = _load_json(evidence_path) if evidence_path else {}
-
         is_song = _looks_song_like(item, evidence)
         if is_song:
             source_srt = str(item.get("source_srt") or "")

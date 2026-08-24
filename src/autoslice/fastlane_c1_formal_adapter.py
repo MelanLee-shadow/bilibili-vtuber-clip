@@ -967,6 +967,24 @@ def audit_fastlane_c1_formal_package(root: Path, *, repo_root: Path = ROOT) -> l
     return []
 
 
+def audit_fastlane_c1_formal_manifest(
+    root: Path, manifest: Mapping[str, object]
+) -> list[dict[str, str]] | None:
+    """Project the C1-only audit into the generic package-audit issue shape."""
+
+    if not is_fastlane_c1_formal_manifest(manifest):
+        return None
+    return [
+        {
+            "code": issue.code,
+            "severity": "BLOCK",
+            **({"path": str(issue.path)} if issue.path is not None else {}),
+            **({"detail": issue.detail} if issue.detail else {}),
+        }
+        for issue in audit_fastlane_c1_formal_package(root)
+    ]
+
+
 def materialize_formal_private_package(
     *,
     predecessor_dir: Path,
