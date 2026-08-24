@@ -784,7 +784,16 @@ def attach_final_human_review(
         return ["same-BV recovery manifest has no exact season IDs"]
     season.update(exact_ids)
     resolved = receipt_path.resolve()
-    attestation["final_human_review"] = {
+    try:
+        receipt = _json_object(resolved, source="final-human-review argument")
+    except FinalHumanReviewError:
+        receipt = {}
+    key = (
+        "c1_technical_receipt"
+        if receipt.get("schema_version") == "fastlane-c1-technical-receipt-evidence.v1"
+        else "final_human_review"
+    )
+    attestation[key] = {
         "path": str(resolved),
         "sha256": _sha256(resolved)[7:],
         "bytes": resolved.stat().st_size,
