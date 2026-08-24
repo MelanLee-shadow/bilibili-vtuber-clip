@@ -20,7 +20,7 @@ ROOT_CHECKS = [
     "cue5 start/mid/end burned evidence",
     "cue21 start/mid/end burned evidence",
     "intro transition",
-    "full burned playback",
+    "full burned video decode",
     "title and cover visual surface",
 ]
 

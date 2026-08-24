@@ -55,6 +55,10 @@ def test_c2_ready_proposal_rejects_stale_status_and_binding_drifts(tmp_path):
     with pytest.raises(ValueError):
         validate_ready_proposal(root, changed)
     changed = json.loads(json.dumps(proposal))
+    changed["required_root_checks"][3] = "full burned playback"
+    with pytest.raises(ValueError):
+        validate_ready_proposal(root, changed)
+    changed = json.loads(json.dumps(proposal))
     changed["bindings"]["audit_policy_fingerprint"] = "sha256:stale"
     with pytest.raises(ValueError):
         validate_ready_proposal(root, changed)
