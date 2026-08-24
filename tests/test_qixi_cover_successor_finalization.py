@@ -80,6 +80,7 @@ def test_finalize_apply_is_create_only_and_freezes_noncover_bytes(
 
     monkeypatch.setattr(successor, "load_authority", lambda _repo: authority)
     monkeypatch.setattr(successor, "validate_provider_evidence", lambda **_kwargs: {})
+    monkeypatch.setattr(successor, "load_channel_profile", lambda _repo: object())
     monkeypatch.setattr(successor, "_trial_files", lambda _root, _authority: (files, {}))
     monkeypatch.setattr(successor, "_write_portable_provenance", lambda **_kwargs: {})
     monkeypatch.setattr(successor, "_generation", lambda **_kwargs: _generation())
@@ -241,3 +242,97 @@ def test_owner_bridge_requires_successor_receipt_hash_and_replay(
     assert owner_bridge.manifest_bound_terminal_projection_authority(
         package_root=tmp_path, item=item, qixi_repo_root=tmp_path
     ) is None
+
+
+def test_deep_replay_has_independent_route_identity_pixel_qc_and_text_gates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every semantic gate remains active after receipt hash verification."""
+
+    package = tmp_path / "candidate" / "replacement_recuts"
+    final = _write(package / successor._PORTABLE_PATHS["final"], b"final")
+    background = _write(package / successor._PORTABLE_PATHS["background"], b"background")
+    pre = _write(package / successor._PORTABLE_PATHS["pre"], b"pre")
+    mask = _write(package / successor._PORTABLE_PATHS["mask"], b"mask")
+    identity = _write(package / successor._PORTABLE_PATHS["identity"], b"identity")
+    lines = ["甲", "乙"]
+    generation = {
+        "rendered_lines": lines,
+        "cover_text": "甲\n乙",
+        "final_cover": successor._PORTABLE_PATHS["final"],
+        "ai_background": successor._PORTABLE_PATHS["background"],
+        "pre_overlay_path": successor._PORTABLE_PATHS["pre"],
+        "reference_image": "evidence/ref.png",
+        "request_path": "evidence/request.json",
+        "response_path": "evidence/response.json",
+        "rendered_text_pixels": {
+            "mask_path": successor._PORTABLE_PATHS["mask"],
+            "pre_overlay_path": successor._PORTABLE_PATHS["pre"],
+        },
+        "final_host_identity_verification": {
+            "comparison_sha256": _sha(identity),
+            "final_cover_path": successor._PORTABLE_PATHS["final"],
+            "comparison_path": successor._PORTABLE_PATHS["identity"],
+            "reference_path": "evidence/ref.png",
+            "witness": {"image_path": successor._PORTABLE_PATHS["identity"]},
+        },
+        "art_direction": {"cover_punch_semantic_review": {}},
+    }
+    record = {
+        "story_contract": {"candidate_id": CID, "selection_hook": "可验证的七夕直播安排"},
+        "publish_staging": {"cover_generation": generation},
+        "cover_generation": generation,
+        "qixi_cover_successor": {"authority_sha256": "sha256:" + "a" * 64},
+    }
+    _write(package / f"{CID}.record.json", json.dumps(record).encode())
+    _write(package / f"{CID}.publish.json", json.dumps({"cover_generation": generation}).encode())
+    replacement = {
+        "final_cover_sha256": _sha(final),
+        "route_background_sha256": _sha(background),
+        "pre_overlay_sha256": _sha(pre),
+        "title_mask_sha256": _sha(mask),
+        "required_title_lines": lines,
+    }
+    authority = {"authority_sha256": "sha256:" + "a" * 64, "replacement": replacement}
+    provenance = {
+        "generation": {
+            "final_cover_sha256": _sha(final), "ai_background_sha256": _sha(background),
+            "pre_overlay_sha256": _sha(pre), "rendered_lines": lines,
+        },
+        "request": {"method": "images.edit", "image_gen_model": "cpa"},
+        "response": {"attempts": [{"output_sha256": _sha(background)}]},
+        "no_text": {"status": "OBSERVED", "image_sha256": _sha(pre)[7:], "answer": '{"has_readable_text":false,"text_fragments":[]}'},
+        "joint": {"status": "PASS", "pass": True, "cover_sha256": _sha(final), "verdict": {"unrelated_or_misleading_elements": []}},
+    }
+    monkeypatch.setattr(successor, "load_authority", lambda _repo: authority)
+    monkeypatch.setattr(successor, "validate_provider_evidence", lambda **_kwargs: {})
+    monkeypatch.setattr(successor, "load_channel_profile", lambda _repo: object())
+    monkeypatch.setattr(successor, "resolve_trusted_cover_font", lambda **_kwargs: tmp_path / "font.ttf")
+    monkeypatch.setattr(successor, "validate_cover_route_decision", lambda *_a, **_kw: True)
+    monkeypatch.setattr(successor, "validate_final_host_identity_verification", lambda *_a: True)
+    monkeypatch.setattr(successor, "verify_rendered_text_pixel_artifacts", lambda *_a, **_kw: True)
+    monkeypatch.setattr(successor, "verify_pre_overlay_route_background", lambda **_kw: True)
+    monkeypatch.setattr(successor, "validate_cover_punch_semantic_review", lambda *_a, **_kw: True)
+    monkeypatch.setattr(successor, "_provenance_document", lambda _p, key, **_kw: provenance[key])
+    receipt = {"preimage_noncover_sha256": successor._canonical_sha(successor._snapshot(package.parent))}
+
+    successor._validate_deep_package(package=package, receipt=receipt, repo=tmp_path)
+    monkeypatch.setattr(successor, "validate_cover_route_decision", lambda *_a, **_kw: False)
+    with pytest.raises(successor.QixiCoverSuccessorError, match="route"):
+        successor._validate_deep_package(package=package, receipt=receipt, repo=tmp_path)
+    monkeypatch.setattr(successor, "validate_cover_route_decision", lambda *_a, **_kw: True)
+    monkeypatch.setattr(successor, "validate_final_host_identity_verification", lambda *_a: False)
+    with pytest.raises(successor.QixiCoverSuccessorError, match="identity"):
+        successor._validate_deep_package(package=package, receipt=receipt, repo=tmp_path)
+    monkeypatch.setattr(successor, "validate_final_host_identity_verification", lambda *_a: True)
+    monkeypatch.setattr(successor, "verify_rendered_text_pixel_artifacts", lambda *_a, **_kw: False)
+    with pytest.raises(successor.QixiCoverSuccessorError, match="pixel recomposition"):
+        successor._validate_deep_package(package=package, receipt=receipt, repo=tmp_path)
+    monkeypatch.setattr(successor, "verify_rendered_text_pixel_artifacts", lambda *_a, **_kw: True)
+    monkeypatch.setattr(successor, "verify_pre_overlay_route_background", lambda **_kw: False)
+    with pytest.raises(successor.QixiCoverSuccessorError, match="background recomposition"):
+        successor._validate_deep_package(package=package, receipt=receipt, repo=tmp_path)
+    monkeypatch.setattr(successor, "verify_pre_overlay_route_background", lambda **_kw: True)
+    provenance["no_text"] = {"status": "OBSERVED", "image_sha256": _sha(pre)[7:], "answer": '{"has_readable_text":true,"text_fragments":["x"]}'}
+    with pytest.raises(successor.QixiCoverSuccessorError, match="no-text/joint-QC"):
+        successor._validate_deep_package(package=package, receipt=receipt, repo=tmp_path)
