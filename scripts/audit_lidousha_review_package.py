@@ -1695,6 +1695,10 @@ def audit_package(
     if not manifest:
         _add_issue(issues, "MANIFEST_MISSING_OR_INVALID", path=manifest_path)
         return _audit_result(root, issues)
+    from src.autoslice.fastlane_c9_successor import audit_c9_successor
+    if (c9_issues := audit_c9_successor(root, manifest)) is not None:
+        issues.extend(c9_issues)
+        return _audit_result(root, issues)
     if _formal_fastlane_audited(root, manifest, issues):
         return _audit_result(root, issues)
     (
