@@ -228,8 +228,16 @@ dry plan；本地存在代码/测试不等于 production 已可用，也不等�
    `biliup show` 登录 canary，再读真实 Creator/public/section 单 P 事实。确认后才运行
   `repair-plan` create-only 落 plan/journal；Creator/public 已一致、但 exact section
   episode title 仍是唯一历史旧值时，planner 必须把该值冻结进 `before`，
-  不得因待修复的 section 标题自锁；之后仍只能在 Creator/public 已收敛
-  到新 CID 和目标 metadata 后，通过已有 one-shot `SECTION_TITLE_SYNC` 状态修复。
+   不得因待修复的 section 标题自锁；之后仍只能在 Creator/public 已收敛
+   到新 CID 和目标 metadata 后，通过已有 one-shot `SECTION_TITLE_SYNC` 状态修复。
+
+   若本次授权范围明确为“只修点名内容”、而当前已发稿的 tags 必须原样保留，可显式传
+   `--preserve-existing-tags`。这不是任意 metadata override：manifest、current audit 和最终人审
+   仍完整重验；planner 必须 fresh read Creator/public，并且两面 tags 都非空、无重复、规范化后
+   完全相等。只有 `tags` 可从该 live 集合冻结为 target，plan 必须保存 typed hash-bound
+   preservation receipt 和 manifest 原 tags；title/desc/tid/copyright/source/cover 仍只取 manifest。
+   未传 flag 的默认行为不变。runner/status/resume/verify-live 都重放 receipt；tags 或任何其他
+   metadata/identity 漂移一律 fail-closed。
 7. 先 `repair-status`，再 `repair-run --dry-run`；最后只用 `repair-run` 执行或幂等 resume；
 8. 每次 resume 前后均可用 `repair-status` 重验**本地** plan/journal/receipt 闭包；它不访问
    线上，也不能证明当前公开态。`repair-run` 进入 `VERIFIED` 后还必须运行

@@ -49,6 +49,7 @@ from src.autoslice.same_bv_section_title_sync import (
 )
 
 PLAN_SCHEMA = "same-bv-repair-plan.v2"
+TAG_PRESERVATION_SCHEMA = "same-bv-repair-metadata-preservation.v1"
 JOURNAL_SCHEMA = "same-bv-repair-journal.v1"
 JOURNAL_STATES = {
     "PLANNED",
@@ -477,6 +478,67 @@ def _target_metadata(manifest: Mapping[str, Any]) -> dict[str, Any]:
         # The exact CDN URL is prepared and journaled immediately before edit.
         "cover": None,
     }
+
+
+def _strict_live_tags(value: object, *, label: str) -> list[str]:
+    """Accept only one non-empty, canonical tag set from a live snapshot."""
+
+    if not isinstance(value, list) or not value or any(
+        not isinstance(tag, str) or not tag or tag != tag.strip() for tag in value
+    ):
+        raise PlanInvalid(f"{label} tags are empty or invalid")
+    normalised = _normalise_tags(value)
+    if value != normalised or len(set(value)) != len(value):
+        raise PlanInvalid(f"{label} tags are non-canonical or duplicated")
+    return normalised
+
+
+def _preserved_tags_receipt(
+    *, manifest: Mapping[str, Any], before: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Freeze the sole permitted live-metadata preservation exception."""
+
+    creator = before.get("creator") or {}
+    public = before.get("public") or {}
+    creator_tags = _strict_live_tags(
+        (creator.get("metadata") or {}).get("tags"), label="Creator"
+    )
+    public_tags = _strict_live_tags(
+        (public.get("metadata") or {}).get("tags"), label="public"
+    )
+    if creator_tags != public_tags:
+        raise PlanInvalid("Creator and public tags differ during preservation planning")
+    manifest_tags = _strict_live_tags(manifest.get("tags"), label="manifest")
+    return {
+        "schema_version": TAG_PRESERVATION_SCHEMA,
+        "field": "tags",
+        "manifest_original_tags": manifest_tags,
+        "preserved_live_tags": creator_tags,
+        "creator_tags_sha256": "sha256:" + hashlib.sha256(
+            _canonical_json(creator_tags)
+        ).hexdigest(),
+        "public_tags_sha256": "sha256:" + hashlib.sha256(
+            _canonical_json(public_tags)
+        ).hexdigest(),
+    }
+
+
+def _target_metadata_with_preservation(
+    *,
+    manifest: Mapping[str, Any],
+    before: Mapping[str, Any],
+    preservation: object,
+) -> dict[str, Any]:
+    """Rebuild the only valid preserved-tags target from hash-bound inputs."""
+
+    target = _target_metadata(manifest)
+    if preservation is None:
+        return target
+    expected = _preserved_tags_receipt(manifest=manifest, before=before)
+    if preservation != expected:
+        raise PlanInvalid("repair tags preservation receipt is not canonical")
+    target["tags"] = expected["preserved_live_tags"]
+    return target
 
 
 def package_recovery_publication_authority(
@@ -1009,6 +1071,7 @@ def create_plan(
     bvid: str,
     snapshot: Mapping[str, Any],
     predecessor_completed_path: Path | None = None,
+    preserve_existing_tags: bool = False,
 ) -> dict[str, Any]:
     """Freeze a read-only, exact single-P repair plan from live state."""
 
@@ -1091,6 +1154,14 @@ def create_plan(
     if problems:
         raise PlanInvalid("; ".join(problems))
 
+    preservation = (
+        _preserved_tags_receipt(manifest=manifest, before=snapshot)
+        if preserve_existing_tags
+        else None
+    )
+    target_metadata = _target_metadata_with_preservation(
+        manifest=manifest, before=snapshot, preservation=preservation
+    )
     manifest_sha = sha256_file(manifest_path)
     video = manifest.get("video") or {}
     cover = manifest.get("cover") or {}
@@ -1126,9 +1197,11 @@ def create_plan(
             "section_id": section_id,
             "season_title": season.get("season_title"),
         },
-        "target_metadata": _target_metadata(manifest),
+        "target_metadata": target_metadata,
         "before": snapshot,
     }
+    if preservation is not None:
+        plan["metadata_preservation"] = preservation
     if predecessor_completion is not None:
         plan["predecessor_completion"] = predecessor_completion
     validate_plan(plan, manifest=manifest)
@@ -1261,8 +1334,17 @@ def validate_plan(
         else:
             if plan_package_attestation != manifest_human_review:
                 problems.append("repair final human review attestation drifted from manifest")
-        if plan.get("target_metadata") != _target_metadata(manifest):
-            problems.append("repair target metadata drifted from manifest")
+        try:
+            expected_target = _target_metadata_with_preservation(
+                manifest=manifest,
+                before=before,
+                preservation=plan.get("metadata_preservation"),
+            )
+        except PlanInvalid as exc:
+            problems.append(str(exc))
+        else:
+            if plan.get("target_metadata") != expected_target:
+                problems.append("repair target metadata drifted from manifest")
         for kind in ("video", "cover"):
             if (replacement.get(kind) or {}).get("sha256") != (manifest.get(kind) or {}).get(
                 "sha256"

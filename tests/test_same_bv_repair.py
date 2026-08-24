@@ -1847,6 +1847,123 @@ def test_planning_refuses_preexisting_creator_public_metadata_drift(tmp_path):
         )
 
 
+def test_explicit_tag_preservation_freezes_equal_live_tags_only(tmp_path):
+    manifest_path, manifest = _manifest(tmp_path)
+    manifest["tags"] = ["manifest-1", "manifest-2", "manifest-3", "manifest-4"]
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False) + "\n", encoding="utf-8")
+    snapshot = _before_snapshot()
+    live_tags = sorted(
+        ["七夕", "反差萌", "唱歌", "搞笑", "李豆沙", "直播切片", "苦情歌", "虚拟UP主", "虚拟主播"]
+    )
+    snapshot["creator"]["metadata"]["tags"] = live_tags
+    snapshot["public"]["metadata"]["tags"] = live_tags
+
+    default = create_plan(
+        manifest_path=manifest_path, manifest=manifest, bvid=BVID, snapshot=snapshot
+    )
+    assert default["target_metadata"]["tags"] == manifest["tags"]
+    assert "metadata_preservation" not in default
+
+    plan = create_plan(
+        manifest_path=manifest_path,
+        manifest=manifest,
+        bvid=BVID,
+        snapshot=snapshot,
+        preserve_existing_tags=True,
+    )
+    assert plan["target_metadata"]["tags"] == live_tags
+    assert plan["metadata_preservation"]["field"] == "tags"
+    assert plan["metadata_preservation"]["manifest_original_tags"] == manifest["tags"]
+    assert set(plan["target_metadata"]) == {
+        "title", "desc", "tags", "tid", "copyright", "source", "cover"
+    }
+    validate_plan(plan, manifest=manifest)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (
+            lambda snapshot: snapshot["public"]["metadata"].update({"tags": ["other"]}),
+            "Creator and public metadata disagree",
+        ),
+        (
+            lambda snapshot: snapshot["creator"]["metadata"].update({"tags": []})
+            or snapshot["public"]["metadata"].update({"tags": []}),
+            "Creator tags are empty or invalid",
+        ),
+        (
+            lambda snapshot: snapshot["creator"]["metadata"].update({"tags": ["dup", "dup"]})
+            or snapshot["public"]["metadata"].update({"tags": ["dup", "dup"]}),
+            "Creator tags are non-canonical or duplicated",
+        ),
+    ],
+)
+def test_tag_preservation_rejects_live_tag_canaries(tmp_path, mutate, message):
+    manifest_path, manifest = _manifest(tmp_path)
+    snapshot = _before_snapshot()
+    mutate(snapshot)
+    with pytest.raises(PlanInvalid, match=message):
+        create_plan(
+            manifest_path=manifest_path,
+            manifest=manifest,
+            bvid=BVID,
+            snapshot=snapshot,
+            preserve_existing_tags=True,
+        )
+
+
+def test_tag_preservation_plan_tampering_or_other_field_override_is_rejected(tmp_path):
+    manifest_path, manifest = _manifest(tmp_path)
+    snapshot = _before_snapshot()
+    tags = sorted(["保留", "直播切片"])
+    snapshot["creator"]["metadata"]["tags"] = tags
+    snapshot["public"]["metadata"]["tags"] = tags
+    plan = create_plan(
+        manifest_path=manifest_path,
+        manifest=manifest,
+        bvid=BVID,
+        snapshot=snapshot,
+        preserve_existing_tags=True,
+    )
+    tampered = copy.deepcopy(plan)
+    tampered["metadata_preservation"]["field"] = "title"
+    with pytest.raises(PlanInvalid, match="preservation receipt is not canonical"):
+        validate_plan(tampered, manifest=manifest)
+
+    tampered = copy.deepcopy(plan)
+    tampered["target_metadata"]["title"] = "CLI override"
+    with pytest.raises(PlanInvalid, match="target metadata drifted"):
+        validate_plan(tampered, manifest=manifest)
+
+
+def test_tag_preservation_resume_blocks_live_tag_drift_before_append(tmp_path):
+    manifest_path, manifest = _manifest(tmp_path)
+    snapshot = _before_snapshot()
+    tags = sorted(["保留", "直播切片"])
+    snapshot["creator"]["metadata"]["tags"] = tags
+    snapshot["public"]["metadata"]["tags"] = tags
+    plan = create_plan(
+        manifest_path=manifest_path,
+        manifest=manifest,
+        bvid=BVID,
+        snapshot=snapshot,
+        preserve_existing_tags=True,
+    )
+    plan_path = tmp_path / "preserved-tags.plan.json"
+    journal = tmp_path / "preserved-tags.journal.jsonl"
+    write_plan(plan_path, plan)
+    adapter = FakeAdapter(plan)
+    adapter.snapshot["creator"]["metadata"]["tags"] = ["drift"]
+    adapter.snapshot["public"]["metadata"]["tags"] = ["drift"]
+
+    result = repair_step(
+        plan_path=plan_path, journal=journal, manifest=manifest, adapter=adapter
+    )
+    assert result.state == "BLOCKED_DRIFT"
+    assert adapter.append_calls == 0
+
+
 def test_planning_freezes_repairable_preexisting_section_title_drift(tmp_path):
     manifest_path, manifest = _manifest(tmp_path)
     snapshot = _before_snapshot()

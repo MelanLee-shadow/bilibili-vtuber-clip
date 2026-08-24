@@ -2522,6 +2522,7 @@ def repair_plan(args: argparse.Namespace) -> int:
             predecessor_completed_path=(
                 Path(args.predecessor_completed).resolve() if args.predecessor_completed else None
             ),
+            preserve_existing_tags=bool(args.preserve_existing_tags),
         )
         journal = Path(args.journal).resolve()
         predecessor = plan.get("predecessor_completion") or {}
