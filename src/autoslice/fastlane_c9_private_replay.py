@@ -22,6 +22,13 @@ _SOURCE = _BASE / f"{_CANDIDATE}.source.speaker-final.srt"
 _REVIEWED = _BASE / f"{_CANDIDATE}.reviewed.srt"
 _ENVELOPE = _BASE / f"{_CANDIDATE}.root-acceptance-envelope.v1.json"
 _CLASSES = frozenset({"IN_VIDEO", "HOST_LIVE", "MIXED", "UNCERTAIN"})
+_DECISION_BASIS = (
+    "Root independently reviewed the C9 15-frame contact sheet, retained "
+    "speaker-final/cue-table/media hashes, exhaustive 66-row source/action "
+    "map, and the exact 25-drop/41-freeze projection; Ivan fastlane ruling #9 "
+    "permits omission only of the sealed complete IN_VIDEO source cues, while "
+    "all remaining source cue bytes stay frozen."
+)
 
 
 class FastlaneC9PrivateReplayError(ValueError):
@@ -134,9 +141,8 @@ def validate_c9_source_action(root: Path) -> dict[str, object]:
 def validate_c9_root_acceptance_envelope(root: Path) -> dict[str, object]:
     """Validate the non-authorizing root-review proposal for this exact C9 set.
 
-    ``accepted=false`` is intentional: this closes only the candidate-private
-    source/action evidence hand-off.  A public/package authority must never be
-    inferred from it.
+    Root has accepted the named source/action correction for candidate-private
+    replay only.  A public/package authority must never be inferred from it.
     """
 
     root = Path(root).resolve(strict=True)
@@ -151,12 +157,22 @@ def validate_c9_root_acceptance_envelope(root: Path) -> dict[str, object]:
     if declared != _sha(_canonical(envelope)):
         raise FastlaneC9PrivateReplayError("C9_ACCEPTANCE_ENVELOPE_HASH_DRIFT")
     envelope["self_sha256"] = declared
+    required_keys = {
+        "schema_version", "candidate_id", "recording_date", "reviewed_by",
+        "reviewed_at", "accepted", "accepted_for_private_replay",
+        "decision_basis", "source_action_receipt", "source_srt", "reviewed_srt",
+        "activation", "self_sha256",
+    }
     if (
-        envelope.get("schema_version") != "fastlane-c9-root-acceptance-envelope.v1"
+        set(envelope) != required_keys
+        or envelope.get("schema_version") != "fastlane-c9-root-acceptance-envelope.v1"
         or envelope.get("candidate_id") != _CANDIDATE
         or envelope.get("recording_date") != "2026-08-15"
-        or envelope.get("root_reviewed_at") != "2026-08-24T23:40:05Z"
-        or envelope.get("accepted") is not False
+        or envelope.get("reviewed_by") != "Codex root"
+        or envelope.get("reviewed_at") != "2026-08-24T23:40:05Z"
+        or envelope.get("accepted") is not True
+        or envelope.get("accepted_for_private_replay") is not True
+        or envelope.get("decision_basis") != _DECISION_BASIS
     ):
         raise FastlaneC9PrivateReplayError("C9_ACCEPTANCE_ENVELOPE_SCOPE_INVALID")
     expected = {
@@ -170,7 +186,7 @@ def validate_c9_root_acceptance_envelope(root: Path) -> dict[str, object]:
             raise FastlaneC9PrivateReplayError("C9_ACCEPTANCE_ENVELOPE_BINDING_DRIFT")
     activation = envelope.get("activation")
     expected_activation = {
-        "kind": "ROOT_ACCEPTANCE_PROPOSAL_ONLY",
+        "kind": "ROOT_ACCEPTED_PRIVATE_REPLAY_ONLY",
         "private_replay_allowed": True,
         "canonical_delivery_allowed": False,
         "state_write_allowed": False,
@@ -179,13 +195,18 @@ def validate_c9_root_acceptance_envelope(root: Path) -> dict[str, object]:
         "deploy_allowed": False,
         "upload_allowed": False,
     }
-    if not isinstance(activation, Mapping) or any(activation.get(key) != value for key, value in expected_activation.items()):
+    if (
+        not isinstance(activation, Mapping)
+        or set(activation) != set(expected_activation)
+        or dict(activation) != expected_activation
+    ):
         raise FastlaneC9PrivateReplayError("C9_ACCEPTANCE_ENVELOPE_ACTIVATION_INVALID")
     return {
         **projection,
         "acceptance_envelope_sha256": _sha(_read(root, _ENVELOPE)),
-        "root_reviewed_at": envelope["root_reviewed_at"],
-        "accepted": False,
+        "reviewed_at": envelope["reviewed_at"],
+        "accepted": True,
+        "accepted_for_private_replay": True,
     }
 
 

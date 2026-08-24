@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -26,7 +27,8 @@ def test_c9_private_replay_is_a_create_only_no_upload_packet(tmp_path: Path) -> 
     packet = materialize_c9_private_replay(root=ROOT, output_dir=tmp_path / CANDIDATE)
 
     assert packet["upload_allowed"] is False
-    assert packet["accepted"] is False
+    assert packet["accepted"] is True
+    assert packet["accepted_for_private_replay"] is True
     assert packet["dropped_source_cues"] == [10, 11, 12, 13, 15, 16, 17, 18, 19, 20, 21, 28, 29, 30, 31, 32, 36, 37, 38, 39, 40, 41, 42, 46, 50]
     assert (tmp_path / CANDIDATE / "reviewed.srt").read_bytes() == (
         ROOT / "assets/lidousha/fastlane_c9_private" / f"{CANDIDATE}.reviewed.srt"
@@ -53,18 +55,35 @@ def test_c9_private_replay_rejects_an_unclassified_or_wrongly_dropped_cue(tmp_pa
         validate_c9_source_action(repo)
 
 
-def test_c9_acceptance_envelope_rejects_near_miss_candidate_and_hash(tmp_path: Path) -> None:
+def _reseal(document: dict[str, object]) -> None:
+    unsigned = dict(document)
+    unsigned.pop("self_sha256")
+    document["self_sha256"] = "sha256:" + hashlib.sha256(
+        json.dumps(unsigned, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+@pytest.mark.parametrize(
+    ("mutation", "error"),
+    [
+        (lambda value: value.__setitem__("candidate_id", "auto_143025_1112_1286"), "ENVELOPE_SCOPE_INVALID"),
+        (lambda value: value.__setitem__("accepted", False), "ENVELOPE_SCOPE_INVALID"),
+        (lambda value: value.__setitem__("decision_basis", "resealed decision rewrite"), "ENVELOPE_SCOPE_INVALID"),
+        (lambda value: value["activation"].__setitem__("kind", "ROOT_ACCEPTANCE_PROPOSAL_ONLY"), "ENVELOPE_ACTIVATION_INVALID"),
+        (lambda value: value.__setitem__("extra", "resealed-near-miss"), "ENVELOPE_SCOPE_INVALID"),
+    ],
+)
+def test_c9_acceptance_envelope_rejects_resealed_near_misses(
+    tmp_path: Path, mutation, error: str,
+) -> None:
     repo = tmp_path / "repo"
     shutil.copytree(ROOT / "assets", repo / "assets")
     envelope_path = repo / "assets/lidousha/fastlane_c9_private" / f"{CANDIDATE}.root-acceptance-envelope.v1.json"
     envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
-    envelope["candidate_id"] = "auto_143025_1112_1286"
-    unsigned = dict(envelope)
-    unsigned.pop("self_sha256")
-    import hashlib
-    envelope["self_sha256"] = "sha256:" + hashlib.sha256(json.dumps(unsigned, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    mutation(envelope)
+    _reseal(envelope)
     envelope_path.write_text(json.dumps(envelope, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    with pytest.raises(FastlaneC9PrivateReplayError, match="ENVELOPE_SCOPE_INVALID"):
+    with pytest.raises(FastlaneC9PrivateReplayError, match=error):
         validate_c9_root_acceptance_envelope(repo)
 
 
@@ -77,6 +96,8 @@ def test_canonical_replay_has_a_c9_only_private_materializer(tmp_path: Path) -> 
     stage = Path(result["stage"])
     document = json.loads((stage / "stage.json").read_text(encoding="utf-8"))
     assert document["upload_allowed"] is False
+    assert document["accepted"] is True
+    assert document["accepted_for_private_replay"] is True
     assert document["canonical_delivery_allowed"] is False
     assert document["state_write_allowed"] is False
     assert document["receipt_sha256"] == "sha256:32fb21e0703a5aec07920cfc544bb951201eaff0f59353fdc8152971f95dd2a4"
