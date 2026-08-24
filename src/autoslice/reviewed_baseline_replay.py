@@ -42,7 +42,10 @@ from src.autoslice.reviewed_baseline_replay_projection import (
     exact_candidate_sidecar_target,
     validate_retained_projection,
 )
-from src.autoslice.reviewed_baseline_replay_authority import resolve_record_bound_finalizer_authority
+from src.autoslice.reviewed_baseline_replay_authority import (
+    RecordBoundFinalizerAuthority,
+    resolve_record_bound_finalizer_authority,
+)
 from src.autoslice.reviewed_baseline_replay_stage_projection import (
     prepare_stage_delivery_projection,
     stage_delivery_projection_receipt,
@@ -892,6 +895,7 @@ def synthesize_replay_spec_and_finalize_private(
     exact_final_entity_verifier: Callable | None = None,
     exact_final_text_adapters: object | None = None,
     provider_invocation: Callable[[], None] | None = None,
+    record_authority_resolver: Callable[..., RecordBoundFinalizerAuthority] | None = None,
 ) -> PrivateReplayFinalization:
     """Call the canonical producer finalizer in an isolated prepare-only root.
 
@@ -961,7 +965,8 @@ def synthesize_replay_spec_and_finalize_private(
         or not isinstance(speaker_style, str) or not speaker_style
     ):
         raise ReviewedBaselineReplayError("REPLAY_FINALIZER_INPUT_MISSING")
-    authority = resolve_record_bound_finalizer_authority(
+    authority_resolver = record_authority_resolver or resolve_record_bound_finalizer_authority
+    authority = authority_resolver(
         plan=plan, record_binding=record_binding, record=record, runtime_authority_root=runtime_authority_root,
         source_media_sha256=normalized_piece["source_media_sha256"], regular_binding=regular_binding,
         safe_directory=_safe_directory, load_json=_load_json, error=ReviewedBaselineReplayError)

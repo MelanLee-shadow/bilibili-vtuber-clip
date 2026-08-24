@@ -733,7 +733,10 @@ def _provider_receipt_sha256s(root: Path) -> tuple[str, ...]:
     return tuple(sorted(values))
 
 
-def _prepare(plan, *, runtime: Path, stage_parent: Path, state_path: Path | None = None):
+def _prepare(
+    plan, *, runtime: Path, stage_parent: Path, state_path: Path | None = None,
+    record_authority_resolver=None,
+):
     """Build one complete no-target-write after-image outside the commit lease."""
     expected_stage = stage_parent / (
         f"{plan.date}-{plan.candidate_id}-"
@@ -778,6 +781,7 @@ def _prepare(plan, *, runtime: Path, stage_parent: Path, state_path: Path | None
             adapters=_adapters(), use_production_exact_final_reviewer=True,
             exact_final_text_adapters=_text_adapters(),
             provider_invocation=mark_provider_attempt,
+            record_authority_resolver=record_authority_resolver,
         )
     except (Exception, SystemExit) as exc:
         stage_sha = _stage_manifest_sha256(stage)
@@ -808,7 +812,7 @@ def _prepare(plan, *, runtime: Path, stage_parent: Path, state_path: Path | None
     return stage, finalization, after, stage_sha, provider_hashes, provider_attempted
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, _record_authority_resolver=None) -> int:
     args = _args(argv)
     try:
         runtime = _safe_directory(args.runtime_root)
@@ -833,7 +837,8 @@ def main(argv: list[str] | None = None) -> int:
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(plans)) as pool:
             work = {
                 pool.submit(_prepare, plan, runtime=runtime, stage_parent=stage_parent,
-                            state_path=state_path): plan
+                            state_path=state_path,
+                            record_authority_resolver=_record_authority_resolver): plan
                 for plan in plans
             }
             for future in concurrent.futures.as_completed(work):
