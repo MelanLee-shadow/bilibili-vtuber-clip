@@ -64,7 +64,7 @@ _REPLAY_NORMALIZABLE_CATEGORIES = frozenset({"STATE_DRIFT", "NEEDS_IVAN_TRUTH"})
 _SAFE_REASON_CODE = re.compile(r"[A-Z][A-Z0-9_]{2,159}\Z")
 _SAFE_EXCEPTION_TYPE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}\Z")
 _SAFE_EXCEPTION_TYPES = frozenset({
-    "AssertionError", "AttributeError", "KeyError", "OSError", "RuntimeError", "TypeError", "ValueError",
+    "AssertionError", "AttributeError", "KeyError", "OSError", "RuntimeError", "SystemExit", "TypeError", "ValueError",
 })
 _MAX_REVIEW_FLAGS_BYTES = 512 * 1024
 _SPEAKER_RUNTIME_RELATIVE = Path("venv-diar/bin/python")
@@ -229,17 +229,9 @@ def _closed_exception_diagnostic(value: Mapping[str, object] | None) -> dict[str
     return result
 
 
-def _generic_exception_diagnostic(exc: BaseException) -> dict[str, object] | None:
-    """Return the innermost safe in-repository locus for an untyped failure."""
+def _repository_exception_locus(exc: BaseException) -> dict[str, object] | None:
+    """Return only the innermost repository-local Python traceback locus."""
 
-    if (
-        not isinstance(exc, Exception)
-        or isinstance(exc, ReviewedBaselineReplayError)
-        or _safe_reason_code(exc) != "REPLAY_PREPARE_EXCEPTION"
-        or type(exc).__name__ not in _SAFE_EXCEPTION_TYPES
-    ):
-        return None
-    diagnostic: dict[str, object] = {"exception_type": type(exc).__name__}
     repository = ROOT.resolve()
     for frame in reversed(traceback.extract_tb(exc.__traceback__)):
         try:
@@ -253,10 +245,36 @@ def _generic_exception_diagnostic(exc: BaseException) -> dict[str, object] | Non
             continue
         if not isinstance(frame.name, str) or not frame.name.isidentifier() or not 1 <= frame.lineno <= 10_000_000:
             continue
-        diagnostic["exception_locus"] = {
-            "module": ".".join(module_parts), "function": frame.name, "line": frame.lineno,
-        }
-        break
+        return {"module": ".".join(module_parts), "function": frame.name, "line": frame.lineno}
+    return None
+
+
+def _generic_exception_diagnostic(exc: BaseException) -> dict[str, object] | None:
+    """Return the innermost safe in-repository locus for an untyped failure."""
+
+    if (
+        not isinstance(exc, Exception)
+        or isinstance(exc, ReviewedBaselineReplayError)
+        or _safe_reason_code(exc) != "REPLAY_PREPARE_EXCEPTION"
+        or type(exc).__name__ not in _SAFE_EXCEPTION_TYPES
+    ):
+        return None
+    diagnostic: dict[str, object] = {"exception_type": type(exc).__name__}
+    locus = _repository_exception_locus(exc)
+    if locus is not None:
+        diagnostic["exception_locus"] = locus
+    return _closed_exception_diagnostic(diagnostic)
+
+
+def _system_exit_diagnostic(exc: BaseException) -> dict[str, object] | None:
+    """Expose a SystemExit locus without reading its code or message."""
+
+    if not isinstance(exc, SystemExit) or _safe_reason_code(exc) != "REPLAY_PREPARE_SYSTEM_EXIT":
+        return None
+    diagnostic: dict[str, object] = {"exception_type": "SystemExit"}
+    locus = _repository_exception_locus(exc)
+    if locus is not None:
+        diagnostic["exception_locus"] = locus
     return _closed_exception_diagnostic(diagnostic)
 
 
@@ -688,12 +706,17 @@ def _prepare_failure(*, exc: BaseException, stage: Path | None = None, plan=None
     failures = flags_failures
     if not failures:
         failures = ((_failure_predicate(reason_code), reason_code),)
+    exception_diagnostic = (
+        _system_exit_diagnostic(exc)
+        if reason_code == "REPLAY_PREPARE_SYSTEM_EXIT"
+        else _generic_exception_diagnostic(exc)
+    )
     return _PrepareFailure(
         reason_code=reason_code,
         provider_attempted=False,
         predicate_failures=failures,
         provider_failure_summary=provider_failure_summary,
-        exception_diagnostic=_generic_exception_diagnostic(exc),
+        exception_diagnostic=exception_diagnostic,
     )
 
 

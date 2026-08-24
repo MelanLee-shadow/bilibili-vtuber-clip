@@ -442,6 +442,77 @@ def test_generic_exception_drops_external_locus_and_typed_errors_stay_unchanged(
     assert typed.exception_diagnostic is None
 
 
+@pytest.mark.parametrize("code", [23, "token=secret /private/stage provider prompt"])
+def test_opaque_system_exit_keeps_only_repo_locus_and_stable_secret_free_receipt(
+    tmp_path: Path, code: object,
+) -> None:
+    def local_exit() -> None:
+        raise SystemExit(code)
+
+    try:
+        local_exit()
+    except SystemExit as exc:
+        failure = cli._prepare_failure(exc=exc)
+    diagnostic = failure.exception_diagnostic
+    assert diagnostic is not None
+    assert diagnostic["exception_type"] == "SystemExit"
+    assert diagnostic["exception_locus"]["module"] == "tests.test_replay_reviewed_subtitle_baseline_cli"
+    assert diagnostic["exception_locus"]["function"] == "local_exit"
+    serialized = json.dumps(diagnostic, sort_keys=True)
+    assert "token=secret" not in serialized
+    assert "/private/stage" not in serialized
+
+    runtime = tmp_path / "runtime"
+    repo = runtime / "repo"
+    repo.mkdir(parents=True)
+    (repo / "DEPLOYED_COMMIT").write_text("a" * 40 + "\n")
+    (repo / "DEPLOYED_AUTHORITY_MANIFEST.json").write_text("{}\n")
+    plan = SimpleNamespace(
+        date="2026-08-14", candidate_id="cid", expected_video_sha256="sha256:" + "b" * 64,
+        baseline=SimpleNamespace(config={"sha256": "c" * 64}),
+    )
+    first = cli._sanitized_failure_receipt(
+        runtime=runtime, plan=plan, matrix=[], provider_attempted=False,
+        exception_diagnostic=diagnostic,
+    )
+    second = cli._sanitized_failure_receipt(
+        runtime=runtime, plan=plan, matrix=[], provider_attempted=False,
+        exception_diagnostic=diagnostic,
+    )
+    assert first == second
+    receipt = next((runtime / "reports").rglob(first.removeprefix("sha256:") + ".json"))
+    receipt_text = receipt.read_text()
+    assert json.loads(receipt_text)["exception_diagnostic"] == diagnostic
+    assert "token=secret" not in receipt_text
+    assert "/private/stage" not in receipt_text
+
+
+def test_system_exit_diagnostic_drops_external_only_traceback_and_nonopaque_exit() -> None:
+    namespace: dict[str, object] = {}
+    exec(compile(
+        "def capture():\n    try:\n        raise SystemExit('token=secret /private/provider')\n    except SystemExit as exc:\n        return exc\n",
+        "/tmp/untrusted-provider.py", "exec",
+    ), namespace)
+    external = namespace["capture"]()
+    assert isinstance(external, SystemExit)
+    assert cli._system_exit_diagnostic(external) == {"exception_type": "SystemExit"}
+    assert cli._system_exit_diagnostic(SystemExit("FINAL_REVIEW_RELEASE_BLOCKED: token=secret")) is None
+
+
+@pytest.mark.parametrize(
+    "locus",
+    [
+        {"module": "not-a-module", "function": "f", "line": 1},
+        {"module": "m" * 241, "function": "f", "line": 1},
+        {"module": "tests.ok", "function": "f", "line": 0},
+    ],
+)
+def test_closed_system_exit_diagnostic_refuses_malformed_or_oversize_locus(locus: dict[str, object]) -> None:
+    assert cli._closed_exception_diagnostic({
+        "exception_type": "SystemExit", "exception_locus": locus,
+    }) is None
+
+
 def test_record_bound_authority_failures_get_their_own_predicate() -> None:
     assert cli._failure_predicate("REPLAY_FINALIZER_CHAT_AUTHORITY_DRIFT") == "RECORD_BOUND_CHAT_AUTHORITY"
     assert cli._failure_predicate("REPLAY_FINALIZER_CLIP_CONTEXT_PAYLOAD_DRIFT") == "RECORD_BOUND_CLIP_CONTEXT"
