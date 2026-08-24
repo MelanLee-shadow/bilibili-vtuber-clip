@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -18,8 +18,7 @@ ROOT_EVIDENCE = "c1.root-review-evidence.v1.json"
 ROOT_SHA = "sha256:20f007654235824c35b3bbe2f0af414c39a2b7a1855c0a7f7fd25fcd89eb0ca9"
 RULING = "ruling/2026-08-19-ivan-review-batch-rulings.md"
 RULING_SHA = "sha256:29bc6e523645ecfbd9dbf15a5bea912dd741a6dced0b54ca41d4f906cebfde49"
-TIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$")
-SEALS = {"line947": {"raw_sha256": "sha256:e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa", "content_sha256": "sha256:0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b"}, "line1643": {"uuid": "b95d4356-7ad2-4481-b4a7-0b7afa3c35b9", "raw_sha256": "sha256:2269c653fa6be7fb0c20df98a7348d5f5c57176e3e41fe80eb13b85c39307609"}, "line1745": {"uuid": "a79d6670-88b1-43c3-a688-3c9615c1da51", "raw_sha256": "sha256:7f97b7f8b6a7ca9cad7f54e02836a185b41c5ea158d70cb31f0867a174f13329"}}
+SEALS = {"line947": {"raw_sha256": "sha256:e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa", "content_sha256": "sha256:0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b"}, "line1643": {"uuid": "b95d4356-7ad2-4481-b4a7-0b7afa3c35b9", "raw_sha256": "sha256:2269c653fa6be7fb0c20df98a7348d5f5c57176e3e41fe80eb13b85c39307609", "content_sha256": "sha256:61e0ee6e0811fce540efc959d7468354bbd1633c271b140b8eed8ac44e8d010a"}, "line1745": {"uuid": "a79d6670-88b1-43c3-a688-3c9615c1da51", "raw_sha256": "sha256:7f97b7f8b6a7ca9cad7f54e02836a185b41c5ea158d70cb31f0867a174f13329", "content_sha256": "sha256:f5d60aee9cc02d100ec6f2b660ade76f951e7b113fe0ae95397e1ca6d2cbbc69"}}
 
 class C1TechnicalReceiptError(ValueError): pass
 
@@ -73,7 +72,9 @@ def validate_completed(value: object, root: Path, audit_path: Path) -> dict[str,
     if not isinstance(value, Mapping) or set(value) != fields: raise C1TechnicalReceiptError("C1_RECEIPT_SCHEMA_INVALID")
     expected=template(root,audit_path)
     if (value.get("schema_version"),value.get("candidate_id"),value.get("status"),value.get("accepted"),value.get("reviewed_by"),value.get("upload_allowed"),value.get("bindings")) != (SCHEMA,CID,"ACCEPTED_FOR_SAME_BV_TECHNICAL",True,"Codex root",False,expected["bindings"]): raise C1TechnicalReceiptError("C1_RECEIPT_BINDING_INVALID")
-    if not isinstance(value.get("reviewed_at"),str) or TIME.fullmatch(value["reviewed_at"]) is None: raise C1TechnicalReceiptError("C1_RECEIPT_REVIEWED_AT_INVALID")
+    try: timestamp = datetime.fromisoformat(str(value.get("reviewed_at", "")).replace("Z", "+00:00"))
+    except ValueError: raise C1TechnicalReceiptError("C1_RECEIPT_REVIEWED_AT_INVALID") from None
+    if timestamp.tzinfo is None or timestamp.utcoffset() is None: raise C1TechnicalReceiptError("C1_RECEIPT_REVIEWED_AT_INVALID")
     points=value.get("six_named_points")
     if not isinstance(points,list) or len(points)!=6: raise C1TechnicalReceiptError("C1_RECEIPT_POINT_SET_INVALID")
     for actual, base in zip(points,expected["six_named_points"],strict=True):
