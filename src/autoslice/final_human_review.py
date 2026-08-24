@@ -653,6 +653,25 @@ def replay_final_human_review_attestation(
             "FINAL_HUMAN_REVIEW_PACKAGE_ATTESTATION_INVALID",
             "package_root",
         )
+    # C1's line947-authorized fastlane is deliberately not a generic
+    # perceptual receipt.  This exact schema pair is the only alternate lane.
+    if "c1_technical_receipt" in attestation:
+        entries: dict[str, dict[str, object]] = {}
+        paths: dict[str, Path] = {}
+        for key in ("review_manifest", "package_audit", "c1_technical_receipt"):
+            entry, path = _absolute_attested_file(attestation.get(key), label=key)
+            if not path.is_relative_to(package_root):
+                raise FinalHumanReviewError("FINAL_HUMAN_REVIEW_ATTESTED_FILE_INVALID", key)
+            entries[key], paths[key] = entry, path
+        review = _json_object(paths["review_manifest"], source="review_manifest")
+        if review.get("schema_version") != "fastlane-c1-formal-private-review-manifest.v1":
+            raise FinalHumanReviewError("FINAL_HUMAN_REVIEW_C1_FORMAL_MANIFEST_REQUIRED")
+        from src.autoslice.fastlane_c1_technical_receipt import C1TechnicalReceiptError, validate_completed
+        try:
+            validate_completed(_json_object(paths["c1_technical_receipt"], source="c1_technical_receipt"), package_root, paths["package_audit"])
+        except C1TechnicalReceiptError as exc:
+            raise FinalHumanReviewError("FINAL_HUMAN_REVIEW_C1_TECHNICAL_RECEIPT_INVALID", str(exc)) from exc
+        return {"package_root": package_root_text, **entries}
     entries: dict[str, dict[str, object]] = {}
     paths: dict[str, Path] = {}
     for key in (
