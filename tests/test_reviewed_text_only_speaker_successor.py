@@ -408,6 +408,32 @@ def test_successor_refuses_projection_binding_and_grid_negatives(
         _call_delivery(b, tmp_path, delivery, receipt)
 
 
+def test_successor_accepts_v2_coordinate_contract_and_rejects_grid_confusion(tmp_path: Path) -> None:
+    """The sole receipt consumer distinguishes record and baseline grids."""
+
+    b = _drop_bundle(tmp_path)
+    delivery, receipt = _c4_delivery_receipt(b, tmp_path)
+    document = json.loads(receipt.read_text())
+    document["schema_version"] = "reviewed-baseline-full-release-delivery-projection.v2"
+    document.pop("padded_source_interval")
+    document.pop("final_delivery_boundary")
+    document["coordinate_contract"] = {
+        "schema_version": "reviewed-baseline-grid-record-grid.v1",
+        "baseline_source_interval": {"start_ms": 0, "end_ms": 24_000},
+        "baseline_delivery_crop": {"start_ms": 3_000, "end_ms": 24_000},
+        "record_padded_source_interval": {"start_ms": 0, "end_ms": 24_000},
+        "record_final_delivery_boundary": {"start_ms": 3_000, "end_ms": 24_000},
+        "baseline_to_record_padded_offset_ms": 0,
+    }
+    _write(receipt, document)
+    assert _call_delivery(b, tmp_path, delivery, receipt)["reviewed_baseline_text_only_successor"]
+
+    document["coordinate_contract"]["baseline_to_record_padded_offset_ms"] = 1
+    _write(receipt, document)
+    with pytest.raises(ReviewedTextOnlySpeakerSuccessorError, match="DELIVERY_PROJECTION_COORDINATE_INVALID"):
+        _call_delivery(b, tmp_path, delivery, receipt)
+
+
 def test_successor_rejects_text_change_not_named_by_ledger(tmp_path: Path) -> None:
     b = _bundle(tmp_path)
     b["new_plain"].write_text(b["new_plain"].read_text().replace("旧文本", "越权"), encoding="utf-8")

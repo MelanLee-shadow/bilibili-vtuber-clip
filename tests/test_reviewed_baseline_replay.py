@@ -335,6 +335,57 @@ def test_c12_attested_final_interval_is_accepted_without_widening_to_padded_sour
         )
 
 
+def test_c12_coordinate_receipt_binds_baseline_and_record_grids() -> None:
+    """A final-attested baseline emits an explicit two-grid v2 receipt."""
+
+    diagnostic = """1\n00:00:00,000 --> 00:00:01,000\n甲\n\n2\n00:00:01,000 --> 00:00:02,000\n乙\n\n3\n00:00:02,000 --> 00:00:03,000\n丙\n"""
+    delivery = """1\n00:00:00,000 --> 00:00:01,000\n甲\n""".encode()
+    diagnostic_sha = _sha(diagnostic.encode()).removeprefix("sha256:")
+    release_sha = diagnostic_sha
+    ledger = b"ledger"
+    diff = json.dumps({"rows": [
+        {"cue": 1, "disposition": "OPERATOR_UNCHANGED_FREEZE", "release_cue_index": 1, "release_truth_text": "甲"},
+        {"cue": 2, "disposition": "OPERATOR_UNCHANGED_FREEZE", "release_cue_index": 2, "release_truth_text": "乙"},
+        {"cue": 3, "disposition": "OPERATOR_UNCHANGED_FREEZE", "release_cue_index": 3, "release_truth_text": "丙"},
+    ]}, ensure_ascii=False).encode()
+    config = {"sha256": release_sha, "operator_truth_lanes": {
+        "pipeline_diagnostic": {"sha256": diagnostic_sha},
+        "decision_ledger": {"sha256": _sha(ledger).removeprefix("sha256:")},
+        "diff_receipt": {"sha256": _sha(diff).removeprefix("sha256:")},
+    }}
+    receipt = full_window_replay._build_full_release_delivery_projection_receipt(
+        candidate_id="auto_130012_435_574", record_sha256="sha256:" + "1" * 64,
+        record_boundary={"final_start_ms": 3_000, "final_end_ms": 4_000},
+        padded_start_ms=0, padded_end_ms=6_000, final_start_ms=3_000, final_end_ms=4_000,
+        diagnostic_text=diagnostic, full_release_text=diagnostic, delivery_bytes=delivery,
+        config=config, staged_media_sha256="sha256:" + "2" * 64,
+        lane_bytes={"pipeline_diagnostic": diagnostic.encode(), "decision_ledger": ledger, "diff_receipt": diff},
+        baseline_source_start_ms=3_000, baseline_source_end_ms=6_000,
+        baseline_crop_start_ms=0, baseline_crop_end_ms=1_000,
+    )
+    assert receipt is not None
+    assert receipt["schema_version"] == "reviewed-baseline-full-release-delivery-projection.v2"
+    assert receipt["coordinate_contract"] == {
+        "schema_version": "reviewed-baseline-grid-record-grid.v1",
+        "baseline_source_interval": {"start_ms": 3_000, "end_ms": 6_000},
+        "baseline_delivery_crop": {"start_ms": 0, "end_ms": 1_000},
+        "record_padded_source_interval": {"start_ms": 0, "end_ms": 6_000},
+        "record_final_delivery_boundary": {"start_ms": 3_000, "end_ms": 4_000},
+        "baseline_to_record_padded_offset_ms": 3_000,
+    }
+    with pytest.raises(full_window_replay.FullWindowReplayError, match="COORDINATE_DRIFT"):
+        full_window_replay._build_full_release_delivery_projection_receipt(
+            candidate_id="auto_130012_435_574", record_sha256="sha256:" + "1" * 64,
+            record_boundary={"final_start_ms": 3_000, "final_end_ms": 4_000},
+            padded_start_ms=0, padded_end_ms=6_000, final_start_ms=3_000, final_end_ms=4_000,
+            diagnostic_text=diagnostic, full_release_text=diagnostic, delivery_bytes=delivery,
+            config=config, staged_media_sha256="sha256:" + "2" * 64,
+            lane_bytes={"pipeline_diagnostic": diagnostic.encode(), "decision_ledger": ledger, "diff_receipt": diff},
+            baseline_source_start_ms=3_001, baseline_source_end_ms=6_000,
+            baseline_crop_start_ms=0, baseline_crop_end_ms=1_000,
+        )
+
+
 def test_stage_rebuilds_only_private_artifacts_and_preserves_expected_video_hash(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

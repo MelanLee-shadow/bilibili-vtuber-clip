@@ -104,6 +104,8 @@ def _canonical_sha256(value: object) -> str:
 
 
 _DELIVERY_PROJECTION_SCHEMA = "reviewed-baseline-full-release-delivery-projection.v1"
+_DELIVERY_PROJECTION_SCHEMA_V2 = "reviewed-baseline-full-release-delivery-projection.v2"
+_DELIVERY_PROJECTION_COORDINATE_SCHEMA = "reviewed-baseline-grid-record-grid.v1"
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -301,6 +303,10 @@ def _build_full_release_delivery_projection_receipt(
     c5_start_clamp_proposal_path: Path | None = None,
     c5_start_clamp_acceptance_path: Path | None = None,
     recording_date: str | None = None,
+    baseline_source_start_ms: int | None = None,
+    baseline_source_end_ms: int | None = None,
+    baseline_crop_start_ms: int | None = None,
+    baseline_crop_end_ms: int | None = None
 ) -> dict[str, object] | None:
     """Prove an exact sealed full-release -> final-delivery projection.
 
@@ -322,6 +328,29 @@ def _build_full_release_delivery_projection_receipt(
         or record_boundary.get("final_end_ms") != final_end_ms
     ):
         raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_RECORD_BOUNDARY_DRIFT")
+    coordinate_values = (
+        baseline_source_start_ms, baseline_source_end_ms,
+        baseline_crop_start_ms, baseline_crop_end_ms,
+    )
+    if any(value is not None for value in coordinate_values) and not all(
+        value is not None for value in coordinate_values
+    ):
+        raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_COORDINATE_INVALID")
+    if all(value is not None for value in coordinate_values):
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in coordinate_values):
+            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_COORDINATE_INVALID")
+        assert isinstance(baseline_source_start_ms, int) and isinstance(baseline_source_end_ms, int)
+        assert isinstance(baseline_crop_start_ms, int) and isinstance(baseline_crop_end_ms, int)
+        if not (
+            padded_start_ms <= baseline_source_start_ms < baseline_source_end_ms <= padded_end_ms
+            and 0 <= baseline_crop_start_ms < baseline_crop_end_ms <= baseline_source_end_ms - baseline_source_start_ms
+            and baseline_source_start_ms + baseline_crop_start_ms == padded_start_ms + final_start_ms
+            and baseline_source_start_ms + baseline_crop_end_ms == padded_start_ms + final_end_ms
+        ):
+            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_COORDINATE_DRIFT")
+        grid_start_ms, grid_end_ms = baseline_crop_start_ms, baseline_crop_end_ms
+    else:
+        grid_start_ms, grid_end_ms = final_start_ms, final_end_ms
     lanes = config.get("operator_truth_lanes")
     if not isinstance(lanes, Mapping):
         raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_LANES_INVALID")
@@ -410,7 +439,7 @@ def _build_full_release_delivery_projection_receipt(
         ):
             raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_MAP_INVALID")
         release_cursor += 1
-        if release.end_ms <= final_start_ms or release.start_ms >= final_end_ms:
+        if release.end_ms <= grid_start_ms or release.start_ms >= grid_end_ms:
             rows.append({
                 "old_source_index": old_ordinal,
                 "release_cue_index": release_index,
@@ -418,10 +447,22 @@ def _build_full_release_delivery_projection_receipt(
                 "disposition": "OUTSIDE_FINAL_DELIVERY",
             })
             continue
-        start_clamp = release.start_ms < final_start_ms
-        end_clamp = release.end_ms > final_end_ms
+        coordinate_projection = all(
+            value is not None
+            for value in (
+                baseline_source_start_ms,
+                baseline_source_end_ms,
+                baseline_crop_start_ms,
+                baseline_crop_end_ms,
+            )
+        )
+        clamp_start_bound = grid_start_ms if coordinate_projection else final_start_ms
+        clamp_end_bound = grid_end_ms if coordinate_projection else final_end_ms
+        start_clamp = release.start_ms < clamp_start_bound
+        end_clamp = release.end_ms > clamp_end_bound
         c7b_start_geometry = None
-        if start_clamp and c7b_start_geometry is None:
+        c7b_geometry = None
+        if start_clamp:
             from src.autoslice.fastlane_c7b_source_reconciliation import (
                 C7bSourceReconciliationError, resolve_c7b_delivery_start_clamp,
             )
@@ -450,13 +491,20 @@ def _build_full_release_delivery_projection_receipt(
                 raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_STRADDLER")
             expected_start, expected_end = c7b_geometry
             disposition = "RETAINED_FINAL_DELIVERY_END_CLAMP"
-        if start_clamp and c7b_start_geometry is None and (
-            None in (
-                c5_start_clamp_proposal_path,
-                c5_start_clamp_acceptance_path,
-                recording_date,
-            )
+        c5_authorized = None not in (
+            c5_start_clamp_proposal_path,
+            c5_start_clamp_acceptance_path,
+            recording_date,
+        )
+        if (
+            (release.start_ms < grid_start_ms or release.end_ms > grid_end_ms)
+            and c7b_start_geometry is None
+            and c7b_geometry is None
+            and not (start_clamp and c5_authorized)
         ):
+            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_STRADDLER")
+        if start_clamp and c7b_start_geometry is None and not c5_authorized:
+            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_STRADDLER")
             raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_STRADDLER")
         if delivery_cursor >= len(delivery_cues):
             raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_DELIVERY_GRID_DRIFT")
@@ -466,8 +514,8 @@ def _build_full_release_delivery_projection_receipt(
             expected_start, expected_end = c7b_start_geometry
         elif not end_clamp:
             expected_start, expected_end = (
-                release.start_ms - final_start_ms,
-                release.end_ms - final_start_ms,
+                release.start_ms - grid_start_ms,
+                release.end_ms - grid_start_ms,
             )
         disposition = "RETAINED_FINAL_DELIVERY"
         if c7b_start_geometry is not None:
@@ -538,13 +586,11 @@ def _build_full_release_delivery_projection_receipt(
         delivery_cursor += 1
     if release_cursor != len(release_cues) or delivery_cursor != len(delivery_cues) or not delivery_cues:
         raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_MAP_INVALID")
-    return {
-        "schema_version": _DELIVERY_PROJECTION_SCHEMA,
+    receipt: dict[str, object] = {
+        "schema_version": (_DELIVERY_PROJECTION_SCHEMA_V2 if coordinate_values[0] is not None else _DELIVERY_PROJECTION_SCHEMA),
         "candidate_id": candidate_id,
         "record_sha256": record_sha256,
         "record_boundary_sha256": _canonical_sha256(dict(record_boundary)),
-        "padded_source_interval": {"start_ms": padded_start_ms, "end_ms": padded_end_ms},
-        "final_delivery_boundary": {"start_ms": final_start_ms, "end_ms": final_end_ms},
         "pipeline_diagnostic_sha256": diagnostic_sha,
         "full_release_srt_sha256": full_release_sha,
         "operator_ledger_sha256": ledger_sha,
@@ -556,6 +602,19 @@ def _build_full_release_delivery_projection_receipt(
         "final_delivery_cue_count": len(delivery_cues),
         "rows": rows,
     }
+    if coordinate_values[0] is None:
+        receipt["padded_source_interval"] = {"start_ms": padded_start_ms, "end_ms": padded_end_ms}
+        receipt["final_delivery_boundary"] = {"start_ms": final_start_ms, "end_ms": final_end_ms}
+    else:
+        receipt["coordinate_contract"] = {
+            "schema_version": _DELIVERY_PROJECTION_COORDINATE_SCHEMA,
+            "baseline_source_interval": {"start_ms": baseline_source_start_ms, "end_ms": baseline_source_end_ms},
+            "baseline_delivery_crop": {"start_ms": baseline_crop_start_ms, "end_ms": baseline_crop_end_ms},
+            "record_padded_source_interval": {"start_ms": padded_start_ms, "end_ms": padded_end_ms},
+            "record_final_delivery_boundary": {"start_ms": final_start_ms, "end_ms": final_end_ms},
+            "baseline_to_record_padded_offset_ms": baseline_source_start_ms - padded_start_ms,
+        }
+    return receipt
 
 
 def replay_full_window_then_crop(
@@ -730,7 +789,11 @@ def replay_full_window_text_and_crop(
     delivery_projection_padded_start_ms: int | None = None,
     delivery_projection_padded_end_ms: int | None = None,
     delivery_projection_final_start_ms: int | None = None,
-    delivery_projection_final_end_ms: int | None = None
+    delivery_projection_final_end_ms: int | None = None,
+    delivery_projection_baseline_start_ms: int | None = None,
+    delivery_projection_baseline_end_ms: int | None = None,
+    delivery_projection_baseline_crop_start_ms: int | None = None,
+    delivery_projection_baseline_crop_end_ms: int | None = None
 ) -> tuple[bytes, dict]:
     """Apply an exact padded baseline and return a deterministic final crop."""
 
@@ -807,12 +870,16 @@ def replay_full_window_text_and_crop(
                 c5_start_clamp_proposal_path=c5_start_clamp_proposal_path,
                 c5_start_clamp_acceptance_path=c5_start_clamp_acceptance_path,
                 recording_date=recording_date,
+                baseline_source_start_ms=delivery_projection_baseline_start_ms,
+                baseline_source_end_ms=delivery_projection_baseline_end_ms,
+                baseline_crop_start_ms=delivery_projection_baseline_crop_start_ms,
+                baseline_crop_end_ms=delivery_projection_baseline_crop_end_ms,
             )
             if receipt is not None:
                 assert projection_receipt_path is not None
                 receipt_sha = _private_create_only_json(projection_receipt_path, receipt)
                 audit["full_release_delivery_projection"] = {
-                    "schema_version": _DELIVERY_PROJECTION_SCHEMA,
+                    "schema_version": receipt["schema_version"],
                     "receipt_sha256": receipt_sha,
                     "full_release_cue_count": receipt["full_release_cue_count"],
                     "final_delivery_cue_count": receipt["final_delivery_cue_count"],

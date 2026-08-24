@@ -299,6 +299,10 @@ def prepare_stage_delivery_projection(
             delivery_projection_padded_end_ms=padded_end,
             delivery_projection_final_start_ms=getattr(plan, "local_start_ms"),
             delivery_projection_final_end_ms=getattr(plan, "local_end_ms"),
+            delivery_projection_baseline_start_ms=(baseline_start if baseline_start != padded_start else None),
+            delivery_projection_baseline_end_ms=(baseline_end if baseline_start != padded_start else None),
+            delivery_projection_baseline_crop_start_ms=(crop_start if baseline_start != padded_start else None),
+            delivery_projection_baseline_crop_end_ms=(crop_end if baseline_start != padded_start else None),
         )
     except FullWindowReplayError as exc:
         raise error(str(exc)) from exc

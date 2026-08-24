@@ -17,7 +17,11 @@ from typing import Callable, Mapping, Protocol
 
 from scripts.apply_speaker_turn_overrides import Cue, sha256_file, write_ass, write_srt
 from scripts.apply_subtitle_text_overrides import parse_srt
-from src.autoslice.redelivery_full_window_replay import _DELIVERY_PROJECTION_SCHEMA
+from src.autoslice.redelivery_full_window_replay import (
+    _DELIVERY_PROJECTION_COORDINATE_SCHEMA,
+    _DELIVERY_PROJECTION_SCHEMA,
+    _DELIVERY_PROJECTION_SCHEMA_V2,
+)
 from src.autoslice.speaker_common import SPEAKER_FINALIZATION_SCHEMA
 
 
@@ -384,9 +388,8 @@ def _delivery_projection_mapping(
         receipt_path, receipt_sha256, code="DELIVERY_PROJECTION_RECEIPT_BINDING"
     )
     receipt = _json(receipt_path, code="DELIVERY_PROJECTION_RECEIPT_INVALID")
-    expected_receipt_keys = {
+    common_receipt_keys = {
         "schema_version", "candidate_id", "record_sha256", "record_boundary_sha256",
-        "padded_source_interval", "final_delivery_boundary",
         "pipeline_diagnostic_sha256", "full_release_srt_sha256",
         "operator_ledger_sha256", "operator_truth_diff_sha256",
         "staged_srt_sha256", "staged_media_sha256",
@@ -397,9 +400,17 @@ def _delivery_projection_mapping(
     if not isinstance(boundary, Mapping):
         _fail("DELIVERY_PROJECTION_RECORD_BOUNDARY")
     final_start, final_end = boundary.get("final_start_ms"), boundary.get("final_end_ms")
+    schema = receipt.get("schema_version")
+    if schema == _DELIVERY_PROJECTION_SCHEMA:
+        expected_receipt_keys = common_receipt_keys | {
+            "padded_source_interval", "final_delivery_boundary",
+        }
+    elif schema == _DELIVERY_PROJECTION_SCHEMA_V2:
+        expected_receipt_keys = common_receipt_keys | {"coordinate_contract"}
+    else:
+        _fail("DELIVERY_PROJECTION_RECEIPT_INVALID")
     if (
         set(receipt) != expected_receipt_keys
-        or receipt.get("schema_version") != _DELIVERY_PROJECTION_SCHEMA
         or receipt.get("candidate_id") != candidate_id
         or _digest(receipt.get("record_sha256"), code="DELIVERY_PROJECTION_RECEIPT_INVALID")
         != _digest(old_record_sha256, code="DELIVERY_PROJECTION_RECEIPT_INVALID")
@@ -415,23 +426,53 @@ def _delivery_projection_mapping(
         or receipt.get("final_delivery_cue_count") != len(delivery_cues)
     ):
         _fail("DELIVERY_PROJECTION_RECEIPT_INVALID")
-    receipt_boundary = receipt.get("final_delivery_boundary")
-    padded = receipt.get("padded_source_interval")
-    padded_start = padded.get("start_ms") if isinstance(padded, Mapping) else None
-    padded_end = padded.get("end_ms") if isinstance(padded, Mapping) else None
-    if (
-        not isinstance(receipt_boundary, Mapping)
-        or not isinstance(padded, Mapping)
-        or receipt_boundary.get("start_ms") != final_start
-        or receipt_boundary.get("end_ms") != final_end
-        or isinstance(final_start, bool) or isinstance(final_end, bool)
-        or not isinstance(final_start, int) or not isinstance(final_end, int)
-        or isinstance(padded_start, bool) or isinstance(padded_end, bool)
-        or not isinstance(padded_start, int) or not isinstance(padded_end, int)
-        or padded_start >= padded_end
-        or not (0 <= final_start < final_end <= padded_end - padded_start)
-    ):
+    if isinstance(final_start, bool) or isinstance(final_end, bool) or not isinstance(final_start, int) or not isinstance(final_end, int):
         _fail("DELIVERY_PROJECTION_RECORD_BOUNDARY")
+    if schema == _DELIVERY_PROJECTION_SCHEMA:
+        receipt_boundary = receipt.get("final_delivery_boundary")
+        padded = receipt.get("padded_source_interval")
+        padded_start = padded.get("start_ms") if isinstance(padded, Mapping) else None
+        padded_end = padded.get("end_ms") if isinstance(padded, Mapping) else None
+        if (
+            not isinstance(receipt_boundary, Mapping) or not isinstance(padded, Mapping)
+            or receipt_boundary.get("start_ms") != final_start or receipt_boundary.get("end_ms") != final_end
+            or isinstance(padded_start, bool) or isinstance(padded_end, bool)
+            or not isinstance(padded_start, int) or not isinstance(padded_end, int)
+            or padded_start >= padded_end or not (0 <= final_start < final_end <= padded_end - padded_start)
+        ):
+            _fail("DELIVERY_PROJECTION_RECORD_BOUNDARY")
+        grid_start, grid_end = final_start, final_end
+    else:
+        contract = receipt.get("coordinate_contract")
+        if not isinstance(contract, Mapping) or set(contract) != {
+            "schema_version", "baseline_source_interval", "baseline_delivery_crop",
+            "record_padded_source_interval", "record_final_delivery_boundary",
+            "baseline_to_record_padded_offset_ms",
+        } or contract.get("schema_version") != _DELIVERY_PROJECTION_COORDINATE_SCHEMA:
+            _fail("DELIVERY_PROJECTION_COORDINATE_INVALID")
+        baseline = contract.get("baseline_source_interval")
+        crop = contract.get("baseline_delivery_crop")
+        padded = contract.get("record_padded_source_interval")
+        receipt_boundary = contract.get("record_final_delivery_boundary")
+        values = tuple(
+            item.get(key) if isinstance(item, Mapping) else None
+            for item, key in ((baseline, "start_ms"), (baseline, "end_ms"), (crop, "start_ms"), (crop, "end_ms"), (padded, "start_ms"), (padded, "end_ms"))
+        )
+        baseline_start, baseline_end, crop_start, crop_end, padded_start, padded_end = values
+        offset = contract.get("baseline_to_record_padded_offset_ms")
+        if (
+            not all(isinstance(item, int) and not isinstance(item, bool) for item in values)
+            or isinstance(offset, bool) or not isinstance(offset, int)
+            or not isinstance(receipt_boundary, Mapping)
+            or receipt_boundary.get("start_ms") != final_start or receipt_boundary.get("end_ms") != final_end
+            or not (padded_start <= baseline_start < baseline_end <= padded_end)
+            or not (0 <= crop_start < crop_end <= baseline_end - baseline_start)
+            or offset != baseline_start - padded_start
+            or baseline_start + crop_start != padded_start + final_start
+            or baseline_start + crop_end != padded_start + final_end
+        ):
+            _fail("DELIVERY_PROJECTION_COORDINATE_INVALID")
+        grid_start, grid_end = crop_start, crop_end
     release_by_old = dict(old_to_release)
     receipt_rows = receipt.get("rows")
     if not isinstance(receipt_rows, list) or len(receipt_rows) != len(old_cues):
@@ -453,20 +494,34 @@ def _delivery_projection_mapping(
         if release.start != old.start or release.end != old.end:
             _fail("DELIVERY_PROJECTION_MAP_INVALID")
         release_start, release_end = _srt_ms(release.start), _srt_ms(release.end)
-        if release_end <= final_start or release_start >= final_end:
+        if release_end <= grid_start or release_start >= grid_end:
             expected_rows.append({
                 "old_source_index": old_index, "release_cue_index": release_index,
                 "delivery_cue_index": None, "disposition": "OUTSIDE_FINAL_DELIVERY",
             })
             continue
-        start_clamp = release_start < final_start or release_end > final_end
-        if start_clamp and (None in (c5_start_clamp_proposal_path, c5_start_clamp_acceptance_path, recording_date)):
+        coordinate_projection = schema != _DELIVERY_PROJECTION_SCHEMA
+        clamp_start_bound = grid_start if coordinate_projection else final_start
+        clamp_end_bound = grid_end if coordinate_projection else final_end
+        start_clamp = release_start < clamp_start_bound or release_end > clamp_end_bound
+        c5_authorized = None not in (
+            c5_start_clamp_proposal_path,
+            c5_start_clamp_acceptance_path,
+            recording_date,
+        )
+        if (
+            (release_start < grid_start or release_end > grid_end)
+            and not (start_clamp and c5_authorized)
+        ):
+            _fail("DELIVERY_PROJECTION_STRADDLER")
+        if start_clamp and not c5_authorized:
+            _fail("DELIVERY_PROJECTION_STRADDLER")
             _fail("DELIVERY_PROJECTION_STRADDLER")
         if delivery_cursor >= len(delivery_cues):
             _fail("DELIVERY_PROJECTION_DELIVERY_GRID_DRIFT")
         delivery = delivery_cues[delivery_cursor]
         delivery_index = delivery_cursor + 1
-        expected_start, expected_end = release_start - final_start, release_end - final_start
+        expected_start, expected_end = release_start - grid_start, release_end - grid_start
         disposition = "RETAINED_FINAL_DELIVERY"
         if start_clamp:
             # This is deliberately invoked only after the historical speaker
