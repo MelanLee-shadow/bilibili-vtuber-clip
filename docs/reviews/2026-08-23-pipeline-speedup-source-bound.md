@@ -106,3 +106,37 @@ Qixi-first 队列；任何发布动作仍须另有授权，不由本页自动触
 
 本页维护 source-bound provenance 与设计入口；若与 step 文件或代码强制层冲突，以后者为准，
 并应通过 README/step 的陈旧规则扫描发现冲突，而不是在本页另立例外。
+
+## 2026-08-24 current code verification appendix
+
+本附录是对本轮 current-baseline audit 的源码与 focused-test 核对；它 supersede 了本页上方“runtime 未验证”的历史表述，但不冒充 free host、部署或 B 站 live readback 证明。逐项核对到的当前 code symbols/path 如下：
+
+| 设计项 | 当前源码证据 |
+|---|---|
+| full no-target-write canonical after-image preflight | `src/autoslice/qixi_post_correction_public_surface.py:1346` `prepare_qixi_after_image()` 在 private stage 构造/校验 after-image，docstring 明确不写 runner/state/journal；`src/autoslice/qixi_post_correction_modes.py:880-925` 的 `run(Mode.FULL_DRY_RUN)` 调 `_build_after_image()`、`_assert_prepare_preimages()`、`_validate_after_image()`，只输出 full-dry-run outcome。 |
+| aggregate typed predicate matrix | `src/autoslice/qixi_post_correction_modes.py:153` `collect_matrix()`；`src/autoslice/qixi_post_correction_diagnostics.py:55` `collect_predicates()` 与 `:107` `matrix_document()` 固定 schema/predicate 集合，formal/stage/cleanup 结果在 `qixi_post_correction_modes.py:925-1008` 汇总。 |
+| create-only sanitized diagnostic receipt | `src/autoslice/qixi_post_correction_modes.py:511` `_failure_receipt()` → `src/autoslice/qixi_post_correction_diagnostics.py:170` `write_failure_receipt()`；receipt body/hash-bound、create-only，且诊断路径只接受 sanitized predicate/provider evidence。 |
+| all-candidate read-only readiness graph | `scripts/publication_readiness_graph.py:2-23` 是固定 no-arg read-only entry；`src/autoslice/publication_readiness.py:562` `build_readiness_graph()` 读取 registry/state/manifest/ledger，返回 `observational_only` graph，不授予 release/upload。 |
+| candidate-private prepare/validate 在 `runner.lock` 外 | `src/autoslice/qixi_post_correction_public_surface.py:1346-1413` 的 `prepare_qixi_after_image()` 先建 private after-image；`src/autoslice/qixi_post_correction_public_surface.py:1413` `commit_qixi_after_image()` 才进入提交路径。实现 docstring 与 `scripts/finalize_qixi_post_correction_public_surface.py:1-11` 均明确 provider/private validation 不持 hot mutation lock。 |
+| bounded cross-process provider slots | `src/autoslice/provider_slots.py:260` `provider_slot()` 使用 runtime-local `provider-slots/slot-N.lock`、跨进程 `flock`、进程内 thread mutex 与 capacity/timeout bound；`src/autoslice/provider_slots.py:118` `runtime_provider_slot()` 是 provider adapter 入口。 |
+| short CAS/commit lease | `src/autoslice/qixi_transaction_core.py:417` `exclusive_runner_commit()` 提供 inode-validated、non-reentrant runner commit lease；`src/autoslice/runner_state_writeback.py:546` `write_exact_state_under_lease()` 只安装已验证 after-image，并要求 lease。 |
+| single serial Bilibili uploader/reconciliation | `scripts/authorized_upload.py:2138` `exclusive_upload_lock()` 串行 verified upload/ledger writes；`scripts/authorized_upload.py:2166-2175` `upload()` 在同一 lock 内 verify、ledger guard 与 transport；publication reconciliation 继续由该 serialized upload/repair lane 收口。 |
+
+### Focused verification
+
+实际运行命令：
+
+```text
+uv run --with pytest --with pillow pytest -q \
+  tests/test_qixi_post_correction_public_surface.py \
+  tests/test_qixi_post_correction_diagnostics.py \
+  tests/test_provider_slots.py \
+  tests/test_provider_adapter_slots.py \
+  tests/test_qixi_transaction_core_lease.py \
+  tests/test_publication_readiness.py \
+  tests/test_replay_reviewed_subtitle_baseline_cli.py
+```
+
+结果：`212 passed in 35.47s`。这些 focused tests 覆盖 private after-image/no-write 与 cleanup、typed matrix/sanitized receipt、provider slot 的跨进程/并发边界、runner lease/CAS、readiness graph 的 observational-only 行为，以及 replay prepare/readiness 的串行提交约束。
+
+在上述源码和测试证据范围内，当前 baseline 没有已确认的 material speed gap，因此本轮没有代码改动。C1/C2/C12 等 candidate-specific packaging bugs 不属于流水线并行设计缺口，不能用来否定或夸大本 appendix 的结论；部署/runtime/public surface 仍须由 root 另行现场验收。
