@@ -112,3 +112,7 @@ def test_c2_runner_cannot_open_generic_apply_or_other_candidate():
         c2_runner(["--apply", "--date", DATE, "--candidate-id", CID, "--runtime-root", "/private/x", "--private-stage-parent", "/private/y"])
     with pytest.raises(SystemExit, match="C2_PRIVATE_REPLAY_CANDIDATE_INVALID"):
         c2_runner(["--plan", "--date", DATE, "--candidate-id", "other", "--runtime-root", "/private/x"])
+    with pytest.raises(SystemExit, match="C2_PRIVATE_REPLAY_CANDIDATE_INVALID"):
+        c2_runner(["--plan", "--date", DATE, "--candidate-id"])
+    with pytest.raises(SystemExit, match="C2_PRIVATE_REPLAY_DATE_INVALID"):
+        c2_runner(["--plan", "--date", "--candidate-id", CID, "--runtime-root", "/private/x"])

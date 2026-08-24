@@ -835,10 +835,15 @@ def main(argv: list[str] | None = None, *, _record_authority_resolver=None) -> i
         prepared, errors = {}, {}
         state_path = runtime / "state" / f"{args.date}.json"
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(plans)) as pool:
+            prepare_kwargs = {
+                "runtime": runtime,
+                "stage_parent": stage_parent,
+                "state_path": state_path,
+            }
+            if _record_authority_resolver is not None:
+                prepare_kwargs["record_authority_resolver"] = _record_authority_resolver
             work = {
-                pool.submit(_prepare, plan, runtime=runtime, stage_parent=stage_parent,
-                            state_path=state_path,
-                            record_authority_resolver=_record_authority_resolver): plan
+                pool.submit(_prepare, plan, **prepare_kwargs): plan
                 for plan in plans
             }
             for future in concurrent.futures.as_completed(work):
