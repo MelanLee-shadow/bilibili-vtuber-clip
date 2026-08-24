@@ -31,9 +31,9 @@ from src.autoslice.cover_title_rendering import (
 ROOT = Path(__file__).resolve().parent
 FONT = ROOT.parents[1] / "assets/lidousha/fonts/ZCOOLKuaiLe-Regular.ttf"
 BACKGROUND = ROOT / "cover/route-background-v2.png"
-FINAL = ROOT / "cover/auto_143025_868_1094.private.cover-v2.png"
-EVIDENCE = ROOT / "cover/rendered-text-pixels.v3.json"
-LINES = ("前辈写的", "现在写不出")
+FINAL = ROOT / "cover/auto_143025_868_1094.private.cover-v3.png"
+EVIDENCE = ROOT / "cover/rendered-text-pixels.v4.json"
+LINES = ("前辈的", "改词应援歌")
 
 
 def main() -> None:

@@ -10,10 +10,10 @@ on-screen lyrics may ground the adaptation; live speech is retained; the exact
 live phrase is `谢谢你 arigatou`; and `前辈` refers to her past self.
 
 `subtitles/*.pipeline-diagnostic.srt` is the copied old text. The release SRT
-contains only live speech. It drops watched-video speech/lyrics and changes no
-other live cue except the exact arigatou cue. `evidence/` preserves bounded
-audio windows and the source-song identity note, rather than treating screen
-lyrics as a new subtitle authority.
+uses the matched watched BV's on-screen chat-bubble lyrics for its watched-song
+cues, retains every other existing outer/live cue, adds the two independently
+detected concurrent live interjections, and corrects only cue 73 to the exact
+`谢谢你 arigatou`. The original-song BV is not lyric authority.
 
 The title and cover are proposals pinned to this package. The cover has a
 textless generated background plus a deterministic title layer; its render
@@ -21,6 +21,7 @@ spec and pixel-recomposition evidence are included. Neither proposal grants
 publication, deployment, state mutation, same-BV replacement, queue mutation,
 or public verification.
 
-The package remains blocked from formal replay because the remote record's
-video hash conflicts with the copied source-media hash, and `deploy.guard` was
-present when the remote was last read. No remote Python was executed.
+The package remains blocked from formal replay because no formal replay has
+been authorized and `deploy.guard` was present when the remote was last read.
+The historical `185f…` identity is not established as a current record. No
+remote production Python was executed.

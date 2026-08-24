@@ -1,0 +1,36 @@
+{
+  "schema_version": "c10-watched-screen-authority.v1",
+  "recut": {
+    "sha256": "sha256:4fc060d30b805f0e1f3fc5a0931420068b9727d563cbc27a1db16e5bc3f1c84c",
+    "bytes": 57264372,
+    "duration_seconds": 226.582683
+  },
+  "watched_video": {
+    "bv": "BV1wF411g7YT",
+    "sha256": "sha256:c36bf777bc82a4dc0273ea6d88f864e789e24134022c9bdb7f68e677cbd6b761",
+    "bytes": 8336122,
+    "duration_seconds": 121.399938,
+    "lyric_authority": "visible chat-bubble text only"
+  },
+  "alignment": {
+    "method": "2kHz normalized cross-correlation",
+    "stable_offset_seconds": 25.408,
+    "matched_groups": {
+      "6-11": {"watched_seconds": [4.75, 15.07], "ncc_range": [0.946, 0.968]},
+      "14-19": {"watched_seconds": [16.08, 26.41], "ncc_range": [0.706, 0.970]},
+      "21-62": {"watched_seconds": [29.15, 117.85], "ncc_range": [0.532, 0.970]}
+    }
+  },
+  "player_clock_reconciliation": {
+    "ivan_label": "03:02",
+    "release_grid_cue": 73,
+    "release_grid_span_seconds": [175.0, 176.7],
+    "pretrim_clock_offset_seconds": 7,
+    "bound_text": "谢谢你 arigatou"
+  },
+  "semantic_binding": {"前辈": "李豆沙对过去自己的戏称"},
+  "residual_unknowns": [
+    "No unlisted live text was rewritten.",
+    "Only independently detected mixed-window overlays are emitted concurrently."
+  ]
+}

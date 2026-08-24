@@ -1,29 +1,30 @@
 {
-  "schema_version": "fastlane-c10-private-repaired-package.v1",
+  "schema_version": "fastlane-c10-private-repaired-package.v2",
   "candidate_id": "auto_143025_868_1094",
-  "status": "PRIVATE_READY_NOT_FORMAL_REPLAY",
+  "status": "PRIVATE_REVIEW_READY_NOT_FORMAL_REPLAY",
   "authority": "Ivan exact line-947 scope, relayed in the C10 task",
   "source_media": {
     "path": "source/auto_143025_868_1094.recut.mp4",
     "sha256": "sha256:4fc060d30b805f0e1f3fc5a0931420068b9727d563cbc27a1db16e5bc3f1c84c",
-    "remote_record_conflict": "record.json declared sha256:185f3818bd729dedb4a18ad2f59b78f80077e1e86d7ea4ba934ed946b9ec5d2b"
+    "historical_identity_unknown": "185f3818bd729dedb4a18ad2f59b78f80077e1e86d7ea4ba934ed946b9ec5d2b appears only in prior prep evidence; it is not a current competing recut authority"
   },
   "subtitle_scope": {
     "pipeline_diagnostic": "subtitles/auto_143025_868_1094.pipeline-diagnostic.srt",
     "release_srt": "subtitles/auto_143025_868_1094.release.srt",
-    "dropped_source_cues": [6, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62],
-    "exact_replacement": {"source_cue": 73, "text": "谢谢你 arigatou"},
+    "watched_song_authority": {"bv": "BV1wF411g7YT", "sha256": "sha256:c36bf777bc82a4dc0273ea6d88f864e789e24134022c9bdb7f68e677cbd6b761", "cue_ordinals": [6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62]},
+    "concurrent_live_overlays": [{"start_ms": 83060, "end_ms": 84580, "text": "这谁唱呢"}, {"start_ms": 87920, "end_ms": 88540, "text": "是谁唱的"}],
+    "exact_replacement": {"source_cue": 73, "grid_span_ms": [175000, 176700], "ruling_player_label": "03:02", "pretrim_clock_offset_seconds": 7, "text": "谢谢你 arigatou"},
     "semantic_binding": {"term": "前辈", "meaning": "李豆沙对过去自己的戏称"}
   },
-  "title": "【李豆沙】前辈写的PSP应援歌，现在的自己根本写不出来",
+  "title": "【李豆沙】回看前辈的改词应援歌｜谢谢你 arigatou",
   "cover": {
     "route": "private_cpa_textless_background_plus_deterministic_overlay",
     "background": "cover/route-background-v2.png",
-    "final": "cover/auto_143025_868_1094.private.cover-v2.png",
-    "punch_lines": ["前辈写的", "现在写不出"]
+    "final": "cover/auto_143025_868_1094.private.cover-v3.png",
+    "punch_lines": ["前辈的", "改词应援歌"]
   },
   "hard_blockers": [
-    "Remote record/video hash conflict must be resolved before formal replay.",
+    "Formal replay has not been authorized; the current 4fc recut identity must be re-read at that later gate.",
     "Remote deploy.guard was present; no remote Python/full-dry/apply was run.",
     "No publication, same-BV, queue, deploy, state, or public mutation is authorized."
   ]

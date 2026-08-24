@@ -1,0 +1,119 @@
+{
+  "schema_version": "lidousha-cover-rendered-text-pixels.v3",
+  "status": "PASS",
+  "final_cover_sha256": "sha256:ae2065712fddbccc74ee1ed29efa404e25db812c20c770622552f99b4b288f82",
+  "pre_overlay_path": "/private/tmp/vtuber-slice-fastlane-c10-20260824/private_fastlane/c10_auto_143025_868_1094/cover/auto_143025_868_1094.private.cover-v3.pre-overlay.png",
+  "pre_overlay_sha256": "sha256:2d4e6ec526e625c60b6bb1034914ec6f9ea3bbfd21677d21485288f51b5b297d",
+  "canvas_size": [
+    1920,
+    1080
+  ],
+  "text_pixel_bbox": [
+    525,
+    134,
+    1370,
+    520
+  ],
+  "text_pixel_width": 845,
+  "text_pixel_height": 386,
+  "font_size": 180,
+  "font_file_name": "ZCOOLKuaiLe-Regular.ttf",
+  "font_file_sha256": "sha256:812a6fc1fe54b6d73a419245c32dfeba8aa33104d5be90d1cf6af082007cb71d",
+  "rendered_text": "前辈的改词应援歌",
+  "render_spec": {
+    "angle_degrees": 0.0,
+    "font_face_index": 0,
+    "font_file_name": "ZCOOLKuaiLe-Regular.ttf",
+    "font_file_sha256": "sha256:812a6fc1fe54b6d73a419245c32dfeba8aa33104d5be90d1cf6af082007cb71d",
+    "layer_size": [
+      900,
+      520
+    ],
+    "lines": [
+      {
+        "font_size": 180,
+        "outlines": [
+          {
+            "color": [
+              18,
+              36,
+              79
+            ],
+            "width": 15
+          },
+          {
+            "color": [
+              255,
+              255,
+              255
+            ],
+            "width": 8
+          }
+        ],
+        "segment_pad": 15,
+        "segments": [
+          {
+            "fill": [
+              255,
+              198,
+              41
+            ],
+            "text": "前辈的"
+          }
+        ],
+        "x": 186.5,
+        "y": 42
+      },
+      {
+        "font_size": 180,
+        "outlines": [
+          {
+            "color": [
+              18,
+              36,
+              79
+            ],
+            "width": 15
+          },
+          {
+            "color": [
+              255,
+              255,
+              255
+            ],
+            "width": 8
+          }
+        ],
+        "segment_pad": 15,
+        "segments": [
+          {
+            "fill": [
+              255,
+              92,
+              138
+            ],
+            "text": "改词应援歌"
+          }
+        ],
+        "x": 21.0,
+        "y": 241
+      }
+    ],
+    "rendered_layer_size": [
+      900,
+      520
+    ],
+    "schema_version": "lidousha-cover-title-render-spec.v1"
+  },
+  "render_spec_sha256": "sha256:387190f731335ae72ddc54cf916a9661bab22162ec62ffd7ab8c07e551ce8eec",
+  "overlay_position": {
+    "x": 510,
+    "y": 92
+  },
+  "mask_path": "/private/tmp/vtuber-slice-fastlane-c10-20260824/private_fastlane/c10_auto_143025_868_1094/cover/auto_143025_868_1094.private.cover-v3.title-mask.png",
+  "mask_sha256": "sha256:dc26a960750f7ef8b37ed3716c22e70e2ef81caf699f90cd40cde1e28cabdeef",
+  "mask_nonzero_pixels": 213970,
+  "changed_pixel_count": 212599,
+  "changed_pixel_ratio": 0.9935925597046315,
+  "masked_final_pixels_sha256": "sha256:387ae5186faec2fb8e0dfadd33e9041af9ae860cdb4bbe009c59adb1aa070bc8"
+}
