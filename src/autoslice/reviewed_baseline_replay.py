@@ -1047,9 +1047,13 @@ def synthesize_replay_spec_and_finalize_private(
         ReviewedTextOnlySpeakerSuccessorError,
         materialize_text_only_speaker_successor,
     )
-    original_speaker_finalizer = adapters.run_speaker_finalization
+    original_speaker_finalizer = getattr(adapters, "run_speaker_finalization", None)
+    if finalizer is None and not callable(original_speaker_finalizer):
+        raise ReviewedBaselineReplayError("REPLAY_FINALIZER_ADAPTERS_INVALID")
 
     def replay_speaker_finalizer(**kwargs: object) -> dict[str, object]:
+        if not callable(original_speaker_finalizer):  # custom-finalizer seam only
+            raise ReviewedBaselineReplayError("REPLAY_FINALIZER_ADAPTERS_INVALID")
         generated = original_speaker_finalizer(**kwargs)
         if generated.get("status") != speaker_guess.SPEAKER_GUESS_STATUS:
             return generated
@@ -1149,17 +1153,25 @@ def synthesize_replay_spec_and_finalize_private(
     reviewer = reviewer or getattr(adapters, "run_exact_final_review", None)
     if not callable(reviewer):
         raise ReviewedBaselineReplayError("REPLAY_EXACT_FINAL_REVIEW_ADAPTER_MISSING")
+    replacement_fields: dict[str, object] = {
+        "stage_publish_draft": replay_publish_adapter(
+            plan, source_fact_llm=source_fact_llm,
+            private_package=out_root / "replacement_recuts",
+            runtime_authority_root=runtime_authority_root,
+        ),
+        "delivery_root": lambda: private_runtime_root / "delivery",
+        "run_exact_final_review": reviewer,
+    }
+    # A test-only custom finalizer owns all finalization behavior and historical
+    # seams intentionally provide a smaller adapter dataclass.  Do not add an
+    # unknown field to it.  The canonical production finalizer always receives
+    # the strict successor wrapper above.
+    if finalizer is None:
+        replacement_fields["run_speaker_finalization"] = replay_speaker_finalizer
     try:
         adapters = replace(
             adapters,
-            stage_publish_draft=replay_publish_adapter(
-                plan, source_fact_llm=source_fact_llm,
-                private_package=out_root / "replacement_recuts",
-                runtime_authority_root=runtime_authority_root,
-            ),
-            delivery_root=lambda: private_runtime_root / "delivery",
-            run_exact_final_review=reviewer,
-            run_speaker_finalization=replay_speaker_finalizer,
+            **replacement_fields,
         )
     except TypeError as exc:
         raise ReviewedBaselineReplayError("REPLAY_FINALIZER_ADAPTERS_INVALID") from exc
