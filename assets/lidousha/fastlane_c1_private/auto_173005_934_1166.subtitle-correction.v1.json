@@ -1,0 +1,39 @@
+{
+  "schema_version": "fastlane-c1-private-subtitle-correction.v1",
+  "candidate_id": "auto_173005_934_1166",
+  "recording_date": "2026-08-11",
+  "operator_authority": "Ivan exhaustive ruling: docs/reviews/2026-08-19-ivan-review-batch-rulings.md line 38; Claude line 947",
+  "title": "【李豆沙】经小李判断，薇欧拉对阿拉蕾就是铁暗恋！",
+  "upload_allowed": false,
+  "future_delivery_constraint": {
+    "requires_same_bv_repair": true,
+    "forbid_new_bv": true,
+    "preserve_public_identity_and_metadata": true
+  },
+  "predecessor": {
+    "video_sha256": "3ac98248a8fa3d3d3a02ea3a7e6045d68a7b5c29c1aa9af340ad5604e3158c08",
+    "srt_sha256": "1a668a899257407685c91629cc254918a594663af8b55cccb0932db16d0aa5d1",
+    "ass_sha256": "69defd7ff572a4e3c7c44fb8c2e62a5b9cd3dfdb5a6bcb97225253d13ac0a62f"
+  },
+  "cue_classification": {
+    "source_cue_count": 36,
+    "live_lidousha_cues": [1, 2, 3, 4, 5, 6, 7, 8, 15, 16, 17, 18, 19, 20, 21, 24, 25, 29, 30, 31, 32, 33, 34, 35, 36],
+    "watched_video_cues": [9, 10, 11, 12, 13, 14, 22, 23, 26, 27, 28],
+    "basis": "Perceptual classification of the hash-bound predecessor delivery: video dialogue/song is excluded; Li Dousha commentary is retained."
+  },
+  "mutations": {
+    "replace": {
+      "6": "薇欧拉酱只是喜欢阿拉蕾酱而已",
+      "16": "主包给练舞室的姐姐们推荐",
+      "25": "daisukino ararei chan"
+    },
+    "drop": [9, 10, 11, 12, 13, 14, 22, 23, 26, 27, 28],
+    "insert_after_source_cue": 19,
+    "insertion": {
+      "start_ms": 96750,
+      "end_ms": 98050,
+      "text": "来了",
+      "basis": "Ivan ruling location: about 01:37; retain the live Li Dousha reaction rather than watched-video dialogue."
+    }
+  }
+}
