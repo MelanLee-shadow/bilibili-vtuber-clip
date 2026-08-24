@@ -357,8 +357,20 @@ def test_locator_projection_rewrites_only_mutable_private_paths(tmp_path: Path) 
         )
 
 
+@pytest.mark.parametrize(
+    ("negative_case", "expected_error"),
+    (
+        (None, None),
+        ("burned_hash", "REPLAY_PROJECTED_BURNED_VIDEO_HASH_INVALID"),
+        ("cover_hash", "REPLAY_PROJECTED_COVER_HASH_STATUS_INVALID"),
+        ("cover_status", "REPLAY_PROJECTED_COVER_HASH_STATUS_INVALID"),
+        ("locator", "REPLAY_PROJECTED_LOCATOR_INVALID"),
+        ("story_candidate", "REPLAY_PROJECTED_STORY_CANDIDATE_INVALID"),
+    ),
+)
 def test_state_projection_restores_canonical_talk_fields_and_drops_rejection_state(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, negative_case: str | None,
+    expected_error: str | None,
 ) -> None:
     out_root, _ = _package(tmp_path)
     plan = replay.build_replay_plan(
@@ -390,9 +402,20 @@ def test_state_projection_restores_canonical_talk_fields_and_drops_rejection_sta
     }
     publish = {
         "video_path": str(video), "cover_path": str(cover),
-        "cover_sha256": "sha256:" + "3" * 64, "cover_status": "AI_COVER_READY",
+        "artifact_hashes": {"cover_sha256": "sha256:" + "3" * 64},
+        "cover_status": "AI_COVER_READY",
         "cover_generation": {"status": "READY"}, "title": "冻结标题",
     }
+    if negative_case == "burned_hash":
+        record["artifact_hashes"]["burned_video_sha256"] = "sha256:" + "9" * 64
+    elif negative_case == "cover_hash":
+        publish["artifact_hashes"]["cover_sha256"] = "sha256:" + "9" * 64
+    elif negative_case == "cover_status":
+        publish["cover_status"] = "BLOCKED"
+    elif negative_case == "locator":
+        publish["cover_path"] = str(tmp_path / "outside.cover.png")
+    elif negative_case == "story_candidate":
+        record["story_contract"]["candidate_id"] = "different-candidate"
     for name, document in (("record", record), ("publish", publish), ("chat", {}), ("speaker", {"status": "READY"})):
         (projection_root / f"{name}.json").write_bytes(json.dumps(document).encode())
     live = replay.ReplayLiveProjection(
@@ -415,6 +438,13 @@ def test_state_projection_restores_canonical_talk_fields_and_drops_rejection_sta
         "speaker_manifest": {"source": "ignored", "target": str(live.live_delivery_root / "钩子__auto_113028_1602_1698.speaker.json"), "sha256": "sha256:" + "9" * 64},
     }
     monkeypatch.setattr(replay, "_delivery_artifacts_from_prepared", lambda *_args, **_kwargs: delivery)
+    if expected_error is not None:
+        with pytest.raises(replay.ReviewedBaselineReplayError, match=expected_error):
+            replay.project_replay_state_after(
+                plan, runtime_root=runtime, state_path=state_path,
+                finalization=object(), projection=live,
+            )
+        return
     result = replay.project_replay_state_after(
         plan, runtime_root=runtime, state_path=state_path,
         finalization=object(), projection=live,

@@ -1688,25 +1688,27 @@ def project_replay_state_after(
     subtitle = delivered["subtitle"]
     cover = delivered["cover"]
     hashes = record.get("artifact_hashes")
+    if not isinstance(hashes, Mapping) or hashes.get("burned_video_sha256") != video["sha256"]:
+        raise ReviewedBaselineReplayError("REPLAY_PROJECTED_BURNED_VIDEO_HASH_INVALID")
+    publish_hashes = publish.get("artifact_hashes")
     if (
-        not isinstance(hashes, Mapping)
-        or hashes.get("burned_video_sha256") != video["sha256"]
-        or publish.get("cover_sha256") != cover["sha256"]
+        not isinstance(publish_hashes, Mapping)
+        or publish_hashes.get("cover_sha256") != cover["sha256"]
         or publish.get("cover_status") != "AI_COVER_READY"
     ):
-        raise ReviewedBaselineReplayError("REPLAY_PROJECTED_RESULT_BINDING_INVALID")
+        raise ReviewedBaselineReplayError("REPLAY_PROJECTED_COVER_HASH_STATUS_INVALID")
     for value in (
         record.get("media_path"), record.get("subtitle_path"),
         publish.get("video_path"), publish.get("cover_path"),
     ):
         if not isinstance(value, str) or not Path(value).is_relative_to(_replay_package_root(plan)):
-            raise ReviewedBaselineReplayError("REPLAY_PROJECTED_RESULT_BINDING_INVALID")
+            raise ReviewedBaselineReplayError("REPLAY_PROJECTED_LOCATOR_INVALID")
     story = record.get("story_contract")
     boundary = record.get("boundary_audit")
     timing = record.get("subtitle_timing_qa")
     speaker = _load_json(projection.speaker_manifest, label="PROJECTED_SPEAKER")
     if not isinstance(story, Mapping) or story.get("candidate_id") != plan.candidate_id:
-        raise ReviewedBaselineReplayError("REPLAY_PROJECTED_RESULT_BINDING_INVALID")
+        raise ReviewedBaselineReplayError("REPLAY_PROJECTED_STORY_CANDIDATE_INVALID")
     row = matching[0]
     # The standard result projector drops all failure/rejection plumbing once
     # an owned delivery exists.  Preserve legitimate revival history and
