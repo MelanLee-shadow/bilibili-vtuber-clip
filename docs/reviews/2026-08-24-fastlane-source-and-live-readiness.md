@@ -23,8 +23,13 @@
 | “今天晚上把我授权的快车道全部上传，不过优先七夕” | line 1643，`timestamp=2026-08-19T04:06:54.376Z`，`uuid=b95d4356-7ad2-4481-b4a7-0b7afa3c35b9`；整行 SHA-256 `2269c653fa6be7fb0c20df98a7348d5f5c57176e3e41fe80eb13b85c39307609`。同一命令的 queue-operation 在 line 1640，整行 SHA-256 `e5fbb4ae5d4f6e906f16095571ea1dbf44d924f4b92244950f51bf03d1a67334`。 |
 | “七夕优先上传，其余快车道随后” | line 1745，`timestamp=2026-08-19T04:46:25.889Z`，`uuid=a79d6670-88b1-43c3-a688-3c9615c1da51`；整行 SHA-256 `7f97b7f8b6a7ca9cad7f54e02836a185b41c5ea158d70cb31f0867a174f13329`。同一命令的 queue-operation 在 line 1740，整行 SHA-256 `ebd218c69e614e36850c99ae6b4906ec501760687a9817d562293544c1d3ee64`。 |
 
-这两条命令表达的是批次优先级和用户授权范围；它们不取消当前项目的最终人审、package
-audit、authorized manifest、上传和公开闭环门。
+这两条命令表达的是批次优先级和用户授权范围。2026-08-24 Ivan 进一步澄清：Claude
+line 947 的逐片意见是本批快车道的**穷尽错误清单**；每片修完该片点名错误即可直接上传，
+不需要 Ivan 再看片或再复审；七夕第一，其余按原表顺序。因而 package audit、delegated-root
+exact-byte review、authorized manifest 及 `authorized_upload.py` receipt 只是绑定实际
+产物和记录执行的可追溯手续，不是扩大修复范围或重新引入 Ivan 人工节点的条件。root 可按
+pipeline 使用 `reviewed_by: "Codex root"`，实现和上传由 worker 执行；本节仍不把授权原话
+扩张为 package completion 或已经发生的上传。
 
 同一 line 947 的候选级真值包括 Qixi：`0:14`「非常brasuki之类的日语」需交 Gemini，
 `2:39`「播的有点压抑了」，并明确「这个切片时效性很强，优先修复优先上传」。同一
