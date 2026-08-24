@@ -13,6 +13,11 @@
 
 在该 JSONL 中直接检索到：
 
+> 本文所有 JSONL `line` 的 SHA-256 均按**原始 JSONL line bytes（含 trailing LF）**重算；
+> 不得使用去掉换行符的 hash 口径。line 947 的完整批次裁定 authority、user payload 中
+> embedded `<system-reminder>` 的排除边界及语义起点，见批次裁定文档的 authority-boundary
+> 注记；该 reminder 不构成 Ivan 的授权内容。
+
 | 语义 | JSONL 位置与稳定锚点 |
 |---|---|
 | “今天晚上把我授权的快车道全部上传，不过优先七夕” | line 1643，`timestamp=2026-08-19T04:06:54.376Z`，`uuid=b95d4356-7ad2-4481-b4a7-0b7afa3c35b9`；整行 SHA-256 `2269c653fa6be7fb0c20df98a7348d5f5c57176e3e41fe80eb13b85c39307609`。同一命令的 queue-operation 在 line 1640，整行 SHA-256 `e5fbb4ae5d4f6e906f16095571ea1dbf44d924f4b92244950f51bf03d1a67334`。 |
@@ -21,10 +26,17 @@
 这两条命令表达的是批次优先级和用户授权范围；它们不取消当前项目的最终人审、package
 audit、authorized manifest、上传和公开闭环门。
 
+同一 line 947 的候选级真值包括 Qixi：`0:14`「非常brasuki之类的日语」需交 Gemini，
+`2:39`「播的有点压抑了」，并明确「这个切片时效性很强，优先修复优先上传」。同一
+user payload 的全批授权原话为「以上我说的所有内容修复后都可以走快车道上传」，随后
+才是「优先级顺序是我说时效性强的优先上传，然后按顺序走快车道上传」。这里仅固化
+修复后快车道范围与顺序；不把原话扩张为 final-human receipt、same-BV receipt、
+package completion 或已经发生的上传。
+
 ## 2. 批次 authority 与顺序
 
 批次执行权威是 [`2026-08-19-ivan-review-batch-rulings.md`](2026-08-19-ivan-review-batch-rulings.md)。
-正文候选表实际包含 21 个 candidate（18 talk、3 song），尽管文档标题仍写着“16 条”。
+正文候选表实际包含 21 个 candidate（18 talk、3 song；保留 `7b` 这一显式候选编号）。
 顺序固定为：Qixi candidate `auto_113022_354_496` 队首，然后按该表原始顺序；三首歌的
 “可传”裁定不改变 Qixi-first 队列，也不把旧公开稿重新算成本轮完成。
 

@@ -1,7 +1,16 @@
-# 2026-08-19 Ivan 批量审片裁定（16 条 + 全局规则）
+# 2026-08-19 Ivan 批量审片裁定（21 条：18 talk + 3 song + 全局规则）
 
 > 来源：Ivan 2026-08-19 ~00:1xZ 聊天逐字。本文件是该轮审片的**执行权威**：
 > 修复、重做、标题封面、上传顺序全部从这里出发。逐字引语除标注外均为原文摘录。
+
+> **Claude JSONL authority boundary**：原始 Ivan 批次裁定位于
+> `/Users/ivan/.claude/projects/-Users-ivan-Project-vtuber-slice/0df2296b-500a-4681-ab5e-6fb46dc39579.jsonl`
+> line 947，`timestamp=2026-08-19T00:08:52.249Z`，
+> `uuid=555195ed-ec18-418d-a311-558f7e54291f`，raw JSONL line bytes（含 trailing LF）
+> SHA-256 `e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa`。
+> 该 user payload 开头还包含 transcript 内嵌的 `<system-reminder>`；它不是 Ivan
+> 批次裁定。语义裁定从原始 payload 中的「sudocode已经充值完成了」开始解析，不能把
+> embedded system-reminder 当作用户授权或候选内容。
 
 ## 〇、全局新规则（须固化进对应 authority/skill/词表）
 
