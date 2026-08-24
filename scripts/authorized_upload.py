@@ -2519,9 +2519,7 @@ def repair_plan(args: argparse.Namespace) -> int:
             manifest=manifest,
             bvid=args.bvid,
             snapshot=snapshot,
-            predecessor_completed_path=(
-                Path(args.predecessor_completed).resolve() if args.predecessor_completed else None
-            ),
+            predecessor_completed_path=(Path(args.predecessor_completed).resolve() if args.predecessor_completed else None),
             preserve_existing_tags=bool(args.preserve_existing_tags),
         )
         journal = Path(args.journal).resolve()

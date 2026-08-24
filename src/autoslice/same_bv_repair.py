@@ -47,10 +47,11 @@ from src.autoslice.same_bv_section_title_sync import (
     section_title_only_pending as _section_title_only_pending,
     sync_exact_section_episode_title,
 )
+from src.autoslice import same_bv_tag_preservation as tag_preservation
 
 PLAN_SCHEMA = "same-bv-repair-plan.v2"
-TAG_PRESERVATION_SCHEMA = "same-bv-repair-metadata-preservation.v1"
 JOURNAL_SCHEMA = "same-bv-repair-journal.v1"
+_target_metadata = tag_preservation.manifest_target  # cover-only repair compatibility
 JOURNAL_STATES = {
     "PLANNED",
     "APPEND_INTENT",
@@ -194,22 +195,11 @@ def _row_hash(row_without_hash: Mapping[str, Any]) -> str:
     return hashlib.sha256(_canonical_json(row_without_hash)).hexdigest()
 
 
-def _normalise_tags(value: object) -> list[str]:
-    if isinstance(value, str):
-        rows = [part.strip() for part in value.split(",") if part.strip()]
-    elif isinstance(value, list):
-        rows = [str(part).strip() for part in value if str(part).strip()]
-    else:
-        rows = []
-    # API ordering is not a semantic metadata distinction.  Duplicates are.
-    return sorted(rows)
-
-
 def _metadata_from_archive(archive: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "title": archive.get("title"),
         "desc": archive.get("desc"),
-        "tags": _normalise_tags(archive.get("tag")),
+        "tags": tag_preservation.normalise_tags(archive.get("tag")),
         "tid": archive.get("tid"),
         "copyright": archive.get("copyright"),
         "source": archive.get("source"),
@@ -221,7 +211,7 @@ def _metadata_from_public(public: Mapping[str, Any], public_tags: object) -> dic
     return {
         "title": public.get("title"),
         "desc": public.get("desc"),
-        "tags": _normalise_tags(public_tags),
+        "tags": tag_preservation.normalise_tags(public_tags),
         "tid": public.get("tid"),
         "copyright": public.get("copyright"),
         "cover": _normalise_cover_url(public.get("pic") or public.get("cover")),
@@ -464,96 +454,6 @@ class BilibiliRepairAdapter:
             expected_current_title=expected_current_title,
             target_title=target_title,
         )
-
-
-def _target_metadata(manifest: Mapping[str, Any]) -> dict[str, Any]:
-    policy = manifest.get("publish_policy") or {}
-    return {
-        "title": manifest.get("title"),
-        "desc": manifest.get("description"),
-        "tags": _normalise_tags(manifest.get("tags")),
-        "tid": policy.get("tid"),
-        "copyright": policy.get("copyright"),
-        "source": policy.get("source"),
-        # The exact CDN URL is prepared and journaled immediately before edit.
-        "cover": None,
-    }
-
-
-def _strict_live_tags(value: object, *, label: str) -> list[str]:
-    """Accept only one non-empty, canonical tag set from a live snapshot."""
-
-    if not isinstance(value, list) or not value or any(
-        not isinstance(tag, str) or not tag or tag != tag.strip() for tag in value
-    ):
-        raise PlanInvalid(f"{label} tags are empty or invalid")
-    normalised = _normalise_tags(value)
-    if value != normalised or len(set(value)) != len(value):
-        raise PlanInvalid(f"{label} tags are non-canonical or duplicated")
-    return normalised
-
-
-def _strict_manifest_tags(value: object) -> list[str]:
-    """Keep record-bound manifest order while rejecting malformed tag input."""
-
-    if not isinstance(value, list) or not value or any(
-        not isinstance(tag, str) or not tag or tag != tag.strip() for tag in value
-    ):
-        raise PlanInvalid("manifest tags are empty or invalid")
-    if len(set(value)) != len(value):
-        raise PlanInvalid("manifest tags are duplicated")
-    return list(value)
-
-
-def _preserved_tags_receipt(
-    *, manifest: Mapping[str, Any], before: Mapping[str, Any]
-) -> dict[str, Any]:
-    """Freeze the sole permitted live-metadata preservation exception."""
-
-    creator = before.get("creator") or {}
-    public = before.get("public") or {}
-    creator_tags = _strict_live_tags(
-        (creator.get("metadata") or {}).get("tags"), label="Creator"
-    )
-    public_tags = _strict_live_tags(
-        (public.get("metadata") or {}).get("tags"), label="public"
-    )
-    if creator_tags != public_tags:
-        raise PlanInvalid("Creator and public tags differ during preservation planning")
-    manifest_tags = _strict_manifest_tags(manifest.get("tags"))
-    return {
-        "schema_version": TAG_PRESERVATION_SCHEMA,
-        "field": "tags",
-        "manifest_original_tags": manifest_tags,
-        "manifest_tags_sha256": "sha256:" + hashlib.sha256(
-            _canonical_json(manifest_tags)
-        ).hexdigest(),
-        "preserved_live_tags": creator_tags,
-        "creator_tags_sha256": "sha256:" + hashlib.sha256(
-            _canonical_json(creator_tags)
-        ).hexdigest(),
-        "public_tags_sha256": "sha256:" + hashlib.sha256(
-            _canonical_json(public_tags)
-        ).hexdigest(),
-    }
-
-
-def _target_metadata_with_preservation(
-    *,
-    manifest: Mapping[str, Any],
-    before: Mapping[str, Any],
-    preservation: object,
-) -> dict[str, Any]:
-    """Rebuild the only valid preserved-tags target from hash-bound inputs."""
-
-    target = _target_metadata(manifest)
-    if preservation is None:
-        return target
-    expected = _preserved_tags_receipt(manifest=manifest, before=before)
-    if preservation != expected:
-        raise PlanInvalid("repair tags preservation receipt is not canonical")
-    target["tags"] = expected["preserved_live_tags"]
-    return target
 
 
 def package_recovery_publication_authority(
@@ -1169,14 +1069,17 @@ def create_plan(
     if problems:
         raise PlanInvalid("; ".join(problems))
 
-    preservation = (
-        _preserved_tags_receipt(manifest=manifest, before=snapshot)
-        if preserve_existing_tags
-        else None
-    )
-    target_metadata = _target_metadata_with_preservation(
-        manifest=manifest, before=snapshot, preservation=preservation
-    )
+    try:
+        preservation = (
+            tag_preservation.receipt(manifest_tags=manifest.get("tags"), before=snapshot)
+            if preserve_existing_tags else None
+        )
+        target_metadata = tag_preservation.target(
+            manifest_tags=manifest.get("tags"), before=snapshot,
+            preservation=preservation, default_target=tag_preservation.manifest_target(manifest),
+        )
+    except tag_preservation.TagPreservationError as exc:
+        raise PlanInvalid(str(exc)) from exc
     manifest_sha = sha256_file(manifest_path)
     video = manifest.get("video") or {}
     cover = manifest.get("cover") or {}
@@ -1350,12 +1253,12 @@ def validate_plan(
             if plan_package_attestation != manifest_human_review:
                 problems.append("repair final human review attestation drifted from manifest")
         try:
-            expected_target = _target_metadata_with_preservation(
-                manifest=manifest,
-                before=before,
+            expected_target = tag_preservation.target(
+                manifest_tags=manifest.get("tags"), before=before,
                 preservation=plan.get("metadata_preservation"),
+                default_target=tag_preservation.manifest_target(manifest),
             )
-        except PlanInvalid as exc:
+        except tag_preservation.TagPreservationError as exc:
             problems.append(str(exc))
         else:
             if plan.get("target_metadata") != expected_target:
