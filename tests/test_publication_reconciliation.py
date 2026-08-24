@@ -265,6 +265,111 @@ def test_recording_date_rejects_conflicting_canonical_package_layouts(
         reconciliation._candidate_and_date(manifest)  # noqa: SLF001
 
 
+def test_recording_date_qixi_portable_clone_uses_attested_review_date(
+    tmp_path: Path,
+) -> None:
+    package = (
+        tmp_path
+        / "qixi-cover-successor-portable-v3"
+        / "2026-08-24"
+        / f"{CANDIDATE}-root-reviewed-20260824T123852Z"
+        / "replacement_recuts"
+    )
+    record = package / f"{CANDIDATE}.record.json"
+    review = package / "review_manifest.json"
+    _write_json(record, {"story_contract": {"candidate_id": CANDIDATE}})
+    _write_json(review, {"candidate_id": CANDIDATE, "date": DATE})
+    manifest = {
+        "package_attestation": {
+            "package_root": str(package.resolve()),
+            "record": _entry(record),
+            "review_manifest": _entry(review),
+        }
+    }
+
+    assert reconciliation._candidate_and_date(manifest) == (  # noqa: SLF001
+        CANDIDATE,
+        DATE,
+    )
+
+
+@pytest.mark.parametrize(
+    ("review", "message"),
+    [
+        ({"candidate_id": "other", "date": DATE}, "candidate differs"),
+        ({"candidate_id": CANDIDATE, "date": "not-a-date"}, "single valid"),
+        (
+            {
+                "candidate_id": CANDIDATE,
+                "date": DATE,
+                "recording_date": "2026-07-28",
+            },
+            "single valid",
+        ),
+    ],
+)
+def test_recording_date_portable_clone_rejects_invalid_attested_review_manifest(
+    tmp_path: Path, review: dict, message: str
+) -> None:
+    package = tmp_path / "portable" / "2026-08-24" / CANDIDATE
+    record = package / f"{CANDIDATE}.record.json"
+    review_path = package / "review_manifest.json"
+    _write_json(record, {"story_contract": {"candidate_id": CANDIDATE}})
+    _write_json(review_path, review)
+    manifest = {
+        "package_attestation": {
+            "package_root": str(package.resolve()),
+            "record": _entry(record),
+            "review_manifest": _entry(review_path),
+        }
+    }
+
+    with pytest.raises(reconciliation.PublicationReconciliationError, match=message):
+        reconciliation._candidate_and_date(manifest)  # noqa: SLF001
+
+
+def test_recording_date_portable_clone_rejects_review_manifest_hash_drift(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "portable" / "2026-08-24" / CANDIDATE
+    record = package / f"{CANDIDATE}.record.json"
+    review = package / "review_manifest.json"
+    _write_json(record, {"story_contract": {"candidate_id": CANDIDATE}})
+    _write_json(review, {"candidate_id": CANDIDATE, "date": DATE})
+    manifest = {
+        "package_attestation": {
+            "package_root": str(package.resolve()),
+            "record": _entry(record),
+            "review_manifest": _entry(review),
+        }
+    }
+    _write_json(review, {"candidate_id": CANDIDATE, "date": "2026-07-28"})
+
+    with pytest.raises(
+        reconciliation.PublicationReconciliationError, match="hash/bytes drifted"
+    ):
+        reconciliation._candidate_and_date(manifest)  # noqa: SLF001
+
+
+def test_recording_date_legacy_wrapper_fallback_without_review_manifest(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "legacy" / DATE / CANDIDATE
+    record = package / f"{CANDIDATE}.record.json"
+    _write_json(record, {"story_contract": {"candidate_id": CANDIDATE}})
+    manifest = {
+        "package_attestation": {
+            "package_root": str(package.resolve()),
+            "record": _entry(record),
+        }
+    }
+
+    assert reconciliation._candidate_and_date(manifest) == (  # noqa: SLF001
+        CANDIDATE,
+        DATE,
+    )
+
+
 def test_new_bv_public_closure_reconciles_registry_and_failed_runner_row(
     tmp_path: Path,
 ) -> None:

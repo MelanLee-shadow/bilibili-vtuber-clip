@@ -273,6 +273,34 @@ def _candidate_and_date(manifest: Mapping[str, object]) -> tuple[str, str]:
     if canonical_dates:
         return candidate_id, next(iter(canonical_dates))
 
+    # A portable reviewed clone can live below a dated recovery wrapper rather
+    # than its original out/<date> or lidousha/<date> tree.  Its attested
+    # review manifest is then the only current, hash-bound recording-date
+    # authority; never let the wrapper date redirect reconciliation to a new
+    # daily state.  Old manifests without this attestation retain the strict
+    # legacy package-root fallback below.
+    if "review_manifest" in attestation:
+        review_path = _validate_sha_entry(
+            attestation.get("review_manifest"), "manifest review manifest"
+        )
+        review = _load_object(review_path, "manifest review manifest")
+        if str(review.get("candidate_id") or "") != candidate_id:
+            raise PublicationReconciliationError(
+                "manifest review manifest candidate differs from record"
+            )
+        review_dates = {
+            str(review[key])
+            for key in ("date", "recording_date")
+            if key in review
+        }
+        if len(review_dates) != 1 or not _DATE_RX.fullmatch(
+            next(iter(review_dates), "")
+        ):
+            raise PublicationReconciliationError(
+                "manifest review manifest has no single valid recording date"
+            )
+        return candidate_id, next(iter(review_dates))
+
     # Legacy/test package roots can predate the canonical out/<date> and
     # lidousha/<date> layouts.  Retain their strict unique-date fallback, but
     # do not let an outer recovery wrapper date compete with a canonical
