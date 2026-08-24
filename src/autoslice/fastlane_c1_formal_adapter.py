@@ -46,8 +46,6 @@ FORMAL_RECEIPT_SCHEMA = "fastlane-c1-formal-private-adapter-receipt.v1"
 RULING_SEAL_SCHEMA = "fastlane-c1-ruling-seal.v1"
 TECHNICAL_TEMPLATE_SCHEMA = "fastlane-c1-delegated-root-technical-review-template.v1"
 ROOT_TECHNICAL_STATUS = "ROOT_TECHNICAL_RECEIPT_REQUIRED"
-ROOT_EVIDENCE_NAME = "c1.root-review-evidence.v1.json"
-ROOT_EVIDENCE_SHA256 = "sha256:20f007654235824c35b3bbe2f0af414c39a2b7a1855c0a7f7fd25fcd89eb0ca9"
 
 SIX_NAMED_POINTS = (
     {
@@ -691,41 +689,6 @@ def _build_manifest(*, authority: Mapping[str, object]) -> dict[str, object]:
 
 def is_fastlane_c1_formal_manifest(manifest: Mapping[str, object]) -> bool:
     return manifest.get("schema_version") == FORMAL_MANIFEST_SCHEMA
-
-
-def build_final_human_review_closure(root: Path) -> tuple[list[str], dict[str, dict[str, object]]]:
-    """Project C1's sealed formal package into the ordinary review closure.
-
-    This is intentionally reachable only after the complete C1 formal replay;
-    it does not reinterpret the predecessor's stale generic transcript gates.
-    """
-    validate_formal_package(root)
-    if sha256_file(_contained(root, ROOT_EVIDENCE_NAME, label="ROOT_EVIDENCE")) != ROOT_EVIDENCE_SHA256:
-        raise FastlaneC1FormalAdapterError("C1_ROOT_EVIDENCE_HASH_DRIFT")
-    manifest = _read_json(_contained(root, "review_manifest.json", label="REVIEW_MANIFEST"), label="REVIEW_MANIFEST")
-    _validate_manifest_shape(manifest, load_formal_authority())
-    names = load_formal_authority()["output_names"]
-    assert isinstance(names, Mapping)
-    predecessor = _read_json(_contained(root, str(names["predecessor_record"]), label="PREDECESSOR_RECORD"), label="PREDECESSOR_RECORD")
-    # The prior record is the only cover-claim/duration authority.  Importing
-    # here avoids a module cycle on normal package-audit paths.
-    generation = predecessor.get("publish_staging", {}).get("cover_generation") if isinstance(predecessor.get("publish_staging"), Mapping) else None
-    pixels = generation.get("rendered_text_pixels") if isinstance(generation, Mapping) else None
-    lines = generation.get("rendered_lines") if isinstance(generation, Mapping) else None
-    if not (isinstance(lines, list) and lines and all(isinstance(line, str) and line.strip() == line for line in lines) and isinstance(pixels, Mapping) and pixels.get("status") == "PASS" and pixels.get("final_cover_sha256") == "sha256:9a3636c47b6bfe808dfdd24cd9486788b6101e9260e1cdf8d98a3886942b980f"):
-        raise FastlaneC1FormalAdapterError("C1_PREDECESSOR_COVER_CLAIMS_DRIFT")
-    claims = {("封面文字呈现“" + " / ".join(lines) + "”", "COVER_TEXT")}
-    preview = predecessor.get("burned_preview")
-    intro = preview.get("branding_intro") if isinstance(preview, Mapping) else None
-    verification = intro.get("verification") if isinstance(intro, Mapping) else None
-    duration = verification.get("duration_ms") if isinstance(verification, Mapping) else None
-    if not isinstance(duration, int) or isinstance(duration, bool) or duration <= 0:
-        raise FastlaneC1FormalAdapterError("C1_PREDECESSOR_DURATION_DRIFT")
-    identity = _read_json(_contained(root, str(names["public_identity"]), label="PUBLIC_IDENTITY"), label="PUBLIC_IDENTITY")
-    public = identity.get("identity")
-    if not isinstance(public, Mapping) or (public.get("bvid"), public.get("aid"), public.get("cid")) != ("BV1os8q61Eya", 117132650155234, 41126267272):
-        raise FastlaneC1FormalAdapterError("C1_PUBLIC_IDENTITY_CONTENT_DRIFT")
-    return [CID], {CID: {"title": TITLE, "artifacts": {"video": str(names["burned_final"]), "subtitle": str(names["successor_srt"]), "cover": str(names["cover"])}, "record_path": str(names["record"]), "publication_target": {"candidate_id": CID, "bvid": "BV1os8q61Eya", "aid": 117132650155234, "cid": 41126267272, "final_title": TITLE, "authority_sha256": sha256_file(_contained(root, str(names["public_identity"]), label="PUBLIC_IDENTITY"))}, "expected_cover_claims": claims, "final_duration_ms": duration}}
 
 
 def _validate_manifest_shape(manifest: Mapping[str, object], authority: Mapping[str, object]) -> None:

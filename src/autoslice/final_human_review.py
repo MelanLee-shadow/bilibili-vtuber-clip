@@ -1136,19 +1136,6 @@ def _manifest_items(
         raise FinalHumanReviewError(
             "FINAL_HUMAN_REVIEW_MANIFEST_INVALID"
         )
-    # C1 is a sealed historical successor.  Its dedicated adapter replays the
-    # narrower ruling/package closure before projecting this normal return
-    # shape; generic manifests remain byte-for-byte on the existing path.
-    from src.autoslice.fastlane_c1_formal_adapter import (
-        FastlaneC1FormalAdapterError,
-        build_final_human_review_closure,
-        is_fastlane_c1_formal_manifest,
-    )
-    if is_fastlane_c1_formal_manifest(review_manifest):
-        try:
-            return build_final_human_review_closure(package_root)
-        except FastlaneC1FormalAdapterError as exc:
-            raise FinalHumanReviewError("FINAL_HUMAN_REVIEW_C1_FORMAL_CLOSURE_INVALID", str(exc)) from exc
     if (
         review_manifest.get("status")
         != "finished_review_package_no_upload_pending_human_review"
