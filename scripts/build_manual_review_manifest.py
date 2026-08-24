@@ -238,6 +238,114 @@ def _verified_cover_artifact(
     return flat_name
 
 
+def _manual_manifest_item_and_terminal_projection(
+    *,
+    candidate_id: str,
+    lane: str,
+    title: str,
+    subtitle: Path,
+    publish: Path,
+    record: Path,
+    burned: Path,
+    cover: Path,
+    cover_pre_overlay: str,
+    cover_title_mask: str,
+    cover_route_background: str,
+    chat_authority: Path,
+    clip_context: Path,
+    ass: Path,
+    speaker_srt: Path,
+    publication_authority: object,
+    corrected_receipt: object,
+    corrected_receipt_path: Path | None,
+    qixi_gate: _PreparedQixiGate,
+    packaged_speaker_manifest: Path | None,
+) -> tuple[dict, str, dict]:
+    """Build the sole manual item and the sealed Qixi terminal projection."""
+
+    item = {
+        "id": candidate_id,
+        "candidate_id": candidate_id,
+        "stem": publish.name[: -len(".publish.json")],
+        "kind": lane,
+        "classification": lane,
+        "title": title,
+        "subtitle_srt": subtitle.name,
+        "publish_json": publish.name,
+        "evidence_json": record.name,
+        "video": burned.name,
+        "cover": cover.name,
+        "cover_pre_overlay": cover_pre_overlay,
+        "cover_title_mask": cover_title_mask,
+        "cover_route_background": cover_route_background,
+        "record": record.name,
+        "chat_authority": chat_authority.name,
+        "clip_context": clip_context.name,
+        "ass_path": ass.name,
+        "ass_sha256": _sha256(ass),
+        "speaker_srt": speaker_srt.name,
+        "speaker_srt_sha256": _sha256(speaker_srt),
+        **(
+            {"recovery_publication_authority": publication_authority}
+            if publication_authority is not None
+            else {}
+        ),
+        **(
+            {
+                "manual_corrected_same_bv": corrected_receipt,
+                "manual_corrected_same_bv_receipt": corrected_receipt_path.name,
+                "manual_corrected_same_bv_receipt_sha256": qixi_gate.receipt_sha256,
+            }
+            if corrected_receipt is not None and corrected_receipt_path is not None
+            else {}
+        ),
+        **(
+            {
+                "qixi_cover_successor_finalization": qixi_gate.receipt_name,
+                "qixi_cover_successor_finalization_sha256": qixi_gate.receipt_sha256,
+            }
+            if qixi_gate.successor_receipt
+            else {}
+        ),
+        **(
+            {
+                "speaker_finalization_manifest": packaged_speaker_manifest.name,
+                "speaker_finalization_manifest_sha256": "sha256:"
+                + _sha256(packaged_speaker_manifest),
+            }
+            if packaged_speaker_manifest is not None
+            else {}
+        ),
+        "sha256": {
+            "subtitle_srt": _sha256(subtitle),
+            "publish_json": _sha256(publish),
+            "evidence_json": _sha256(record),
+            "video": _sha256(burned),
+            "cover": _sha256(cover),
+        },
+    }
+    finalized_qixi_same_bv = (
+        corrected_receipt is not None and corrected_receipt_path is not None
+    )
+    terminal = finalized_qixi_same_bv or qixi_gate.successor_receipt
+    projection = (
+        {
+            "exact_candidate_ids": [candidate_id],
+            "selection_contract": {
+                "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
+                "candidate_ids": [candidate_id],
+            },
+        }
+        if terminal
+        else {}
+    )
+    return (
+        item,
+        "finished_review_package_no_upload_pending_human_review" if terminal else "review_ready",
+        projection,
+    )
+
+
 def build_manual(
     package_root: Path,
     *,
@@ -425,68 +533,28 @@ def build_manual(
         expected_sha256=qixi_gate.receipt_sha256,
     )
 
-    item = {
-        "id": candidate_id,
-        "candidate_id": candidate_id,
-        "stem": stem,
-        "kind": lane,
-        "classification": lane,
-        "title": title,
-        "subtitle_srt": subtitle.name,
-        "publish_json": publish.name,
-        "evidence_json": record.name,
-        "video": burned.name,
-        "cover": cover.name,
-        "cover_pre_overlay": cover_pre_overlay,
-        "cover_title_mask": cover_title_mask,
-        "cover_route_background": cover_route_background,
-        "record": record.name,
-        "chat_authority": chat_authority.name,
-        "clip_context": clip_context.name,
-        "ass_path": ass.name,
-        "ass_sha256": _sha256(ass),
-        "speaker_srt": speaker_srt.name,
-        "speaker_srt_sha256": _sha256(speaker_srt),
-        **(
-            {"recovery_publication_authority": publication_authority}
-            if publication_authority is not None
-            else {}
-        ),
-        **(
-            {
-                "manual_corrected_same_bv": corrected_receipt,
-                "manual_corrected_same_bv_receipt": corrected_receipt_path.name,
-                "manual_corrected_same_bv_receipt_sha256": qixi_gate.receipt_sha256,
-            }
-            if corrected_receipt is not None and corrected_receipt_path is not None
-            else {}
-        ),
-        **(
-            {
-                "qixi_cover_successor_finalization": qixi_gate.receipt_name,
-                "qixi_cover_successor_finalization_sha256": qixi_gate.receipt_sha256,
-            }
-            if qixi_gate.successor_receipt
-            else {}
-        ),
-        **(
-            {
-                "speaker_finalization_manifest": packaged_speaker_manifest.name,
-                "speaker_finalization_manifest_sha256": (
-                    "sha256:" + _sha256(packaged_speaker_manifest)
-                ),
-            }
-            if packaged_speaker_manifest is not None
-            else {}
-        ),
-        "sha256": {
-            "subtitle_srt": _sha256(subtitle),
-            "publish_json": _sha256(publish),
-            "evidence_json": _sha256(record),
-            "video": _sha256(burned),
-            "cover": _sha256(cover),
-        },
-    }
+    item, status, terminal_projection = _manual_manifest_item_and_terminal_projection(
+        candidate_id=candidate_id,
+        lane=lane,
+        title=title,
+        subtitle=subtitle,
+        publish=publish,
+        record=record,
+        burned=burned,
+        cover=cover,
+        cover_pre_overlay=cover_pre_overlay,
+        cover_title_mask=cover_title_mask,
+        cover_route_background=cover_route_background,
+        chat_authority=chat_authority,
+        clip_context=clip_context,
+        ass=ass,
+        speaker_srt=speaker_srt,
+        publication_authority=publication_authority,
+        corrected_receipt=corrected_receipt,
+        corrected_receipt_path=corrected_receipt_path,
+        qixi_gate=qixi_gate,
+        packaged_speaker_manifest=packaged_speaker_manifest,
+    )
     attestation = {
         "candidate_id": candidate_id,
         "reference_sha256": cover_generation.get("reference_sha256"),
@@ -495,9 +563,6 @@ def build_manual(
         "route_decision": cover_generation.get("route_decision"),
         "reference_authority": cover_generation.get("reference_authority"),
     }
-    finalized_qixi_same_bv = (
-        corrected_receipt is not None and corrected_receipt_path is not None
-    )
     manifest = {
         "schema_version": "lidousha-manual-review-manifest.v1",
         "generated_by": "build_manual_review_manifest.v1",
@@ -506,11 +571,7 @@ def build_manual(
         # only exception is a Qixi package whose sealed finalizer receipt was
         # replayed above and is embedded in its sole item: that exact closure
         # may enter the still-no-upload final perceptual-review lane.
-        "status": (
-            "finished_review_package_no_upload_pending_human_review"
-            if finalized_qixi_same_bv or qixi_gate.successor_receipt
-            else "review_ready"
-        ),
+        "status": status,
         "candidate_id": candidate_id,
         "date": recording_date,
         "run_mode": "MANUAL_PRODUCE_REVIEW",
@@ -535,16 +596,7 @@ def build_manual(
         manifest["recovery_publication_authorities_by_candidate"] = {
             candidate_id: publication_authority
         }
-    if finalized_qixi_same_bv or qixi_gate.successor_receipt:
-        manifest.update(
-            {
-                "exact_candidate_ids": [candidate_id],
-                "selection_contract": {
-                    "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
-                    "candidate_ids": [candidate_id],
-                },
-            }
-        )
+    manifest.update(terminal_projection)
     return manifest
 
 
