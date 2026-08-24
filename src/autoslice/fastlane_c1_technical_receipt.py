@@ -29,3 +29,12 @@ def closure(root:Path,audit_path:Path)->dict[str,Any]:
  return {"formal_authority_sha256":au["authority_sha256"],"root_evidence_sha256":ROOT_SHA,"audit":{"path":audit_path.name,"sha256":sha256_file(audit_path),"policy_fingerprint":a["policy_fingerprint"]},"artifacts":artifacts,"publication_target":{"bvid":"BV1os8q61Eya","aid":117132650155234,"cid":41126267272,"title":TITLE}}
 def template(root:Path,audit_path:Path)->dict[str,Any]:
  return {"schema_version":SCHEMA,"candidate_id":CID,"status":"TECHNICAL_REVIEW_REQUIRED","accepted":False,"reviewed_by":None,"reviewed_at":None,"upload_allowed":False,"bindings":closure(root,audit_path),"six_named_points":[{"point_id":x["point_id"],"expectation":x["expected"],"verdict":None,"evidence":None} for x in SIX_NAMED_POINTS]}
+def validate_completed(value:object,root:Path,audit_path:Path)->dict[str,Any]:
+ if not isinstance(value,Mapping) or set(value)!={"schema_version","candidate_id","status","accepted","reviewed_by","reviewed_at","upload_allowed","bindings","six_named_points"}: raise C1TechnicalReceiptError("C1_RECEIPT_SCHEMA_INVALID")
+ expected=template(root,audit_path)
+ if value.get("schema_version")!=SCHEMA or value.get("candidate_id")!=CID or value.get("status")!="ACCEPTED_FOR_SAME_BV_TECHNICAL" or value.get("accepted") is not True or value.get("reviewed_by")!="Codex root" or not isinstance(value.get("reviewed_at"),str) or not value["reviewed_at"].strip() or value.get("upload_allowed") is not False or value.get("bindings")!=expected["bindings"]: raise C1TechnicalReceiptError("C1_RECEIPT_BINDING_INVALID")
+ points=value.get("six_named_points")
+ if not isinstance(points,list) or len(points)!=6: raise C1TechnicalReceiptError("C1_RECEIPT_POINT_SET_INVALID")
+ for raw, base in zip(points,expected["six_named_points"],strict=True):
+  if not isinstance(raw,Mapping) or set(raw)!={"point_id","expectation","verdict","evidence"} or raw.get("point_id")!=base["point_id"] or raw.get("expectation")!=base["expectation"] or raw.get("verdict")!="PASS" or not isinstance(raw.get("evidence"),str) or len(raw["evidence"].strip())<12: raise C1TechnicalReceiptError("C1_RECEIPT_POINT_INVALID")
+ return dict(value)
