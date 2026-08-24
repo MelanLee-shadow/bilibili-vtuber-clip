@@ -62,16 +62,16 @@ public view API 交叉读取；无 BVID 不是“从未发布”的证明，只�
 | 8 | `songvis_130040_670` / song | `confirmed`: `BV1fr8P6REDP`；public + Creator + section 均 `VERIFIED_PUBLIC` | live public/Creator/section readback | `confirmed`: 已是公开态；从本轮 pending queue 移除，不重复上传。 |
 | 9 | `auto_143025_1112_1285` / talk | `confirmed`: 无当前公开 BVID | 未发现当前 reviewed baseline/repair authority | `blocker`: 视频内字幕边界与灰泽修复未闭合。 |
 | 10 | `auto_143025_868_1094` / talk | `confirmed`: 无当前公开 BVID | 未发现当前 reviewed baseline/repair authority | `blocker`: 应援歌/直播讲话分离及日文修复未闭合。 |
-| 11 | `song_130012_1163` / song | `confirmed`: public `BV1pW8E6eEq5`, AID `117120855709245`, CID `41058045650` | live registry/state/public API 一致 | `unknown`: 旧公开稿已核实；是否需要本轮新登记仍需确认，不能称 fastlane 新动作完成。 |
-| 12 | `auto_130012_435_574` / talk | `confirmed`: state 有 `BLOCKED_TERMINAL`，无公开 BVID | 未发现当前 repair authority | `blocker`: chat-authority 拒；需复活+修+发。 |
-| 13 | `auto_123008_1017_1114` / talk | `confirmed`: 无当前公开 BVID | 未发现当前 repair authority | `blocker`: 提督十秒需 recover+修+发。 |
-| 14 | `auto_120026_125_253` / talk | `confirmed`: 无当前公开 BVID | 未发现当前 reviewed baseline/repair authority | `blocker`: 专名与后文呼应修复未闭合。 |
-| 15 | `auto_123655_771_844` / talk | `confirmed`: public `BV133816tEiN`, AID `117138287300220`, CID `41157069221` | qixi/public-surface/cover authorities | `unknown/blocker`: 旧公开稿已核实；same-BV 修复闭环尚未证明。 |
-| 16 | `auto_123655_1613_1676` / talk | `confirmed`: 无当前公开 BVID | operator exact title/source-fact authority | `unknown/blocker`: 仅 title authority，subtitle/package/Cover QC 未完整证明。 |
-| 17 | `auto_113022_260_324` / talk | `confirmed`: state 曾 candidate_rejected/FLAGGED，无公开 BVID | 未发现当前 repair authority | `blocker`: story-contract 拒；需复活并重新冻结标题封面。 |
-| 18 | `auto_143702_0_53` / talk | `confirmed`: public `BV1Pi8P6FEzS`, AID `117130183840023`, CID `41111389163` | live registry/state/public API 一致 | `unknown`: 旧公开稿已核实；不能由此证明本轮 fastlane 新动作完成。 |
-| 19 | `auto_113022_354_496` / talk/Qixi | `confirmed`: public `BV1Ud8F6fECS`, AID `117126140527747`, CID `41087534673` | Qixi terminal/projection/branding/cover authorities | `blocker`: successor package 缺真实最终人审 receipt；Qixi 队首，暂不得 upload/same-BV apply。 |
-| 20 | `song_133654_1170` / song | `confirmed`: public `BV1Cn8E6iEf8`, AID `117120822222716`, CID `41057781970` | live registry/state/public API 一致 | `unknown`: 旧公开稿已核实；是否需要本轮新登记仍需确认。 |
+| 11 | `song_130012_1163` / song | `confirmed`: fresh public `BV1pW8E6eEq5`, AID `117120855709245`, CID `41058045650`；runtime registry 与 completed ledger 对齐 | public view + registry/ledger | `historical-public-only`: 本轮未 fresh 读取 Creator/exact section；旧公开稿不得重传。 |
+| 12 | `auto_130012_435_574` / talk | `confirmed`: `BLOCKED_TERMINAL`, `REFRESH_HOOK_UNSUPPORTED`，无公开 BVID | revival/repair authority 未发现 | `blocker`: chat-authority 拒；需复活+修+发，当前不上传。 |
+| 13 | `auto_123008_1017_1114` / talk | `confirmed`: current `candidate_rejected`, `rc=1`, `failure_recoverable=false`，无公开 BVID | subtitle authority unresolved | `blocker`: 人工真值须裁决 `おめでとう`（声学候选 `ありがとう`）；不得以旧“可恢复”说法替代当前终态。 |
+| 14 | `auto_120026_125_253` / talk | `confirmed`: `boundary_semantic` failure，`failure_recoverable=false`，无公开 BVID；AI cover required | boundary/source-fact + cover authority 未闭合 | `blocker`: 需授权复活、边界/字幕人审及 AI cover；不上传。 |
+| 15 | `auto_123655_771_844` / talk | `confirmed`: fresh public + Creator `BV133816tEiN`, AID `117138287300220`, CID `41157069221` | public/Creator readback；section 未独立 fresh read | `historical-public-only/blocker`: 旧稿不得重传；若修，只能 same-BV，需新 scope、包、人审和授权链。 |
+| 16 | `auto_123655_1613_1676` / talk | `confirmed`: 无 verified BVID；当前 replacement package bytes 与 record 声明漂移 | source-fact/story-contract authority 未闭合 | `blocker`: 仅 locator；不得 review/package/transfer，先重生成 coherent package。 |
+| 17 | `auto_113022_260_324` / talk | `confirmed`: `candidate_rejected/FLAGGED`, `rc=1`, `failure_recoverable=false`；replacement package bytes 与 record 漂移，无 BVID | recovery + subtitle authority 未闭合 | `blocker`: 仅 locator；需 recovery authority、重生成包及 cover/QC/人审，不得错误 transfer。 |
+| 18 | `auto_143702_0_53` / talk | `confirmed`: fresh public + Creator + exact section `9320779` 一致：`BV1Pi8P6FEzS`, AID `117130183840023`, CID `41111389163`, state `0` | 三面 live readback | `historical-public-only`: 旧公开稿不得重传；新修复须另走 same-BV 链。 |
+| 19 | `auto_113022_354_496` / talk/Qixi | `confirmed`: fresh public + Creator + exact section `9320779` 一致：`BV1Ud8F6fECS`, AID `117126140527747`, CID `41087534673`; Qixi queue head | successor package + pending human review | `blocker`: successor video/SRT/cover hashes已冻结但实际人审仍 `PENDING`；不得 same-BV apply/upload/宣称闭环。 |
+| 20 | `song_133654_1170` / song | `confirmed`: fresh public + Creator + exact song section `9364628` 一致：`BV1Cn8E6iEf8`, AID `117120822222716`, CID `41057781970`, state `0` | 三面 live readback | `historical-public-only`: 旧公开稿不得重传；任何修复只走 same-BV。 |
 
 ## 4. Next wave
 
@@ -180,3 +180,53 @@ hash 校验；5f90525 的 live `READY_TO_COMMIT` 结果是该 schema 修复已�
 pending queue 移除。上述 blocker 通过后仍须重新执行后续 package、commit、upload 与
 public/Creator/section readback gates；`READY_TO_COMMIT` 不是 publication 完成，也不暗示
 人审通过后必然可发。
+
+## 7. 2026-08-24 fresh live readback：#11–#20（wave evidence）
+
+本节覆盖三组 private wave 报告的最新只读结果；`/private/tmp` 仅为本次 session evidence，
+不是持久 authority，也没有因此发生 provider、state、registry、journal、upload 或 remote
+写入。部署身份为 `free:/opt/bilive/autoslice` commit
+`5f90525520530c9d7246d09718d209024b1181f5`；`DISABLED` 是 regular empty `0644`，
+`AUTO_UPLOAD` 与 `deploy.guard` 均 absent（upload path blocked）。
+
+- **#11**：fresh public view、runtime registry 和 completed ledger 对齐
+  `BV1pW8E6eEq5` / AID `117120855709245` / CID `41058045650`；本轮 wave 未 fresh 读取
+  Creator 或 exact section，因此不能过报为三面确认。既有公开稿不重传。
+- **#12**：当前为 `BLOCKED_TERMINAL` / `REFRESH_HOOK_UNSUPPORTED`，无 BVID；需要有明确
+  revival authority 后再修复、审包和发布。
+- **#13**：当前 candidate 为 `candidate_rejected`，`rc=1`，`failure_recoverable=false`。
+  `おめでとう` 与声学提出的 `ありがとう` 仍需人工真值裁决；旧的“可恢复”描述不构成当前
+  authority。
+- **#14**：当前在 `boundary_semantic` 失败，`failure_recoverable=false`，且 cover route
+  为 `BLOCKED_AI_COVER_REQUIRED`；边界/字幕、人审和 AI cover 均未闭合。
+- **#15**：fresh public + Creator 确认 `BV133816tEiN` / AID `117138287300220` /
+  CID `41157069221`，但 current section membership 在该 wave 未独立 fresh read。任何后续
+  修复只准 same-BV；不得 normal upload。
+- **#16**：当前 replacement bytes 与 record 声明漂移：record `84516` bytes、SHA
+  `eca63b1e4da1dea20c2e07ef63d1ceec8eaff52a4f351c190dad0c9c21f31104`；现 burned video
+  `18147527` / `192ac163cec52dfcd8362c3eb71b0ca1c5cd93222573ce5bfa423e9d4d1f11aa`，SRT
+  `1435` / `5669272b33595df688bc5ebaa329021727a37cd664e0c89821781efa5ee62ea7`，ASS
+  `2423` / `027210f0ecd50d0ea37016381ffc0c3ff52ee78df1783b064a4d55e381eb1aa0`。仅作 locator，
+  不得 review、package 或错误 transfer。
+- **#17**：当前 replacement bytes 同样与 record 漂移：record `96998` bytes、SHA
+  `a4c63eb311c651af7cb158b87c1a178ef1470a9e97e115d68624f3a4cd0aea24`；现 burned video
+  `38657896` / `d81f8c0f580bce7dd9fc015e055fc7ffa3031015b3d2553500ecb8caf03cd23e`，SRT
+  `1471` / `59203237381369ddcf964e8d0a503ea04cd6b4c9973f6cfeb3b53e70d80487e7`，ASS
+  `2419` / `dd8167e12f5f2a20c8e50610ed89036d4fd8b83193a38ea534b9a7d9aae4be40`。仅作 locator，
+  不得 review、package 或错误 transfer；先取得 recovery authority 并重生成 coherent package。
+- **#18**：fresh public、Creator 与 exact talk section `9320779` 三面一致：
+  `BV1Pi8P6FEzS` / AID `117130183840023` / CID `41111389163` / state `0`。这是旧公开稿，
+  不是本轮新发布，不重传。
+- **#19**：Qixi queue head；fresh public、Creator 与 exact talk section `9320779` 三面一致：
+  `BV1Ud8F6fECS` / AID `117126140527747` / CID `41087534673`。successor exact bytes 为
+  video `78,452,463` / `8539f49ecba77d12c69b51e3177f12e67d9ae39debebc762a997757e54cc488a`，
+  SRT `0b712412cb2dcccb0c61dcadd0764cd37487d4c2ee4453e69824e029309052d9`，cover
+  `e57c8c7af3b9346da468d54d5675319f3ace6a73760c3aa847808adbbb033642`。实际 final human review
+  仍为 `PENDING` template（不是 receipt），所以不得 same-BV apply、upload 或宣称修复闭环。
+- **#20**：fresh public、Creator 与 exact song section `9364628` 三面一致：
+  `BV1Cn8E6iEf8` / AID `117120822222716` / CID `41057781970` / state `0`。这是旧公开稿，
+  不是本轮新发布，不重传；任何后续更正只走 same-BV。
+
+结论：这些 readback 证明的是当前公开/阻塞面，不是本轮发布完成；旧公开不得重传，
+`review_ready`、历史 ruling 或 pending template 均不能替代真实人审、package audit、
+authorized manifest、same-BV/上传和 public/Creator/section 复核链。
