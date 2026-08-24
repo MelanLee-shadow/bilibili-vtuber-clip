@@ -21,6 +21,110 @@ sys.path.insert(0, ".")
 from src.autoslice.cpa_frame_witness import image_vision_probe
 
 
+def resolve_candidate_id(record: dict, review: dict) -> str:
+    """Preserve ordinary precedence; narrowly admit the exact C2 legacy shape."""
+    story = record.get("story_contract")
+    story_id = story.get("candidate_id") if isinstance(story, dict) else None
+    delivery_id = record.get("delivery_candidate_id")
+    candidates = [value for value in (story_id, delivery_id) if isinstance(value, str) and value]
+    if candidates:
+        if len(set(candidates)) != 1:
+            raise ValueError("candidate authorities conflict")
+        return candidates[0]
+    if record.get("schema_version") != "lidousha-c2-release-record.v1":
+        raise ValueError("candidate id is unavailable")
+    root_id, items = record.get("candidate_id"), review.get("items")
+    if not isinstance(root_id, str) or not root_id or not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict) or items[0].get("candidate_id") != root_id:
+        raise ValueError("C2 legacy record candidate is absent or conflicts with review item")
+    return root_id
+
+
+def preflight_create_only_output(path: Path) -> tuple[int, str]:
+    absolute = path.absolute()
+    if absolute.name != path.name or not absolute.name:
+        raise ValueError("QC output filename is unsafe")
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    parent_fd = os.open(absolute.anchor, flags)
+    try:
+        # Descend under directory FDs rather than re-resolving an attacker-
+        # controlled ancestor path after its safety check.
+        for component in absolute.parent.parts[1:]:
+            if component in {"", ".", ".."}:
+                raise ValueError("QC output parent has an unsafe component")
+            try:
+                child_fd = os.open(component, flags, dir_fd=parent_fd)
+            except FileNotFoundError:
+                raise
+            except OSError as exc:
+                raise ValueError("QC output parent traverses unsafe directory") from exc
+            os.close(parent_fd)
+            parent_fd = child_fd
+        if stat.S_IMODE(os.fstat(parent_fd).st_mode) != 0o700:
+            raise ValueError("QC output parent must be 0700")
+        try:
+            os.stat(absolute.name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return parent_fd, absolute.name
+        raise FileExistsError("QC output already exists")
+    except Exception:
+        os.close(parent_fd)
+        raise
+
+
+def write_receipt_create_only(parent_fd: int, name: str, receipt: dict) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(name, flags, 0o600, dir_fd=parent_fd)
+    try:
+        data = (json.dumps(receipt, ensure_ascii=False, indent=1) + "\n").encode()
+        offset = 0
+        while offset < len(data):
+            wrote = os.write(fd, data[offset:])
+            if wrote <= 0:
+                raise OSError("QC receipt short write")
+            offset += wrote
+        os.fsync(fd)
+    except Exception:
+        try:
+            os.unlink(name, dir_fd=parent_fd)
+        finally:
+            raise
+    finally:
+        os.close(fd)
+    os.fsync(parent_fd)
+
+
+def run_qc(
+    package_root: Path,
+    title: str,
+    out_path: Path,
+    *,
+    image_probe,
+) -> dict:
+    """Preflight the create-only target before the potentially paid probe."""
+    record, _publish, cover_path = resolve_package_inputs(package_root, title)
+    review_path = package_root.absolute() / "review_manifest.json"
+    review = json.loads(review_path.read_text(encoding="utf-8"))
+    parent_fd, output_name = preflight_create_only_output(out_path)
+    try:
+        candidate_id = resolve_candidate_id(record, review)
+        receipt = build_joint_qc_receipt(
+            cover_path=cover_path,
+            title=title,
+            candidate_id=candidate_id,
+            image_probe=image_probe,
+        )
+        write_receipt_create_only(parent_fd, output_name, receipt)
+        return receipt
+    finally:
+        os.close(parent_fd)
+
+
 def load_env(path: str) -> dict:
     out = {}
     for line in Path(path).read_text(encoding="utf-8").splitlines():
@@ -234,38 +338,11 @@ def main() -> int:
     out_path = Path(sys.argv[3])
     env = load_env("/opt/bilive/autoslice/cpa.env")
 
-    record, publish, cover_path = resolve_package_inputs(package_root, title)
-    story = record.get("story_contract") or {}
-    candidate_id = str(story.get("candidate_id") or record.get("delivery_candidate_id") or "")
-    if not candidate_id and record.get("schema_version") == "lidousha-c2-release-record.v1":
-        items = json.loads((package_root / "review_manifest.json").read_text(encoding="utf-8")).get("items")
-        root_candidate = record.get("candidate_id")
-        if not isinstance(root_candidate, str) or not root_candidate or not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict) or items[0].get("candidate_id") != root_candidate:
-            raise ValueError("C2 legacy record candidate is absent or conflicts with review item")
-        candidate_id = root_candidate
-    if not candidate_id:
-        raise ValueError("candidate id is unavailable")
     def probe(path: Path, prompt: str) -> dict:
         result = image_vision_probe(path, prompt, api_base=env.get("CPA_BASE_URL", ""), api_key=env.get("CPA_API_KEY", ""))
         result["image_path"] = str(path)
         return result
-    receipt = build_joint_qc_receipt(
-        cover_path=cover_path, title=title, candidate_id=candidate_id, image_probe=probe
-    )
-    parent = out_path.parent.absolute()
-    info = os.lstat(parent)
-    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o700:
-        raise ValueError("QC output parent must be an existing 0700 non-symlink directory")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    fd = os.open(out_path, flags, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(json.dumps(receipt, ensure_ascii=False, indent=1) + "\n")
-        handle.flush(); os.fsync(handle.fileno())
-    directory_fd = os.open(parent, os.O_RDONLY)
-    try: os.fsync(directory_fd)
-    finally: os.close(directory_fd)
+    receipt = run_qc(package_root, title, out_path, image_probe=probe)
     print("status:", receipt["status"], "| verdict:", json.dumps(receipt["verdict"], ensure_ascii=False)[:200])
     print("receipt:", out_path)
     return 0 if receipt["pass"] else 2
