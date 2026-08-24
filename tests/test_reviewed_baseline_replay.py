@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -194,6 +195,43 @@ def test_production_replay_llm_binds_runtime_cpa_environment(
     assert config.command_child_env is not None
     assert config.command_child_env["CPA_BASE_URL"] == "https://runtime.example/v1"
     assert os.environ["CPA_BASE_URL"] == "https://ambient.invalid/v1"
+    assert shlex.split(config.command_template)[1] == str(
+        runtime / "repo" / "scripts" / "llm_via_cpa.sh"
+    )
+
+
+def test_production_replay_llm_uses_runtime_bridge_outside_repo_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The replay CLI can run by absolute path from a non-repository CWD."""
+
+    runtime = tmp_path / "runtime"
+    bridge = runtime / "repo" / "scripts" / "llm_via_cpa.sh"
+    _runtime_cpa_env(
+        runtime,
+        "CPA_BASE_URL=https://runtime.example/v1\nCPA_API_KEY=runtime-secret\n",
+    )
+    real_environment = llm_client.runtime_cpa_command_environment
+    monkeypatch.setattr(
+        llm_client,
+        "runtime_cpa_command_environment",
+        lambda path: real_environment(path, _owner_uid=os.getuid()),
+    )
+    observed: dict[str, list[str]] = {}
+
+    def fake_call_command(_prompt: str, config: llm_client.LlmConfig) -> str:
+        observed["command"] = shlex.split(config.command_template)
+        return "{}"
+
+    monkeypatch.setattr(llm_client, "_call_command", fake_call_command)
+    outside_repo = tmp_path / "outside-repo"
+    outside_repo.mkdir()
+    monkeypatch.chdir(outside_repo)
+
+    call = replay._production_llm_call(runtime_root=runtime, effort="low")
+    assert call("fixture") == "{}"
+    assert observed["command"][:2] == ["bash", str(bridge)]
+    assert Path(observed["command"][1]).is_absolute()
 
 
 def test_plan_is_read_only_and_binds_canonical_v2_v3_assets(tmp_path: Path) -> None:

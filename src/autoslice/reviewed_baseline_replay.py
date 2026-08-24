@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -744,10 +745,11 @@ def _production_llm_call(*, runtime_root: Path, effort: str) -> Callable[[str], 
     )
 
     runtime = _safe_directory(runtime_root)
+    bridge = runtime / "repo" / "scripts" / "llm_via_cpa.sh"
     return build_llm_call(LlmConfig(
         transport="command",
         command_template=(
-            "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} "
+            f"bash {shlex.quote(str(bridge))} {{prompt_file}} {{completion_file}} "
             f"'gpt-5.6-sol gpt-5.5 gpt-5.4' {effort} 1"
         ),
         timeout_seconds=600.0,
