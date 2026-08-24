@@ -387,9 +387,20 @@
     },
     {
       "candidate_id": "auto_203011_328_389",
-      "note": "Ivan direct Claude JSONL line 947 candidate fact: 0:14「小豆老公；； 不是你老公」；1:04 是回应弹幕「小豆好吵（」，不是念出该弹幕；current title wrongly treats 小李 and 李豆沙 as two people; redo title/cover. Temporary no-upload guard while required WHOLE_CLIP_RERUN_AND_REVIEW runs. Ivan direct Claude JSONL line 947 blanket condition: 「以上我说的所有内容修复后都可以走快车道上传，优先级顺序是我说时效性强的优先上传（=七夕），然后按顺序走快车道上传」。Release only after fixes and that explicit fastlane condition, never before current package audit, title/cover joint QC, authorized manifest verify/upload, and public reconciliation.",
+      "note": "Ivan direct Claude JSONL line 947 candidate fact: 0:14「小豆老公；； 不是你老公」；1:04 是回应弹幕「小豆好吵（」，不是念出该弹幕；current title wrongly treats 小李 and 李豆沙 as two people; redo title/cover. The named fixes are complete and Ivan's line-947 fastlane condition is retained in assets/lidousha/fastlane_c2_private/auto_203011_328_389.release-authorization.v1.json. This release only removes the historical hold; current package audit, accepted C2 technical receipt, exact-title/cover CPA joint QC, authorized manifest verify, serialized upload, and public/Creator/section reconciliation remain mandatory.",
       "recording_date": "2026-08-13",
-      "status": "hold_pending_review"
+      "status": "released_for_upload",
+      "release_authorization": {
+        "path": "assets/lidousha/fastlane_c2_private/auto_203011_328_389.release-authorization.v1.json",
+        "direct_ivan_lines": [947, 1643, 1745],
+        "remaining_machine_gates": [
+          "accepted C2 root technical receipt",
+          "current package audit",
+          "CPA title-cover joint QC",
+          "authorized manifest verify",
+          "serialized upload and public reconciliation"
+        ]
+      }
     },
     {
       "bvid": "BV133816tEiN",
