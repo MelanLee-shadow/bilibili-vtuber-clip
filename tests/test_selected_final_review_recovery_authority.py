@@ -352,7 +352,7 @@ def test_registry_is_replayed_sealed_current_asset_and_drift_changes_manifest_en
     entry = manifest["entries"][registry.relative_to(ROOT).as_posix()]
     assert entry == {
         "bytes": len(registry.read_bytes()),
-        "sha256": "sha256:406d8cef1509917e1cae98e9ee2a3408ea6c280eec85a378771c0806c95997d6",
+        "sha256": "sha256:bf9a092c6d0549aa5dd20633609a1113ca3340b3fb61977f053f6f6da8bc163e",
     }
     drifted = json.loads(registry.read_text())
     next(row for row in drifted["entries"] if row["candidate_id"] == "auto_123655_771_844")["bvid"] = "BV1drifted"
