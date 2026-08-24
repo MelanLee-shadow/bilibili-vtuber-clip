@@ -234,7 +234,12 @@ def test_stage_rebuilds_only_private_artifacts_and_preserves_expected_video_hash
     def apply_full_padded_baseline(text: str, **kwargs: object) -> tuple[str, dict[str, str]]:
         seen["text"] = text
         seen.update(kwargs)
-        return text, {"status": "APPLIED"}
+        config = kwargs["config"]
+        assert isinstance(config, Mapping)
+        return (
+            (Path(str(kwargs["spec_parent"])) / str(config["path"])).read_text(encoding="utf-8"),
+            {"status": "APPLIED"},
+        )
 
     monkeypatch.setattr(
         full_window_replay,
@@ -247,7 +252,8 @@ def test_stage_rebuilds_only_private_artifacts_and_preserves_expected_video_hash
 
     stage = Path(result["stage"])
     assert {path.name for path in stage.iterdir()} == {
-        "recut.mp4", "reviewed.srt", "redelivery-baseline.json", "stage.json",
+        "recut.mp4", "reviewed.srt", "redelivery-baseline.json",
+        "full-release-delivery-projection.json", "stage.json",
     }
     assert (stage / "recut.mp4").is_file()
     reviewed = (stage / "reviewed.srt").read_text(encoding="utf-8")
@@ -256,6 +262,10 @@ def test_stage_rebuilds_only_private_artifacts_and_preserves_expected_video_hash
     assert "1592760" not in reviewed
     assert all(path.stat().st_mode & 0o777 == 0o600 for path in stage.iterdir() if path.name != "recut.mp4")
     assert _sha((stage / "recut.mp4").read_bytes()) == plan.expected_video_sha256
+    stage_document = json.loads((stage / "stage.json").read_text(encoding="utf-8"))
+    assert stage_document["delivery_projection_receipt"]["sha256"] == _sha(
+        (stage / "full-release-delivery-projection.json").read_bytes()
+    )
     assert not list((out_root / DATE / CID / "replacement_recuts").glob("*.stage.json"))
     diagnostic = plan.baseline.config["operator_truth_lanes"]["pipeline_diagnostic"]
     expected_text = (plan.baseline.manifest_path.parent / diagnostic["path"]).read_text(encoding="utf-8")

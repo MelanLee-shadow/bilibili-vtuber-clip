@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import stat
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
@@ -53,6 +54,54 @@ def translate_final_local_protected_windows(
 def _canonical_sha256(value: object) -> str:
     raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return "sha256:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+_DELIVERY_PROJECTION_SCHEMA = "reviewed-baseline-full-release-delivery-projection.v1"
+
+
+def _sha256_bytes(value: bytes) -> str:
+    return "sha256:" + hashlib.sha256(value).hexdigest()
+
+
+def _private_create_only_json(path: Path, value: Mapping[str, object]) -> str:
+    """Commit one private receipt without making a reusable mutable sidecar."""
+
+    payload = (
+        json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True,
+                   separators=(",", ":")) + "\n"
+    ).encode("utf-8")
+    try:
+        descriptor = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+    except OSError as exc:
+        raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_RECEIPT_COLLISION") from exc
+    try:
+        view = memoryview(payload)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_RECEIPT_WRITE_FAILED")
+            view = view[written:]
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    try:
+        observed = os.lstat(path)
+    except OSError as exc:
+        raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_RECEIPT_WRITE_FAILED") from exc
+    if not stat.S_ISREG(observed.st_mode) or stat.S_IMODE(observed.st_mode) != 0o600:
+        raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_RECEIPT_UNSAFE")
+    return _sha256_bytes(payload)
+
+
+def _projection_hash(value: object, *, code: str) -> str:
+    raw = str(value or "")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", raw):
+        raise FullWindowReplayError(code)
+    return raw
 
 
 def _clip_interval(
@@ -185,6 +234,190 @@ def _project_protected_intervals(
             projected.append({"start_ms": clipped_start - final_start_ms,
                               "end_ms": clipped_end - final_start_ms})
     return projected
+
+
+def _build_full_release_delivery_projection_receipt(
+    *,
+    candidate_id: str,
+    record_sha256: str,
+    record_boundary: Mapping[str, object],
+    padded_start_ms: int,
+    padded_end_ms: int,
+    final_start_ms: int,
+    final_end_ms: int,
+    diagnostic_text: str,
+    full_release_text: str,
+    delivery_bytes: bytes,
+    config: Mapping[str, object],
+    spec_parent: Path,
+    staged_media_sha256: str,
+) -> dict[str, object] | None:
+    """Prove an exact sealed full-release -> final-delivery projection.
+
+    This receipt deliberately carries cue indexes/times and byte bindings but
+    never subtitle text or filesystem locations.  It exists only for the
+    exceptional case where the final delivery grid is a strict subset of the
+    sealed release grid; ordinary equal-grid replay does not need it.
+    """
+
+    if not candidate_id or not isinstance(record_boundary, Mapping):
+        raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_INPUT_INVALID")
+    for value in (padded_start_ms, padded_end_ms, final_start_ms, final_end_ms):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_BOUNDARY_INVALID")
+    if not (padded_start_ms < padded_end_ms and 0 <= final_start_ms < final_end_ms <= padded_end_ms - padded_start_ms):
+        raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_BOUNDARY_INVALID")
+    if (
+        record_boundary.get("final_start_ms") != final_start_ms
+        or record_boundary.get("final_end_ms") != final_end_ms
+    ):
+        raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_RECORD_BOUNDARY_DRIFT")
+    lanes = config.get("operator_truth_lanes")
+    if not isinstance(lanes, Mapping):
+        raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_LANES_INVALID")
+    diagnostic = lanes.get("pipeline_diagnostic")
+    ledger = lanes.get("decision_ledger")
+    diff = lanes.get("diff_receipt")
+    if not all(isinstance(item, Mapping) for item in (diagnostic, ledger, diff)):
+        raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_LANES_INVALID")
+    try:
+        diagnostic_sha = _projection_hash(
+            "sha256:" + str(diagnostic.get("sha256") or "").removeprefix("sha256:"),
+            code="REDELIVERY_DELIVERY_PROJECTION_LANES_INVALID",
+        )
+        ledger_sha = _projection_hash(
+            "sha256:" + str(ledger.get("sha256") or "").removeprefix("sha256:"),
+            code="REDELIVERY_DELIVERY_PROJECTION_LANES_INVALID",
+        )
+        diff_sha = _projection_hash(
+            "sha256:" + str(diff.get("sha256") or "").removeprefix("sha256:"),
+            code="REDELIVERY_DELIVERY_PROJECTION_LANES_INVALID",
+        )
+        full_release_sha = _projection_hash(
+            "sha256:" + str(config.get("sha256") or "").removeprefix("sha256:"),
+            code="REDELIVERY_DELIVERY_PROJECTION_LANES_INVALID",
+        )
+        record_sha256 = _projection_hash(record_sha256, code="REDELIVERY_DELIVERY_PROJECTION_RECORD_INVALID")
+        staged_media_sha256 = _projection_hash(staged_media_sha256, code="REDELIVERY_DELIVERY_PROJECTION_MEDIA_INVALID")
+    except AttributeError as exc:
+        raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_LANES_INVALID") from exc
+    descriptors = ((diagnostic, diagnostic_sha), (ledger, ledger_sha), (diff, diff_sha))
+    for descriptor, expected in descriptors:
+        raw_path = descriptor.get("path")
+        if not isinstance(raw_path, str) or not raw_path:
+            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_LANES_INVALID")
+        path = Path(raw_path)
+        if not path.is_absolute():
+            path = spec_parent / path
+        if path.parent.absolute() != spec_parent.absolute():
+            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_LANES_INVALID")
+        try:
+            actual = _sha256_bytes(path.read_bytes())
+        except OSError as exc:
+            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_LANES_INVALID") from exc
+        if actual != expected:
+            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_LANES_INVALID")
+    if _sha256_bytes(diagnostic_text.encode("utf-8")) != diagnostic_sha:
+        raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_DIAGNOSTIC_DRIFT")
+    if _sha256_bytes(full_release_text.encode("utf-8")) != full_release_sha:
+        raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_FULL_RELEASE_DRIFT")
+    try:
+        old_cues = parse_srt_cues(diagnostic_text)
+        release_cues = parse_srt_cues(full_release_text)
+        delivery_cues = parse_srt_cues(delivery_bytes.decode("utf-8"))
+        diff_document = json.loads((spec_parent / str(diff["path"])).read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError, OSError) as exc:
+        raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_GRID_INVALID") from exc
+    if not isinstance(diff_document, Mapping) or not isinstance(diff_document.get("rows"), list):
+        raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_GRID_INVALID")
+    diff_rows = diff_document["rows"]
+    if len(diff_rows) != len(old_cues):
+        raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_MAP_INVALID")
+    if len(release_cues) == len(delivery_cues):
+        # Equal-grid C6-style replay is deliberately not projected.  A crop
+        # that did not remove a release cue has no exceptional authority.
+        return None
+    if len(release_cues) < len(delivery_cues):
+        raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_DELIVERY_GRID_DRIFT")
+    rows: list[dict[str, object]] = []
+    release_cursor = 0
+    delivery_cursor = 0
+    for old_ordinal, (old, diff_row) in enumerate(zip(old_cues, diff_rows, strict=True), start=1):
+        if not isinstance(diff_row, Mapping) or diff_row.get("cue") != old_ordinal:
+            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_MAP_INVALID")
+        if diff_row.get("disposition") == "OPERATOR_DROP":
+            if diff_row.get("release_cue_index") is not None:
+                raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_MAP_INVALID")
+            rows.append({
+                "old_source_index": old_ordinal,
+                "release_cue_index": None,
+                "delivery_cue_index": None,
+                "disposition": "OPERATOR_DROP",
+            })
+            continue
+        if release_cursor >= len(release_cues):
+            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_MAP_INVALID")
+        release = release_cues[release_cursor]
+        release_index = release_cursor + 1
+        if (
+            diff_row.get("release_cue_index") != release_index
+            or (old.start_ms, old.end_ms) != (release.start_ms, release.end_ms)
+            or str(diff_row.get("release_truth_text") or "") != release.text
+        ):
+            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_MAP_INVALID")
+        release_cursor += 1
+        if release.end_ms <= final_start_ms or release.start_ms >= final_end_ms:
+            rows.append({
+                "old_source_index": old_ordinal,
+                "release_cue_index": release_index,
+                "delivery_cue_index": None,
+                "disposition": "OUTSIDE_FINAL_DELIVERY",
+            })
+            continue
+        if release.start_ms < final_start_ms or release.end_ms > final_end_ms:
+            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_STRADDLER")
+        if delivery_cursor >= len(delivery_cues):
+            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_DELIVERY_GRID_DRIFT")
+        delivery = delivery_cues[delivery_cursor]
+        delivery_index = delivery_cursor + 1
+        if (
+            delivery.index != str(delivery_index)
+            or (delivery.start_ms, delivery.end_ms)
+            != (release.start_ms - final_start_ms, release.end_ms - final_start_ms)
+            or delivery.text != release.text
+        ):
+            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_DELIVERY_GRID_DRIFT")
+        rows.append({
+            "old_source_index": old_ordinal,
+            "release_cue_index": release_index,
+            "delivery_cue_index": delivery_index,
+            "disposition": "RETAINED_FINAL_DELIVERY",
+            "release_start_ms": release.start_ms,
+            "release_end_ms": release.end_ms,
+            "delivery_start_ms": delivery.start_ms,
+            "delivery_end_ms": delivery.end_ms,
+        })
+        delivery_cursor += 1
+    if release_cursor != len(release_cues) or delivery_cursor != len(delivery_cues) or not delivery_cues:
+        raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_MAP_INVALID")
+    return {
+        "schema_version": _DELIVERY_PROJECTION_SCHEMA,
+        "candidate_id": candidate_id,
+        "record_sha256": record_sha256,
+        "record_boundary_sha256": _canonical_sha256(dict(record_boundary)),
+        "padded_source_interval": {"start_ms": padded_start_ms, "end_ms": padded_end_ms},
+        "final_delivery_boundary": {"start_ms": final_start_ms, "end_ms": final_end_ms},
+        "pipeline_diagnostic_sha256": diagnostic_sha,
+        "full_release_srt_sha256": full_release_sha,
+        "operator_ledger_sha256": ledger_sha,
+        "operator_truth_diff_sha256": diff_sha,
+        "staged_srt_sha256": _sha256_bytes(delivery_bytes),
+        "staged_media_sha256": staged_media_sha256,
+        "old_diagnostic_cue_count": len(old_cues),
+        "full_release_cue_count": len(release_cues),
+        "final_delivery_cue_count": len(delivery_cues),
+        "rows": rows,
+    }
 
 
 def replay_full_window_then_crop(
@@ -337,6 +570,11 @@ def replay_full_window_text_and_crop(
     write_source_range_srt: Callable[[Sequence[SourceCue], int, int, Path], None],
     crop_path: Path,
     read_crop: Callable[[Path], bytes],
+    projection_receipt_path: Path | None = None,
+    projection_candidate_id: str | None = None,
+    projection_record_sha256: str | None = None,
+    projection_record_boundary: Mapping[str, object] | None = None,
+    projection_staged_media_sha256: str | None = None,
 ) -> tuple[bytes, dict]:
     """Apply an exact padded baseline and return a deterministic final crop."""
 
@@ -359,6 +597,34 @@ def replay_full_window_text_and_crop(
         raise FullWindowReplayError("REPLAY_REVIEWED_BASELINE_GEOMETRY_INVALID") from exc
     write_source_range_srt(cues, final_start_ms, final_end_ms, crop_path)
     try:
-        return read_crop(crop_path), audit
+        cropped = read_crop(crop_path)
+        projection_inputs = (
+            projection_receipt_path, projection_candidate_id,
+            projection_record_sha256, projection_record_boundary,
+            projection_staged_media_sha256,
+        )
+        if any(value is not None for value in projection_inputs):
+            if not all(value is not None for value in projection_inputs):
+                raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_INPUT_INVALID")
+            receipt = _build_full_release_delivery_projection_receipt(
+                candidate_id=str(projection_candidate_id),
+                record_sha256=str(projection_record_sha256),
+                record_boundary=projection_record_boundary,
+                padded_start_ms=padded_start_ms, padded_end_ms=padded_end_ms,
+                final_start_ms=final_start_ms, final_end_ms=final_end_ms,
+                diagnostic_text=text, full_release_text=reviewed,
+                delivery_bytes=cropped, config=config, spec_parent=spec_parent,
+                staged_media_sha256=str(projection_staged_media_sha256),
+            )
+            if receipt is not None:
+                assert projection_receipt_path is not None
+                receipt_sha = _private_create_only_json(projection_receipt_path, receipt)
+                audit["full_release_delivery_projection"] = {
+                    "schema_version": _DELIVERY_PROJECTION_SCHEMA,
+                    "receipt_sha256": receipt_sha,
+                    "full_release_cue_count": receipt["full_release_cue_count"],
+                    "final_delivery_cue_count": receipt["final_delivery_cue_count"],
+                }
+        return cropped, audit
     finally:
         crop_path.unlink(missing_ok=True)

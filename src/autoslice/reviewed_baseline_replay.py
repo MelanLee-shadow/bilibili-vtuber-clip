@@ -26,10 +26,6 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from src.autoslice.branding_intro import pin_existing_delivery_intro, require_branding_intro
-from src.autoslice.redelivery_full_window_replay import (
-    FullWindowReplayError,
-    replay_full_window_text_and_crop,
-)
 from src.autoslice.recut_materialization import (
     _accurate_reencode_recut_command,
     _fresh_srt_to_source_cues,
@@ -47,6 +43,10 @@ from src.autoslice.reviewed_baseline_replay_projection import (
     validate_retained_projection,
 )
 from src.autoslice.reviewed_baseline_replay_authority import resolve_record_bound_finalizer_authority
+from src.autoslice.reviewed_baseline_replay_stage_projection import (
+    prepare_stage_delivery_projection,
+    stage_delivery_projection_receipt,
+)
 
 
 REPLAY_STAGE_SCHEMA = "reviewed-baseline-replay-stage.v1"
@@ -439,45 +439,11 @@ def stage_replay(
     rebuilt = regular_binding(media, label="STAGED_VIDEO")
     if rebuilt.sha256 != plan.expected_video_sha256:
         raise ReviewedBaselineReplayError("REPLAY_OLD_RECORD_VIDEO_SHA256_MISMATCH")
-    config = plan.baseline.config
-    diagnostic = config["operator_truth_lanes"]["pipeline_diagnostic"]
-    diagnostic_path = plan.baseline.manifest_path.parent / str(diagnostic["path"])
-    diagnostic_binding = regular_binding(diagnostic_path, label="PIPELINE_DIAGNOSTIC")
-    try:
-        text_value = _read_small_bytes(
-            diagnostic_binding, label="PIPELINE_DIAGNOSTIC"
-        ).decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise ReviewedBaselineReplayError("REPLAY_PIPELINE_DIAGNOSTIC_INVALID") from exc
-    match = _PADDED.fullmatch(plan.padded_path.name)
-    assert match is not None  # already proved while binding the plan
-    padded_start = int(match.group(1))
-    try:
-        _fresh_srt_to_source_cues(
-            text_value, window_start_ms=0,
-            duration_ms=int(match.group(2)) - padded_start,
-        )
-    except ValueError as exc:
-        raise ReviewedBaselineReplayError("REPLAY_PIPELINE_DIAGNOSTIC_GEOMETRY_INVALID") from exc
-    cropped_path = stage / ".reviewed-window.srt"
-    try:
-        cropped_bytes, audit = replay_full_window_text_and_crop(
-            text=text_value,
-            config=config,
-            spec_parent=plan.baseline.manifest_path.parent,
-            padded_start_ms=padded_start,
-            padded_end_ms=int(match.group(2)),
-            final_start_ms=plan.local_start_ms,
-            final_end_ms=plan.local_end_ms,
-            write_source_range_srt=_write_source_range_srt,
-            crop_path=cropped_path,
-            read_crop=lambda path: _read_small_bytes(
-                regular_binding(path, label="REVIEWED_WINDOW"),
-                label="REVIEWED_WINDOW",
-            ),
-        )
-    except FullWindowReplayError as exc:
-        raise ReviewedBaselineReplayError(str(exc)) from exc
+    cropped_bytes, audit, projection_descriptor = prepare_stage_delivery_projection(
+        plan, stage, rebuilt, regular_binding=regular_binding, load_json=_load_json,
+        read_small_bytes=_read_small_bytes, fresh_srt_to_source_cues=_fresh_srt_to_source_cues,
+        write_source_range_srt=_write_source_range_srt, error=ReviewedBaselineReplayError,
+    )
     _write_private(stage / "reviewed.srt", cropped_bytes)
     _write_private(stage / "redelivery-baseline.json", _canonical(audit))
     document: dict[str, Any] = {
@@ -497,6 +463,8 @@ def stage_replay(
         "predicate_matrix": list(plan.matrix),
         "upload_allowed": False,
     }
+    if projection_descriptor is not None:
+        document["delivery_projection_receipt"] = projection_descriptor
     document["stage_sha256"] = _sha(_canonical(document))
     _write_private(stage / "stage.json", _canonical(document))
     return {"stage": str(stage), "stage_sha256": document["stage_sha256"], "predicate_matrix": document["predicate_matrix"]}
@@ -939,6 +907,11 @@ def synthesize_replay_spec_and_finalize_private(
     from src.autoslice.recut_materialization import _fresh_srt_to_source_cues
 
     stage = _safe_directory(stage)
+    projection_receipt_path, projection_receipt_sha256 = stage_delivery_projection_receipt(
+        stage, load_json=_load_json, regular_binding=regular_binding,
+        canonical=_canonical, sha=_sha, sha_pattern=_SHA,
+        error=ReviewedBaselineReplayError,
+    )
     record_binding = regular_binding(plan.record_path, label="RECORD")
     record = _load_json(record_binding, label="RECORD")
     provenance_path = next(plan.package_root.joinpath("replacement_recuts").glob("*.recut.provenance.json"), None)
@@ -1048,6 +1021,8 @@ def synthesize_replay_spec_and_finalize_private(
         reviewed_baseline_path=plan.baseline.baseline_path,
         reviewed_baseline_sha256="sha256:" + str(plan.baseline.config["sha256"]),
         expected_media_sha256=plan.expected_video_sha256,
+        delivery_projection_receipt_path=projection_receipt_path,
+        delivery_projection_receipt_sha256=projection_receipt_sha256,
         regular_binding=regular_binding, replay_error=ReviewedBaselineReplayError,
         error_factory=ReviewedBaselineReplayError,
     )

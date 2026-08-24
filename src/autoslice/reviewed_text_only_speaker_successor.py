@@ -17,6 +17,7 @@ from typing import Callable, Mapping, Protocol
 
 from scripts.apply_speaker_turn_overrides import Cue, sha256_file, write_ass, write_srt
 from scripts.apply_subtitle_text_overrides import parse_srt
+from src.autoslice.redelivery_full_window_replay import _DELIVERY_PROJECTION_SCHEMA
 from src.autoslice.speaker_common import SPEAKER_FINALIZATION_SCHEMA
 
 
@@ -46,6 +47,8 @@ def build_text_only_speaker_successor_fields(
     reviewed_baseline_path: Path,
     reviewed_baseline_sha256: str,
     expected_media_sha256: str,
+    delivery_projection_receipt_path: Path | None = None,
+    delivery_projection_receipt_sha256: str | None = None,
     regular_binding: Callable[..., _RegularBinding],
     replay_error: type[Exception],
     error_factory: Callable[[str], Exception],
@@ -140,6 +143,8 @@ def build_text_only_speaker_successor_fields(
                 reviewed_baseline_sha256=reviewed_baseline_sha256,
                 ledger_path=ledger_binding.path, ledger_sha256=ledger_binding.sha256,
                 truth_diff_path=diff_binding.path, truth_diff_sha256=diff_binding.sha256,
+                delivery_projection_receipt_path=delivery_projection_receipt_path,
+                delivery_projection_receipt_sha256=delivery_projection_receipt_sha256,
                 new_plain_srt=Path(str(kwargs["text_srt_path"])),
                 new_media=Path(str(kwargs["media_path"])),
                 expected_media_sha256=expected_media_sha256,
@@ -324,6 +329,140 @@ def _srt_ms(value: str) -> int:
         _fail("CUE_TIMING_DRIFT")
 
 
+def _canonical_sha256(value: object) -> str:
+    raw = json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True,
+                     separators=(",", ":")).encode("utf-8")
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
+def _delivery_projection_mapping(
+    *,
+    candidate_id: str,
+    old_record: Mapping[str, object],
+    old_record_sha256: str,
+    old_cues: list[Cue],
+    full_release_cues: list[Cue],
+    delivery_cues: list[Cue],
+    old_to_release: list[tuple[int, int]],
+    dropped: list[int],
+    old_diagnostic_sha256: str,
+    reviewed_baseline_sha256: str,
+    ledger_sha256: str,
+    truth_diff_sha256: str,
+    delivery_sha256: str,
+    expected_media_sha256: str,
+    receipt_path: Path | None,
+    receipt_sha256: str | None,
+) -> list[tuple[int, int, int]]:
+    """Accept a delivery grid only through a sealed full-release projection."""
+
+    if receipt_path is None or receipt_sha256 is None:
+        _fail("DELIVERY_PROJECTION_RECEIPT_MISSING")
+    actual_receipt_sha = _binding(
+        receipt_path, receipt_sha256, code="DELIVERY_PROJECTION_RECEIPT_BINDING"
+    )
+    receipt = _json(receipt_path, code="DELIVERY_PROJECTION_RECEIPT_INVALID")
+    expected_receipt_keys = {
+        "schema_version", "candidate_id", "record_sha256", "record_boundary_sha256",
+        "padded_source_interval", "final_delivery_boundary",
+        "pipeline_diagnostic_sha256", "full_release_srt_sha256",
+        "operator_ledger_sha256", "operator_truth_diff_sha256",
+        "staged_srt_sha256", "staged_media_sha256",
+        "old_diagnostic_cue_count", "full_release_cue_count",
+        "final_delivery_cue_count", "rows",
+    }
+    boundary = old_record.get("boundary_audit")
+    if not isinstance(boundary, Mapping):
+        _fail("DELIVERY_PROJECTION_RECORD_BOUNDARY")
+    final_start, final_end = boundary.get("final_start_ms"), boundary.get("final_end_ms")
+    if (
+        set(receipt) != expected_receipt_keys
+        or receipt.get("schema_version") != _DELIVERY_PROJECTION_SCHEMA
+        or receipt.get("candidate_id") != candidate_id
+        or _digest(receipt.get("record_sha256"), code="DELIVERY_PROJECTION_RECEIPT_INVALID")
+        != _digest(old_record_sha256, code="DELIVERY_PROJECTION_RECEIPT_INVALID")
+        or receipt.get("record_boundary_sha256") != _canonical_sha256(dict(boundary))
+        or _digest(receipt.get("pipeline_diagnostic_sha256"), code="DELIVERY_PROJECTION_RECEIPT_INVALID") != old_diagnostic_sha256
+        or _digest(receipt.get("full_release_srt_sha256"), code="DELIVERY_PROJECTION_RECEIPT_INVALID") != reviewed_baseline_sha256
+        or _digest(receipt.get("operator_ledger_sha256"), code="DELIVERY_PROJECTION_RECEIPT_INVALID") != ledger_sha256
+        or _digest(receipt.get("operator_truth_diff_sha256"), code="DELIVERY_PROJECTION_RECEIPT_INVALID") != truth_diff_sha256
+        or _digest(receipt.get("staged_srt_sha256"), code="DELIVERY_PROJECTION_RECEIPT_INVALID") != delivery_sha256
+        or _digest(receipt.get("staged_media_sha256"), code="DELIVERY_PROJECTION_RECEIPT_INVALID") != expected_media_sha256
+        or receipt.get("old_diagnostic_cue_count") != len(old_cues)
+        or receipt.get("full_release_cue_count") != len(full_release_cues)
+        or receipt.get("final_delivery_cue_count") != len(delivery_cues)
+    ):
+        _fail("DELIVERY_PROJECTION_RECEIPT_INVALID")
+    receipt_boundary = receipt.get("final_delivery_boundary")
+    padded = receipt.get("padded_source_interval")
+    if (
+        not isinstance(receipt_boundary, Mapping)
+        or not isinstance(padded, Mapping)
+        or receipt_boundary.get("start_ms") != final_start
+        or receipt_boundary.get("end_ms") != final_end
+        or isinstance(final_start, bool) or isinstance(final_end, bool)
+        or not isinstance(final_start, int) or not isinstance(final_end, int)
+        or not isinstance(padded.get("start_ms"), int) or not isinstance(padded.get("end_ms"), int)
+        or padded["start_ms"] >= padded["end_ms"]
+    ):
+        _fail("DELIVERY_PROJECTION_RECORD_BOUNDARY")
+    release_by_old = dict(old_to_release)
+    receipt_rows = receipt.get("rows")
+    if not isinstance(receipt_rows, list) or len(receipt_rows) != len(old_cues):
+        _fail("DELIVERY_PROJECTION_MAP_INVALID")
+    expected_rows: list[dict[str, object]] = []
+    retained: list[tuple[int, int, int]] = []
+    delivery_cursor = 0
+    for old_index, old in enumerate(old_cues, start=1):
+        release_index = release_by_old.get(old_index)
+        if release_index is None:
+            if old_index not in dropped:
+                _fail("DELIVERY_PROJECTION_MAP_INVALID")
+            expected_rows.append({
+                "old_source_index": old_index, "release_cue_index": None,
+                "delivery_cue_index": None, "disposition": "OPERATOR_DROP",
+            })
+            continue
+        release = full_release_cues[release_index - 1]
+        if release.start != old.start or release.end != old.end:
+            _fail("DELIVERY_PROJECTION_MAP_INVALID")
+        release_start, release_end = _srt_ms(release.start), _srt_ms(release.end)
+        if release_end <= final_start or release_start >= final_end:
+            expected_rows.append({
+                "old_source_index": old_index, "release_cue_index": release_index,
+                "delivery_cue_index": None, "disposition": "OUTSIDE_FINAL_DELIVERY",
+            })
+            continue
+        if release_start < final_start or release_end > final_end:
+            _fail("DELIVERY_PROJECTION_STRADDLER")
+        if delivery_cursor >= len(delivery_cues):
+            _fail("DELIVERY_PROJECTION_DELIVERY_GRID_DRIFT")
+        delivery = delivery_cues[delivery_cursor]
+        delivery_index = delivery_cursor + 1
+        if (
+            delivery.source_index != delivery_index
+            or (_srt_ms(delivery.start), _srt_ms(delivery.end))
+            != (release_start - final_start, release_end - final_start)
+            or delivery.text != release.text
+        ):
+            _fail("DELIVERY_PROJECTION_DELIVERY_GRID_DRIFT")
+        expected_rows.append({
+            "old_source_index": old_index, "release_cue_index": release_index,
+            "delivery_cue_index": delivery_index,
+            "disposition": "RETAINED_FINAL_DELIVERY",
+            "release_start_ms": release_start, "release_end_ms": release_end,
+            "delivery_start_ms": _srt_ms(delivery.start), "delivery_end_ms": _srt_ms(delivery.end),
+        })
+        retained.append((old_index, release_index, delivery_index))
+        delivery_cursor += 1
+    if delivery_cursor != len(delivery_cues) or list(receipt_rows) != expected_rows:
+        _fail("DELIVERY_PROJECTION_MAP_INVALID")
+    # The digest is intentionally retained only as a binding in the successor
+    # provenance; receipt contents remain private and text-free.
+    _ = actual_receipt_sha
+    return retained
+
+
 def _validate_old_speaker_against_diagnostic(
     *, old_cues: list[Cue], speaker_cues: list[Cue], decisions: object,
 ) -> list[Mapping[str, object]]:
@@ -366,6 +505,8 @@ def materialize_text_only_speaker_successor(
     old_diagnostic_sha256: str, reviewed_baseline_path: Path,
     reviewed_baseline_sha256: str, ledger_path: Path, ledger_sha256: str,
     truth_diff_path: Path, truth_diff_sha256: str,
+    delivery_projection_receipt_path: Path | None = None,
+    delivery_projection_receipt_sha256: str | None = None,
     new_plain_srt: Path, new_media: Path, expected_media_sha256: str,
     output_srt: Path, output_ass: Path, output_manifest: Path,
 ) -> dict[str, object]:
@@ -396,8 +537,9 @@ def materialize_text_only_speaker_successor(
         _fail("OLD_DIAGNOSTIC_PLAIN_MISMATCH")
     old_speaker_sha = _binding(old_speaker, old_manifest.get("output_review_srt_sha256"), code="OLD_SPEAKER_BINDING")
     new_plain_sha = "sha256:" + sha256_file(new_plain_srt)
-    if _binding(reviewed_baseline_path, reviewed_baseline_sha256, code="BASELINE_BINDING") != new_plain_sha:
-        _fail("BASELINE_NEW_TEXT_MISMATCH")
+    full_release_sha = _binding(
+        reviewed_baseline_path, reviewed_baseline_sha256, code="BASELINE_BINDING"
+    )
     _binding(ledger_path, ledger_sha256, code="LEDGER_BINDING")
     _binding(truth_diff_path, truth_diff_sha256, code="TRUTH_DIFF_BINDING")
     expected_media = _raw_digest(expected_media_sha256, code="MEDIA_BINDING")
@@ -411,34 +553,56 @@ def materialize_text_only_speaker_successor(
         old_manifest.get("source_cue_count"), old_manifest.get("output_cue_count")
     ) != (len(old_cues), len(speaker_cues)):
         _fail("CUE_COUNT_DRIFT")
+    full_release_cues = parse_srt(reviewed_baseline_path)
     mapping, dropped, deltas = _sealed_release_mapping(
-        candidate_id=candidate_id, old_cues=old_cues, release_cues=new_cues,
-        old_sha=old_plain_sha, release_sha=new_plain_sha, ledger_path=ledger_path,
+        candidate_id=candidate_id, old_cues=old_cues, release_cues=full_release_cues,
+        old_sha=old_plain_sha, release_sha=full_release_sha, ledger_path=ledger_path,
         ledger_sha=ledger_sha256, truth_diff_path=truth_diff_path,
         truth_diff_sha=truth_diff_sha256,
     )
+    if new_plain_sha == full_release_sha:
+        if delivery_projection_receipt_path is not None or delivery_projection_receipt_sha256 is not None:
+            _fail("DELIVERY_PROJECTION_UNEXPECTED")
+        retained = [(old_index, release_index, release_index) for old_index, release_index in mapping]
+        grid_mode = "FULL_RELEASE"
+    else:
+        retained = _delivery_projection_mapping(
+            candidate_id=candidate_id, old_record=old_record,
+            old_record_sha256=old_record_sha256, old_cues=old_cues,
+            full_release_cues=full_release_cues, delivery_cues=new_cues,
+            old_to_release=mapping, dropped=dropped,
+            old_diagnostic_sha256=old_plain_sha,
+            reviewed_baseline_sha256=full_release_sha,
+            ledger_sha256=ledger_sha256, truth_diff_sha256=truth_diff_sha256,
+            delivery_sha256=new_plain_sha,
+            expected_media_sha256="sha256:" + expected_media,
+            receipt_path=delivery_projection_receipt_path,
+            receipt_sha256=delivery_projection_receipt_sha256,
+        )
+        grid_mode = "FINAL_DELIVERY_PROJECTION"
     decisions = _validate_old_speaker_against_diagnostic(
         old_cues=old_cues, speaker_cues=speaker_cues,
         decisions=old_manifest.get("final_decisions"),
     )
     successor_cues: list[Cue] = []
     successor_decisions: list[dict[str, object]] = []
-    for old_index, release_index in mapping:
-        old, new, labelled, raw = old_cues[old_index - 1], new_cues[release_index - 1], speaker_cues[old_index - 1], decisions[old_index - 1]
-        if old.source_index != old_index or new.source_index != release_index or labelled.source_index != old_index:
+    for old_index, release_index, delivery_index in retained:
+        old, release, new, labelled, raw = old_cues[old_index - 1], full_release_cues[release_index - 1], new_cues[delivery_index - 1], speaker_cues[old_index - 1], decisions[old_index - 1]
+        if old.source_index != old_index or release.source_index != release_index or new.source_index != delivery_index or labelled.source_index != old_index:
             _fail("CUE_INDEX_DRIFT")
-        if (old.start, old.end) != (new.start, new.end):
+        if grid_mode == "FULL_RELEASE" and (old.start, old.end) != (new.start, new.end):
             _fail("CUE_TIMING_DRIFT")
         label = _LABEL.fullmatch(labelled.text)
         assert label is not None  # already proved for every old row
         expected = deltas.get(old_index, old.text)
-        if new.text != expected or (new.text != old.text) != (old_index in deltas):
+        if release.text != expected or (release.text != old.text) != (old_index in deltas) or new.text != release.text:
             _fail("TEXT_DELTA_OUTSIDE_LEDGER")
         copied = dict(raw)
-        copied["source_index"] = release_index
+        copied["source_index"] = delivery_index
+        copied["start"], copied["end"] = new.start, new.end
         copied["text"] = new.text
         successor_decisions.append(copied)
-        successor_cues.append(Cue(release_index, new.start, new.end, label.group(1), new.text, str(raw.get("decision_source") or ""), raw.get("authority"), raw.get("note"), raw.get("speaker_detail"), int(raw.get("layer") or 0), str(raw.get("placement") or "main")))
+        successor_cues.append(Cue(delivery_index, new.start, new.end, label.group(1), new.text, str(raw.get("decision_source") or ""), raw.get("authority"), raw.get("note"), raw.get("speaker_detail"), int(raw.get("layer") or 0), str(raw.get("placement") or "main")))
 
     write_srt(successor_cues, output_srt)
     write_ass(successor_cues, output_ass, show_speaker_labels=False)
@@ -460,14 +624,24 @@ def materialize_text_only_speaker_successor(
             "operator_truth_diff_sha256": truth_diff_sha256,
             "new_plain_srt_sha256": new_plain_sha, "new_speaker_srt_sha256": "sha256:" + sha256_file(output_srt),
             "speaker_labels_inherited": True, "speaker_label_mutation_authorized": False,
+            "input_grid_mode": grid_mode,
             "changed_cue_indices": sorted(deltas),
             "old_to_release_index_map": [
                 {"old_source_index": old_index, "release_source_index": release_index}
                 for old_index, release_index in mapping
             ],
+            "release_to_delivery_index_map": [
+                {"release_source_index": release_index, "delivery_source_index": delivery_index}
+                for _old_index, release_index, delivery_index in retained
+            ],
             "dropped_old_source_indices": dropped,
         },
     })
+    if grid_mode == "FINAL_DELIVERY_PROJECTION":
+        assert delivery_projection_receipt_path is not None
+        result["reviewed_baseline_text_only_successor"]["delivery_projection_receipt_sha256"] = _digest(
+            delivery_projection_receipt_sha256, code="DELIVERY_PROJECTION_RECEIPT_INVALID"
+        )
     output_manifest.parent.mkdir(parents=True, exist_ok=True)
     output_manifest.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return result

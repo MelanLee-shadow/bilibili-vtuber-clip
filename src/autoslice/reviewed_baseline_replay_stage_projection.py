@@ -1,0 +1,112 @@
+"""Private receipt sealing helpers for reviewed-baseline replay stages."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Callable, Mapping
+
+from src.autoslice.redelivery_full_window_replay import (
+    FullWindowReplayError,
+    replay_full_window_text_and_crop,
+)
+
+
+def stage_delivery_projection_receipt(
+    stage: Path,
+    *,
+    load_json: Callable[..., Mapping[str, object]],
+    regular_binding: Callable[..., object],
+    canonical: Callable[[object], bytes],
+    sha: Callable[[bytes], str],
+    sha_pattern: object,
+    error: Callable[[str], Exception],
+) -> tuple[Path | None, str | None]:
+    """Return only a stage-sealed private projection receipt, if present."""
+
+    document_path = stage / "stage.json"
+    if not document_path.exists():
+        return None, None
+    document = load_json(regular_binding(document_path, label="STAGE_DOCUMENT"), label="STAGE_DOCUMENT")
+    unsigned = dict(document)
+    declared = unsigned.pop("stage_sha256", None)
+    fullmatch = getattr(sha_pattern, "fullmatch", None)
+    if not isinstance(declared, str) or not callable(fullmatch) or fullmatch(declared) is None or declared != sha(canonical(unsigned)):
+        raise error("REPLAY_STAGE_DOCUMENT_DRIFT")
+    descriptor = document.get("delivery_projection_receipt")
+    if descriptor is None:
+        return None, None
+    if not isinstance(descriptor, Mapping):
+        raise error("REPLAY_DELIVERY_PROJECTION_RECEIPT_INVALID")
+    expected_path = stage / "full-release-delivery-projection.json"
+    raw_path, raw_sha, raw_bytes = descriptor.get("path"), descriptor.get("sha256"), descriptor.get("bytes")
+    if (
+        raw_path != str(expected_path)
+        or not isinstance(raw_sha, str) or fullmatch(raw_sha) is None
+        or isinstance(raw_bytes, bool) or not isinstance(raw_bytes, int) or raw_bytes <= 0
+    ):
+        raise error("REPLAY_DELIVERY_PROJECTION_RECEIPT_INVALID")
+    binding = regular_binding(expected_path, label="DELIVERY_PROJECTION_RECEIPT")
+    if getattr(binding, "sha256", None) != raw_sha or getattr(binding, "size", None) != raw_bytes:
+        raise error("REPLAY_DELIVERY_PROJECTION_RECEIPT_DRIFT")
+    return expected_path, raw_sha
+
+
+def prepare_stage_delivery_projection(
+    plan: object,
+    stage: Path,
+    rebuilt: object,
+    *,
+    regular_binding: Callable[..., object],
+    load_json: Callable[..., Mapping[str, object]],
+    read_small_bytes: Callable[..., bytes],
+    fresh_srt_to_source_cues: Callable[..., object],
+    write_source_range_srt: Callable[..., None],
+    error: Callable[[str], Exception],
+) -> tuple[bytes, Mapping[str, object], dict[str, object] | None]:
+    """Replay the full release and, only when needed, seal its 17-cue crop."""
+
+    baseline = getattr(plan, "baseline")
+    config = getattr(baseline, "config")
+    record_path = getattr(plan, "record_path")
+    record_binding = regular_binding(record_path, label="RECORD")
+    record = load_json(record_binding, label="RECORD")
+    boundary = record.get("boundary_audit")
+    if not isinstance(boundary, Mapping):
+        raise error("REPLAY_RECORD_TIMING_INVALID")
+    diagnostic = config["operator_truth_lanes"]["pipeline_diagnostic"]
+    diagnostic_path = getattr(baseline, "manifest_path").parent / str(diagnostic["path"])
+    try:
+        text = read_small_bytes(regular_binding(diagnostic_path, label="PIPELINE_DIAGNOSTIC"), label="PIPELINE_DIAGNOSTIC").decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise error("REPLAY_PIPELINE_DIAGNOSTIC_INVALID") from exc
+    padded = getattr(plan, "padded_path")
+    name = padded.name
+    import re
+    match = re.fullmatch(r"padded_(\d+)_(\d+)\.mp4", name)
+    if match is None:
+        raise error("REPLAY_PADDED_SOURCE_NAME_INVALID")
+    padded_start, padded_end = (int(value) for value in match.groups())
+    try:
+        fresh_srt_to_source_cues(text, window_start_ms=0, duration_ms=padded_end - padded_start)
+    except ValueError as exc:
+        raise error("REPLAY_PIPELINE_DIAGNOSTIC_GEOMETRY_INVALID") from exc
+    receipt = stage / "full-release-delivery-projection.json"
+    crop = stage / ".reviewed-window.srt"
+    try:
+        cropped, audit = replay_full_window_text_and_crop(
+            text=text, config=config, spec_parent=getattr(baseline, "manifest_path").parent,
+            padded_start_ms=padded_start, padded_end_ms=padded_end,
+            final_start_ms=getattr(plan, "local_start_ms"), final_end_ms=getattr(plan, "local_end_ms"),
+            write_source_range_srt=write_source_range_srt, crop_path=crop,
+            read_crop=lambda path: read_small_bytes(regular_binding(path, label="REVIEWED_WINDOW"), label="REVIEWED_WINDOW"),
+            projection_receipt_path=receipt, projection_candidate_id=getattr(plan, "candidate_id"),
+            projection_record_sha256=getattr(record_binding, "sha256"), projection_record_boundary=boundary,
+            projection_staged_media_sha256=getattr(rebuilt, "sha256"),
+        )
+    except FullWindowReplayError as exc:
+        raise error(str(exc)) from exc
+    descriptor = None
+    if receipt.exists():
+        binding = regular_binding(receipt, label="DELIVERY_PROJECTION_RECEIPT")
+        descriptor = {"path": str(getattr(binding, "path")), "sha256": getattr(binding, "sha256"), "bytes": getattr(binding, "size")}
+    return cropped, audit, descriptor

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from scripts.apply_speaker_turn_overrides import Cue, write_srt
+from scripts.apply_subtitle_text_overrides import parse_srt
 from src.autoslice.addressee_attribution import SpeakerEvidenceState, build_addressee_evidence
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.reviewed_text_only_speaker_successor import (
@@ -60,6 +61,81 @@ def _bundle(tmp_path: Path) -> dict[str, object]:
 
 def _call(b: dict[str, object], tmp_path: Path) -> dict[str, object]:
     return materialize_text_only_speaker_successor(candidate_id="cid", old_record=b["record"], old_record_sha256="sha256:"+"1"*64, old_manifest_path=b["manifest"], old_manifest_sha256=_sha(b["manifest"]), old_diagnostic_path=b["diagnostic"], old_diagnostic_sha256=_sha(b["diagnostic"]), reviewed_baseline_path=b["new_plain"], reviewed_baseline_sha256=_sha(b["new_plain"]), ledger_path=b["ledger"], ledger_sha256=_sha(b["ledger"]), truth_diff_path=b["truth_diff"], truth_diff_sha256=_sha(b["truth_diff"]), new_plain_srt=b["new_plain"], new_media=b["media"], expected_media_sha256=_sha(b["media"]), output_srt=tmp_path/"new.speaker.srt", output_ass=tmp_path/"new.speaker.ass", output_manifest=tmp_path/"new.speaker.json")
+
+
+def _stamp(ms: int) -> str:
+    seconds, millis = divmod(ms, 1_000)
+    minutes, seconds = divmod(seconds, 60)
+    return f"00:{minutes:02d}:{seconds:02d},{millis:03d}"
+
+
+def _canonical_sha(value: object) -> str:
+    raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
+def _c4_delivery_receipt(b: dict[str, object], tmp_path: Path) -> tuple[Path, Path]:
+    """Build the C4-shaped sealed 24 -> 20 -> 17 delivery fixture."""
+
+    release = parse_srt(b["new_plain"])
+    retained = [(index, cue) for index, cue in enumerate(release, 1) if _srt(cue.start) >= 3_000]
+    delivery = tmp_path / "delivery.srt"
+    _plain_srt(delivery, [
+        (_stamp(_srt(cue.start) - 3_000), _stamp(_srt(cue.end) - 3_000), cue.text)
+        for _release_index, cue in retained
+    ])
+    b["record"]["boundary_audit"] = {"final_start_ms": 3_000, "final_end_ms": 24_000}
+    dropped = {8, 12, 13, 14}
+    rows, release_index, delivery_index = [], 0, 0
+    for old_index in range(1, 25):
+        if old_index in dropped:
+            rows.append({"old_source_index": old_index, "release_cue_index": None, "delivery_cue_index": None, "disposition": "OPERATOR_DROP"})
+            continue
+        release_index += 1
+        if old_index <= 3:
+            rows.append({"old_source_index": old_index, "release_cue_index": release_index, "delivery_cue_index": None, "disposition": "OUTSIDE_FINAL_DELIVERY"})
+            continue
+        delivery_index += 1
+        cue = release[release_index - 1]
+        start, end = _srt(cue.start), _srt(cue.end)
+        rows.append({"old_source_index": old_index, "release_cue_index": release_index, "delivery_cue_index": delivery_index, "disposition": "RETAINED_FINAL_DELIVERY", "release_start_ms": start, "release_end_ms": end, "delivery_start_ms": start - 3_000, "delivery_end_ms": end - 3_000})
+    receipt = tmp_path / "projection.json"
+    _write(receipt, {
+        "schema_version": "reviewed-baseline-full-release-delivery-projection.v1",
+        "candidate_id": "cid", "record_sha256": "sha256:" + "1" * 64,
+        "record_boundary_sha256": _canonical_sha(b["record"]["boundary_audit"]),
+        "padded_source_interval": {"start_ms": 0, "end_ms": 24_000},
+        "final_delivery_boundary": {"start_ms": 3_000, "end_ms": 24_000},
+        "pipeline_diagnostic_sha256": _sha(b["diagnostic"]),
+        "full_release_srt_sha256": _sha(b["new_plain"]),
+        "operator_ledger_sha256": _sha(b["ledger"]),
+        "operator_truth_diff_sha256": _sha(b["truth_diff"]),
+        "staged_srt_sha256": _sha(delivery), "staged_media_sha256": _sha(b["media"]),
+        "old_diagnostic_cue_count": 24, "full_release_cue_count": 20,
+        "final_delivery_cue_count": 17, "rows": rows,
+    })
+    return delivery, receipt
+
+
+def _srt(value: str) -> int:
+    hh, mm, rest = value.split(":")
+    ss, msec = rest.split(",")
+    return ((int(hh) * 60 + int(mm)) * 60 + int(ss)) * 1000 + int(msec)
+
+
+def _call_delivery(b: dict[str, object], tmp_path: Path, delivery: Path, receipt: Path, *, receipt_sha: str | None = None) -> dict[str, object]:
+    return materialize_text_only_speaker_successor(
+        candidate_id="cid", old_record=b["record"], old_record_sha256="sha256:" + "1" * 64,
+        old_manifest_path=b["manifest"], old_manifest_sha256=_sha(b["manifest"]),
+        old_diagnostic_path=b["diagnostic"], old_diagnostic_sha256=_sha(b["diagnostic"]),
+        reviewed_baseline_path=b["new_plain"], reviewed_baseline_sha256=_sha(b["new_plain"]),
+        ledger_path=b["ledger"], ledger_sha256=_sha(b["ledger"]),
+        truth_diff_path=b["truth_diff"], truth_diff_sha256=_sha(b["truth_diff"]),
+        delivery_projection_receipt_path=receipt, delivery_projection_receipt_sha256=receipt_sha or _sha(receipt),
+        new_plain_srt=delivery, new_media=b["media"], expected_media_sha256=_sha(b["media"]),
+        output_srt=tmp_path / "delivery.speaker.srt", output_ass=tmp_path / "delivery.speaker.ass",
+        output_manifest=tmp_path / "delivery.speaker.json",
+    )
 
 
 def _refresh_record_manifest(b: dict[str, object]) -> None:
@@ -157,6 +233,56 @@ def test_successor_materializes_sealed_24_to_20_drop_grid(tmp_path: Path) -> Non
     ]
     _plain, evidence = build_addressee_evidence(record, cues)
     assert evidence.state is SpeakerEvidenceState.PRESENT_VALID
+
+
+def test_successor_materializes_c4_full_release_to_final_delivery_projection(tmp_path: Path) -> None:
+    b = _drop_bundle(tmp_path)
+    delivery, receipt = _c4_delivery_receipt(b, tmp_path)
+    result = _call_delivery(b, tmp_path, delivery, receipt)
+    sealed = result["reviewed_baseline_text_only_successor"]
+    assert sealed["input_grid_mode"] == "FINAL_DELIVERY_PROJECTION"
+    assert len(result["final_decisions"]) == 17
+    assert sealed["old_to_release_index_map"][0] == {"old_source_index": 1, "release_source_index": 1}
+    assert sealed["release_to_delivery_index_map"][0] == {"release_source_index": 4, "delivery_source_index": 1}
+    assert sealed["speaker_label_mutation_authorized"] is False
+    assert result["final_decisions"][0]["source_index"] == 1
+    assert result["final_decisions"][0]["text"] == "旧3"
+    record = {
+        "speaker_mode": "auto", "speaker_review_srt_path": str(tmp_path / "delivery.speaker.srt"),
+        "speaker_finalization_manifest_path": str(tmp_path / "delivery.speaker.json"),
+        "speaker_finalization_manifest_sha256": _sha(tmp_path / "delivery.speaker.json"),
+        "speaker_finalization": result,
+        "artifact_hashes": {"speaker_review_srt_sha256": _sha(tmp_path / "delivery.speaker.srt"), "subtitle_sha256": _sha(delivery)},
+    }
+    delivery_cues = [
+        SourceCue(str(index), _srt(cue.start), _srt(cue.end), cue.text)
+        for index, cue in enumerate(parse_srt(delivery), 1)
+    ]
+    _plain, evidence = build_addressee_evidence(record, delivery_cues)
+    assert evidence.state is SpeakerEvidenceState.PRESENT_VALID
+
+
+@pytest.mark.parametrize("mutation", ["receipt_row", "receipt_hash", "full_as_delivery"])
+def test_successor_refuses_c4_projection_receipt_or_grid_drift(
+    tmp_path: Path, mutation: str,
+) -> None:
+    b = _drop_bundle(tmp_path)
+    delivery, receipt = _c4_delivery_receipt(b, tmp_path)
+    if mutation == "receipt_row":
+        document = json.loads(receipt.read_text())
+        document["rows"][3]["delivery_start_ms"] += 1
+        _write(receipt, document)
+        with pytest.raises(ReviewedTextOnlySpeakerSuccessorError, match="DELIVERY_PROJECTION_MAP_INVALID"):
+            _call_delivery(b, tmp_path, delivery, receipt)
+    elif mutation == "receipt_hash":
+        stale_sha = _sha(receipt)
+        receipt.write_text(receipt.read_text() + " ", encoding="utf-8")
+        with pytest.raises(ReviewedTextOnlySpeakerSuccessorError, match="DELIVERY_PROJECTION_RECEIPT_BINDING"):
+            _call_delivery(b, tmp_path, delivery, receipt, receipt_sha=stale_sha)
+    else:
+        # A 20-cue full release must never carry a 17-cue projection receipt.
+        with pytest.raises(ReviewedTextOnlySpeakerSuccessorError, match="DELIVERY_PROJECTION_UNEXPECTED"):
+            _call_delivery(b, tmp_path, b["new_plain"], receipt)
 
 
 def test_successor_rejects_text_change_not_named_by_ledger(tmp_path: Path) -> None:
