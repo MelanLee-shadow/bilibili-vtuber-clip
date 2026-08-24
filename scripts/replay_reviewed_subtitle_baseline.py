@@ -67,8 +67,12 @@ _SAFE_EXCEPTION_TYPES = frozenset({
     "AssertionError", "AttributeError", "KeyError", "OSError", "RuntimeError", "SystemExit", "TypeError", "ValueError",
 })
 _MAX_REVIEW_FLAGS_BYTES = 512 * 1024
+_MAX_REDELIVERY_BASELINE_FAILURE_ROWS = 32
+_MAX_REDELIVERY_CUE_INDEX = 1_000_000
+_MAX_REDELIVERY_TIME_MS = 1_000_000_000_000
 _SPEAKER_RUNTIME_RELATIVE = Path("venv-diar/bin/python")
 _SAFE_PROVIDER_CLASSES = frozenset({"quota", "service", "rejected", "unknown"})
+
 # This private C2-only hook is deliberately narrower than the ordinary
 # sanitized exception diagnostic.  Its caller is injected by the locked C2
 # wrapper, never by argparse, and it can report only one of these static path
@@ -115,6 +119,27 @@ _C2_PRIVATE_PATH_UNAVAILABLE_REASON_CODES = frozenset(
     _C2_PRIVATE_PATH_UNAVAILABLE_PREFIX + role
     for role in _C2_PRIVATE_PATH_UNAVAILABLE_ROLES
 )
+
+_SAFE_REDELIVERY_FAILURE_SCALAR_FIELDS = (
+    "baseline_cue_index",
+    "current_cue_index",
+    "start_ms",
+    "end_ms",
+    "absolute_source_start_ms",
+    "absolute_source_end_ms",
+)
+_SAFE_REDELIVERY_FAILURE_INDEX_ARRAY_FIELDS = (
+    "baseline_cue_indexes",
+    "current_cue_indexes",
+)
+_SAFE_REDELIVERY_FAILURE_ROW_FIELDS = frozenset({
+    "reason_code",
+    *_SAFE_REDELIVERY_FAILURE_SCALAR_FIELDS,
+    *_SAFE_REDELIVERY_FAILURE_INDEX_ARRAY_FIELDS,
+})
+_SAFE_REDELIVERY_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
+_SAFE_REDELIVERY_CANDIDATE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,159}\Z")
+
 # Closed replay-adapter reason codes.  Keep this exact rather than accepting
 # arbitrary suffixes: provider/path/prompt text must never become a predicate.
 _REPLAY_TITLE_SURFACE_REASONS = {
@@ -159,6 +184,7 @@ _SAFE_FINALIZER_EXIT_PREFIXES = (
     "SOURCE_FACT_",
     "STORY_CONTRACT_",
     "TITLE_AUTHORITY_",
+    "REDELIVERY_SUBTITLE_BASELINE_FAILED",
 )
 
 
@@ -168,7 +194,8 @@ class _PrepareFailure(RuntimeError):
                  provider_receipt_sha256s: tuple[str, ...] = (),
                  predicate_failures: tuple[tuple[str, str], ...] = (),
                  provider_failure_summary: dict[str, object] | None = None,
-                 exception_diagnostic: Mapping[str, object] | None = None) -> None:
+                 exception_diagnostic: Mapping[str, object] | None = None,
+                 redelivery_baseline_failure_summary: Mapping[str, object] | None = None) -> None:
         super().__init__(reason_code)
         self.reason_code = reason_code
         self.provider_attempted = provider_attempted
@@ -178,6 +205,11 @@ class _PrepareFailure(RuntimeError):
         self.predicate_failures = predicate_failures
         self.provider_failure_summary = provider_failure_summary
         self.exception_diagnostic = _closed_exception_diagnostic(exception_diagnostic)
+        self.redelivery_baseline_failure_summary = (
+            _closed_redelivery_baseline_failure_summary(
+                redelivery_baseline_failure_summary
+            )
+        )
 
 
 def _safe_reason_code(exc: BaseException) -> str:
@@ -557,6 +589,8 @@ _AFTER_IMAGE_PREDICATES = (
 
 
 def _failure_predicate(reason_code: str) -> str:
+    if reason_code.startswith("REDELIVERY_SUBTITLE_BASELINE_FAILED"):
+        return "REDELIVERY_BASELINE_REPLAY"
     exact_replay_surface = _REPLAY_TITLE_SURFACE_REASONS.get(reason_code)
     if exact_replay_surface is not None:
         return exact_replay_surface
@@ -629,6 +663,138 @@ def _safe_reason_codes(value: object) -> tuple[str, ...]:
     if not isinstance(value, list):
         return ()
     return tuple(sorted({row for row in value if isinstance(row, str) and _SAFE_REASON_CODE.fullmatch(row)}))
+
+
+def _safe_redelivery_failure_number(value: object, *, index: bool) -> int | None:
+    """Accept only bounded numeric cue coordinates from a failed audit row."""
+
+    if type(value) is not int:
+        return None
+    if index:
+        return value if 0 <= value <= _MAX_REDELIVERY_CUE_INDEX else None
+    return value if -_MAX_REDELIVERY_TIME_MS <= value <= _MAX_REDELIVERY_TIME_MS else None
+
+
+def _sanitize_redelivery_baseline_failure_row(value: object) -> dict[str, object] | None:
+    """Project one finalizer audit failure onto its path/text-free public shape."""
+
+    if not isinstance(value, Mapping):
+        return None
+    reason_code = value.get("reason_code")
+    if not isinstance(reason_code, str) or not _SAFE_REASON_CODE.fullmatch(reason_code):
+        return None
+    row: dict[str, object] = {"reason_code": reason_code}
+    for field in _SAFE_REDELIVERY_FAILURE_SCALAR_FIELDS:
+        number = _safe_redelivery_failure_number(
+            value.get(field), index=field.endswith("cue_index"),
+        )
+        if number is not None:
+            row[field] = number
+    for field in _SAFE_REDELIVERY_FAILURE_INDEX_ARRAY_FIELDS:
+        indexes = value.get(field)
+        if (
+            not isinstance(indexes, list)
+            or len(indexes) > _MAX_REDELIVERY_BASELINE_FAILURE_ROWS
+        ):
+            continue
+        sanitized_indexes = [
+            number
+            for item in indexes
+            if (number := _safe_redelivery_failure_number(item, index=True)) is not None
+        ]
+        if len(sanitized_indexes) == len(indexes):
+            row[field] = sorted(set(sanitized_indexes))
+    return row
+
+
+def _closed_redelivery_baseline_failure_summary(
+    value: Mapping[str, object] | None,
+) -> dict[str, object] | None:
+    """Revalidate the complete closed shape before it reaches an output surface."""
+
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != {"reason_codes", "failure_count", "failure_rows"}
+    ):
+        return None
+    reason_codes = value.get("reason_codes")
+    failure_count = value.get("failure_count")
+    failure_rows = value.get("failure_rows")
+    if (
+        not isinstance(reason_codes, list)
+        or not isinstance(failure_rows, list)
+        or type(failure_count) is not int
+        or not 0 <= failure_count <= _MAX_REDELIVERY_BASELINE_FAILURE_ROWS
+        or failure_count != len(failure_rows)
+        or len(failure_rows) > _MAX_REDELIVERY_BASELINE_FAILURE_ROWS
+        or any(
+            not isinstance(code, str) or not _SAFE_REASON_CODE.fullmatch(code)
+            for code in reason_codes
+        )
+    ):
+        return None
+    rows: list[dict[str, object]] = []
+    for raw_row in failure_rows:
+        if (
+            not isinstance(raw_row, Mapping)
+            or set(raw_row) - _SAFE_REDELIVERY_FAILURE_ROW_FIELDS
+            or "reason_code" not in raw_row
+        ):
+            return None
+        row = _sanitize_redelivery_baseline_failure_row(raw_row)
+        if row is None or row != dict(raw_row):
+            return None
+        rows.append(row)
+    expected_codes = sorted({str(row["reason_code"]) for row in rows})
+    if reason_codes != expected_codes:
+        return None
+    return {
+        "reason_codes": expected_codes,
+        "failure_count": len(rows),
+        "failure_rows": rows,
+    }
+
+
+def _redelivery_baseline_failure_summary(*, stage: Path, plan) -> dict[str, object] | None:
+    """Read only the private finalizer's failed redelivery audit before cleanup."""
+
+    date = getattr(plan, "date", None)
+    candidate_id = getattr(plan, "candidate_id", None)
+    if (
+        not isinstance(date, str)
+        or not _SAFE_REDELIVERY_DATE.fullmatch(date)
+        or not isinstance(candidate_id, str)
+        or not _SAFE_REDELIVERY_CANDIDATE_ID.fullmatch(candidate_id)
+    ):
+        return None
+    path = (
+        Path(stage) / "finalizer-runtime" / date / candidate_id / "replacement_recuts"
+        / f"{candidate_id}.redelivery-baseline.json"
+    )
+    document = _read_bound_small_json(path, label="REDELIVERY_BASELINE_AUDIT")
+    if (
+        not isinstance(document, dict)
+        or document.get("schema_version")
+        not in {
+            "subtitle-redelivery-baseline-audit.v1",
+            "subtitle-redelivery-baseline-audit.v2",
+        }
+        or document.get("status") != "FAILED"
+        or not isinstance(document.get("failures"), list)
+    ):
+        return None
+    rows: list[dict[str, object]] = []
+    for failure in document["failures"]:
+        row = _sanitize_redelivery_baseline_failure_row(failure)
+        if row is not None:
+            rows.append(row)
+        if len(rows) >= _MAX_REDELIVERY_BASELINE_FAILURE_ROWS:
+            break
+    return _closed_redelivery_baseline_failure_summary({
+        "reason_codes": sorted({str(row["reason_code"]) for row in rows}),
+        "failure_count": len(rows),
+        "failure_rows": rows,
+    })
 
 
 def _provider_failure_summary(discovery: object) -> dict[str, object] | None:
@@ -711,12 +877,22 @@ def _prepare_failure(*, exc: BaseException, stage: Path | None = None, plan=None
         if reason_code == "REPLAY_PREPARE_SYSTEM_EXIT"
         else _generic_exception_diagnostic(exc)
     )
+    redelivery_baseline_failure_summary = (
+        _redelivery_baseline_failure_summary(stage=stage, plan=plan)
+        if (
+            reason_code.startswith("REDELIVERY_SUBTITLE_BASELINE_FAILED")
+            and stage is not None
+            and plan is not None
+        )
+        else None
+    )
     return _PrepareFailure(
         reason_code=reason_code,
         provider_attempted=False,
         predicate_failures=failures,
         provider_failure_summary=provider_failure_summary,
         exception_diagnostic=exception_diagnostic,
+        redelivery_baseline_failure_summary=redelivery_baseline_failure_summary,
     )
 
 
@@ -814,7 +990,8 @@ def _sanitized_failure_receipt(*, runtime: Path, plan, matrix: list[dict[str, ob
                                 prepared_manifest_sha256: str | None = None,
                                 provider_receipt_sha256s: tuple[str, ...] = (),
                                 provider_failure_summary: dict[str, object] | None = None,
-                                exception_diagnostic: Mapping[str, object] | None = None) -> str:
+                                exception_diagnostic: Mapping[str, object] | None = None,
+                                redelivery_baseline_failure_summary: Mapping[str, object] | None = None) -> str:
     """Create one sealed diagnostic receipt without a path, prompt, or error text."""
 
     deployed = (runtime / "repo" / "DEPLOYED_COMMIT").read_text(encoding="utf-8").strip()
@@ -842,6 +1019,11 @@ def _sanitized_failure_receipt(*, runtime: Path, plan, matrix: list[dict[str, ob
     generic = _closed_exception_diagnostic(exception_diagnostic)
     if generic is not None:
         body["exception_diagnostic"] = generic
+    redelivery_summary = _closed_redelivery_baseline_failure_summary(
+        redelivery_baseline_failure_summary
+    )
+    if redelivery_summary is not None:
+        body["redelivery_baseline_failure_summary"] = redelivery_summary
     body["receipt_sha256"] = "sha256:" + hashlib.sha256(_canon(body)).hexdigest()
     root = runtime
     for index, component in enumerate(("reports", "reviewed-baseline-replay-diagnostics", plan.date, plan.candidate_id)):
@@ -1188,6 +1370,15 @@ def main(
                         exception_diagnostic=_closed_exception_diagnostic(
                             getattr(exc, "exception_diagnostic", None),
                         ),
+                        redelivery_baseline_failure_summary=(
+                            _closed_redelivery_baseline_failure_summary(
+                                getattr(
+                                    exc,
+                                    "redelivery_baseline_failure_summary",
+                                    None,
+                                )
+                            )
+                        ),
                     )
         result = {"schema_version": "reviewed-baseline-replay-run.v1",
                   "mode": "APPLY" if args.apply else "FULL_DRY_RUN",
@@ -1204,6 +1395,9 @@ def main(
                 provider_hashes = error.provider_receipt_sha256s
                 provider_summary = error.provider_failure_summary
                 exception_diagnostic = _closed_exception_diagnostic(error.exception_diagnostic)
+                redelivery_summary = _closed_redelivery_baseline_failure_summary(
+                    error.redelivery_baseline_failure_summary
+                )
                 matrix = _matrix(plan, status="NOT_EVALUATED",
                                  failures=dict(error.predicate_failures) or {
                                      _failure_predicate(reason_code): reason_code,
@@ -1214,6 +1408,7 @@ def main(
                     provider_receipt_sha256s=provider_hashes,
                     provider_failure_summary=provider_summary,
                     exception_diagnostic=exception_diagnostic,
+                    redelivery_baseline_failure_summary=redelivery_summary,
                 )
                 item = {"candidate_id": plan.candidate_id, "status": "BLOCKED",
                         "predicate_matrix": matrix, "diagnostic_receipt_sha256": receipt}
@@ -1221,6 +1416,8 @@ def main(
                     item["provider_failure_summary"] = provider_summary
                 if exception_diagnostic is not None:
                     item["exception_diagnostic"] = exception_diagnostic
+                if redelivery_summary is not None:
+                    item["redelivery_baseline_failure_summary"] = redelivery_summary
                 result["candidates"].append(item)
                 continue
             stage, finalization, prepared_after, stage_sha, provider_hashes, provider_attempted = prepared[plan.candidate_id]

@@ -594,6 +594,271 @@ def _review_flags(
     return path
 
 
+def _redelivery_baseline_audit(
+    stage: Path, *, date: str = "2026-08-14", cid: str = "cid",
+    failures: list[object] | None = None,
+    schema_version: str = "subtitle-redelivery-baseline-audit.v2",
+) -> Path:
+    path = (
+        stage / "finalizer-runtime" / date / cid / "replacement_recuts"
+        / f"{cid}.redelivery-baseline.json"
+    )
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({
+        "schema_version": schema_version,
+        "status": "FAILED",
+        "failures": failures if failures is not None else [
+            {
+                "reason_code": "REDELIVERY_CURRENT_CUE_UNALIGNED",
+                "current_cue_index": 4,
+                "start_ms": 910,
+                "end_ms": 1_030,
+                "baseline_cue_indexes": [2, 3],
+            },
+        ],
+    }) + "\n")
+    return path
+
+
+def _closed_redelivery_summary() -> dict[str, object]:
+    return {
+        "reason_codes": ["REDELIVERY_CURRENT_CUE_UNALIGNED"],
+        "failure_count": 1,
+        "failure_rows": [{
+            "reason_code": "REDELIVERY_CURRENT_CUE_UNALIGNED",
+            "current_cue_index": 4,
+            "start_ms": 910,
+            "end_ms": 1_030,
+            "baseline_cue_indexes": [2, 3],
+        }],
+    }
+
+
+@pytest.mark.parametrize(
+    "schema_version",
+    [
+        "subtitle-redelivery-baseline-audit.v1",
+        "subtitle-redelivery-baseline-audit.v2",
+    ],
+)
+def test_redelivery_baseline_failure_summary_strips_text_path_and_unknown_fields(
+    tmp_path: Path, schema_version: str,
+) -> None:
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    _redelivery_baseline_audit(stage, failures=[{
+        "reason_code": "REDELIVERY_CURRENT_CUE_UNALIGNED",
+        "current_cue_index": 4,
+        "start_ms": 910,
+        "end_ms": 1_030,
+        "baseline_cue_indexes": [3, 2, 3],
+        "text": "token=secret subtitle text",
+        "baseline_path": "/external/private/baseline.srt",
+        "output_sha256": "sha256:" + "a" * 64,
+        "authority": {"prompt": "secret"},
+        "provider": "private-provider",
+        "message": "private message",
+        "args": ["/external/private"],
+        "unknown_numeric": 99,
+    }], schema_version=schema_version)
+    plan = SimpleNamespace(date="2026-08-14", candidate_id="cid")
+    summary = cli._redelivery_baseline_failure_summary(stage=stage, plan=plan)
+    assert summary == _closed_redelivery_summary()
+    serialized = json.dumps(summary, sort_keys=True)
+    for unsafe in (
+        "token=secret", "subtitle text", "/external/private", "sha256:",
+        "private-provider", "private message", "unknown_numeric",
+    ):
+        assert unsafe not in serialized
+
+
+def test_redelivery_baseline_failure_summary_bounds_rows_and_unique_reason_codes(
+    tmp_path: Path,
+) -> None:
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    _redelivery_baseline_audit(stage, failures=[
+        {
+            "reason_code": (
+                "REDELIVERY_BASELINE_CUE_UNCONSUMED"
+                if index % 2
+                else "REDELIVERY_CURRENT_CUE_UNALIGNED"
+            ),
+            "current_cue_index": index + 1,
+        }
+        for index in range(cli._MAX_REDELIVERY_BASELINE_FAILURE_ROWS + 3)
+    ])
+    summary = cli._redelivery_baseline_failure_summary(
+        stage=stage,
+        plan=SimpleNamespace(date="2026-08-14", candidate_id="cid"),
+    )
+    assert summary is not None
+    assert summary["failure_count"] == cli._MAX_REDELIVERY_BASELINE_FAILURE_ROWS
+    assert len(summary["failure_rows"]) == cli._MAX_REDELIVERY_BASELINE_FAILURE_ROWS
+    assert summary["reason_codes"] == [
+        "REDELIVERY_BASELINE_CUE_UNCONSUMED",
+        "REDELIVERY_CURRENT_CUE_UNALIGNED",
+    ]
+
+
+def test_prepare_extracts_redelivery_baseline_failure_before_private_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = tmp_path / "record.json"
+    record.write_text("{}\n")
+    plan = SimpleNamespace(
+        date="2026-08-14", candidate_id="cid", record_path=record,
+        baseline=SimpleNamespace(config={"sha256": "a" * 64}),
+    )
+    parent = tmp_path / "private"
+    parent.mkdir(mode=0o700)
+    stage = parent / "candidate-stage"
+    stage.mkdir()
+    (stage / "stage.json").write_text("{}\n")
+    _redelivery_baseline_audit(stage)
+    monkeypatch.setattr(cli, "stage_replay", lambda *_args, **_kwargs: {"stage": str(stage)})
+    monkeypatch.setattr(cli, "_production_llm_call", lambda **_kwargs: lambda _prompt: "{}")
+    monkeypatch.setattr(
+        cli,
+        "synthesize_replay_spec_and_finalize_private",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            SystemExit("REDELIVERY_SUBTITLE_BASELINE_FAILED: /private/secret/audit.json")
+        ),
+    )
+    with pytest.raises(cli._PrepareFailure) as caught:
+        cli._prepare(plan, runtime=tmp_path, stage_parent=parent)
+    failure = caught.value
+    assert failure.reason_code == "REDELIVERY_SUBTITLE_BASELINE_FAILED"
+    assert failure.predicate_failures == ((
+        "REDELIVERY_BASELINE_REPLAY",
+        "REDELIVERY_SUBTITLE_BASELINE_FAILED",
+    ),)
+    assert failure.redelivery_baseline_failure_summary == _closed_redelivery_summary()
+    assert "/private/secret" not in json.dumps(vars(failure), sort_keys=True)
+    assert not stage.exists()
+
+
+@pytest.mark.parametrize(
+    "kind",
+    ["malformed", "wrong-schema", "wrong-status", "oversized", "external-path"],
+)
+def test_redelivery_baseline_failure_summary_rejects_unsafe_audit(
+    tmp_path: Path, kind: str,
+) -> None:
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    path = _redelivery_baseline_audit(stage)
+    if kind == "malformed":
+        path.write_text("{not-json")
+    elif kind == "wrong-schema":
+        document = json.loads(path.read_text())
+        document["schema_version"] = "other.v1"
+        path.write_text(json.dumps(document))
+    elif kind == "wrong-status":
+        document = json.loads(path.read_text())
+        document["status"] = "APPLIED"
+        path.write_text(json.dumps(document))
+    elif kind == "oversized":
+        path.write_bytes(b"x" * (cli._MAX_REVIEW_FLAGS_BYTES + 1))
+    else:
+        external = tmp_path / "external-redelivery-baseline.json"
+        external.write_text(path.read_text())
+        path.unlink()
+        path.symlink_to(external)
+    plan = SimpleNamespace(date="2026-08-14", candidate_id="cid")
+    assert cli._redelivery_baseline_failure_summary(stage=stage, plan=plan) is None
+
+
+def test_redelivery_baseline_failure_summary_rejects_external_plan_component(
+    tmp_path: Path,
+) -> None:
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "cid.redelivery-baseline.json").write_text(json.dumps({
+        "schema_version": "subtitle-redelivery-baseline-audit.v1",
+        "status": "FAILED",
+        "failures": [{"reason_code": "REDELIVERY_CURRENT_CUE_UNALIGNED"}],
+    }))
+    assert cli._redelivery_baseline_failure_summary(
+        stage=stage,
+        plan=SimpleNamespace(date="2026-08-14", candidate_id="../external"),
+    ) is None
+
+
+def test_redelivery_baseline_summary_is_revalidated_in_result_and_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    runtime = tmp_path / "runtime"
+    repo = runtime / "repo"
+    repo.mkdir(parents=True)
+    (repo / "DEPLOYED_COMMIT").write_text("a" * 40 + "\n")
+    (repo / "DEPLOYED_AUTHORITY_MANIFEST.json").write_text("{}\n")
+    parent = tmp_path / "private"
+    parent.mkdir(mode=0o700)
+    plan = SimpleNamespace(
+        date="2026-08-14", candidate_id="cid", matrix=(),
+        expected_video_sha256="sha256:" + "b" * 64,
+        baseline=SimpleNamespace(config={"sha256": "c" * 64}),
+    )
+    summary = _closed_redelivery_summary()
+    monkeypatch.setattr(cli, "_runtime_gate", lambda _runtime: None)
+    monkeypatch.setattr(cli, "build_replay_plan", lambda **_kwargs: plan)
+    monkeypatch.setattr(
+        cli,
+        "_prepare",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(cli._PrepareFailure(
+            reason_code="REDELIVERY_SUBTITLE_BASELINE_FAILED",
+            provider_attempted=False,
+            predicate_failures=((
+                "REDELIVERY_BASELINE_REPLAY",
+                "REDELIVERY_SUBTITLE_BASELINE_FAILED",
+            ),),
+            redelivery_baseline_failure_summary=summary,
+        )),
+    )
+    assert cli.main([
+        "--full-dry-run", "--runtime-root", str(runtime), "--date", "2026-08-14",
+        "--candidate-id", "cid", "--private-stage-parent", str(parent),
+    ]) == 2
+    item = json.loads(capsys.readouterr().out)["candidates"][0]
+    assert item["redelivery_baseline_failure_summary"] == summary
+    receipt = next(
+        (runtime / "reports").rglob(
+            item["diagnostic_receipt_sha256"].removeprefix("sha256:") + ".json"
+        )
+    )
+    assert json.loads(receipt.read_text())["redelivery_baseline_failure_summary"] == summary
+
+    unsafe = {
+        **summary,
+        "failure_rows": [{
+            **summary["failure_rows"][0],
+            "text": "token=secret /external/private",
+        }],
+    }
+    first = cli._sanitized_failure_receipt(
+        runtime=runtime, plan=plan, matrix=[], provider_attempted=False,
+        redelivery_baseline_failure_summary=summary,
+    )
+    second = cli._sanitized_failure_receipt(
+        runtime=runtime, plan=plan, matrix=[], provider_attempted=False,
+        redelivery_baseline_failure_summary=summary,
+    )
+    assert first == second
+    rejected = cli._sanitized_failure_receipt(
+        runtime=runtime, plan=plan, matrix=[], provider_attempted=False,
+        redelivery_baseline_failure_summary=unsafe,
+    )
+    rendered = next(
+        (runtime / "reports").rglob(rejected.removeprefix("sha256:") + ".json")
+    ).read_text()
+    assert "redelivery_baseline_failure_summary" not in rendered
+    assert "token=secret" not in rendered
+    assert "/external/private" not in rendered
+
+
 def test_prepare_extracts_exact_final_review_flags_without_private_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
