@@ -14,6 +14,11 @@ from scripts.build_fastlane_c1_private_successor import (
     project_cues,
     validate_projection,
 )
+from scripts.build_fastlane_c1_root_review_evidence import (
+    C1RootReviewEvidenceError,
+    build_parser as evidence_build_parser,
+    build_review_plan,
+)
 from src.autoslice.fastlane_c1_formal_adapter import (
     CID,
     FORMAL_MANIFEST_SCHEMA,
@@ -60,10 +65,15 @@ def test_formal_authority_is_closed_and_has_no_markdown_line_binding() -> None:
     assert "line 38" not in rendered
     assert authority["operator_ruling"]["candidate_scope_ordinal"] == 1
     assert authority["operator_ruling"]["ivan_rereview_required"] is False
+    assert authority["operator_ruling"]["raw_line947_content_sha256"] == (
+        "sha256:0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b"
+    )
 
 
 def test_formal_authority_is_a_fixed_reviewed_baseline_recovery_adapter() -> None:
     authority = load_formal_authority()
+    assert TITLE == "【李豆沙】经小李判断，薇欧拉对阿拉蕾就是铁暗恋！"
+    assert "上头" not in TITLE
     grid = authority["successor_grid"]
     assert grid["source_cue_count"] == 36
     assert grid["retained_live_cue_count"] == 25
@@ -86,6 +96,24 @@ def test_formal_manifest_rejects_the_stale_ivan_rereview_status() -> None:
         _validate_manifest_shape(manifest, authority)
 
 
+def test_root_review_evidence_maps_public_points_through_the_z1_offset() -> None:
+    plan = build_review_plan(intro_offset_ms=5_749)
+    assert len(plan) == 6
+    assert plan[0]["public_anchor_ms"] == 46_000
+    assert plan[0]["source_anchor_ms"] == 40_251
+    assert plan[3]["proof_frame_source_ms"] == 91_251
+    assert plan[5]["public_anchor_ms"] == 146_000
+    assert plan[5]["proof_frame_public_ms"] == 147_800
+    assert plan[5]["proof_frame_source_ms"] == 142_051
+    with pytest.raises(C1RootReviewEvidenceError, match="C1_REVIEW_INTRO_OFFSET_DRIFT"):
+        build_review_plan(intro_offset_ms=0)
+
+
+def test_root_review_evidence_cli_has_no_free_candidate_or_text_flags() -> None:
+    option_names = set(evidence_build_parser()._option_string_actions)
+    assert option_names == {"-h", "--help", "--package", "--out"}
+
+
 @pytest.mark.parametrize(
     ("mutate", "code"),
     [
@@ -97,6 +125,10 @@ def test_formal_manifest_rejects_the_stale_ivan_rereview_status() -> None:
         (
             lambda value: value["successor_grid"].update(release_cue_count=27),
             "C1_SUCCESSOR_GRID_AUTHORITY_INVALID",
+        ),
+        (
+            lambda value: value.update(title="【李豆沙】薇欧拉对阿拉蕾上头了！"),
+            "C1_FORMAL_AUTHORITY_BINDING_INVALID",
         ),
     ],
 )
@@ -177,6 +209,9 @@ def test_ruling_scope_reseals_document_but_binds_raw_line_and_candidate_scope(tm
         }
     )
     authority["operator_ruling"]["raw_line947_sha256"] = "sha256:" + hashlib.sha256(raw).hexdigest()
+    authority["operator_ruling"]["raw_line947_content_sha256"] = (
+        "sha256:" + hashlib.sha256(" ".join(raw_fragments).encode("utf-8")).hexdigest()
+    )
     ruling_document = tmp_path / "ruling.md"
     ruling_document.write_text("\n".join(document_fragments), encoding="utf-8")
     seal, _ = _validate_ruling_inputs(
@@ -188,6 +223,27 @@ def test_ruling_scope_reseals_document_but_binds_raw_line_and_candidate_scope(tm
     assert seal["ivan_rereview_required"] is False
     ruling_document.write_text("candidate scope only", encoding="utf-8")
     with pytest.raises(FastlaneC1FormalAdapterError, match="C1_RULING_DOCUMENT_SCOPE_DRIFT"):
+        _validate_ruling_inputs(raw_line=raw, ruling_document=ruling_document, authority=authority)
+
+
+def test_ruling_scope_rejects_resealed_raw_line_with_content_hash_drift(tmp_path: Path) -> None:
+    authority = copy.deepcopy(load_formal_authority())
+    raw_fragments = authority["operator_ruling"]["raw_payload_required_fragments"]
+    document_fragments = authority["operator_ruling"]["ruling_document_required_fragments"]
+    content = " ".join(raw_fragments)
+    raw = _canonical(
+        {
+            "type": "user",
+            "uuid": "555195ed-ec18-418d-a311-558f7e54291f",
+            "timestamp": "2026-08-19T00:08:52.249Z",
+            "message": {"content": content},
+        }
+    )
+    authority["operator_ruling"]["raw_line947_sha256"] = "sha256:" + hashlib.sha256(raw).hexdigest()
+    authority["operator_ruling"]["raw_line947_content_sha256"] = "sha256:" + "0" * 64
+    ruling_document = tmp_path / "ruling.md"
+    ruling_document.write_text("\n".join(document_fragments), encoding="utf-8")
+    with pytest.raises(FastlaneC1FormalAdapterError, match="C1_CLAUDE_LINE947_CONTENT_HASH_DRIFT"):
         _validate_ruling_inputs(raw_line=raw, ruling_document=ruling_document, authority=authority)
 
 

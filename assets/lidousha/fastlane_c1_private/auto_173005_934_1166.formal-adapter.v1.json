@@ -9,6 +9,7 @@
   },
   "operator_ruling": {
     "raw_line947_sha256": "sha256:e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa",
+    "raw_line947_content_sha256": "sha256:0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b",
     "candidate_id": "auto_173005_934_1166",
     "candidate_scope_ordinal": 1,
     "document_binding_mode": "RESEAL_AT_INTEGRATION",
@@ -125,5 +126,5 @@
     "predecessor_publish": "predecessor/auto_173005_934_1166.recut.publish.json",
     "predecessor_manifest": "predecessor/review_manifest.json"
   },
-  "authority_sha256": "sha256:aa9e88eb43f04083a3a9896d0fd5aaf4f31559010af28d5272d1e46cb30069de"
+  "authority_sha256": "sha256:fe35571c05823cf0af1a78b14ba501712f36a6f56bc432431f525cab99f4416f"
 }

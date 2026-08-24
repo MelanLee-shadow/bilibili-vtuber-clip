@@ -236,6 +236,8 @@ def _validate_formal_authority(value: Mapping[str, object], *, repo_root: Path) 
         raise FastlaneC1FormalAdapterError("C1_RULING_AUTHORITY_INVALID")
     if (
         ruling.get("raw_line947_sha256") != "sha256:e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa"
+        or ruling.get("raw_line947_content_sha256")
+        != "sha256:0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b"
         or ruling.get("candidate_id") != CID
         or ruling.get("candidate_scope_ordinal") != 1
         or ruling.get("document_binding_mode") != "RESEAL_AT_INTEGRATION"
@@ -450,8 +452,11 @@ def _validate_ruling_inputs(
         or line.get("uuid") != "555195ed-ec18-418d-a311-558f7e54291f"
         or line.get("timestamp") != "2026-08-19T00:08:52.249Z"
         or not isinstance(content, str)
-        or any(fragment not in content for fragment in ruling["raw_payload_required_fragments"])
     ):
+        raise FastlaneC1FormalAdapterError("C1_CLAUDE_LINE947_SCOPE_DRIFT")
+    if _sha256_bytes(content.encode("utf-8")) != ruling["raw_line947_content_sha256"]:
+        raise FastlaneC1FormalAdapterError("C1_CLAUDE_LINE947_CONTENT_HASH_DRIFT")
+    if any(fragment not in content for fragment in ruling["raw_payload_required_fragments"]):
         raise FastlaneC1FormalAdapterError("C1_CLAUDE_LINE947_SCOPE_DRIFT")
     raw_document = _require_regular(ruling_document, label="RULING_DOCUMENT").read_bytes()
     try:
@@ -465,7 +470,7 @@ def _validate_ruling_inputs(
             "schema_version": RULING_SEAL_SCHEMA,
             "candidate_id": CID,
             "raw_line947_sha256": ruling["raw_line947_sha256"],
-            "raw_line947_content_sha256": ruling["raw_line947_sha256"],
+            "raw_line947_content_sha256": ruling["raw_line947_content_sha256"],
             "raw_line947": {
                 "source_kind": "Claude JSONL user payload",
                 "line_number": 947,
@@ -767,7 +772,7 @@ def _validate_ruling_seal(root: Path, authority: Mapping[str, object]) -> None:
         "schema_version": RULING_SEAL_SCHEMA,
         "candidate_id": CID,
         "raw_line947_sha256": ruling["raw_line947_sha256"],
-        "raw_line947_content_sha256": ruling["raw_line947_sha256"],
+        "raw_line947_content_sha256": ruling["raw_line947_content_sha256"],
         "raw_line947": {
             "source_kind": "Claude JSONL user payload",
             "line_number": 947,
