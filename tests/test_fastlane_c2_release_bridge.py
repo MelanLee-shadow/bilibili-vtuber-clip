@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from src.autoslice import fastlane_c2_release_bridge as bridge
+from src.autoslice.fastlane_c2_legacy_recovery import make_accepted_execution_contract, validate_accepted_execution_contract
 from src.autoslice.fastlane_c2_formal_adapter import NAMES
 
 
@@ -127,6 +128,20 @@ def test_c2_authorization_asset_is_self_sealed_and_registry_hash_bound():
             "single serialized upload and public Creator section reconciliation",
         ],
     }
+
+
+def test_c2_legacy_execution_envelope_rejects_any_signature_surface_drift(tmp_path):
+    proposal = tmp_path / "proposal.json"
+    proposal.write_text("{}", encoding="utf-8")
+    accepted = make_accepted_execution_contract(proposal=proposal, reviewed_at="2026-08-24T20:00:00+00:00", decision_basis="root acceptance fixture")
+    validate_accepted_execution_contract(accepted, proposal=proposal)
+    for key, value in (("reviewed_by", "other"), ("reviewed_at", "2026-08-24T20:00:00"), ("decision_basis", "")):
+        drift = dict(accepted); drift[key] = value
+        with pytest.raises(ValueError):
+            validate_accepted_execution_contract(drift, proposal=proposal)
+    proposal.write_text('{"drift":true}', encoding="utf-8")
+    with pytest.raises(ValueError, match="proposal binding"):
+        validate_accepted_execution_contract(accepted, proposal=proposal)
 
 
 def test_c2_bridge_projects_strict_same_stem_package(monkeypatch, tmp_path):

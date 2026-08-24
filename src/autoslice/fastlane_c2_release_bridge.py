@@ -101,6 +101,24 @@ def _safe_directory(path: Path, label: str) -> None:
         raise C2ReleaseBridgeError(f"{label} is missing or unsafe")
 
 
+def _safe_input(path: Path, label: str, *, directory: bool = False) -> Path:
+    """Make an absolute path without resolving through any symlink."""
+    absolute = path.absolute()
+    chain = [absolute, *absolute.parents]
+    for component in chain:
+        try:
+            mode = component.lstat().st_mode
+        except OSError as exc:
+            raise C2ReleaseBridgeError(f"{label} parent is missing or unsafe") from exc
+        if stat.S_ISLNK(mode):
+            raise C2ReleaseBridgeError(f"{label} symlink is forbidden")
+    if directory:
+        _safe_directory(absolute, label)
+    else:
+        _regular(absolute, label)
+    return absolute
+
+
 def _fsync_directory(path: Path) -> None:
     fd = os.open(path, os.O_RDONLY)
     try:
@@ -136,7 +154,12 @@ def _copy_regular(source: Path, destination: Path) -> None:
     try:
         with os.fdopen(source_fd, "rb", closefd=True) as input_file, os.fdopen(destination_fd, "wb", closefd=True) as output_file:
             while chunk := input_file.read(1024 * 1024):
-                output_file.write(chunk)
+                offset = 0
+                while offset < len(chunk):
+                    written = output_file.write(chunk[offset:])
+                    if not isinstance(written, int) or written <= 0:
+                        raise C2ReleaseBridgeError("copy short write")
+                    offset += written
             output_file.flush()
             os.fsync(output_file.fileno())
     finally:
@@ -316,9 +339,13 @@ def build_release_package(
     tag_generator: Callable[..., dict] = generate_upload_tags,
 ) -> Path:
     """Create one private C2 projection.  It never calls upload or CPA image QC."""
-    formal_package, ready_proposal, root_receipt, authorization, legacy_proposal, legacy_execution_contract, out = (
-        formal_package.resolve(), ready_proposal.resolve(), root_receipt.resolve(), authorization.resolve(), legacy_proposal.resolve(), legacy_execution_contract.resolve(), out.resolve()
-    )
+    formal_package = _safe_input(formal_package, "formal package", directory=True)
+    ready_proposal = _safe_input(ready_proposal, "ready proposal")
+    root_receipt = _safe_input(root_receipt, "root receipt")
+    authorization = _safe_input(authorization, "authorization")
+    legacy_proposal = _safe_input(legacy_proposal, "legacy proposal")
+    legacy_execution_contract = _safe_input(legacy_execution_contract, "legacy execution contract")
+    out = out.absolute()
     if out.exists() or out.is_symlink():
         raise C2ReleaseBridgeError("C2 release package output already exists")
     if audit_fastlane_c2_formal_package(formal_package):
@@ -396,6 +423,7 @@ def build_release_package(
                 "correction_authority": _sha_entry(out / AUTH_NAME),
                 "root_receipt": _sha_entry(out / ROOT_RECEIPT_NAME),
                 "ready_proposal": _sha_entry(out / proposal_name),
+                "legacy_proposal": _sha_entry(out / LEGACY_PROPOSAL_NAME),
                 "legacy_execution_contract": _sha_entry(out / LEGACY_CONTRACT_NAME),
             },
             "tag_generation": _sha_entry(out / TAG_RECEIPT_NAME),
@@ -471,6 +499,7 @@ def audit_fastlane_c2_release_package(root: Path) -> list[dict[str, str]]:
             "correction_authority": auth_path,
             "root_receipt": receipt_path,
             "ready_proposal": proposal_path,
+            "legacy_proposal": legacy_proposal,
             "legacy_execution_contract": legacy_contract,
         }
         if set(manifest.get("formal_source") or {}) != set(expected_source):

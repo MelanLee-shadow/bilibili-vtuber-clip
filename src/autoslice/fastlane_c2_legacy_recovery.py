@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -82,11 +83,32 @@ def validate_proposal(value: Mapping[str, Any], *, formal: Path, authorization: 
         raise ValueError("C2 legacy recovery proposal source binding drift")
 
 
+def make_accepted_execution_contract(*, proposal: Path, reviewed_at: str, decision_basis: str) -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "schema_version": ACCEPTED_SCHEMA, "candidate_id": CID, "accepted": True, "upload_allowed": False,
+        "reviewer_kind": "delegated_root_agent", "reviewed_by": "Codex root", "reviewed_at": reviewed_at,
+        "decision_basis": decision_basis, "proposal": {"path": proposal.name, "bytes": proposal.stat().st_size, "sha256": "sha256:" + sha256(proposal)},
+    }
+    raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    value["self_seal"] = {"canonical_json_without_self_seal_sha256": "sha256:" + hashlib.sha256(raw).hexdigest()}
+    return value
+
+
 def validate_accepted_execution_contract(value: Mapping[str, Any], *, proposal: Path) -> None:
     """Acceptance envelope only; it cannot recreate a producer StoryContract."""
-    required = {"schema_version", "candidate_id", "accepted", "upload_allowed", "reviewer_kind", "reviewed_by", "reviewed_at", "decision_basis", "proposal"}
+    required = {"schema_version", "candidate_id", "accepted", "upload_allowed", "reviewer_kind", "reviewed_by", "reviewed_at", "decision_basis", "proposal", "self_seal"}
     if set(value) != required or value.get("schema_version") != ACCEPTED_SCHEMA or value.get("candidate_id") != CID or value.get("accepted") is not True or value.get("upload_allowed") is not False or value.get("reviewer_kind") != "delegated_root_agent" or value.get("reviewed_by") != "Codex root" or not isinstance(value.get("reviewed_at"), str) or not value["reviewed_at"].strip() or not isinstance(value.get("decision_basis"), str) or not value["decision_basis"].strip():
         raise ValueError("C2 legacy execution acceptance drift")
+    try:
+        parsed = datetime.fromisoformat(value["reviewed_at"].replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("C2 legacy execution timestamp invalid") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("C2 legacy execution timestamp lacks timezone")
     expected = {"path": proposal.name, "bytes": proposal.stat().st_size, "sha256": "sha256:" + sha256(proposal)}
     if value.get("proposal") != expected:
         raise ValueError("C2 legacy execution proposal binding drift")
+    unsigned = dict(value); seal = unsigned.pop("self_seal")
+    raw = json.dumps(unsigned, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    if seal != {"canonical_json_without_self_seal_sha256": "sha256:" + hashlib.sha256(raw).hexdigest()}:
+        raise ValueError("C2 legacy execution self-seal drift")
