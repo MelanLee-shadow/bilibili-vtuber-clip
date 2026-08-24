@@ -273,6 +273,10 @@ REMOTE_RECOVERY_KIND
     # A successful swap can lose its final SSH connection before cleanup.  This
     # is deliberately a separate recovery transaction: it never accepts the
     # old rollback state as the live deployment.
+    if git ls-tree -r --name-only "${RECOVERY_OWNER%%-*}" | grep -E '(^|/)__pycache__/|\.pyc$' >/dev/null; then
+        echo "REFUSE: owner commit tracks bytecode cache content" >&2
+        exit 1
+    fi
     POSTCOMMIT_TREE_SHA=$(git archive --format=tar "${RECOVERY_OWNER%%-*}" \
         scripts src ops assets profiles .agent docs cleanup_manifests AGENTS.md README.md \
         | python3 -c 'import hashlib,json,stat,sys,tarfile; t=tarfile.open(fileobj=sys.stdin.buffer,mode="r|"); e={}; [e.update({m.name.rstrip("/"):{"type":"dir","mode":m.mode & ~0o022} if m.isdir() else {"type":"file","mode":m.mode & ~0o022,"sha256":hashlib.sha256(t.extractfile(m).read()).hexdigest()}}) for m in t if m.isdir() or m.isfile()]; print(hashlib.sha256(json.dumps(e,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()).hexdigest())')
@@ -322,7 +326,10 @@ root=Path(sys.argv[1]); caches=[]
 for name in ('scripts','src','ops','assets','profiles','.agent','docs','cleanup_manifests'):
  p=root/name
  if not p.exists(): continue
- for d in p.rglob('__pycache__'):
+ for q in p.rglob('*.pyc'):
+  if q.parent.name != '__pycache__': raise SystemExit('stray bytecode file')
+ for d in p.rglob('*'):
+  if d.name != '__pycache__': continue
   s=d.lstat()
   if d.is_symlink() or not d.is_dir() or not stat.S_ISDIR(s.st_mode): raise SystemExit('unsafe bytecode cache dir')
   rows=list(d.iterdir())

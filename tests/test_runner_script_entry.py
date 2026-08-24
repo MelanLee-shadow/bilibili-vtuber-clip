@@ -2314,6 +2314,11 @@ def test_postcommit_guard_recovery_executes_fixture_and_fails_closed(tmp_path):
     assert ok.returncode == 0, ok.stderr
     assert not backup.exists() and not guard.exists()
     assert (backup.parent / "tick.lock").read_bytes() == b"tick.lock sentinel\n"
+    def cache_file(base, name="x.pyc"):
+        d=base / "repo/src/__pycache__"; d.mkdir(); (d / name).write_bytes(b"cache")
+    cached, backup, guard = run("cache-ok", lambda b,k,g: cache_file(b))
+    assert cached.returncode == 0, cached.stderr
+    assert not (backup.parent / "repo/src/__pycache__").exists()
     def symlink_file(path):
         saved = path.with_name(path.name + ".saved"); path.rename(saved); path.symlink_to(saved.name)
     def symlink_dir(path):
@@ -2358,6 +2363,12 @@ def test_postcommit_guard_recovery_executes_fixture_and_fails_closed(tmp_path):
         "tick-nonregular": lambda b,k,g: (b / "tick.lock").unlink() or (b / "tick.lock").mkdir(),
         "runner-nonregular": lambda b,k,g: (b / "runner.lock").unlink() or (b / "runner.lock").mkdir(),
         "upload-nonregular": lambda b,k,g: (b / "upload.lock").unlink() or (b / "upload.lock").mkdir(),
+        "cache-dir-link": lambda b,k,g: (b / "repo/src/__pycache__").symlink_to("missing"),
+        "cache-pyc-link": lambda b,k,g: (cache_file(b), symlink_file(b / "repo/src/__pycache__/x.pyc")),
+        "cache-nonpyc": lambda b,k,g: (cache_file(b), (b / "repo/src/__pycache__/note.txt").write_text("x")),
+        "cache-nested": lambda b,k,g: (cache_file(b), (b / "repo/src/__pycache__/nested").mkdir()),
+        "cache-empty": lambda b,k,g: (b / "repo/src/__pycache__").mkdir(),
+        "stray-pyc": lambda b,k,g: (b / "repo/src/stray.pyc").write_bytes(b"x"),
     }.items():
         bad, backup, guard = run(label, mutate)
         assert bad.returncode != 0, label
