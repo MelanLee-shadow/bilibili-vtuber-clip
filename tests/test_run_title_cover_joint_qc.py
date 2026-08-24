@@ -138,6 +138,26 @@ def test_create_only_writer_preserves_concurrent_replacement_on_failure(
     assert target.read_bytes() == b"replacement-bytes"
 
 
+def test_create_only_writer_preserves_original_error_when_cleanup_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    os.chmod(tmp_path, 0o700)
+    target = tmp_path / "unlink-failure.json"
+    parent_fd, name = preflight_create_only_output(target)
+    monkeypatch.setattr(os, "write", lambda _fd, _data: 0)
+
+    def fail_unlink(*_args, **_kwargs) -> None:
+        raise OSError("cleanup denied")
+
+    monkeypatch.setattr(os, "unlink", fail_unlink)
+    try:
+        with pytest.raises(OSError, match="short write"):
+            write_receipt_create_only(parent_fd, name, {"a": 1})
+    finally:
+        os.close(parent_fd)
+    assert target.exists()
+
+
 def test_joint_qc_resolves_exact_same_stem_cover(tmp_path: Path) -> None:
     title = "【李豆沙】一条自动标题"
     candidate = "auto_test"

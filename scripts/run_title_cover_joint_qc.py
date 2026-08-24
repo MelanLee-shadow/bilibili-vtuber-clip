@@ -100,7 +100,10 @@ def write_receipt_create_only(parent_fd: int, name: str, receipt: dict) -> None:
                 pass
             else:
                 if (current.st_dev, current.st_ino) == (created.st_dev, created.st_ino):
-                    os.unlink(name, dir_fd=parent_fd)
+                    try:
+                        os.unlink(name, dir_fd=parent_fd)
+                    except OSError:
+                        pass
         finally:
             raise
     finally:
