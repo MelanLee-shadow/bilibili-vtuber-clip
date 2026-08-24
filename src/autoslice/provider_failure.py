@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import re
 
-from src.autoslice.llm_client import LLM_JSON_PARSE_REASON_CODES
+from src.autoslice.llm_client import LLM_JSON_PARSE_REASON_CODES, LLM_TRANSPORT_REASON_CODES
 
 PROVIDER_DETAIL_LIMIT = 2000
 
@@ -274,7 +274,7 @@ def auditor_unavailable_discovery(
         (
             value
             for value in (detail, provider_detail)
-            if isinstance(value, str) and value in LLM_JSON_PARSE_REASON_CODES
+            if isinstance(value, str) and value in (LLM_JSON_PARSE_REASON_CODES | LLM_TRANSPORT_REASON_CODES)
         ),
         None,
     )

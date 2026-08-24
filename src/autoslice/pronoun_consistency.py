@@ -186,7 +186,7 @@ def discover_candidate_pronoun_findings(
     except Exception as exc:
         raise CandidatePronounAuditError(
             "CANDIDATE_PRONOUN_PROVIDER_OR_JSON_UNAVAILABLE",
-            type(exc).__name__,
+            getattr(exc, "safe_reason", None) or type(exc).__name__,
         ) from exc
     if not isinstance(payload, Mapping):
         raise CandidatePronounAuditError(

@@ -479,6 +479,13 @@ def test_replay_provider_summary_keeps_only_allowlisted_json_parse_code(tmp_path
     assert "/private/prompt" not in payload
 
 
+def test_replay_provider_summary_keeps_only_closed_transport_reason() -> None:
+    assert cli._provider_failure_summary({
+        "provider_error_code": "LLM_COMMAND_FAILED",
+        "provider_detail": "token=secret /private/prompt",
+    }) == {"provider_error_code": "LLM_COMMAND_FAILED"}
+
+
 @pytest.mark.parametrize("discovery", [
     None,
     {"provider_class": "forged", "provider_status_codes": [503]},

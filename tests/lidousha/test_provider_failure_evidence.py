@@ -203,6 +203,31 @@ def test_candidate_pronoun_provider_error_carries_the_cascade():
     assert "http=408" in pf.provider_failure_detail_from_cause(error)
 
 
+def test_candidate_pronoun_preserves_only_a_closed_transport_reason():
+    def failing_call(_prompt: str) -> str:
+        raise LlmCallError("bridge diagnostic with token=secret", safe_reason="LLM_COMMAND_FAILED")
+
+    with pytest.raises(CandidatePronounAuditError) as excinfo:
+        discover_candidate_pronoun_findings(
+            "1\n00:00:00,000 --> 00:00:02,000\n她说她来了\n",
+            policy_text="（无）",
+            candidate_context_text="（无）",
+            llm_call=failing_call,
+            extract_json=json.loads,
+        )
+
+    assert excinfo.value.detail == "LLM_COMMAND_FAILED"
+    assert "secret" not in str(excinfo.value)
+
+
+def test_auditor_unavailable_discovery_keeps_closed_transport_reason():
+    assert _auditor_unavailable_discovery("LLM_COMMAND_TIMEOUT") == {
+        "status": "AUDITOR_UNAVAILABLE",
+        "detail": "LLM_COMMAND_TIMEOUT",
+        "provider_error_code": "LLM_COMMAND_TIMEOUT",
+    }
+
+
 def test_final_review_retries_only_a_typed_json_parse_failure():
     prompts: list[str] = []
     replies = iter(["provider completion with no object", '{"findings":[]}'])

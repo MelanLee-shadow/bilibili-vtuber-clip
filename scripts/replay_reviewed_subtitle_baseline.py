@@ -37,7 +37,7 @@ from scripts.suggest_upload_tags import generate_upload_tags
 from src.autoslice.producer_package_finalization import ProducerFinalizationAdapters
 from src.autoslice.producer_text_pipeline import TextPipelineAdapters
 from src.autoslice.branding_intro import BrandingIntroError
-from src.autoslice.llm_client import LLM_JSON_PARSE_REASON_CODES
+from src.autoslice.llm_client import LLM_JSON_PARSE_REASON_CODES, LLM_TRANSPORT_REASON_CODES
 from src.autoslice.reviewed_baseline_replay import (
     ReviewedBaselineReplayError, _canonical, _production_llm_call, _safe_directory, _sha,
     build_replay_plan, prepare_replay_after_image, rebind_replay_after_image_state, stage_replay,
@@ -498,7 +498,7 @@ def _provider_failure_summary(discovery: object) -> dict[str, object] | None:
         return None
     summary: dict[str, object] = {}
     parse_code = discovery.get("provider_error_code")
-    if isinstance(parse_code, str) and parse_code in LLM_JSON_PARSE_REASON_CODES:
+    if isinstance(parse_code, str) and parse_code in (LLM_JSON_PARSE_REASON_CODES | LLM_TRANSPORT_REASON_CODES):
         summary["provider_error_code"] = parse_code
     provider_class = discovery.get("provider_class")
     codes = discovery.get("provider_status_codes")
