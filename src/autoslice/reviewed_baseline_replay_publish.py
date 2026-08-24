@@ -6,6 +6,7 @@ historical public-surface carry merely by passing a title or cover path.
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 from typing import Callable, Mapping
 
@@ -111,6 +112,14 @@ def replay_publish_adapter(
         root_reviewed = bool(authority and authority.is_root_reviewed_resolution)
         expected_title = authority.resolved_title if root_reviewed else title
         expected_hook = authority.resolved_selection_hook if root_reviewed else old_hook
+        old_review = old_staging.get("source_fact_review")
+        carry_old_review = (
+            not root_reviewed
+            and isinstance(old_review, Mapping)
+            and source_fact_review_passes(old_review)
+            and old_staging.get("title") == expected_title
+            and old_hook == expected_hook
+        )
         cover = replay.regular_binding(Path(cover_path), label="COVER")
         if cover.sha256 != cover_sha or generation.get("final_cover_sha256") != cover_sha:
             raise replay.ReviewedBaselineReplayError("REPLAY_COVER_BINDING_DRIFT")
@@ -132,8 +141,20 @@ def replay_publish_adapter(
                 "reason_codes": [],
             }
 
+        stage_record = dict(record)
+        if carry_old_review:
+            fresh_story = stage_record.get("story_contract")
+            if not isinstance(fresh_story, Mapping):
+                raise replay.ReviewedBaselineReplayError("REPLAY_STORY_CONTRACT_MISSING")
+            stage_story = dict(fresh_story)
+            # The carried review is safe only for an exactly frozen surface.
+            # Seed it before staging so the cover's StoryContract binding and
+            # the finalizer's post-stage binding describe the same receipt.
+            stage_story["source_fact_review"] = copy.deepcopy(dict(old_review))
+            stage_record["story_contract"] = stage_story
+
         staged = _stage_publish_draft(
-            dict(record), candidate_id=plan.candidate_id, title=expected_title,
+            stage_record, candidate_id=plan.candidate_id, title=expected_title,
             cues=kwargs["cues"], run_ffmpeg=bool(kwargs.get("run_ffmpeg")),
             title_llm_call=None, art_direction_llm_call=None, skip_cover=False,
             selection_hook=old_hook,
@@ -149,18 +170,20 @@ def replay_publish_adapter(
         if not isinstance(staged_story, Mapping):
             raise replay.ReviewedBaselineReplayError("REPLAY_STORY_CONTRACT_MISSING")
         review = staged_publish.get("source_fact_review")
-        old_review = old_staging.get("source_fact_review")
-        source_fact_verified = source_fact_review_passes(review) or (
-            review is None and source_fact_review_passes(old_review)
-            and old_staging.get("title") == expected_title and old_hook == staged_story.get("selection_hook")
-        )
-        if (
+        fallback_review_verified = (
             review is None
-            and source_fact_verified
+            and carry_old_review
+            and staged_publish.get("title") == expected_title
+            and staged_story.get("selection_hook") == expected_hook
+            and staged_story.get("source_fact_review") == old_review
+        )
+        source_fact_verified = source_fact_review_passes(review) or fallback_review_verified
+        if (
+            fallback_review_verified
             and isinstance(old_review, Mapping)
             and isinstance(staged_publish, dict)
         ):
-            staged_publish["source_fact_review"] = dict(old_review)
+            staged_publish["source_fact_review"] = copy.deepcopy(dict(old_review))
         # Source-fact is the highest-precedence diagnosis.  A failed fresh
         # review often also leaves a title-authority error; reporting the
         # latter would misroute the candidate into the title gate and hide the
