@@ -49,6 +49,8 @@ def build_text_only_speaker_successor_fields(
     expected_media_sha256: str,
     delivery_projection_receipt_path: Path | None = None,
     delivery_projection_receipt_sha256: str | None = None,
+    c5_start_clamp_proposal: Mapping[str, object] | None = None,
+    c5_start_clamp_acceptance: Mapping[str, object] | None = None,
     regular_binding: Callable[..., _RegularBinding],
     replay_error: type[Exception],
     error_factory: Callable[[str], Exception],
@@ -145,6 +147,8 @@ def build_text_only_speaker_successor_fields(
                 truth_diff_path=diff_binding.path, truth_diff_sha256=diff_binding.sha256,
                 delivery_projection_receipt_path=delivery_projection_receipt_path,
                 delivery_projection_receipt_sha256=delivery_projection_receipt_sha256,
+                c5_start_clamp_proposal=c5_start_clamp_proposal,
+                c5_start_clamp_acceptance=c5_start_clamp_acceptance,
                 new_plain_srt=Path(str(kwargs["text_srt_path"])),
                 new_media=Path(str(kwargs["media_path"])),
                 expected_media_sha256=expected_media_sha256,
@@ -353,6 +357,9 @@ def _delivery_projection_mapping(
     expected_media_sha256: str,
     receipt_path: Path | None,
     receipt_sha256: str | None,
+    speaker_decisions: list[Mapping[str, object]],
+    c5_start_clamp_proposal: Mapping[str, object] | None,
+    c5_start_clamp_acceptance: Mapping[str, object] | None,
 ) -> list[tuple[int, int, int]]:
     """Accept a delivery grid only through a sealed full-release projection."""
 
@@ -437,23 +444,44 @@ def _delivery_projection_mapping(
                 "delivery_cue_index": None, "disposition": "OUTSIDE_FINAL_DELIVERY",
             })
             continue
-        if release_start < final_start or release_end > final_end:
+        start_clamp = release_start < final_start or release_end > final_end
+        if start_clamp and (c5_start_clamp_proposal is None or c5_start_clamp_acceptance is None):
             _fail("DELIVERY_PROJECTION_STRADDLER")
         if delivery_cursor >= len(delivery_cues):
             _fail("DELIVERY_PROJECTION_DELIVERY_GRID_DRIFT")
         delivery = delivery_cues[delivery_cursor]
         delivery_index = delivery_cursor + 1
+        expected_start, expected_end = release_start - final_start, release_end - final_start
+        disposition = "RETAINED_FINAL_DELIVERY"
+        if start_clamp:
+            # This is deliberately invoked only after the historical speaker
+            # decision has been validated below; it does not infer a label.
+            from src.autoslice.c5_start_clamp import C5StartClampError, accepted_delivery_geometry
+            raw = speaker_decisions[old_index - 1]
+            try:
+                expected_start, expected_end = accepted_delivery_geometry(
+                    proposal=c5_start_clamp_proposal, acceptance=c5_start_clamp_acceptance,
+                    candidate_id=candidate_id, recording_date="2026-08-14",
+                    final_start_ms=final_start, final_end_ms=final_end,
+                    source_index=old_index, text=release.text,
+                    speaker_label=str(raw.get("speaker")), old_start_ms=release_start,
+                    old_end_ms=release_end,
+                    media_sha256=expected_media_sha256,
+                )
+            except C5StartClampError:
+                _fail("DELIVERY_PROJECTION_STRADDLER")
+            disposition = "RETAINED_FINAL_DELIVERY_START_CLAMP"
         if (
             delivery.source_index != delivery_index
             or (_srt_ms(delivery.start), _srt_ms(delivery.end))
-            != (release_start - final_start, release_end - final_start)
+            != (expected_start, expected_end)
             or delivery.text != release.text
         ):
             _fail("DELIVERY_PROJECTION_DELIVERY_GRID_DRIFT")
         expected_rows.append({
             "old_source_index": old_index, "release_cue_index": release_index,
             "delivery_cue_index": delivery_index,
-            "disposition": "RETAINED_FINAL_DELIVERY",
+            "disposition": disposition,
             "release_start_ms": release_start, "release_end_ms": release_end,
             "delivery_start_ms": _srt_ms(delivery.start), "delivery_end_ms": _srt_ms(delivery.end),
         })
@@ -511,6 +539,8 @@ def materialize_text_only_speaker_successor(
     truth_diff_path: Path, truth_diff_sha256: str,
     delivery_projection_receipt_path: Path | None = None,
     delivery_projection_receipt_sha256: str | None = None,
+    c5_start_clamp_proposal: Mapping[str, object] | None = None,
+    c5_start_clamp_acceptance: Mapping[str, object] | None = None,
     new_plain_srt: Path, new_media: Path, expected_media_sha256: str,
     output_srt: Path, output_ass: Path, output_manifest: Path,
 ) -> dict[str, object]:
@@ -564,6 +594,12 @@ def materialize_text_only_speaker_successor(
         ledger_sha=ledger_sha256, truth_diff_path=truth_diff_path,
         truth_diff_sha=truth_diff_sha256,
     )
+    decisions = _validate_old_speaker_against_diagnostic(
+        old_cues=old_cues, speaker_cues=speaker_cues,
+        decisions=old_manifest.get("final_decisions"),
+    )
+    if (c5_start_clamp_proposal is None) != (c5_start_clamp_acceptance is None):
+        _fail("DELIVERY_PROJECTION_STRADDLER")
     if new_plain_sha == full_release_sha:
         if delivery_projection_receipt_path is not None or delivery_projection_receipt_sha256 is not None:
             _fail("DELIVERY_PROJECTION_UNEXPECTED")
@@ -582,12 +618,11 @@ def materialize_text_only_speaker_successor(
             expected_media_sha256="sha256:" + expected_media,
             receipt_path=delivery_projection_receipt_path,
             receipt_sha256=delivery_projection_receipt_sha256,
+            speaker_decisions=decisions,
+            c5_start_clamp_proposal=c5_start_clamp_proposal,
+            c5_start_clamp_acceptance=c5_start_clamp_acceptance,
         )
         grid_mode = "FINAL_DELIVERY_PROJECTION"
-    decisions = _validate_old_speaker_against_diagnostic(
-        old_cues=old_cues, speaker_cues=speaker_cues,
-        decisions=old_manifest.get("final_decisions"),
-    )
     successor_cues: list[Cue] = []
     successor_decisions: list[dict[str, object]] = []
     for old_index, release_index, delivery_index in retained:

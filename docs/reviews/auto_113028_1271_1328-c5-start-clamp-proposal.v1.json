@@ -1,0 +1,15 @@
+{
+  "accepted": false,
+  "boundary": {"final_end_ms": 67524, "final_start_ms": 9750, "media_sha256": "sha256:ce0142eca7921ddd7ca85412c0b11bf040b32e60021482b3b8cfe234ef36b312"},
+  "candidate_id": "auto_113028_1271_1328",
+  "cue": {"clamp_ms": 190, "delivery_end_ms": 330, "delivery_start_ms": 0, "old_end_ms": 10080, "old_start_ms": 9560, "source_index": 5, "speaker_label": "李豆沙", "text": "呃"},
+  "drop_source_indices": [13, 14, 15],
+  "evidence": {"audio_sha256": "sha256:904b77ad9b60c5480872c979796f8ead2449157a858a3814f9f608386ab02342", "frame_10080_sha256": "sha256:bedfe3b21dfe69d438f6baf866c1b5641428ac31982f4c58ba6fd70e4ed25096", "frame_9500_sha256": "sha256:ddf0ea59a65b735ea144da0ac298be75127b34dacea448584f5c7e81655401e3", "frame_9750_sha256": "sha256:913ac4067707450560aa50ab3d7feb7f458f92378005c4210f1f71f1286e5079", "silence_end_ms": 10028, "silence_start_ms": 9679},
+  "historical_chain": {"diagnostic_srt_sha256": "sha256:5da5af9dba5ce3ff2fee7d585bda809eb3a9edb612a18868ace683cb94281043", "ledger_sha256": "sha256:6fac5913ee143619c840483a8355e6ba63690f9bf47ddd27b3d34b9fcb5ce1a2", "record_sha256": "sha256:09646c35fdb2afd6a35cc4cf7c5aa4fbb61461f455a1866e9de3c8f35952ab95", "reviewed_srt_sha256": "sha256:9f33f247deb405b409d50f294bbfab08db7d5f43086241dd736fac0498faf64b", "speaker_ass_sha256": "sha256:493e6aa6603b7a9dfe7ecb86e8b67d79cddc65ba1666ef2f499afb540106d94d", "speaker_manifest_sha256": "sha256:cbed92f720d52d4da93f2b3fd58d1acaa02aefae0dc55a3a6cece13c3de248ec", "speaker_srt_sha256": "sha256:a014b0ece4a12234be58f08afb52bbb41a9ec7260d737b06a4ebfe8191932d20", "truth_diff_sha256": "sha256:48142b7ebf737dde41472757030385794deb43ba9091289d1f4962885fd446b1"},
+  "proposal_doc_sha256": "sha256:d8b2074bcc446180135fb3a554aec322f19b90c4a0915d17f3571180c4069d34",
+  "recording_date": "2026-08-14",
+  "ruling_line_sha256": "sha256:e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa",
+  "schema_version": "c5-start-clamp-proposal.v1",
+  "self_sha256": "sha256:b714c84e974fbab314979ac8a3170fd10e25c34d8cef3fb28ce4ee9c842cfd6c",
+  "upload_allowed": false
+}
