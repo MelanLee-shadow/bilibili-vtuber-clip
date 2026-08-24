@@ -94,7 +94,8 @@ from src.autoslice.qixi_review_package_owner_bridge import (  # noqa: E402
     manifest_bound_terminal_projection_authority,
 )
 from src.autoslice.fastlane_c1_formal_adapter import (  # noqa: E402
-    audit_fastlane_c1_formal_manifest,
+    audit_fastlane_formal_package,
+    is_fastlane_formal_manifest,
 )
 
 
@@ -1664,6 +1665,14 @@ def _prepare_package_audit(
     )
 
 
+def _formal_fastlane_audited(root: Path, manifest: Mapping[str, object], issues: list[dict[str, Any]]) -> bool:
+    if not is_fastlane_formal_manifest(manifest):
+        return False
+    for issue in audit_fastlane_formal_package(root, manifest):
+        _add_issue(issues, issue.code, path=issue.path, detail=issue.detail)
+    return True
+
+
 def audit_package(
     root: str | Path, *, qixi_repo_root: Path | None = None
 ) -> dict[str, Any]:
@@ -1683,14 +1692,11 @@ def audit_package(
         if not manifest:
             _add_issue(issues, "MANIFEST_MISSING_OR_INVALID", path=manifest_path)
         return _audit_result(root, issues)
-
     if not manifest:
         _add_issue(issues, "MANIFEST_MISSING_OR_INVALID", path=manifest_path)
         return _audit_result(root, issues)
-    if (c1_issues := audit_fastlane_c1_formal_manifest(root, manifest)) is not None:
-        issues.extend(c1_issues)
+    if _formal_fastlane_audited(root, manifest, issues):
         return _audit_result(root, issues)
-
     (
         items,
         max_visual_lines,

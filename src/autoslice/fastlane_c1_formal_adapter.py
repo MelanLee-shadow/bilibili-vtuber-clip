@@ -1158,3 +1158,15 @@ def materialize_formal_private_package(
         except FileExistsError as exc:
             raise FastlaneC1FormalAdapterError("C1_FORMAL_OUTPUT_ALREADY_EXISTS") from exc
     return out
+
+
+def is_fastlane_formal_manifest(manifest: Mapping[str, object]) -> bool:
+    from .fastlane_c2_formal_adapter import is_fastlane_c2_formal_manifest
+    return is_fastlane_c1_formal_manifest(manifest) or is_fastlane_c2_formal_manifest(manifest)
+
+
+def audit_fastlane_formal_package(root: Path, manifest: Mapping[str, object]) -> list[C1AuditIssue]:
+    if is_fastlane_c1_formal_manifest(manifest):
+        return audit_fastlane_c1_formal_package(root)
+    from .fastlane_c2_formal_adapter import audit_fastlane_c2_formal_package
+    return [C1AuditIssue(item["code"], root, item.get("detail", "")) for item in audit_fastlane_c2_formal_package(root)]
