@@ -904,14 +904,19 @@ def _prepare(
             # A preflight may use the installed interpreter without copying or
             # mutating its virtualenv.  Resolve and hash-bind the executable
             # target; accepting an unbound path would make the replay outcome
-            # depend on a mutable ambient interpreter.
+            # depend on a mutable ambient interpreter.  Invoke the requested
+            # launcher, however: a conventional venv ``bin/python`` is a
+            # symlink whose target is a base interpreter, and invoking that
+            # target directly silently drops the venv's site-packages.
+            requested_speaker_python = Path(speaker_python).absolute()
             try:
-                selected_speaker_python = Path(speaker_python).resolve(strict=True)
+                resolved_speaker_python = requested_speaker_python.resolve(strict=True)
             except OSError as exc:
                 raise ReviewedBaselineReplayError("REPLAY_SPEAKER_PYTHON_UNAVAILABLE") from exc
-            binding = regular_binding(selected_speaker_python, label="SPEAKER_PYTHON")
+            binding = regular_binding(resolved_speaker_python, label="SPEAKER_PYTHON")
             if not os.access(binding.path, os.X_OK):
                 raise ReviewedBaselineReplayError("REPLAY_SPEAKER_PYTHON_UNSAFE")
+            selected_speaker_python = requested_speaker_python
         if plan.candidate_id == C6_EXACT_CANDIDATE_ID and plan.date == C6_EXACT_RECORDING_DATE:
             exact_final_reviewer = build_c6_exact_final_reviewer(plan=plan, stage=stage)
         else:

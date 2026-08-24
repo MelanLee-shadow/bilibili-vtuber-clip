@@ -204,7 +204,7 @@ def test_prepare_binds_pinned_speaker_runtime_not_controller_python(
     assert captured["speaker_python"] == tmp_path / "venv-diar/bin/python"
 
 
-def test_prepare_resolves_and_binds_explicit_private_preflight_interpreter(
+def test_prepare_binds_explicit_private_preflight_interpreter_without_losing_venv_launcher(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     record = tmp_path / "record.json"
@@ -232,7 +232,9 @@ def test_prepare_resolves_and_binds_explicit_private_preflight_interpreter(
     monkeypatch.setattr(cli, "synthesize_replay_spec_and_finalize_private", capture_runtime)
     with pytest.raises(cli._PrepareFailure):
         cli._prepare(plan, runtime=tmp_path, stage_parent=parent, speaker_python=requested)
-    assert captured["speaker_python"] == interpreter
+    # The resolved regular target is hash-bound, but the venv launcher itself
+    # must be invoked so Python retains its virtualenv site-packages.
+    assert captured["speaker_python"] == requested.absolute()
 
 
 def test_safe_reason_code_keeps_only_typed_codes() -> None:
