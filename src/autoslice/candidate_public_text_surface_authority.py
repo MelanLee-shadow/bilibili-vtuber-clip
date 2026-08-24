@@ -35,11 +35,29 @@ CHANNEL_PROFILE = load_channel_profile(ROOT)
 SCHEMA_VERSION = "lidousha-candidate-public-text-surface-authority.v1"
 ALGORITHM_ID = "exact-candidate-generated-surface-resolution.v1"
 MANUAL_TITLE_ALGORITHM_ID = "exact-candidate-manual-title-resolution.v1"
+ROOT_REVIEWED_ALGORITHM_ID = "exact-candidate-root-reviewed-public-surface-resolution.v1"
+ROOT_REVIEWED_CANDIDATE_ID = "auto_120032_753_816"
+ROOT_REVIEWED_RECORDING_DATE = "2026-08-14"
+ROOT_REVIEWED_CONTEXT_SHA256 = "sha256:edf26d3d7cf0eeea0e94c8d3a0006b7a323441ed11bdb701818bb65da619100a"
+ROOT_REVIEWED_STORY_SHA256 = "sha256:94b52484061524ce7d3865d9a8939b84773fcb87015b14287aa4e9f6794dcfd6"
+ROOT_REVIEWED_PROMPT_SHA256 = "sha256:ff0a633cdd9eb853d25278b24d71e939cfe35fac00d94c51617295164f07c4d8"
+ROOT_REVIEWED_INTERVAL = {"absolute_start_ms": 753000, "absolute_end_ms": 816000}
+ROOT_REVIEWED_SOURCE_PIECES = ({"recording_basename": "22966160_20260814-12-00-32.mp4", "source_media_sha256": "sha256:0f0770a9426c48fee5457cf9639a77e5a477f41ec806f4e4789e19c336e1aae5", "start_ms": 743770, "end_ms": 864000},)
+ROOT_REVIEWED_RULING_SHA256 = "sha256:c2ffd0721739334257c468f0756b3e647c62ffb8c32e2cab4a0ae2bc6ee38fac"
+ROOT_REVIEWED_RULING_LOCATOR = (
+    "/Users/ivan/.claude/projects/-Users-ivan-Project-vtuber-slice/"
+    "0df2296b-500a-4681-ab5e-6fb46dc39579.jsonl:947"
+)
+ROOT_REVIEWED_RULING_QUOTE = (
+    "她提醒开车的观众别发弹幕后，把弹幕里的“坏结果”听成“大结果”这个切片，"
+    "1:01插了一句naruhodo ne的日语，中文字幕错了，而且不是听错了，是弹幕本身发错了。重做标题封面。"
+)
+ROOT_REVIEWED_RULING_TIMESTAMP = "2026-08-19T00:08:52.249Z"
 CONSUMPTION_SCHEMA_VERSION = "candidate-public-text-surface-consumption.v1"
 AUTHORITY_DIRECTORY = "candidate_public_text_surface_authorities"
 AUTHORITY_SUFFIX = ".public-text-surface-authority.v1.json"
 AUTHORITY_REQUIRED_CANDIDATES = frozenset(
-    {"auto_173005_934_1166", "auto_210739_1142_1436"}
+    {"auto_173005_934_1166", "auto_210739_1142_1436", "auto_120032_753_816"}
 )
 PUBLIC_ARTIFACT_KINDS = ("selection_hook", "title", "cover", "publication")
 _CANDIDATE_RX = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{2,127}\Z")
@@ -65,6 +83,7 @@ _MANUAL_TITLE_ROOT_FIELDS = {
     "user_authorization",
     "authority_sha256",
 }
+_ROOT_REVIEWED_ROOT_FIELDS = _MANUAL_TITLE_ROOT_FIELDS | {"decision_authorization"}
 _CANDIDATE_FIELDS = {
     "candidate_id",
     "recording_date",
@@ -95,6 +114,7 @@ _RESOLVED_FIELDS = {
     "title",
     "title_sha256",
 }
+_ROOT_REVIEWED_RESOLVED_FIELDS = _RESOLVED_FIELDS | {"cover_lines", "cover_lines_sha256"}
 _ENTITY_FIELDS = {
     "entity_id",
     "equivalent_surfaces",
@@ -180,17 +200,27 @@ class CandidatePublicTextSurfaceAuthority:
     algorithm_id: str = ALGORITHM_ID
     story_contract_sha256: str | None = None
     clip_context_prompt_sha256: str | None = None
+    decision_authorization: dict[str, object] | None = None
+    resolved_cover_lines: tuple[str, ...] = ()
 
     @property
     def is_manual_title_resolution(self) -> bool:
         return self.algorithm_id == MANUAL_TITLE_ALGORITHM_ID
 
     @property
+    def is_root_reviewed_resolution(self) -> bool:
+        return self.algorithm_id == ROOT_REVIEWED_ALGORITHM_ID
+
+    @property
     def title_source(self) -> str:
         return (
             "deterministic_candidate_manual_title_resolution+ivan_exact_title"
             if self.is_manual_title_resolution
-            else "deterministic_candidate_public_surface_resolution+ivan_exact_substitution"
+            else (
+                "deterministic_candidate_root_reviewed_public_surface_resolution"
+                if self.is_root_reviewed_resolution
+                else "deterministic_candidate_public_surface_resolution+ivan_exact_substitution"
+            )
         )
 
     def require_text_surfaces(self, *, surface_type: str, text: str) -> str:
@@ -213,6 +243,8 @@ class CandidatePublicTextSurfaceAuthority:
         self.require_text_surfaces(surface_type="title_cover", text=text)
         if artifact_kind in {"title", "publication"} and text != self.resolved_title:
             raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_EXACT_TITLE_MISMATCH")
+        if artifact_kind == "cover" and self.resolved_cover_lines and text != "\n".join(self.resolved_cover_lines):
+            raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_EXACT_COVER_MISMATCH")
         return text
 
     def validate_clip_context_prompt(self, prompt: str) -> None:
@@ -275,6 +307,8 @@ class CandidatePublicTextTitleState:
 
 
 def _freeze_authority(document: dict[str, object]) -> CandidatePublicTextSurfaceAuthority:
+    if document.get("algorithm_id") == ROOT_REVIEWED_ALGORITHM_ID:
+        return _freeze_root_reviewed_authority(document)
     if document.get("algorithm_id") == MANUAL_TITLE_ALGORITHM_ID:
         return _freeze_manual_title_authority(document)
     candidate = _required_object(
@@ -385,6 +419,72 @@ def _freeze_authority(document: dict[str, object]) -> CandidatePublicTextSurface
         forbidden_public_surfaces=tuple(forbidden),
         authority_sha256=str(document["authority_sha256"]),
         user_authorization=authorization,
+    )
+
+
+def _freeze_root_reviewed_authority(document: dict[str, object]) -> CandidatePublicTextSurfaceAuthority:
+    """Freeze a root decision derived from, but never impersonating, Ivan text.
+
+    This variant is intentionally candidate-specific.  It permits an exact
+    public hook/title replacement after a requested redo while retaining the
+    original chat ruling as evidence; it never grants transcript, speaker,
+    state, registry, upload, or provider authority.
+    """
+    candidate = _required_object(document["candidate_binding"], _MANUAL_TITLE_CANDIDATE_FIELDS, "PUBLIC_TEXT_ROOT_BINDING_INVALID")
+    inputs = _required_object(document["input_surface_binding"], _INPUT_FIELDS, "PUBLIC_TEXT_INPUT_INVALID")
+    resolved = _required_object(document["resolved_surfaces"], _ROOT_REVIEWED_RESOLVED_FIELDS, "PUBLIC_TEXT_RESOLUTION_INVALID")
+    scope = _required_object(document["scope"], _SCOPE_FIELDS, "PUBLIC_TEXT_SCOPE_INVALID")
+    ruling = _required_object(document["user_authorization"], {"quote", "timestamp"}, "PUBLIC_TEXT_USER_AUTHORITY_INVALID")
+    decision = _required_object(document["decision_authorization"], {"decision_owner", "source_scope", "ruling_sha256", "ruling_locator"}, "PUBLIC_TEXT_ROOT_DECISION_INVALID")
+    candidate_id = _required_text(candidate["candidate_id"], "PUBLIC_TEXT_CANDIDATE_INVALID")
+    selected = _required_object(candidate["selected_interval"], _SELECTED_INTERVAL_FIELDS, "PUBLIC_TEXT_SELECTED_INTERVAL_INVALID")
+    pieces = _validate_source_pieces(candidate["clip_context_source_pieces"])
+    input_hook = _required_text(inputs["selection_hook"], "PUBLIC_TEXT_INPUT_INVALID")
+    old_title = _required_text(inputs["superseded_title"], "PUBLIC_TEXT_INPUT_INVALID")
+    resolved_hook = _required_text(resolved["selection_hook"], "PUBLIC_TEXT_RESOLUTION_INVALID")
+    resolved_title = _required_text(resolved["title"], "PUBLIC_TEXT_RESOLUTION_INVALID")
+    cover_lines = resolved["cover_lines"]
+    if not (
+        _CANDIDATE_RX.fullmatch(candidate_id) and Path(candidate_id).name == candidate_id
+        and _SHA_RX.fullmatch(str(candidate["clip_context_sha256"] or ""))
+        and _SHA_RX.fullmatch(str(candidate["story_contract_sha256"] or ""))
+        and _SHA_RX.fullmatch(str(candidate["clip_context_prompt_sha256"] or ""))
+        and isinstance(selected["absolute_start_ms"], int) and isinstance(selected["absolute_end_ms"], int)
+        and 0 <= selected["absolute_start_ms"] < selected["absolute_end_ms"]
+        and candidate_id == ROOT_REVIEWED_CANDIDATE_ID
+        and candidate["recording_date"] == ROOT_REVIEWED_RECORDING_DATE
+        and candidate["clip_context_sha256"] == ROOT_REVIEWED_CONTEXT_SHA256
+        and candidate["story_contract_sha256"] == ROOT_REVIEWED_STORY_SHA256
+        and candidate["clip_context_prompt_sha256"] == ROOT_REVIEWED_PROMPT_SHA256
+        and selected == ROOT_REVIEWED_INTERVAL
+        and pieces == ROOT_REVIEWED_SOURCE_PIECES
+        and decision == {
+            "decision_owner": "Codex root", "source_scope": "IVAN_REQUESTED_REDO",
+            "ruling_sha256": ROOT_REVIEWED_RULING_SHA256,
+            "ruling_locator": ROOT_REVIEWED_RULING_LOCATOR,
+        }
+        and ruling == {"quote": ROOT_REVIEWED_RULING_QUOTE, "timestamp": ROOT_REVIEWED_RULING_TIMESTAMP}
+        and scope == {"artifact_kinds": list(PUBLIC_ARTIFACT_KINDS), "subtitle_text_mutation_authorized": False, "speaker_label_mutation_authorized": False, "upload_authorized": False, "registry_hold_released": False}
+        and isinstance(cover_lines, list) and len(cover_lines) in (1, 2)
+        and all(isinstance(line, str) and line and len(line) <= 9 for line in cover_lines)
+        and resolved["cover_lines_sha256"] == _sha256_json(cover_lines)
+        and any(int(p["start_ms"]) <= selected["absolute_start_ms"] and selected["absolute_end_ms"] <= int(p["end_ms"]) for p in pieces)
+    ):
+        raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_ROOT_DECISION_INVALID")
+    for text, declared in ((input_hook, inputs["selection_hook_sha256"]), (old_title, inputs["superseded_title_sha256"]), (resolved_hook, resolved["selection_hook_sha256"]), (resolved_title, resolved["title_sha256"])):
+        if declared != _sha256_text(text):
+            raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_SURFACE_HASH_MISMATCH")
+    return CandidatePublicTextSurfaceAuthority(
+        candidate_id=candidate_id, recording_date=_required_text(candidate["recording_date"], "PUBLIC_TEXT_ROOT_BINDING_INVALID"),
+        clip_context_sha256=str(candidate["clip_context_sha256"]), source_pieces=pieces,
+        selected_start_ms=int(selected["absolute_start_ms"]), selected_end_ms=int(selected["absolute_end_ms"]),
+        input_selection_hook=input_hook, superseded_title=old_title, resolved_selection_hook=resolved_hook,
+        resolved_title=resolved_title, entity_id="root-reviewed-public-surface", equivalent_surfaces=(),
+        required_public_surface=resolved_title, forbidden_public_surfaces=(old_title,),
+        authority_sha256=str(document["authority_sha256"]), user_authorization=ruling,
+        algorithm_id=ROOT_REVIEWED_ALGORITHM_ID, story_contract_sha256=str(candidate["story_contract_sha256"]),
+        clip_context_prompt_sha256=str(candidate["clip_context_prompt_sha256"]), decision_authorization=decision,
+        resolved_cover_lines=tuple(cover_lines),
     )
 
 
@@ -560,11 +660,14 @@ def load_candidate_public_text_surface_authority(
             "PUBLIC_TEXT_AUTHORITY_UNREADABLE_OR_UNSEALED"
         ) from exc
     algorithm_id = loaded.get("algorithm_id") if isinstance(loaded, Mapping) else None
-    fields = _MANUAL_TITLE_ROOT_FIELDS if algorithm_id == MANUAL_TITLE_ALGORITHM_ID else _ROOT_FIELDS
+    fields = (
+        _ROOT_REVIEWED_ROOT_FIELDS if algorithm_id == ROOT_REVIEWED_ALGORITHM_ID
+        else (_MANUAL_TITLE_ROOT_FIELDS if algorithm_id == MANUAL_TITLE_ALGORITHM_ID else _ROOT_FIELDS)
+    )
     document = _required_object(loaded, fields, "PUBLIC_TEXT_AUTHORITY_SCHEMA_INVALID")
     if document["schema_version"] != SCHEMA_VERSION or document["algorithm_id"] not in {
         ALGORITHM_ID,
-        MANUAL_TITLE_ALGORITHM_ID,
+        MANUAL_TITLE_ALGORITHM_ID, ROOT_REVIEWED_ALGORITHM_ID,
     }:
         raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_AUTHORITY_SCHEMA_INVALID")
     declared = document.pop("authority_sha256")
@@ -588,6 +691,39 @@ def consume_candidate_public_text_surface_authority(
 
     binding = story_contract.get("clip_context_binding")
     source_hashes = [str(piece["source_media_sha256"]) for piece in authority.source_pieces]
+    if authority.is_root_reviewed_resolution:
+        prompt = str(story_contract.get("clip_context_prompt") or "")
+        normalized_story = dict(story_contract)
+        normalized_story["selection_hook"] = authority.input_selection_hook
+        if not (
+            candidate_id == authority.candidate_id
+            and story_contract.get("candidate_id") == candidate_id
+            and selection_hook in {authority.input_selection_hook, authority.resolved_selection_hook}
+            and story_contract.get("selection_hook") == selection_hook
+            and story_contract.get("source_media_sha256s") == sorted(set(source_hashes))
+            and isinstance(binding, Mapping)
+            and binding.get("context_sha256") == authority.clip_context_sha256
+            and authority.clip_context_prompt_sha256 == _sha256_text(prompt)
+            and authority.story_contract_sha256 == _sha256_json(normalized_story)
+        ):
+            raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_RUNTIME_BINDING_MISMATCH")
+        return {
+            "schema_version": CONSUMPTION_SCHEMA_VERSION, "status": "CONSUMED",
+            "candidate_id": candidate_id, "authority_sha256": authority.authority_sha256,
+            "algorithm_id": ROOT_REVIEWED_ALGORITHM_ID,
+            "clip_context_sha256": authority.clip_context_sha256,
+            "clip_context_prompt_sha256": _sha256_text(prompt),
+            "selected_interval": {"absolute_start_ms": authority.selected_start_ms, "absolute_end_ms": authority.selected_end_ms},
+            "input_selection_hook_sha256": _sha256_text(authority.input_selection_hook),
+            "observed_selection_hook_sha256": _sha256_text(selection_hook),
+            "resolved_selection_hook": authority.resolved_selection_hook,
+            "resolved_title": authority.resolved_title,
+            "resolved_cover_lines": list(authority.resolved_cover_lines),
+            "subtitle_text_mutation_authorized": False, "speaker_label_mutation_authorized": False,
+            "upload_authorized": False, "registry_hold_released": False,
+            "user_authorization": dict(authority.user_authorization),
+            "decision_authorization": dict(authority.decision_authorization or {}),
+        }
     if authority.is_manual_title_resolution:
         prompt = str(story_contract.get("clip_context_prompt") or "")
         current_story_sha = _sha256_json(dict(story_contract))
@@ -608,8 +744,8 @@ def consume_candidate_public_text_surface_authority(
         if not (
             candidate_id == authority.candidate_id
             and story_contract.get("candidate_id") == candidate_id
-            and selection_hook == authority.input_selection_hook
-            and story_contract.get("selection_hook") == authority.input_selection_hook
+                and selection_hook in {authority.input_selection_hook, authority.resolved_selection_hook}
+                and story_contract.get("selection_hook") == selection_hook
             and story_contract.get("source_media_sha256s") == sorted(set(source_hashes))
             and isinstance(binding, Mapping)
             and binding.get("context_sha256") == authority.clip_context_sha256
@@ -622,7 +758,7 @@ def consume_candidate_public_text_surface_authority(
             "status": "CONSUMED",
             "candidate_id": candidate_id,
             "authority_sha256": authority.authority_sha256,
-            "algorithm_id": MANUAL_TITLE_ALGORITHM_ID,
+            "algorithm_id": authority.algorithm_id,
             "clip_context_sha256": authority.clip_context_sha256,
             "clip_context_prompt_sha256": _sha256_text(prompt),
             "story_contract_sha256": authority.story_contract_sha256,
@@ -638,6 +774,7 @@ def consume_candidate_public_text_surface_authority(
             "upload_authorized": False,
             "registry_hold_released": False,
             "user_authorization": dict(authority.user_authorization),
+            **({"decision_authorization": dict(authority.decision_authorization)} if authority.decision_authorization else {}),
         }
     if not (
         candidate_id == authority.candidate_id
@@ -846,6 +983,22 @@ def resolve_candidate_public_text_staging(
                 candidate_id=candidate_id,
                 selection_hook=authority.resolved_selection_hook,
                 story_contract=story_contract,
+            ),
+            title_source=authority.title_source,
+        )
+    if authority.is_root_reviewed_resolution:
+        # The decision changes generated public wording only.  Rebuilding the
+        # historical StoryContract would expand scope into subtitle/source
+        # truth; retain its bytes except for the explicitly resolved hook.
+        rebuilt = dict(story_contract)
+        rebuilt["selection_hook"] = authority.resolved_selection_hook
+        return CandidatePublicTextStagingResolution(
+            selection_hook=authority.resolved_selection_hook,
+            title=authority.resolved_title,
+            story_contract=rebuilt,
+            consumption=consume_candidate_public_text_surface_authority(
+                authority, candidate_id=candidate_id,
+                selection_hook=authority.resolved_selection_hook, story_contract=rebuilt,
             ),
             title_source=authority.title_source,
         )
