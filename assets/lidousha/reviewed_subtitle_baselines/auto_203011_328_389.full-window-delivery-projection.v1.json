@@ -1,0 +1,208 @@
+{
+  "schema_version": "fastlane-c2-full-window-delivery-projection.v1",
+  "candidate_id": "auto_203011_328_389",
+  "padded_fresh_sha256": "82a2acf76995030215e33cd03dc99aacc25f78eb9f619f7177675a74acd2247c",
+  "final_start_ms": 9750,
+  "final_end_ms": 71070,
+  "delivery_cue_count": 22,
+  "rows": [
+    {
+      "full_cue": 3,
+      "delivery_cue": 1,
+      "full_start_ms": 10000,
+      "full_end_ms": 11820,
+      "delivery_start_ms": 250,
+      "delivery_end_ms": 2070,
+      "text": "告诉小李今晚不回去"
+    },
+    {
+      "full_cue": 4,
+      "delivery_cue": 2,
+      "full_start_ms": 11820,
+      "full_end_ms": 13480,
+      "delivery_start_ms": 2070,
+      "delivery_end_ms": 3730,
+      "text": "小李就在这呢"
+    },
+    {
+      "full_cue": 5,
+      "delivery_cue": 3,
+      "full_start_ms": 13520,
+      "full_end_ms": 17340,
+      "delivery_start_ms": 3770,
+      "delivery_end_ms": 7590,
+      "text": "小李也同时存在在这个直播间"
+    },
+    {
+      "full_cue": 6,
+      "delivery_cue": 4,
+      "full_start_ms": 17340,
+      "full_end_ms": 18470,
+      "delivery_start_ms": 7590,
+      "delivery_end_ms": 8720,
+      "text": "谢谢苍老师"
+    },
+    {
+      "full_cue": 7,
+      "delivery_cue": 5,
+      "full_start_ms": 18470,
+      "full_end_ms": 20990,
+      "delivery_start_ms": 8720,
+      "delivery_end_ms": 11240,
+      "text": "小豆老公；； 不是你老公"
+    },
+    {
+      "full_cue": 8,
+      "delivery_cue": 6,
+      "full_start_ms": 20990,
+      "full_end_ms": 23980,
+      "delivery_start_ms": 11240,
+      "delivery_end_ms": 14230,
+      "text": "老公；；今天早上去拔了智齿；；"
+    },
+    {
+      "full_cue": 9,
+      "delivery_cue": 7,
+      "full_start_ms": 23980,
+      "full_end_ms": 26900,
+      "delivery_start_ms": 14230,
+      "delivery_end_ms": 17150,
+      "text": "痛痛；；想要老公亲亲才能好；；"
+    },
+    {
+      "full_cue": 10,
+      "delivery_cue": 8,
+      "full_start_ms": 27180,
+      "full_end_ms": 30460,
+      "delivery_start_ms": 17430,
+      "delivery_end_ms": 20710,
+      "text": "这下知道拔智齿了，痛了吧"
+    },
+    {
+      "full_cue": 11,
+      "delivery_cue": 9,
+      "full_start_ms": 31110,
+      "full_end_ms": 33790,
+      "delivery_start_ms": 21360,
+      "delivery_end_ms": 24040,
+      "text": "这下还敢嘲笑我"
+    },
+    {
+      "full_cue": 12,
+      "delivery_cue": 10,
+      "full_start_ms": 33830,
+      "full_end_ms": 36670,
+      "delivery_start_ms": 24080,
+      "delivery_end_ms": 26920,
+      "text": "这下谁还敢嘲笑我"
+    },
+    {
+      "full_cue": 13,
+      "delivery_cue": 11,
+      "full_start_ms": 37250,
+      "full_end_ms": 40350,
+      "delivery_start_ms": 27500,
+      "delivery_end_ms": 30600,
+      "text": "这下知道拔智齿有多痛了吧"
+    },
+    {
+      "full_cue": 14,
+      "delivery_cue": 12,
+      "full_start_ms": 40350,
+      "full_end_ms": 41850,
+      "delivery_start_ms": 30600,
+      "delivery_end_ms": 32100,
+      "text": "你哭也没用"
+    },
+    {
+      "full_cue": 15,
+      "delivery_cue": 13,
+      "full_start_ms": 42280,
+      "full_end_ms": 44360,
+      "delivery_start_ms": 32530,
+      "delivery_end_ms": 34610,
+      "text": "哭也不会安慰你的"
+    },
+    {
+      "full_cue": 16,
+      "delivery_cue": 14,
+      "full_start_ms": 44360,
+      "full_end_ms": 46020,
+      "delivery_start_ms": 34610,
+      "delivery_end_ms": 36270,
+      "text": "我只会嘲笑你"
+    },
+    {
+      "full_cue": 17,
+      "delivery_cue": 15,
+      "full_start_ms": 46020,
+      "full_end_ms": 46920,
+      "delivery_start_ms": 36270,
+      "delivery_end_ms": 37170,
+      "text": "哎呀"
+    },
+    {
+      "full_cue": 18,
+      "delivery_cue": 16,
+      "full_start_ms": 48480,
+      "full_end_ms": 50680,
+      "delivery_start_ms": 38730,
+      "delivery_end_ms": 40930,
+      "text": "碰吧碰你就对了"
+    },
+    {
+      "full_cue": 19,
+      "delivery_cue": 17,
+      "full_start_ms": 52780,
+      "full_end_ms": 54380,
+      "delivery_start_ms": 43030,
+      "delivery_end_ms": 44630,
+      "text": "看对了啊"
+    },
+    {
+      "full_cue": 20,
+      "delivery_cue": 18,
+      "full_start_ms": 56620,
+      "full_end_ms": 58580,
+      "delivery_start_ms": 46870,
+      "delivery_end_ms": 48830,
+      "text": "小豆声音好大"
+    },
+    {
+      "full_cue": 21,
+      "delivery_cue": 19,
+      "full_start_ms": 58940,
+      "full_end_ms": 62300,
+      "delivery_start_ms": 49190,
+      "delivery_end_ms": 52550,
+      "text": "小豆刚刚被夺舍了"
+    },
+    {
+      "full_cue": 22,
+      "delivery_cue": 20,
+      "full_start_ms": 63670,
+      "full_end_ms": 65710,
+      "delivery_start_ms": 53920,
+      "delivery_end_ms": 55960,
+      "text": "刚被夺舍了一下"
+    },
+    {
+      "full_cue": 23,
+      "delivery_cue": 21,
+      "full_start_ms": 65830,
+      "full_end_ms": 68610,
+      "delivery_start_ms": 56080,
+      "delivery_end_ms": 58860,
+      "text": "小豆哪有好吵"
+    },
+    {
+      "full_cue": 24,
+      "delivery_cue": 22,
+      "full_start_ms": 68610,
+      "full_end_ms": 70990,
+      "delivery_start_ms": 58860,
+      "delivery_end_ms": 61240,
+      "text": "都是安静美女来着"
+    }
+  ]
+}

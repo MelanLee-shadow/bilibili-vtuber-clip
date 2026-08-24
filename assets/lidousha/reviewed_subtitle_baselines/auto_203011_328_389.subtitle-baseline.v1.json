@@ -5,7 +5,7 @@
   "mode": "preserve_text_outside_source_truth",
   "exact_interval_replay": true,
   "path": "auto_203011_328_389.reviewed.srt",
-  "sha256": "3cb16000b1bb34f205ffd6db524e3a2874108666bb4b34d0b6902654900572c1",
+  "sha256": "7e078d8801a2a83b90ec344ec67cc3f4bd245ed15ce11bdf7810815057523ee6",
   "authority": "Claude raw line e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; content 0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b; exhaustive C2 fastlane repair.",
   "source_recording_basename": "22966160_20260813-20-30-11.mp4",
   "source_sha256": "b5a7861c7283914742783ccc740531d9a21bdf78da7f5b8f90a463cb9d7f209e",
@@ -13,37 +13,37 @@
   "absolute_source_end_ms": 437660,
   "operator_text_full_ownership": {
     "schema_version": "operator-reviewed-text-full-ownership-pin.v3",
-    "baseline_sha256": "3cb16000b1bb34f205ffd6db524e3a2874108666bb4b34d0b6902654900572c1",
-    "pipeline_srt_sha256": "4122f3392a9531d200bf2cd6d6c10b1aeafd60d48f9b58553fdbfacc6ac4bcba",
-    "decision_ledger_sha256": "6a828000d812d297fac5dcce26480bbf400f9780fe56bd6ad414955759ed8586",
-    "diagnostic_diff_sha256": "58d7b703b989440cf525ea416efdc9dc40d19011936e3e9e44d79789a141dda5",
+    "baseline_sha256": "7e078d8801a2a83b90ec344ec67cc3f4bd245ed15ce11bdf7810815057523ee6",
+    "pipeline_srt_sha256": "82a2acf76995030215e33cd03dc99aacc25f78eb9f619f7177675a74acd2247c",
+    "decision_ledger_sha256": "2087ea81f92feb4dcbc8f4c385c10631f200527d2207abefeb4fafba81a72277",
+    "diagnostic_diff_sha256": "d49213855b92c0f9c8b17134418c3cbdd6d44efb8defd9a6d4b66041167ba6c1",
     "operator_authority": {
       "kind": "IVAN_OPERATOR",
-      "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; raw JSONL line sha256 including LF e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; Ivan ruling #2: 0:14 exact 小豆老公；； 不是你老公; 1:04 is direct response to danmaku 小豆好吵（, fixed as the current reviewed direct-response text 小豆哪有好吵. Ivan later clarified that correcting all named fastlane errors authorizes direct upload."
+      "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; raw JSONL line sha256 including LF e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; the exact C2 repairs are 0:14 小豆老公；； 不是你老公 and the 1:04 direct response to danmaku 小豆好吵（ as 小豆哪有好吵."
     },
-    "source_cue_count": 22,
-    "release_cue_count": 22,
-    "changed_cue_count": 1,
-    "operator_exact_text_cue_count": 1,
-    "operator_unchanged_freeze_cue_count": 21,
+    "source_cue_count": 44,
+    "release_cue_count": 44,
+    "changed_cue_count": 2,
+    "operator_exact_text_cue_count": 2,
+    "operator_unchanged_freeze_cue_count": 42,
     "operator_drop_cue_count": 0,
     "speaker_authority": "NOT_CLAIMED_TEXT_ONLY"
   },
   "operator_truth_lanes": {
     "schema_version": "operator-reviewed-subtitle-truth-lanes.v2",
     "release_truth": {
-      "srt_sha256": "3cb16000b1bb34f205ffd6db524e3a2874108666bb4b34d0b6902654900572c1"
+      "srt_sha256": "7e078d8801a2a83b90ec344ec67cc3f4bd245ed15ce11bdf7810815057523ee6"
     },
     "pipeline_diagnostic": {
-      "sha256": "4122f3392a9531d200bf2cd6d6c10b1aeafd60d48f9b58553fdbfacc6ac4bcba",
+      "sha256": "82a2acf76995030215e33cd03dc99aacc25f78eb9f619f7177675a74acd2247c",
       "path": "auto_203011_328_389.pipeline-diagnostic.srt"
     },
     "decision_ledger": {
-      "sha256": "6a828000d812d297fac5dcce26480bbf400f9780fe56bd6ad414955759ed8586",
+      "sha256": "2087ea81f92feb4dcbc8f4c385c10631f200527d2207abefeb4fafba81a72277",
       "path": "auto_203011_328_389.operator-decisions.v3.json"
     },
     "diff_receipt": {
-      "sha256": "58d7b703b989440cf525ea416efdc9dc40d19011936e3e9e44d79789a141dda5",
+      "sha256": "d49213855b92c0f9c8b17134418c3cbdd6d44efb8defd9a6d4b66041167ba6c1",
       "path": "auto_203011_328_389.operator-truth-diff.v2.json"
     }
   }

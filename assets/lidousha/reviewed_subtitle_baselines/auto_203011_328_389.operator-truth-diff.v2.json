@@ -1,238 +1,462 @@
 {
   "schema_version": "operator-reviewed-subtitle-truth-diff.v2",
   "candidate_id": "auto_203011_328_389",
-  "pipeline_srt_sha256": "4122f3392a9531d200bf2cd6d6c10b1aeafd60d48f9b58553fdbfacc6ac4bcba",
-  "release_truth_srt_sha256": "3cb16000b1bb34f205ffd6db524e3a2874108666bb4b34d0b6902654900572c1",
-  "decision_ledger_sha256": "6a828000d812d297fac5dcce26480bbf400f9780fe56bd6ad414955759ed8586",
-  "cue_count": 22,
-  "source_cue_count": 22,
-  "release_cue_count": 22,
+  "pipeline_srt_sha256": "82a2acf76995030215e33cd03dc99aacc25f78eb9f619f7177675a74acd2247c",
+  "release_truth_srt_sha256": "7e078d8801a2a83b90ec344ec67cc3f4bd245ed15ce11bdf7810815057523ee6",
+  "decision_ledger_sha256": "2087ea81f92feb4dcbc8f4c385c10631f200527d2207abefeb4fafba81a72277",
+  "cue_count": 44,
+  "source_cue_count": 44,
+  "release_cue_count": 44,
   "operator_drop_cue_count": 0,
-  "changed_cue_count": 1,
+  "changed_cue_count": 2,
   "rows": [
     {
       "cue": 1,
       "source_index": "1",
-      "start_ms": 250,
-      "end_ms": 2070,
-      "pipeline_text": "告诉小李今晚不回去",
+      "start_ms": 120,
+      "end_ms": 2640,
+      "pipeline_text": "官网小豆崽，你好",
       "disposition": "OPERATOR_UNCHANGED_FREEZE",
       "release_cue_index": 1,
-      "release_truth_text": "告诉小李今晚不回去"
+      "release_truth_text": "官网小豆崽，你好"
     },
     {
       "cue": 2,
       "source_index": "2",
-      "start_ms": 2070,
-      "end_ms": 3730,
-      "pipeline_text": "小李就在这呢",
+      "start_ms": 3700,
+      "end_ms": 8300,
+      "pipeline_text": "你好，小豆感觉很适合被叫小豆崽",
       "disposition": "OPERATOR_UNCHANGED_FREEZE",
       "release_cue_index": 2,
-      "release_truth_text": "小李就在这呢"
+      "release_truth_text": "你好，小豆感觉很适合被叫小豆崽"
     },
     {
       "cue": 3,
       "source_index": "3",
-      "start_ms": 3770,
-      "end_ms": 7590,
-      "pipeline_text": "小李也同时存在在这个直播间",
+      "start_ms": 10000,
+      "end_ms": 11820,
+      "pipeline_text": "告诉小李今晚不回去",
       "disposition": "OPERATOR_UNCHANGED_FREEZE",
       "release_cue_index": 3,
-      "release_truth_text": "小李也同时存在在这个直播间"
+      "release_truth_text": "告诉小李今晚不回去"
     },
     {
       "cue": 4,
       "source_index": "4",
-      "start_ms": 7590,
-      "end_ms": 8720,
-      "pipeline_text": "谢谢沧老师",
+      "start_ms": 11820,
+      "end_ms": 13480,
+      "pipeline_text": "小李就在这呢",
       "disposition": "OPERATOR_UNCHANGED_FREEZE",
       "release_cue_index": 4,
-      "release_truth_text": "谢谢沧老师"
+      "release_truth_text": "小李就在这呢"
     },
     {
       "cue": 5,
       "source_index": "5",
-      "start_ms": 8720,
-      "end_ms": 11240,
-      "pipeline_text": "是刚吗？小豆老公不是你老公",
-      "disposition": "OPERATOR_EXACT_TEXT",
+      "start_ms": 13520,
+      "end_ms": 17340,
+      "pipeline_text": "小李也同时存在在这个直播间",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
       "release_cue_index": 5,
-      "release_truth_text": "小豆老公；； 不是你老公",
-      "decision_authority": {
-        "kind": "IVAN_OPERATOR",
-        "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; raw JSONL line sha256 including LF e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; Ivan ruling #2: 0:14 exact 小豆老公；； 不是你老公; 1:04 is direct response to danmaku 小豆好吵（, fixed as the current reviewed direct-response text 小豆哪有好吵. Ivan later clarified that correcting all named fastlane errors authorizes direct upload."
-      }
+      "release_truth_text": "小李也同时存在在这个直播间"
     },
     {
       "cue": 6,
       "source_index": "6",
-      "start_ms": 11240,
-      "end_ms": 14230,
-      "pipeline_text": "老公；；今天早上去拔了智齿；；",
+      "start_ms": 17340,
+      "end_ms": 18470,
+      "pipeline_text": "谢谢苍老师",
       "disposition": "OPERATOR_UNCHANGED_FREEZE",
       "release_cue_index": 6,
-      "release_truth_text": "老公；；今天早上去拔了智齿；；"
+      "release_truth_text": "谢谢苍老师"
     },
     {
       "cue": 7,
       "source_index": "7",
-      "start_ms": 14230,
-      "end_ms": 17150,
-      "pipeline_text": "痛痛；；想要老公亲亲才能好；；",
-      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "start_ms": 18470,
+      "end_ms": 20990,
+      "pipeline_text": "是刚吗？小豆老公不是你老公",
+      "disposition": "OPERATOR_EXACT_TEXT",
       "release_cue_index": 7,
-      "release_truth_text": "痛痛；；想要老公亲亲才能好；；"
+      "release_truth_text": "小豆老公；； 不是你老公",
+      "decision_authority": {
+        "kind": "IVAN_OPERATOR",
+        "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; raw JSONL line sha256 including LF e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; the exact C2 repairs are 0:14 小豆老公；； 不是你老公 and the 1:04 direct response to danmaku 小豆好吵（ as 小豆哪有好吵."
+      }
     },
     {
       "cue": 8,
       "source_index": "8",
-      "start_ms": 17430,
-      "end_ms": 20710,
-      "pipeline_text": "这下知道拔智齿有多痛了吧",
+      "start_ms": 20990,
+      "end_ms": 23980,
+      "pipeline_text": "老公；；今天早上去拔了智齿；；",
       "disposition": "OPERATOR_UNCHANGED_FREEZE",
       "release_cue_index": 8,
-      "release_truth_text": "这下知道拔智齿有多痛了吧"
+      "release_truth_text": "老公；；今天早上去拔了智齿；；"
     },
     {
       "cue": 9,
       "source_index": "9",
-      "start_ms": 21360,
-      "end_ms": 24040,
-      "pipeline_text": "这下还敢嘲笑我",
+      "start_ms": 23980,
+      "end_ms": 26900,
+      "pipeline_text": "痛痛；；想要老公亲亲才能好；；",
       "disposition": "OPERATOR_UNCHANGED_FREEZE",
       "release_cue_index": 9,
-      "release_truth_text": "这下还敢嘲笑我"
+      "release_truth_text": "痛痛；；想要老公亲亲才能好；；"
     },
     {
       "cue": 10,
       "source_index": "10",
-      "start_ms": 24080,
-      "end_ms": 26920,
-      "pipeline_text": "这下谁还敢嘲笑我",
+      "start_ms": 27180,
+      "end_ms": 30460,
+      "pipeline_text": "这下知道拔智齿了，痛了吧",
       "disposition": "OPERATOR_UNCHANGED_FREEZE",
       "release_cue_index": 10,
-      "release_truth_text": "这下谁还敢嘲笑我"
+      "release_truth_text": "这下知道拔智齿了，痛了吧"
     },
     {
       "cue": 11,
       "source_index": "11",
-      "start_ms": 27500,
-      "end_ms": 30600,
-      "pipeline_text": "这下知道拔智齿有多痛了吧",
+      "start_ms": 31110,
+      "end_ms": 33790,
+      "pipeline_text": "这下还敢嘲笑我",
       "disposition": "OPERATOR_UNCHANGED_FREEZE",
       "release_cue_index": 11,
-      "release_truth_text": "这下知道拔智齿有多痛了吧"
+      "release_truth_text": "这下还敢嘲笑我"
     },
     {
       "cue": 12,
       "source_index": "12",
-      "start_ms": 30600,
-      "end_ms": 32100,
-      "pipeline_text": "你哭也没用",
+      "start_ms": 33830,
+      "end_ms": 36670,
+      "pipeline_text": "这下谁还敢嘲笑我",
       "disposition": "OPERATOR_UNCHANGED_FREEZE",
       "release_cue_index": 12,
-      "release_truth_text": "你哭也没用"
+      "release_truth_text": "这下谁还敢嘲笑我"
     },
     {
       "cue": 13,
       "source_index": "13",
-      "start_ms": 32530,
-      "end_ms": 34610,
-      "pipeline_text": "哭也不会安慰你的",
+      "start_ms": 37250,
+      "end_ms": 40350,
+      "pipeline_text": "这下知道拔智齿有多痛了吧",
       "disposition": "OPERATOR_UNCHANGED_FREEZE",
       "release_cue_index": 13,
-      "release_truth_text": "哭也不会安慰你的"
+      "release_truth_text": "这下知道拔智齿有多痛了吧"
     },
     {
       "cue": 14,
       "source_index": "14",
-      "start_ms": 34610,
-      "end_ms": 36270,
-      "pipeline_text": "我只会嘲笑你",
+      "start_ms": 40350,
+      "end_ms": 41850,
+      "pipeline_text": "你哭也没用",
       "disposition": "OPERATOR_UNCHANGED_FREEZE",
       "release_cue_index": 14,
-      "release_truth_text": "我只会嘲笑你"
+      "release_truth_text": "你哭也没用"
     },
     {
       "cue": 15,
       "source_index": "15",
-      "start_ms": 36270,
-      "end_ms": 37270,
-      "pipeline_text": "哎呀",
+      "start_ms": 42280,
+      "end_ms": 44360,
+      "pipeline_text": "哭也不会安慰你的",
       "disposition": "OPERATOR_UNCHANGED_FREEZE",
       "release_cue_index": 15,
-      "release_truth_text": "哎呀"
+      "release_truth_text": "哭也不会安慰你的"
     },
     {
       "cue": 16,
       "source_index": "16",
-      "start_ms": 38730,
-      "end_ms": 40930,
-      "pipeline_text": "痛吧痛你就对了",
+      "start_ms": 44360,
+      "end_ms": 46020,
+      "pipeline_text": "我只会嘲笑你",
       "disposition": "OPERATOR_UNCHANGED_FREEZE",
       "release_cue_index": 16,
-      "release_truth_text": "痛吧痛你就对了"
+      "release_truth_text": "我只会嘲笑你"
     },
     {
       "cue": 17,
       "source_index": "17",
-      "start_ms": 43030,
-      "end_ms": 44630,
-      "pipeline_text": "痛就对了啊",
+      "start_ms": 46020,
+      "end_ms": 46920,
+      "pipeline_text": "哎呀",
       "disposition": "OPERATOR_UNCHANGED_FREEZE",
       "release_cue_index": 17,
-      "release_truth_text": "痛就对了啊"
+      "release_truth_text": "哎呀"
     },
     {
       "cue": 18,
       "source_index": "18",
-      "start_ms": 46870,
-      "end_ms": 48830,
-      "pipeline_text": "小豆声音好大",
+      "start_ms": 48480,
+      "end_ms": 50680,
+      "pipeline_text": "碰吧碰你就对了",
       "disposition": "OPERATOR_UNCHANGED_FREEZE",
       "release_cue_index": 18,
-      "release_truth_text": "小豆声音好大"
+      "release_truth_text": "碰吧碰你就对了"
     },
     {
       "cue": 19,
       "source_index": "19",
-      "start_ms": 49190,
-      "end_ms": 52550,
-      "pipeline_text": "小豆刚刚被夺舍了",
+      "start_ms": 52780,
+      "end_ms": 54380,
+      "pipeline_text": "看对了啊",
       "disposition": "OPERATOR_UNCHANGED_FREEZE",
       "release_cue_index": 19,
-      "release_truth_text": "小豆刚刚被夺舍了"
+      "release_truth_text": "看对了啊"
     },
     {
       "cue": 20,
       "source_index": "20",
-      "start_ms": 53920,
-      "end_ms": 55960,
-      "pipeline_text": "刚被夺舍了一下",
+      "start_ms": 56620,
+      "end_ms": 58580,
+      "pipeline_text": "小豆声音好大",
       "disposition": "OPERATOR_UNCHANGED_FREEZE",
       "release_cue_index": 20,
-      "release_truth_text": "刚被夺舍了一下"
+      "release_truth_text": "小豆声音好大"
     },
     {
       "cue": 21,
       "source_index": "21",
-      "start_ms": 56080,
-      "end_ms": 58860,
-      "pipeline_text": "小豆哪有好吵",
+      "start_ms": 58940,
+      "end_ms": 62300,
+      "pipeline_text": "小豆刚刚被夺舍了",
       "disposition": "OPERATOR_UNCHANGED_FREEZE",
       "release_cue_index": 21,
-      "release_truth_text": "小豆哪有好吵"
+      "release_truth_text": "小豆刚刚被夺舍了"
     },
     {
       "cue": 22,
       "source_index": "22",
-      "start_ms": 58860,
-      "end_ms": 61240,
-      "pipeline_text": "都是安静美女来着",
+      "start_ms": 63670,
+      "end_ms": 65710,
+      "pipeline_text": "刚被夺舍了一下",
       "disposition": "OPERATOR_UNCHANGED_FREEZE",
       "release_cue_index": 22,
+      "release_truth_text": "刚被夺舍了一下"
+    },
+    {
+      "cue": 23,
+      "source_index": "23",
+      "start_ms": 65830,
+      "end_ms": 68610,
+      "pipeline_text": "小豆没有好吵",
+      "disposition": "OPERATOR_EXACT_TEXT",
+      "release_cue_index": 23,
+      "release_truth_text": "小豆哪有好吵",
+      "decision_authority": {
+        "kind": "IVAN_OPERATOR",
+        "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; raw JSONL line sha256 including LF e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; the exact C2 repairs are 0:14 小豆老公；； 不是你老公 and the 1:04 direct response to danmaku 小豆好吵（ as 小豆哪有好吵."
+      }
+    },
+    {
+      "cue": 24,
+      "source_index": "24",
+      "start_ms": 68610,
+      "end_ms": 70990,
+      "pipeline_text": "都是安静美女来着",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 24,
       "release_truth_text": "都是安静美女来着"
+    },
+    {
+      "cue": 25,
+      "source_index": "25",
+      "start_ms": 71170,
+      "end_ms": 73990,
+      "pipeline_text": "谢谢美国老师的钢木仔仔可爱",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 25,
+      "release_truth_text": "谢谢美国老师的钢木仔仔可爱"
+    },
+    {
+      "cue": 26,
+      "source_index": "26",
+      "start_ms": 73990,
+      "end_ms": 75170,
+      "pipeline_text": "谢谢你",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 26,
+      "release_truth_text": "谢谢你"
+    },
+    {
+      "cue": 27,
+      "source_index": "27",
+      "start_ms": 75610,
+      "end_ms": 76890,
+      "pipeline_text": "谢谢你",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 27,
+      "release_truth_text": "谢谢你"
+    },
+    {
+      "cue": 28,
+      "source_index": "28",
+      "start_ms": 77250,
+      "end_ms": 80430,
+      "pipeline_text": "嘿嘿，谢谢小松人口的钢镚",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 28,
+      "release_truth_text": "嘿嘿，谢谢小松人口的钢镚"
+    },
+    {
+      "cue": 29,
+      "source_index": "29",
+      "start_ms": 80430,
+      "end_ms": 83790,
+      "pipeline_text": "妈妈妈妈看了23分钟就行。好，收到",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 29,
+      "release_truth_text": "妈妈妈妈看了23分钟就行。好，收到"
+    },
+    {
+      "cue": 30,
+      "source_index": "30",
+      "start_ms": 83930,
+      "end_ms": 85550,
+      "pipeline_text": "我们把练习课看完",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 30,
+      "release_truth_text": "我们把练习课看完"
+    },
+    {
+      "cue": 31,
+      "source_index": "31",
+      "start_ms": 85550,
+      "end_ms": 88410,
+      "pipeline_text": "然后就一起看大家推的视频哦",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 31,
+      "release_truth_text": "然后就一起看大家推的视频哦"
+    },
+    {
+      "cue": 32,
+      "source_index": "32",
+      "start_ms": 88450,
+      "end_ms": 89690,
+      "pipeline_text": "昨天推了好多",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 32,
+      "release_truth_text": "昨天推了好多"
+    },
+    {
+      "cue": 33,
+      "source_index": "33",
+      "start_ms": 89690,
+      "end_ms": 92170,
+      "pipeline_text": "然后之前还有一个，嗯",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 33,
+      "release_truth_text": "然后之前还有一个，嗯"
+    },
+    {
+      "cue": 34,
+      "source_index": "34",
+      "start_ms": 92670,
+      "end_ms": 97190,
+      "pipeline_text": "别这样说的那个那个那个视频",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 34,
+      "release_truth_text": "别这样说的那个那个那个视频"
+    },
+    {
+      "cue": 35,
+      "source_index": "35",
+      "start_ms": 97330,
+      "end_ms": 99130,
+      "pipeline_text": "好，那么我们",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 35,
+      "release_truth_text": "好，那么我们"
+    },
+    {
+      "cue": 36,
+      "source_index": "36",
+      "start_ms": 99130,
+      "end_ms": 101310,
+      "pipeline_text": "嗯，我正好还没吃晚饭",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 36,
+      "release_truth_text": "嗯，我正好还没吃晚饭"
+    },
+    {
+      "cue": 37,
+      "source_index": "37",
+      "start_ms": 101310,
+      "end_ms": 105090,
+      "pipeline_text": "刚刚一直都在弄这个上海的事情",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 37,
+      "release_truth_text": "刚刚一直都在弄这个上海的事情"
+    },
+    {
+      "cue": 38,
+      "source_index": "38",
+      "start_ms": 105130,
+      "end_ms": 107290,
+      "pipeline_text": "那我们先看好不好",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 38,
+      "release_truth_text": "那我们先看好不好"
+    },
+    {
+      "cue": 39,
+      "source_index": "39",
+      "start_ms": 107810,
+      "end_ms": 109650,
+      "pipeline_text": "我们先看看",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 39,
+      "release_truth_text": "我们先看看"
+    },
+    {
+      "cue": 40,
+      "source_index": "40",
+      "start_ms": 110260,
+      "end_ms": 111780,
+      "pipeline_text": "好久没看了",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 40,
+      "release_truth_text": "好久没看了"
+    },
+    {
+      "cue": 41,
+      "source_index": "41",
+      "start_ms": 111820,
+      "end_ms": 114380,
+      "pipeline_text": "谢谢寒-歌的舰长",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 41,
+      "release_truth_text": "谢谢寒-歌的舰长"
+    },
+    {
+      "cue": 42,
+      "source_index": "42",
+      "start_ms": 114380,
+      "end_ms": 115220,
+      "pipeline_text": "谢谢你",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 42,
+      "release_truth_text": "谢谢你"
+    },
+    {
+      "cue": 43,
+      "source_index": "43",
+      "start_ms": 115220,
+      "end_ms": 116100,
+      "pipeline_text": "欢迎上船",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 43,
+      "release_truth_text": "欢迎上船"
+    },
+    {
+      "cue": 44,
+      "source_index": "44",
+      "start_ms": 116500,
+      "end_ms": 118860,
+      "pipeline_text": "谢绝不糊涂老板的少年线",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 44,
+      "release_truth_text": "谢绝不糊涂老板的少年线"
     }
   ]
 }

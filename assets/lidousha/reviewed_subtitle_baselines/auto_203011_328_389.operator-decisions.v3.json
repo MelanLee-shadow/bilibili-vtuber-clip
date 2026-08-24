@@ -2,10 +2,10 @@
   "schema_version": "operator-reviewed-subtitle-decisions.v3",
   "candidate_id": "auto_203011_328_389",
   "report_scope": "EXHAUSTIVE",
-  "pipeline_srt_sha256": "4122f3392a9531d200bf2cd6d6c10b1aeafd60d48f9b58553fdbfacc6ac4bcba",
+  "pipeline_srt_sha256": "82a2acf76995030215e33cd03dc99aacc25f78eb9f619f7177675a74acd2247c",
   "operator_authority": {
     "kind": "IVAN_OPERATOR",
-    "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; raw JSONL line sha256 including LF e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; Ivan ruling #2: 0:14 exact 小豆老公；； 不是你老公; 1:04 is direct response to danmaku 小豆好吵（, fixed as the current reviewed direct-response text 小豆哪有好吵. Ivan later clarified that correcting all named fastlane errors authorizes direct upload."
+    "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; raw JSONL line sha256 including LF e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; the exact C2 repairs are 0:14 小豆老公；； 不是你老公 and the 1:04 direct response to danmaku 小豆好吵（ as 小豆哪有好吵."
   },
   "cue_decisions": [
     {
@@ -26,9 +26,7 @@
     },
     {
       "cue": 5,
-      "disposition": "OPERATOR_EXACT_TEXT",
-      "release_text": "小豆老公；； 不是你老公",
-      "decision_authority": "LEDGER_OPERATOR_AUTHORITY"
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
     },
     {
       "cue": 6,
@@ -36,7 +34,9 @@
     },
     {
       "cue": 7,
-      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+      "disposition": "OPERATOR_EXACT_TEXT",
+      "release_text": "小豆老公；； 不是你老公",
+      "decision_authority": "LEDGER_OPERATOR_AUTHORITY"
     },
     {
       "cue": 8,
@@ -96,6 +96,96 @@
     },
     {
       "cue": 22,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 23,
+      "disposition": "OPERATOR_EXACT_TEXT",
+      "release_text": "小豆哪有好吵",
+      "decision_authority": "LEDGER_OPERATOR_AUTHORITY"
+    },
+    {
+      "cue": 24,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 25,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 26,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 27,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 28,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 29,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 30,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 31,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 32,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 33,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 34,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 35,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 36,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 37,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 38,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 39,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 40,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 41,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 42,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 43,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 44,
       "disposition": "OPERATOR_UNCHANGED_FREEZE"
     }
   ]
