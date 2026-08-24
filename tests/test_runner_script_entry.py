@@ -2217,3 +2217,167 @@ def test_deploy_authority_identity_is_captured_and_restored_on_every_path(tmp_pa
         )
         assert removed.returncode == 0, removed.stderr
         assert not absent_destination.exists()
+
+
+def test_postcommit_guard_recovery_classifies_only_strict_stamp_relations(tmp_path):
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    classifier = source.split("<<'REMOTE_RECOVERY_KIND'\n", 1)[1].split(
+        "\nREMOTE_RECOVERY_KIND", 1
+    )[0]
+    commit = "a" * 40
+    old = "b" * 40
+    owner = f"{commit}-20260824T145737Z-1"
+
+    def classify(current: str, previous: str) -> subprocess.CompletedProcess[str]:
+        base = tmp_path / f"{current[:1]}-{previous[:1]}"
+        repo = base / "repo"
+        backup = base / f"repo.rollback-{commit}"
+        repo.mkdir(parents=True)
+        backup.mkdir()
+        (repo / "DEPLOYED_COMMIT").write_text(current + " deployed\n", encoding="utf-8")
+        (backup / "DEPLOYED_COMMIT.old").write_text(previous + " deployed\n", encoding="utf-8")
+        return subprocess.run(
+            ["bash", "-c", classifier, "kind", str(base), owner],
+            text=True, capture_output=True, check=False,
+        )
+
+    assert classify(commit, old).stdout.strip() == "POSTCOMMIT_SUCCESS_CLEANUP"
+    assert classify(old, old).stdout.strip() == "PRECOMMIT_OR_ROLLBACK"
+    for current, previous in ((commit, commit), (old, commit), ("c" * 40, old)):
+        assert classify(current, previous).returncode != 0
+
+
+def test_postcommit_guard_recovery_holds_runtime_locks_not_fuser_probe():
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    recovery = source.split("<<'REMOTE_POSTCOMMIT_GUARD_RECOVERY'\n", 1)[1].split(
+        "\nREMOTE_POSTCOMMIT_GUARD_RECOVERY", 1
+    )[0]
+    assert "fuser" not in recovery
+    assert 'exec 9<>"$base/tick.lock"; /usr/bin/flock -n 9' in recovery
+    assert 'exec 8<>"$base/runner.lock"; /usr/bin/flock -n 8' in recovery
+    assert 'exec 7<>"$base/upload.lock"; /usr/bin/flock -n 7' in recovery
+
+
+def test_postcommit_guard_recovery_executes_fixture_and_fails_closed(tmp_path):
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    remote = source.split("<<'REMOTE_POSTCOMMIT_GUARD_RECOVERY'\n", 1)[1].split(
+        "\nREMOTE_POSTCOMMIT_GUARD_RECOVERY", 1
+    )[0]
+    commit, old = "a" * 40, "b" * 40
+    owner = f"{commit}-20260824T145737Z-1"
+
+    def build(name: str):
+        root = tmp_path / name; base = root / "autoslice"; repo = base / "repo"
+        backup = base / f"repo.rollback-{commit}"; guard = base / "deploy.guard"
+        rec = root / "recording"; app = root / "uploader"
+        for p in (repo / "scripts", repo / "src/autoslice", repo / "ops/recording", repo / "assets/lidousha", rec): p.mkdir(parents=True, exist_ok=True)
+        (repo / "src/__init__.py").touch(); (repo / "src/autoslice/__init__.py").touch()
+        (repo / "scripts/free_session_autoslice.py").write_text("runner\n")
+        (repo / "scripts/free_mount_watchdog.sh").write_text("watch\n")
+        (repo / "scripts/clouddrive_upload_fatal_sentinel.sh").write_text("sentinel\n")
+        (repo / "scripts/free_do_upload.sh").write_text("uploader\n")
+        (repo / "ops/recording/bililive_recorder_adapter.py").write_text("adapter\n")
+        (repo / "assets/lidousha/publication_registry.v1.json").write_text("{}")
+        (repo / "src/autoslice/repository_asset_authority.py").write_text("def build_deployed_authority_manifest(*,repo_root,deployed_commit,relative_paths): return {'commit': deployed_commit}\n")
+        (repo / "DEPLOYED_COMMIT").write_text(commit + " deployed\n")
+        (repo / "DEPLOYED_AUTHORITY_MANIFEST.json").write_text(json.dumps({"commit": commit}))
+        guard.mkdir(); (guard / "owner").write_text(owner + "\n"); (base / "DISABLED").touch()
+        for lock in ("tick.lock", "runner.lock", "upload.lock"): (base / lock).write_bytes((lock + " sentinel\n").encode())
+        for src, dst in ((repo / "scripts/free_mount_watchdog.sh", base / "free_mount_watchdog.sh"),(repo / "scripts/clouddrive_upload_fatal_sentinel.sh",base / "upload_fatal_sentinel.sh"),(repo / "scripts/free_do_upload.sh",app),(repo / "ops/recording/bililive_recorder_adapter.py",rec / "bililive_recorder_adapter.py")):
+            dst.parent.mkdir(parents=True, exist_ok=True); dst.write_bytes(src.read_bytes())
+        backup.mkdir(); (backup / "DEPLOYED_COMMIT.old").write_text(old + " deployed\n")
+        import shutil, stat
+        for n in ("scripts","src","ops","assets") : shutil.copytree(repo / n, backup / n)
+        def inventory(path):
+            rows={}
+            for n in ("scripts","src","ops","assets","profiles",".agent","docs","cleanup_manifests","AGENTS.md","README.md"):
+                p=path/n
+                if not p.exists(): continue
+                for q in (p,*p.rglob('*')):
+                    s=q.lstat(); rel=q.relative_to(path).as_posix()
+                    rows[rel]={"type":"dir","mode":stat.S_IMODE(s.st_mode)} if q.is_dir() else {"type":"file","mode":stat.S_IMODE(s.st_mode),"sha256":hashlib.sha256(q.read_bytes()).hexdigest()}
+            return rows
+        (backup / "repo.manifest.old.json").write_text(json.dumps(inventory(backup)))
+        tree=hashlib.sha256(json.dumps(inventory(repo),ensure_ascii=False,sort_keys=True,separators=(",",":" )).encode()).hexdigest()
+        runner=hashlib.md5((repo / "scripts/free_session_autoslice.py").read_bytes()).hexdigest()
+        script="flock() { return 0; }\n" + remote.replace("/usr/bin/flock", "flock").replace("/opt/bilive/recording",str(rec)).replace("/opt/bilive/app/tmp_manual_upload/do_upload.sh",str(app))
+        return base, backup, guard, script, tree, runner
+    def run(name, mutate=None, busy_fd=None, wrong_owner=False, runner_drift=False):
+        base, backup, guard, script, tree, runner = build(name)
+        if mutate: mutate(base, backup, guard)
+        if wrong_owner: (guard / "owner").write_text("c" * 40 + "-20260824T145737Z-1\n")
+        if busy_fd is not None: script = script.replace(f"flock -n {busy_fd}", "false")
+        if runner_drift: runner = "0" * 32
+        result=subprocess.run(["bash","-c",script,"post",str(base),owner,tree,runner],text=True,capture_output=True,check=False)
+        return result, backup, guard
+    ok, backup, guard = run("ok")
+    assert ok.returncode == 0, ok.stderr
+    assert not backup.exists() and not guard.exists()
+    assert (backup.parent / "tick.lock").read_bytes() == b"tick.lock sentinel\n"
+    def symlink_file(path):
+        saved = path.with_name(path.name + ".saved"); path.rename(saved); path.symlink_to(saved.name)
+    def symlink_dir(path):
+        saved = path.with_name(path.name + ".saved"); path.rename(saved); path.symlink_to(saved.name, target_is_directory=True)
+    def type_drift(path):
+        path.unlink(); path.mkdir()
+    for label, mutate in {
+        "extra-guard": lambda b,k,g: (g / "extra").touch(),
+        "stage": lambda b,k,g: (b / f"repo.deploy-{commit}").mkdir(),
+        "stamp": lambda b,k,g: (b / "repo/DEPLOYED_COMMIT").write_text(old),
+        "disabled-link": lambda b,k,g: ((b / "DISABLED").unlink(), (b / "DISABLED").symlink_to("x")),
+        "auto-upload": lambda b,k,g: (b / "AUTO_UPLOAD").touch(),
+        "tree-drift": lambda b,k,g: (b / "repo/scripts/free_session_autoslice.py").write_text("drift"),
+        "old-manifest": lambda b,k,g: (k / "repo.manifest.old.json").write_text("{}"),
+        "authority": lambda b,k,g: (b / "repo/DEPLOYED_AUTHORITY_MANIFEST.json").write_text("{}"),
+        "backup-stamp": lambda b,k,g: (k / "DEPLOYED_COMMIT.old").write_text(commit),
+        "external": lambda b,k,g: (b / "free_mount_watchdog.sh").write_text("drift"),
+        "backup-mode": lambda b,k,g: (k / "scripts/free_session_autoslice.py").chmod(0o600),
+        "current-stamp-link": lambda b,k,g: symlink_file(b / "repo/DEPLOYED_COMMIT"),
+        "authority-link": lambda b,k,g: symlink_file(b / "repo/DEPLOYED_AUTHORITY_MANIFEST.json"),
+        "backup-stamp-link": lambda b,k,g: symlink_file(k / "DEPLOYED_COMMIT.old"),
+        "old-manifest-link": lambda b,k,g: symlink_file(k / "repo.manifest.old.json"),
+        "backup-link": lambda b,k,g: symlink_dir(k),
+        "guard-link": lambda b,k,g: symlink_dir(g),
+        "old-content": lambda b,k,g: (k / "scripts/free_session_autoslice.py").write_text("old drift"),
+        "old-type": lambda b,k,g: type_drift(k / "scripts/free_session_autoslice.py"),
+        "authority-semantic": lambda b,k,g: (b / "repo/DEPLOYED_AUTHORITY_MANIFEST.json").write_text(json.dumps({"commit": commit, "semantic": "drift"})),
+        "watchdog-drift": lambda b,k,g: (b / "free_mount_watchdog.sh").write_text("drift"),
+        "sentinel-drift": lambda b,k,g: (b / "upload_fatal_sentinel.sh").write_text("drift"),
+        "uploader-drift": lambda b,k,g: (b.parent / "uploader").write_text("drift"),
+        "adapter-drift": lambda b,k,g: (b.parent / "recording/bililive_recorder_adapter.py").write_text("drift"),
+        "stage-link": lambda b,k,g: (b / f"repo.deploy-{commit}").symlink_to("missing"),
+        "auto-link": lambda b,k,g: (b / "AUTO_UPLOAD").symlink_to("missing"),
+        "invalid-old": lambda b,k,g: (k / "DEPLOYED_COMMIT.old").write_text("not-a-sha"),
+        "watchdog-link": lambda b,k,g: symlink_file(b / "free_mount_watchdog.sh"),
+        "sentinel-link": lambda b,k,g: symlink_file(b / "upload_fatal_sentinel.sh"),
+        "uploader-link": lambda b,k,g: symlink_file(b.parent / "uploader"),
+        "adapter-link": lambda b,k,g: symlink_file(b.parent / "recording/bililive_recorder_adapter.py"),
+        "tick-link": lambda b,k,g: symlink_file(b / "tick.lock"),
+        "runner-link": lambda b,k,g: symlink_file(b / "runner.lock"),
+        "upload-link": lambda b,k,g: symlink_file(b / "upload.lock"),
+        "tick-nonregular": lambda b,k,g: (b / "tick.lock").unlink() or (b / "tick.lock").mkdir(),
+        "runner-nonregular": lambda b,k,g: (b / "runner.lock").unlink() or (b / "runner.lock").mkdir(),
+        "upload-nonregular": lambda b,k,g: (b / "upload.lock").unlink() or (b / "upload.lock").mkdir(),
+    }.items():
+        bad, backup, guard = run(label, mutate)
+        assert bad.returncode != 0, label
+        assert backup.exists() and guard.exists(), label
+    for fd in (9, 8, 7):
+        bad, backup, guard = run(f"busy-{fd}", busy_fd=fd)
+        assert bad.returncode != 0 and backup.exists() and guard.exists()
+    for kwargs in ({"wrong_owner": True}, {"runner_drift": True}):
+        bad, backup, guard = run("guard-or-runner-" + next(iter(kwargs)), **kwargs)
+        assert bad.returncode != 0 and backup.exists() and guard.exists()
+    for label, mutate in {
+        "missing-guard": lambda b,k,g: __import__("shutil").rmtree(g),
+        "missing-backup": lambda b,k,g: __import__("shutil").rmtree(k),
+        "missing-current": lambda b,k,g: (b / "repo/DEPLOYED_COMMIT").unlink(),
+        "missing-authority": lambda b,k,g: (b / "repo/DEPLOYED_AUTHORITY_MANIFEST.json").unlink(),
+        "missing-old-stamp": lambda b,k,g: (k / "DEPLOYED_COMMIT.old").unlink(),
+        "missing-old-manifest": lambda b,k,g: (k / "repo.manifest.old.json").unlink(),
+        "missing-tick": lambda b,k,g: (b / "tick.lock").unlink(),
+        "missing-runner": lambda b,k,g: (b / "runner.lock").unlink(),
+        "missing-upload": lambda b,k,g: (b / "upload.lock").unlink(),
+    }.items():
+        bad, _backup, _guard = run(label, mutate)
+        assert bad.returncode != 0, label
