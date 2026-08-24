@@ -395,6 +395,8 @@ def _delivery_projection_mapping(
         _fail("DELIVERY_PROJECTION_RECEIPT_INVALID")
     receipt_boundary = receipt.get("final_delivery_boundary")
     padded = receipt.get("padded_source_interval")
+    padded_start = padded.get("start_ms") if isinstance(padded, Mapping) else None
+    padded_end = padded.get("end_ms") if isinstance(padded, Mapping) else None
     if (
         not isinstance(receipt_boundary, Mapping)
         or not isinstance(padded, Mapping)
@@ -402,8 +404,10 @@ def _delivery_projection_mapping(
         or receipt_boundary.get("end_ms") != final_end
         or isinstance(final_start, bool) or isinstance(final_end, bool)
         or not isinstance(final_start, int) or not isinstance(final_end, int)
-        or not isinstance(padded.get("start_ms"), int) or not isinstance(padded.get("end_ms"), int)
-        or padded["start_ms"] >= padded["end_ms"]
+        or isinstance(padded_start, bool) or isinstance(padded_end, bool)
+        or not isinstance(padded_start, int) or not isinstance(padded_end, int)
+        or padded_start >= padded_end
+        or not (0 <= final_start < final_end <= padded_end - padded_start)
     ):
         _fail("DELIVERY_PROJECTION_RECORD_BOUNDARY")
     release_by_old = dict(old_to_release)

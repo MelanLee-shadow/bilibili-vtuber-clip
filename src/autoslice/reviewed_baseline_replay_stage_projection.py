@@ -73,10 +73,30 @@ def prepare_stage_delivery_projection(
     boundary = record.get("boundary_audit")
     if not isinstance(boundary, Mapping):
         raise error("REPLAY_RECORD_TIMING_INVALID")
-    diagnostic = config["operator_truth_lanes"]["pipeline_diagnostic"]
-    diagnostic_path = getattr(baseline, "manifest_path").parent / str(diagnostic["path"])
+    parent = getattr(baseline, "manifest_path").parent
+    lanes = config.get("operator_truth_lanes")
+    if not isinstance(lanes, Mapping):
+        raise error("REPLAY_DELIVERY_PROJECTION_LANES_INVALID")
+    lane_bytes: dict[str, bytes] = {}
+    for key, label in (
+        ("pipeline_diagnostic", "PIPELINE_DIAGNOSTIC"),
+        ("decision_ledger", "OPERATOR_DECISION_LEDGER"),
+        ("diff_receipt", "OPERATOR_TRUTH_DIFF"),
+    ):
+        descriptor = lanes.get(key)
+        raw_path = descriptor.get("path") if isinstance(descriptor, Mapping) else None
+        if not isinstance(raw_path, str) or not raw_path:
+            raise error("REPLAY_DELIVERY_PROJECTION_LANES_INVALID")
+        path = Path(raw_path)
+        if not path.is_absolute():
+            path = parent / path
+        if path.parent.absolute() != parent.absolute():
+            raise error("REPLAY_DELIVERY_PROJECTION_LANES_INVALID")
+        lane_bytes[key] = read_small_bytes(
+            regular_binding(path, label=label), label=label
+        )
     try:
-        text = read_small_bytes(regular_binding(diagnostic_path, label="PIPELINE_DIAGNOSTIC"), label="PIPELINE_DIAGNOSTIC").decode("utf-8")
+        text = lane_bytes["pipeline_diagnostic"].decode("utf-8")
     except UnicodeDecodeError as exc:
         raise error("REPLAY_PIPELINE_DIAGNOSTIC_INVALID") from exc
     padded = getattr(plan, "padded_path")
@@ -102,6 +122,7 @@ def prepare_stage_delivery_projection(
             projection_receipt_path=receipt, projection_candidate_id=getattr(plan, "candidate_id"),
             projection_record_sha256=getattr(record_binding, "sha256"), projection_record_boundary=boundary,
             projection_staged_media_sha256=getattr(rebuilt, "sha256"),
+            projection_lane_bytes=lane_bytes,
         )
     except FullWindowReplayError as exc:
         raise error(str(exc)) from exc

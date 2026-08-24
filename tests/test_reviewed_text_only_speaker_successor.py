@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,6 +13,7 @@ from src.autoslice.addressee_attribution import SpeakerEvidenceState, build_addr
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.reviewed_text_only_speaker_successor import (
     ReviewedTextOnlySpeakerSuccessorError,
+    build_text_only_speaker_successor_fields,
     materialize_text_only_speaker_successor,
 )
 from src.autoslice.speaker_common import SPEAKER_FINALIZATION_SCHEMA
@@ -138,6 +140,46 @@ def _call_delivery(b: dict[str, object], tmp_path: Path, delivery: Path, receipt
     )
 
 
+def _production_delivery_wrapper(b: dict[str, object], receipt: Path):
+    """Exercise the canonical replay wrapper's production kwargs shape."""
+
+    b["record"]["speaker_finalization_manifest_path"] = str(b["manifest"])
+    config = {
+        "operator_truth_lanes": {
+            "pipeline_diagnostic": {"path": str(b["diagnostic"]), "sha256": _sha(b["diagnostic"])},
+            "decision_ledger": {"path": str(b["ledger"]), "sha256": _sha(b["ledger"])},
+            "diff_receipt": {"path": str(b["truth_diff"]), "sha256": _sha(b["truth_diff"])},
+            "release_truth": {"srt_sha256": _sha(b["new_plain"])},
+        },
+        "operator_text_full_ownership": {
+            "speaker_authority": "NOT_CLAIMED_TEXT_ONLY",
+            "decision_ledger_sha256": _sha(b["ledger"]),
+            "pipeline_srt_sha256": _sha(b["diagnostic"]),
+            "diagnostic_diff_sha256": _sha(b["truth_diff"]),
+            "baseline_sha256": _sha(b["new_plain"]),
+        },
+    }
+
+    def binding(path: Path, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(path=path, sha256=_sha(path))
+
+    def generated_guess(**_kwargs: object) -> dict[str, object]:
+        from src.autoslice.speaker_guess import SPEAKER_GUESS_STATUS
+        return {"status": SPEAKER_GUESS_STATUS}
+
+    fields = build_text_only_speaker_successor_fields(
+        finalizer=None, original_speaker_finalizer=generated_guess,
+        candidate_id="cid", record=b["record"], old_record_sha256="sha256:" + "1" * 64,
+        baseline_config=config, baseline_manifest_parent=Path(b["tmp_path"]),
+        reviewed_baseline_path=b["new_plain"], reviewed_baseline_sha256=_sha(b["new_plain"]),
+        expected_media_sha256=_sha(b["media"]),
+        delivery_projection_receipt_path=receipt,
+        delivery_projection_receipt_sha256=_sha(receipt),
+        regular_binding=binding, replay_error=RuntimeError, error_factory=RuntimeError,
+    )
+    return fields["run_speaker_finalization"]
+
+
 def _refresh_record_manifest(b: dict[str, object]) -> None:
     manifest = json.loads(b["manifest"].read_text())
     b["record"]["speaker_finalization"] = manifest
@@ -262,6 +304,42 @@ def test_successor_materializes_c4_full_release_to_final_delivery_projection(tmp
     assert evidence.state is SpeakerEvidenceState.PRESENT_VALID
 
 
+def test_production_wrapper_uses_17_cue_delivery_kwargs_not_full_release(
+    tmp_path: Path,
+) -> None:
+    b = _drop_bundle(tmp_path)
+    delivery, receipt = _c4_delivery_receipt(b, tmp_path)
+    runner = _production_delivery_wrapper(b, receipt)
+    result = runner(
+        text_srt_path=str(delivery), media_path=str(b["media"]),
+        output_srt_path=str(tmp_path / "wrapper.speaker.srt"),
+        output_ass_path=str(tmp_path / "wrapper.speaker.ass"),
+        output_manifest_path=str(tmp_path / "wrapper.speaker.json"),
+    )
+    assert result["output_cue_count"] == 17
+    assert len(parse_srt(tmp_path / "wrapper.speaker.srt")) == 17
+    final_plain = [
+        SourceCue(str(index), _srt(cue.start), _srt(cue.end), cue.text)
+        for index, cue in enumerate(parse_srt(delivery), 1)
+    ]
+    record = {
+        "speaker_mode": "auto", "speaker_review_srt_path": str(tmp_path / "wrapper.speaker.srt"),
+        "speaker_finalization_manifest_path": str(tmp_path / "wrapper.speaker.json"),
+        "speaker_finalization_manifest_sha256": _sha(tmp_path / "wrapper.speaker.json"),
+        "speaker_finalization": result,
+        "artifact_hashes": {"speaker_review_srt_sha256": _sha(tmp_path / "wrapper.speaker.srt"), "subtitle_sha256": _sha(delivery)},
+    }
+    _plain, evidence = build_addressee_evidence(record, final_plain)
+    assert evidence.state is SpeakerEvidenceState.PRESENT_VALID
+    with pytest.raises(RuntimeError, match="SPEAKER_GUESS_REQUIRES_HUMAN_REVIEW"):
+        runner(
+            text_srt_path=str(b["new_plain"]), media_path=str(b["media"]),
+            output_srt_path=str(tmp_path / "wrong.speaker.srt"),
+            output_ass_path=str(tmp_path / "wrong.speaker.ass"),
+            output_manifest_path=str(tmp_path / "wrong.speaker.json"),
+        )
+
+
 @pytest.mark.parametrize("mutation", ["receipt_row", "receipt_hash", "full_as_delivery"])
 def test_successor_refuses_c4_projection_receipt_or_grid_drift(
     tmp_path: Path, mutation: str,
@@ -283,6 +361,49 @@ def test_successor_refuses_c4_projection_receipt_or_grid_drift(
         # A 20-cue full release must never carry a 17-cue projection receipt.
         with pytest.raises(ReviewedTextOnlySpeakerSuccessorError, match="DELIVERY_PROJECTION_UNEXPECTED"):
             _call_delivery(b, tmp_path, b["new_plain"], receipt)
+
+
+@pytest.mark.parametrize(("mutation", "reason"), [
+    ("record_boundary", "DELIVERY_PROJECTION_RECEIPT_INVALID"),
+    ("delivery_text", "DELIVERY_PROJECTION_RECEIPT_INVALID"),
+    ("delivery_timing", "DELIVERY_PROJECTION_RECEIPT_INVALID"),
+    ("declared_baseline", "DELIVERY_PROJECTION_RECEIPT_INVALID"),
+    ("declared_diff", "DELIVERY_PROJECTION_RECEIPT_INVALID"),
+    ("staged_media", "DELIVERY_PROJECTION_RECEIPT_INVALID"),
+    ("padded_bool", "DELIVERY_PROJECTION_RECORD_BOUNDARY"),
+    ("straddler", "DELIVERY_PROJECTION_STRADDLER"),
+])
+def test_successor_refuses_projection_binding_and_grid_negatives(
+    tmp_path: Path, mutation: str, reason: str,
+) -> None:
+    b = _drop_bundle(tmp_path)
+    delivery, receipt = _c4_delivery_receipt(b, tmp_path)
+    document = json.loads(receipt.read_text())
+    if mutation == "record_boundary":
+        b["record"]["boundary_audit"]["final_end_ms"] -= 1
+    elif mutation == "delivery_text":
+        delivery.write_text(delivery.read_text(encoding="utf-8").replace("旧3", "漂移", 1), encoding="utf-8")
+    elif mutation == "delivery_timing":
+        delivery.write_text(delivery.read_text(encoding="utf-8").replace("00:00:00,000", "00:00:00,001", 1), encoding="utf-8")
+    elif mutation == "declared_baseline":
+        document["full_release_srt_sha256"] = "sha256:" + "f" * 64
+        _write(receipt, document)
+    elif mutation == "declared_diff":
+        document["operator_truth_diff_sha256"] = "sha256:" + "f" * 64
+        _write(receipt, document)
+    elif mutation == "staged_media":
+        document["staged_media_sha256"] = "sha256:" + "f" * 64
+        _write(receipt, document)
+    elif mutation == "padded_bool":
+        document["padded_source_interval"]["start_ms"] = False
+        _write(receipt, document)
+    else:
+        b["record"]["boundary_audit"] = {"final_start_ms": 3_500, "final_end_ms": 24_000}
+        document["record_boundary_sha256"] = _canonical_sha(b["record"]["boundary_audit"])
+        document["final_delivery_boundary"] = {"start_ms": 3_500, "end_ms": 24_000}
+        _write(receipt, document)
+    with pytest.raises(ReviewedTextOnlySpeakerSuccessorError, match=reason):
+        _call_delivery(b, tmp_path, delivery, receipt)
 
 
 def test_successor_rejects_text_change_not_named_by_ledger(tmp_path: Path) -> None:

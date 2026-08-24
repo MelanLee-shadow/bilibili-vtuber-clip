@@ -249,8 +249,8 @@ def _build_full_release_delivery_projection_receipt(
     full_release_text: str,
     delivery_bytes: bytes,
     config: Mapping[str, object],
-    spec_parent: Path,
     staged_media_sha256: str,
+    lane_bytes: Mapping[str, bytes],
 ) -> dict[str, object] | None:
     """Prove an exact sealed full-release -> final-delivery projection.
 
@@ -301,21 +301,15 @@ def _build_full_release_delivery_projection_receipt(
         staged_media_sha256 = _projection_hash(staged_media_sha256, code="REDELIVERY_DELIVERY_PROJECTION_MEDIA_INVALID")
     except AttributeError as exc:
         raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_LANES_INVALID") from exc
-    descriptors = ((diagnostic, diagnostic_sha), (ledger, ledger_sha), (diff, diff_sha))
-    for descriptor, expected in descriptors:
-        raw_path = descriptor.get("path")
-        if not isinstance(raw_path, str) or not raw_path:
-            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_LANES_INVALID")
-        path = Path(raw_path)
-        if not path.is_absolute():
-            path = spec_parent / path
-        if path.parent.absolute() != spec_parent.absolute():
-            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_LANES_INVALID")
-        try:
-            actual = _sha256_bytes(path.read_bytes())
-        except OSError as exc:
-            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_LANES_INVALID") from exc
-        if actual != expected:
+    if set(lane_bytes) != {"pipeline_diagnostic", "decision_ledger", "diff_receipt"}:
+        raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_LANES_INVALID")
+    for key, expected in (
+        ("pipeline_diagnostic", diagnostic_sha),
+        ("decision_ledger", ledger_sha),
+        ("diff_receipt", diff_sha),
+    ):
+        captured = lane_bytes.get(key)
+        if not isinstance(captured, bytes) or _sha256_bytes(captured) != expected:
             raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_LANES_INVALID")
     if _sha256_bytes(diagnostic_text.encode("utf-8")) != diagnostic_sha:
         raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_DIAGNOSTIC_DRIFT")
@@ -325,8 +319,8 @@ def _build_full_release_delivery_projection_receipt(
         old_cues = parse_srt_cues(diagnostic_text)
         release_cues = parse_srt_cues(full_release_text)
         delivery_cues = parse_srt_cues(delivery_bytes.decode("utf-8"))
-        diff_document = json.loads((spec_parent / str(diff["path"])).read_text(encoding="utf-8"))
-    except (UnicodeDecodeError, ValueError, json.JSONDecodeError, OSError) as exc:
+        diff_document = json.loads(lane_bytes["diff_receipt"].decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
         raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_GRID_INVALID") from exc
     if not isinstance(diff_document, Mapping) or not isinstance(diff_document.get("rows"), list):
         raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_GRID_INVALID")
@@ -575,6 +569,7 @@ def replay_full_window_text_and_crop(
     projection_record_sha256: str | None = None,
     projection_record_boundary: Mapping[str, object] | None = None,
     projection_staged_media_sha256: str | None = None,
+    projection_lane_bytes: Mapping[str, bytes] | None = None,
 ) -> tuple[bytes, dict]:
     """Apply an exact padded baseline and return a deterministic final crop."""
 
@@ -601,7 +596,7 @@ def replay_full_window_text_and_crop(
         projection_inputs = (
             projection_receipt_path, projection_candidate_id,
             projection_record_sha256, projection_record_boundary,
-            projection_staged_media_sha256,
+            projection_staged_media_sha256, projection_lane_bytes,
         )
         if any(value is not None for value in projection_inputs):
             if not all(value is not None for value in projection_inputs):
@@ -613,8 +608,9 @@ def replay_full_window_text_and_crop(
                 padded_start_ms=padded_start_ms, padded_end_ms=padded_end_ms,
                 final_start_ms=final_start_ms, final_end_ms=final_end_ms,
                 diagnostic_text=text, full_release_text=reviewed,
-                delivery_bytes=cropped, config=config, spec_parent=spec_parent,
+                delivery_bytes=cropped, config=config,
                 staged_media_sha256=str(projection_staged_media_sha256),
+                lane_bytes=projection_lane_bytes,
             )
             if receipt is not None:
                 assert projection_receipt_path is not None
