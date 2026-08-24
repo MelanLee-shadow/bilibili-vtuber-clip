@@ -1019,6 +1019,18 @@ def synthesize_replay_spec_and_finalize_private(
     # the sole text delta.  This wrapper is private-stage-only: it never points
     # at an installed package or writes a formal target.
     original_speaker_finalizer = getattr(adapters, "run_speaker_finalization", None)
+    c5_fields: dict[str, object] = {}
+    if plan.candidate_id == "auto_113028_1271_1328" and plan.date == "2026-08-14":
+        # This location is candidate-private and has no CLI/config override.
+        # The acceptance loader verifies its copied proposal byte-for-byte
+        # against the repository proposal before the exact clamp can run.
+        from src.autoslice.c5_start_clamp import runtime_authority_paths
+        proposal_path, acceptance_path = runtime_authority_paths(runtime_authority_root)
+        c5_fields = {
+            "c5_start_clamp_proposal_path": proposal_path,
+            "c5_start_clamp_acceptance_path": acceptance_path,
+            "recording_date": plan.date,
+        }
     successor_fields = build_text_only_speaker_successor_fields(
         finalizer=finalizer, original_speaker_finalizer=original_speaker_finalizer,
         candidate_id=plan.candidate_id, record=record,
@@ -1032,6 +1044,7 @@ def synthesize_replay_spec_and_finalize_private(
         delivery_projection_receipt_sha256=projection_receipt_sha256,
         regular_binding=regular_binding, replay_error=ReviewedBaselineReplayError,
         error_factory=ReviewedBaselineReplayError,
+        **c5_fields,
     )
     spec_path = private_runtime_root / "replay-spec.json"
     _write_private(spec_path, _canonical(spec))
