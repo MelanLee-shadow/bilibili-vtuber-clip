@@ -173,6 +173,8 @@ successor mismatch 阻断；4e5 修复了 24→20→17 projection 并到达 spea
 hash 校验；5f90525 的 live `READY_TO_COMMIT` 结果是该 schema 修复已在运行面得到确认。
 这里不把 4e5 的分支细节写成未经独立 readback 的 exact deploy 事实。
 
-当前接受边界仍未变：Qixi 只差真实最终感知人审 receipt，未执行 same-BV apply/upload；C5/C7
-只差 speaker/source-fact 人审 receipt，C6 只差 boundary 人审 receipt；7b、#9、#10 仍为
-private prep，#8 已公开并从 pending queue 移除。`READY_TO_COMMIT` 不是 publication 完成。
+当前已知 blocker 仍为：Qixi 缺真实最终感知人审 receipt；C5/C7 缺 speaker/source-fact
+人审 receipt；C6 缺 boundary 人审 receipt；7b、#9、#10 仍为 private prep，#8 已公开并从
+pending queue 移除。上述 blocker 通过后仍须重新执行后续 package、commit、upload 与
+public/Creator/section readback gates；`READY_TO_COMMIT` 不是 publication 完成，也不暗示
+人审通过后必然可发。
