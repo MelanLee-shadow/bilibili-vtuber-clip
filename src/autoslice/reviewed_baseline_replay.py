@@ -1064,10 +1064,21 @@ def synthesize_replay_spec_and_finalize_private(
             ledger_descriptor = lanes.get("decision_ledger") if isinstance(lanes, Mapping) else None
             if not isinstance(ledger_descriptor, Mapping) or not isinstance(ledger_descriptor.get("path"), str):
                 raise ReviewedTextOnlySpeakerSuccessorError("LEDGER_MISSING")
+            ownership = plan.baseline.config.get("operator_text_full_ownership")
+            if not isinstance(ownership, Mapping) or ownership.get("speaker_authority") != "NOT_CLAIMED_TEXT_ONLY":
+                raise ReviewedTextOnlySpeakerSuccessorError("SPEAKER_AUTHORITY_SCOPE_INVALID")
             ledger_binding = regular_binding(
                 plan.baseline.manifest_path.parent / str(ledger_descriptor["path"]),
                 label="OPERATOR_DECISION_LEDGER",
             )
+            descriptor_sha = str(ledger_descriptor.get("sha256") or "").removeprefix("sha256:")
+            ownership_sha = str(ownership.get("decision_ledger_sha256") or "").removeprefix("sha256:")
+            if (
+                len(descriptor_sha) != 64
+                or ledger_binding.sha256.removeprefix("sha256:") != descriptor_sha
+                or ownership_sha != descriptor_sha
+            ):
+                raise ReviewedTextOnlySpeakerSuccessorError("LEDGER_BINDING_INVALID")
             return materialize_text_only_speaker_successor(
                 candidate_id=plan.candidate_id, old_record=record,
                 old_record_sha256=record_binding.sha256,

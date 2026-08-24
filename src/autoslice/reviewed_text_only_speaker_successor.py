@@ -42,6 +42,10 @@ def _digest(value: object, *, code: str) -> str:
     return "sha256:" + match.group(1)
 
 
+def _raw_digest(value: object, *, code: str) -> str:
+    return _digest(value, code=code).removeprefix("sha256:")
+
+
 def _binding(path: Path, expected: object, *, code: str) -> str:
     if path.is_symlink() or not path.is_file():
         _fail(code)
@@ -128,11 +132,16 @@ def materialize_text_only_speaker_successor(
     if _binding(reviewed_baseline_path, reviewed_baseline_sha256, code="BASELINE_BINDING") != new_plain_sha:
         _fail("BASELINE_NEW_TEXT_MISMATCH")
     _binding(ledger_path, ledger_sha256, code="LEDGER_BINDING")
-    if "sha256:" + sha256_file(new_media) != expected_media_sha256 or _digest(old_manifest.get("source_media_sha256"), code="MEDIA_BINDING") != expected_media_sha256:
+    expected_media = _raw_digest(expected_media_sha256, code="MEDIA_BINDING")
+    if sha256_file(new_media) != expected_media or _raw_digest(
+        old_manifest.get("source_media_sha256"), code="MEDIA_BINDING"
+    ) != expected_media:
         _fail("MEDIA_BINDING")
 
     old_cues, new_cues, speaker_cues = parse_srt(old_plain), parse_srt(new_plain_srt), parse_srt(old_speaker)
-    if not (len(old_cues) == len(new_cues) == len(speaker_cues)):
+    if not (len(old_cues) == len(new_cues) == len(speaker_cues)) or (
+        old_manifest.get("source_cue_count"), old_manifest.get("output_cue_count")
+    ) != (len(old_cues), len(speaker_cues)):
         _fail("CUE_COUNT_DRIFT")
     deltas = _ledger_deltas(ledger_path, candidate_id=candidate_id, old_sha=old_plain_sha, new_sha=new_plain_sha)
     decisions = old_manifest.get("final_decisions")
@@ -146,7 +155,9 @@ def materialize_text_only_speaker_successor(
         if (old.start, old.end) != (new.start, new.end) or (old.start, old.end) != (labelled.start, labelled.end):
             _fail("CUE_TIMING_DRIFT")
         label = _LABEL.fullmatch(labelled.text)
-        if label is None or raw.get("source_index") != index or raw.get("speaker") != label.group(1) or raw.get("text") != old.text:
+        if label is None or label.group(2) != old.text or (
+            raw.get("source_index"), raw.get("start"), raw.get("end"), raw.get("speaker"), raw.get("text")
+        ) != (index, old.start, old.end, label.group(1), old.text):
             _fail("SPEAKER_LABEL_OR_DECISION_DRIFT")
         expected = deltas.get(index, old.text)
         if new.text != expected or (new.text != old.text) != (index in deltas):
@@ -161,7 +172,7 @@ def materialize_text_only_speaker_successor(
     result = deepcopy(old_manifest)
     result.update({
         "status": "READY", "production_ready": True, "source_media": str(new_media),
-        "source_media_sha256": expected_media_sha256, "text_final_srt": str(new_plain_srt),
+        "source_media_sha256": expected_media, "text_final_srt": str(new_plain_srt),
         "text_final_srt_sha256": new_plain_sha.removeprefix("sha256:"),
         "output_review_srt": str(output_srt), "output_review_srt_sha256": sha256_file(output_srt),
         "output_ass": str(output_ass), "output_ass_sha256": sha256_file(output_ass),

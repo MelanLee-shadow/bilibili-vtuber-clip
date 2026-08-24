@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from scripts.apply_speaker_turn_overrides import Cue, write_srt
+from src.autoslice.addressee_attribution import SpeakerEvidenceState, build_addressee_evidence
+from src.autoslice.review_evidence import SourceCue
 from src.autoslice.reviewed_text_only_speaker_successor import (
     ReviewedTextOnlySpeakerSuccessorError,
     materialize_text_only_speaker_successor,
@@ -48,18 +50,55 @@ def _bundle(tmp_path: Path) -> dict[str, object]:
     return locals()
 
 
+def _call(b: dict[str, object], tmp_path: Path) -> dict[str, object]:
+    return materialize_text_only_speaker_successor(candidate_id="cid", old_record=b["record"], old_record_sha256="sha256:"+"1"*64, old_manifest_path=b["manifest"], old_manifest_sha256=_sha(b["manifest"]), reviewed_baseline_path=b["new_plain"], reviewed_baseline_sha256=_sha(b["new_plain"]), ledger_path=b["ledger"], ledger_sha256=_sha(b["ledger"]), new_plain_srt=b["new_plain"], new_media=b["media"], expected_media_sha256=_sha(b["media"]), output_srt=tmp_path/"new.speaker.srt", output_ass=tmp_path/"new.speaker.ass", output_manifest=tmp_path/"new.speaker.json")
+
+
+def _refresh_record_manifest(b: dict[str, object]) -> None:
+    manifest = json.loads(b["manifest"].read_text())
+    b["record"]["speaker_finalization"] = manifest
+    b["record"]["speaker_finalization_manifest_sha256"] = _sha(b["manifest"])
+
+
 def test_successor_only_rebinds_ledger_named_text_and_keeps_labels(tmp_path: Path) -> None:
     b = _bundle(tmp_path)
-    result = materialize_text_only_speaker_successor(candidate_id="cid", old_record=b["record"], old_record_sha256="sha256:"+"1"*64, old_manifest_path=b["manifest"], old_manifest_sha256=_sha(b["manifest"]), reviewed_baseline_path=b["new_plain"], reviewed_baseline_sha256=_sha(b["new_plain"]), ledger_path=b["ledger"], ledger_sha256=_sha(b["ledger"]), new_plain_srt=b["new_plain"], new_media=b["media"], expected_media_sha256=_sha(b["media"]), output_srt=tmp_path/"new.speaker.srt", output_ass=tmp_path/"new.speaker.ass", output_manifest=tmp_path/"new.speaker.json")
+    result = _call(b, tmp_path)
     assert result["status"] == "READY"
     assert result["reviewed_baseline_text_only_successor"]["speaker_label_mutation_authorized"] is False
     assert result["final_decisions"][0]["text"] == "旧文本"
     assert result["final_decisions"][1]["text"] == "新文本"
     assert "[李豆沙] 新文本" in (tmp_path/"new.speaker.srt").read_text()
+    assert result["source_media_sha256"] == _sha(b["media"]).removeprefix("sha256:")
+    successor_record = {"speaker_mode":"auto", "speaker_review_srt_path":str(tmp_path/"new.speaker.srt"), "speaker_finalization_manifest_path":str(tmp_path/"new.speaker.json"), "speaker_finalization_manifest_sha256":_sha(tmp_path/"new.speaker.json"), "speaker_finalization":json.loads((tmp_path/"new.speaker.json").read_text()), "artifact_hashes":{"speaker_review_srt_sha256":_sha(tmp_path/"new.speaker.srt"), "subtitle_sha256":_sha(b["new_plain"])}}
+    new_cues = [
+        SourceCue("1", 0, 1_000, "旧文本"),
+        SourceCue("2", 1_000, 2_000, "新文本"),
+    ]
+    _plain, evidence = build_addressee_evidence(successor_record, new_cues)
+    assert evidence.state is SpeakerEvidenceState.PRESENT_VALID
+    assert "2 [李豆沙] 新文本" in evidence.transcript
 
 
 def test_successor_rejects_text_change_not_named_by_ledger(tmp_path: Path) -> None:
     b = _bundle(tmp_path)
     b["new_plain"].write_text(b["new_plain"].read_text().replace("旧文本", "越权"), encoding="utf-8")
     with pytest.raises(ReviewedTextOnlySpeakerSuccessorError, match="TEXT_DELTA_OUTSIDE_LEDGER"):
-        materialize_text_only_speaker_successor(candidate_id="cid", old_record=b["record"], old_record_sha256="sha256:"+"1"*64, old_manifest_path=b["manifest"], old_manifest_sha256=_sha(b["manifest"]), reviewed_baseline_path=b["new_plain"], reviewed_baseline_sha256=_sha(b["new_plain"]), ledger_path=b["ledger"], ledger_sha256=_sha(b["ledger"]), new_plain_srt=b["new_plain"], new_media=b["media"], expected_media_sha256=_sha(b["media"]), output_srt=tmp_path/"new.speaker.srt", output_ass=tmp_path/"new.speaker.ass", output_manifest=tmp_path/"new.speaker.json")
+        _call(b, tmp_path)
+
+
+@pytest.mark.parametrize(("mutate", "reason"), [
+    ("label", "SPEAKER_LABEL_OR_DECISION_DRIFT"), ("labelled_text", "SPEAKER_LABEL_OR_DECISION_DRIFT"),
+    ("decision_timing", "SPEAKER_LABEL_OR_DECISION_DRIFT"), ("media", "MEDIA_BINDING"),
+])
+def test_successor_rejects_speaker_or_media_drift(tmp_path: Path, mutate: str, reason: str) -> None:
+    b = _bundle(tmp_path)
+    if mutate in {"label", "labelled_text"}:
+        text = b["old_speaker"].read_text()
+        b["old_speaker"].write_text(text.replace("[李豆沙] 旧文本", "[连线] 旧文本" if mutate == "label" else "[李豆沙] 伪造"), encoding="utf-8")
+        manifest = json.loads(b["manifest"].read_text()); manifest["output_review_srt_sha256"] = _sha(b["old_speaker"]).removeprefix("sha256:"); _write(b["manifest"], manifest); _refresh_record_manifest(b)
+    elif mutate == "decision_timing":
+        manifest = json.loads(b["manifest"].read_text()); manifest["final_decisions"][0]["end"] = "00:00:01,001"; _write(b["manifest"], manifest); _refresh_record_manifest(b)
+    else:
+        b["media"].write_bytes(b"drift")
+    with pytest.raises(ReviewedTextOnlySpeakerSuccessorError, match=reason):
+        _call(b, tmp_path)
