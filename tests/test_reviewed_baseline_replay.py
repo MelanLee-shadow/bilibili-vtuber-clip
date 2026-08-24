@@ -1833,6 +1833,38 @@ def test_record_bound_portable_mirror_recovers_only_exact_sidecar_pair(
     assert authority.clip_context.sha256 == record["artifact_hashes"]["clip_context_file_sha256"]
 
 
+def test_record_bound_portable_mirror_accepts_exact_record_after_private_package_relocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, record_path, record, portable, _portable_record = _record_bound_authority_fixture(tmp_path)
+    # The immutable record still names its original candidate package, while a
+    # private no-upload replay stages the same bytes under an isolated root.
+    plan.package_root = tmp_path / "private-runtime" / "2026-08-14" / CID
+
+    authority = _resolve_fixture_authority(
+        plan=plan, record_path=record_path, record=record, portable=portable, monkeypatch=monkeypatch,
+    )
+
+    assert authority.source == "portable-record-mirror"
+
+
+@pytest.mark.parametrize("field", ["chat_authority_audit_path", "clip_context_path"])
+def test_record_bound_portable_mirror_refuses_record_locator_confusion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str,
+) -> None:
+    plan, record_path, record, portable, portable_record = _record_bound_authority_fixture(tmp_path)
+    mirror = json.loads(portable_record.read_text())
+    mirror[field] = str(tmp_path / "wrong" / Path(str(mirror[field])).name)
+    portable_record.write_text(json.dumps(mirror))
+
+    # Changing either locator changes the sealed portable record hash, so it
+    # cannot be selected as the exact mirror for the current record.
+    with pytest.raises(replay.ReviewedBaselineReplayError, match="PORTABLE_AUTHORITY_RECORD_AMBIGUOUS"):
+        _resolve_fixture_authority(
+            plan=plan, record_path=record_path, record=record, portable=portable, monkeypatch=monkeypatch,
+        )
+
+
 def test_record_bound_authority_uses_current_exact_pair_without_portable_lookup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -209,8 +209,15 @@ def _portable_authority(
             or not isinstance(hashes, Mapping)
             or not _same_sha(hashes.get("chat_authority_audit_sha256"), chat_sha256)
             or not _same_sha(hashes.get("clip_context_file_sha256"), clip_sha256)
-            or mirror.get("chat_authority_audit_path") != str(plan.package_root / f"{plan.candidate_id}.chat-authority.json")
-            or mirror.get("clip_context_path") != str(plan.package_root / f"{plan.candidate_id}.clip-context.json")
+            # A candidate-private replay deliberately preserves the immutable
+            # record bytes while its package is staged below a different
+            # runtime root.  The portable mirror therefore has to agree with
+            # the sealed record's declared locations, rather than with the
+            # transient staging path.  Comparing against ``plan.package_root``
+            # would reject an otherwise exact record solely because private
+            # isolation rebased the delivery directory.
+            or mirror.get("chat_authority_audit_path") != record.get("chat_authority_audit_path")
+            or mirror.get("clip_context_path") != record.get("clip_context_path")
         ):
             raise error("REPLAY_PORTABLE_AUTHORITY_RECORD_IDENTITY_DRIFT")
         matches.append((binding, mirror))
