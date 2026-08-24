@@ -86,6 +86,25 @@ Ivan 明确澄清：Claude line 947 的逐片意见就是本批快车道的**穷
 
 package audit、delegated-root exact-byte review 以及 `authorized_upload.py` 生成的 receipt 是可追溯执行手续，用于绑定实际产物、记录执行者和完成发布闭环；它们不得扩大本表修复范围，也不得重新引入 Ivan 人工节点。root 可按 pipeline 使用 `reviewed_by: "Codex root"` 完成 delegated-root 记录；实现和上传由低级 worker 执行，root 负责规划、审查、验收和发布批准。
 
+### Line 947 execution-authority hash binding（corrective clarification）
+
+同一 Claude JSONL 的 line 947 必须同时记录两种不可互换的字节口径，作为本表执行权威的并列锚点：
+
+| 口径 | SHA-256 |
+|---|---|
+| `.message.content` UTF-8 bytes（去除 JSONL 行尾 LF 后的内容字段） | `0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b` |
+| raw JSONL line bytes（含 trailing LF） | `e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa` |
+
+这两个 digest 是同一 authority 的不同输入边界，不能互相替代或把去 LF 的 hash 当作 raw-line hash。21 项（18 talk + 3 song）逐片点名错误是**穷尽清单**：完成某片点名修复即可直接上传，不新增 Ivan 复审；仅 #12「考试写解」与 #13「提督十秒」的“其他小错自己识别/顺手修”属于各自候选范围内的明示小错例外。其余未点名内容冻结。
+
+generic package/audit/technical receipt 只可验证点名修复、未点名内容冻结、媒体/字幕/封面/metadata 字节与 B 站发布一致性；这些手续不得产生新的 unrelated content/semantic 修复门，也不得把技术 receipt 变成人工复审节点。
+
+### 七夕闭环历史 review ledger（historical evidence only）
+
+七夕 `auto_113022_354_496` 的历史闭环记录如下：BVID `BV1Ud8F6fECS`，AID `117126140527747`，successor CID `41229421848`；sidecar SHA-256 `2efd6966...`；semantic diff receipt SHA-256 `46aa020d...`；fresh four-surface SHA-256 `77604245...`。这些摘要用于把历史 review、successor 字节和四面 readback 绑定到同一目标项。
+
+该 reconciliation 阶段的记录明确为 `remote_mutation:false`：它表示本次阶段只做本地对账/证据收敛，**不否认此前同 BV 替换已经发生**。state、runtime、static 三者的差异只限于上述目标项（BVID/AID/CID、sidecar、semantic diff receipt、fresh four-surface receipt）；不得据此推断其他候选或其他发布面的状态。
+
 ## 三、Ivan 质询清单（需回答/诊断归因）
 
 1. 薇欧拉酱 0:46 为何没修成（两条既有原则均可用）。
