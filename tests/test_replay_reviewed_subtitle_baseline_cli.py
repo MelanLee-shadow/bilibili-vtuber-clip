@@ -3,8 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
-import sys
 import threading
+import venv as venv_module
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -310,17 +310,31 @@ def test_speaker_python_binding_rejects_pyvenv_drift(tmp_path: Path) -> None:
 
 def test_speaker_python_binding_keeps_venv_launcher_prefix(tmp_path: Path) -> None:
     venv = tmp_path / "venv"
-    launcher_dir = venv / "bin"
-    launcher_dir.mkdir(parents=True)
-    (venv / "pyvenv.cfg").write_text(f"home = {Path(sys.executable).parent}\n")
-    requested = launcher_dir / "python"
-    requested.symlink_to(Path(sys.executable))
+    # Symlinking is the portable venv layout for the uv Python distributed on
+    # macOS: copying its executable loses the adjacent shared library.
+    venv_module.EnvBuilder(with_pip=False, symlinks=True).create(venv)
+    requested = venv / "bin" / "python"
     document = cli._speaker_python_binding(requested)
     stage = _sealed_speaker_binding_stage(tmp_path, document)
     cli._stage_speaker_python_revalidator(stage, document)()
     assert subprocess.check_output(
         [str(requested), "-c", "import sys; print(sys.prefix)"], text=True,
     ).strip() == str(venv)
+
+
+def test_speaker_python_revalidator_rereads_stage_seal_at_invocation(tmp_path: Path) -> None:
+    target = tmp_path / "interpreter"
+    target.write_text("#!/bin/sh\nexit 0\n")
+    target.chmod(0o700)
+    requested = tmp_path / "venv-python"
+    requested.symlink_to(target)
+    document = cli._speaker_python_binding(requested)
+    stage = _sealed_speaker_binding_stage(tmp_path, document)
+    verifier = cli._stage_speaker_python_revalidator(stage, document)
+    (stage / "speaker-python-binding.json").write_text('{"changed":true}')
+    (stage / "speaker-python-binding.json").chmod(0o600)
+    with pytest.raises(cli.ReviewedBaselineReplayError, match="SPEAKER_PYTHON_STAGE_BINDING_DRIFT"):
+        verifier()
 
 
 @pytest.mark.parametrize(

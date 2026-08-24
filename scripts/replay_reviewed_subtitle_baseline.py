@@ -474,20 +474,24 @@ def _stage_speaker_python_revalidator(stage: Path, expected: Mapping[str, object
     """Return the finalizer-adjacent checker for a sealed private launcher."""
 
     expected_document = dict(expected)
-    stage_document = _read_bound_json(stage / "stage.json", label="PRIVATE_STAGE")
-    descriptor = stage_document.get("speaker_python_binding")
     binding_path = stage / "speaker-python-binding.json"
-    binding = regular_binding(binding_path, label="SPEAKER_PYTHON_BINDING")
-    if (
-        not isinstance(descriptor, Mapping)
-        or set(descriptor) != {"path", "sha256"}
-        or descriptor.get("path") != binding_path.name
-        or descriptor.get("sha256") != binding.sha256
-        or _read_bound_json(binding_path, label="SPEAKER_PYTHON_BINDING") != expected_document
-    ):
-        raise ReviewedBaselineReplayError("REPLAY_SPEAKER_PYTHON_STAGE_BINDING_DRIFT")
 
     def revalidate() -> None:
+        # This callback runs immediately before finalizer invocation.  Re-read
+        # both create-only stage seals here, not merely when constructing the
+        # callback, so a later stage-receipt swap cannot race the launcher
+        # check.
+        stage_document = _read_bound_json(stage / "stage.json", label="PRIVATE_STAGE")
+        descriptor = stage_document.get("speaker_python_binding")
+        binding = regular_binding(binding_path, label="SPEAKER_PYTHON_BINDING")
+        if (
+            not isinstance(descriptor, Mapping)
+            or set(descriptor) != {"path", "sha256"}
+            or descriptor.get("path") != binding_path.name
+            or descriptor.get("sha256") != binding.sha256
+            or _read_bound_json(binding_path, label="SPEAKER_PYTHON_BINDING") != expected_document
+        ):
+            raise ReviewedBaselineReplayError("REPLAY_SPEAKER_PYTHON_STAGE_BINDING_DRIFT")
         if _speaker_python_binding(Path(str(expected_document["requested_path"]))) != expected_document:
             raise ReviewedBaselineReplayError("REPLAY_SPEAKER_PYTHON_BINDING_DRIFT")
 
