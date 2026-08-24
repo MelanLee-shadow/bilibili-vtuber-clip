@@ -10,6 +10,7 @@ import src.autoslice.reviewed_baseline_replay as replay
 import src.autoslice.reviewed_baseline_replay_authority as authority_module
 import scripts.run_fastlane_c2_private_replay as c2_runner_module
 from scripts.run_fastlane_c2_private_replay import main as c2_runner
+from src.autoslice.repository_asset_authority import build_deployed_authority_manifest
 
 
 CID, DATE = c2.C2_CANDIDATE_ID, c2.C2_RECORDING_DATE
@@ -25,12 +26,67 @@ def _context_sha(value: object) -> str:
     ).hexdigest()
 
 
+def _canonical_sha(value: object) -> str:
+    return "sha256:" + hashlib.sha256(
+        json.dumps(
+            value, ensure_ascii=False, allow_nan=False, sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+
+def _seal_uniform_host_closure(
+    *, runtime: Path, record_path: Path, record: dict[str, object], chat_path: Path,
+) -> Path:
+    repo = runtime / "repo"
+    hashes = record["artifact_hashes"]
+    assert isinstance(hashes, dict)
+    chat = json.loads(chat_path.read_text())
+    closure = {
+        "schema_version": c2._C2_UNIFORM_HOST_CLOSURE_SCHEMA,
+        "candidate_id": CID,
+        "recording_date": DATE,
+        "scope": "PRIVATE_NO_UPLOAD",
+        "predecessor_record": {
+            "sha256": _sha(record_path.read_bytes()),
+            "speaker_mode": "uniform_host",
+            "subtitle_style": "lidousha-final-sapphire72",
+            "artifact_hashes": {
+                name: hashes[name]
+                for name in (
+                    "chat_authority_audit_sha256", "publish_draft_sha256",
+                    "subtitle_sha256", "speaker_review_srt_sha256", "ass_sha256",
+                )
+            },
+        },
+        "portable_chat_authority": {"sha256": _sha(chat_path.read_bytes()), **chat},
+        "uniform_host_projection": {
+            "record_ass_role": "DISPLAY_ASS",
+            "record_ass_sha256": hashes["ass_sha256"],
+            "speaker_ass_role": "NO_SEPARATE_SPEAKER_ASS",
+            "speaker_srt_role": "TEXT_SRT_FALLBACK",
+        },
+    }
+    closure["authority_sha256"] = _canonical_sha(closure)
+    path = repo / c2._C2_UNIFORM_HOST_CLOSURE_RELATIVE
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(closure), encoding="utf-8")
+    commit = "a" * 40
+    (repo / "DEPLOYED_COMMIT").write_text(commit + "\n")
+    manifest = build_deployed_authority_manifest(
+        repo_root=repo, deployed_commit=commit,
+        relative_paths=[c2._C2_UNIFORM_HOST_CLOSURE_RELATIVE],
+    )
+    (repo / "DEPLOYED_AUTHORITY_MANIFEST.json").write_text(json.dumps(manifest))
+    return path
+
+
 def _fixture(tmp_path: Path):
-    runtime = tmp_path / "runtime"; package = runtime / "out" / DATE / CID
-    package.mkdir(parents=True)
-    canonical = tmp_path / "canonical" / "out" / DATE / CID
+    runtime = tmp_path / "runtime"; candidate = runtime / "out" / DATE / CID
+    package = candidate / "replacement_recuts"; package.mkdir(parents=True)
+    canonical = tmp_path / "canonical" / "out" / DATE / CID / "replacement_recuts"
     canonical.mkdir(parents=True)
-    source_sha, subtitle_sha, speaker_sha, ass_sha = ("sha256:" + x * 64 for x in "1234")
+    source_sha, subtitle_sha, ass_sha = ("sha256:" + x * 64 for x in "123")
     draft = "1\n00:00:00,000 --> 00:00:01,000\ntext\n"
     clip = {"schema_version": "lidousha-clip-context.v1", "candidate_id": CID, "recording_date": DATE,
             "mutation_authorized": False, "whole_clip_draft_srt": draft,
@@ -39,8 +95,8 @@ def _fixture(tmp_path: Path):
     clip["context_sha256"] = _context_sha(clip)
     chat = {"schema_version": "chat-authority-audit.v2", "status": "APPLIED_AND_VERIFIED",
             "final_status": "FINAL_ARTIFACTS_VERIFIED", "final_output_srt_sha256": subtitle_sha,
-            "final_text_srt_sha256": subtitle_sha, "final_speaker_srt_sha256": speaker_sha,
-            "speaker_ass_sha256": ass_sha,
+            "final_text_srt_sha256": subtitle_sha, "final_speaker_srt_sha256": subtitle_sha,
+            "speaker_ass_sha256": None,
             "final_review_audit": {"schema_version": "final-review-audit.v2", "status": "CLEAN", "reviewed_srt_sha256": subtitle_sha},
             "structured_chat_binding_audit": {"schema_version": "structured-chat-binding-audit.v1", "status": "PASS"}}
     portable = runtime / "repo" / "lidousha" / DATE; portable.mkdir(parents=True)
@@ -54,11 +110,15 @@ def _fixture(tmp_path: Path):
               "clip_context_path": str(canonical / f"{CID}.clip-context.json"),
               "clip_context_payload_sha256": clip["context_sha256"],
               "artifact_hashes": {**publish["artifact_hashes"], "publish_draft_sha256": _sha(publish_path.read_bytes()),
-                                  "subtitle_sha256": subtitle_sha, "speaker_review_srt_sha256": speaker_sha, "ass_sha256": ass_sha},
+                                  "subtitle_sha256": subtitle_sha, "speaker_review_srt_sha256": None, "ass_sha256": ass_sha},
+              "speaker_mode": "uniform_host", "subtitle_style": "lidousha-final-sapphire72",
               "story_contract": {"candidate_id": CID, "clip_context_binding": {"context_sha256": clip["context_sha256"]}}}
     record_path = package / f"{CID}.record.json"; record_path.write_text(json.dumps(record))
     (portable / f"{stem}.record.json").write_bytes(record_path.read_bytes())
-    plan = SimpleNamespace(candidate_id=CID, date=DATE, package_root=package)
+    _seal_uniform_host_closure(
+        runtime=runtime, record_path=record_path, record=record, chat_path=chat_path,
+    )
+    plan = SimpleNamespace(candidate_id=CID, date=DATE, package_root=candidate)
     return runtime, plan, record_path, record, portable
 
 
@@ -84,6 +144,154 @@ def test_c2_private_adapter_reads_only_private_mirrors(monkeypatch, tmp_path):
     assert Path(resolved.clip_context.path).is_relative_to(runtime)
 
 
+def test_c2_uniform_host_receipt_is_private_hash_bound_and_idempotent(monkeypatch, tmp_path):
+    runtime, plan, record_path, record, portable = _fixture(tmp_path); reads = []
+    _resolve(runtime, plan, record_path, record, portable, monkeypatch, reads)
+    receipt_path = record_path.parent / (
+        f"{CID}.c2-uniform-host-chat-closure-receipt.v1.json"
+    )
+    payload = receipt_path.read_bytes()
+    receipt = json.loads(payload)
+    body = dict(receipt); declared = body.pop("receipt_sha256")
+    assert set(receipt) == {
+        "schema_version", "scope", "candidate_id", "recording_date",
+        "runtime_root_sha256", "closure_authority", "record", "chat",
+        "uniform_host_projection", "receipt_sha256",
+    }
+    assert receipt["schema_version"] == c2._C2_UNIFORM_HOST_CLOSURE_RECEIPT_SCHEMA
+    assert receipt["scope"] == "PRIVATE_NO_UPLOAD"
+    assert receipt["candidate_id"] == CID
+    assert receipt["recording_date"] == DATE
+    assert receipt["runtime_root_sha256"] == _sha(str(runtime).encode("utf-8"))
+    assert receipt["closure_authority"]["relative_path"] == (
+        c2._C2_UNIFORM_HOST_CLOSURE_RELATIVE.as_posix()
+    )
+    assert receipt["record"]["sha256"] == _sha(record_path.read_bytes())
+    assert receipt["record"]["relative_path"].startswith(f"out/{DATE}/{CID}/")
+    assert receipt["chat"]["relative_path"].startswith("repo/")
+    assert receipt["chat"]["final_speaker_srt_sha256"] == receipt["chat"]["final_text_srt_sha256"]
+    assert receipt["chat"]["speaker_ass_sha256"] is None
+    assert declared == _canonical_sha(body)
+    assert str(runtime) not in payload.decode("utf-8")
+    before = _sha(payload)
+    _resolve(runtime, plan, record_path, record, portable, monkeypatch, reads)
+    assert _sha(receipt_path.read_bytes()) == before
+
+
+def test_committed_c2_uniform_host_closure_binds_the_confirmed_legacy_fields():
+    path = Path(__file__).parents[1] / c2._C2_UNIFORM_HOST_CLOSURE_RELATIVE
+    document = json.loads(path.read_text())
+    validated = c2._validate_c2_uniform_host_closure_document(
+        document, error=replay.ReviewedBaselineReplayError,
+    )
+    assert validated["candidate_id"] == CID
+    assert validated["recording_date"] == DATE
+    predecessor = validated["predecessor_record"]
+    chat = validated["portable_chat_authority"]
+    assert predecessor["sha256"] == (
+        "sha256:7917578664f3e8fd1a3a3c1cad1ed9c69c96b57a9e0aa828b90bd501ee51d11e"
+    )
+    assert predecessor["artifact_hashes"]["speaker_review_srt_sha256"] is None
+    assert chat["sha256"] == predecessor["artifact_hashes"]["chat_authority_audit_sha256"]
+    assert chat["final_speaker_srt_sha256"] == chat["final_text_srt_sha256"]
+    assert chat["speaker_ass_sha256"] is None
+
+
+def test_generic_authority_keeps_rejecting_uniform_host_null_inner_bindings(monkeypatch, tmp_path):
+    runtime, _plan, record_path, record, portable = _fixture(tmp_path)
+    monkeypatch.setattr(authority_module, "_portable_date_root", lambda **_kwargs: portable)
+    generic_plan = SimpleNamespace(
+        candidate_id=CID,
+        date=DATE,
+        package_root=Path(record["chat_authority_audit_path"]).parent,
+    )
+    with pytest.raises(
+        replay.ReviewedBaselineReplayError,
+        match="REPLAY_FINALIZER_CHAT_AUTHORITY_RECORD_CLOSURE_DRIFT",
+    ):
+        authority_module.resolve_record_bound_finalizer_authority(
+            plan=generic_plan,
+            record_binding=replay.regular_binding(record_path, label="RECORD"),
+            record=record,
+            runtime_authority_root=runtime,
+            source_media_sha256="sha256:" + "1" * 64,
+            regular_binding=replay.regular_binding,
+            safe_directory=replay._safe_directory,
+            load_json=replay._load_json,
+            error=replay.ReviewedBaselineReplayError,
+        )
+
+
+@pytest.mark.parametrize("kind", ["candidate", "date", "self_hash", "speaker_fallback"])
+def test_c2_uniform_host_closure_rejects_unsealed_or_invalid_authority(
+    monkeypatch, tmp_path, kind,
+):
+    runtime, plan, record_path, record, portable = _fixture(tmp_path); reads = []
+    path = runtime / "repo" / c2._C2_UNIFORM_HOST_CLOSURE_RELATIVE
+    document = json.loads(path.read_text())
+    if kind == "candidate":
+        document["candidate_id"] = "other"
+    elif kind == "date":
+        document["recording_date"] = "2026-08-14"
+    elif kind == "self_hash":
+        document["authority_sha256"] = "sha256:" + "f" * 64
+    else:
+        document["portable_chat_authority"]["final_speaker_srt_sha256"] = "sha256:" + "f" * 64
+        document["authority_sha256"] = _canonical_sha({
+            key: value for key, value in document.items() if key != "authority_sha256"
+        })
+    path.write_text(json.dumps(document))
+    with pytest.raises(
+        replay.ReviewedBaselineReplayError,
+        match="C2_PRIVATE_AUTHORITY_UNIFORM_HOST_CLOSURE_INVALID",
+    ):
+        _resolve(runtime, plan, record_path, record, portable, monkeypatch, reads)
+
+
+def test_c2_uniform_host_closure_rejects_record_hash_or_schema_drift(monkeypatch, tmp_path):
+    runtime, plan, record_path, record, portable = _fixture(tmp_path); reads = []
+    record["artifact_hashes"]["ass_sha256"] = "sha256:" + "f" * 64
+    record_path.write_text(json.dumps(record))
+    with pytest.raises(
+        replay.ReviewedBaselineReplayError,
+        match="C2_PRIVATE_AUTHORITY_UNIFORM_HOST_CLOSURE_RECORD_DRIFT",
+    ):
+        _resolve(runtime, plan, record_path, record, portable, monkeypatch, reads)
+
+
+def test_c2_uniform_host_closure_requires_the_private_deploy_manifest(monkeypatch, tmp_path):
+    runtime, plan, record_path, record, portable = _fixture(tmp_path); reads = []
+    path = runtime / "repo" / c2._C2_UNIFORM_HOST_CLOSURE_RELATIVE
+    # Whitespace preserves the sealed semantic self-hash, but must still fail
+    # the private deployed-manifest byte binding.
+    path.write_text(path.read_text() + "\n")
+    with pytest.raises(
+        replay.ReviewedBaselineReplayError,
+        match="C2_PRIVATE_AUTHORITY_UNIFORM_HOST_CLOSURE_UNSEALED",
+    ):
+        _resolve(runtime, plan, record_path, record, portable, monkeypatch, reads)
+
+
+def test_c2_uniform_host_closure_rejects_tampered_or_symlinked_receipt(monkeypatch, tmp_path):
+    runtime, plan, record_path, record, portable = _fixture(tmp_path); reads = []
+    receipt = record_path.parent / f"{CID}.c2-uniform-host-chat-closure-receipt.v1.json"
+    receipt.write_text("{}")
+    with pytest.raises(
+        replay.ReviewedBaselineReplayError,
+        match="C2_PRIVATE_AUTHORITY_UNIFORM_HOST_CLOSURE_RECEIPT_DRIFT",
+    ):
+        _resolve(runtime, plan, record_path, record, portable, monkeypatch, reads)
+
+    runtime, plan, record_path, record, portable = _fixture(tmp_path / "symlink"); reads = []
+    receipt = record_path.parent / f"{CID}.c2-uniform-host-chat-closure-receipt.v1.json"
+    receipt.symlink_to(tmp_path / "outside-receipt.json")
+    with pytest.raises(
+        replay.ReviewedBaselineReplayError,
+        match="C2_PRIVATE_AUTHORITY_UNIFORM_HOST_CLOSURE_RECEIPT_UNSAFE",
+    ):
+        _resolve(runtime, plan, record_path, record, portable, monkeypatch, reads)
+
+
 @pytest.mark.parametrize("field", ["candidate", "chat_hash", "clip_hash", "canonical_locator"])
 def test_c2_private_adapter_rejects_identity_drift(monkeypatch, tmp_path, field):
     runtime, plan, record_path, record, portable = _fixture(tmp_path); reads = []
@@ -105,7 +313,9 @@ def test_c2_private_adapter_rejects_outside_read(monkeypatch, tmp_path):
     monkeypatch.setattr(authority_module, "_portable_date_root", lambda **_kwargs: outside)
     with pytest.raises(replay.ReviewedBaselineReplayError, match="PORTABLE_AUTHORITY_UNSAFE"):
         _resolve(runtime, plan, record_path, record, outside, monkeypatch, reads)
-    assert not reads
+    assert reads
+    assert all(path.is_relative_to(runtime) for path in reads)
+    assert all(not path.is_relative_to(outside) for path in reads)
 
 
 def test_c2_runner_cannot_open_generic_apply_or_other_candidate():

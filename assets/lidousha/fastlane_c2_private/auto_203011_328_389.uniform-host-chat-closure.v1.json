@@ -1,0 +1,44 @@
+{
+  "schema_version": "fastlane-c2-uniform-host-chat-closure.v1",
+  "candidate_id": "auto_203011_328_389",
+  "recording_date": "2026-08-13",
+  "scope": "PRIVATE_NO_UPLOAD",
+  "predecessor_record": {
+    "sha256": "sha256:7917578664f3e8fd1a3a3c1cad1ed9c69c96b57a9e0aa828b90bd501ee51d11e",
+    "speaker_mode": "uniform_host",
+    "subtitle_style": "lidousha-final-sapphire72",
+    "artifact_hashes": {
+      "chat_authority_audit_sha256": "sha256:0287cc9e0216bfd4ce08905bbb5b6c9de06a7ca35685165da4b35e21d2b4c3e6",
+      "publish_draft_sha256": "sha256:a7bd329abf26c12b3daf1e81e8b5db0fdba87ae59a192aed48f5f73bc7374d1d",
+      "subtitle_sha256": "sha256:0f2dfaba23ac61fe1392e2f96d98b8c3c93738fc709cf7d9940a4e86f9286862",
+      "speaker_review_srt_sha256": null,
+      "ass_sha256": "sha256:ca54e06d0416c35bcaf7bd0fd0c85d6dff6a722d0bf944a4dcce40aa2c723e26"
+    }
+  },
+  "portable_chat_authority": {
+    "sha256": "sha256:0287cc9e0216bfd4ce08905bbb5b6c9de06a7ca35685165da4b35e21d2b4c3e6",
+    "schema_version": "chat-authority-audit.v2",
+    "status": "APPLIED_AND_VERIFIED",
+    "final_status": "FINAL_ARTIFACTS_VERIFIED",
+    "final_output_srt_sha256": "sha256:0f2dfaba23ac61fe1392e2f96d98b8c3c93738fc709cf7d9940a4e86f9286862",
+    "final_text_srt_sha256": "sha256:0f2dfaba23ac61fe1392e2f96d98b8c3c93738fc709cf7d9940a4e86f9286862",
+    "final_speaker_srt_sha256": "sha256:0f2dfaba23ac61fe1392e2f96d98b8c3c93738fc709cf7d9940a4e86f9286862",
+    "speaker_ass_sha256": null,
+    "final_review_audit": {
+      "schema_version": "final-review-audit.v2",
+      "status": "CLEAN",
+      "reviewed_srt_sha256": "sha256:0f2dfaba23ac61fe1392e2f96d98b8c3c93738fc709cf7d9940a4e86f9286862"
+    },
+    "structured_chat_binding_audit": {
+      "schema_version": "structured-chat-binding-audit.v1",
+      "status": "PASS"
+    }
+  },
+  "uniform_host_projection": {
+    "record_ass_role": "DISPLAY_ASS",
+    "record_ass_sha256": "sha256:ca54e06d0416c35bcaf7bd0fd0c85d6dff6a722d0bf944a4dcce40aa2c723e26",
+    "speaker_ass_role": "NO_SEPARATE_SPEAKER_ASS",
+    "speaker_srt_role": "TEXT_SRT_FALLBACK"
+  },
+  "authority_sha256": "sha256:d1091b7f4eab8f0ebd3c9b129abb0899ac9c14408143a50d44edcfa64448c790"
+}

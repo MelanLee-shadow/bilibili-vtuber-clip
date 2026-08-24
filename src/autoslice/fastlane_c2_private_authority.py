@@ -10,12 +10,17 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import stat
-from dataclasses import is_dataclass, replace
+from dataclasses import dataclass, is_dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping
 from types import SimpleNamespace
 
+from src.autoslice.repository_asset_authority import (
+    RepositoryAssetAuthority,
+    require_repository_asset_authority,
+)
 from src.autoslice.reviewed_baseline_replay_authority import (
     RecordBoundFinalizerAuthority,
     resolve_record_bound_finalizer_authority,
@@ -24,6 +29,15 @@ from src.autoslice.reviewed_baseline_replay_authority import (
 
 C2_CANDIDATE_ID = "auto_203011_328_389"
 C2_RECORDING_DATE = "2026-08-13"
+_C2_UNIFORM_HOST_CLOSURE_RELATIVE = Path(
+    "assets/lidousha/fastlane_c2_private/"
+    "auto_203011_328_389.uniform-host-chat-closure.v1.json"
+)
+_C2_UNIFORM_HOST_CLOSURE_SCHEMA = "fastlane-c2-uniform-host-chat-closure.v1"
+_C2_UNIFORM_HOST_CLOSURE_RECEIPT_SCHEMA = (
+    "c2-private-uniform-host-chat-closure-receipt.v1"
+)
+_C2_SHA256 = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _C2_PROVENANCE_POINTERS = (
     "/final_recut/output_path",
     "/final_recut/source_path",
@@ -68,8 +82,367 @@ _C2_SAFE_DIRECTORY_PATH_ROLES = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class _C2UniformHostChatClosure:
+    """The C2-only sealed representation of one legacy uniform-host closure."""
+
+    document: Mapping[str, Any]
+    repository_authority: RepositoryAssetAuthority
+
+
 def _c2_error(code: str) -> ValueError:
     return ValueError(code)
+
+
+def _canonical_sha256(value: object) -> str:
+    """Return the canonical semantic digest used by sealed C2 documents."""
+
+    payload = json.dumps(
+        value, ensure_ascii=False, allow_nan=False, sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _canonical_json_bytes(value: object) -> bytes:
+    return (
+        json.dumps(
+            value, ensure_ascii=False, allow_nan=False, sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
+def _exact_sha(value: object) -> bool:
+    return isinstance(value, str) and _C2_SHA256.fullmatch(value) is not None
+
+
+def _closure_error(error: Callable[[str], Exception], suffix: str) -> Exception:
+    return error(f"C2_PRIVATE_AUTHORITY_UNIFORM_HOST_CLOSURE_{suffix}")
+
+
+def _closure_mapping(
+    value: object, *, keys: frozenset[str], error: Callable[[str], Exception],
+) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != keys:
+        raise _closure_error(error, "INVALID")
+    return value
+
+
+def _validate_c2_uniform_host_closure_document(
+    document: object, *, error: Callable[[str], Exception],
+) -> Mapping[str, Any]:
+    """Validate the exact legacy representation without changing its bytes.
+
+    This is deliberately a *representation* seal: it neither creates a
+    speaker SRT/ASS nor treats a missing value as generally acceptable.  It
+    recognizes exactly C2's pre-existing ``uniform_host`` fallback.
+    """
+
+    top = _closure_mapping(
+        document,
+        keys=frozenset({
+            "schema_version", "candidate_id", "recording_date", "scope",
+            "predecessor_record", "portable_chat_authority",
+            "uniform_host_projection", "authority_sha256",
+        }),
+        error=error,
+    )
+    body = dict(top)
+    declared = body.pop("authority_sha256", None)
+    if (
+        top.get("schema_version") != _C2_UNIFORM_HOST_CLOSURE_SCHEMA
+        or top.get("candidate_id") != C2_CANDIDATE_ID
+        or top.get("recording_date") != C2_RECORDING_DATE
+        or top.get("scope") != "PRIVATE_NO_UPLOAD"
+        or not _exact_sha(declared)
+        or declared != _canonical_sha256(body)
+    ):
+        raise _closure_error(error, "INVALID")
+
+    predecessor = _closure_mapping(
+        top.get("predecessor_record"),
+        keys=frozenset({"sha256", "speaker_mode", "subtitle_style", "artifact_hashes"}),
+        error=error,
+    )
+    record_hashes = _closure_mapping(
+        predecessor.get("artifact_hashes"),
+        keys=frozenset({
+            "chat_authority_audit_sha256", "publish_draft_sha256",
+            "subtitle_sha256", "speaker_review_srt_sha256", "ass_sha256",
+        }),
+        error=error,
+    )
+    if (
+        not _exact_sha(predecessor.get("sha256"))
+        or predecessor.get("speaker_mode") != "uniform_host"
+        or predecessor.get("subtitle_style") != "lidousha-final-sapphire72"
+        or any(
+            not _exact_sha(record_hashes.get(name))
+            for name in (
+                "chat_authority_audit_sha256", "publish_draft_sha256",
+                "subtitle_sha256", "ass_sha256",
+            )
+        )
+        or record_hashes.get("speaker_review_srt_sha256") is not None
+    ):
+        raise _closure_error(error, "INVALID")
+
+    chat = _closure_mapping(
+        top.get("portable_chat_authority"),
+        keys=frozenset({
+            "sha256", "schema_version", "status", "final_status",
+            "final_output_srt_sha256", "final_text_srt_sha256",
+            "final_speaker_srt_sha256", "speaker_ass_sha256",
+            "final_review_audit", "structured_chat_binding_audit",
+        }),
+        error=error,
+    )
+    review = _closure_mapping(
+        chat.get("final_review_audit"),
+        keys=frozenset({"schema_version", "status", "reviewed_srt_sha256"}),
+        error=error,
+    )
+    structured = _closure_mapping(
+        chat.get("structured_chat_binding_audit"),
+        keys=frozenset({"schema_version", "status"}),
+        error=error,
+    )
+    subtitle_sha256 = record_hashes["subtitle_sha256"]
+    if (
+        not _exact_sha(chat.get("sha256"))
+        or chat.get("schema_version") != "chat-authority-audit.v2"
+        or chat.get("status") not in {"NO_MATCH", "APPLIED_AND_VERIFIED"}
+        or chat.get("final_status") != "FINAL_ARTIFACTS_VERIFIED"
+        or any(
+            chat.get(name) != subtitle_sha256
+            for name in (
+                "final_output_srt_sha256", "final_text_srt_sha256",
+                "final_speaker_srt_sha256",
+            )
+        )
+        or chat.get("speaker_ass_sha256") is not None
+        or review.get("schema_version") != "final-review-audit.v2"
+        or review.get("status") != "CLEAN"
+        or review.get("reviewed_srt_sha256") != subtitle_sha256
+        or structured.get("schema_version") != "structured-chat-binding-audit.v1"
+        or structured.get("status") != "PASS"
+    ):
+        raise _closure_error(error, "INVALID")
+
+    projection = _closure_mapping(
+        top.get("uniform_host_projection"),
+        keys=frozenset({
+            "record_ass_role", "record_ass_sha256", "speaker_ass_role",
+            "speaker_srt_role",
+        }),
+        error=error,
+    )
+    if (
+        projection.get("record_ass_role") != "DISPLAY_ASS"
+        or projection.get("record_ass_sha256") != record_hashes["ass_sha256"]
+        or projection.get("speaker_ass_role") != "NO_SEPARATE_SPEAKER_ASS"
+        or projection.get("speaker_srt_role") != "TEXT_SRT_FALLBACK"
+    ):
+        raise _closure_error(error, "INVALID")
+    return top
+
+
+def _load_c2_uniform_host_chat_closure(
+    *, runtime: Path, private_binding: Callable[..., object],
+    private_directory: Callable[[Path], Path], load_json: Callable[..., dict[str, Any]],
+    error: Callable[[str], Exception],
+) -> _C2UniformHostChatClosure:
+    """Load C2's committed/deployed closure seal from the private runtime."""
+
+    try:
+        repo = private_directory(runtime / "repo")
+        binding = private_binding(
+            repo / _C2_UNIFORM_HOST_CLOSURE_RELATIVE,
+            label="C2_UNIFORM_HOST_CLOSURE",
+        )
+        path = Path(getattr(binding, "path"))
+        payload = path.read_bytes()
+    except Exception as exc:
+        if str(exc).startswith("C2_PRIVATE_AUTHORITY_UNIFORM_HOST_CLOSURE_"):
+            raise
+        raise _closure_error(error, "UNAVAILABLE") from exc
+    if (
+        not path.is_relative_to(repo)
+        or "sha256:" + hashlib.sha256(payload).hexdigest()
+        != getattr(binding, "sha256", None)
+    ):
+        raise _closure_error(error, "ASSET_DRIFT")
+    try:
+        document = _validate_c2_uniform_host_closure_document(
+            load_json(binding, label="C2_UNIFORM_HOST_CLOSURE"), error=error,
+        )
+        repository_authority = require_repository_asset_authority(
+            repo_root=repo,
+            relative_path=_C2_UNIFORM_HOST_CLOSURE_RELATIVE,
+            observed_bytes=payload,
+        )
+    except Exception as exc:
+        if str(exc).startswith("C2_PRIVATE_AUTHORITY_UNIFORM_HOST_CLOSURE_"):
+            raise
+        raise _closure_error(error, "UNSEALED") from exc
+    return _C2UniformHostChatClosure(document, repository_authority)
+
+
+def _validate_c2_uniform_host_record(
+    *, closure: _C2UniformHostChatClosure, record_binding: object,
+    record: Mapping[str, object], error: Callable[[str], Exception],
+) -> None:
+    predecessor = closure.document.get("predecessor_record")
+    if not isinstance(predecessor, Mapping):
+        raise _closure_error(error, "INVALID")
+    expected_hashes = predecessor.get("artifact_hashes")
+    if not isinstance(expected_hashes, Mapping):
+        raise _closure_error(error, "INVALID")
+    hashes = record.get("artifact_hashes")
+    if (
+        getattr(record_binding, "sha256", None) != predecessor["sha256"]
+        or record.get("speaker_mode") != predecessor["speaker_mode"]
+        or record.get("subtitle_style") != predecessor["subtitle_style"]
+        or not isinstance(hashes, Mapping)
+        or any(hashes.get(name) != value for name, value in expected_hashes.items())
+    ):
+        raise _closure_error(error, "RECORD_DRIFT")
+
+
+def _validate_c2_uniform_host_chat(
+    binding: object, *, closure: _C2UniformHostChatClosure,
+    record: Mapping[str, object], load_json: Callable[..., dict[str, Any]],
+    error: Callable[[str], Exception],
+) -> None:
+    """Validate the sealed fallback fields while retaining every other gate."""
+
+    expected = closure.document.get("portable_chat_authority")
+    projection = closure.document.get("uniform_host_projection")
+    if not isinstance(expected, Mapping) or not isinstance(projection, Mapping):
+        raise _closure_error(error, "INVALID")
+    hashes = record.get("artifact_hashes")
+    try:
+        document = load_json(binding, label="CHAT_AUTHORITY")
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise _closure_error(error, "CHAT_DRIFT") from exc
+    if (
+        getattr(binding, "sha256", None) != expected["sha256"]
+        or not isinstance(hashes, Mapping)
+        or hashes.get("speaker_review_srt_sha256") is not None
+        or hashes.get("ass_sha256") != projection.get("record_ass_sha256")
+        or any(
+            document.get(name) != value
+            for name, value in expected.items()
+            if name != "sha256"
+        )
+    ):
+        raise _closure_error(error, "CHAT_DRIFT")
+
+
+def _private_relative_binding(
+    binding: object, *, runtime: Path, error: Callable[[str], Exception],
+) -> str:
+    try:
+        return Path(getattr(binding, "path")).absolute().relative_to(runtime).as_posix()
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise _closure_error(error, "RECEIPT_OUTSIDE_RUNTIME") from exc
+
+
+def _materialize_c2_uniform_host_chat_closure_receipt(
+    *, runtime: Path, plan: Any, record_binding: object,
+    authority: RecordBoundFinalizerAuthority, closure: _C2UniformHostChatClosure,
+    private_binding: Callable[..., object], private_directory: Callable[[Path], Path],
+    load_json: Callable[..., dict[str, Any]], error: Callable[[str], Exception],
+) -> Path:
+    """Create one checked, private-only receipt for the legacy representation."""
+
+    candidate_root = private_directory(
+        runtime / "out" / plan.date / plan.candidate_id
+    )
+    recut_root = private_directory(candidate_root / "replacement_recuts")
+    record_relative = _private_relative_binding(record_binding, runtime=runtime, error=error)
+    chat_relative = _private_relative_binding(authority.chat, runtime=runtime, error=error)
+    if not record_relative.startswith(
+        f"out/{C2_RECORDING_DATE}/{C2_CANDIDATE_ID}/replacement_recuts/"
+    ) or not record_relative.endswith(".record.json"):
+        raise _closure_error(error, "RECEIPT_RECORD_LOCATOR_DRIFT")
+    if not chat_relative.startswith("repo/") or not chat_relative.endswith(".chat-authority.json"):
+        raise _closure_error(error, "RECEIPT_CHAT_LOCATOR_DRIFT")
+    predecessor = closure.document.get("predecessor_record")
+    chat = closure.document.get("portable_chat_authority")
+    projection = closure.document.get("uniform_host_projection")
+    if (
+        not isinstance(predecessor, Mapping)
+        or not isinstance(chat, Mapping)
+        or not isinstance(projection, Mapping)
+    ):
+        raise _closure_error(error, "INVALID")
+    body: dict[str, object] = {
+        "schema_version": _C2_UNIFORM_HOST_CLOSURE_RECEIPT_SCHEMA,
+        "scope": "PRIVATE_NO_UPLOAD",
+        "candidate_id": C2_CANDIDATE_ID,
+        "recording_date": C2_RECORDING_DATE,
+        "runtime_root_sha256": "sha256:" + hashlib.sha256(
+            str(runtime).encode("utf-8")
+        ).hexdigest(),
+        "closure_authority": {
+            "authority_sha256": closure.document["authority_sha256"],
+            "repository_mode": closure.repository_authority.mode,
+            "repository_commit": closure.repository_authority.commit,
+            "relative_path": closure.repository_authority.relative_path,
+            "file_sha256": closure.repository_authority.file_sha256,
+        },
+        "record": {
+            "relative_path": record_relative,
+            "sha256": predecessor["sha256"],
+            "speaker_mode": predecessor["speaker_mode"],
+            "subtitle_style": predecessor["subtitle_style"],
+            "artifact_hashes": dict(predecessor["artifact_hashes"]),
+        },
+        "chat": {
+            "relative_path": chat_relative,
+            "sha256": chat["sha256"],
+            "final_output_srt_sha256": chat["final_output_srt_sha256"],
+            "final_text_srt_sha256": chat["final_text_srt_sha256"],
+            "final_speaker_srt_sha256": chat["final_speaker_srt_sha256"],
+            "speaker_ass_sha256": chat["speaker_ass_sha256"],
+        },
+        "uniform_host_projection": dict(projection),
+    }
+    document = dict(body)
+    document["receipt_sha256"] = _canonical_sha256(body)
+    payload = _canonical_json_bytes(document)
+    receipt = recut_root / (
+        f"{C2_CANDIDATE_ID}.c2-uniform-host-chat-closure-receipt.v1.json"
+    )
+    if receipt.is_symlink():
+        raise _closure_error(error, "RECEIPT_UNSAFE")
+    if receipt.exists():
+        try:
+            binding = private_binding(receipt, label="C2_UNIFORM_HOST_CLOSURE_RECEIPT")
+            actual = load_json(binding, label="C2_UNIFORM_HOST_CLOSURE_RECEIPT")
+        except (OSError, UnicodeError, ValueError) as exc:
+            raise _closure_error(error, "RECEIPT_UNSAFE") from exc
+        if (
+            actual != document
+            or getattr(binding, "sha256", None)
+            != "sha256:" + hashlib.sha256(payload).hexdigest()
+        ):
+            raise _closure_error(error, "RECEIPT_DRIFT")
+        return receipt
+    try:
+        _write_create_only(receipt, payload)
+    except FileExistsError:
+        return _materialize_c2_uniform_host_chat_closure_receipt(
+            runtime=runtime, plan=plan, record_binding=record_binding,
+            authority=authority, closure=closure, private_binding=private_binding,
+            private_directory=private_directory, load_json=load_json, error=error,
+        )
+    except OSError as exc:
+        raise _closure_error(error, "RECEIPT_WRITE_FAILED") from exc
+    return receipt
 
 
 def classify_c2_private_path_unavailable(exc: BaseException) -> str:
@@ -383,6 +756,14 @@ def resolve_c2_private_record_authority(
             raise error("C2_PRIVATE_AUTHORITY_READ_OUTSIDE_RUNTIME")
         return candidate
 
+    closure = _load_c2_uniform_host_chat_closure(
+        runtime=runtime, private_binding=private_binding,
+        private_directory=private_directory, load_json=load_json, error=error,
+    )
+    _validate_c2_uniform_host_record(
+        closure=closure, record_binding=record_binding, record=record, error=error,
+    )
+
     # The resolver's portable-record check compares immutable locator strings
     # against `plan.package_root`.  Only that comparison gets a proxy; all
     # paths actually passed to `private_binding` remain under `runtime`.
@@ -399,9 +780,21 @@ def resolve_c2_private_record_authority(
         runtime_authority_root=runtime, source_media_sha256=source_media_sha256,
         regular_binding=private_binding, safe_directory=private_directory,
         load_json=load_json, error=error,
+        chat_validator=lambda binding, *, record, load_json, error:
+            _validate_c2_uniform_host_chat(
+                binding, closure=closure, record=record,
+                load_json=load_json, error=error,
+            ),
     )
+    if authority.source != "portable-record-mirror":
+        raise error("C2_PRIVATE_AUTHORITY_UNIFORM_HOST_CLOSURE_SOURCE_DRIFT")
     for binding in (authority.chat, authority.clip_context):
         path = Path(getattr(binding, "path"))
         if not path.is_relative_to(runtime):
             raise error("C2_PRIVATE_AUTHORITY_RETURN_OUTSIDE_RUNTIME")
+    _materialize_c2_uniform_host_chat_closure_receipt(
+        runtime=runtime, plan=plan, record_binding=record_binding,
+        authority=authority, closure=closure, private_binding=private_binding,
+        private_directory=private_directory, load_json=load_json, error=error,
+    )
     return authority

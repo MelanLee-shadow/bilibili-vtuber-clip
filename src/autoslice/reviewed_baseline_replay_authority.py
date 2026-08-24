@@ -246,6 +246,7 @@ def resolve_record_bound_finalizer_authority(
     runtime_authority_root: Path, source_media_sha256: str,
     regular_binding: Callable[..., object], safe_directory: Callable[[Path], Path],
     load_json: Callable[..., dict[str, Any]], error: Callable[[str], Exception],
+    chat_validator: Callable[..., None] | None = None,
 ) -> RecordBoundFinalizerAuthority:
     """Return the only sidecar pair the record can authorize for replay."""
 
@@ -265,7 +266,13 @@ def resolve_record_bound_finalizer_authority(
             clip_sha256=clip_sha256, regular_binding=regular_binding,
             safe_directory=safe_directory, load_json=load_json, error=error,
         )
-    _validate_chat(authority.chat, record=record, load_json=load_json, error=error)
+    # The default remains the generic record/chat closure.  A narrowly scoped
+    # caller can inject a stricter schema-specific validator only when its
+    # sealed authority proves that the generic speaker fields encode a
+    # different, but still complete, artifact representation.
+    (chat_validator or _validate_chat)(
+        authority.chat, record=record, load_json=load_json, error=error
+    )
     _validate_clip(
         authority.clip_context, plan=plan, record=record,
         source_media_sha256=source_media_sha256, load_json=load_json, error=error,
