@@ -656,6 +656,20 @@ def replay_final_human_review_attestation(
     # C1's line947-authorized fastlane is deliberately not a generic
     # perceptual receipt.  This exact schema pair is the only alternate lane.
     if "c1_technical_receipt" in attestation:
+        expected_keys = {
+            "package_root",
+            "review_manifest",
+            "package_audit",
+            "c1_technical_receipt",
+        }
+        if set(attestation) != expected_keys:
+            raise FinalHumanReviewError(
+                "FINAL_HUMAN_REVIEW_C1_ATTESTATION_SCHEMA_INVALID"
+            )
+        if not isinstance(manifest.get("recovery_publication_authority"), Mapping):
+            raise FinalHumanReviewError(
+                "FINAL_HUMAN_REVIEW_C1_RECOVERY_REQUIRED"
+            )
         entries: dict[str, dict[str, object]] = {}
         paths: dict[str, Path] = {}
         for key in ("review_manifest", "package_audit", "c1_technical_receipt"):
@@ -793,6 +807,20 @@ def attach_final_human_review(
         if receipt.get("schema_version") == "fastlane-c1-technical-receipt-evidence.v1"
         else "final_human_review"
     )
+    if key == "c1_technical_receipt":
+        expected = {"package_root", "review_manifest", "package_audit"}
+        if set(attestation) != expected:
+            return ["C1 technical receipt requires an exact formal package attestation"]
+        review_entry = attestation.get("review_manifest")
+        try:
+            _entry, review_path = _absolute_attested_file(
+                review_entry, label="review_manifest"
+            )
+            review = _json_object(review_path, source="review_manifest")
+        except FinalHumanReviewError:
+            return ["C1 technical receipt requires a readable formal review manifest"]
+        if review.get("schema_version") != "fastlane-c1-formal-private-review-manifest.v1":
+            return ["C1 technical receipt requires the C1 formal review manifest"]
     attestation[key] = {
         "path": str(resolved),
         "sha256": _sha256(resolved)[7:],
