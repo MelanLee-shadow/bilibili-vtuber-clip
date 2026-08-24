@@ -16,6 +16,7 @@ import src.autoslice.reviewed_baseline_replay_authority as replay_authority
 import src.autoslice.reviewed_baseline_replay_publish as replay_publish
 from src.autoslice import llm_client
 from src.autoslice.repository_asset_authority import _canonical_sha256
+from src.autoslice.reviewed_baseline_replay_setup import resolve_replay_exact_final_reviewer
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -825,6 +826,30 @@ def test_replay_publish_adapter_refuses_source_fact_title_rewrite(
         match="REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_STAGED_TITLE_MISMATCH",
     ):
         adapter({}, cues=[], run_ffmpeg=False)
+
+
+def test_replay_exact_review_prefers_production_over_adapter_fallback(tmp_path: Path) -> None:
+    calls: list[str] = []
+    fallback = lambda *_args, **_kwargs: {"reviewer": "fallback"}
+    production_reviewer = lambda *_args, **_kwargs: {"reviewer": "production"}
+
+    def build_production(*_args: object, **_kwargs: object) -> object:
+        calls.append("production")
+        return production_reviewer
+
+    reviewer, _ = resolve_replay_exact_final_reviewer(
+        explicit_reviewer=None, fallback_reviewer=fallback, use_production=True,
+        entity_verifier=lambda *_args, **_kwargs: None, text_adapters=None,
+        plan=object(), candidate_id=CID, spec={"clip_context": {}},
+        spec_piece={"start_ms": 0, "end_ms": 1, "source_media_sha256": "sha256:" + "a" * 64},
+        padded=tmp_path / "padded.mp4", out_root=tmp_path / "out",
+        runtime_authority_root=tmp_path / "runtime", release_text_path=tmp_path / "release.srt",
+        read_text=lambda _path: "", reconstruct_chat=lambda *_args, **_kwargs: [],
+        replay_reviewer=build_production, provider_invocation=None,
+        error_factory=ValueError,
+    )
+    assert reviewer is production_reviewer
+    assert calls == ["production"]
 
 
 def test_replay_publish_adapter_uses_story_contract_hook_when_staging_hook_missing(

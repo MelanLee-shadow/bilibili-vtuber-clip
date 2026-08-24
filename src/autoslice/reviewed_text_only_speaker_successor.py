@@ -13,7 +13,7 @@ import json
 import re
 from copy import deepcopy
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping, Protocol
 
 from scripts.apply_speaker_turn_overrides import Cue, sha256_file, write_ass, write_srt
 from scripts.apply_subtitle_text_overrides import parse_srt
@@ -24,9 +24,102 @@ class ReviewedTextOnlySpeakerSuccessorError(RuntimeError):
     """The old speaker evidence cannot be safely rebound."""
 
 
+class _RegularBinding(Protocol):
+    path: Path
+    sha256: str
+
+
 _SHA = re.compile(r"(?:sha256:)?([0-9a-f]{64})\Z")
 _LABEL = re.compile(r"^\[([^\]]+)\]\s*(.+)\Z")
 _SUCCESSOR_SCHEMA = "reviewed-baseline-text-only-speaker-successor.v1"
+
+
+def build_text_only_speaker_successor_fields(
+    *,
+    finalizer: Callable[..., object] | None,
+    original_speaker_finalizer: object,
+    candidate_id: str,
+    record: Mapping[str, object],
+    old_record_sha256: str,
+    baseline_config: Mapping[str, object],
+    baseline_manifest_parent: Path,
+    reviewed_baseline_path: Path,
+    reviewed_baseline_sha256: str,
+    expected_media_sha256: str,
+    regular_binding: Callable[..., _RegularBinding],
+    replay_error: type[Exception],
+    error_factory: Callable[[str], Exception],
+) -> dict[str, object]:
+    """Build the private-only speaker successor adapter for replay.
+
+    A canonical finalizer supplied by a test owns its own adapter shape and is
+    therefore left untouched.  The production finalizer receives one typed
+    wrapper that only replaces a provider's speaker guess with a sealed
+    text-only successor; every binding and failure code stays in that lane.
+    """
+
+    if finalizer is not None:
+        return {}
+    if not callable(original_speaker_finalizer):
+        raise error_factory("REPLAY_FINALIZER_ADAPTERS_INVALID")
+
+    from src.autoslice import speaker_guess
+
+    def replay_speaker_finalizer(**kwargs: object) -> dict[str, object]:
+        generated = original_speaker_finalizer(**kwargs)
+        if generated.get("status") != speaker_guess.SPEAKER_GUESS_STATUS:
+            return generated
+        try:
+            old_speaker_path_raw = record.get("speaker_finalization_manifest_path")
+            if not isinstance(old_speaker_path_raw, str):
+                raise ReviewedTextOnlySpeakerSuccessorError("OLD_MANIFEST_MISSING")
+            old_speaker_binding = regular_binding(
+                Path(old_speaker_path_raw), label="OLD_SPEAKER_MANIFEST"
+            )
+            lanes = baseline_config.get("operator_truth_lanes")
+            ledger_descriptor = lanes.get("decision_ledger") if isinstance(lanes, Mapping) else None
+            if not isinstance(ledger_descriptor, Mapping) or not isinstance(ledger_descriptor.get("path"), str):
+                raise ReviewedTextOnlySpeakerSuccessorError("LEDGER_MISSING")
+            ownership = baseline_config.get("operator_text_full_ownership")
+            if not isinstance(ownership, Mapping) or ownership.get("speaker_authority") != "NOT_CLAIMED_TEXT_ONLY":
+                raise ReviewedTextOnlySpeakerSuccessorError("SPEAKER_AUTHORITY_SCOPE_INVALID")
+            ledger_binding = regular_binding(
+                baseline_manifest_parent / str(ledger_descriptor["path"]),
+                label="OPERATOR_DECISION_LEDGER",
+            )
+            descriptor_sha = str(ledger_descriptor.get("sha256") or "").removeprefix("sha256:")
+            ownership_sha = str(ownership.get("decision_ledger_sha256") or "").removeprefix("sha256:")
+            if (
+                len(descriptor_sha) != 64
+                or ledger_binding.sha256.removeprefix("sha256:") != descriptor_sha
+                or ownership_sha != descriptor_sha
+            ):
+                raise ReviewedTextOnlySpeakerSuccessorError("LEDGER_BINDING_INVALID")
+            return materialize_text_only_speaker_successor(
+                candidate_id=candidate_id, old_record=record,
+                old_record_sha256=old_record_sha256,
+                old_manifest_path=old_speaker_binding.path,
+                old_manifest_sha256=old_speaker_binding.sha256,
+                reviewed_baseline_path=reviewed_baseline_path,
+                reviewed_baseline_sha256=reviewed_baseline_sha256,
+                ledger_path=ledger_binding.path, ledger_sha256=ledger_binding.sha256,
+                new_plain_srt=Path(str(kwargs["text_srt_path"])),
+                new_media=Path(str(kwargs["media_path"])),
+                expected_media_sha256=expected_media_sha256,
+                output_srt=Path(str(kwargs["output_srt_path"])),
+                output_ass=Path(str(kwargs["output_ass_path"])),
+                output_manifest=Path(str(kwargs["output_manifest_path"])),
+            )
+        except (ReviewedTextOnlySpeakerSuccessorError, replay_error) as exc:
+            # Do not let the source-fact provider see guessed speaker evidence.
+            # The code is deliberately closed and replay-specific so operations
+            # can distinguish this from title or provider failures.
+            raise error_factory(
+                "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_"
+                "SOURCE_FACT_REVIEW_SPEAKER_GUESS_REQUIRES_HUMAN_REVIEW"
+            ) from exc
+
+    return {"run_speaker_finalization": replay_speaker_finalizer}
 
 
 def _fail(code: str) -> None:

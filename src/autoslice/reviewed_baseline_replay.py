@@ -1014,98 +1014,39 @@ def synthesize_replay_spec_and_finalize_private(
     )
     final_start = plan.local_start_ms
     final_end = plan.local_end_ms
-    spec = {
-        "date": plan.date, "candidate_id": plan.candidate_id, "output_root": str(out_root),
-        "given_title": None, "recovery_publication_authority": None,
-        # The prepared delivery is later projected into the same CID-injective
-        # public basename that the normal Talk runner uses.  Never let a
-        # historical replay silently fall back to the bare candidate id.
-        "delivery_name": canonical_talk_delivery_basename(
-            str(story.get("selection_hook") or ""), plan.candidate_id,
-            error=ReviewedBaselineReplayError,
-        ),
-        "selection_hook": str(story.get("selection_hook") or ""),
-        "selection_scorecard": story.get("selection_scorecard"),
-        "session_relation_authority": story.get("session_relation_authority"),
-        "story_contract": dict(story),
-        "source_piece": normalized_piece,
-        "clip_context_path": str(out_root / f"{plan.candidate_id}.clip-context.json"),
-        "clip_context": _load_json(clip, label="CLIP_CONTEXT"),
-        "pieces": [spec_piece],
-        "subtitle_redelivery_baseline": plan.baseline.config,
-        "boundary_semantic_review": boundary.get("boundary_semantic_review"),
-    }
-    if story.get("candidate_id") != plan.candidate_id or not spec["selection_hook"]:
-        raise ReviewedBaselineReplayError("REPLAY_STORY_CONTRACT_BINDING_DRIFT")
+    from src.autoslice.reviewed_baseline_replay_setup import (
+        build_reviewed_baseline_replay_spec,
+        resolve_replay_exact_final_reviewer,
+    )
+    from src.autoslice.reviewed_text_only_speaker_successor import (
+        build_text_only_speaker_successor_fields,
+    )
+    spec = build_reviewed_baseline_replay_spec(
+        date=plan.date, candidate_id=plan.candidate_id, output_root=out_root,
+        story=story, normalized_piece=normalized_piece, spec_piece=spec_piece,
+        clip_context_path=out_root / f"{plan.candidate_id}.clip-context.json",
+        clip_context=_load_json(clip, label="CLIP_CONTEXT"),
+        baseline_config=plan.baseline.config, boundary=boundary,
+        error_factory=ReviewedBaselineReplayError,
+    )
     # A text-only reviewed baseline does not authorize new speaker decisions.
     # It may, however, strictly rebind a prior READY artifact when every label,
     # decision, boundary and media binding survives and the sealed ledger names
     # the sole text delta.  This wrapper is private-stage-only: it never points
     # at an installed package or writes a formal target.
-    from src.autoslice import speaker_guess
-    from src.autoslice.reviewed_text_only_speaker_successor import (
-        ReviewedTextOnlySpeakerSuccessorError,
-        materialize_text_only_speaker_successor,
-    )
     original_speaker_finalizer = getattr(adapters, "run_speaker_finalization", None)
-    if finalizer is None and not callable(original_speaker_finalizer):
-        raise ReviewedBaselineReplayError("REPLAY_FINALIZER_ADAPTERS_INVALID")
-
-    def replay_speaker_finalizer(**kwargs: object) -> dict[str, object]:
-        if not callable(original_speaker_finalizer):  # custom-finalizer seam only
-            raise ReviewedBaselineReplayError("REPLAY_FINALIZER_ADAPTERS_INVALID")
-        generated = original_speaker_finalizer(**kwargs)
-        if generated.get("status") != speaker_guess.SPEAKER_GUESS_STATUS:
-            return generated
-        try:
-            old_speaker_path_raw = record.get("speaker_finalization_manifest_path")
-            if not isinstance(old_speaker_path_raw, str):
-                raise ReviewedTextOnlySpeakerSuccessorError("OLD_MANIFEST_MISSING")
-            old_speaker_binding = regular_binding(
-                Path(old_speaker_path_raw), label="OLD_SPEAKER_MANIFEST"
-            )
-            lanes = plan.baseline.config.get("operator_truth_lanes")
-            ledger_descriptor = lanes.get("decision_ledger") if isinstance(lanes, Mapping) else None
-            if not isinstance(ledger_descriptor, Mapping) or not isinstance(ledger_descriptor.get("path"), str):
-                raise ReviewedTextOnlySpeakerSuccessorError("LEDGER_MISSING")
-            ownership = plan.baseline.config.get("operator_text_full_ownership")
-            if not isinstance(ownership, Mapping) or ownership.get("speaker_authority") != "NOT_CLAIMED_TEXT_ONLY":
-                raise ReviewedTextOnlySpeakerSuccessorError("SPEAKER_AUTHORITY_SCOPE_INVALID")
-            ledger_binding = regular_binding(
-                plan.baseline.manifest_path.parent / str(ledger_descriptor["path"]),
-                label="OPERATOR_DECISION_LEDGER",
-            )
-            descriptor_sha = str(ledger_descriptor.get("sha256") or "").removeprefix("sha256:")
-            ownership_sha = str(ownership.get("decision_ledger_sha256") or "").removeprefix("sha256:")
-            if (
-                len(descriptor_sha) != 64
-                or ledger_binding.sha256.removeprefix("sha256:") != descriptor_sha
-                or ownership_sha != descriptor_sha
-            ):
-                raise ReviewedTextOnlySpeakerSuccessorError("LEDGER_BINDING_INVALID")
-            return materialize_text_only_speaker_successor(
-                candidate_id=plan.candidate_id, old_record=record,
-                old_record_sha256=record_binding.sha256,
-                old_manifest_path=old_speaker_binding.path,
-                old_manifest_sha256=old_speaker_binding.sha256,
-                reviewed_baseline_path=plan.baseline.baseline_path,
-                reviewed_baseline_sha256="sha256:" + str(plan.baseline.config["sha256"]),
-                ledger_path=ledger_binding.path, ledger_sha256=ledger_binding.sha256,
-                new_plain_srt=Path(str(kwargs["text_srt_path"])),
-                new_media=Path(str(kwargs["media_path"])),
-                expected_media_sha256=plan.expected_video_sha256,
-                output_srt=Path(str(kwargs["output_srt_path"])),
-                output_ass=Path(str(kwargs["output_ass_path"])),
-                output_manifest=Path(str(kwargs["output_manifest_path"])),
-            )
-        except (ReviewedTextOnlySpeakerSuccessorError, ReviewedBaselineReplayError) as exc:
-            # Do not let the source-fact provider see guessed speaker evidence.
-            # The code is deliberately closed and replay-specific so operations
-            # can distinguish this from title or provider failures.
-            raise ReviewedBaselineReplayError(
-                "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_"
-                "SOURCE_FACT_REVIEW_SPEAKER_GUESS_REQUIRES_HUMAN_REVIEW"
-            ) from exc
+    successor_fields = build_text_only_speaker_successor_fields(
+        finalizer=finalizer, original_speaker_finalizer=original_speaker_finalizer,
+        candidate_id=plan.candidate_id, record=record,
+        old_record_sha256=record_binding.sha256,
+        baseline_config=plan.baseline.config,
+        baseline_manifest_parent=plan.baseline.manifest_path.parent,
+        reviewed_baseline_path=plan.baseline.baseline_path,
+        reviewed_baseline_sha256="sha256:" + str(plan.baseline.config["sha256"]),
+        expected_media_sha256=plan.expected_video_sha256,
+        regular_binding=regular_binding, replay_error=ReviewedBaselineReplayError,
+        error_factory=ReviewedBaselineReplayError,
+    )
     spec_path = private_runtime_root / "replay-spec.json"
     _write_private(spec_path, _canonical(spec))
     options = ProducerFinalizationOptions(
@@ -1114,45 +1055,24 @@ def synthesize_replay_spec_and_finalize_private(
         speaker_source_session_anchors=None, speaker_mixed_overlap_evidence=None,
         speaker_python=speaker_python, reuse_cover=True, prepare_only=True,
     )
-    reviewer = exact_final_reviewer
-    if reviewer is None and use_production_exact_final_reviewer:
-        if exact_final_entity_verifier is None:
-            # Build the *same* entity verifier used by normal text production,
-            # against the sealed release truth and hash-bound padded source.
-            # It is private-stage evidence, never an old final-review carry.
-            if exact_final_text_adapters is None:
-                raise ReviewedBaselineReplayError("REPLAY_ENTITY_VERIFIER_MISSING")
-            from src.autoslice.producer_text_pipeline import _build_entity_verification_context
-            from src.autoslice.jingting_chunker import parse_srt_cues
-            release_text = _read_small_bytes(
-                regular_binding(plan.baseline.baseline_path, label="RELEASE_TRUTH"), label="RELEASE_TRUTH"
-            ).decode("utf-8")
-            # The finalizer's baseline replay must reproduce this exact final
-            # text; the canonical final authority gate verifies that separately.
-            if not parse_srt_cues(release_text):
-                raise ReviewedBaselineReplayError("REPLAY_RELEASE_TRUTH_INVALID")
-            entity_context = _build_entity_verification_context(
-                spec=spec, padded=plan.padded_path,
-                padded_dur=spec_piece["end_ms"] - spec_piece["start_ms"],
-                host="localhost", text_override_path=None, cid=plan.candidate_id,
-                out_root=out_root, srt_text=release_text,
-                authoritative_chat=list(_reconstruct_structured_chat(
-                    spec["clip_context"], plan=plan,
-                    source_media_sha256=str(spec_piece["source_media_sha256"]),
-                )),
-                adapters=exact_final_text_adapters,
-            )
-            exact_final_entity_verifier = entity_context.verify_confusable_entity
-        reviewer = replay_exact_final_reviewer(
-            plan, spec=spec, clip_context=spec["clip_context"],
-            runtime_root=runtime_authority_root, out_root=out_root,
-            padded=plan.padded_path,
-            verify_confusable_entity=exact_final_entity_verifier,
-            provider_invocation=provider_invocation,
-        )
-    reviewer = reviewer or getattr(adapters, "run_exact_final_review", None)
-    if not callable(reviewer):
-        raise ReviewedBaselineReplayError("REPLAY_EXACT_FINAL_REVIEW_ADAPTER_MISSING")
+    reviewer, exact_final_entity_verifier = resolve_replay_exact_final_reviewer(
+        explicit_reviewer=exact_final_reviewer,
+        fallback_reviewer=getattr(adapters, "run_exact_final_review", None),
+        use_production=use_production_exact_final_reviewer,
+        entity_verifier=exact_final_entity_verifier,
+        text_adapters=exact_final_text_adapters, plan=plan, spec=spec,
+        candidate_id=plan.candidate_id, spec_piece=spec_piece,
+        padded=plan.padded_path, out_root=out_root,
+        runtime_authority_root=runtime_authority_root,
+        release_text_path=plan.baseline.baseline_path,
+        read_text=lambda path: _read_small_bytes(
+            regular_binding(path, label="RELEASE_TRUTH"), label="RELEASE_TRUTH"
+        ).decode("utf-8"),
+        reconstruct_chat=_reconstruct_structured_chat,
+        replay_reviewer=replay_exact_final_reviewer,
+        provider_invocation=provider_invocation,
+        error_factory=ReviewedBaselineReplayError,
+    )
     replacement_fields: dict[str, object] = {
         "stage_publish_draft": replay_publish_adapter(
             plan, source_fact_llm=source_fact_llm,
@@ -1166,8 +1086,7 @@ def synthesize_replay_spec_and_finalize_private(
     # seams intentionally provide a smaller adapter dataclass.  Do not add an
     # unknown field to it.  The canonical production finalizer always receives
     # the strict successor wrapper above.
-    if finalizer is None:
-        replacement_fields["run_speaker_finalization"] = replay_speaker_finalizer
+    replacement_fields.update(successor_fields)
     try:
         adapters = replace(
             adapters,
