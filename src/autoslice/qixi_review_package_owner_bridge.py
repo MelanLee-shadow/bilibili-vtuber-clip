@@ -11,6 +11,8 @@ from src.autoslice.qixi_corrected_package_finalization import (
     validate_manifest_bound_applied_receipt,
 )
 from src.autoslice.qixi_cover_successor_finalization import (
+    CANDIDATE_ID,
+    RECEIPT,
     QixiCoverSuccessorError,
     validate_applied_receipt as validate_cover_successor_receipt,
 )
@@ -36,7 +38,12 @@ def manifest_bound_terminal_projection_authority(
         successor_name = item.get("qixi_cover_successor_finalization")
         successor_sha = item.get("qixi_cover_successor_finalization_sha256")
         if isinstance(successor_name, str) or successor_sha is not None:
-            if not (isinstance(successor_name, str) and isinstance(successor_sha, str)):
+            if not (
+                candidate_id == CANDIDATE_ID
+                and isinstance(successor_name, str)
+                and successor_name == RECEIPT
+                and isinstance(successor_sha, str)
+            ):
                 return None
             successor_path = package_root / successor_name
             if successor_path.is_symlink() or not successor_path.is_file():
@@ -46,7 +53,11 @@ def manifest_bound_terminal_projection_authority(
             if "sha256:" + hashlib.sha256(payload).hexdigest() != successor_sha:
                 return None
             receipt = json.loads(payload.decode("utf-8"))
-            validate_cover_successor_receipt(receipt, package_root=package_root)
+            validate_cover_successor_receipt(
+                receipt,
+                package_root=package_root,
+                repo_root=repo_root,
+            )
             return validate_projection_assets(repo_root)
         if not validate_manifest_bound_applied_receipt(
             item,

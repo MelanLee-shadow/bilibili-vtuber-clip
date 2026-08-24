@@ -121,7 +121,11 @@ def _prepare_qixi_gate(
         try:
             successor_bytes = successor_path.read_bytes()
             successor = json.loads(successor_bytes.decode("utf-8"))
-            validate_qixi_successor_receipt(successor, package_root=package_root)
+            validate_qixi_successor_receipt(
+                successor,
+                package_root=package_root,
+                repo_root=qixi_repo_root,
+            )
         except (OSError, UnicodeError, json.JSONDecodeError, QixiCoverSuccessorError) as exc:
             raise DailyManifestError("Qixi cover successor receipt is unreadable") from exc
         publication_authority = record_doc.get("recovery_publication_authority")

@@ -5,11 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 from pathlib import Path
 
 import pytest
 
 from scripts import build_manual_review_manifest as manual_manifest
+from scripts import finalize_qixi_cover_successor_review_package as successor_review_package
 from src.autoslice import qixi_cover_successor_finalization as successor
 from src.autoslice import qixi_review_package_owner_bridge as owner_bridge
 
@@ -98,6 +100,10 @@ def test_finalize_apply_is_create_only_and_freezes_noncover_bytes(
     assert result["mode"] == "APPLIED"
     assert (target / "frozen.bin").read_bytes() == b"must-not-change"
     assert (target / "replacement_recuts" / successor.RECEIPT).is_file()
+    for item in [target, *target.rglob("*")]:
+        expected_mode = 0o700 if item.is_dir() else 0o600
+        assert stat.S_IMODE(item.lstat().st_mode) == expected_mode
+        assert item.lstat().st_uid == os.geteuid()
     with pytest.raises(successor.QixiCoverSuccessorError, match="create-only"):
         successor.finalize(
             repo_root=tmp_path,
@@ -244,6 +250,65 @@ def test_owner_bridge_requires_successor_receipt_hash_and_replay(
     ) is None
 
 
+@pytest.mark.parametrize(
+    ("candidate_id", "receipt_name"),
+    [
+        ("other-candidate", successor.RECEIPT),
+        (CID, "../" + successor.RECEIPT),
+        (CID, "/private/tmp/" + successor.RECEIPT),
+        (CID, "another-receipt.json"),
+    ],
+)
+def test_owner_bridge_rejects_wrong_successor_candidate_or_receipt_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    candidate_id: str,
+    receipt_name: str,
+) -> None:
+    payload = b'{"mode":"APPLIED"}'
+    _write(tmp_path / successor.RECEIPT, payload)
+    monkeypatch.setattr(owner_bridge, "validate_cover_successor_receipt", lambda *_a, **_kw: {})
+    item = {
+        "candidate_id": candidate_id,
+        "qixi_cover_successor_finalization": receipt_name,
+        "qixi_cover_successor_finalization_sha256": "sha256:" + hashlib.sha256(payload).hexdigest(),
+    }
+    assert owner_bridge.manifest_bound_terminal_projection_authority(
+        package_root=tmp_path,
+        item=item,
+        qixi_repo_root=tmp_path,
+    ) is None
+
+
+def test_manual_builder_passes_explicit_repo_to_successor_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(tmp_path / successor.RECEIPT, b'{"schema_version":"receipt"}')
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        manual_manifest,
+        "validate_qixi_successor_receipt",
+        lambda *_a, **kwargs: calls.append(kwargs) or {},
+    )
+    monkeypatch.setattr(manual_manifest, "validate_recovery_publication_authority", lambda value, **_kw: value)
+    monkeypatch.setattr(
+        manual_manifest,
+        "_sync_record_bound_candidate_artifacts",
+        lambda **_kw: {"chat_authority": "chat.json", "clip_context": "clip.json"},
+    )
+    record = {"recovery_publication_authority": {"sealed": True}, "publish_staging": {"recovery_publication_authority": {"sealed": True}}}
+    manual_manifest._prepare_qixi_gate(
+        package_root=tmp_path,
+        stem=CID,
+        candidate_id=CID,
+        title="frozen",
+        record_doc=record,
+        publish_doc={"recovery_publication_authority": {"sealed": True}},
+        qixi_repo_root=tmp_path,
+    )
+    assert calls == [{"package_root": tmp_path, "repo_root": tmp_path}]
+
+
 def test_deep_replay_has_independent_route_identity_pixel_qc_and_text_gates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -303,6 +368,7 @@ def test_deep_replay_has_independent_route_identity_pixel_qc_and_text_gates(
         "response": {"attempts": [{"output_sha256": _sha(background)}]},
         "no_text": {"status": "OBSERVED", "image_sha256": _sha(pre)[7:], "answer": '{"has_readable_text":false,"text_fragments":[]}'},
         "joint": {"status": "PASS", "pass": True, "cover_sha256": _sha(final), "verdict": {"unrelated_or_misleading_elements": []}},
+        "identity": {"image_sha256": _sha(identity)},
     }
     monkeypatch.setattr(successor, "load_authority", lambda _repo: authority)
     monkeypatch.setattr(successor, "validate_provider_evidence", lambda **_kwargs: {})
@@ -336,3 +402,163 @@ def test_deep_replay_has_independent_route_identity_pixel_qc_and_text_gates(
     provenance["no_text"] = {"status": "OBSERVED", "image_sha256": _sha(pre)[7:], "answer": '{"has_readable_text":true,"text_fragments":["x"]}'}
     with pytest.raises(successor.QixiCoverSuccessorError, match="no-text/joint-QC"):
         successor._validate_deep_package(package=package, receipt=receipt, repo=tmp_path)
+
+
+def test_portable_provenance_replay_binds_every_source_hash_and_document(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    package = tmp_path / "package"
+    source_documents = {
+        "generation": {"kind": "generation", "value": "sealed"},
+        "request": {"kind": "request", "value": "sealed"},
+        "response": {"kind": "response", "value": "sealed"},
+        "joint": {"kind": "joint", "value": "sealed"},
+    }
+    replacement: dict[str, object] = {}
+    for key, document in source_documents.items():
+        source = _write(repo / "sealed" / f"{key}.json", json.dumps(document).encode())
+        if key == "joint":
+            continue
+        replacement[f"provider_{key}_relative_path"] = f"sealed/{key}.json"
+        replacement[f"provider_{key}_sha256"] = _sha(source)
+    joint_path = repo / "sealed" / "joint.json"
+    identity_sha = "sha256:" + "1" * 64
+    no_text_source_sha = "sha256:" + "2" * 64
+    identity_document = {
+        "image_path": successor._PORTABLE_PATHS["identity"],
+        "image_sha256": identity_sha,
+    }
+    no_text_document = {"status": "OBSERVED", "answer": "sealed"}
+    replacement.update(
+        {
+            "identity_witness_sha256": identity_sha,
+            "identity_portable_document_sha256": successor._canonical_sha(identity_document),
+            "no_model_text_witness_sha256": no_text_source_sha,
+            "no_model_text_portable_document_sha256": successor._canonical_sha(no_text_document),
+        }
+    )
+    authority = {
+        "replacement": replacement,
+        "joint_qc": {"relative_path": "sealed/joint.json", "sha256": _sha(joint_path)},
+    }
+    documents = {**source_documents, "identity": identity_document, "no_text": no_text_document}
+    evidence = package / "evidence" / "qixi-cover-successor"
+    for key, document in documents.items():
+        payload = {
+            "schema_version": successor.PORTABLE_PROVENANCE_SCHEMA,
+            "kind": key,
+            "source_sha256": successor._expected_provenance_source_hashes(authority)[key],
+            "document": document,
+        }
+        _write(evidence / successor._PROVENANCE_NAMES[key], json.dumps(payload).encode())
+    for key in documents:
+        assert successor._provenance_document(package, key, authority=authority, repo=repo) == documents[key]
+
+    generation_path = evidence / successor._PROVENANCE_NAMES["generation"]
+    payload = json.loads(generation_path.read_text())
+    payload["source_sha256"] = "sha256:" + "0" * 64
+    generation_path.write_text(json.dumps(payload))
+    with pytest.raises(successor.QixiCoverSuccessorError, match="source hash drifts"):
+        successor._provenance_document(package, "generation", authority=authority, repo=repo)
+
+    payload["source_sha256"] = successor._expected_provenance_source_hashes(authority)["generation"]
+    payload["document"]["value"] = "tampered"
+    generation_path.write_text(json.dumps(payload))
+    with pytest.raises(successor.QixiCoverSuccessorError, match="document drifts"):
+        successor._provenance_document(package, "generation", authority=authority, repo=repo)
+
+
+def test_current_successor_audit_rejects_stale_root_or_input_hash(tmp_path: Path) -> None:
+    package = tmp_path / "replacement_recuts"
+    required = [
+        successor._PORTABLE_PATHS["final"],
+        f"{CID}.record.json",
+        f"{CID}.publish.json",
+        "review_manifest.json",
+        successor.RECEIPT,
+    ]
+    rows = []
+    for relative in required:
+        path = _write(package / relative, relative.encode())
+        rows.append({"path": relative, "sha256": _sha(path)[7:], "bytes": path.stat().st_size})
+    audit = {
+        "schema_version": "lidousha-review-package-audit.v2",
+        "passed": True,
+        "issues": [],
+        "issue_count": 0,
+        "blocking_issue_count": 0,
+        "root": str(package.resolve()),
+        "audited_inputs": rows,
+    }
+    audit_path = _write(package / successor.PACKAGE_AUDIT, json.dumps(audit).encode())
+    assert successor.validate_current_successor_audit(package_root=package)["passed"] is True
+
+    audit["root"] = "/opt/bilive/qixi-successor-preimage/stale"
+    audit_path.write_text(json.dumps(audit))
+    with pytest.raises(successor.QixiCoverSuccessorError, match="stale or failed"):
+        successor.validate_current_successor_audit(package_root=package)
+
+    audit["root"] = str(package.resolve())
+    audit["audited_inputs"][0]["sha256"] = "0" * 64
+    audit_path.write_text(json.dumps(audit))
+    with pytest.raises(successor.QixiCoverSuccessorError, match="input hash drifts"):
+        successor.validate_current_successor_audit(package_root=package)
+
+
+def test_review_orchestrator_reseals_manifest_and_current_audit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / CID
+    package = target / "replacement_recuts"
+    target.mkdir(mode=0o700)
+    os.chmod(target, 0o700)
+    receipt = _write(package / successor.RECEIPT, b"receipt")
+    required = [
+        successor._PORTABLE_PATHS["final"],
+        f"{CID}.record.json",
+        f"{CID}.publish.json",
+        "review_manifest.json",
+        successor.RECEIPT,
+    ]
+    for relative in required[:-1]:
+        _write(package / relative, relative.encode())
+    _write(package / successor.PACKAGE_AUDIT, b"{}")
+    monkeypatch.setattr(
+        successor_review_package,
+        "finalize",
+        lambda **_kwargs: {"mode": "APPLIED", "target": str(target)},
+    )
+    monkeypatch.setattr(
+        successor_review_package,
+        "build_manual",
+        lambda *_args, **_kwargs: {"items": [{"candidate_id": CID}]},
+    )
+
+    def audit(_package: Path, **_kwargs: object) -> dict[str, object]:
+        inputs = []
+        for relative in required:
+            path = package / relative
+            inputs.append({"path": relative, "sha256": _sha(path)[7:], "bytes": path.stat().st_size})
+        return {
+            "schema_version": "lidousha-review-package-audit.v2",
+            "passed": True,
+            "issues": [],
+            "issue_count": 0,
+            "blocking_issue_count": 0,
+            "root": str(package.resolve()),
+            "audited_inputs": inputs,
+        }
+
+    monkeypatch.setattr(successor_review_package, "audit_package", audit)
+    result = successor_review_package.build_review_package(
+        preimage=tmp_path / "preimage",
+        trial_root=tmp_path / "trial",
+        target=target,
+        punch_response="observed",
+        operator="operator",
+        note="pending human review",
+    )
+    assert result["audit_passed"] is True
+    assert receipt.is_file()
+    for item in [target, *target.rglob("*")]:
+        expected_mode = 0o700 if item.is_dir() else 0o600
+        assert stat.S_IMODE(item.lstat().st_mode) == expected_mode

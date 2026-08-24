@@ -156,6 +156,7 @@ def validate_provider_evidence(*, authority: Mapping[str, object], bundle_root: 
         and generation.get("ai_background_sha256") == replacement["route_background_sha256"]
         and generation.get("pre_overlay_sha256") == replacement["pre_overlay_sha256"]
         and isinstance(identity, Mapping) and identity.get("status") == "PASS"
+        and identity.get("comparison_sha256") == replacement["identity_witness_sha256"]
         and isinstance(pixels, Mapping) and pixels.get("status") == "PASS"
         and pixels.get("mask_sha256") == replacement["title_mask_sha256"]
         and generation.get("rendered_lines") == replacement["required_title_lines"]

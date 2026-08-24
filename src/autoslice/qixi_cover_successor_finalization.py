@@ -47,6 +47,7 @@ from src.autoslice.story_contract import cover_story_contract_binding
 RECEIPT = "qixi-cover-successor-finalization.json"
 SCHEMA = "qixi-cover-successor-finalization-receipt.v2"
 PORTABLE_PROVENANCE_SCHEMA = "qixi-cover-successor-portable-provenance.v1"
+PACKAGE_AUDIT = f"{CANDIDATE_ID}.package-audit.json"
 
 _TRIAL_NAMES = {
     "final": "qixi-cpa-redraw.png",
@@ -69,6 +70,11 @@ _PORTABLE_PATHS = {
     "mask": f"{CANDIDATE_ID}.cover.title-mask.png",
     "reference": "evidence/cover-reference.png",
     "identity": "evidence/qixi-cover-successor/qixi-cpa-redraw.host-identity-witness.png",
+}
+
+_PROVENANCE_NAMES = {
+    **{key: value for key, value in _TRIAL_NAMES.items() if key != "identity"},
+    "identity": "qixi-cpa-redraw.host-identity-witness.provenance.json",
 }
 
 
@@ -190,7 +196,7 @@ def _fsync_directory(path: Path) -> None:
 
 
 def _assert_tree_regular(root: Path, *, label: str) -> None:
-    for item in root.rglob("*"):
+    for item in [root, *root.rglob("*")]:
         info = os.lstat(item)
         if stat.S_ISLNK(info.st_mode):
             raise QixiCoverSuccessorError(f"{label} contains a symlink")
@@ -211,6 +217,18 @@ def _seal_private_tree(root: Path) -> None:
         observed = os.lstat(item)
         if stat.S_IMODE(observed.st_mode) != expected_mode or observed.st_uid != os.geteuid():
             raise QixiCoverSuccessorError("staged package private mode drifts")
+
+
+def seal_private_successor_tree(root: Path) -> None:
+    """Seal the sole successor package after a later sealed sidecar write.
+
+    The manual-review manifest and its canonical audit are created only after
+    the finalizer has installed the successor receipt.  Their candidate-only
+    orchestrator calls this exported narrow helper before considering the
+    package complete; it is deliberately not a generic package-permission API.
+    """
+
+    _seal_private_tree(root)
 
 
 def _snapshot(root: Path) -> dict[str, str]:
@@ -297,6 +315,47 @@ def validate_portable_cover_locators(generation: object) -> dict[str, Any]:
     return normalized
 
 
+def validate_current_successor_audit(*, package_root: Path) -> dict[str, Any]:
+    """Reject a copied preimage audit in the sole successor review package."""
+
+    package = _safe_absolute_dir(package_root, label="successor package")
+    audit = _load_json(
+        _regular(package, PACKAGE_AUDIT, label="successor package audit"),
+        label="successor package audit",
+    )
+    if not (
+        audit.get("schema_version") == "lidousha-review-package-audit.v2"
+        and audit.get("passed") is True
+        and audit.get("issues") == []
+        and audit.get("issue_count") == 0
+        and audit.get("blocking_issue_count") == 0
+        and audit.get("root") == str(package)
+    ):
+        raise QixiCoverSuccessorError("successor package audit is stale or failed")
+    rows = audit.get("audited_inputs")
+    if not isinstance(rows, list):
+        raise QixiCoverSuccessorError("successor package audit inputs are absent")
+    indexed = {
+        row.get("path"): row
+        for row in rows
+        if isinstance(row, Mapping) and isinstance(row.get("path"), str)
+    }
+    for relative in (
+        _PORTABLE_PATHS["final"],
+        f"{CANDIDATE_ID}.record.json",
+        f"{CANDIDATE_ID}.publish.json",
+        "review_manifest.json",
+        RECEIPT,
+    ):
+        row = indexed.get(relative)
+        if not isinstance(row, Mapping):
+            raise QixiCoverSuccessorError(f"successor package audit omits {relative}")
+        expected = _sha(_regular(package, relative, label=f"audited {relative}"))[7:]
+        if row.get("sha256") != expected:
+            raise QixiCoverSuccessorError(f"successor package audit input hash drifts: {relative}")
+    return audit
+
+
 def _trial_files(root: Path, authority: Mapping[str, object]) -> tuple[dict[str, Path], dict[str, Any]]:
     files = {
         key: _regular(root, name, label=f"trial {key}")
@@ -359,33 +418,61 @@ def _portableize(value: object, *, paths: Mapping[str, str]) -> object:
     return value
 
 
-def _write_portable_provenance(
-    *, evidence: Path, files: Mapping[str, Path], authority: Mapping[str, object]
-) -> dict[str, str]:
+def _expected_provenance_source_hashes(authority: Mapping[str, object]) -> dict[str, str]:
+    """Return all six source hashes from the sealed Qixi authority."""
+
     replacement = authority["replacement"]
-    assert isinstance(replacement, Mapping)
-    source_hashes = {
-        "generation": replacement["provider_generation_sha256"],
-        "request": replacement["provider_request_sha256"],
-        "response": replacement["provider_response_sha256"],
-        "identity": _sha(files["identity"]),
-        "no_text": _sha(files["no_text"]),
-        "joint": _sha(files["joint"]),
+    joint = authority["joint_qc"]
+    if not isinstance(replacement, Mapping) or not isinstance(joint, Mapping):
+        raise QixiCoverSuccessorError("sealed provenance authority is malformed")
+    values = {
+        "generation": replacement.get("provider_generation_sha256"),
+        "request": replacement.get("provider_request_sha256"),
+        "response": replacement.get("provider_response_sha256"),
+        "identity": replacement.get("identity_witness_sha256"),
+        "no_text": replacement.get("no_model_text_witness_sha256"),
+        "joint": joint.get("sha256"),
     }
-    path_map = {
+    if any(not isinstance(value, str) or not value.startswith("sha256:") for value in values.values()):
+        raise QixiCoverSuccessorError("sealed provenance hashes are malformed")
+    return {key: str(value) for key, value in values.items()}
+
+
+def _portable_path_map() -> dict[str, str]:
+    return {
         _TRIAL_NAMES["final"]: _PORTABLE_PATHS["final"],
         _TRIAL_NAMES["background"]: _PORTABLE_PATHS["background"],
         _TRIAL_NAMES["pre"]: _PORTABLE_PATHS["pre"],
         _TRIAL_NAMES["mask"]: _PORTABLE_PATHS["mask"],
         _TRIAL_NAMES["identity"]: _PORTABLE_PATHS["identity"],
-        _TRIAL_NAMES["request"]: "evidence/qixi-cover-successor/" + _TRIAL_NAMES["request"],
-        _TRIAL_NAMES["response"]: "evidence/qixi-cover-successor/" + _TRIAL_NAMES["response"],
+        _TRIAL_NAMES["request"]: "evidence/qixi-cover-successor/" + _PROVENANCE_NAMES["request"],
+        _TRIAL_NAMES["response"]: "evidence/qixi-cover-successor/" + _PROVENANCE_NAMES["response"],
         "cover-reference.png": _PORTABLE_PATHS["reference"],
     }
+
+
+def _write_portable_provenance(
+    *, evidence: Path, files: Mapping[str, Path], authority: Mapping[str, object]
+) -> dict[str, str]:
+    replacement = authority["replacement"]
+    assert isinstance(replacement, Mapping)
+    source_hashes = _expected_provenance_source_hashes(authority)
+    path_map = _portable_path_map()
     written: dict[str, str] = {}
     identity_destination = evidence / _TRIAL_NAMES["identity"]
     shutil.copy2(files["identity"], identity_destination)
     written["identity"] = _sha(identity_destination)
+    identity_document = {
+        "image_path": _PORTABLE_PATHS["identity"],
+        "image_sha256": _sha(identity_destination),
+    }
+    identity_payload = {
+        "schema_version": PORTABLE_PROVENANCE_SCHEMA,
+        "kind": "identity",
+        "source_sha256": source_hashes["identity"],
+        "document": identity_document,
+    }
+    _write_json(evidence / _PROVENANCE_NAMES["identity"], identity_payload)
     for key in ("generation", "no_text", "joint", "request", "response"):
         source = _load_json(files[key], label=f"trial {key}")
         document = _portableize(source, paths=path_map)
@@ -396,7 +483,7 @@ def _write_portable_provenance(
             "source_sha256": source_hashes[key],
             "document": document,
         }
-        destination = evidence / _TRIAL_NAMES[key]
+        destination = evidence / _PROVENANCE_NAMES[key]
         _write_json(destination, payload)
         written[key] = _sha(destination)
     return written
@@ -593,11 +680,11 @@ def _generation(
 
 
 def _provenance_document(
-    package: Path, key: str, *, authority: Mapping[str, object]
+    package: Path, key: str, *, authority: Mapping[str, object], repo: Path
 ) -> dict[str, Any]:
     path = _regular(
         package,
-        "evidence/qixi-cover-successor/" + _TRIAL_NAMES[key],
+        "evidence/qixi-cover-successor/" + _PROVENANCE_NAMES[key],
         label=f"portable provenance {key}",
     )
     value = _load_json(path, label=f"portable provenance {key}")
@@ -607,15 +694,42 @@ def _provenance_document(
     if not isinstance(document, dict):
         raise QixiCoverSuccessorError(f"portable provenance {key} document missing")
     _assert_no_absolute_locator(value, label=f"portable provenance {key}")
-    replacement = authority["replacement"]
-    assert isinstance(replacement, Mapping)
-    expected = {
-        "generation": replacement["provider_generation_sha256"],
-        "request": replacement["provider_request_sha256"],
-        "response": replacement["provider_response_sha256"],
-    }.get(key)
-    if expected is not None and value.get("source_sha256") != expected:
+    expected_source = _expected_provenance_source_hashes(authority)[key]
+    if value.get("source_sha256") != expected_source:
         raise QixiCoverSuccessorError(f"portable provenance {key} source hash drifts")
+    replacement = authority["replacement"]
+    joint = authority["joint_qc"]
+    assert isinstance(replacement, Mapping) and isinstance(joint, Mapping)
+    sealed_paths = {
+        "generation": replacement.get("provider_generation_relative_path"),
+        "request": replacement.get("provider_request_relative_path"),
+        "response": replacement.get("provider_response_relative_path"),
+        "joint": joint.get("relative_path"),
+    }
+    sealed_path = sealed_paths.get(key)
+    if sealed_path is not None:
+        if not isinstance(sealed_path, str):
+            raise QixiCoverSuccessorError(f"portable provenance {key} sealed path missing")
+        source = _load_json(_regular(repo, sealed_path, label=f"sealed {key}"), label=f"sealed {key}")
+        expected_document = _portableize(source, paths=_portable_path_map())
+        if document != expected_document:
+            raise QixiCoverSuccessorError(f"portable provenance {key} document drifts")
+    elif key == "identity":
+        expected_document = {
+            "image_path": _PORTABLE_PATHS["identity"],
+            "image_sha256": expected_source,
+        }
+        if (
+            document != expected_document
+            or _canonical_sha(document)
+            != replacement.get("identity_portable_document_sha256")
+        ):
+            raise QixiCoverSuccessorError("portable provenance identity document drifts")
+    elif key == "no_text":
+        if _canonical_sha(document) != replacement.get("no_model_text_portable_document_sha256"):
+            raise QixiCoverSuccessorError("portable provenance no_text document drifts")
+    else:
+        raise QixiCoverSuccessorError(f"portable provenance {key} is unsupported")
     return document
 
 
@@ -675,14 +789,19 @@ def _validate_deep_package(
         scrim=generation.get("scrim"),
     ):
         raise QixiCoverSuccessorError("receipt background recomposition fails")
-    no_text = _provenance_document(package, "no_text", authority=authority)
-    joint = _provenance_document(package, "joint", authority=authority)
-    provider_generation = _provenance_document(package, "generation", authority=authority)
-    provider_request = _provenance_document(package, "request", authority=authority)
-    provider_response = _provenance_document(package, "response", authority=authority)
+    no_text = _provenance_document(package, "no_text", authority=authority, repo=repo)
+    joint = _provenance_document(package, "joint", authority=authority, repo=repo)
+    provider_generation = _provenance_document(package, "generation", authority=authority, repo=repo)
+    provider_request = _provenance_document(package, "request", authority=authority, repo=repo)
+    provider_response = _provenance_document(package, "response", authority=authority, repo=repo)
+    identity_provenance = _provenance_document(package, "identity", authority=authority, repo=repo)
     identity_path = _regular(package, _PORTABLE_PATHS["identity"], label="identity comparison")
     identity = generation.get("final_host_identity_verification")
-    if not isinstance(identity, Mapping) or identity.get("comparison_sha256") != _sha(identity_path):
+    if (
+        not isinstance(identity, Mapping)
+        or identity.get("comparison_sha256") != _sha(identity_path)
+        or identity_provenance.get("image_sha256") != _sha(identity_path)
+    ):
         raise QixiCoverSuccessorError("identity comparison bytes drift")
     if not (
         provider_generation.get("final_cover_sha256") == replacement["final_cover_sha256"]
@@ -877,7 +996,7 @@ def finalize(
             "failed_joint_qc_sha256": authority["predecessor"]["failed_joint_qc_sha256"],
             "route_preserving_attempt": authority["route_preserving_attempt"],
             "portable_provenance": {
-                key: "evidence/qixi-cover-successor/" + _TRIAL_NAMES[key]
+                key: "evidence/qixi-cover-successor/" + _PROVENANCE_NAMES[key]
                 for key in ("generation", "identity", "no_text", "joint", "request", "response")
             },
             "upload_allowed": False,
@@ -917,6 +1036,10 @@ def finalize(
             "publish_sha256": _sha(publish_path),
         }
         _write_json(package / RECEIPT, receipt)
+        # Trial copy2 preserves source modes.  Re-seal after every successor
+        # mutation, including provenance, rewritten record/publish and the
+        # receipt itself, before the create-only rename is possible.
+        _seal_private_tree(candidate)
         _fsync_directory(evidence)
         _fsync_directory(package)
         if os.path.lexists(target):
