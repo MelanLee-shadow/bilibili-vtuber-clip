@@ -14,9 +14,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--trial-root", required=True, type=Path)
     parser.add_argument("--target", required=True, type=Path)
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument(
+        "--punch-response",
+        type=Path,
+        help="private CPA response used by the canonical punch semantic reviewer",
+    )
     args = parser.parse_args(argv)
     try:
-        result = finalize(repo_root=ROOT, preimage=args.preimage, trial_root=args.trial_root, target=args.target, apply=args.apply)
+        response = (
+            args.punch_response.read_text(encoding="utf-8")
+            if args.punch_response is not None
+            else None
+        )
+        result = finalize(
+            repo_root=ROOT,
+            preimage=args.preimage,
+            trial_root=args.trial_root,
+            target=args.target,
+            apply=args.apply,
+            punch_response=response,
+        )
     except QixiCoverSuccessorError as exc:
         print(f"REFUSED: {exc}", file=sys.stderr); return 2
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True)); return 0
