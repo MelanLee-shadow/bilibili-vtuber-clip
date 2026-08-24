@@ -4,7 +4,7 @@
   "schema_version": "subtitle-redelivery-baseline.v2",
   "mode": "preserve_text_outside_source_truth",
   "exact_interval_replay": true,
-  "path": "reviewed.srt",
+  "path": "auto_203011_328_389.reviewed.srt",
   "sha256": "3cb16000b1bb34f205ffd6db524e3a2874108666bb4b34d0b6902654900572c1",
   "authority": "Claude raw line e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; content 0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b; exhaustive C2 fastlane repair.",
   "source_recording_basename": "22966160_20260813-20-30-11.mp4",
@@ -36,15 +36,15 @@
     },
     "pipeline_diagnostic": {
       "sha256": "4122f3392a9531d200bf2cd6d6c10b1aeafd60d48f9b58553fdbfacc6ac4bcba",
-      "path": "pipeline.srt"
+      "path": "auto_203011_328_389.pipeline-diagnostic.srt"
     },
     "decision_ledger": {
       "sha256": "6a828000d812d297fac5dcce26480bbf400f9780fe56bd6ad414955759ed8586",
-      "path": "decisions.json"
+      "path": "auto_203011_328_389.operator-decisions.v3.json"
     },
     "diff_receipt": {
       "sha256": "58d7b703b989440cf525ea416efdc9dc40d19011936e3e9e44d79789a141dda5",
-      "path": "diff.json"
+      "path": "auto_203011_328_389.operator-truth-diff.v2.json"
     }
   }
 }
