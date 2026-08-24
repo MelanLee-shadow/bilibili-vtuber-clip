@@ -1037,6 +1037,60 @@ def synthesize_replay_spec_and_finalize_private(
     }
     if story.get("candidate_id") != plan.candidate_id or not spec["selection_hook"]:
         raise ReviewedBaselineReplayError("REPLAY_STORY_CONTRACT_BINDING_DRIFT")
+    # A text-only reviewed baseline does not authorize new speaker decisions.
+    # It may, however, strictly rebind a prior READY artifact when every label,
+    # decision, boundary and media binding survives and the sealed ledger names
+    # the sole text delta.  This wrapper is private-stage-only: it never points
+    # at an installed package or writes a formal target.
+    from src.autoslice import speaker_guess
+    from src.autoslice.reviewed_text_only_speaker_successor import (
+        ReviewedTextOnlySpeakerSuccessorError,
+        materialize_text_only_speaker_successor,
+    )
+    original_speaker_finalizer = adapters.run_speaker_finalization
+
+    def replay_speaker_finalizer(**kwargs: object) -> dict[str, object]:
+        generated = original_speaker_finalizer(**kwargs)
+        if generated.get("status") != speaker_guess.SPEAKER_GUESS_STATUS:
+            return generated
+        try:
+            old_speaker_path_raw = record.get("speaker_finalization_manifest_path")
+            if not isinstance(old_speaker_path_raw, str):
+                raise ReviewedTextOnlySpeakerSuccessorError("OLD_MANIFEST_MISSING")
+            old_speaker_binding = regular_binding(
+                Path(old_speaker_path_raw), label="OLD_SPEAKER_MANIFEST"
+            )
+            lanes = plan.baseline.config.get("operator_truth_lanes")
+            ledger_descriptor = lanes.get("decision_ledger") if isinstance(lanes, Mapping) else None
+            if not isinstance(ledger_descriptor, Mapping) or not isinstance(ledger_descriptor.get("path"), str):
+                raise ReviewedTextOnlySpeakerSuccessorError("LEDGER_MISSING")
+            ledger_binding = regular_binding(
+                plan.baseline.manifest_path.parent / str(ledger_descriptor["path"]),
+                label="OPERATOR_DECISION_LEDGER",
+            )
+            return materialize_text_only_speaker_successor(
+                candidate_id=plan.candidate_id, old_record=record,
+                old_record_sha256=record_binding.sha256,
+                old_manifest_path=old_speaker_binding.path,
+                old_manifest_sha256=old_speaker_binding.sha256,
+                reviewed_baseline_path=plan.baseline.baseline_path,
+                reviewed_baseline_sha256="sha256:" + str(plan.baseline.config["sha256"]),
+                ledger_path=ledger_binding.path, ledger_sha256=ledger_binding.sha256,
+                new_plain_srt=Path(str(kwargs["text_srt_path"])),
+                new_media=Path(str(kwargs["media_path"])),
+                expected_media_sha256=plan.expected_video_sha256,
+                output_srt=Path(str(kwargs["output_srt_path"])),
+                output_ass=Path(str(kwargs["output_ass_path"])),
+                output_manifest=Path(str(kwargs["output_manifest_path"])),
+            )
+        except (ReviewedTextOnlySpeakerSuccessorError, ReviewedBaselineReplayError) as exc:
+            # Do not let the source-fact provider see guessed speaker evidence.
+            # The code is deliberately closed and replay-specific so operations
+            # can distinguish this from title or provider failures.
+            raise ReviewedBaselineReplayError(
+                "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_"
+                "SOURCE_FACT_REVIEW_SPEAKER_GUESS_REQUIRES_HUMAN_REVIEW"
+            ) from exc
     spec_path = private_runtime_root / "replay-spec.json"
     _write_private(spec_path, _canonical(spec))
     options = ProducerFinalizationOptions(
@@ -1094,6 +1148,7 @@ def synthesize_replay_spec_and_finalize_private(
             ),
             delivery_root=lambda: private_runtime_root / "delivery",
             run_exact_final_review=reviewer,
+            run_speaker_finalization=replay_speaker_finalizer,
         )
     except TypeError as exc:
         raise ReviewedBaselineReplayError("REPLAY_FINALIZER_ADAPTERS_INVALID") from exc

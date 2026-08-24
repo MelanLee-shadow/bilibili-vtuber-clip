@@ -153,6 +153,10 @@ def test_safe_reason_code_keeps_only_typed_codes() -> None:
             "REPLAY_PRIVATE_MANIFEST_SPEAKER_GUESS_REQUIRES_HUMAN_REVIEW"
         )
     ) == "REPLAY_PRIVATE_MANIFEST_SPEAKER_GUESS_REQUIRES_HUMAN_REVIEW"
+    assert cli._failure_predicate(
+        "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_"
+        "SOURCE_FACT_REVIEW_SPEAKER_GUESS_REQUIRES_HUMAN_REVIEW"
+    ) == "SOURCE_FACT_REVIEW"
     assert DailyManifestError(
         "speaker evidence rejected", reason_code="SPEAKER_GUESS_REQUIRES_HUMAN_REVIEW"
     ).reason_code == "SPEAKER_GUESS_REQUIRES_HUMAN_REVIEW"
