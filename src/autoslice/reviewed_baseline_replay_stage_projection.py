@@ -295,6 +295,10 @@ def prepare_stage_delivery_projection(
             c5_start_clamp_proposal_path=c5_start_clamp_proposal_path,
             c5_start_clamp_acceptance_path=c5_start_clamp_acceptance_path,
             recording_date=recording_date,
+            delivery_projection_padded_start_ms=padded_start,
+            delivery_projection_padded_end_ms=padded_end,
+            delivery_projection_final_start_ms=getattr(plan, "local_start_ms"),
+            delivery_projection_final_end_ms=getattr(plan, "local_end_ms"),
         )
     except FullWindowReplayError as exc:
         raise error(str(exc)) from exc

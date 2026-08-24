@@ -727,6 +727,10 @@ def replay_full_window_text_and_crop(
     c5_start_clamp_proposal_path: Path | None = None,
     c5_start_clamp_acceptance_path: Path | None = None,
     recording_date: str | None = None,
+    delivery_projection_padded_start_ms: int | None = None,
+    delivery_projection_padded_end_ms: int | None = None,
+    delivery_projection_final_start_ms: int | None = None,
+    delivery_projection_final_end_ms: int | None = None
 ) -> tuple[bytes, dict]:
     """Apply an exact padded baseline and return a deterministic final crop."""
 
@@ -774,12 +778,28 @@ def replay_full_window_text_and_crop(
         if any(value is not None for value in projection_inputs):
             if not all(value is not None for value in projection_inputs):
                 raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_INPUT_INVALID")
+            projection_bounds = (
+                delivery_projection_padded_start_ms,
+                delivery_projection_padded_end_ms,
+                delivery_projection_final_start_ms,
+                delivery_projection_final_end_ms,
+            )
+            if any(value is not None for value in projection_bounds) and not all(
+                value is not None for value in projection_bounds
+            ):
+                raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_INPUT_INVALID")
             receipt = _build_full_release_delivery_projection_receipt(
                 candidate_id=str(projection_candidate_id),
                 record_sha256=str(projection_record_sha256),
                 record_boundary=projection_record_boundary,
-                padded_start_ms=padded_start_ms, padded_end_ms=padded_end_ms,
-                final_start_ms=final_start_ms, final_end_ms=final_end_ms,
+                padded_start_ms=(delivery_projection_padded_start_ms
+                                 if delivery_projection_padded_start_ms is not None else padded_start_ms),
+                padded_end_ms=(delivery_projection_padded_end_ms
+                               if delivery_projection_padded_end_ms is not None else padded_end_ms),
+                final_start_ms=(delivery_projection_final_start_ms
+                                if delivery_projection_final_start_ms is not None else final_start_ms),
+                final_end_ms=(delivery_projection_final_end_ms
+                              if delivery_projection_final_end_ms is not None else final_end_ms),
                 diagnostic_text=text, full_release_text=reviewed,
                 delivery_bytes=cropped, config=config,
                 staged_media_sha256=str(projection_staged_media_sha256),
