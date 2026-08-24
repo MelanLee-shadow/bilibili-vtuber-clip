@@ -1,0 +1,30 @@
+{
+  "schema_version": "fastlane-c9-foreign-video-truth-blocker.v1",
+  "candidate_id": "auto_143025_1112_1285",
+  "upload": false,
+  "outcome": "BLOCKED_UNSEALED_FOREIGN_VIDEO_CUE_TRUTH",
+  "ruling_scope": "Ivan fastlane #9: discard only speech/captions originating inside a watched other-VTuber video; do not repair or subtitle it. No other text, boundary, title, or cover change is authorized.",
+  "retained_snapshot": {
+    "locator": "/private/tmp/fastlane-prep-20260824/9-auto_143025_1112_1285",
+    "artifact_manifest_sha256": "sha256:c5bdfcda0deded5dd4f66d173886da043755c4e6adf1fcce588d65d9c0aa5a8c",
+    "cue_truth_table_sha256": "sha256:6443a55611778c1934c2de6ef5fe1d2fafd52b69abfbf6872c2d6eaacffcfb52",
+    "speaker_final_json_sha256": "sha256:1761e4896b221d15c1e43ac8abc8c67d1c6258448ebfe645c6d23b54af63f86b",
+    "recut_video_sha256": "sha256:40025aa2a2727493207a0deea69013d2a8f5f9c49b29003627f398349a847e7e",
+    "burned_preview_sha256": "sha256:af7d5d1c7107a950e63029872454a685af48e246df619cbca445e298e9470f12",
+    "current_srt_sha256": "sha256:3327cb186ba44785df255c544e5e7ac1ce989a3872ccb91958a7b43ba77823c7",
+    "recorded_subtitle_sha256": "sha256:4b0402dafbffbc9cf3358f21ff09a3d4aa07c052978848b70cc6b860844c2ac1"
+  },
+  "cue_inventory": {
+    "cue_count": 66,
+    "cue_indexes": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66],
+    "dropped_cue_indexes": [],
+    "frozen_cue_indexes": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66]
+  },
+  "why_no_drop_is_proven": [
+    "The retained cue-truth table marks every human_source_verdict and human_action PENDING; its overlap flag is expressly mechanical-only and not a deletion decision.",
+    "The retained README requires human playback source/action judgment and forbids treating the package itself as a formal receipt.",
+    "The retained record's subtitle SHA does not equal retained current.srt SHA, so neither surface can be silently promoted to a sealed final-text authority."
+  ],
+  "required_successor_evidence": "A candidate/date/hash-bound receipt must identify watched-video playback intervals and independently classify every affected cue or sub-cue as IN_VIDEO, HOST_LIVE, MIXED, or UNCERTAIN. Only complete IN_VIDEO cues may be dropped; mixed cues require an exact sub-cue projection, and UNCERTAIN cues remain frozen.",
+  "self_sha256": "sha256:1444c62fff0a8b980d27353ab0dbc287ab3e51ed3be619a2cc5632e23e7a3c19"
+}
