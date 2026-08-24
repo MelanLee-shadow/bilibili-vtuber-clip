@@ -24,6 +24,8 @@ from src.autoslice.fastlane_c7b_private_adapter import apply_replay_carry
 from src.autoslice.fastlane_c7b_source_reconciliation import (
     C7bSourceReconciliationError, resolve_c7b_source_reconciliation,
 )
+from src.autoslice.fastlane_c9_source_stage import stage_c9_source_action_private_replay
+validate_c9_root_acceptance_envelope = None
 from src.autoslice.recut_materialization import (
     _accurate_reencode_recut_command,
     _fresh_srt_to_source_cues,

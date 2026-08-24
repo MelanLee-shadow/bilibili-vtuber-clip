@@ -20,6 +20,7 @@ _BASE = Path("assets/lidousha/fastlane_c9_private")
 _RECEIPT = _BASE / f"{_CANDIDATE}.foreign-video-source-action.v1.json"
 _SOURCE = _BASE / f"{_CANDIDATE}.source.speaker-final.srt"
 _REVIEWED = _BASE / f"{_CANDIDATE}.reviewed.srt"
+_ENVELOPE = _BASE / f"{_CANDIDATE}.root-acceptance-envelope.v1.json"
 _CLASSES = frozenset({"IN_VIDEO", "HOST_LIVE", "MIXED", "UNCERTAIN"})
 
 
@@ -130,10 +131,68 @@ def validate_c9_source_action(root: Path) -> dict[str, object]:
     }
 
 
+def validate_c9_root_acceptance_envelope(root: Path) -> dict[str, object]:
+    """Validate the non-authorizing root-review proposal for this exact C9 set.
+
+    ``accepted=false`` is intentional: this closes only the candidate-private
+    source/action evidence hand-off.  A public/package authority must never be
+    inferred from it.
+    """
+
+    root = Path(root).resolve(strict=True)
+    projection = validate_c9_source_action(root)
+    try:
+        envelope = json.loads(_read(root, _ENVELOPE).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise FastlaneC9PrivateReplayError("C9_ACCEPTANCE_ENVELOPE_INVALID") from exc
+    if not isinstance(envelope, dict):
+        raise FastlaneC9PrivateReplayError("C9_ACCEPTANCE_ENVELOPE_INVALID")
+    declared = envelope.pop("self_sha256", None)
+    if declared != _sha(_canonical(envelope)):
+        raise FastlaneC9PrivateReplayError("C9_ACCEPTANCE_ENVELOPE_HASH_DRIFT")
+    envelope["self_sha256"] = declared
+    if (
+        envelope.get("schema_version") != "fastlane-c9-root-acceptance-envelope.v1"
+        or envelope.get("candidate_id") != _CANDIDATE
+        or envelope.get("recording_date") != "2026-08-15"
+        or envelope.get("root_reviewed_at") != "2026-08-24T23:40:05Z"
+        or envelope.get("accepted") is not False
+    ):
+        raise FastlaneC9PrivateReplayError("C9_ACCEPTANCE_ENVELOPE_SCOPE_INVALID")
+    expected = {
+        "source_action_receipt": (_RECEIPT.as_posix(), projection["receipt_sha256"]),
+        "source_srt": (_SOURCE.as_posix(), projection["source_srt_sha256"]),
+        "reviewed_srt": (_REVIEWED.as_posix(), projection["reviewed_srt_sha256"]),
+    }
+    for key, (path, digest) in expected.items():
+        binding = envelope.get(key)
+        if not isinstance(binding, Mapping) or binding != {"repo_path": path, "sha256": digest}:
+            raise FastlaneC9PrivateReplayError("C9_ACCEPTANCE_ENVELOPE_BINDING_DRIFT")
+    activation = envelope.get("activation")
+    expected_activation = {
+        "kind": "ROOT_ACCEPTANCE_PROPOSAL_ONLY",
+        "private_replay_allowed": True,
+        "canonical_delivery_allowed": False,
+        "state_write_allowed": False,
+        "provider_allowed": False,
+        "ssh_allowed": False,
+        "deploy_allowed": False,
+        "upload_allowed": False,
+    }
+    if not isinstance(activation, Mapping) or any(activation.get(key) != value for key, value in expected_activation.items()):
+        raise FastlaneC9PrivateReplayError("C9_ACCEPTANCE_ENVELOPE_ACTIVATION_INVALID")
+    return {
+        **projection,
+        "acceptance_envelope_sha256": _sha(_read(root, _ENVELOPE)),
+        "root_reviewed_at": envelope["root_reviewed_at"],
+        "accepted": False,
+    }
+
+
 def materialize_c9_private_replay(*, root: Path, output_dir: Path) -> dict[str, object]:
     """Create one create-only local evidence packet; never a delivery package."""
 
-    projection = validate_c9_source_action(root)
+    projection = validate_c9_root_acceptance_envelope(root)
     output_dir = Path(output_dir).absolute()
     if output_dir.exists() or output_dir.is_symlink() or output_dir.name != _CANDIDATE:
         raise FastlaneC9PrivateReplayError("C9_PRIVATE_REPLAY_OUTPUT_NOT_CREATE_ONLY")
@@ -142,11 +201,22 @@ def materialize_c9_private_replay(*, root: Path, output_dir: Path) -> dict[str, 
         raise FastlaneC9PrivateReplayError("C9_PRIVATE_REPLAY_OUTPUT_UNSAFE")
     try:
         os.mkdir(output_dir)
-        for name, payload in (("reviewed.srt", _read(Path(root), _REVIEWED)), ("source-action.json", _read(Path(root), _RECEIPT))):
+        for name, payload in (
+            ("reviewed.srt", _read(Path(root), _REVIEWED)),
+            ("source.speaker-final.srt", _read(Path(root), _SOURCE)),
+            ("source-action.json", _read(Path(root), _RECEIPT)),
+            ("root-acceptance-envelope.json", _read(Path(root), _ENVELOPE)),
+        ):
             with (output_dir / name).open("xb") as handle:
                 handle.write(payload)
         packet = dict(projection)
-        packet["artifacts"] = {"reviewed.srt": _sha((output_dir / "reviewed.srt").read_bytes()), "source-action.json": _sha((output_dir / "source-action.json").read_bytes())}
+        packet["artifacts"] = {
+            name: _sha((output_dir / name).read_bytes())
+            for name in (
+                "reviewed.srt", "source.speaker-final.srt", "source-action.json",
+                "root-acceptance-envelope.json",
+            )
+        }
         packet["packet_sha256"] = _sha(_canonical(packet))
         with (output_dir / "private-replay.json").open("x", encoding="utf-8") as handle:
             handle.write(json.dumps(packet, ensure_ascii=False, sort_keys=True, indent=2) + "\n")

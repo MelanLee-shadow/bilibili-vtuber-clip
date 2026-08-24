@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import src.autoslice.redelivery_full_window_replay as full_window_replay
 import src.autoslice.reviewed_baseline_replay as replay
 import src.autoslice.reviewed_baseline_replay_authority as replay_authority
 import src.autoslice.reviewed_baseline_replay_publish as replay_publish
@@ -300,6 +301,27 @@ def test_non_c7b_mapping_authority_cannot_enter_private_stage(tmp_path: Path, mo
         Path(command[-1]).write_bytes(media)
         return type("Completed", (), {"returncode": 0})()
     monkeypatch.setattr(replay.subprocess, "run", fake_run)
+    seen: dict[str, object] = {}
+
+    def apply_full_padded_baseline(text: str, **kwargs: object) -> tuple[str, dict[str, str]]:
+        seen["text"] = text
+        seen.update(kwargs)
+        config = kwargs["config"]
+        assert isinstance(config, Mapping)
+        return (
+            (Path(str(kwargs["spec_parent"])) / str(config["path"])).read_text(encoding="utf-8"),
+            {"status": "APPLIED"},
+        )
+
+    monkeypatch.setattr(
+        full_window_replay,
+        "apply_redelivery_subtitle_baseline",
+        apply_full_padded_baseline,
+    )
+    monkeypatch.setattr(
+        replay, "validate_c9_root_acceptance_envelope",
+        lambda _root: (_ for _ in ()).throw(AssertionError("generic replay consulted C9")),
+    )
     stage_parent = tmp_path / "private"
     stage_parent.mkdir(mode=0o700)
     with pytest.raises(replay.ReviewedBaselineReplayError, match="REPLAY_BASELINE_APPLICATION_FAILED"):

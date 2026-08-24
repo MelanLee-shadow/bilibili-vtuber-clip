@@ -38,3 +38,8 @@ receipt 的 `cue_actions` 是 source cue 1--66 的唯一完整 action map：每�
 `src.autoslice.fastlane_c9_private_replay` 只可在调用方给出的空目录中 create-only 地复制
 reviewed SRT、source-action receipt 与 hash-bound private packet；它没有 runner、provider、
 manifest、upload 或 state-write 路径，不能被视为正式交付包。
+
+Root 于 `2026-08-24T23:40:05Z` 独立复核 source/action 事实后，repo 保存的
+`root-acceptance-envelope.v1` 仍明确为 `accepted=false` 的 proposal：它绑定 candidate/date/
+receipt/source SRT/reviewed SRT 的精确 hash，且只允许 C9-only private replay。它没有、也不暗示
+canonical delivery、state write、provider、SSH、部署或投稿授权。

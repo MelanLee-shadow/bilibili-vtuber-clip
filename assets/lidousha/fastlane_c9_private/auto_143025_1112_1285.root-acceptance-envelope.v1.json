@@ -1,0 +1,32 @@
+{
+  "schema_version": "fastlane-c9-root-acceptance-envelope.v1",
+  "candidate_id": "auto_143025_1112_1285",
+  "recording_date": "2026-08-15",
+  "root_reviewed_at": "2026-08-24T23:40:05Z",
+  "accepted": false,
+  "proposal_scope": "Candidate-private replay only. Ivan fastlane ruling #9 permits omission only of the sealed complete IN_VIDEO source cues; all remaining source cue bytes stay frozen.",
+  "source_action_receipt": {
+    "repo_path": "assets/lidousha/fastlane_c9_private/auto_143025_1112_1285.foreign-video-source-action.v1.json",
+    "sha256": "sha256:32fb21e0703a5aec07920cfc544bb951201eaff0f59353fdc8152971f95dd2a4"
+  },
+  "source_srt": {
+    "repo_path": "assets/lidousha/fastlane_c9_private/auto_143025_1112_1285.source.speaker-final.srt",
+    "sha256": "sha256:65ae7dfd66348c4af7a8dbc78b1f196bd4cf354c181416a03fa346b9b4cab069"
+  },
+  "reviewed_srt": {
+    "repo_path": "assets/lidousha/fastlane_c9_private/auto_143025_1112_1285.reviewed.srt",
+    "sha256": "sha256:f436e1913b8eb2bd948c37b18bce9c2a9970dd9be07cf114f309a9c162c2b51b"
+  },
+  "activation": {
+    "kind": "ROOT_ACCEPTANCE_PROPOSAL_ONLY",
+    "private_replay_allowed": true,
+    "canonical_delivery_allowed": false,
+    "state_write_allowed": false,
+    "provider_allowed": false,
+    "ssh_allowed": false,
+    "deploy_allowed": false,
+    "upload_allowed": false,
+    "next_authority_required": "A separately reviewed, newly sealed root acceptance may authorize a later canonical materialization; this proposal itself cannot do so."
+  },
+  "self_sha256": "sha256:72e0b9462ddd45908ae314e3744a200716ec0dd2f632050a533f60d5eb07aad7"
+}
