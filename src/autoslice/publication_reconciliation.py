@@ -23,6 +23,8 @@ from pathlib import Path
 
 import fcntl
 
+from . import fastlane_c1_technical_receipt
+
 
 RECONCILIATION_SCHEMA = "publication-reconciliation.v1"
 RUNTIME_REGISTRY_SCHEMA = "publication-reconciliation-registry.v1"
@@ -244,6 +246,27 @@ def _candidate_and_date(manifest: Mapping[str, object]) -> tuple[str, str]:
             "manifest has no package_attestation"
         )
     record_entry = attestation.get("record")
+    if record_entry is None and "c1_technical_receipt" in attestation:
+        try:
+            fastlane_c1_technical_receipt.validate_authorized_projection_manifest(
+                manifest
+            )
+        except fastlane_c1_technical_receipt.C1TechnicalReceiptError as exc:
+            raise PublicationReconciliationError(
+                "C1 manifest cannot resolve publication candidate/date"
+            ) from exc
+        authority = manifest.get("recovery_publication_authority")
+        if not isinstance(authority, Mapping):
+            raise PublicationReconciliationError(
+                "C1 manifest has no recovery publication authority"
+            )
+        candidate_id = str(authority.get("candidate_id") or "")
+        recording_date = str(authority.get("recording_date") or "")
+        if not candidate_id or not _DATE_RX.fullmatch(recording_date):
+            raise PublicationReconciliationError(
+                "C1 recovery publication authority has invalid candidate/date"
+            )
+        return candidate_id, recording_date
     record_path = _validate_sha_entry(record_entry, "manifest record")
     record = _load_object(record_path, "manifest record")
     story = record.get("story_contract")

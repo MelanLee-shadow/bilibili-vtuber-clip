@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.autoslice import publication_reconciliation as reconciliation
+from src.autoslice import fastlane_c1_technical_receipt
 from src.autoslice.batch_terminal_state import project_terminal_batch_state
 from src.autoslice.candidate_selection import exact_talk_contract_closure
 from src.autoslice.reporting import _current_compliant_delivery
@@ -368,6 +369,88 @@ def test_recording_date_legacy_wrapper_fallback_without_review_manifest(
         CANDIDATE,
         DATE,
     )
+
+
+def _c1_manifest_without_record() -> dict:
+    title = "【李豆沙】经小李判断，薇欧拉对阿拉蕾就是铁暗恋！"
+    tags = [
+        "李豆沙", "虚拟主播", "虚拟UP主", "直播切片", "梦限大",
+        "夢限大みゅーたいぷ", "BanG Dream", "邦多利", "磕CP", "上头",
+    ]
+    return {
+        "manifest_version": 3,
+        "schema_version": "authorized-upload-manifest.v3",
+        "title": title,
+        "tags": tags,
+        "package_attestation": {
+            "package_root": "/private/c1-formal-package",
+            "review_manifest": {},
+            "package_audit": {},
+            "c1_technical_receipt": {},
+        },
+        "recovery_publication_authority": {
+            "schema_version": "fastlane-c1-authorized-same-bv-projection.v1",
+            "candidate_id": "auto_173005_934_1166",
+            "recording_date": "2026-08-11",
+            "bvid": "BV1os8q61Eya",
+            "aid": 117132650155234,
+            "cid": 41126267272,
+            "title": title,
+            "tags": tags,
+            "same_bv_only": True,
+        },
+    }
+
+
+def test_c1_reconciliation_resolves_missing_record_after_receipt_replay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = _c1_manifest_without_record()
+    replayed: list[object] = []
+
+    def validate(value: object) -> None:
+        replayed.append(value)
+
+    monkeypatch.setattr(
+        reconciliation.fastlane_c1_technical_receipt,
+        "validate_authorized_projection_manifest",
+        validate,
+    )
+    assert reconciliation._candidate_and_date(manifest) == (  # noqa: SLF001
+        "auto_173005_934_1166", "2026-08-11"
+    )
+    assert replayed == [manifest]
+
+
+@pytest.mark.parametrize(
+    "drift", ["receipt", "audit", "artifact", "authority", "title", "tags", "date", "candidate"]
+)
+def test_c1_reconciliation_rejects_any_failed_receipt_replay(
+    monkeypatch: pytest.MonkeyPatch, drift: str
+) -> None:
+    manifest = _c1_manifest_without_record()
+
+    def reject(_value: object) -> None:
+        raise fastlane_c1_technical_receipt.C1TechnicalReceiptError(drift)
+
+    monkeypatch.setattr(
+        reconciliation.fastlane_c1_technical_receipt,
+        "validate_authorized_projection_manifest",
+        reject,
+    )
+    with pytest.raises(
+        reconciliation.PublicationReconciliationError,
+        match="C1 manifest cannot resolve publication candidate/date",
+    ):
+        reconciliation._candidate_and_date(manifest)  # noqa: SLF001
+
+
+def test_generic_missing_record_keeps_original_error() -> None:
+    with pytest.raises(
+        reconciliation.PublicationReconciliationError,
+        match="manifest record binding is missing",
+    ):
+        reconciliation._candidate_and_date({"package_attestation": {}})  # noqa: SLF001
 
 
 def test_new_bv_public_closure_reconciles_registry_and_failed_runner_row(
