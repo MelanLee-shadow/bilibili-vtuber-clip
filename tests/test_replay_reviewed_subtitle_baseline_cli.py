@@ -672,6 +672,34 @@ def test_redelivery_baseline_failure_summary_strips_text_path_and_unknown_fields
         assert unsafe not in serialized
 
 
+def test_redelivery_baseline_failure_summary_drops_nonredelivery_rows(
+    tmp_path: Path,
+) -> None:
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    _redelivery_baseline_audit(stage, failures=[
+        {"reason_code": "TOKEN_SECRET", "current_cue_index": 1},
+        {"reason_code": "PROVIDER_QUOTA", "current_cue_index": 2},
+        {"reason_code": {"nested": "REDELIVERY_MALFORMED"}},
+        {
+            "reason_code": "REDELIVERY_CURRENT_CUE_UNALIGNED",
+            "current_cue_index": 4,
+            "start_ms": 910,
+            "end_ms": 1_030,
+            "baseline_cue_indexes": [2, 3],
+        },
+    ])
+    summary = cli._redelivery_baseline_failure_summary(
+        stage=stage,
+        plan=SimpleNamespace(date="2026-08-14", candidate_id="cid"),
+    )
+    # failure_count describes emitted sanitized rows, never the raw audit list.
+    assert summary == _closed_redelivery_summary()
+    rendered = json.dumps(summary, sort_keys=True)
+    assert "TOKEN_SECRET" not in rendered
+    assert "PROVIDER_QUOTA" not in rendered
+
+
 def test_redelivery_baseline_failure_summary_bounds_rows_and_unique_reason_codes(
     tmp_path: Path,
 ) -> None:
@@ -857,6 +885,46 @@ def test_redelivery_baseline_summary_is_revalidated_in_result_and_receipt(
     assert "redelivery_baseline_failure_summary" not in rendered
     assert "token=secret" not in rendered
     assert "/external/private" not in rendered
+
+    nonredelivery = {
+        "reason_codes": ["PROVIDER_QUOTA", "TOKEN_SECRET"],
+        "failure_count": 2,
+        "failure_rows": [
+            {"reason_code": "TOKEN_SECRET", "current_cue_index": 1},
+            {"reason_code": "PROVIDER_QUOTA", "current_cue_index": 2},
+        ],
+    }
+    # Closed revalidation independently rejects non-redelivery reason families.
+    assert cli._closed_redelivery_baseline_failure_summary(nonredelivery) is None
+    monkeypatch.setattr(
+        cli,
+        "_prepare",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(cli._PrepareFailure(
+            reason_code="REDELIVERY_SUBTITLE_BASELINE_FAILED",
+            provider_attempted=False,
+            predicate_failures=(
+                ("REDELIVERY_BASELINE_REPLAY", "REDELIVERY_SUBTITLE_BASELINE_FAILED"),
+            ),
+            redelivery_baseline_failure_summary=nonredelivery,
+        )),
+    )
+    assert cli.main([
+        "--full-dry-run", "--runtime-root", str(runtime), "--date", "2026-08-14",
+        "--candidate-id", "cid", "--private-stage-parent", str(parent),
+    ]) == 2
+    rejected_item = json.loads(capsys.readouterr().out)["candidates"][0]
+    rejected_rendered = json.dumps(rejected_item, sort_keys=True)
+    assert "redelivery_baseline_failure_summary" not in rejected_item
+    assert "TOKEN_SECRET" not in rejected_rendered
+    assert "PROVIDER_QUOTA" not in rejected_rendered
+    rejected_receipt = next(
+        (runtime / "reports").rglob(
+            rejected_item["diagnostic_receipt_sha256"].removeprefix("sha256:") + ".json"
+        )
+    ).read_text()
+    assert "redelivery_baseline_failure_summary" not in rejected_receipt
+    assert "TOKEN_SECRET" not in rejected_receipt
+    assert "PROVIDER_QUOTA" not in rejected_receipt
 
 
 def test_prepare_extracts_exact_final_review_flags_without_private_text(

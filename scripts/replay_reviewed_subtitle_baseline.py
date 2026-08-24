@@ -681,7 +681,11 @@ def _sanitize_redelivery_baseline_failure_row(value: object) -> dict[str, object
     if not isinstance(value, Mapping):
         return None
     reason_code = value.get("reason_code")
-    if not isinstance(reason_code, str) or not _SAFE_REASON_CODE.fullmatch(reason_code):
+    if (
+        not isinstance(reason_code, str)
+        or not _SAFE_REASON_CODE.fullmatch(reason_code)
+        or not reason_code.startswith("REDELIVERY_")
+    ):
         return None
     row: dict[str, object] = {"reason_code": reason_code}
     for field in _SAFE_REDELIVERY_FAILURE_SCALAR_FIELDS:
@@ -728,7 +732,9 @@ def _closed_redelivery_baseline_failure_summary(
         or failure_count != len(failure_rows)
         or len(failure_rows) > _MAX_REDELIVERY_BASELINE_FAILURE_ROWS
         or any(
-            not isinstance(code, str) or not _SAFE_REASON_CODE.fullmatch(code)
+            not isinstance(code, str)
+            or not _SAFE_REASON_CODE.fullmatch(code)
+            or not code.startswith("REDELIVERY_")
             for code in reason_codes
         )
     ):
