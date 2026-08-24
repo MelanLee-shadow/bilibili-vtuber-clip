@@ -22,6 +22,9 @@
 6. runtime 状态不固化进本目录。部署版本、任务状态、产物字节和公开稿件必须实时读取
    `free:/opt/bilive/autoslice/{repo,state,out,reports}` 与 B 站公开/创作中心面。
 
+提速并行设计的历史证据与当前映射见 [source-bound review](../reviews/2026-08-23-pipeline-speedup-source-bound.md)；
+该页仅作 provenance/入口，不增加分步规则。
+
 | 步 | 文件 | 职责 | 代码入口 |
 |---|---|---|---|
 | 10 | [10-source-recording.md](10-source-recording.md) | 录制、源健康、mount 看门狗 | `ops/recording/bililive_recorder_adapter.py`、`scripts/free_session_autoslice.py`（源门）、`src/autoslice/source_integrity.py` |
