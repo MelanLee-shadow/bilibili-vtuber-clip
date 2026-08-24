@@ -92,7 +92,7 @@ package audit、delegated-root exact-byte review 以及 `authorized_upload.py` �
 
 | 口径 | SHA-256 |
 |---|---|
-| `.message.content` UTF-8 bytes（去除 JSONL 行尾 LF 后的内容字段） | `0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b` |
+| decoded `.message.content` string encoded as UTF-8 bytes（不含 JSON syntax，也不含 raw JSONL trailing LF） | `0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b` |
 | raw JSONL line bytes（含 trailing LF） | `e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa` |
 
 这两个 digest 是同一 authority 的不同输入边界，不能互相替代或把去 LF 的 hash 当作 raw-line hash。21 项（18 talk + 3 song）逐片点名错误是**穷尽清单**：完成某片点名修复即可直接上传，不新增 Ivan 复审；仅 #12「考试写解」与 #13「提督十秒」的“其他小错自己识别/顺手修”属于各自候选范围内的明示小错例外。其余未点名内容冻结。
@@ -101,7 +101,7 @@ generic package/audit/technical receipt 只可验证点名修复、未点名内�
 
 ### 七夕闭环历史 review ledger（historical evidence only）
 
-七夕 `auto_113022_354_496` 的历史闭环记录如下：BVID `BV1Ud8F6fECS`，AID `117126140527747`，successor CID `41229421848`；sidecar SHA-256 `2efd6966...`；semantic diff receipt SHA-256 `46aa020d...`；fresh four-surface SHA-256 `77604245...`。这些摘要用于把历史 review、successor 字节和四面 readback 绑定到同一目标项。
+七夕 `auto_113022_354_496` 的历史闭环记录如下：BVID `BV1Ud8F6fECS`，AID `117126140527747`，successor CID `41229421848`；sidecar SHA-256 `2efd696601ada048e5649d0a962da5532af9e54175fd7428fd341b8ca37514a8`；semantic diff receipt SHA-256 `46aa020dc87f2f83b753c016f9a402e8eb1800b9521d0ec9197cc5afb388ccaf`；fresh four-surface SHA-256 `7760424598c57f1bcebb2b54c7d1cd30f2ec265818308fda2d408a882c139d91`。这些 digest 用于把历史 review、successor 字节和四面 readback 绑定到同一目标项。
 
 该 reconciliation 阶段的记录明确为 `remote_mutation:false`：它表示本次阶段只做本地对账/证据收敛，**不否认此前同 BV 替换已经发生**。state、runtime、static 三者的差异只限于上述目标项（BVID/AID/CID、sidecar、semantic diff receipt、fresh four-surface receipt）；不得据此推断其他候选或其他发布面的状态。
 
