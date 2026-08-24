@@ -221,7 +221,15 @@ public/Creator/section readback gates；`READY_TO_COMMIT` 不是 publication 完
   `BV1Ud8F6fECS` / AID `117126140527747` / CID `41087534673`。successor exact bytes 为
   video `78,452,463` / `8539f49ecba77d12c69b51e3177f12e67d9ae39debebc762a997757e54cc488a`，
   SRT `0b712412cb2dcccb0c61dcadd0764cd37487d4c2ee4453e69824e029309052d9`，cover
-  `e57c8c7af3b9346da468d54d5675319f3ace6a73760c3aa847808adbbb033642`。实际 final human review
+  `e57c8c7af3b9346da468d54d5675319f3ace6a73760c3aa847808adbbb033642`。唯一可签署私有面为
+  `/private/tmp/qixi-canonical-human-review-20260824/`；canonical root clean package audit
+  `8b2dedb4acb993efa831812690596cd702444fd8648b89ea3ff50e15341b292d` `passed=true/0`，
+  record `1a4e7ae28623c328cd184d4a7de870b3ad8070b520245bf334ce35ede09aeefe`、review manifest
+  `659035c7e18bb1c0c3e56e2e18e38ac34d00fcf95bc3f3dafe78952559f56401`、pending template
+  `023d6d3ac27b7c284a67035f9b7be3a72289c6561424e1dbc5a6be6c2390b922`。旧
+  `/private/tmp/qixi-root-review-surface-20260824/` 的 record/audit/review-manifest sidecars
+  `26eeeb6c…` / `1b92983e…` / `6ea8c5e1…` 是 mixed diagnostic surface，
+  `REJECTED_FOR_SIGNING`，仅保留诊断，不应误称为 canonical 成品缺陷。实际 final human review
   仍为 `PENDING` template（不是 receipt），所以不得 same-BV apply、upload 或宣称修复闭环。
 - **#20**：fresh public、Creator 与 exact song section `9364628` 三面一致：
   `BV1Cn8E6iEf8` / AID `117120822222716` / CID `41057781970` / state `0`。这是旧公开稿，
