@@ -17,11 +17,14 @@ from scripts.build_fastlane_c1_private_successor import (
 from src.autoslice.fastlane_c1_formal_adapter import (
     CID,
     FORMAL_MANIFEST_SCHEMA,
+    ROOT_TECHNICAL_STATUS,
     ROOT,
     TITLE,
     FastlaneC1FormalAdapterError,
+    _build_manifest,
     _public_identity_binding,
     _validate_formal_authority,
+    _validate_manifest_shape,
     _validate_ruling_inputs,
     _verify_input,
     load_formal_authority,
@@ -72,6 +75,15 @@ def test_formal_authority_is_a_fixed_reviewed_baseline_recovery_adapter() -> Non
         "forbid_new_bv": True,
         "preserve_public_identity_and_metadata": True,
     }
+
+
+def test_formal_manifest_rejects_the_stale_ivan_rereview_status() -> None:
+    authority = load_formal_authority()
+    manifest = _build_manifest(authority=authority)
+    assert manifest["status"] == ROOT_TECHNICAL_STATUS
+    manifest["status"] = "PENDING_ROOT_AND_IVAN_REVIEW"
+    with pytest.raises(FastlaneC1FormalAdapterError, match="C1_FORMAL_MANIFEST_BINDING_DRIFT"):
+        _validate_manifest_shape(manifest, authority)
 
 
 @pytest.mark.parametrize(
