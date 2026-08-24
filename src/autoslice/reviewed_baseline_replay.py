@@ -638,8 +638,28 @@ def _copy_deployed_authority(*, source_runtime_root: Path, private_runtime_root:
     expected = deployment_authority_binding(source_root)
     source_repo = _safe_directory(source_root / "repo")
     private_repo = _mkdir_private(private_runtime_root / "repo")
+    manifest_binding = regular_binding(
+        source_repo / "DEPLOYED_AUTHORITY_MANIFEST.json", label="DEPLOYED_MANIFEST"
+    )
+    manifest = _load_json(manifest_binding, label="DEPLOYED_MANIFEST")
+    entries = manifest.get("entries")
+    if not isinstance(entries, Mapping):
+        raise ReviewedBaselineReplayError("REPLAY_DEPLOYED_AUTHORITY_COPY_INVALID")
     for name in ("DEPLOYED_COMMIT", "DEPLOYED_AUTHORITY_MANIFEST.json"):
         _copy_private_artifact(source_repo / name, private_repo / name)
+    # The finalizer derives its repository root from its candidate-private
+    # output layout.  Carry precisely the manifest-declared assets into that
+    # root; a seal-only directory would later resolve a missing asset through
+    # an ambient runtime (or fail merely because isolation worked).
+    for raw_relative, entry in sorted(entries.items()):
+        if not isinstance(raw_relative, str) or not isinstance(entry, Mapping):
+            raise ReviewedBaselineReplayError("REPLAY_DEPLOYED_AUTHORITY_COPY_INVALID")
+        relative = Path(raw_relative)
+        source = source_repo / relative
+        observed = regular_binding(source, label="DEPLOYED_ASSET")
+        if entry.get("sha256") != observed.sha256 or entry.get("bytes") != observed.size:
+            raise ReviewedBaselineReplayError("REPLAY_DEPLOYED_AUTHORITY_COPY_DRIFT")
+        _copy_private_artifact(source, _private_relative_path(private_repo, relative))
     if deployment_authority_binding(private_runtime_root) != expected:
         raise ReviewedBaselineReplayError("REPLAY_DEPLOYED_AUTHORITY_COPY_DRIFT")
 

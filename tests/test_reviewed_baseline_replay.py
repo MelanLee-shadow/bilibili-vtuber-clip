@@ -74,12 +74,15 @@ def _runtime_authority(root: Path) -> Path:
     runtime = root / "runtime-authority"
     repo = runtime / "repo"
     repo.mkdir(parents=True)
+    asset = repo / "docs" / "pipeline" / "80-package-delivery.md"
+    asset.parent.mkdir(parents=True)
+    asset.write_text("x", encoding="utf-8")
     commit = "a" * 40
     body = {
         "schema_version": "deployed-authority-manifest.v1",
         "deployed_commit": commit,
         "entries": {"docs/pipeline/80-package-delivery.md": {
-            "bytes": 1, "sha256": "sha256:" + "b" * 64,
+            "bytes": 1, "sha256": "sha256:" + hashlib.sha256(b"x").hexdigest(),
         }},
     }
     manifest = {**body, "manifest_sha256": _canonical_sha256(body)}
