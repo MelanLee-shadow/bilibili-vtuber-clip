@@ -392,8 +392,8 @@
       "status": "released_for_upload",
   "release_authorization": {
     "path": "assets/lidousha/fastlane_c2_private/auto_203011_328_389.release-authorization.v1.json",
-    "bytes": 2213,
-    "sha256": "sha256:eb117d898f199345f8d7ca6a732b2c9b814dbbd157a812f07bdbaa598f9a80a7",
+    "bytes": 2200,
+    "sha256": "sha256:6eb5130f7c04524e549545fd44b6e3a951fef49ab479d7f82c0baae0bb4bd336",
         "direct_ivan_lines": [947, 1643, 1745],
         "remaining_machine_gates": [
       "accepted C2 root technical receipt bound to current formal audit and artifacts",
