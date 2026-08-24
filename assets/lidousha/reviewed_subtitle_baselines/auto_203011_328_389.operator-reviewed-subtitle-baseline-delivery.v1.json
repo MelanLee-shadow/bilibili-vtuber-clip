@@ -1,0 +1,295 @@
+{
+  "schema_version": "operator-reviewed-subtitle-baseline-delivery.v1",
+  "candidate_id": "auto_203011_328_389",
+  "authority": "Ivan 2026-08-19 exhaustive fastlane ruling #2; only cue 5 changes, with cue 21 explicitly frozen as direct response and cue 4 unchanged.",
+  "operator_authority": {
+    "kind": "IVAN_OPERATOR",
+    "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; raw JSONL line sha256 including LF e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; Ivan ruling #2: 0:14 exact 小豆老公；； 不是你老公; 1:04 is direct response to danmaku 小豆好吵（, fixed as the current reviewed direct-response text 小豆哪有好吵. Ivan later clarified that correcting all named fastlane errors authorizes direct upload."
+  },
+  "source_srt": {
+    "path": "/private/tmp/vtuber-slice-fastlane-c2-20260824/assets/lidousha/reviewed_subtitle_baselines/auto_203011_328_389.pipeline-diagnostic.srt",
+    "sha256": "4122f3392a9531d200bf2cd6d6c10b1aeafd60d48f9b58553fdbfacc6ac4bcba"
+  },
+  "reviewed_srt": {
+    "path": "/private/tmp/vtuber-slice-fastlane-c2-20260824/assets/lidousha/reviewed_subtitle_baselines/auto_203011_328_389.reviewed.srt",
+    "sha256": "3cb16000b1bb34f205ffd6db524e3a2874108666bb4b34d0b6902654900572c1"
+  },
+  "baseline_sha256": "3cb16000b1bb34f205ffd6db524e3a2874108666bb4b34d0b6902654900572c1",
+  "source_recording": {
+    "basename": "22966160_20260813-20-30-11.mp4",
+    "sha256": "b5a7861c7283914742783ccc740531d9a21bdf78da7f5b8f90a463cb9d7f209e",
+    "absolute_start_ms": 318740,
+    "absolute_end_ms": 437660
+  },
+  "cue_count": 22,
+  "source_cue_count": 22,
+  "operator_drop_cue_count": 0,
+  "changed_cue_count": 1,
+  "changed_cues": [
+    {
+      "cue": 5,
+      "source_index": "5",
+      "start_ms": 8720,
+      "end_ms": 11240,
+      "absolute_source_start_ms": 327460,
+      "absolute_source_end_ms": 329980,
+      "before": "是刚吗？小豆老公不是你老公",
+      "after": "小豆老公；； 不是你老公",
+      "disposition": "OPERATOR_EXACT_TEXT"
+    }
+  ],
+  "truth_lanes": {
+    "schema_version": "operator-reviewed-subtitle-truth-lanes.v2",
+    "release_truth": {
+      "srt_sha256": "3cb16000b1bb34f205ffd6db524e3a2874108666bb4b34d0b6902654900572c1"
+    },
+    "pipeline_diagnostic": {
+      "sha256": "4122f3392a9531d200bf2cd6d6c10b1aeafd60d48f9b58553fdbfacc6ac4bcba"
+    },
+    "decision_ledger": {
+      "sha256": "e53a628fe4f9fc0f69314b3c9e0424842c3f473c7cb8050dc9018f3a685f4c92"
+    },
+    "diff_receipt": {
+      "sha256": "003c03ca6e00ad8b9a4c6a7ab14f192054e7547a0b07a6223b3841b083453e21"
+    }
+  },
+  "diagnostic_diff": {
+    "schema_version": "operator-reviewed-subtitle-truth-diff.v2",
+    "candidate_id": "auto_203011_328_389",
+    "pipeline_srt_sha256": "4122f3392a9531d200bf2cd6d6c10b1aeafd60d48f9b58553fdbfacc6ac4bcba",
+    "release_truth_srt_sha256": "3cb16000b1bb34f205ffd6db524e3a2874108666bb4b34d0b6902654900572c1",
+    "decision_ledger_sha256": "e53a628fe4f9fc0f69314b3c9e0424842c3f473c7cb8050dc9018f3a685f4c92",
+    "cue_count": 22,
+    "source_cue_count": 22,
+    "release_cue_count": 22,
+    "operator_drop_cue_count": 0,
+    "changed_cue_count": 1,
+    "rows": [
+      {
+        "cue": 1,
+        "source_index": "1",
+        "start_ms": 250,
+        "end_ms": 2070,
+        "pipeline_text": "告诉小李今晚不回去",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE",
+        "release_cue_index": 1,
+        "release_truth_text": "告诉小李今晚不回去"
+      },
+      {
+        "cue": 2,
+        "source_index": "2",
+        "start_ms": 2070,
+        "end_ms": 3730,
+        "pipeline_text": "小李就在这呢",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE",
+        "release_cue_index": 2,
+        "release_truth_text": "小李就在这呢"
+      },
+      {
+        "cue": 3,
+        "source_index": "3",
+        "start_ms": 3770,
+        "end_ms": 7590,
+        "pipeline_text": "小李也同时存在在这个直播间",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE",
+        "release_cue_index": 3,
+        "release_truth_text": "小李也同时存在在这个直播间"
+      },
+      {
+        "cue": 4,
+        "source_index": "4",
+        "start_ms": 7590,
+        "end_ms": 8720,
+        "pipeline_text": "谢谢沧老师",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE",
+        "release_cue_index": 4,
+        "release_truth_text": "谢谢沧老师"
+      },
+      {
+        "cue": 5,
+        "source_index": "5",
+        "start_ms": 8720,
+        "end_ms": 11240,
+        "pipeline_text": "是刚吗？小豆老公不是你老公",
+        "disposition": "OPERATOR_EXACT_TEXT",
+        "release_cue_index": 5,
+        "release_truth_text": "小豆老公；； 不是你老公",
+        "decision_authority": {
+          "kind": "IVAN_OPERATOR",
+          "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; raw JSONL line sha256 including LF e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; Ivan ruling #2: 0:14 exact 小豆老公；； 不是你老公; 1:04 is direct response to danmaku 小豆好吵（, fixed as the current reviewed direct-response text 小豆哪有好吵. Ivan later clarified that correcting all named fastlane errors authorizes direct upload."
+        }
+      },
+      {
+        "cue": 6,
+        "source_index": "6",
+        "start_ms": 11240,
+        "end_ms": 14230,
+        "pipeline_text": "老公；；今天早上去拔了智齿；；",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE",
+        "release_cue_index": 6,
+        "release_truth_text": "老公；；今天早上去拔了智齿；；"
+      },
+      {
+        "cue": 7,
+        "source_index": "7",
+        "start_ms": 14230,
+        "end_ms": 17150,
+        "pipeline_text": "痛痛；；想要老公亲亲才能好；；",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE",
+        "release_cue_index": 7,
+        "release_truth_text": "痛痛；；想要老公亲亲才能好；；"
+      },
+      {
+        "cue": 8,
+        "source_index": "8",
+        "start_ms": 17430,
+        "end_ms": 20710,
+        "pipeline_text": "这下知道拔智齿有多痛了吧",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE",
+        "release_cue_index": 8,
+        "release_truth_text": "这下知道拔智齿有多痛了吧"
+      },
+      {
+        "cue": 9,
+        "source_index": "9",
+        "start_ms": 21360,
+        "end_ms": 24040,
+        "pipeline_text": "这下还敢嘲笑我",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE",
+        "release_cue_index": 9,
+        "release_truth_text": "这下还敢嘲笑我"
+      },
+      {
+        "cue": 10,
+        "source_index": "10",
+        "start_ms": 24080,
+        "end_ms": 26920,
+        "pipeline_text": "这下谁还敢嘲笑我",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE",
+        "release_cue_index": 10,
+        "release_truth_text": "这下谁还敢嘲笑我"
+      },
+      {
+        "cue": 11,
+        "source_index": "11",
+        "start_ms": 27500,
+        "end_ms": 30600,
+        "pipeline_text": "这下知道拔智齿有多痛了吧",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE",
+        "release_cue_index": 11,
+        "release_truth_text": "这下知道拔智齿有多痛了吧"
+      },
+      {
+        "cue": 12,
+        "source_index": "12",
+        "start_ms": 30600,
+        "end_ms": 32100,
+        "pipeline_text": "你哭也没用",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE",
+        "release_cue_index": 12,
+        "release_truth_text": "你哭也没用"
+      },
+      {
+        "cue": 13,
+        "source_index": "13",
+        "start_ms": 32530,
+        "end_ms": 34610,
+        "pipeline_text": "哭也不会安慰你的",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE",
+        "release_cue_index": 13,
+        "release_truth_text": "哭也不会安慰你的"
+      },
+      {
+        "cue": 14,
+        "source_index": "14",
+        "start_ms": 34610,
+        "end_ms": 36270,
+        "pipeline_text": "我只会嘲笑你",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE",
+        "release_cue_index": 14,
+        "release_truth_text": "我只会嘲笑你"
+      },
+      {
+        "cue": 15,
+        "source_index": "15",
+        "start_ms": 36270,
+        "end_ms": 37270,
+        "pipeline_text": "哎呀",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE",
+        "release_cue_index": 15,
+        "release_truth_text": "哎呀"
+      },
+      {
+        "cue": 16,
+        "source_index": "16",
+        "start_ms": 38730,
+        "end_ms": 40930,
+        "pipeline_text": "痛吧痛你就对了",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE",
+        "release_cue_index": 16,
+        "release_truth_text": "痛吧痛你就对了"
+      },
+      {
+        "cue": 17,
+        "source_index": "17",
+        "start_ms": 43030,
+        "end_ms": 44630,
+        "pipeline_text": "痛就对了啊",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE",
+        "release_cue_index": 17,
+        "release_truth_text": "痛就对了啊"
+      },
+      {
+        "cue": 18,
+        "source_index": "18",
+        "start_ms": 46870,
+        "end_ms": 48830,
+        "pipeline_text": "小豆声音好大",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE",
+        "release_cue_index": 18,
+        "release_truth_text": "小豆声音好大"
+      },
+      {
+        "cue": 19,
+        "source_index": "19",
+        "start_ms": 49190,
+        "end_ms": 52550,
+        "pipeline_text": "小豆刚刚被夺舍了",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE",
+        "release_cue_index": 19,
+        "release_truth_text": "小豆刚刚被夺舍了"
+      },
+      {
+        "cue": 20,
+        "source_index": "20",
+        "start_ms": 53920,
+        "end_ms": 55960,
+        "pipeline_text": "刚被夺舍了一下",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE",
+        "release_cue_index": 20,
+        "release_truth_text": "刚被夺舍了一下"
+      },
+      {
+        "cue": 21,
+        "source_index": "21",
+        "start_ms": 56080,
+        "end_ms": 58860,
+        "pipeline_text": "小豆哪有好吵",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE",
+        "release_cue_index": 21,
+        "release_truth_text": "小豆哪有好吵"
+      },
+      {
+        "cue": 22,
+        "source_index": "22",
+        "start_ms": 58860,
+        "end_ms": 61240,
+        "pipeline_text": "都是安静美女来着",
+        "disposition": "OPERATOR_UNCHANGED_FREEZE",
+        "release_cue_index": 22,
+        "release_truth_text": "都是安静美女来着"
+      }
+    ]
+  },
+  "speaker_authority": "NOT_CLAIMED_TEXT_ONLY"
+}
