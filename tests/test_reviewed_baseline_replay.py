@@ -294,6 +294,131 @@ def test_plan_refuses_current_padded_source_hash_drift(tmp_path: Path) -> None:
         replay.build_replay_plan(repo_root=ROOT, out_root=out_root, date=DATE, candidate_id=CID)
 
 
+def test_plan_refuses_attested_baseline_interval_drift(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A sealed v2 baseline cannot name a third source interval."""
+
+    out_root, _media = _package(tmp_path)
+    original = replay._baseline
+
+    def drifted_baseline(**kwargs: object):
+        baseline = original(**kwargs)
+        baseline.config["absolute_source_start_ms"] += 1
+        return baseline
+
+    monkeypatch.setattr(replay, "_baseline", drifted_baseline)
+    with pytest.raises(replay.ReviewedBaselineReplayError, match="BASELINE_ATTESTED_INTERVAL_DRIFT"):
+        replay.build_replay_plan(repo_root=ROOT, out_root=out_root, date=DATE, candidate_id=CID)
+
+
+def test_c12_attested_final_interval_is_accepted_without_widening_to_padded_source() -> None:
+    """C12's sealed baseline is attested to its exact recut, not its padding."""
+
+    manifest = ROOT / "assets/lidousha/reviewed_subtitle_baselines/auto_130012_435_574.subtitle-baseline.v1.json"
+    config = json.loads(manifest.read_text(encoding="utf-8"))
+    assert replay.baseline_application_interval(
+        config=config,
+        padded_start_ms=425_180,
+        padded_end_ms=622_370,
+        final_start_ms=9_740,
+        final_end_ms=178_660,
+        error=replay.ReviewedBaselineReplayError,
+    ) == (434_920, 603_840)
+    config["absolute_source_end_ms"] += 1
+    with pytest.raises(replay.ReviewedBaselineReplayError, match="BASELINE_ATTESTED_INTERVAL_DRIFT"):
+        replay.baseline_application_interval(
+            config=config,
+            padded_start_ms=425_180,
+            padded_end_ms=622_370,
+            final_start_ms=9_740,
+            final_end_ms=178_660,
+            error=replay.ReviewedBaselineReplayError,
+        )
+
+
+def test_stage_rebuilds_only_private_artifacts_and_preserves_expected_video_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out_root, media = _package(tmp_path)
+    plan = replay.build_replay_plan(repo_root=ROOT, out_root=out_root, date=DATE, candidate_id=CID)
+
+    def fake_run(command: list[str], **_kwargs: object) -> object:
+        Path(command[-1]).write_bytes(media)
+        return type("Completed", (), {"returncode": 0})()
+
+    monkeypatch.setattr(replay.subprocess, "run", fake_run)
+    seen: dict[str, object] = {}
+
+    def apply_full_padded_baseline(text: str, **kwargs: object) -> tuple[str, dict[str, str]]:
+        seen["text"] = text
+        seen.update(kwargs)
+        config = kwargs["config"]
+        assert isinstance(config, Mapping)
+        return (
+            (Path(str(kwargs["spec_parent"])) / str(config["path"])).read_text(encoding="utf-8"),
+            {"status": "APPLIED"},
+        )
+
+    monkeypatch.setattr(
+        full_window_replay,
+        "apply_redelivery_subtitle_baseline",
+        apply_full_padded_baseline,
+    )
+    stage_parent = tmp_path / "private"
+    stage_parent.mkdir(mode=0o700)
+    result = replay.stage_replay(plan, stage_parent=stage_parent)
+
+    stage = Path(result["stage"])
+    assert {path.name for path in stage.iterdir()} == {
+        "recut.mp4", "reviewed.srt", "redelivery-baseline.json",
+        "full-release-delivery-projection.json", "stage.json",
+    }
+    assert (stage / "recut.mp4").is_file()
+    reviewed = (stage / "reviewed.srt").read_text(encoding="utf-8")
+    assert reviewed.strip()
+    assert "00:00:" in reviewed
+    assert "1592760" not in reviewed
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in stage.iterdir() if path.name != "recut.mp4")
+    assert _sha((stage / "recut.mp4").read_bytes()) == plan.expected_video_sha256
+    stage_document = json.loads((stage / "stage.json").read_text(encoding="utf-8"))
+    assert stage_document["delivery_projection_receipt"]["sha256"] == _sha(
+        (stage / "full-release-delivery-projection.json").read_bytes()
+    )
+    assert not list((out_root / DATE / CID / "replacement_recuts").glob("*.stage.json"))
+    diagnostic = plan.baseline.config["operator_truth_lanes"]["pipeline_diagnostic"]
+    expected_text = (plan.baseline.manifest_path.parent / diagnostic["path"]).read_text(encoding="utf-8")
+    assert seen["text"] == expected_text
+    assert seen["current_source_start_ms"] == 1_592_760
+    assert seen["current_source_end_ms"] == 1_746_900
+
+
+def test_stage_replays_exact_baseline_over_full_padded_window_before_final_crop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A final subwindow is not a legal substitute for an exact padded baseline."""
+
+    out_root, media = _package(tmp_path)
+    plan = replay.build_replay_plan(repo_root=ROOT, out_root=out_root, date=DATE, candidate_id=CID)
+
+    def fake_run(command: list[str], **_kwargs: object) -> object:
+        Path(command[-1]).write_bytes(media)
+        return type("Completed", (), {"returncode": 0})()
+
+    monkeypatch.setattr(replay.subprocess, "run", fake_run)
+    parent = tmp_path / "private"
+    parent.mkdir(mode=0o700)
+    result = replay.stage_replay(plan, stage_parent=parent)
+
+    audit = json.loads((Path(result["stage"]) / "redelivery-baseline.json").read_text())
+    assert audit["status"] in {"APPLIED", "ALREADY_SATISFIED"}
+    assert audit["application_strategy"] == "exact_reviewed_interval_replay"
+    assert audit["current_source_interval"] == {
+        "absolute_source_start_ms": 1_592_760,
+        "absolute_source_end_ms": 1_746_900,
+    }
+    reviewed = (Path(result["stage"]) / "reviewed.srt").read_text(encoding="utf-8")
+    assert reviewed.strip()
+
+
 def test_non_c7b_mapping_authority_cannot_enter_private_stage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     out_root, media = _package(tmp_path)
     plan = replay.build_replay_plan(repo_root=ROOT, out_root=out_root, date=DATE, candidate_id=CID)

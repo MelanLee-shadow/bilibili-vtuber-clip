@@ -24,6 +24,44 @@ from src.autoslice.fastlane_c3_private_stage import (
 )
 
 
+def baseline_application_interval(
+    *,
+    config: Mapping[str, object],
+    padded_start_ms: int,
+    padded_end_ms: int,
+    final_start_ms: int,
+    final_end_ms: int,
+    error: Callable[[str], Exception],
+) -> tuple[int, int]:
+    """Resolve the only source interval a sealed v2 baseline may consume.
+
+    Most reviewed baselines describe the whole padded source.  A small number
+    are explicitly attested to the final recut interval instead.  Accept only
+    those two geometries: accepting any arbitrary subinterval would silently
+    turn a source-bound replay into an unreviewed crop.
+    """
+
+    if (
+        config.get("schema_version") != "subtitle-redelivery-baseline.v2"
+        or config.get("exact_interval_replay") is not True
+    ):
+        return padded_start_ms, padded_end_ms
+    start = config.get("absolute_source_start_ms")
+    end = config.get("absolute_source_end_ms")
+    if (
+        isinstance(start, bool) or not isinstance(start, int)
+        or isinstance(end, bool) or not isinstance(end, int)
+        or start >= end
+    ):
+        raise error("REPLAY_BASELINE_ATTESTED_INTERVAL_INVALID")
+    padded = (padded_start_ms, padded_end_ms)
+    final = (padded_start_ms + final_start_ms, padded_start_ms + final_end_ms)
+    attested = (start, end)
+    if attested == padded or attested == final:
+        return attested
+    raise error("REPLAY_BASELINE_ATTESTED_INTERVAL_DRIFT")
+
+
 def stage_delivery_projection_receipt(
     stage: Path,
     *,
@@ -133,6 +171,14 @@ def prepare_stage_delivery_projection(
     if match is None:
         raise error("REPLAY_PADDED_SOURCE_NAME_INVALID")
     padded_start, padded_end = (int(value) for value in match.groups())
+    baseline_start, baseline_end = baseline_application_interval(
+        config=config,
+        padded_start_ms=padded_start,
+        padded_end_ms=padded_end,
+        final_start_ms=getattr(plan, "local_start_ms"),
+        final_end_ms=getattr(plan, "local_end_ms"),
+        error=error,
+    )
     try:
         fresh_srt_to_source_cues(text, window_start_ms=0, duration_ms=padded_end - padded_start)
     except ValueError as exc:
@@ -232,7 +278,7 @@ def prepare_stage_delivery_projection(
     try:
         cropped, audit = replay_full_window_text_and_crop(
             text=text, config=config, spec_parent=getattr(baseline, "manifest_path").parent,
-            padded_start_ms=padded_start, padded_end_ms=padded_end,
+            padded_start_ms=baseline_start, padded_end_ms=baseline_end,
             final_start_ms=getattr(plan, "local_start_ms"), final_end_ms=getattr(plan, "local_end_ms"),
             write_source_range_srt=write_source_range_srt, crop_path=crop,
             read_crop=lambda path: read_small_bytes(regular_binding(path, label="REVIEWED_WINDOW"), label="REVIEWED_WINDOW"),

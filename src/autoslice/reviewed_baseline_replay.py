@@ -50,7 +50,7 @@ from src.autoslice.reviewed_baseline_replay_authority import (
     resolve_record_bound_finalizer_authority,
 )
 from src.autoslice.reviewed_baseline_replay_stage_projection import (
-    prepare_stage_delivery_projection,
+    baseline_application_interval, prepare_stage_delivery_projection,
     stage_delivery_projection_receipt,
 )
 validate_c9_root_acceptance_envelope = None
@@ -369,6 +369,17 @@ def build_replay_plan(*, repo_root: Path, out_root: Path, date: str, candidate_i
         )
     except RedeliveryTimeDomainError as exc:
         raise ReviewedBaselineReplayError(str(exc)) from exc
+    # Verify the attested baseline geometry before any private media write.
+    # A v2 baseline may bind either the padded source or this record's exact
+    # final interval, never an arbitrary third window.
+    baseline_application_interval(
+        config=config,
+        padded_start_ms=padded_start,
+        padded_end_ms=padded_end,
+        final_start_ms=start,
+        final_end_ms=end,
+        error=ReviewedBaselineReplayError,
+    )
     diagnostic = config.get("operator_truth_lanes", {}).get("pipeline_diagnostic")
     if not isinstance(diagnostic, Mapping) or not isinstance(diagnostic.get("path"), str):
         raise ReviewedBaselineReplayError("REPLAY_PIPELINE_DIAGNOSTIC_MISSING")
