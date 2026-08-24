@@ -522,6 +522,47 @@
       ]
     },
     {
+      "candidate_id": "auto_173005_934_1166",
+      "subtitle_review_points": [
+        {
+          "point_id": "c1-0046-weioula",
+          "final_video_start_ms": 43000,
+          "final_video_end_ms": 50000,
+          "expectation": "该窗字幕必须为“薇欧拉酱只是喜欢阿拉蕾酱而已”。"
+        },
+        {
+          "point_id": "c1-0101-watched-video-speech-absent",
+          "final_video_start_ms": 57000,
+          "final_video_end_ms": 68000,
+          "expectation": "该窗 watched-video speech 不做李豆沙 sidecar 字幕。"
+        },
+        {
+          "point_id": "c1-0112-zhubao",
+          "final_video_start_ms": 68000,
+          "final_video_end_ms": 76000,
+          "expectation": "该窗字幕必须为“主包给练舞室的姐姐们推荐”。"
+        },
+        {
+          "point_id": "c1-0137-laile",
+          "final_video_start_ms": 94000,
+          "final_video_end_ms": 99000,
+          "expectation": "该窗字幕必须为“来了”。"
+        },
+        {
+          "point_id": "c1-0200-watched-video-subtitles-absent",
+          "final_video_start_ms": 116000,
+          "final_video_end_ms": 126000,
+          "expectation": "该窗 watched-video subtitles 不做李豆沙 sidecar 字幕。"
+        },
+        {
+          "point_id": "c1-0226-daisukino-ararei-chan",
+          "final_video_start_ms": 141000,
+          "final_video_end_ms": 150000,
+          "expectation": "2:26/2:27.8 字幕必须为“daisukino ararei chan”。"
+        }
+      ]
+    },
+    {
       "candidate_id": "auto_113022_354_496",
       "subtitle_review_points": [
         {
