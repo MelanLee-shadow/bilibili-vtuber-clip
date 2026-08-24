@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -178,3 +179,20 @@ def validate_accepted_receipt(root: Path, proposal_path: Path, receipt: Mapping[
         raise ValueError("accepted receipt root check drift")
     if receipt["non_authorizations"] != ["does not replace Ivan line947 authorization", "does not replace CPA title-cover QC", "does not authorize AUTO_UPLOAD or any upload"]:
         raise ValueError("accepted receipt non-authorization drift")
+
+
+def write_create_only_json(path: Path, value: Mapping[str, Any]) -> None:
+    if path.exists() or path.is_symlink():
+        raise FileExistsError("refusing to overwrite accepted C2 technical receipt")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(value, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    directory_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)

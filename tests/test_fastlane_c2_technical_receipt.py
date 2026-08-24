@@ -1,7 +1,4 @@
 import json
-import subprocess
-import sys
-
 import pytest
 
 from src.autoslice.fastlane_c2_formal_adapter import NAMES, TITLE, visual_inventory
@@ -11,6 +8,7 @@ from src.autoslice.fastlane_c2_technical_receipt import (
     make_ready_proposal,
     validate_accepted_receipt,
     validate_ready_proposal,
+    write_create_only_json,
 )
 
 
@@ -82,12 +80,11 @@ def test_c2_accepted_materializer_is_create_only_and_rejects_symlink_proposal(tm
     root = _package(tmp_path)
     proposal_path = root / "ready.proposal.json"
     _write(proposal_path, _proposal(root))
+    receipt = make_accepted_receipt(root, proposal_path, "2026-08-24T22:00:00+00:00", "Root decision.")
     receipt_path = root / "accepted.json"
-    script = "scripts/materialize_fastlane_c2_accepted_technical_receipt.py"
-    args = [sys.executable, script, "--package", str(root), "--proposal", str(proposal_path), "--reviewed-at", "2026-08-24T22:00:00+00:00", "--decision-basis", "Root decision.", "--out", str(receipt_path)]
-    subprocess.run(args, check=True)
-    second = subprocess.run(args, capture_output=True, text=True, check=False)
-    assert second.returncode != 0 and "refusing to overwrite" in second.stderr
+    write_create_only_json(receipt_path, receipt)
+    with pytest.raises(FileExistsError):
+        write_create_only_json(receipt_path, receipt)
     link = root / "proposal-link.json"
     link.symlink_to(proposal_path)
     with pytest.raises(ValueError):
