@@ -237,6 +237,14 @@ def main() -> int:
     record, publish, cover_path = resolve_package_inputs(package_root, title)
     story = record.get("story_contract") or {}
     candidate_id = str(story.get("candidate_id") or record.get("delivery_candidate_id") or "")
+    if not candidate_id and record.get("schema_version") == "lidousha-c2-release-record.v1":
+        items = json.loads((package_root / "review_manifest.json").read_text(encoding="utf-8")).get("items")
+        root_candidate = record.get("candidate_id")
+        if not isinstance(root_candidate, str) or not root_candidate or not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict) or items[0].get("candidate_id") != root_candidate:
+            raise ValueError("C2 legacy record candidate is absent or conflicts with review item")
+        candidate_id = root_candidate
+    if not candidate_id:
+        raise ValueError("candidate id is unavailable")
     def probe(path: Path, prompt: str) -> dict:
         result = image_vision_probe(path, prompt, api_base=env.get("CPA_BASE_URL", ""), api_key=env.get("CPA_API_KEY", ""))
         result["image_path"] = str(path)
@@ -244,8 +252,20 @@ def main() -> int:
     receipt = build_joint_qc_receipt(
         cover_path=cover_path, title=title, candidate_id=candidate_id, image_probe=probe
     )
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(receipt, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    parent = out_path.parent.absolute()
+    info = os.lstat(parent)
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o700:
+        raise ValueError("QC output parent must be an existing 0700 non-symlink directory")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(out_path, flags, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(receipt, ensure_ascii=False, indent=1) + "\n")
+        handle.flush(); os.fsync(handle.fileno())
+    directory_fd = os.open(parent, os.O_RDONLY)
+    try: os.fsync(directory_fd)
+    finally: os.close(directory_fd)
     print("status:", receipt["status"], "| verdict:", json.dumps(receipt["verdict"], ensure_ascii=False)[:200])
     print("receipt:", out_path)
     return 0 if receipt["pass"] else 2
