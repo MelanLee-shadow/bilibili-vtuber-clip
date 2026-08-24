@@ -493,6 +493,18 @@ def _strict_live_tags(value: object, *, label: str) -> list[str]:
     return normalised
 
 
+def _strict_manifest_tags(value: object) -> list[str]:
+    """Keep record-bound manifest order while rejecting malformed tag input."""
+
+    if not isinstance(value, list) or not value or any(
+        not isinstance(tag, str) or not tag or tag != tag.strip() for tag in value
+    ):
+        raise PlanInvalid("manifest tags are empty or invalid")
+    if len(set(value)) != len(value):
+        raise PlanInvalid("manifest tags are duplicated")
+    return list(value)
+
+
 def _preserved_tags_receipt(
     *, manifest: Mapping[str, Any], before: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -508,11 +520,14 @@ def _preserved_tags_receipt(
     )
     if creator_tags != public_tags:
         raise PlanInvalid("Creator and public tags differ during preservation planning")
-    manifest_tags = _strict_live_tags(manifest.get("tags"), label="manifest")
+    manifest_tags = _strict_manifest_tags(manifest.get("tags"))
     return {
         "schema_version": TAG_PRESERVATION_SCHEMA,
         "field": "tags",
         "manifest_original_tags": manifest_tags,
+        "manifest_tags_sha256": "sha256:" + hashlib.sha256(
+            _canonical_json(manifest_tags)
+        ).hexdigest(),
         "preserved_live_tags": creator_tags,
         "creator_tags_sha256": "sha256:" + hashlib.sha256(
             _canonical_json(creator_tags)

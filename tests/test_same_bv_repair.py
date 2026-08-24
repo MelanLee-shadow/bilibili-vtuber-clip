@@ -1849,7 +1849,7 @@ def test_planning_refuses_preexisting_creator_public_metadata_drift(tmp_path):
 
 def test_explicit_tag_preservation_freezes_equal_live_tags_only(tmp_path):
     manifest_path, manifest = _manifest(tmp_path)
-    manifest["tags"] = ["manifest-1", "manifest-2", "manifest-3", "manifest-4"]
+    manifest["tags"] = ["李豆沙", "虚拟主播", "虚拟UP主", "直播切片"]
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False) + "\n", encoding="utf-8")
     snapshot = _before_snapshot()
     live_tags = sorted(
@@ -1861,7 +1861,7 @@ def test_explicit_tag_preservation_freezes_equal_live_tags_only(tmp_path):
     default = create_plan(
         manifest_path=manifest_path, manifest=manifest, bvid=BVID, snapshot=snapshot
     )
-    assert default["target_metadata"]["tags"] == manifest["tags"]
+    assert default["target_metadata"]["tags"] == sorted(manifest["tags"])
     assert "metadata_preservation" not in default
 
     plan = create_plan(
