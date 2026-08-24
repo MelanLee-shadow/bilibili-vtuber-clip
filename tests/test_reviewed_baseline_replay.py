@@ -1018,6 +1018,9 @@ def test_replay_publish_adapter_classifies_missing_staged_story_contract(
     [
         (None, "冻结标题", "冻结钩子", "provider_failed", replay_publish.REPLAY_FROZEN_SOURCE_FACT_REVIEW_MISSING),
         ({"reason_code": "CPA_TEXT_REVIEW_CALL_FAILED"}, "冻结标题", "冻结钩子", None, "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_SOURCE_FACT_REVIEW_CPA_TEXT_REVIEW_CALL_FAILED"),
+        ({"reason_code": "CPA_ENTITY_SURFACE_RESPONSE_INVALID"}, "冻结标题", "冻结钩子", None, "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_SOURCE_FACT_REVIEW_CPA_ENTITY_SURFACE_RESPONSE_INVALID"),
+        ({"reason_code": "CPA_TEXT_REVIEW_ADDRESSEE_ATTRIBUTION_UNRESOLVED"}, "冻结标题", "冻结钩子", None, "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_SOURCE_FACT_REVIEW_CPA_TEXT_REVIEW_ADDRESSEE_ATTRIBUTION_UNRESOLVED"),
+        ({"reason_code": "UNLISTED_PROVIDER_DETAIL"}, "冻结标题", "冻结钩子", None, replay_publish.REPLAY_FROZEN_SOURCE_FACT_REVIEW),
         ({"status": "PASS"}, "错误标题", "冻结钩子", None, replay_publish.REPLAY_FROZEN_STAGED_TITLE_MISMATCH),
         ({"status": "PASS"}, "冻结标题", "错误钩子", None, replay_publish.REPLAY_FROZEN_STORY_RESOLVED_HOOK_MISMATCH),
         ({"status": "PASS"}, "冻结标题", "冻结钩子", "title_failed", replay_publish.REPLAY_FROZEN_TITLE_AUTHORITY_ERROR),

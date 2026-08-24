@@ -238,6 +238,18 @@ def test_record_bound_authority_failures_get_their_own_predicate() -> None:
             "SOURCE_FACT_REVIEW",
         ),
         (
+            "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_SOURCE_FACT_REVIEW_CPA_ENTITY_SURFACE_RESPONSE_INVALID",
+            "SOURCE_FACT_REVIEW",
+        ),
+        (
+            "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_SOURCE_FACT_REVIEW_CPA_TEXT_REVIEW_ADDRESSEE_ATTRIBUTION_UNRESOLVED",
+            "SOURCE_FACT_REVIEW",
+        ),
+        (
+            "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_SOURCE_FACT_REVIEW_SOURCE_FACT_FINAL_REVIEWED_SRT_REQUIRED",
+            "SOURCE_FACT_REVIEW",
+        ),
+        (
             "REPLAY_FROZEN_TITLE_AUTHORITY_DRIFT_STAGED_TITLE_MISMATCH",
             "FROZEN_TITLE_AUTHORITY",
         ),
