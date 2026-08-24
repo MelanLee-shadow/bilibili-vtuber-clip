@@ -33,6 +33,13 @@ def test_c9_source_action_projection_is_exhaustive_and_preserves_uncertain_cues(
 
     assert receipt["candidate_id"] == "auto_143025_1112_1285"
     assert receipt["upload"] is False
+    actions = receipt["cue_actions"]
+    assert [action["cue"] for action in actions] == list(range(1, 67))
+    assert {action["source_classification"] for action in actions} == {
+        "IN_VIDEO", "HOST_LIVE", "MIXED", "UNCERTAIN"
+    }
+    assert all(action["action"] == "DROP" for action in actions if action["source_classification"] == "IN_VIDEO")
+    assert all(action["action"] == "RETAIN_FROZEN" for action in actions if action["source_classification"] != "IN_VIDEO")
     rows = receipt["drop_rows"]
     assert [row["cue"] for row in rows] == dropped
     assert all(row["no_host_overlap"] is True for row in rows)

@@ -21,6 +21,12 @@ start/mid/end cluster 与 speaker-final 的 exact JSON pointer/windows；没有 
 其余 41 cue 字节冻结。特别地，5、47--49、52 有 host/guest 混合窗口，35/44 是短 guest-labelled
 回应但无法可靠来源拆分，均维持 `UNCERTAIN`，没有整条删除。
 
+receipt 的 `cue_actions` 是 source cue 1--66 的唯一完整 action map：每行明确为
+`IN_VIDEO`、`HOST_LIVE`、`MIXED` 或 `UNCERTAIN`，并同时给出 `DROP` 或
+`RETAIN_FROZEN`。只有 `IN_VIDEO/DROP` 组合合法；`HOST_LIVE`、`MIXED`、
+`UNCERTAIN` 一律冻结。这个 map 将此前的 speaker `guest/unresolved` 诊断与 source
+分类分离，避免把诊断标签本身误当作删除授权。
+
 投影从 66 条 source cue 生成 41 条 reviewed cue，SRT SHA-256 为
 `f436e1913b8eb2bd948c37b18bce9c2a9970dd9be07cf114f309a9c162c2b51b`。完整可复算图以
 “source 1..66 的升序、精确 drop 集合、其余 cue 原字节保留并连续编号”定义，避免第二份手工
@@ -28,3 +34,7 @@ start/mid/end cluster 与 speaker-final 的 exact JSON pointer/windows；没有 
 
 此候选私有 authority 仍需在 root 审查后才可被后续 canonical materializer 消费；当前不允许
 对标题、封面、边界、任何未点名文本或远端状态产生修改。
+
+`src.autoslice.fastlane_c9_private_replay` 只可在调用方给出的空目录中 create-only 地复制
+reviewed SRT、source-action receipt 与 hash-bound private packet；它没有 runner、provider、
+manifest、upload 或 state-write 路径，不能被视为正式交付包。
