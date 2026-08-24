@@ -424,6 +424,23 @@
       },
       "recording_date": "2026-08-17",
       "status": "published"
+    },
+    {
+      "bvid": "BV1os8q61Eya",
+      "candidate_id": "auto_173005_934_1166",
+      "note": "post-publish reconciliation; public authority hash-bound",
+      "publication_reconciliation": {
+        "authority": {
+          "bytes": 4283,
+          "path": "/opt/bilive/autoslice/private-fastlane-preflight/c1-v11-fresh-dry-20260824T200730Z/c1.same-bv-repair-completed.v1.json",
+          "sha256": "9c333e68e66ecd60df6e873f2fd003a57cbd557eb704802e8f30e66ff7310276"
+        },
+        "reconciled_at": "2026-08-24T20:18:43+0000",
+        "schema_version": "publication-reconciliation.v1",
+        "status": "VERIFIED_SAME_BV"
+      },
+      "recording_date": "2026-08-11",
+      "status": "published"
     }
   ],
   "notes": "候选↔BV 出版登记：published 候选禁止再走新投稿（修复只允许 authorized_upload.py repair-* 的原 BV 修复链）；hold_pending_review 候选在 Ivan 放行前禁止任何上传。2026-07-27 建立（BV1ec3A6bEWF 事故：7/24 争议搁置件被当新切片上传）。",
