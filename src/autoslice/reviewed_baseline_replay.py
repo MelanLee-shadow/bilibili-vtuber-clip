@@ -54,6 +54,9 @@ from src.autoslice.reviewed_baseline_replay_stage_projection import (
     stage_delivery_projection_receipt,
 )
 validate_c9_root_acceptance_envelope = None
+from src.autoslice.reviewed_baseline_replay_c12_projection import (
+    build_c12_final_delivery_projection,
+)
 REPLAY_STAGE_SCHEMA = "reviewed-baseline-replay-stage.v1"
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 _CID = re.compile(r"[A-Za-z0-9_-]{1,96}\Z")
@@ -1156,6 +1159,17 @@ def synthesize_replay_spec_and_finalize_private(
         spec, candidate_id=plan.candidate_id, recording_date=plan.date,
         baseline_sha256="sha256:" + str(plan.baseline.config["sha256"]),
     )
+    c12_delivery_projection = build_c12_final_delivery_projection(
+        candidate_id=plan.candidate_id,
+        config=plan.baseline.config,
+        record_sha256=record_binding.sha256,
+        record_boundary=boundary,
+        expected_video_sha256=plan.expected_video_sha256,
+        padded_path=plan.padded_path,
+        final_start_ms=final_start,
+        final_end_ms=final_end,
+        stage=stage,
+    )
     # A text-only reviewed baseline does not authorize new speaker decisions.
     # It may, however, strictly rebind a prior READY artifact when every label,
     # decision, boundary and media binding survives and the sealed ledger names
@@ -1240,7 +1254,7 @@ def synthesize_replay_spec_and_finalize_private(
         # Recheck its complete sealed identity immediately before the only
         # finalizer invocation that can execute it.
         speaker_python_revalidate()
-    run(
+    finalizer_kwargs: dict[str, object] = dict(
         options=options, profile_id="lidousha", speaker_subtitle_style_id=speaker_style,
         spec=spec, cid=plan.candidate_id, out_root=out_root, host="localhost",
         padded=plan.padded_path,
@@ -1253,6 +1267,14 @@ def synthesize_replay_spec_and_finalize_private(
         branding_intro=branding_intro,
         adapters=adapters,
     )
+    if finalizer is None and c12_delivery_projection is not None:
+        # The canonical finalizer alone receives this opaque, in-process
+        # capability.  Test/custom finalizers retain their historical narrow
+        # signature and cannot silently activate the C12 exception.
+        finalizer_kwargs["reviewed_baseline_replay_c12_projection"] = (
+            c12_delivery_projection
+        )
+    run(**finalizer_kwargs)
     prepared = sorted(
         (private_runtime_root / ".prepared-deliveries" / "talk" / plan.candidate_id)
         .glob("*/prepared.json")
