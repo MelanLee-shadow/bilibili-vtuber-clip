@@ -53,6 +53,7 @@ def build_text_only_speaker_successor_fields(
     c5_start_clamp_acceptance: Mapping[str, object] | None = None,
     c5_start_clamp_proposal_path: Path | None = None,
     c5_start_clamp_proposal_file_sha256: str | None = None,
+    c5_start_clamp_acceptance_path: Path | None = None,
     c5_start_clamp_expectations: object | None = None,
     recording_date: str | None = None,
     regular_binding: Callable[..., _RegularBinding],
@@ -155,6 +156,7 @@ def build_text_only_speaker_successor_fields(
                 c5_start_clamp_acceptance=c5_start_clamp_acceptance,
                 c5_start_clamp_proposal_path=c5_start_clamp_proposal_path,
                 c5_start_clamp_proposal_file_sha256=c5_start_clamp_proposal_file_sha256,
+                c5_start_clamp_acceptance_path=c5_start_clamp_acceptance_path,
                 c5_start_clamp_expectations=c5_start_clamp_expectations,
                 recording_date=recording_date,
                 new_plain_srt=Path(str(kwargs["text_srt_path"])),
@@ -370,6 +372,7 @@ def _delivery_projection_mapping(
     c5_start_clamp_acceptance: Mapping[str, object] | None,
     c5_start_clamp_proposal_path: Path | None,
     c5_start_clamp_proposal_file_sha256: str | None,
+    c5_start_clamp_acceptance_path: Path | None,
     c5_start_clamp_expectations: object | None,
     recording_date: str | None,
 ) -> list[tuple[int, int, int]]:
@@ -457,7 +460,7 @@ def _delivery_projection_mapping(
             })
             continue
         start_clamp = release_start < final_start or release_end > final_end
-        if start_clamp and (None in (c5_start_clamp_proposal, c5_start_clamp_acceptance, c5_start_clamp_proposal_path, c5_start_clamp_proposal_file_sha256, recording_date)):
+        if start_clamp and (None in (c5_start_clamp_proposal_path, c5_start_clamp_acceptance_path, recording_date)):
             _fail("DELIVERY_PROJECTION_STRADDLER")
         if delivery_cursor >= len(delivery_cues):
             _fail("DELIVERY_PROJECTION_DELIVERY_GRID_DRIFT")
@@ -468,14 +471,31 @@ def _delivery_projection_mapping(
         if start_clamp:
             # This is deliberately invoked only after the historical speaker
             # decision has been validated below; it does not infer a label.
-            from src.autoslice.c5_start_clamp import C5StartClampError, accepted_delivery_geometry
+            from src.autoslice.c5_start_clamp import (
+                C5StartClampError, C5_ACCEPTANCE_EXPECTATIONS,
+                accepted_delivery_geometry, load_accepted_authority, load_proposal,
+            )
             raw = speaker_decisions[old_index - 1]
             try:
+                loaded_proposal, loaded_proposal_sha = load_proposal(c5_start_clamp_proposal_path)
+                loaded_acceptance = load_accepted_authority(
+                    c5_start_clamp_acceptance_path,
+                    proposal_path=c5_start_clamp_proposal_path,
+                    expectations=C5_ACCEPTANCE_EXPECTATIONS,
+                )
+                if (
+                    c5_start_clamp_proposal is not None and dict(c5_start_clamp_proposal) != loaded_proposal
+                ) or (
+                    c5_start_clamp_acceptance is not None and dict(c5_start_clamp_acceptance) != loaded_acceptance
+                ) or (
+                    c5_start_clamp_proposal_file_sha256 is not None
+                    and c5_start_clamp_proposal_file_sha256 != loaded_proposal_sha
+                ):
+                    _fail("DELIVERY_PROJECTION_STRADDLER")
                 expected_start, expected_end = accepted_delivery_geometry(
-                    proposal_path=c5_start_clamp_proposal_path, proposal=c5_start_clamp_proposal,
-                    proposal_file_sha256=c5_start_clamp_proposal_file_sha256,
-                    acceptance=c5_start_clamp_acceptance,
-                    expectations=c5_start_clamp_expectations,
+                    proposal_path=c5_start_clamp_proposal_path, proposal=loaded_proposal,
+                    proposal_file_sha256=loaded_proposal_sha, acceptance=loaded_acceptance,
+                    expectations=C5_ACCEPTANCE_EXPECTATIONS,
                     candidate_id=candidate_id, recording_date=recording_date,
                     final_start_ms=final_start, final_end_ms=final_end,
                     source_index=old_index, text=release.text,
@@ -558,6 +578,7 @@ def materialize_text_only_speaker_successor(
     c5_start_clamp_acceptance: Mapping[str, object] | None = None,
     c5_start_clamp_proposal_path: Path | None = None,
     c5_start_clamp_proposal_file_sha256: str | None = None,
+    c5_start_clamp_acceptance_path: Path | None = None,
     c5_start_clamp_expectations: object | None = None,
     recording_date: str | None = None,
     new_plain_srt: Path, new_media: Path, expected_media_sha256: str,
@@ -617,7 +638,7 @@ def materialize_text_only_speaker_successor(
         old_cues=old_cues, speaker_cues=speaker_cues,
         decisions=old_manifest.get("final_decisions"),
     )
-    c5_inputs = (c5_start_clamp_proposal, c5_start_clamp_acceptance, c5_start_clamp_proposal_path, c5_start_clamp_proposal_file_sha256, recording_date)
+    c5_inputs = (c5_start_clamp_proposal_path, c5_start_clamp_acceptance_path, recording_date)
     if any(value is None for value in c5_inputs) and any(value is not None for value in c5_inputs):
         _fail("DELIVERY_PROJECTION_STRADDLER")
     if new_plain_sha == full_release_sha:
@@ -643,6 +664,7 @@ def materialize_text_only_speaker_successor(
             c5_start_clamp_acceptance=c5_start_clamp_acceptance,
             c5_start_clamp_proposal_path=c5_start_clamp_proposal_path,
             c5_start_clamp_proposal_file_sha256=c5_start_clamp_proposal_file_sha256,
+            c5_start_clamp_acceptance_path=c5_start_clamp_acceptance_path,
             c5_start_clamp_expectations=c5_start_clamp_expectations,
             recording_date=recording_date,
         )

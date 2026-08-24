@@ -15,7 +15,7 @@ def _proposal_path() -> Path:
 def _fixture() -> tuple[Path, dict[str, object], str, c5.AcceptanceExpectations, dict[str, object]]:
     path = _proposal_path()
     proposal, proposal_sha = c5.load_proposal(path)
-    expected = c5.AcceptanceExpectations("delegated-root", "ivan", "2026-08-24T23:00:00Z", "C5 technical projection only")
+    expected = c5.C5_ACCEPTANCE_EXPECTATIONS
     acceptance = c5.build_accepted_authority(proposal_path=path, proposal_file_sha256=proposal_sha, proposal_self_sha256=str(proposal["self_sha256"]), expectations=expected)
     return path, proposal, proposal_sha, expected, acceptance
 

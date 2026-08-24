@@ -32,6 +32,12 @@ class AcceptanceExpectations:
     reviewed_at: str | None = None
     decision_basis: str | None = None
 
+C5_ACCEPTANCE_EXPECTATIONS = AcceptanceExpectations(
+    reviewer_kind="delegated_root_agent", reviewer_by="Codex root",
+    reviewed_at="2026-08-24T23:00:13Z",
+    decision_basis="Root accepted the exact C5 cue-5 private start-clamp proposal after verifying that the frozen 9750 ms boundary lies inside the detected silence interval and that Ivan's named C5 content change remains limited to dropping humming cues 13-15; private projection only, with no text, speaker, title, cover, boundary, media, deploy, manifest, or upload approval.",
+)
+
 def _canonical(value: object) -> bytes:
     return json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")).encode()
 def _sha_bytes(value: bytes) -> str: return "sha256:" + hashlib.sha256(value).hexdigest()
