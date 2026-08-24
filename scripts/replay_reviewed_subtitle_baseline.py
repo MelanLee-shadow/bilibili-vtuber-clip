@@ -273,6 +273,8 @@ def _args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--private-stage-parent", type=Path)
     parser.add_argument("--published-recovery-bvid")
     parser.add_argument("--recovery-package-root", type=Path)
+    parser.add_argument("--speaker-python", type=Path,
+                        help="explicit interpreter for an isolated no-upload preflight")
     args = parser.parse_args(argv)
     if not args.readiness_graph and not args.candidate_id:
         parser.error("--candidate-id is required outside --readiness-graph")
@@ -850,8 +852,10 @@ def _prepare(
     plan, *, runtime: Path, stage_parent: Path, state_path: Path | None = None,
     record_authority_resolver=None, path_unavailable_diagnostic: Callable[[BaseException], object] | None = None,
     published_recovery=None, recovery_package_root: Path | None = None,
-    persist_recovery: bool = False,
+    persist_recovery: bool = False, speaker_python: Path | None = None,
 ):
+             
+
     """Build one complete no-target-write after-image outside the commit lease."""
     expected_stage = stage_parent / (
         f"{plan.date}-{plan.candidate_id}-"
@@ -895,6 +899,19 @@ def _prepare(
         return raw_source_fact_llm(prompt)
 
     try:
+        selected_speaker_python = runtime / _SPEAKER_RUNTIME_RELATIVE
+        if speaker_python is not None:
+            # A preflight may use the installed interpreter without copying or
+            # mutating its virtualenv.  Resolve and hash-bind the executable
+            # target; accepting an unbound path would make the replay outcome
+            # depend on a mutable ambient interpreter.
+            try:
+                selected_speaker_python = Path(speaker_python).resolve(strict=True)
+            except OSError as exc:
+                raise ReviewedBaselineReplayError("REPLAY_SPEAKER_PYTHON_UNAVAILABLE") from exc
+            binding = regular_binding(selected_speaker_python, label="SPEAKER_PYTHON")
+            if not os.access(binding.path, os.X_OK):
+                raise ReviewedBaselineReplayError("REPLAY_SPEAKER_PYTHON_UNSAFE")
         if plan.candidate_id == C6_EXACT_CANDIDATE_ID and plan.date == C6_EXACT_RECORDING_DATE:
             exact_final_reviewer = build_c6_exact_final_reviewer(plan=plan, stage=stage)
         else:
@@ -905,7 +922,7 @@ def _prepare(
             # speaker finalizer requires the pinned ModelScope/CAM++ runtime.
             # Binding this to the runtime root keeps full-dry/apply parity with
             # normal production instead of silently using ``sys.executable``.
-            speaker_python=runtime / _SPEAKER_RUNTIME_RELATIVE,
+            speaker_python=selected_speaker_python,
             source_fact_llm=source_fact_llm,
             adapters=_adapters(), exact_final_reviewer=exact_final_reviewer,
             use_production_exact_final_reviewer=exact_final_production,
@@ -1016,6 +1033,7 @@ def main(
                     "recovery_package_root": args.recovery_package_root,
                     "persist_recovery": bool(args.apply),
                 })
+            prepare_kwargs["speaker_python"] = args.speaker_python
             work = {
                 pool.submit(_prepare, plan, **prepare_kwargs): plan
                 for plan in plans
