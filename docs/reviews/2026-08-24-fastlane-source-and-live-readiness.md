@@ -46,15 +46,15 @@ public view API 交叉读取；无 BVID 不是“从未发布”的证明，只�
 标记含义：`confirmed` 是本次实际 readback 观察；`unknown` 是没有足够当前证据；`blocker`
 是已观察到的阻塞，不能靠 `review_ready`、旧 overnight report 或旧 BV 绕过。
 
-本节最初采集于 `e008955...` pre-deploy snapshot；C4/C5/C6/C7 的旧描述已由本文件第 5
-节的 `18291ae` full-dry 回写取代，第 5 节是当前规范结论。
+本节最初采集于 `e008955...` pre-deploy snapshot；它保留为历史来源，C4 的当前结论以本文件
+第 6 节 `5f90525` live acceptance 为准；第 5 节的 `18291ae` 仅作为历史 full-dry 记录。
 
 | # | candidate / lane | 当前可验证状态 | baseline / repair authority | readiness 标记与最短结论 |
 |---:|---|---|---|---|
 | 1 | `auto_173005_934_1166` / talk | `confirmed`: public `BV1os8q61Eya`, AID `117132650155234`, CID `41126267272` | source-fact refresh、cover recovery、public-text authority | `unknown/blocker`: 旧公开稿不等于本轮修复完成；需重新冻结修复包与 same-BV 证据。 |
 | 2 | `auto_203011_328_389` / talk | `confirmed`: 无当前公开 BVID | selected-final-review recovery、subtitle override | `blocker`: 拔智齿标题/字幕真值与最终 package 未闭合；需 Ivan truth。 |
 | 3 | `auto_220021_561_670` / talk | `confirmed`: 无当前公开 BVID | selected-final-review recovery、subtitle override | `blocker`: 视频内人声/弹幕专名修复未闭合；需 Ivan truth。 |
-| 4 | `auto_113028_1602_1698` / talk | `confirmed`: 无当前公开 BVID；`18291ae` full-dry 一次 | operator reviewed subtitle baseline v2 | `blocker`: `SOURCE_FACT_REVIEW` speaker guess requires human review；`upload_allowed=false`。 |
+| 4 | `auto_113028_1602_1698` / talk | `confirmed`: 无当前公开 BVID；`5f90525` full-dry 一次 | operator reviewed subtitle baseline v2 | `confirmed`: `READY_TO_COMMIT`，`rc=0`，`upload_allowed=false` 仅因全局上传门；speaker `READY`、guess `null`。尚未 apply/upload。 |
 | 5 | `auto_113028_1271_1328` / talk | `confirmed`: 无当前公开 BVID；`18291ae` full-dry 一次 | operator reviewed subtitle baseline v2 | `blocker`: stale binding 已越过，当前为 speaker guess requires human review；`upload_allowed=false`。 |
 | 6 | `auto_120032_753_816` / talk | `confirmed`: 无当前公开 BVID；`18291ae` full-dry 一次 | reviewed baseline v2、public-text authority | `blocker`: exact delivery boundary `CONTENT_ANCHOR_NOT_COVERED` / final-boundary semantic block；`upload_allowed=false`。 |
 | 7 | `auto_123036_727_785` / talk | `confirmed`: 无当前公开 BVID；`18291ae` full-dry 一次 | reviewed baseline v2 | `blocker`: stale binding 已越过，当前为 speaker guess requires human review；`upload_allowed=false`。 |
@@ -77,9 +77,10 @@ public view API 交叉读取；无 BVID 不是“从未发布”的证明，只�
 
 1. **Qixi**：完成真实最终播放/感知复核并生成 hash-bound human receipt；receipt 之前保持
    upload、same-BV apply 和 public closure 冻结。
-2. **C4**：先部署 `b6e87cd` successor，再针对该部署执行一次 full-dry；在此之前不把
-   local successor 当成 live readiness。**C5/C7** 当前补真实人审 speaker receipt，**C6**
-   补 boundary 人审 receipt。禁止盲重试旧 stage/旧 receipt。
+2. **C4**：已在 `5f90525` 部署并完成一次 no-write full-dry，达到
+   `READY_TO_COMMIT`；仍禁止绕过显式 commit lease、最终人审与上传门。**C5/C7** 当前补
+   真实人审 speaker/source-fact receipt，**C6** 补 boundary 人审 receipt。禁止盲重试旧
+   stage/旧 receipt。
 3. **候选 #4/#5**：在独立 private stage 并行 prepare/package/QC；只产生候选私有产物，
    不写 formal state/journal，不调用上传器，等待最终标题/封面和授权 manifest。
 4. **7b/#9/#10 与其余候选**：按表顺序补齐 Ivan truth、复活 authority、song package/registry 缺口或
@@ -116,16 +117,16 @@ private evidence，不能当作持久最终 authority；后续必须把 receipt 
 `/opt/bilive/autoslice/private-fastlane-preflight/c6-auto_120032_753_816-18291ae669af5f22394673655691395e5555e56b-20260824T052920Z/`、
 `/opt/bilive/autoslice/private-fastlane-preflight/c7-auto_123036_727_785-18291ae669af5f22394673655691395e5555e56b-20260824T052932Z/`。
 
-C4/C5/C7 的旧 stale source-fact binding 因新 successor carry 已不再是当前阻塞；当前
-阻塞是 speaker guess 必须由人审闭合。C6 的阻塞已推进到 exact delivery boundary，仍
+C5/C7 的旧 stale source-fact binding 因新 successor carry 已不再是当前阻塞；对这两个候选，
+当前阻塞是 speaker guess 必须由人审闭合。C6 的阻塞已推进到 exact delivery boundary，仍
 需要其余人审/边界证据。C4 的 `b6e87cd` local actual-media reconciliation 已 PASS：
 canonical `stage_replay` produced media SHA `0f5ee52f…6075`，stage manifest SHA
 `7c58e33d…dc76`；private successor produced 20 cues，drops `8/12/13/14`，只改变
 old cue 3；speaker SRT SHA `848d02…c43c`，ASS SHA `50eaa0…10f4`，manifest SHA
 `e2a1fb…c2e2d`，addressee `PresentValid` SHA `e61606…f5`，formal state/record/journal
 unchanged。此前 `abb211…` helper attempt 是错误路径证据，已丢弃，不代表当前状态。
-该 successor 仍 `NOT_DEPLOYED`，live full-dry pending；不能替换上述 `18291ae` full-dry
-结论。
+上述 successor 状态是旧历史快照；随后已进入 `5f90525` canonical deploy，并由第 6 节的
+C4 live full-dry readback 取代。该历史段落不构成当前 C4 阻塞或当前部署结论。
 
 本地 human-review surfaces（均为当前 session worktree 的私有证据，状态为 `PENDING`
 真实人审 receipt，不是 publication authority）：
@@ -143,3 +144,35 @@ unchanged。此前 `abb211…` helper attempt 是错误路径证据，已丢弃�
 发布顺序不变：Qixi-first，然后按 ruling table 原序；candidate-private prepare/package/QC
 可以并行，但 publication、same-BV apply 和 uploader 不能并行跳过队列。Qixi
 `auto_113022_354_496` 仍需真实 human receipt，当前 successor 仍 `no upload`。
+
+## 6. 最新 live acceptance：5f90525
+
+以下结论以当前 integration/deployed 的 exact readback 为准，覆盖前述旧 snapshot；不是由
+worker done、commit 名称或 `review_ready` 推断：
+
+- integration 与 free deployed exact commit：
+  `5f90525520530c9d7246d09718d209024b1181f5`。
+- authority manifest：v1，229 entries；built-in full suite：`6482 passed in 289.57s`。
+- `/opt/bilive/autoslice/DISABLED` 为 regular empty `0644`；`AUTO_UPLOAD` 与 `deploy.guard`
+  均 absent；source hash readback accepted。
+- C4 `auto_113028_1602_1698` 只执行一次 `FULL_DRY_RUN`，`rc=0`、
+  `READY_TO_COMMIT`、`upload_allowed=false`。每个 preparation predicate 为 `PASS`，唯一
+  未放行项是 `UPLOAD_ALLOWED=PASS_FALSE`；speaker 为 `READY`，guess 为 `null`。
+- C4 prepared receipt：
+  `sha256:9dd0bec761755bbcc737f9f3f65efd11e7cd6af661b3980caff314513f270c`；speaker manifest：
+  `sha256:ca8eeb715ba09a496219ef128e582476e07f020e068773cb109bd9f2006be9e9`。
+  stdout private parent：
+  `/opt/bilive/autoslice/private-fastlane-preflight/c4-auto_113028_1602_1698-5f90525-20260824T073301Z`；
+  stage 已清理。
+- formal state/record/publish 仍保持 before/after：
+  `6878305f…d7cc8f48`、`70e669e5…c376c580`、`3ba60ef3…a9f4c01e`；无 apply、upload、journal。
+
+修复链条应紧凑理解：a870 的 C4 full-dry 仍被生产 17-cue delivery 与 20-cue release 的
+successor mismatch 阻断；4e5 修复了 24→20→17 projection 并到达 speaker `READY`，随后
+触发 projected binding 错误。随后发现并修复 production-shaped publish 的 nested cover
+hash 校验；5f90525 的 live `READY_TO_COMMIT` 结果是该 schema 修复已在运行面得到确认。
+这里不把 4e5 的分支细节写成未经独立 readback 的 exact deploy 事实。
+
+当前接受边界仍未变：Qixi 只差真实最终感知人审 receipt，未执行 same-BV apply/upload；C5/C7
+只差 speaker/source-fact 人审 receipt，C6 只差 boundary 人审 receipt；7b、#9、#10 仍为
+private prep，#8 已公开并从 pending queue 移除。`READY_TO_COMMIT` 不是 publication 完成。
