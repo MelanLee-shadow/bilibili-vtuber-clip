@@ -3,11 +3,13 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from argparse import Namespace
 from pathlib import Path
 
 import pytest
 
 from scripts import audit_lidousha_review_package as package_audit
+from scripts import authorized_upload
 from scripts.build_fastlane_c1_formal_private_package import build_parser
 from scripts.build_fastlane_c1_private_successor import (
     parse_srt,
@@ -304,3 +306,80 @@ def test_c1_projection_authority_rejects_non_c1_or_drifted_shapes(mutate) -> Non
     mutate(authority)
     with pytest.raises(c1_receipt.C1TechnicalReceiptError, match="C1_AUTHORIZED_PROJECTION_INVALID"):
         c1_receipt.validate_projection_authority(authority, candidate_id=CID, expected_final_title=TITLE)
+
+
+def test_c1_cli_dispatches_before_a_portable_audit_root_is_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = tmp_path / "formal"
+    package.mkdir()
+    video, cover, audit = package / "final.mp4", package / "final.cover.png", package / "package_audit.json"
+    video.write_bytes(b"video")
+    cover.write_bytes(b"cover")
+    (package / "review_manifest.json").write_text(
+        json.dumps({"schema_version": "fastlane-c1-formal-private-review-manifest.v1"}),
+        encoding="utf-8",
+    )
+    audit.write_text(json.dumps({
+        "root": str(tmp_path / "gone"), "passed": True,
+        "blocking_issue_count": 0, "issue_count": 0, "issues": [],
+    }), encoding="utf-8")
+    seen: dict[str, Path] = {}
+    def dispatched(_args, root, audit_path, dispatched_video, dispatched_cover):
+        seen.update(root=root, audit=audit_path, video=dispatched_video, cover=dispatched_cover)
+        return 0
+    monkeypatch.setattr(authorized_upload, "_make_c1_authorized_projection", dispatched)
+    args = Namespace(video=str(video), cover=str(cover), package_audit=str(audit), title=TITLE,
+                     quote="快车道上传", authorized_by="Ivan", tags="", no_tags=False,
+                     season="auto", final_human_review="receipt", title_cover_qc=None, out=None)
+    assert authorized_upload.make_manifest(args) == 0
+    assert seen == {"root": package, "audit": audit, "video": video, "cover": cover}
+
+
+def _minimal_c1_projection_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    root = tmp_path / "package"
+    root.mkdir()
+    names = {"burned_final": "final.mp4", "cover": "final.cover.png"}
+    for name, content in ((names["burned_final"], b"video"), (names["cover"], b"cover"),
+                          ("review_manifest.json", b"{}"), ("package_audit.json", b"{}"),
+                          ("c1.technical-receipt.accepted.v1.json", b"{}")):
+        (root / name).write_bytes(content)
+    authority = {"candidate_id": CID, "bvid": "BV1os8q61Eya"}
+    monkeypatch.setattr(c1_receipt, "load_formal_authority", lambda: {"output_names": names})
+    monkeypatch.setattr(c1_receipt, "closure", lambda *_args: {"audit": {"passed": True}})
+    monkeypatch.setattr(c1_receipt, "validate_completed", lambda *_args: None)
+    monkeypatch.setattr(c1_receipt, "projection_authority", lambda: authority)
+    def entry(name: str) -> dict[str, object]:
+        path = root / name
+        return {"path": str(path), "sha256": c1_receipt.sha256_file(path)[7:], "bytes": path.stat().st_size}
+    return {
+        "manifest_version": 3, "schema_version": "authorized-upload-manifest.v3",
+        "artifact_id": c1_receipt.sha256_file(root / names["burned_final"])[7:][:12],
+        "video": entry(names["burned_final"]), "cover": entry(names["cover"]), "title": TITLE,
+        "description": "https://live.bilibili.com/\n本切片由 bilibili-vtuber-clip 项目提供：https://github.com/MelanLee-shadow/bilibili-vtuber-clip\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+        "publish_policy": {"tid": 21, "copyright": 2, "source": "https://live.bilibili.com/"},
+        "season": {"lane": "talk", "season_title": "小李切片", "source": "talk:title-prefix", "season_id": 8383206, "section_id": 9320779},
+        "package_attestation": {"package_root": str(root), "review_manifest": entry("review_manifest.json"), "package_audit": entry("package_audit.json"), "c1_technical_receipt": entry("c1.technical-receipt.accepted.v1.json")},
+        "authorization": {"by": "Ivan", "quote": "快车道上传", "at": "2026-08-24T14:15:00-04:00"},
+        "created_at": "2026-08-24T14:15:00-04:00", "tags": list(c1_receipt.PUBLIC_TAGS),
+        "tags_source": "c1-public-metadata-seal.v1", "recovery_publication_authority": authority,
+    }
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda value: value["package_attestation"].pop("c1_technical_receipt"),
+    lambda value: value["package_attestation"].update(extra={}),
+    lambda value: value["package_attestation"]["package_audit"].update(sha256="0" * 64),
+    lambda value: value["video"].update(path="/outside/final.mp4"),
+    lambda value: value.update(tags=list(reversed(value["tags"]))),
+    lambda value: value.update(artifact_id="0" * 12),
+    lambda value: value.update(created_at="not-a-time"),
+])
+def test_c1_projection_manifest_rejects_closure_and_path_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutate
+) -> None:
+    manifest = _minimal_c1_projection_manifest(tmp_path, monkeypatch)
+    c1_receipt.validate_authorized_projection_manifest(manifest)
+    mutate(manifest)
+    with pytest.raises(c1_receipt.C1TechnicalReceiptError):
+        c1_receipt.validate_authorized_projection_manifest(manifest)

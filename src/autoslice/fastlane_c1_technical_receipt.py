@@ -84,8 +84,25 @@ def validate_authorized_projection_manifest(manifest: object, *, verify_audit: b
     if not isinstance(manifest, Mapping) or set(manifest) != required:
         raise C1TechnicalReceiptError("C1_AUTHORIZED_MANIFEST_SCHEMA_INVALID")
     authorization = manifest.get("authorization")
-    if manifest.get("manifest_version") != 3 or manifest.get("schema_version") != "authorized-upload-manifest.v3" or manifest.get("title") != TITLE or manifest.get("tags") != list(PUBLIC_TAGS) or manifest.get("tags_source") != "c1-public-metadata-seal.v1" or manifest.get("recovery_publication_authority") != projection_authority() or not isinstance(authorization, Mapping) or authorization.get("by") != "Ivan" or not isinstance(authorization.get("quote"), str) or "快车道上传" not in authorization["quote"]:
+    expected_policy = {"tid": 21, "copyright": 2, "source": "https://live.bilibili.com/"}
+    expected_season = {
+        "lane": "talk", "season_title": "小李切片", "source": "talk:title-prefix",
+        "season_id": 8383206, "section_id": 9320779,
+    }
+    expected_description = (
+        "https://live.bilibili.com/\n本切片由 bilibili-vtuber-clip 项目提供："
+        "https://github.com/MelanLee-shadow/bilibili-vtuber-clip\n李豆沙个人主页："
+        "https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160"
+    )
+    if manifest.get("manifest_version") != 3 or manifest.get("schema_version") != "authorized-upload-manifest.v3" or manifest.get("title") != TITLE or manifest.get("description") != expected_description or manifest.get("publish_policy") != expected_policy or manifest.get("season") != expected_season or manifest.get("tags") != list(PUBLIC_TAGS) or manifest.get("tags_source") != "c1-public-metadata-seal.v1" or manifest.get("recovery_publication_authority") != projection_authority() or not isinstance(authorization, Mapping) or set(authorization) != {"by", "quote", "at"} or authorization.get("by") != "Ivan" or not isinstance(authorization.get("quote"), str) or "快车道上传" not in authorization["quote"]:
         raise C1TechnicalReceiptError("C1_AUTHORIZED_MANIFEST_BINDING_INVALID")
+    for value in (authorization.get("at"), manifest.get("created_at")):
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise C1TechnicalReceiptError("C1_AUTHORIZED_MANIFEST_TIMESTAMP_INVALID") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise C1TechnicalReceiptError("C1_AUTHORIZED_MANIFEST_TIMESTAMP_INVALID")
     attestation = manifest.get("package_attestation")
     if not isinstance(attestation, Mapping) or set(attestation) != {"package_root", "review_manifest", "package_audit", "c1_technical_receipt"}:
         raise C1TechnicalReceiptError("C1_AUTHORIZED_MANIFEST_ATTESTATION_INVALID")
@@ -120,6 +137,8 @@ def validate_authorized_projection_manifest(manifest: object, *, verify_audit: b
         path = Path(str(entry.get("path") or ""))
         if not path.is_file() or path.parent.resolve() != root.resolve() or path.name != filename or str(path.resolve()) != entry.get("path") or sha256_file(path)[7:] != entry.get("sha256") or path.stat().st_size != entry.get("bytes"):
             raise C1TechnicalReceiptError("C1_AUTHORIZED_MANIFEST_ARTIFACT_INVALID")
+        if key == "video" and manifest.get("artifact_id") != sha256_file(path)[7:][:12]:
+            raise C1TechnicalReceiptError("C1_AUTHORIZED_MANIFEST_ARTIFACT_ID_INVALID")
 
 def _point_hash(value: Mapping[str, object]) -> str:
     raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

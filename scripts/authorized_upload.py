@@ -1749,27 +1749,31 @@ def make_manifest(args: argparse.Namespace) -> int:
     audit_problems: list[str] = []
     audit = _load_json_object(package_audit, "package audit", audit_problems)
     package_root = Path(str(audit.get("root") or "")).resolve()
+    candidate_root = video.resolve().parent
+    candidate_review = candidate_root / "review_manifest.json"
+    candidate_payload = (
+        _load_json_object(candidate_review, "review manifest", [])
+        if candidate_review.is_file()
+        else {}
+    )
+    is_c1_formal_package = (
+        candidate_payload.get("schema_version")
+        == "fastlane-c1-formal-private-review-manifest.v1"
+    )
     if audit.get("passed") is not True:
         audit_problems.append("package audit did not pass")
     if not _zero_blocking_issues(audit):
         audit_problems.append("package audit reports blocking issues")
-    if not package_root.is_dir():
-        audit_problems.append(f"package audit root missing: {package_root}")
-    if video.resolve().parent != package_root:
-        audit_problems.append("video must be directly inside package audit root")
-    candidate_root = video.resolve().parent
     # C1's accepted private audit is portable across its isolated worktree;
     # recognize only the formal schema beside the supplied final video, then
     # let the C1 validator prove that the sole difference is audit root path.
-    candidate_review = candidate_root / "review_manifest.json"
-    if candidate_review.is_file():
-        candidate_payload = _load_json_object(candidate_review, "review manifest", [])
-        if candidate_payload.get("schema_version") == "fastlane-c1-formal-private-review-manifest.v1":
-            package_root = candidate_root
-            audit_problems = [
-                problem for problem in audit_problems
-                if problem != "video must be directly inside package audit root"
-            ]
+    if is_c1_formal_package:
+        package_root = candidate_root
+    else:
+        if not package_root.is_dir():
+            audit_problems.append(f"package audit root missing: {package_root}")
+        if video.resolve().parent != package_root:
+            audit_problems.append("video must be directly inside package audit root")
     # C1 has an intentionally non-generic formal record/review closure.  Route
     # it before the ordinary same-stem record convention is inspected.
     if (package_root / "review_manifest.json").is_file():
