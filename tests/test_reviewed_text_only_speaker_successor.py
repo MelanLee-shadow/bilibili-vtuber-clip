@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.autoslice import c5_start_clamp as c5
+from src.autoslice import reviewed_text_only_speaker_successor as successor_module
 from scripts.apply_speaker_turn_overrides import Cue, write_srt
 from scripts.apply_subtitle_text_overrides import parse_srt
 from src.autoslice.addressee_attribution import SpeakerEvidenceState, build_addressee_evidence
@@ -436,6 +438,61 @@ def test_successor_rejects_unsealed_drop_mapping_drift(
         b["new_plain"].write_text(release.replace("旧0", "__swap__", 1).replace("旧1", "旧0", 1).replace("__swap__", "旧1", 1), encoding="utf-8")
     with pytest.raises(ReviewedTextOnlySpeakerSuccessorError, match=reason):
         _call(b, tmp_path)
+
+
+def test_c5_runtime_authority_loader_materializes_exact_clamp(tmp_path: Path, monkeypatch) -> None:
+    """Exercise the real 24->21->17 C5 grid through both authority loaders."""
+    root = Path(__file__).parents[1]
+    assets = root / "assets" / "lidousha" / "reviewed_subtitle_baselines"
+    diagnostic, reviewed = assets / "auto_113028_1271_1328.pipeline-diagnostic.srt", assets / "auto_113028_1271_1328.reviewed.srt"
+    ledger, truth = assets / "auto_113028_1271_1328.operator-decisions.v3.json", assets / "auto_113028_1271_1328.operator-truth-diff.v2.json"
+    old_speaker, manifest, media = tmp_path / "old.speaker.srt", tmp_path / "old.json", tmp_path / "recut.mp4"
+    old_cues = parse_srt(diagnostic)
+    write_srt([Cue(i, cue.start, cue.end, "李豆沙", cue.text, "historical") for i, cue in enumerate(old_cues, 1)], old_speaker)
+    media.write_bytes(b"fixture media")
+    decisions = [{"source_index": i, "start": cue.start, "end": cue.end, "speaker": "李豆沙", "text": cue.text, "decision_source": "historical", "authority": None, "note": None, "speaker_detail": None, "layer": 0, "placement": "main"} for i, cue in enumerate(old_cues, 1)]
+    _write(manifest, {"schema_version": SPEAKER_FINALIZATION_SCHEMA, "status": "READY", "production_ready": True, "text_final_srt": str(diagnostic), "text_final_srt_sha256": _sha(diagnostic).removeprefix("sha256:"), "output_review_srt": str(old_speaker), "output_review_srt_sha256": _sha(old_speaker).removeprefix("sha256:"), "source_media_sha256": str(c5.BOUNDARY["media_sha256"]), "source_cue_count": 24, "output_cue_count": 24, "final_decisions": decisions})
+    record = {"speaker_mode": "auto", "speaker_finalization": json.loads(manifest.read_text()), "speaker_finalization_manifest_sha256": _sha(manifest), "boundary_audit": {"final_start_ms": 9750, "final_end_ms": 67524}}
+    release = parse_srt(reviewed); delivery = tmp_path / "delivery.srt"
+    retained = [(index, cue) for index, cue in enumerate(release, 1) if _srt(cue.end) > 9750]
+    _plain_srt(delivery, [("00:00:00,000", "00:00:00,330", retained[0][1].text)] + [(_stamp(_srt(cue.start) - 9750), _stamp(_srt(cue.end) - 9750), cue.text) for _index, cue in retained[1:]])
+    rows=[]; release_index=delivery_index=0
+    for old_index, old in enumerate(old_cues, 1):
+        if old_index in {13,14,15}:
+            rows.append({"old_source_index":old_index,"release_cue_index":None,"delivery_cue_index":None,"disposition":"OPERATOR_DROP"}); continue
+        release_index += 1; start,end=_srt(old.start),_srt(old.end)
+        if end <= 9750:
+            rows.append({"old_source_index":old_index,"release_cue_index":release_index,"delivery_cue_index":None,"disposition":"OUTSIDE_FINAL_DELIVERY"}); continue
+        delivery_index += 1; ds,de=(0,330) if old_index == 5 else (start-9750,end-9750)
+        rows.append({"old_source_index":old_index,"release_cue_index":release_index,"delivery_cue_index":delivery_index,"disposition":"RETAINED_FINAL_DELIVERY_START_CLAMP" if old_index == 5 else "RETAINED_FINAL_DELIVERY","release_start_ms":start,"release_end_ms":end,"delivery_start_ms":ds,"delivery_end_ms":de})
+    receipt=tmp_path/"receipt.json"; old_record_sha="sha256:"+"1"*64
+    _write(receipt,{"schema_version":"reviewed-baseline-full-release-delivery-projection.v1","candidate_id":c5.CANDIDATE_ID,"record_sha256":old_record_sha,"record_boundary_sha256":_canonical_sha(record["boundary_audit"]),"padded_source_interval":{"start_ms":0,"end_ms":67524},"final_delivery_boundary":{"start_ms":9750,"end_ms":67524},"pipeline_diagnostic_sha256":_sha(diagnostic),"full_release_srt_sha256":_sha(reviewed),"operator_ledger_sha256":_sha(ledger),"operator_truth_diff_sha256":_sha(truth),"staged_srt_sha256":_sha(delivery),"staged_media_sha256":str(c5.BOUNDARY["media_sha256"]),"old_diagnostic_cue_count":24,"full_release_cue_count":21,"final_delivery_cue_count":17,"rows":rows})
+    runtime = tmp_path / "runtime"; authority = runtime / ".private-c5-start-clamp-authority"; authority.mkdir(parents=True, mode=0o700)
+    proposal_path, acceptance_path = c5.runtime_authority_paths(runtime)
+    proposal_path.write_bytes((root / "docs/reviews/auto_113028_1271_1328-c5-start-clamp-proposal.v1.json").read_bytes()); proposal, proposal_sha = c5.load_proposal(proposal_path)
+    acceptance = c5.build_accepted_authority(proposal_path=proposal_path, proposal_file_sha256=proposal_sha, proposal_self_sha256=str(proposal["self_sha256"]), expectations=c5.C5_ACCEPTANCE_EXPECTATIONS)
+    c5.materialize_accepted_authority(acceptance_path, proposal_path=proposal_path, proposal=proposal, proposal_file_sha256=proposal_sha, acceptance=acceptance, expectations=c5.C5_ACCEPTANCE_EXPECTATIONS)
+    original_sha = successor_module.sha256_file
+    monkeypatch.setattr(successor_module, "sha256_file", lambda path: str(c5.BOUNDARY["media_sha256"]).removeprefix("sha256:") if Path(path) == media else original_sha(path))
+    kwargs = dict(candidate_id=c5.CANDIDATE_ID, old_record=record, old_record_sha256=old_record_sha, old_manifest_path=manifest, old_manifest_sha256=_sha(manifest), old_diagnostic_path=diagnostic, old_diagnostic_sha256=_sha(diagnostic), reviewed_baseline_path=reviewed, reviewed_baseline_sha256=_sha(reviewed), ledger_path=ledger, ledger_sha256=_sha(ledger), truth_diff_path=truth, truth_diff_sha256=_sha(truth), delivery_projection_receipt_path=receipt, delivery_projection_receipt_sha256=_sha(receipt), c5_start_clamp_proposal_path=proposal_path, c5_start_clamp_acceptance_path=acceptance_path, recording_date="2026-08-14", new_plain_srt=delivery, new_media=media, expected_media_sha256=str(c5.BOUNDARY["media_sha256"]), output_srt=tmp_path/"out.srt", output_ass=tmp_path/"out.ass", output_manifest=tmp_path/"out.json")
+    result = materialize_text_only_speaker_successor(**kwargs)
+    cue5 = parse_srt(tmp_path / "out.srt")[0]
+    assert (cue5.start, cue5.end, cue5.text) == ("00:00:00,000", "00:00:00,330", "[李豆沙] 呃")
+    assert result["final_decisions"][0]["speaker"] == "李豆沙" and len(result["final_decisions"]) == 17
+    acceptance_path.unlink()
+    with pytest.raises(ReviewedTextOnlySpeakerSuccessorError, match="DELIVERY_PROJECTION_STRADDLER"):
+        materialize_text_only_speaker_successor(**kwargs)
+    bad = dict(acceptance); bad["reviewer_by"] = "wrong"; unsigned = dict(bad); unsigned.pop("self_sha256"); bad["self_sha256"] = c5._sha(unsigned)
+    acceptance_path.write_text(json.dumps(bad), encoding="utf-8")
+    with pytest.raises(ReviewedTextOnlySpeakerSuccessorError, match="DELIVERY_PROJECTION_STRADDLER"):
+        materialize_text_only_speaker_successor(**kwargs)
+    acceptance_path.unlink(); c5.materialize_accepted_authority(acceptance_path, proposal_path=proposal_path, proposal=proposal, proposal_file_sha256=proposal_sha, acceptance=acceptance, expectations=c5.C5_ACCEPTANCE_EXPECTATIONS)
+    kwargs["recording_date"] = "2026-08-15"
+    with pytest.raises(ReviewedTextOnlySpeakerSuccessorError, match="DELIVERY_PROJECTION_STRADDLER"):
+        materialize_text_only_speaker_successor(**kwargs)
+    kwargs["recording_date"] = "2026-08-14"; kwargs["c5_start_clamp_proposal_path"] = tmp_path / "missing-proposal.json"
+    with pytest.raises(ReviewedTextOnlySpeakerSuccessorError, match="DELIVERY_PROJECTION_STRADDLER"):
+        materialize_text_only_speaker_successor(**kwargs)
 
 
 @pytest.mark.parametrize(("mutate", "reason"), [
