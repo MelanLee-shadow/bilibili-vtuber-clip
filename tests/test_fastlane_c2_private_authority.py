@@ -8,6 +8,7 @@ import pytest
 import src.autoslice.fastlane_c2_private_authority as c2
 import src.autoslice.reviewed_baseline_replay as replay
 import src.autoslice.reviewed_baseline_replay_authority as authority_module
+import scripts.run_fastlane_c2_private_replay as c2_runner_module
 from scripts.run_fastlane_c2_private_replay import main as c2_runner
 
 
@@ -116,6 +117,61 @@ def test_c2_runner_cannot_open_generic_apply_or_other_candidate():
         c2_runner(["--plan", "--date", DATE, "--candidate-id"])
     with pytest.raises(SystemExit, match="C2_PRIVATE_REPLAY_DATE_INVALID"):
         c2_runner(["--plan", "--date", "--candidate-id", CID, "--runtime-root", "/private/x"])
+
+
+def test_c2_runner_injects_only_the_closed_path_diagnostic(monkeypatch):
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        c2_runner_module.replay,
+        "main",
+        lambda args, **kwargs: captured.update({"args": args, "kwargs": kwargs}) or 0,
+    )
+    assert c2_runner([
+        "--plan", "--date", DATE, "--candidate-id", CID,
+        "--runtime-root", "/private/only-a-test",
+    ]) == 0
+    assert captured["args"] == [
+        "--plan", "--date", DATE, "--candidate-id", CID,
+        "--runtime-root", "/private/only-a-test",
+    ]
+    assert captured["kwargs"] == {
+        "_record_authority_resolver": c2.resolve_c2_private_record_authority,
+        "_path_unavailable_diagnostic": c2.classify_c2_private_path_unavailable,
+    }
+
+
+def test_c2_path_unavailable_classifier_reports_only_allowlisted_regular_role(tmp_path):
+    missing = tmp_path / "token=secret" / "provider-response" / "record.json"
+    with pytest.raises(replay.ReviewedBaselineReplayError) as caught:
+        replay.regular_binding(missing, label="PROVENANCE")
+    reason = c2.classify_c2_private_path_unavailable(caught.value)
+    assert reason == "C2_PRIVATE_REPLAY_PATH_UNAVAILABLE_REGULAR_PROVENANCE_PARENT"
+    rendered = json.dumps({"reason_code": reason})
+    assert str(tmp_path) not in rendered
+    assert "token=secret" not in rendered
+    assert "provider-response" not in rendered
+
+
+def test_c2_path_unavailable_classifier_rejects_unknown_binding_label(tmp_path):
+    missing = tmp_path / "token=secret" / "provider-response" / "record.json"
+    with pytest.raises(replay.ReviewedBaselineReplayError) as caught:
+        replay.regular_binding(missing, label="UNTRUSTED_PROVIDER_SECRET")
+    reason = c2.classify_c2_private_path_unavailable(caught.value)
+    assert reason == "C2_PRIVATE_REPLAY_PATH_UNAVAILABLE_REGULAR_BINDING_UNCLASSIFIED"
+    rendered = json.dumps({"reason_code": reason})
+    assert "UNTRUSTED_PROVIDER_SECRET" not in rendered
+    assert str(tmp_path) not in rendered
+
+
+def test_c2_path_unavailable_classifier_maps_deployed_runtime_locus(tmp_path):
+    with pytest.raises(replay.ReviewedBaselineReplayError) as caught:
+        replay._copy_deployed_authority(
+            source_runtime_root=tmp_path / "token=secret" / "missing-runtime",
+            private_runtime_root=tmp_path / "private-runtime",
+        )
+    reason = c2.classify_c2_private_path_unavailable(caught.value)
+    assert reason == "C2_PRIVATE_REPLAY_PATH_UNAVAILABLE_DEPLOYED_AUTHORITY_RUNTIME"
+    assert str(tmp_path) not in json.dumps({"reason_code": reason})
 
 
 def _provenance_fixture(tmp_path: Path):

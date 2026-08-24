@@ -18,7 +18,7 @@ import stat
 import sys
 import traceback
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -61,6 +61,52 @@ _SAFE_EXCEPTION_TYPES = frozenset({
 _MAX_REVIEW_FLAGS_BYTES = 512 * 1024
 _SPEAKER_RUNTIME_RELATIVE = Path("venv-diar/bin/python")
 _SAFE_PROVIDER_CLASSES = frozenset({"quota", "service", "rejected", "unknown"})
+# This private C2-only hook is deliberately narrower than the ordinary
+# sanitized exception diagnostic.  Its caller is injected by the locked C2
+# wrapper, never by argparse, and it can report only one of these static path
+# roles.  It must not turn a path, a binding label, or a provider detail into a
+# receipt-visible reason code.
+_C2_PRIVATE_PATH_UNAVAILABLE_PREFIX = "C2_PRIVATE_REPLAY_PATH_UNAVAILABLE_"
+_C2_PRIVATE_PATH_UNAVAILABLE_ROLES = frozenset({
+    "SYNTHESIS_STAGE",
+    "PRIVATE_RUNTIME_PARENT",
+    "PRIVATE_ARTIFACT_PARENT",
+    "DEPLOYED_AUTHORITY_RUNTIME",
+    "EXACT_FINAL_RUNTIME",
+    "PROVIDER_RUNTIME",
+    "PADDED_PROVENANCE_PARENT",
+    "PRIVATE_COVER_PACKAGE_ROOT",
+    "DEPLOYED_ASSETS_RUNTIME",
+    "C2_AUTHORITY_PRIVATE_RUNTIME",
+    "REGULAR_STAGE_DOCUMENT_PARENT",
+    "REGULAR_RECORD_PARENT",
+    "REGULAR_PROVENANCE_PARENT",
+    "REGULAR_PADDED_SOURCE_PARENT",
+    "REGULAR_PADDED_PROVENANCE_PARENT",
+    "REGULAR_RELEASE_TRUTH_PARENT",
+    "REGULAR_CHAT_AUTHORITY_PARENT",
+    "REGULAR_CLIP_CONTEXT_PARENT",
+    "REGULAR_PORTABLE_RECORD_PARENT",
+    "REGULAR_PORTABLE_CHAT_AUTHORITY_PARENT",
+    "REGULAR_PORTABLE_CLIP_CONTEXT_PARENT",
+    "REGULAR_PORTABLE_PUBLISH_PARENT",
+    "REGULAR_DEPLOYED_MANIFEST_PARENT",
+    "REGULAR_DELIVERY_PROJECTION_PARENT",
+    "REGULAR_OLD_SPEAKER_MANIFEST_PARENT",
+    "REGULAR_OPERATOR_DECISION_LEDGER_PARENT",
+    "REGULAR_PIPELINE_DIAGNOSTIC_PARENT",
+    "REGULAR_OPERATOR_TRUTH_DIFF_PARENT",
+    "REGULAR_COVER_PARENT",
+    "REGULAR_COVER_CARRY_PARENT",
+    "REGULAR_PREPARED_HANDLE_PARENT",
+    "REGULAR_BINDING_UNCLASSIFIED",
+    "CALL_LOCUS_UNCLASSIFIED",
+    "CLASSIFIER_INVALID",
+})
+_C2_PRIVATE_PATH_UNAVAILABLE_REASON_CODES = frozenset(
+    _C2_PRIVATE_PATH_UNAVAILABLE_PREFIX + role
+    for role in _C2_PRIVATE_PATH_UNAVAILABLE_ROLES
+)
 # Closed replay-adapter reason codes.  Keep this exact rather than accepting
 # arbitrary suffixes: provider/path/prompt text must never become a predicate.
 _REPLAY_TITLE_SURFACE_REASONS = {
@@ -529,6 +575,42 @@ def _prepare_failure(*, exc: BaseException, stage: Path | None = None, plan=None
     )
 
 
+def _apply_c2_private_path_unavailable_diagnostic(
+    failure: _PrepareFailure,
+    *,
+    exc: BaseException,
+    diagnostic: Callable[[BaseException], object] | None,
+) -> None:
+    """Replace only C2's opaque missing-path code with a closed path role.
+
+    Generic replay callers do not pass ``diagnostic`` and retain their exact
+    historical behavior.  This deliberately accepts neither arbitrary reason
+    text nor a generic prefix: the callback result must be one member of the
+    fixed C2 vocabulary above.
+    """
+
+    if (
+        diagnostic is None
+        or not isinstance(exc, ReviewedBaselineReplayError)
+        or str(exc) != "REPLAY_PATH_UNAVAILABLE"
+    ):
+        return
+    fallback = _C2_PRIVATE_PATH_UNAVAILABLE_PREFIX + "CLASSIFIER_INVALID"
+    try:
+        candidate = diagnostic(exc)
+    except BaseException:
+        candidate = None
+    reason_code = candidate if isinstance(candidate, str) else fallback
+    if reason_code not in _C2_PRIVATE_PATH_UNAVAILABLE_REASON_CODES:
+        reason_code = fallback
+    failure.reason_code = reason_code
+    # Do not let an unrelated staged review-flags document obscure the exact
+    # missing-path locus we are diagnosing.  The role is a finalization-local
+    # technical predicate, not a content or provider finding.
+    failure.predicate_failures = ((_failure_predicate(reason_code), reason_code),)
+    failure.exception_diagnostic = None
+
+
 def _matrix(
     plan, *, status: str, failures: dict[str, str] | None = None,
 ) -> list[dict[str, object]]:
@@ -735,7 +817,7 @@ def _provider_receipt_sha256s(root: Path) -> tuple[str, ...]:
 
 def _prepare(
     plan, *, runtime: Path, stage_parent: Path, state_path: Path | None = None,
-    record_authority_resolver=None,
+    record_authority_resolver=None, path_unavailable_diagnostic: Callable[[BaseException], object] | None = None,
 ):
     """Build one complete no-target-write after-image outside the commit lease."""
     expected_stage = stage_parent / (
@@ -787,6 +869,9 @@ def _prepare(
         stage_sha = _stage_manifest_sha256(stage)
         provider_hashes = _provider_receipt_sha256s(stage)
         failure = _prepare_failure(exc=exc, stage=stage, plan=plan)
+        _apply_c2_private_path_unavailable_diagnostic(
+            failure, exc=exc, diagnostic=path_unavailable_diagnostic,
+        )
         failure.provider_attempted = provider_attempted
         failure.stage_manifest_sha256 = stage_sha
         failure.provider_receipt_sha256s = provider_hashes
@@ -812,7 +897,12 @@ def _prepare(
     return stage, finalization, after, stage_sha, provider_hashes, provider_attempted
 
 
-def main(argv: list[str] | None = None, *, _record_authority_resolver=None) -> int:
+def main(
+    argv: list[str] | None = None,
+    *,
+    _record_authority_resolver=None,
+    _path_unavailable_diagnostic: Callable[[BaseException], object] | None = None,
+) -> int:
     args = _args(argv)
     try:
         runtime = _safe_directory(args.runtime_root)
@@ -842,6 +932,8 @@ def main(argv: list[str] | None = None, *, _record_authority_resolver=None) -> i
             }
             if _record_authority_resolver is not None:
                 prepare_kwargs["record_authority_resolver"] = _record_authority_resolver
+            if _path_unavailable_diagnostic is not None:
+                prepare_kwargs["path_unavailable_diagnostic"] = _path_unavailable_diagnostic
             work = {
                 pool.submit(_prepare, plan, **prepare_kwargs): plan
                 for plan in plans

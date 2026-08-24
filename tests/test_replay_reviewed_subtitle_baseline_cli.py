@@ -12,6 +12,7 @@ from scripts import replay_reviewed_subtitle_baseline as cli
 from scripts.build_lidousha_daily_review_manifest import DailyManifestError
 from src.autoslice.branding_intro import BrandingIntroError
 from src.autoslice.producer_speaker import SpeakerFinalizationBlockedError
+from src.autoslice.fastlane_c2_private_authority import classify_c2_private_path_unavailable
 
 
 def test_success_matrix_has_unique_terminal_predicates() -> None:
@@ -103,6 +104,76 @@ def test_prepare_records_only_an_actual_provider_callback(tmp_path: Path, monkey
         cli._prepare(plan, runtime=tmp_path, stage_parent=parent)
     assert caught.value.provider_attempted is True
     assert caught.value.reason_code == "REPLAY_FINALIZER_CHAT_AUTHORITY_DRIFT"
+
+
+def test_prepare_c2_path_diagnostic_is_closed_and_replaces_only_missing_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = tmp_path / "record.json"
+    record.write_text("{}\n")
+    plan = SimpleNamespace(
+        date="2026-08-14", candidate_id="cid", record_path=record,
+        baseline=SimpleNamespace(config={"sha256": "a" * 64}),
+    )
+    parent = tmp_path / "private"
+    parent.mkdir(mode=0o700)
+    stage = parent / "candidate-stage"
+    stage.mkdir()
+    (stage / "stage.json").write_text("{}\n")
+    monkeypatch.setattr(cli, "stage_replay", lambda *_args, **_kwargs: {"stage": str(stage)})
+    monkeypatch.setattr(cli, "_production_llm_call", lambda **_kwargs: lambda _prompt: "{}")
+
+    def missing_path(*_args: object, **_kwargs: object) -> object:
+        return cli.regular_binding(
+            tmp_path / "token=secret" / "provider-response" / "missing.json",
+            label="PROVENANCE",
+        )
+
+    monkeypatch.setattr(cli, "synthesize_replay_spec_and_finalize_private", missing_path)
+    with pytest.raises(cli._PrepareFailure) as caught:
+        cli._prepare(
+            plan, runtime=tmp_path, stage_parent=parent,
+            path_unavailable_diagnostic=classify_c2_private_path_unavailable,
+        )
+    failure = caught.value
+    assert failure.reason_code == "C2_PRIVATE_REPLAY_PATH_UNAVAILABLE_REGULAR_PROVENANCE_PARENT"
+    assert failure.predicate_failures == (("PRIVATE_FINALIZATION", failure.reason_code),)
+    rendered = json.dumps(vars(failure), sort_keys=True)
+    assert "token=secret" not in rendered
+    assert "provider-response" not in rendered
+    assert str(tmp_path) not in rendered
+    assert not stage.exists()
+
+
+def test_prepare_c2_path_diagnostic_rejects_untrusted_callback_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = tmp_path / "record.json"
+    record.write_text("{}\n")
+    plan = SimpleNamespace(
+        date="2026-08-14", candidate_id="cid", record_path=record,
+        baseline=SimpleNamespace(config={"sha256": "a" * 64}),
+    )
+    parent = tmp_path / "private"
+    parent.mkdir(mode=0o700)
+    stage = parent / "candidate-stage"
+    stage.mkdir()
+    (stage / "stage.json").write_text("{}\n")
+    monkeypatch.setattr(cli, "stage_replay", lambda *_args, **_kwargs: {"stage": str(stage)})
+    monkeypatch.setattr(cli, "_production_llm_call", lambda **_kwargs: lambda _prompt: "{}")
+
+    def missing_path(*_args: object, **_kwargs: object) -> object:
+        return cli.regular_binding(tmp_path / "missing" / "record.json", label="PROVENANCE")
+
+    monkeypatch.setattr(cli, "synthesize_replay_spec_and_finalize_private", missing_path)
+    with pytest.raises(cli._PrepareFailure) as caught:
+        cli._prepare(
+            plan, runtime=tmp_path, stage_parent=parent,
+            path_unavailable_diagnostic=lambda _exc: "C2_PRIVATE_REPLAY_PATH_UNAVAILABLE_TOKEN_SECRET",
+        )
+    assert caught.value.reason_code == "C2_PRIVATE_REPLAY_PATH_UNAVAILABLE_CLASSIFIER_INVALID"
+    assert caught.value.predicate_failures == (("PRIVATE_FINALIZATION", caught.value.reason_code),)
+    assert not stage.exists()
 
 
 def test_prepare_binds_pinned_speaker_runtime_not_controller_python(

@@ -9,6 +9,7 @@ from scripts import replay_reviewed_subtitle_baseline as replay
 from src.autoslice.fastlane_c2_private_authority import (
     C2_CANDIDATE_ID,
     C2_RECORDING_DATE,
+    classify_c2_private_path_unavailable,
     materialize_c2_private_provenance,
     resolve_c2_private_record_authority,
 )
@@ -44,7 +45,11 @@ def main(argv: list[str] | None = None) -> int:
             )
         except ValueError as exc:
             raise SystemExit(str(exc)) from None
-    return replay.main(args, _record_authority_resolver=resolve_c2_private_record_authority)
+    return replay.main(
+        args,
+        _record_authority_resolver=resolve_c2_private_record_authority,
+        _path_unavailable_diagnostic=classify_c2_private_path_unavailable,
+    )
 
 
 if __name__ == "__main__":

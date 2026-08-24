@@ -31,10 +31,84 @@ _C2_PROVENANCE_POINTERS = (
     "/padded/output_path",
     "/source_piece/output_path",
 )
+_C2_PATH_UNAVAILABLE_PREFIX = "C2_PRIVATE_REPLAY_PATH_UNAVAILABLE_"
+_C2_REGULAR_PATH_ROLES = {
+    "STAGE_DOCUMENT": "REGULAR_STAGE_DOCUMENT_PARENT",
+    "RECORD": "REGULAR_RECORD_PARENT",
+    "PROVENANCE": "REGULAR_PROVENANCE_PARENT",
+    "PADDED_SOURCE": "REGULAR_PADDED_SOURCE_PARENT",
+    "PADDED_PROVENANCE": "REGULAR_PADDED_PROVENANCE_PARENT",
+    "RELEASE_TRUTH": "REGULAR_RELEASE_TRUTH_PARENT",
+    "OLD_SPEAKER_MANIFEST": "REGULAR_OLD_SPEAKER_MANIFEST_PARENT",
+    "OPERATOR_DECISION_LEDGER": "REGULAR_OPERATOR_DECISION_LEDGER_PARENT",
+    "PIPELINE_DIAGNOSTIC": "REGULAR_PIPELINE_DIAGNOSTIC_PARENT",
+    "OPERATOR_TRUTH_DIFF": "REGULAR_OPERATOR_TRUTH_DIFF_PARENT",
+    "CHAT_AUTHORITY": "REGULAR_CHAT_AUTHORITY_PARENT",
+    "CLIP_CONTEXT": "REGULAR_CLIP_CONTEXT_PARENT",
+    "PORTABLE_RECORD": "REGULAR_PORTABLE_RECORD_PARENT",
+    "PORTABLE_CHAT_AUTHORITY": "REGULAR_PORTABLE_CHAT_AUTHORITY_PARENT",
+    "PORTABLE_CLIP_CONTEXT": "REGULAR_PORTABLE_CLIP_CONTEXT_PARENT",
+    "PORTABLE_PUBLISH": "REGULAR_PORTABLE_PUBLISH_PARENT",
+    "DEPLOYED_MANIFEST": "REGULAR_DEPLOYED_MANIFEST_PARENT",
+    "DELIVERY_PROJECTION_RECEIPT": "REGULAR_DELIVERY_PROJECTION_PARENT",
+    "COVER": "REGULAR_COVER_PARENT",
+    "COVER_CARRY": "REGULAR_COVER_CARRY_PARENT",
+    "PREPARED_HANDLE": "REGULAR_PREPARED_HANDLE_PARENT",
+}
+_C2_SAFE_DIRECTORY_PATH_ROLES = {
+    "synthesize_replay_spec_and_finalize_private": "SYNTHESIS_STAGE",
+    "_mkdir_private": "PRIVATE_RUNTIME_PARENT",
+    "_copy_private_artifact": "PRIVATE_ARTIFACT_PARENT",
+    "_copy_deployed_authority": "DEPLOYED_AUTHORITY_RUNTIME",
+    "_production_llm_call": "PROVIDER_RUNTIME",
+    "replay_exact_final_reviewer": "EXACT_FINAL_RUNTIME",
+    "_validated_padded_provenance": "PADDED_PROVENANCE_PARENT",
+    "_private_relative_path": "PRIVATE_COVER_PACKAGE_ROOT",
+    "_private_carried_cover_generation": "DEPLOYED_ASSETS_RUNTIME",
+}
 
 
 def _c2_error(code: str) -> ValueError:
     return ValueError(code)
+
+
+def classify_c2_private_path_unavailable(exc: BaseException) -> str:
+    """Return a closed C2 call-locus code without retaining a filesystem path.
+
+    ``REPLAY_PATH_UNAVAILABLE`` intentionally elides the failed component.
+    C2 needs enough bounded information to distinguish its private-runtime
+    bridge from the remaining canonical consumers, but must never emit a raw
+    traceback, path, provider response, or arbitrary regular-binding label.
+    """
+
+    fallback = _C2_PATH_UNAVAILABLE_PREFIX + "CALL_LOCUS_UNCLASSIFIED"
+    if not isinstance(exc, Exception) or str(exc) != "REPLAY_PATH_UNAVAILABLE":
+        return fallback
+    frames = []
+    trace = exc.__traceback__
+    while trace is not None:
+        frames.append(trace.tb_frame)
+        trace = trace.tb_next
+    for index, frame in enumerate(frames):
+        if (
+            frame.f_code.co_name != "_safe_directory"
+            or not frame.f_code.co_filename.endswith("src/autoslice/reviewed_baseline_replay.py")
+            or index == 0
+        ):
+            continue
+        caller = frames[index - 1]
+        if caller.f_code.co_filename.endswith("src/autoslice/fastlane_c2_private_authority.py"):
+            if caller.f_code.co_name == "private_directory":
+                return _C2_PATH_UNAVAILABLE_PREFIX + "C2_AUTHORITY_PRIVATE_RUNTIME"
+            return fallback
+        if not caller.f_code.co_filename.endswith("src/autoslice/reviewed_baseline_replay.py"):
+            return fallback
+        if caller.f_code.co_name == "regular_binding":
+            role = _C2_REGULAR_PATH_ROLES.get(caller.f_locals.get("label"))
+            return _C2_PATH_UNAVAILABLE_PREFIX + (role or "REGULAR_BINDING_UNCLASSIFIED")
+        role = _C2_SAFE_DIRECTORY_PATH_ROLES.get(caller.f_code.co_name)
+        return _C2_PATH_UNAVAILABLE_PREFIX + (role or "CALL_LOCUS_UNCLASSIFIED")
+    return fallback
 
 
 def _regular(path: Path, *, label: str) -> tuple[Path, str, int]:
