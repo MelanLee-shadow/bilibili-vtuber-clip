@@ -14,7 +14,7 @@
 - raw JSONL line bytes（含 trailing LF）SHA-256：
   e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa
 - decoded .message.content UTF-8 bytes SHA-256（不含 JSON syntax 和 trailing LF）：
-  0e0e69e54fc06c88296536c6dfbca947181170873529c5de5082aaf39aa93f6b
+  0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b
 
 line 947 的 payload 开头含 transcript 内嵌的 <system-reminder>；逐项裁定语义从
 「sudocode已经充值完成了」开始。21 项完整逐项表只以
