@@ -4,7 +4,6 @@ Prepares local evidence only; every document keeps upload disabled behind the re
 """
 
 from __future__ import annotations
-
 import json
 import os
 import subprocess
@@ -21,7 +20,7 @@ from .candidate_entity_publish_gate import (
     evaluate_candidate_title_gates,
 )
 from .candidate_public_text_surface_authority import (
-    load_candidate_public_text_surface_authority,
+    resolve_candidate_public_cover_text,
     resolve_candidate_public_text_title_state,
 )
 from .content_ip_signal import important_content_ip_signal_from_srt
@@ -662,15 +661,7 @@ def _stage_publish_draft(
     title_authority_status = title_gate.authority_status
     title_story_audit = title_gate.story_audit
     entity_projection_audit = title_gate.entity_projection_audit
-    cover_text = _lidousha_cover_text(staged_title)
-    # A root-reviewed public-surface redo may pin a short, independently
-    # approved thumbnail punch.  It is still subject to all normal semantic
-    # and pixel gates; this only prevents the art-direction model from
-    # silently changing the human-scoped public wording.
-    public_authority = load_candidate_public_text_surface_authority(candidate_id)
-    if public_authority is not None and public_authority.resolved_cover_lines:
-        cover_text = "\n".join(public_authority.resolved_cover_lines)
-        public_authority.require_artifact_text(artifact_kind="cover", text=cover_text)
+    cover_text = resolve_candidate_public_cover_text(candidate_id=candidate_id, default_cover_text=_lidousha_cover_text(staged_title))
     if title_authority_error is not None:
         # A candidate id / job fallback is not publish-title authority.  Fail
         # before art direction or any paid image request; the runner will keep

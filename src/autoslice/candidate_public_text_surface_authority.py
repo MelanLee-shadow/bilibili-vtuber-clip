@@ -1095,6 +1095,17 @@ def resolve_candidate_public_text_title_state(
     )
 
 
+def resolve_candidate_public_cover_text(*, candidate_id: str, default_cover_text: str) -> str:
+    """Return the authority-pinned short punch without widening staging scope."""
+
+    authority = load_candidate_public_text_surface_authority(candidate_id)
+    if authority is None or not authority.resolved_cover_lines:
+        return default_cover_text
+    cover_text = "\n".join(authority.resolved_cover_lines)
+    authority.require_artifact_text(artifact_kind="cover", text=cover_text)
+    return cover_text
+
+
 def build_public_text_source_fact_context(
     authority: CandidatePublicTextSurfaceAuthority,
     *,
