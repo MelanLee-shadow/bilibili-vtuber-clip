@@ -70,8 +70,8 @@ state、registry、候选包和 Bilibili public/Creator/section surface。
 ## 私有人审 surfaces（session evidence only）
 
 以下绝对路径均位于 `/private/tmp`，是本次 session 的 review surface，不是真实持久 authority，
-不构成上传授权；三个 receipt template 当前均为 `PENDING`，所有 human judgement 仍为
-`null/PENDING`。
+不构成上传授权；三个目录内的 `human-receipt.pending.json` 当前均为 `PENDING`，所有
+human judgement 仍为 `null/PENDING`。
 
 - #1：`/private/tmp/fastlane-human-review-20260824/1-auto_173005_934_1166/`
   - `video.mp4` SHA-256 `1bdb0e3278d291ef850299b9b7bde8011241c6ac5ad48faef4d274d69286de81`
