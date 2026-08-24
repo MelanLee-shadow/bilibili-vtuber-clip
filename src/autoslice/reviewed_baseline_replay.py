@@ -485,6 +485,7 @@ def _write_private(path: Path, payload: bytes) -> None:
 def stage_replay(
     plan: ReplayPlan, *, stage_parent: Path, run_command: Sequence[str] | None = None,
     runtime_authority_root: Path | None = None,
+    speaker_python_binding: Mapping[str, object] | None = None,
 ) -> dict[str, Any]:
     """Create a private recut/SRT/audit stage; no live target is named writable."""
 
@@ -543,6 +544,16 @@ def stage_replay(
     )
     _write_private(stage / "reviewed.srt", cropped_bytes)
     _write_private(stage / "redelivery-baseline.json", _canonical(audit))
+    speaker_binding_sha256: str | None = None
+    if speaker_python_binding is not None:
+        # This is a caller-supplied preflight-only control receipt.  It is
+        # sealed into the stage before any finalizer work, so the launcher
+        # verification cannot be detached from the stage it authorizes.
+        speaker_payload = _canonical(dict(speaker_python_binding))
+        _write_private(stage / "speaker-python-binding.json", speaker_payload)
+        speaker_binding_sha256 = regular_binding(
+            stage / "speaker-python-binding.json", label="SPEAKER_PYTHON_BINDING"
+        ).sha256
     document: dict[str, Any] = {
         "schema_version": REPLAY_STAGE_SCHEMA,
         "date": plan.date,
@@ -560,6 +571,10 @@ def stage_replay(
         "predicate_matrix": list(plan.matrix),
         "upload_allowed": False,
     }
+    if speaker_binding_sha256 is not None:
+        document["speaker_python_binding"] = {
+            "path": "speaker-python-binding.json", "sha256": speaker_binding_sha256,
+        }
     if projection_descriptor is not None:
         document["delivery_projection_receipt"] = projection_descriptor
     document["stage_sha256"] = _sha(_canonical(document))
@@ -1011,6 +1026,7 @@ def synthesize_replay_spec_and_finalize_private(
     provider_invocation: Callable[[], None] | None = None,
     record_authority_resolver: Callable[..., RecordBoundFinalizerAuthority] | None = None,
     recovery_publication_authority: Mapping[str, object] | None = None,
+    speaker_python_revalidate: Callable[[], None] | None = None,
 ) -> PrivateReplayFinalization:
     """Call the canonical producer finalizer in an isolated prepare-only root.
     The synthetic spec is deliberately derived from bound record/provenance
@@ -1219,6 +1235,11 @@ def synthesize_replay_spec_and_finalize_private(
     branding_intro = _replay_branding_intro(
         runtime_authority_root=runtime_authority_root, burned=burned
     )
+    if speaker_python_revalidate is not None:
+        # The explicit private-preflight launcher is outside the staged tree.
+        # Recheck its complete sealed identity immediately before the only
+        # finalizer invocation that can execute it.
+        speaker_python_revalidate()
     run(
         options=options, profile_id="lidousha", speaker_subtitle_style_id=speaker_style,
         spec=spec, cid=plan.candidate_id, out_root=out_root, host="localhost",

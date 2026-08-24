@@ -419,12 +419,15 @@ def test_stage_rebuilds_only_private_artifacts_and_preserves_expected_video_hash
     )
     stage_parent = tmp_path / "private"
     stage_parent.mkdir(mode=0o700)
-    result = replay.stage_replay(plan, stage_parent=stage_parent)
+    speaker_binding = {"schema_version": "speaker-binding-test.v1", "requested_path": "/private/venv/bin/python"}
+    result = replay.stage_replay(
+        plan, stage_parent=stage_parent, speaker_python_binding=speaker_binding,
+    )
 
     stage = Path(result["stage"])
     assert {path.name for path in stage.iterdir()} == {
         "recut.mp4", "reviewed.srt", "redelivery-baseline.json",
-        "full-release-delivery-projection.json", "stage.json",
+        "full-release-delivery-projection.json", "speaker-python-binding.json", "stage.json",
     }
     assert (stage / "recut.mp4").is_file()
     reviewed = (stage / "reviewed.srt").read_text(encoding="utf-8")
@@ -437,6 +440,10 @@ def test_stage_rebuilds_only_private_artifacts_and_preserves_expected_video_hash
     assert stage_document["delivery_projection_receipt"]["sha256"] == _sha(
         (stage / "full-release-delivery-projection.json").read_bytes()
     )
+    assert stage_document["speaker_python_binding"] == {
+        "path": "speaker-python-binding.json",
+        "sha256": _sha((stage / "speaker-python-binding.json").read_bytes()),
+    }
     assert not list((out_root / DATE / CID / "replacement_recuts").glob("*.stage.json"))
     diagnostic = plan.baseline.config["operator_truth_lanes"]["pipeline_diagnostic"]
     expected_text = (plan.baseline.manifest_path.parent / diagnostic["path"]).read_text(encoding="utf-8")

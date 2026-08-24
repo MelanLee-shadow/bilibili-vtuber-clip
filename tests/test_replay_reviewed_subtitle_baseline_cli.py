@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
+import sys
 import threading
 from types import SimpleNamespace
 from pathlib import Path
@@ -222,6 +224,7 @@ def test_prepare_binds_explicit_private_preflight_interpreter_without_losing_ven
     requested = tmp_path / "venv-python"
     requested.symlink_to(interpreter)
     monkeypatch.setattr(cli, "stage_replay", lambda *_args, **_kwargs: {"stage": str(stage)})
+    monkeypatch.setattr(cli, "_stage_speaker_python_revalidator", lambda *_args: lambda: None)
     monkeypatch.setattr(cli, "_production_llm_call", lambda **_kwargs: lambda _prompt: "{}")
     captured: dict[str, object] = {}
 
@@ -235,6 +238,106 @@ def test_prepare_binds_explicit_private_preflight_interpreter_without_losing_ven
     # The resolved regular target is hash-bound, but the venv launcher itself
     # must be invoked so Python retains its virtualenv site-packages.
     assert captured["speaker_python"] == requested.absolute()
+
+
+def _sealed_speaker_binding_stage(tmp_path: Path, document: dict[str, object]) -> Path:
+    stage = tmp_path / "stage"
+    stage.mkdir(mode=0o700)
+    binding_path = stage / "speaker-python-binding.json"
+    binding_path.write_bytes(cli._canon(document))
+    binding_path.chmod(0o600)
+    stage_document = stage / "stage.json"
+    stage_document.write_bytes(cli._canon({
+        "speaker_python_binding": {
+            "path": binding_path.name,
+            "sha256": cli.regular_binding(binding_path, label="SPEAKER_PYTHON_BINDING").sha256,
+        },
+    }))
+    stage_document.chmod(0o600)
+    return stage
+
+
+def test_speaker_python_binding_rejects_launcher_swap(tmp_path: Path) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    for target in (first, second):
+        target.write_text("#!/bin/sh\nexit 0\n")
+        target.chmod(0o700)
+    requested = tmp_path / "venv-python"
+    requested.symlink_to(first)
+    document = cli._speaker_python_binding(requested)
+    stage = _sealed_speaker_binding_stage(tmp_path, document)
+    verifier = cli._stage_speaker_python_revalidator(stage, document)
+    requested.unlink()
+    requested.symlink_to(second)
+    with pytest.raises(cli.ReviewedBaselineReplayError, match="SPEAKER_PYTHON_BINDING_DRIFT"):
+        verifier()
+
+
+def test_speaker_python_binding_rejects_resolved_target_drift(tmp_path: Path) -> None:
+    target = tmp_path / "interpreter"
+    target.write_text("#!/bin/sh\nexit 0\n")
+    target.chmod(0o700)
+    requested = tmp_path / "venv-python"
+    requested.symlink_to(target)
+    document = cli._speaker_python_binding(requested)
+    stage = _sealed_speaker_binding_stage(tmp_path, document)
+    verifier = cli._stage_speaker_python_revalidator(stage, document)
+    target.write_text("#!/bin/sh\necho changed\n")
+    target.chmod(0o700)
+    with pytest.raises(cli.ReviewedBaselineReplayError, match="SPEAKER_PYTHON_BINDING_DRIFT"):
+        verifier()
+
+
+def test_speaker_python_binding_rejects_pyvenv_drift(tmp_path: Path) -> None:
+    venv = tmp_path / "venv"
+    launcher_dir = venv / "bin"
+    launcher_dir.mkdir(parents=True)
+    pyvenv = venv / "pyvenv.cfg"
+    pyvenv.write_text("home = /trusted\n")
+    target = tmp_path / "interpreter"
+    target.write_text("#!/bin/sh\nexit 0\n")
+    target.chmod(0o700)
+    requested = launcher_dir / "python"
+    requested.symlink_to(target)
+    document = cli._speaker_python_binding(requested)
+    stage = _sealed_speaker_binding_stage(tmp_path, document)
+    verifier = cli._stage_speaker_python_revalidator(stage, document)
+    pyvenv.write_text("home = /changed\n")
+    with pytest.raises(cli.ReviewedBaselineReplayError, match="SPEAKER_PYTHON_BINDING_DRIFT"):
+        verifier()
+
+
+def test_speaker_python_binding_keeps_venv_launcher_prefix(tmp_path: Path) -> None:
+    venv = tmp_path / "venv"
+    launcher_dir = venv / "bin"
+    launcher_dir.mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text(f"home = {Path(sys.executable).parent}\n")
+    requested = launcher_dir / "python"
+    requested.symlink_to(Path(sys.executable))
+    document = cli._speaker_python_binding(requested)
+    stage = _sealed_speaker_binding_stage(tmp_path, document)
+    cli._stage_speaker_python_revalidator(stage, document)()
+    assert subprocess.check_output(
+        [str(requested), "-c", "import sys; print(sys.prefix)"], text=True,
+    ).strip() == str(venv)
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        ["--plan"],
+        ["--apply", "--private-stage-parent", "/private/stage"],
+        ["--readiness-graph"],
+    ],
+)
+def test_main_refuses_speaker_override_outside_private_full_dry(mode: list[str], capsys: pytest.CaptureFixture[str]) -> None:
+    argv = [*mode, "--runtime-root", "/private/runtime", "--date", "2026-08-14",
+            "--speaker-python", "/private/venv/bin/python"]
+    if "--readiness-graph" not in mode:
+        argv.extend(["--candidate-id", "cid"])
+    assert cli.main(argv) == 2
+    assert json.loads(capsys.readouterr().out)["reason_code"] == "REPLAY_SPEAKER_PYTHON_PRIVATE_DRY_RUN_ONLY"
 
 
 def test_safe_reason_code_keeps_only_typed_codes() -> None:

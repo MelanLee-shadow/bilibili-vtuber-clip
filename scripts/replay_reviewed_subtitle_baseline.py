@@ -397,6 +397,103 @@ def _private_parent(path: Path) -> Path:
     return path
 
 
+def _speaker_python_binding(requested: Path) -> dict[str, object]:
+    """Seal the complete identity of one external venv launcher."""
+
+    requested = Path(requested).absolute()
+    try:
+        requested_lstat = os.lstat(requested)
+    except OSError as exc:
+        raise ReviewedBaselineReplayError("REPLAY_SPEAKER_PYTHON_UNAVAILABLE") from exc
+    if stat.S_ISLNK(requested_lstat.st_mode):
+        kind = "symlink"
+        try:
+            link_target: str | None = os.readlink(requested)
+        except OSError as exc:
+            raise ReviewedBaselineReplayError("REPLAY_SPEAKER_PYTHON_UNAVAILABLE") from exc
+    elif stat.S_ISREG(requested_lstat.st_mode):
+        kind = "regular"
+        link_target = None
+    else:
+        raise ReviewedBaselineReplayError("REPLAY_SPEAKER_PYTHON_UNSAFE")
+    try:
+        resolved = requested.resolve(strict=True)
+    except OSError as exc:
+        raise ReviewedBaselineReplayError("REPLAY_SPEAKER_PYTHON_UNAVAILABLE") from exc
+    executable = regular_binding(resolved, label="SPEAKER_PYTHON")
+    if not os.access(executable.path, os.X_OK):
+        raise ReviewedBaselineReplayError("REPLAY_SPEAKER_PYTHON_UNSAFE")
+    pyvenv = requested.parent.parent / "pyvenv.cfg"
+    if pyvenv.exists() or pyvenv.is_symlink():
+        pyvenv_binding = regular_binding(pyvenv, label="SPEAKER_PYVENV")
+        pyvenv_document: dict[str, object] | None = {
+            "path": str(pyvenv), "sha256": pyvenv_binding.sha256,
+        }
+    else:
+        pyvenv_document = None
+    return {
+        "schema_version": "reviewed-baseline-speaker-python-binding.v1",
+        "requested_path": str(requested),
+        "requested_lstat": {
+            "kind": kind,
+            "mode": stat.S_IMODE(requested_lstat.st_mode),
+            "readlink": link_target,
+        },
+        "resolved": {
+            "path": str(executable.path), "sha256": executable.sha256,
+            "mode": executable.mode,
+        },
+        "pyvenv_cfg": pyvenv_document,
+    }
+
+
+def _read_bound_json(path: Path, *, label: str) -> dict[str, object]:
+    """Read a small stage control document only through a stable binding."""
+
+    binding = regular_binding(path, label=label)
+    if binding.size > 64 * 1024:
+        raise ReviewedBaselineReplayError(f"REPLAY_{label}_TOO_LARGE")
+    try:
+        payload = binding.path.read_bytes()
+    except OSError as exc:
+        raise ReviewedBaselineReplayError(f"REPLAY_{label}_UNAVAILABLE") from exc
+    if hashlib.sha256(payload).hexdigest() != binding.sha256.removeprefix("sha256:"):
+        raise ReviewedBaselineReplayError(f"REPLAY_{label}_DRIFT")
+    if regular_binding(path, label=label) != binding:
+        raise ReviewedBaselineReplayError(f"REPLAY_{label}_DRIFT")
+    try:
+        value = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ReviewedBaselineReplayError(f"REPLAY_{label}_INVALID") from exc
+    if not isinstance(value, dict):
+        raise ReviewedBaselineReplayError(f"REPLAY_{label}_INVALID")
+    return value
+
+
+def _stage_speaker_python_revalidator(stage: Path, expected: Mapping[str, object]):
+    """Return the finalizer-adjacent checker for a sealed private launcher."""
+
+    expected_document = dict(expected)
+    stage_document = _read_bound_json(stage / "stage.json", label="PRIVATE_STAGE")
+    descriptor = stage_document.get("speaker_python_binding")
+    binding_path = stage / "speaker-python-binding.json"
+    binding = regular_binding(binding_path, label="SPEAKER_PYTHON_BINDING")
+    if (
+        not isinstance(descriptor, Mapping)
+        or set(descriptor) != {"path", "sha256"}
+        or descriptor.get("path") != binding_path.name
+        or descriptor.get("sha256") != binding.sha256
+        or _read_bound_json(binding_path, label="SPEAKER_PYTHON_BINDING") != expected_document
+    ):
+        raise ReviewedBaselineReplayError("REPLAY_SPEAKER_PYTHON_STAGE_BINDING_DRIFT")
+
+    def revalidate() -> None:
+        if _speaker_python_binding(Path(str(expected_document["requested_path"]))) != expected_document:
+            raise ReviewedBaselineReplayError("REPLAY_SPEAKER_PYTHON_BINDING_DRIFT")
+
+    return revalidate
+
+
 def _adapters() -> ProducerFinalizationAdapters:
     return ProducerFinalizationAdapters(
         accurate_recut_command=_accurate_reencode_recut_command, run_command=run,
@@ -857,6 +954,7 @@ def _prepare(
              
 
     """Build one complete no-target-write after-image outside the commit lease."""
+    speaker_binding = _speaker_python_binding(speaker_python) if speaker_python is not None else None
     expected_stage = stage_parent / (
         f"{plan.date}-{plan.candidate_id}-"
         f"{_sha(_canonical({'date': plan.date, 'candidate_id': plan.candidate_id, 'record': regular_binding(plan.record_path, label='RECORD').sha256, 'baseline': 'sha256:' + plan.baseline.config['sha256']})).removeprefix('sha256:')[:16]}"
@@ -864,6 +962,7 @@ def _prepare(
     try:
         staged = stage_replay(
             plan, stage_parent=stage_parent, runtime_authority_root=runtime,
+            speaker_python_binding=speaker_binding,
         )
     except (Exception, SystemExit) as exc:
         if expected_stage.exists() and not expected_stage.is_symlink():
@@ -900,6 +999,7 @@ def _prepare(
 
     try:
         selected_speaker_python = runtime / _SPEAKER_RUNTIME_RELATIVE
+        speaker_python_revalidate = None
         if speaker_python is not None:
             # A preflight may use the installed interpreter without copying or
             # mutating its virtualenv.  Resolve and hash-bind the executable
@@ -908,15 +1008,10 @@ def _prepare(
             # launcher, however: a conventional venv ``bin/python`` is a
             # symlink whose target is a base interpreter, and invoking that
             # target directly silently drops the venv's site-packages.
-            requested_speaker_python = Path(speaker_python).absolute()
-            try:
-                resolved_speaker_python = requested_speaker_python.resolve(strict=True)
-            except OSError as exc:
-                raise ReviewedBaselineReplayError("REPLAY_SPEAKER_PYTHON_UNAVAILABLE") from exc
-            binding = regular_binding(resolved_speaker_python, label="SPEAKER_PYTHON")
-            if not os.access(binding.path, os.X_OK):
-                raise ReviewedBaselineReplayError("REPLAY_SPEAKER_PYTHON_UNSAFE")
-            selected_speaker_python = requested_speaker_python
+            if speaker_binding is None:
+                raise ReviewedBaselineReplayError("REPLAY_SPEAKER_PYTHON_STAGE_BINDING_DRIFT")
+            selected_speaker_python = Path(str(speaker_binding["requested_path"]))
+            speaker_python_revalidate = _stage_speaker_python_revalidator(stage, speaker_binding)
         if plan.candidate_id == C6_EXACT_CANDIDATE_ID and plan.date == C6_EXACT_RECORDING_DATE:
             exact_final_reviewer = build_c6_exact_final_reviewer(plan=plan, stage=stage)
         else:
@@ -938,6 +1033,7 @@ def _prepare(
                 {"recovery_publication_authority": published_recovery.publication_authority}
                 if published_recovery is not None else {}
             ),
+            speaker_python_revalidate=speaker_python_revalidate,
         )
     except (Exception, SystemExit) as exc:
         stage_sha = _stage_manifest_sha256(stage)
@@ -993,6 +1089,10 @@ def main(
 ) -> int:
     args = _args(argv)
     try:
+        if args.speaker_python is not None and (
+            not args.full_dry_run or args.private_stage_parent is None
+        ):
+            raise ReviewedBaselineReplayError("REPLAY_SPEAKER_PYTHON_PRIVATE_DRY_RUN_ONLY")
         runtime = _safe_directory(args.runtime_root)
         if args.readiness_graph:
             print(json.dumps(_readiness_graph(runtime=runtime, date=args.date,
