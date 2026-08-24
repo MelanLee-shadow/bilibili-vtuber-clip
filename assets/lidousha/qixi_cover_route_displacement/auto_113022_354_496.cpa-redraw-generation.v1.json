@@ -1,0 +1,280 @@
+{
+  "ai_background": "/opt/bilive/qixi-cover-trial/2026-08-24/qixi-cpa-redraw.ai-bg.png",
+  "ai_background_sha256": "sha256:72997957fe499ef4c10f5703f69d2cc6806a4d62e14ca3b6d0907333158e94b8",
+  "angle_degrees": -2.0,
+  "art_direction": {
+    "background_style": "warm-scrapbook-collage",
+    "cover_punch": [
+      "李豆沙中午唱甜到腻",
+      "晚上苦情歌唱到分号"
+    ],
+    "cover_punch_semantic_review": {
+      "attempt_count": 1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "model_status": "REVISE",
+          "request_sha256": "db1595bb2fb9334184ee3b1c575dc58822a3786fa0f6e2694395eaa7c036d8c6",
+          "response_sha256": "f6cdd889c414c4d301871949652c31d19095e7f60a3469a3a9c4920876a6aefa",
+          "status": "ACCEPTED",
+          "validated_final_punch": [
+            "李豆沙中午唱甜到腻",
+            "晚上苦情歌唱到分号"
+          ]
+        }
+      ],
+      "click_motivation": "中午甜歌与晚上苦情歌形成荒诞反差，且“唱到分号”的结果离奇，能引发观众好奇这套七夕PUA直播究竟如何进行。",
+      "contains_action_or_conflict": true,
+      "contains_concrete_subject": true,
+      "cover_text_sha256": "65783e0cb1e0e0f4f96a79de9343577a84f434a7119602b1faa3dda4d2d90ec5",
+      "final_punch": [
+        "李豆沙中午唱甜到腻",
+        "晚上苦情歌唱到分号"
+      ],
+      "no_fabricated_fact": true,
+      "original_punch": [
+        "甜到腻",
+        "苦情歌唱到分号"
+      ],
+      "reason_code": null,
+      "request_sha256": "db1595bb2fb9334184ee3b1c575dc58822a3786fa0f6e2694395eaa7c036d8c6",
+      "response_sha256": "f6cdd889c414c4d301871949652c31d19095e7f60a3469a3a9c4920876a6aefa",
+      "schema_version": "lidousha-cover-punch-semantic-review.v2",
+      "status": "REVISED",
+      "story_hook_sha256": "c26941d34605c4bd947c8f77b7b66bd5951ff74b4283bc1a6d6b11279c5d0950",
+      "story_summary": "李豆沙七夕中午唱甜歌唱到发腻，晚上再唱苦情歌唱到大家分号。",
+      "stranger_can_infer_event": true
+    },
+    "emote_id": "",
+    "emote_mode": "",
+    "emote_reason": "",
+    "expression_en": "Closed-mouth mischievous smile with one raised eyebrow, looking like she has proudly planned a sweet-then-bitter Valentine's Day trap.",
+    "hook_color": "pink",
+    "hook_word": "分号",
+    "is_song": false,
+    "layout": "banner",
+    "role": "witty_smug",
+    "scene_props": []
+  },
+  "attempted_models": [
+    "gpt-image-2"
+  ],
+  "background_style": "warm-scrapbook-collage",
+  "candidate_id": "auto_113022_354_496",
+  "cover_diversity_slot": 7,
+  "cover_punch": [
+    "李豆沙中午唱甜到腻",
+    "晚上苦情歌唱到分号"
+  ],
+  "cover_text": "李豆沙中午甜到腻\\n晚上唱苦情歌到分号",
+  "cover_text_mode": "punch",
+  "emote": null,
+  "expression_en": "Closed-mouth mischievous smile with one raised eyebrow, looking like she has proudly planned a sweet-then-bitter Valentine's Day trap.",
+  "fallback_used": false,
+  "final_cover": "/opt/bilive/qixi-cover-trial/2026-08-24/qixi-cpa-redraw.png",
+  "final_cover_sha256": "sha256:e57c8c7af3b9346da468d54d5675319f3ace6a73760c3aa847808adbbb033642",
+  "final_host_identity_verification": {
+    "authority": "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_AND_PROMINENCE_COMPARISON",
+    "comparison_path": "/opt/bilive/qixi-cover-trial/2026-08-24/qixi-cpa-redraw.host-identity-witness.png",
+    "comparison_sha256": "sha256:3a692ea46bd9442ac067a9ac7a06934be0ea9c38d5b0abe64ac4167b05825c12",
+    "final_cover_path": "/opt/bilive/qixi-cover-trial/2026-08-24/qixi-cpa-redraw.png",
+    "final_cover_sha256": "sha256:e57c8c7af3b9346da468d54d5675319f3ace6a73760c3aa847808adbbb033642",
+    "preferred_witness_provider": "cpa",
+    "reference_path": "/opt/bilive/qixi-z2-staging/2026-08-23/auto_113022_354_496/replacement_recuts/evidence/cover-reference.png",
+    "reference_sha256": "sha256:901e14fbe5c77ac513d9a3106bedeec88c5c57656119be64b19d1a3458c9fa18",
+    "schema_version": "lidousha-cover-final-host-identity-verification.v3",
+    "selected_witness_provider": "cpa",
+    "status": "PASS",
+    "verdict": {
+      "composition_conflicts": [],
+      "excessive_dead_space": false,
+      "identity_conflicts": [],
+      "meaningless_dominant_decoration": false,
+      "primary_subject_carries_story_reaction": true,
+      "primary_subject_face_is_large_and_clear": true,
+      "primary_subject_identity": "白发、蓝白熊猫帽/熊猫耳的李豆沙",
+      "primary_subject_is_lidousha": true,
+      "primary_subject_is_visually_dominant": true,
+      "primary_subject_matches_other_source_participant": false,
+      "reason": "右图最大主体延续左图李豆沙的白发、熊猫耳及熊猫配饰特征，脸部完整清晰且位于视觉中心，甜蜜表情与动作呼应标题事件；标题区留白合理，巧克力和爱心装饰服务主题，点击钩子明确。",
+      "source_lidousha_located": true,
+      "thumbnail_has_clear_click_hook": true
+    },
+    "witness": {
+      "answer": "{\"source_lidousha_located\":true,\"primary_subject_is_lidousha\":true,\"primary_subject_matches_other_source_participant\":false,\"primary_subject_is_visually_dominant\":true,\"primary_subject_face_is_large_and_clear\":true,\"primary_subject_carries_story_reaction\":true,\"excessive_dead_space\":false,\"meaningless_dominant_decoration\":false,\"thumbnail_has_clear_click_hook\":true,\"primary_subject_identity\":\"白发、蓝白熊猫帽/熊猫耳的李豆沙\",\"identity_conflicts\":[],\"composition_conflicts\":[],\"reason\":\"右图最大主体延续左图李豆沙的白发、熊猫耳及熊猫配饰特征，脸部完整清晰且位于视觉中心，甜蜜表情与动作呼应标题事件；标题区留白合理，巧克力和爱心装饰服务主题，点击钩子明确。\"}",
+      "frame_sha256": "41aa68d74beacab382eaf6302c97b3652b96b762c5c73bdc1634538972c76246",
+      "image_path": "/opt/bilive/qixi-cover-trial/2026-08-24/qixi-cpa-redraw.host-identity-witness.png",
+      "image_sha256": "3a692ea46bd9442ac067a9ac7a06934be0ea9c38d5b0abe64ac4167b05825c12",
+      "model": "gpt-5.6-sol",
+      "prompt_sha256": "a4ad952e37a0ed6e757b892b9d9d94b54cfd440e6f7775e304416c699c477aa2",
+      "provider": "cpa",
+      "question": "左侧是同一切片的 SOURCE REFERENCE，右侧是待发布 FINAL COVER。请先在左图用可见名牌、服装和外形定位李豆沙；若名牌可见，必须以名牌为准。李豆沙是白发、蓝白熊猫帽/熊猫耳的小个子形象。特别注意：不要把左图其他人物（例如带红金角饰、白发长辫、红领结的伊索尔Sol）误认成李豆沙；给别的角色加熊猫耳也不算身份正确。再判断右图最大、最显眼、承担故事反应的主角是否确实延续左图李豆沙，而不是其他参与者。次要人物可以存在，但主角必须是李豆沙。这是信息流缩略图终检，不只验身份：李豆沙不能缩在角落或小到需要寻找；脸部必须足够大、完整、清楚，且她的表情/动作必须承担标题所讲事件的反应。通常脸或上半身应形成第一视觉焦点；仅仅能认出她不算通过。专门留给已渲染标题的干净文字区是合理留白，但标题以外不得有大片死空白、无意义纯色红条/色块、装饰噪声或与故事无关的强元素压过人物。陌生观众只看右图时应立即知道看谁、看到一个明确点击钩子。不确定就 FAIL。只输出 JSON：{\"source_lidousha_located\":true|false,\"primary_subject_is_lidousha\":true|false,\"primary_subject_matches_other_source_participant\":true|false,\"primary_subject_is_visually_dominant\":true|false,\"primary_subject_face_is_large_and_clear\":true|false,\"primary_subject_carries_story_reaction\":true|false,\"excessive_dead_space\":true|false,\"meaningless_dominant_decoration\":true|false,\"thumbnail_has_clear_click_hook\":true|false,\"primary_subject_identity\":\"简短身份\",\"identity_conflicts\":[\"冲突特征\"],\"composition_conflicts\":[\"主体过小/角落小人/死空白/无意义装饰等\"],\"reason\":\"简短中文说明\"}",
+      "response_sha256": "4dcd94a3b9c3377761afc3106e44902d48e9d3506fc1f78359a208a6f8add661",
+      "routing": {
+        "fallback_used": false,
+        "preferred_provider": "cpa",
+        "selected_provider": "cpa"
+      },
+      "schema_version": "cpa-frame-witness.v1",
+      "status": "OBSERVED"
+    }
+  },
+  "font": "ZCOOLKuaiLe-Regular.ttf",
+  "font_selection": {
+    "font": "ZCOOLKuaiLe-Regular.ttf",
+    "glyph_risk": [],
+    "rejected": []
+  },
+  "font_size": 165,
+  "hook_color": "pink",
+  "hook_word": "分号",
+  "image_gen_model": "cpa",
+  "layout": "banner",
+  "line_split": "punch",
+  "method": "images.edit",
+  "min_talk_font_size": 120,
+  "model": "gpt-image-2",
+  "model_fallback_used": false,
+  "overlay_position": {
+    "x": 181,
+    "y": 45
+  },
+  "pre_overlay_path": "/opt/bilive/qixi-cover-trial/2026-08-24/qixi-cpa-redraw.pre-overlay.png",
+  "pre_overlay_sha256": "sha256:72997957fe499ef4c10f5703f69d2cc6806a4d62e14ca3b6d0907333158e94b8",
+  "reference_image": "/opt/bilive/qixi-z2-staging/2026-08-23/auto_113022_354_496/replacement_recuts/evidence/cover-reference.png",
+  "reference_sha256": "sha256:901e14fbe5c77ac513d9a3106bedeec88c5c57656119be64b19d1a3458c9fa18",
+  "rendered_lines": [
+    "李豆沙中午唱甜到腻",
+    "晚上苦情歌唱到分号"
+  ],
+  "rendered_text_pixels": {
+    "canvas_size": [
+      1920,
+      1080
+    ],
+    "changed_pixel_count": 238252,
+    "changed_pixel_ratio": 0.9944694190176854,
+    "final_cover_sha256": "sha256:e57c8c7af3b9346da468d54d5675319f3ace6a73760c3aa847808adbbb033642",
+    "font_file_name": "ZCOOLKuaiLe-Regular.ttf",
+    "font_file_sha256": "sha256:812a6fc1fe54b6d73a419245c32dfeba8aa33104d5be90d1cf6af082007cb71d",
+    "font_size": 165,
+    "mask_nonzero_pixels": 239577,
+    "mask_path": "/opt/bilive/qixi-cover-trial/2026-08-24/qixi-cpa-redraw.title-mask.png",
+    "mask_sha256": "sha256:648d4c249aa2573d0f6136e1ed7b24bc70d1175dbfde7a77e8686ffa2ecfac80",
+    "masked_final_pixels_sha256": "sha256:92bd4aae743f329e9a00987544bc07544ade0cf8c79f4227df268b7e90217471",
+    "overlay_position": {
+      "x": 181,
+      "y": 45
+    },
+    "pre_overlay_path": "/opt/bilive/qixi-cover-trial/2026-08-24/qixi-cpa-redraw.pre-overlay.png",
+    "pre_overlay_sha256": "sha256:72997957fe499ef4c10f5703f69d2cc6806a4d62e14ca3b6d0907333158e94b8",
+    "render_spec": {
+      "angle_degrees": -2.0,
+      "font_face_index": 0,
+      "font_file_name": "ZCOOLKuaiLe-Regular.ttf",
+      "font_file_sha256": "sha256:812a6fc1fe54b6d73a419245c32dfeba8aa33104d5be90d1cf6af082007cb71d",
+      "layer_size": [
+        1546,
+        358
+      ],
+      "lines": [
+        {
+          "font_size": 165,
+          "outlines": [
+            {
+              "color": [
+                18,
+                36,
+                79
+              ],
+              "width": 14
+            },
+            {
+              "color": [
+                255,
+                255,
+                255
+              ],
+              "width": 7
+            }
+          ],
+          "segment_pad": 14,
+          "segments": [
+            {
+              "fill": [
+                255,
+                92,
+                138
+              ],
+              "text": "李豆沙中午唱甜到腻"
+            }
+          ],
+          "x": 89.9140625,
+          "y": 45
+        },
+        {
+          "font_size": 82,
+          "outlines": [
+            {
+              "color": [
+                18,
+                36,
+                79
+              ],
+              "width": 8
+            },
+            {
+              "color": [
+                255,
+                255,
+                255
+              ],
+              "width": 4
+            }
+          ],
+          "segment_pad": 8,
+          "segments": [
+            {
+              "fill": [
+                255,
+                246,
+                214
+              ],
+              "text": "晚上苦情歌唱到分号"
+            }
+          ],
+          "x": 433.53125,
+          "y": 224
+        }
+      ],
+      "rendered_layer_size": [
+        1558,
+        412
+      ],
+      "schema_version": "lidousha-cover-title-render-spec.v1"
+    },
+    "render_spec_sha256": "sha256:7331e64976fb7117bab34251dab14f5c27a15147698a53660d969a898b55232e",
+    "rendered_text": "李豆沙中午唱甜到腻晚上苦情歌唱到分号",
+    "schema_version": "lidousha-cover-rendered-text-pixels.v3",
+    "status": "PASS",
+    "text_pixel_bbox": [
+      274,
+      96,
+      1658,
+      394
+    ],
+    "text_pixel_height": 298,
+    "text_pixel_width": 1384
+  },
+  "request_path": "/opt/bilive/qixi-cover-trial/2026-08-24/qixi-cpa-redraw.cpa-request.redacted.json",
+  "request_sha256": "sha256:94f836cc6148679c5ab7750abbe46a8abd82f0b7548c52a8b1e553a59bb34ab9",
+  "response_path": "/opt/bilive/qixi-cover-trial/2026-08-24/qixi-cpa-redraw.cpa-response.redacted.json",
+  "response_sha256": "sha256:03d95ca25a0da4a02cc1a13716e116f9a89bfdc2c0942f13e1347e0f0ebcb8f7",
+  "role": "witty_smug",
+  "scrim": false,
+  "status": "AI_COVER_READY",
+  "text_backing": "outline",
+  "title": "【李豆沙】李豆沙公布七夕安排，中午甜甜甜晚上苦苦苦，一套PUA直播要让kmx集体分号！",
+  "title_band": "banner",
+  "workflow": "regenerate_lidousha_cover"
+}

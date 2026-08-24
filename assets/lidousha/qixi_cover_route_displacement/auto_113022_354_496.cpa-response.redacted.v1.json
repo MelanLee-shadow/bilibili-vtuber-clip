@@ -1,0 +1,28 @@
+{
+  "attempts": [
+    {
+      "attempt": 1,
+      "b64_json_bytes": 3110740,
+      "canvas": [
+        1920,
+        1080
+      ],
+      "data_keys": [
+        "b64_json"
+      ],
+      "keys": [
+        "background",
+        "created",
+        "data",
+        "output_format",
+        "quality",
+        "size",
+        "usage"
+      ],
+      "model": "gpt-image-2",
+      "output_path": "/opt/bilive/qixi-cover-trial/2026-08-24/qixi-cpa-redraw.ai-bg.png",
+      "output_sha256": "sha256:72997957fe499ef4c10f5703f69d2cc6806a4d62e14ca3b6d0907333158e94b8",
+      "status_code": 200
+    }
+  ]
+}

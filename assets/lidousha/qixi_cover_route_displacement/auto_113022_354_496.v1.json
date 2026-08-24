@@ -1,0 +1,68 @@
+{
+  "allowed_mutations": [
+    "/publish_staging/cover_generation",
+    "/publish_staging/cover_path",
+    "/publish_staging/cover_status",
+    "/artifact_hashes/cover_sha256",
+    "/cover_generation",
+    "/cover_path",
+    "/cover_status",
+    "/artifact_hashes/cover_sha256",
+    "/title_cover_joint_qc"
+  ],
+  "authority_sha256": "sha256:119fcb9e27accf3aff7eca2df8ffc503bf72f3b2d02db3d9321c8b652add7ba1",
+  "candidate_id": "auto_113022_354_496",
+  "joint_qc": {
+    "relative_path": "assets/lidousha/qixi_cover_route_displacement/auto_113022_354_496.title-cover-joint-qc.v1.json",
+    "sha256": "sha256:0dac12e8026d4b7f41ce55bea67994148da94e076bcc117f6aba282a25ae563c",
+    "status": "PASS",
+    "title": "【李豆沙】七夕中午唱甜到腻，晚上苦情歌唱到分号！"
+  },
+  "operator_scope": {
+    "quote": "今天晚上把我授权的快车道全部上传，不过优先七夕。",
+    "scope": "QIXI_FASTLANE_PRIVATE_REPAIR_ONLY_NO_UPLOAD",
+    "timestamp": "2026-08-19T04:06:54.376Z"
+  },
+  "predecessor": {
+    "failed_joint_qc_sha256": "sha256:84db306df62aa2c6972e0be6a9de7d1c927d926ac2d2c772ad1d78ebd9bcb7f7",
+    "previous_cover_sha256": "sha256:8cacaafc502a31474f93e6472c945f8527dee23b5fdb39df27d672ee08f4d4e0",
+    "selected_treatment": "screenshot_polish",
+    "source_frame_ms": 116000,
+    "source_reference_sha256": "sha256:901e14fbe5c77ac513d9a3106bedeec88c5c57656119be64b19d1a3458c9fa18"
+  },
+  "recording_date": "2026-08-17",
+  "replacement": {
+    "actual_treatment": "cpa_redraw",
+    "final_cover_sha256": "sha256:e57c8c7af3b9346da468d54d5675319f3ace6a73760c3aa847808adbbb033642",
+    "pre_overlay_sha256": "sha256:72997957fe499ef4c10f5703f69d2cc6806a4d62e14ca3b6d0907333158e94b8",
+    "provider_generation_relative_path": "assets/lidousha/qixi_cover_route_displacement/auto_113022_354_496.cpa-redraw-generation.v1.json",
+    "provider_generation_sha256": "sha256:eca809d733511f16be80436bdba23535c54ccd3994516796d2f1841a7fd0fb1b",
+    "provider_request_relative_path": "assets/lidousha/qixi_cover_route_displacement/auto_113022_354_496.cpa-request.redacted.v1.json",
+    "provider_request_sha256": "sha256:94f836cc6148679c5ab7750abbe46a8abd82f0b7548c52a8b1e553a59bb34ab9",
+    "provider_response_relative_path": "assets/lidousha/qixi_cover_route_displacement/auto_113022_354_496.cpa-response.redacted.v1.json",
+    "provider_response_sha256": "sha256:03d95ca25a0da4a02cc1a13716e116f9a89bfdc2c0942f13e1347e0f0ebcb8f7",
+    "required_title_lines": [
+      "李豆沙中午唱甜到腻",
+      "晚上苦情歌唱到分号"
+    ],
+    "route_background_sha256": "sha256:72997957fe499ef4c10f5703f69d2cc6806a4d62e14ca3b6d0907333158e94b8",
+    "title_mask_sha256": "sha256:648d4c249aa2573d0f6136e1ed7b24bc70d1175dbfde7a77e8686ffa2ecfac80"
+  },
+  "required_gates": [
+    "FINAL_HOST_IDENTITY_V3_PASS",
+    "NO_MODEL_TEXT",
+    "TRUSTED_FONT_RENDER_SPEC",
+    "TITLE_MASK_RECOMPOSITION_EXACT",
+    "FEED_SAFE_CROP",
+    "QIXI_TITLE_COVER_JOINT_QC_PASS"
+  ],
+  "route_preserving_attempt": {
+    "new_cover_sha256": "sha256:e3fa419daeb5e240c8ada13338453879896a0ad6ed42b82ac73f1dd5cc21d2cf",
+    "qc_conclusion": "CLASSROOM_NARRATIVE_REMAINS",
+    "relative_path": "assets/lidousha/qixi_cover_route_displacement/auto_113022_354_496.screenshot-repair-receipt.v1.json",
+    "sha256": "sha256:bfe1bad19f96ec09ee9eae184b458f22b95199ee4d8b11e4ea880d1635d11db1",
+    "status": "REPAIRED"
+  },
+  "schema_version": "qixi-cover-route-displacement-authority.v1",
+  "upload_enabled": false
+}

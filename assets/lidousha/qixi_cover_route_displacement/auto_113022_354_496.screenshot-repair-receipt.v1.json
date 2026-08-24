@@ -1,0 +1,47 @@
+{
+  "schema_version": "repair-screenshot-cover.v1",
+  "repaired_at": "2026-08-24T02:00:16.197805+00:00",
+  "record_path": "/opt/bilive/qixi-z2-staging/2026-08-23/auto_113022_354_496/replacement_recuts/auto_113022_354_496.record.json",
+  "candidate_id": null,
+  "previous_final_cover_sha256": "sha256:8cacaafc502a31474f93e6472c945f8527dee23b5fdb39df27d672ee08f4d4e0",
+  "polished_input_sha256": "sha256:5e875c2b49fed7c248f40fb7431ff6243cd56d3d27b1b77d73f6fa1882232d99",
+  "new_final_cover": "/opt/bilive/qixi-cover-trial/2026-08-24/screenshot-route/qixi-screenshot-polish-poster.png",
+  "new_final_cover_sha256": "sha256:e3fa419daeb5e240c8ada13338453879896a0ad6ed42b82ac73f1dd5cc21d2cf",
+  "card_fit": "contain_face_safe",
+  "rendered_lines": [
+    "李豆沙中午甜到腻",
+    "晚上唱苦情歌到分号"
+  ],
+  "polish_face_verification": {
+    "schema_version": "lidousha-cover-polish-face-verification.v2",
+    "authority": "CPA_PRIMARY_HASH_BOUND_FINAL_FACE_CHECK",
+    "witness": {
+      "schema_version": "cpa-frame-witness.v1",
+      "image_path": "/opt/bilive/qixi-cover-trial/2026-08-24/screenshot-route/qixi-screenshot-polish-poster.png",
+      "question": "这是一张视频封面成品。请只判断画面中人物的脸部是否完整可见：双眼、嘴巴、下巴都必须在画面内，且没有被画面边缘或卡片边框切断。同时报告人物是否吐舌头。只输出 JSON：{\"face_complete\": true|false, \"missing\": [\"eyes\"|\"mouth\"|\"chin\"], \"tongue_out\": true|false, \"reason\": \"简短中文说明\"}",
+      "model": "gpt-5.6-sol",
+      "provider": "cpa",
+      "image_sha256": "e3fa419daeb5e240c8ada13338453879896a0ad6ed42b82ac73f1dd5cc21d2cf",
+      "frame_sha256": "bd285364a129eab2586d702bfe7254f92aa1e0a39f45bdd5ad4166e90e9ff4bb",
+      "prompt_sha256": "1681e01610b8fe3b5a694ea4fef5768b8db6ff9f9806646482a0843355443fa1",
+      "status": "OBSERVED",
+      "answer": "{\"face_complete\":true,\"missing\":[],\"tongue_out\":false,\"reason\":\"双眼、嘴巴和下巴均完整可见，未被边缘或边框切断，且没有吐舌头。\"}",
+      "response_sha256": "1bee0e4d848744d66e8235788a55632941c90c82134d1a0e070351f47498dc0f",
+      "routing": {
+        "preferred_provider": "cpa",
+        "selected_provider": "cpa",
+        "fallback_used": false
+      }
+    },
+    "preferred_witness_provider": "cpa",
+    "selected_witness_provider": "cpa",
+    "verdict": {
+      "face_complete": true,
+      "missing": [],
+      "tongue_out": false,
+      "reason": "双眼、嘴巴和下巴均完整可见，未被边缘或边框切断，且没有吐舌头。"
+    },
+    "status": "PASS"
+  },
+  "status": "REPAIRED"
+}

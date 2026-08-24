@@ -1,0 +1,37 @@
+{
+  "schema_version": "lidousha-title-cover-joint-qc.v1",
+  "candidate_id": "auto_113022_354_496",
+  "title": "【李豆沙】七夕中午唱甜到腻，晚上苦情歌唱到分号！",
+  "title_sha256": "sha256:e5c64eaa4f169cdb4244b1f1d383524b2da846b21ab1438d786d02244c4ecbb6",
+  "cover_path": "/opt/bilive/qixi-cover-trial/2026-08-24/qixi-cpa-redraw.png",
+  "cover_sha256": "sha256:e57c8c7af3b9346da468d54d5675319f3ace6a73760c3aa847808adbbb033642",
+  "preferred_provider": "cpa",
+  "selected_provider": "cpa",
+  "witness": {
+    "schema_version": "cpa-frame-witness.v1",
+    "image_path": "/opt/bilive/qixi-cover-trial/2026-08-24/qixi-cpa-redraw.png",
+    "question": "你是李豆沙频道的标题+封面联合质检员。下图是最终封面,拟用标题是:\n《【李豆沙】七夕中午唱甜到腻，晚上苦情歌唱到分号！》\n请只输出一个 JSON 对象(不要 markdown 代码块,不要多余文字),字段与含义:\n{\"lidousha_primary\": bool 封面主体是否是李豆沙(白发+头顶小熊猫耳的虚拟熊猫少女;熊猫耳长在头上不是头套/帽子;头顶墨镜或发饰是可选配饰,可有可无),\"thumbnail_readable\": bool 缩略图尺寸下封面大字是否清晰可读,\"single_clear_hook\": bool 封面文案是否构成一个清晰单一的钩子,\"text_overcrowded\": bool 文字是否过度拥挤,\"title_cover_aligned\": bool 标题与封面是否讲同一件事,\"physical_text_line_count\": int 封面主文案的物理行数,\"unrelated_or_misleading_elements\": [] 与内容无关或误导的元素列表(没有就空数组),\"reason\": str 一句话理由,\"pass\": bool 综合是否通过}\n如实判断,不要迎合。",
+    "model": "gpt-5.6-sol",
+    "provider": "cpa",
+    "image_sha256": "e57c8c7af3b9346da468d54d5675319f3ace6a73760c3aa847808adbbb033642",
+    "frame_sha256": "80c383a47e64e73af475a916151eed4854f05fc26658ddc589b57692d2aa81e6",
+    "prompt_sha256": "ee10564334eefecf7fd5d46258ee83d535a82e4e65254b939f8b5140da7fb8c1",
+    "status": "OBSERVED",
+    "answer": "{\"lidousha_primary\":true,\"thumbnail_readable\":true,\"single_clear_hook\":true,\"text_overcrowded\":false,\"title_cover_aligned\":true,\"physical_text_line_count\":2,\"unrelated_or_misleading_elements\":[],\"reason\":\"白发熊猫耳的李豆沙主体明确，大字清晰，以中午甜歌与晚上苦情歌的反差形成单一钩子，且与标题内容一致。\",\"pass\":true}",
+    "response_sha256": "292f6f966168efe6a2c805fab2665e75f2d61cccec52b2aed3be4c07053b5d64"
+  },
+  "verdict": {
+    "lidousha_primary": true,
+    "thumbnail_readable": true,
+    "single_clear_hook": true,
+    "text_overcrowded": false,
+    "title_cover_aligned": true,
+    "physical_text_line_count": 2,
+    "unrelated_or_misleading_elements": [],
+    "reason": "白发熊猫耳的李豆沙主体明确，大字清晰，以中午甜歌与晚上苦情歌的反差形成单一钩子，且与标题内容一致。",
+    "pass": true
+  },
+  "status": "PASS",
+  "pass": true,
+  "generated_at": "2026-08-24T02:08:30Z"
+}
