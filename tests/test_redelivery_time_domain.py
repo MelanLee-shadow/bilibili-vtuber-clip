@@ -13,6 +13,9 @@ from src.autoslice.redelivery_full_window_replay import (
     exact_full_window_replay_enabled,
 )
 from src.autoslice.redelivery_source_binding import V2RedeliverySourceBinding
+from src.autoslice.reviewed_subtitle_baseline_registry import (
+    load_candidate_reviewed_subtitle_baseline,
+)
 from src.autoslice.redelivery_time_domain import (
     DELIVERY_LOCAL,
     PIECE_LOCAL,
@@ -147,10 +150,25 @@ def test_delivery_local_head_rejects_the_old_full_piece_projection() -> None:
         ("auto_113028_1602_1698", DELIVERY_LOCAL, 1_602_510, 1_699_300),
         ("auto_120032_753_816", DELIVERY_LOCAL, 753_540, 816_400),
         ("auto_123036_727_785", DELIVERY_LOCAL, 726_910, 786_090),
-        ("auto_220021_561_670", DELIVERY_LOCAL, 561_650, 670_690),
         ("auto_203011_328_389", PIECE_LOCAL, 318_740, 437_660),
     ],
 )
+def test_legacy_c3_exact_authority_synthesizes_only_its_sealed_domain() -> None:
+    manifest = json.loads(
+        (ASSETS / "auto_220021_561_670.subtitle-baseline.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "time_domain" not in manifest
+    baseline = load_candidate_reviewed_subtitle_baseline(
+        ASSETS,
+        "auto_220021_561_670",
+        repo_root=ROOT,
+    )
+    assert baseline is not None
+    assert baseline.config["time_domain"] == DELIVERY_LOCAL
+
+
 def test_checked_in_v3_assets_declare_observed_time_domain(
     candidate_id: str, domain: str, start: int, end: int,
 ) -> None:

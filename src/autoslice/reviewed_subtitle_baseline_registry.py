@@ -37,6 +37,7 @@ from src.autoslice.reviewed_exact_source_interval import (
     validate_runtime_authority,
 )
 from src.autoslice.redelivery_time_domain import (
+    DELIVERY_LOCAL,
     RedeliveryTimeDomainError,
     operator_v3_time_domain,
 )
@@ -63,6 +64,8 @@ _SHA256_RX = re.compile(r"(?:sha256:)?([0-9a-f]{64})\Z")
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BASELINE_REPO_DIRECTORY = Path("assets/lidousha/reviewed_subtitle_baselines")
 _EXACT_INTERVAL_REPO_DIRECTORY = Path("assets/lidousha/reviewed_exact_source_intervals")
+_LEGACY_C3_CANDIDATE_ID = "auto_220021_561_670"
+_LEGACY_C3_MANIFEST_SHA256 = "fa1fee5f2ec29556d8713414963df32f3bdf2a0f2b6cdd56efc71937509adf30"
 
 
 def _valid_speaker_authority(*, candidate_id: str, value: object) -> bool:
@@ -747,6 +750,17 @@ def load_candidate_reviewed_subtitle_baseline(
             raise ReviewedSubtitleBaselineRegistryError(
                 "operator truth lanes are not sealed by the active repository"
             ) from exc
+
+    # C3 predates the explicit field but is already independently sealed to an
+    # exact final-delivery interval by its immutable deployable authority chain.
+    # Synthesize only for those exact historical manifest bytes; no other
+    # operator-v3 asset receives a compatibility default.
+    if (
+        candidate_id == _LEGACY_C3_CANDIDATE_ID
+        and hashlib.sha256(manifest_bytes).hexdigest() == _LEGACY_C3_MANIFEST_SHA256
+        and document.get("time_domain") is None
+    ):
+        document = {**dict(document), "time_domain": DELIVERY_LOCAL}
 
     if schema_version == "subtitle-redelivery-baseline.v2":
         if not isinstance(document.get("exact_interval_replay", False), bool):
