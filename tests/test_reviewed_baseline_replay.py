@@ -932,8 +932,12 @@ def test_replay_publish_adapter_refuses_source_fact_title_rewrite(
 
 def test_replay_exact_review_prefers_production_over_adapter_fallback(tmp_path: Path) -> None:
     calls: list[str] = []
-    fallback = lambda *_args, **_kwargs: {"reviewer": "fallback"}
-    production_reviewer = lambda *_args, **_kwargs: {"reviewer": "production"}
+
+    def fallback(*_args: object, **_kwargs: object) -> dict[str, str]:
+        return {"reviewer": "fallback"}
+
+    def production_reviewer(*_args: object, **_kwargs: object) -> dict[str, str]:
+        return {"reviewer": "production"}
 
     def build_production(*_args: object, **_kwargs: object) -> object:
         calls.append("production")

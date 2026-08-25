@@ -43,6 +43,20 @@ def runtime_authority_paths(runtime_root: Path) -> tuple[Path, Path]:
     root = Path(runtime_root).absolute() / ".private-c5-start-clamp-authority"
     return root / "c5-start-clamp-proposal.v1.json", root / "c5-start-clamp-acceptance.v2.json"
 
+
+def finalizer_authority_kwargs(
+    *, candidate_id: str, recording_date: str, runtime_root: Path
+) -> dict[str, object]:
+    """Return C5's sealed finalizer paths, or no extra fields for every other lane."""
+    if (candidate_id, recording_date) != (CANDIDATE_ID, RECORDING_DATE):
+        return {}
+    proposal_path, acceptance_path = runtime_authority_paths(runtime_root)
+    return {
+        "c5_start_clamp_proposal_path": proposal_path,
+        "c5_start_clamp_acceptance_path": acceptance_path,
+        "recording_date": recording_date,
+    }
+
 def _canonical(value: object) -> bytes:
     return json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")).encode()
 def _sha_bytes(value: bytes) -> str: return "sha256:" + hashlib.sha256(value).hexdigest()

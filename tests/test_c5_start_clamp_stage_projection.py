@@ -56,6 +56,26 @@ def _c5_inputs(tmp_path: Path) -> dict[str, object]:
     }
 
 
+def test_c5_finalizer_authority_kwargs_are_exactly_candidate_scoped(tmp_path: Path) -> None:
+    expected = {
+        "c5_start_clamp_proposal_path": c5.runtime_authority_paths(tmp_path)[0],
+        "c5_start_clamp_acceptance_path": c5.runtime_authority_paths(tmp_path)[1],
+        "recording_date": c5.RECORDING_DATE,
+    }
+    assert c5.finalizer_authority_kwargs(
+        candidate_id=c5.CANDIDATE_ID, recording_date=c5.RECORDING_DATE,
+        runtime_root=tmp_path,
+    ) == expected
+    assert c5.finalizer_authority_kwargs(
+        candidate_id="auto_other", recording_date=c5.RECORDING_DATE,
+        runtime_root=tmp_path,
+    ) == {}
+    assert c5.finalizer_authority_kwargs(
+        candidate_id=c5.CANDIDATE_ID, recording_date="2026-08-15",
+        runtime_root=tmp_path,
+    ) == {}
+
+
 def _replay_kwargs(tmp_path: Path) -> dict[str, object]:
     baseline = load_candidate_reviewed_subtitle_baseline(
         ASSETS, c5.CANDIDATE_ID, repo_root=ROOT,

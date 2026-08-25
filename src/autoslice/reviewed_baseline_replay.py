@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from src.autoslice.branding_intro import pin_existing_delivery_intro, require_branding_intro
+from src.autoslice.c5_start_clamp import finalizer_authority_kwargs
 from src.autoslice.recut_materialization import (
     _accurate_reencode_recut_command,
     _fresh_srt_to_source_cues,
@@ -51,8 +52,6 @@ from src.autoslice.reviewed_baseline_replay_stage_projection import (
     prepare_stage_delivery_projection,
     stage_delivery_projection_receipt,
 )
-
-
 REPLAY_STAGE_SCHEMA = "reviewed-baseline-replay-stage.v1"
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 _CID = re.compile(r"[A-Za-z0-9_-]{1,96}\Z")
@@ -1034,18 +1033,7 @@ def synthesize_replay_spec_and_finalize_private(
     # the sole text delta.  This wrapper is private-stage-only: it never points
     # at an installed package or writes a formal target.
     original_speaker_finalizer = getattr(adapters, "run_speaker_finalization", None)
-    c5_fields: dict[str, object] = {}
-    if plan.candidate_id == "auto_113028_1271_1328" and plan.date == "2026-08-14":
-        # This location is candidate-private and has no CLI/config override.
-        # The acceptance loader verifies its copied proposal byte-for-byte
-        # against the repository proposal before the exact clamp can run.
-        from src.autoslice.c5_start_clamp import runtime_authority_paths
-        proposal_path, acceptance_path = runtime_authority_paths(runtime_authority_root)
-        c5_fields = {
-            "c5_start_clamp_proposal_path": proposal_path,
-            "c5_start_clamp_acceptance_path": acceptance_path,
-            "recording_date": plan.date,
-        }
+    c5_fields = finalizer_authority_kwargs(candidate_id=plan.candidate_id, recording_date=plan.date, runtime_root=runtime_authority_root)
     successor_fields = build_text_only_speaker_successor_fields(
         finalizer=finalizer, original_speaker_finalizer=original_speaker_finalizer,
         candidate_id=plan.candidate_id, record=record,
