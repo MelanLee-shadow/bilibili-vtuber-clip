@@ -24,6 +24,7 @@ from .fastlane_c2_formal_adapter import (
     audit_fastlane_c2_formal_package,
     sha256,
 )
+from .package_audit_binding import audit_content_binding
 
 SCHEMA = "fastlane-c2-release-package-manifest.v1"
 AUTH_SCHEMA = "fastlane-c2-direct-upload-authorization.v1"
@@ -250,9 +251,10 @@ def _validate_formal_audit(formal: Path) -> None:
 
     saved = _read_object(formal / "package_audit.json", "C2 formal package audit")
     current = audit_package(formal)
-    # A copied formal tree necessarily relocates only audit.root; every other
-    # audited field remains byte-for-byte identical.
-    current_cmp, saved_cmp = dict(current), dict(saved)
+    # The copied tree relocates audit.root.  Current/saved auditor identity may
+    # also change during an in-flight review, while their content verdict must
+    # remain exact.
+    current_cmp, saved_cmp = audit_content_binding(current), audit_content_binding(saved)
     current_cmp.pop("root", None)
     saved_cmp.pop("root", None)
     if current_cmp != saved_cmp or current.get("passed") is not True or current.get("blocking_issue_count") != 0:

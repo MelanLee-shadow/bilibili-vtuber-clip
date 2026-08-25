@@ -161,6 +161,96 @@ def _validate_current_legacy_reclosure(paths: dict[str, Path]) -> None:
     )
 
 
+def _passing_formal_audit(root: str) -> dict[str, object]:
+    return {
+        "schema_version": "lidousha-review-package-audit.v2",
+        "policy_epoch": "2026-07-31.final-artifact-gates.v5",
+        "policy_fingerprint": "sha256:" + "a" * 64,
+        "auditor_source_sha256": "sha256:" + "b" * 64,
+        "passed": True,
+        "root": root,
+        "audited_inputs": [{"path": "video.mp4", "sha256": "sha256:" + "c" * 64}],
+        "issues": [],
+        "issue_count": 0,
+        "blocking_issue_count": 0,
+    }
+
+
+def _formal_audit_replay_fixture(tmp_path, monkeypatch):
+    formal = tmp_path / "formal"
+    formal.mkdir()
+    saved = _passing_formal_audit("/frozen/c2-formal")
+    (formal / "package_audit.json").write_text(json.dumps(saved), encoding="utf-8")
+    current = json.loads(json.dumps(saved))
+    current["root"] = str(formal.resolve())
+
+    import scripts.audit_lidousha_review_package as review_package_audit
+
+    monkeypatch.setattr(review_package_audit, "audit_package", lambda _root: current)
+    return formal, current
+
+
+def test_c2_formal_audit_allows_root_and_auditor_identity_churn(tmp_path, monkeypatch):
+    formal, current = _formal_audit_replay_fixture(tmp_path, monkeypatch)
+    current["policy_fingerprint"] = "sha256:" + "d" * 64
+    current["auditor_source_sha256"] = "sha256:" + "e" * 64
+
+    bridge._validate_formal_audit(formal)
+
+
+@pytest.mark.parametrize(
+    "drift, mutate",
+    [
+        (
+            "inputs",
+            lambda audit: audit.update(
+                audited_inputs=[{"path": "video.mp4", "sha256": "sha256:" + "f" * 64}]
+            ),
+        ),
+        (
+            "issues",
+            lambda audit: audit.update(
+                issues=[{"code": "NEW_ISSUE", "severity": "WARN"}], issue_count=1
+            ),
+        ),
+        ("schema", lambda audit: audit.update(schema_version="other-audit-schema.v1")),
+        ("epoch", lambda audit: audit.update(policy_epoch="other-policy-epoch")),
+        ("pass", lambda audit: audit.update(passed=False)),
+        ("blocking", lambda audit: audit.update(blocking_issue_count=1)),
+        ("count", lambda audit: audit.update(issue_count=1)),
+    ],
+)
+def test_c2_formal_audit_rejects_content_or_verdict_drift(
+    tmp_path, monkeypatch, drift, mutate
+):
+    formal, current = _formal_audit_replay_fixture(tmp_path, monkeypatch)
+    current["policy_fingerprint"] = "sha256:" + "d" * 64
+    current["auditor_source_sha256"] = "sha256:" + "e" * 64
+    mutate(current)
+
+    with pytest.raises(bridge.C2ReleaseBridgeError, match="current passing replay"):
+        bridge._validate_formal_audit(formal)
+
+
+def test_c2_bridge_does_not_accept_non_c2_manifest(tmp_path):
+    root = tmp_path / "ordinary-package"
+    root.mkdir()
+    (root / "review_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": bridge.SCHEMA,
+                "candidate_id": "ordinary-candidate",
+                "recording_date": bridge.DATE,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert bridge.audit_fastlane_c2_release_package(root) == [
+        {"code": "C2_RELEASE_MANIFEST_INVALID", "severity": "BLOCK", "detail": ""}
+    ]
+
+
 def test_c2_receipt_requires_its_exact_self_bound_proposal(tmp_path):
     formal = tmp_path / "formal"
     formal.mkdir()
