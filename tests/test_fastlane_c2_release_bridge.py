@@ -190,6 +190,164 @@ def _formal_audit_replay_fixture(tmp_path, monkeypatch):
     return formal, current
 
 
+def _legacy_formal_audit_replay_values(tmp_path: Path):
+    formal = tmp_path / "formal"
+    formal.mkdir()
+    saved = _passing_formal_audit("/frozen/c2-formal")
+    current = json.loads(json.dumps(saved))
+    current["root"] = str(formal.resolve())
+    return formal, saved, current
+
+
+def _legacy_make_proposal_fixture(tmp_path: Path, monkeypatch):
+    formal, saved, current = _legacy_formal_audit_replay_values(tmp_path)
+    for role, name in NAMES.items():
+        path = formal / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{role}\n", encoding="utf-8")
+
+    rows = [{} for _ in range(21)]
+    rows[4] = {
+        "cue": 5,
+        "time": "00:00:08,720 --> 00:00:11,240",
+        "before": "是刚吗？小豆老公不是你老公",
+        "after": "小豆老公；； 不是你老公",
+        "disposition": "OPERATOR_REPAIR",
+    }
+    rows[20] = {"after": "小豆哪有好吵"}
+    (formal / NAMES["graph"]).write_text(json.dumps({"rows": rows}), encoding="utf-8")
+    (formal / "c2.formal.record.v1.json").write_text(
+        json.dumps({"candidate_id": bridge.CID, "title": bridge.TITLE}), encoding="utf-8"
+    )
+    for name in (
+        "c2.formal.publish.v1.json",
+        "review_manifest.json",
+        "cover-reprojection.v1.json",
+    ):
+        (formal / name).write_text("{}", encoding="utf-8")
+    (formal / "package_audit.json").write_text(json.dumps(saved), encoding="utf-8")
+
+    import scripts.audit_lidousha_review_package as review_package_audit
+
+    monkeypatch.setattr(review_package_audit, "audit_package", lambda _root: current)
+    authorization = tmp_path / "authorization.json"
+    _authorization(authorization)
+    proposal_path = formal / "ready-proposal.json"
+    proposal_path.write_text("{}", encoding="utf-8")
+    receipt = tmp_path / "receipt.json"
+    receipt.write_text(json.dumps({"proposal": {"path": proposal_path.name}}), encoding="utf-8")
+
+    def validate_receipt(root, proposal, receipt_data, *, allow_audit_root_relocation):
+        assert root == formal
+        assert proposal == proposal_path
+        assert receipt_data == {"proposal": {"path": proposal_path.name}}
+        assert allow_audit_root_relocation is True
+
+    monkeypatch.setattr(legacy, "validate_accepted_receipt", validate_receipt)
+    return formal, authorization, receipt, current
+
+
+def test_c2_legacy_make_proposal_allows_formal_root_and_auditor_identity_churn(
+    tmp_path, monkeypatch
+):
+    formal, authorization, receipt, current = _legacy_make_proposal_fixture(tmp_path, monkeypatch)
+    current["policy_fingerprint"] = "sha256:" + "d" * 64
+    current["auditor_source_sha256"] = "sha256:" + "e" * 64
+
+    proposal = legacy.make_proposal(formal, authorization, receipt)
+
+    assert proposal["candidate_id"] == bridge.CID
+    assert proposal["recording_date"] == bridge.DATE
+    assert proposal["formal_inputs"]["package_audit"] == {
+        "path": "package_audit.json",
+        "bytes": (formal / "package_audit.json").stat().st_size,
+        "sha256": "sha256:" + _sha(formal / "package_audit.json"),
+    }
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda audit: audit.update(
+            issues=[{"code": "SAVED_WARNING", "severity": "WARN"}], issue_count=1
+        ),
+        lambda audit: audit.update(blocking_issue_count=1),
+        lambda audit: audit.update(passed=False),
+    ],
+    ids=["issues-count", "blocking", "pass"],
+)
+def test_c2_legacy_formal_audit_replay_requires_saved_and_current_pass_zero(tmp_path, mutate):
+    formal, saved, current = _legacy_formal_audit_replay_values(tmp_path)
+    mutate(saved)
+    current = json.loads(json.dumps(saved))
+    current["root"] = str(formal.resolve())
+
+    with pytest.raises(ValueError, match="C2 formal audit replay drift"):
+        legacy._validate_current_formal_audit_replay(
+            formal=formal,
+            saved=saved,
+            current=current,
+        )
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda saved, _current, _formal: saved.update(root="relative/frozen-root"),
+        lambda _saved, current, formal: current.update(root=str(formal.parent / "other-formal")),
+    ],
+    ids=["saved-root-not-absolute", "current-root-not-formal"],
+)
+def test_c2_legacy_formal_audit_replay_rejects_unsafe_root_relocation(tmp_path, mutate):
+    formal, saved, current = _legacy_formal_audit_replay_values(tmp_path)
+    mutate(saved, current, formal)
+
+    with pytest.raises(ValueError, match="C2 formal audit replay drift"):
+        legacy._validate_current_formal_audit_replay(
+            formal=formal,
+            saved=saved,
+            current=current,
+        )
+
+
+@pytest.mark.parametrize(
+    "drift, mutate",
+    [
+        (
+            "inputs",
+            lambda audit: audit.update(
+                audited_inputs=[{"path": "video.mp4", "sha256": "sha256:" + "f" * 64}]
+            ),
+        ),
+        (
+            "issues",
+            lambda audit: audit.update(
+                issues=[{"code": "NEW_ISSUE", "severity": "WARN"}], issue_count=1
+            ),
+        ),
+        ("schema", lambda audit: audit.update(schema_version="other-audit-schema.v1")),
+        ("epoch", lambda audit: audit.update(policy_epoch="other-policy-epoch")),
+        ("pass", lambda audit: audit.update(passed=False)),
+        ("blocking", lambda audit: audit.update(blocking_issue_count=1)),
+        ("count", lambda audit: audit.update(issue_count=1)),
+    ],
+)
+def test_c2_legacy_formal_audit_replay_rejects_content_or_verdict_drift(
+    tmp_path, drift, mutate
+):
+    formal, saved, current = _legacy_formal_audit_replay_values(tmp_path)
+    current["policy_fingerprint"] = "sha256:" + "d" * 64
+    current["auditor_source_sha256"] = "sha256:" + "e" * 64
+    mutate(current)
+
+    with pytest.raises(ValueError, match="C2 formal audit replay drift"):
+        legacy._validate_current_formal_audit_replay(
+            formal=formal,
+            saved=saved,
+            current=current,
+        )
+
+
 def test_c2_formal_audit_allows_root_and_auditor_identity_churn(tmp_path, monkeypatch):
     formal, current = _formal_audit_replay_fixture(tmp_path, monkeypatch)
     current["policy_fingerprint"] = "sha256:" + "d" * 64

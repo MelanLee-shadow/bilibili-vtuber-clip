@@ -8,8 +8,9 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .fastlane_c2_formal_adapter import CID, NAMES, TITLE, sha256
-from .fastlane_c2_release_bridge import AUTH_SCHEMA, _validate_authorization
+from .fastlane_c2_release_bridge import _validate_authorization
 from .fastlane_c2_technical_receipt import validate_accepted_receipt
+from .package_audit_binding import audit_content_binding
 
 SCHEMA = "fastlane-c2-legacy-recovery-contract-proposal.v1"
 ACCEPTED_SCHEMA = "fastlane-c2-legacy-recovery-execution-contract.v1"
@@ -24,6 +25,39 @@ def _entry(root: Path, name: str) -> dict[str, object]:
     return {"path": name, "bytes": path.stat().st_size, "sha256": "sha256:" + sha256(path)}
 
 
+def _validate_current_formal_audit_replay(
+    *, formal: Path, saved: Mapping[str, Any], current: Mapping[str, Any]
+) -> None:
+    """Allow only C2 formal-audit relocation and auditor-identity churn.
+
+    ``make_proposal`` is reached only after its exact C2 candidate/date/title
+    checks.  The accepted contract still seals the saved audit file by hash;
+    this replay merely permits its absolute root and deployed auditor identity
+    to differ.  Schema, epoch, inputs, issues, counts, and verdict stay exact.
+    """
+
+    current_cmp = audit_content_binding(dict(current))
+    saved_cmp = audit_content_binding(dict(saved))
+    current_cmp.pop("root", None)
+    saved_cmp.pop("root", None)
+    saved_root = saved.get("root")
+    if (
+        current_cmp != saved_cmp
+        or not isinstance(saved_root, str)
+        or not Path(saved_root).is_absolute()
+        or current.get("root") != str(formal.absolute())
+        or saved.get("passed") is not True
+        or saved.get("issues") != []
+        or saved.get("issue_count") != 0
+        or saved.get("blocking_issue_count") != 0
+        or current.get("passed") is not True
+        or current.get("issues") != []
+        or current.get("issue_count") != 0
+        or current.get("blocking_issue_count") != 0
+    ):
+        raise ValueError("C2 formal audit replay drift")
+
+
 def make_proposal(formal: Path, authorization: Path, receipt: Path) -> dict[str, Any]:
     record = json.loads((formal / "c2.formal.record.v1.json").read_text(encoding="utf-8"))
     auth = json.loads(authorization.read_text(encoding="utf-8"))
@@ -33,10 +67,7 @@ def make_proposal(formal: Path, authorization: Path, receipt: Path) -> dict[str,
     from scripts.audit_lidousha_review_package import audit_package
     saved = json.loads((formal / "package_audit.json").read_text(encoding="utf-8"))
     current = audit_package(formal)
-    current_cmp, saved_cmp = dict(current), dict(saved)
-    current_cmp.pop("root", None); saved_cmp.pop("root", None)
-    if current_cmp != saved_cmp or not isinstance(saved.get("root"), str) or not Path(str(saved["root"])).is_absolute() or current.get("root") != str(formal.absolute()) or current.get("passed") is not True or current.get("blocking_issue_count") != 0:
-        raise ValueError("C2 formal audit replay drift")
+    _validate_current_formal_audit_replay(formal=formal, saved=saved, current=current)
     receipt_data = json.loads(receipt.read_text(encoding="utf-8"))
     proposal_binding = receipt_data.get("proposal")
     if not isinstance(proposal_binding, Mapping) or not isinstance(proposal_binding.get("path"), str):
@@ -77,7 +108,8 @@ def validate_proposal(value: Mapping[str, Any], *, formal: Path, authorization: 
     required = {"schema_version", "candidate_id", "recording_date", "title", "accepted", "upload_allowed", "scope", "technical_recovery_projection_not_historical_producer_story_contract", "formal_inputs", "authorization", "technical_receipt", "frozen_claims", "generic_historical_story_contract", "unavailable_or_not_applicable", "self_seal"}
     if set(value) != required or value.get("schema_version") != SCHEMA or value.get("candidate_id") != CID or value.get("recording_date") != DATE or value.get("title") != TITLE or value.get("accepted") is not False or value.get("upload_allowed") is not False or value.get("scope") != SCOPE or value.get("technical_recovery_projection_not_historical_producer_story_contract") is not True:
         raise ValueError("C2 legacy recovery proposal identity/scope drift")
-    unsigned = dict(value); seal = unsigned.pop("self_seal")
+    unsigned = dict(value)
+    seal = unsigned.pop("self_seal")
     raw = json.dumps(unsigned, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     if seal != {"canonical_json_without_self_seal_sha256": "sha256:" + hashlib.sha256(raw).hexdigest()}:
         raise ValueError("C2 legacy recovery proposal self-seal drift")
@@ -114,7 +146,8 @@ def validate_accepted_execution_contract(value: Mapping[str, Any], *, proposal: 
     expected = {"path": proposal.name, "bytes": proposal.stat().st_size, "sha256": "sha256:" + sha256(proposal)}
     if value.get("proposal") != expected:
         raise ValueError("C2 legacy execution proposal binding drift")
-    unsigned = dict(value); seal = unsigned.pop("self_seal")
+    unsigned = dict(value)
+    seal = unsigned.pop("self_seal")
     raw = json.dumps(unsigned, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     if seal != {"canonical_json_without_self_seal_sha256": "sha256:" + hashlib.sha256(raw).hexdigest()}:
         raise ValueError("C2 legacy execution self-seal drift")
