@@ -1978,6 +1978,54 @@ def test_make_manifest_freezes_matching_package_publication_authority(
         ]
     ) == 0
 
+    adapter_created = 0
+
+    def mutation_adapter(*_args):
+        nonlocal adapter_created
+        adapter_created += 1
+        raise AssertionError("adapter must not be created after audit rejection")
+
+    def rejected_current_audit(root):
+        payload = audit_package(root)
+        payload.update(
+            {
+                "passed": False,
+                "issues": [
+                    {
+                        "code": "REDELIVERY_BASELINE_DELIVERY_LOCAL_SUBTITLE_MISMATCH"
+                    }
+                ],
+                "issue_count": 1,
+                "blocking_issue_count": 1,
+            }
+        )
+        return payload
+
+    blocked_plan = tmp_path / "audit-rejected-repair-plan.json"
+    blocked_journal = tmp_path / "audit-rejected-repair-journal.jsonl"
+    monkeypatch.setattr(au, "audit_package", rejected_current_audit)
+    monkeypatch.setattr(au, "_same_bv_adapter", mutation_adapter)
+    assert au.main(
+        [
+            "repair-plan",
+            "--manifest",
+            str(manifest),
+            "--bvid",
+            RECOVERY_BVID,
+            "--out",
+            str(blocked_plan),
+            "--journal",
+            str(blocked_journal),
+        ]
+    ) == 2
+    assert adapter_created == 0
+    assert not blocked_plan.exists()
+    assert not blocked_journal.exists()
+    monkeypatch.setattr(au, "audit_package", audit_package)
+    monkeypatch.setattr(
+        au, "_same_bv_adapter", lambda *_args: ReadOnlyAdapter()
+    )
+
     manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
     manifest_data["recovery_publication_authority"]["cid"] = 999
     manifest.write_text(
