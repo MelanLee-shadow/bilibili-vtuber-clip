@@ -180,6 +180,15 @@ timeline 上重放已绑定的 semantic verdict；第 8 阶段直接物化 autho
   reviewed SRT 与 baseline audit。该 stage 不是 package apply：speaker/ASS/burn、title/cover、
   final review 和 package audit 仍须从完整 after-image 通过，之后才可经 state-last transaction
   安装；不得用单独 SRT/MP4 或 private stage 覆盖 live package。
+- `operator-reviewed-text-full-ownership-pin.v3` 的 reviewed SRT 必须显式声明唯一时间域：
+  `DELIVERY_LOCAL` 表示 cue 0 已对应最终主片 source 起点，manifest 的绝对区间必须逐毫秒等于
+  `[piece_start + final_start, piece_start + final_end)`，重放是 identity，禁止再减一次 crop；
+  `PIECE_LOCAL` 表示 cue 0 对应完整 content piece 起点，只允许在 full-window 重放后按最终边界裁
+  **一次**。缺字段、未知值、domain/区间/record/media boundary 不一致或 delivery-local cue 越过最终
+  媒体时长均 fail closed。piece-local baseline 不能把媒体开场强制为 source-local 0；
+  delivery-local head 若与 semantic start 的受控 lead 几何矛盾也必须拒绝。历史 C3 仅因已有独立
+  deploy-sealed exact-final authority，可按其原 manifest bytes 合成 `DELIVERY_LOCAL`；不得扩展成
+  通用兼容默认。
 - reviewed-baseline replay 的 `--plan` 只读取 sealed baseline/old-record/source 绑定，不能报成
   full preflight；`--readiness-graph` 只读指定 date/CID 的 state discovery，不审计其它日期的
   package。只有 `--full-dry-run` 才在 candidate-private namespace 完整重建 speaker/ASS/burn、
