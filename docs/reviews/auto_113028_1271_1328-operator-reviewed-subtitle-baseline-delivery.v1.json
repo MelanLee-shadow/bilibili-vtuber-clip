@@ -18,8 +18,9 @@
   "source_recording": {
     "basename": "22966160_20260814-11-30-28.mp4",
     "sha256": "20c2fc8ccf054c038eb2e308a9ed2a0bb00593de8c7e8895e87ae0b1ee13734c",
-    "absolute_start_ms": 1261170,
-    "absolute_end_ms": 1376550
+    "absolute_start_ms": 1270920,
+    "absolute_end_ms": 1328694,
+    "time_domain": "DELIVERY_LOCAL"
   },
   "cue_count": 21,
   "source_cue_count": 24,
@@ -31,8 +32,8 @@
       "source_index": "13",
       "start_ms": 28700,
       "end_ms": 30460,
-      "absolute_source_start_ms": 1289870,
-      "absolute_source_end_ms": 1291630,
+      "absolute_source_start_ms": 1299620,
+      "absolute_source_end_ms": 1301380,
       "before": "niji的夏天，宁静",
       "after": null,
       "disposition": "OPERATOR_DROP"
@@ -42,8 +43,8 @@
       "source_index": "14",
       "start_ms": 30460,
       "end_ms": 33240,
-      "absolute_source_start_ms": 1291630,
-      "absolute_source_end_ms": 1294410,
+      "absolute_source_start_ms": 1301380,
+      "absolute_source_end_ms": 1304160,
       "before": "你躺你的躺耶",
       "after": null,
       "disposition": "OPERATOR_DROP"
@@ -53,8 +54,8 @@
       "source_index": "15",
       "start_ms": 33240,
       "end_ms": 36140,
-      "absolute_source_start_ms": 1294410,
-      "absolute_source_end_ms": 1297310,
+      "absolute_source_start_ms": 1304160,
+      "absolute_source_end_ms": 1307060,
       "before": "你你你你躺你的躺",
       "after": null,
       "disposition": "OPERATOR_DROP"
