@@ -137,6 +137,7 @@ def test_delivery_local_stage_projection_is_identity_without_cue_loss(
     }), encoding="utf-8")
     padded = tmp_path / f"padded_{padded_start}_{padded_end}.mp4"
     plan = SimpleNamespace(
+        date="2026-08-14",
         candidate_id=candidate_id,
         record_path=record,
         padded_path=padded,
