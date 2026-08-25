@@ -11,7 +11,7 @@
       "bvid": "BV1Sahj65ExM",
       "aid": 117157295950921,
       "cid": 41264349440,
-      "source_public_verify_repo_path": "reports/authorized_uploads/2026-08-25-c5-timeaxis-repair/auto_113028_1271_1328.public_verify.json",
+      "source_public_verify_repo_path": "assets/lidousha/published_recovery_evidence/c5-original-public-verify.json",
       "source_public_verify_sha256": "sha256:b00c0374aaf6a01de7be9bab859d48badcc0a9f27fbb2c18e63900fd515e9f03",
       "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
       "source_public_verify_status": "VERIFIED_PUBLIC"
@@ -25,7 +25,7 @@
       "bvid": "BV1h7hg68E8Y",
       "aid": 117154678638617,
       "cid": 41244820167,
-      "source_public_verify_repo_path": "reports/authorized_uploads/2026-08-25-c4-timeaxis-repair/auto_113028_1602_1698.public_verify.json",
+      "source_public_verify_repo_path": "assets/lidousha/published_recovery_evidence/c4-original-public-verify.json",
       "source_public_verify_sha256": "sha256:b6846c0b51985065b000a06d5c9ce5f2c8bf71d4fa829cf38244f8047fffeaab",
       "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
       "source_public_verify_status": "VERIFIED_PUBLIC"

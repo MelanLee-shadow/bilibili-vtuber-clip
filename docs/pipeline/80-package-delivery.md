@@ -486,7 +486,9 @@ prepare 工作。一个被阻候选不得阻断其它候选。
   `--published-recovery-bvid` 只接受仓库 hash-bound C4/C5 publication registry、published-state
   authority 与当前 state 的完整 BVID/AID/published-CID/reconciliation/title tuple 一致。C4 的
   original-authority CID→当前 CID 差异只由指定 `same-bv-repair-completed.v1` predecessor 的精确
-  repo path/SHA/new CID 放行；普通 C5 不得借用该例外。`--full-dry-run` 不保留包，`--apply
+  repo path/SHA/new CID 放行；普通 C5 不得借用该例外。public-verify 与 predecessor 原始字节必须
+  hash-bound 复制到 deploy-managed `assets/`，生产缺该文件时 fail closed；runtime `reports/` 历史路径
+  不得冒充部署 authority。`--full-dry-run` 不保留包，`--apply
   --recovery-package-root <new-private-cid-root>` 只把 canonical finalizer、manual manifest 与
   auditor 已通过的 package 在私有 sibling stage 内完成 receipt、root projection 与最终 drift
   check，再用 atomic no-replace 一次落到新的 mode-0700 私有根；失败不得留下占位目标或覆盖旧包。

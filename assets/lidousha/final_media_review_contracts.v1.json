@@ -1,6 +1,6 @@
 {
   "schema_version": "lidousha-final-media-review-contracts.v1",
-  "authority": "Ivan 2026-07-22/23, 2026-07-28, 2026-07-29, 2026-07-30, 2026-08-09, and 2026-08-20 explicit correction, same-BV repair authorization, and final-review instructions, normalized into exact final-video review points; timestamps are deliberately broad windows around the reported point so the reviewer must inspect the surrounding audio, subtitle, callback, and boundary context.",
+  "authority": "Ivan 2026-07-22/23, 2026-07-28, 2026-07-29, 2026-07-30, 2026-08-09, 2026-08-20, and 2026-08-25 explicit correction, same-BV repair authorization, and final-review instructions, normalized into exact final-video review points; timestamps are deliberately broad windows around the reported point so the reviewer must inspect the surrounding audio, subtitle, callback, and boundary context.",
   "contracts": [
     {
       "candidate_id": "auto_193450_3573_3665",
@@ -588,6 +588,82 @@
           "final_video_start_ms": 6183,
           "final_video_end_ms": 148400,
           "expectation": "除本轮 Ivan 明确裁定与已绑定既有裁定外，全片最终烧录字幕必须与当前受管发布词面逐 cue 保持一致；不得因本次定点修复改写其他人名、标题、句序、时间或边界。"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_113028_1271_1328",
+      "subtitle_review_points": [
+        {
+          "point_id": "c5-intro-first-cue-single-offset",
+          "final_video_start_ms": 6183,
+          "final_video_end_ms": 12553,
+          "expectation": "品牌片头必须在 6.183 秒结束，主片第 1 条字幕“我觉得特别神奇”须在最终视频 6.433 秒开始，随后前四条字幕与人声持续同步；不得再多出 9.750 秒延迟。"
+        },
+        {
+          "point_id": "c5-e-cue-single-offset",
+          "final_video_start_ms": 14500,
+          "final_video_end_ms": 17000,
+          "expectation": "单字字幕“呃”须在最终视频 15.743 秒出现并与该声对齐（主片 9.560 秒加一次 6.183 秒片头）；不得重复扣除或叠加 9.750 秒裁切偏移。"
+        },
+        {
+          "point_id": "c5-intentional-subtitle-gap",
+          "final_video_start_ms": 34363,
+          "final_video_end_ms": 43013,
+          "expectation": "“要安静地睡过去了吗”结束后至“谢谢风浪的心动卡”开始前是受管字幕空窗，34.363–43.013 秒不得残留、提前或拖尾任何烧录字幕。"
+        },
+        {
+          "point_id": "c5-late-quantum-exchange-natural-end",
+          "final_video_start_ms": 51703,
+          "final_video_end_ms": 63957,
+          "expectation": "末段须从“kmx和李豆沙是量子纠缠的关系吗”依次完整到“不管在世界哪个角落，都会出现量子纠缠的”，逐句与人声同步；最后字幕在 63.813 秒结束，成片在 63.957 秒自然收束，不得截断。"
+        },
+        {
+          "point_id": "c5-full-release-timebase-stability",
+          "final_video_start_ms": 6183,
+          "final_video_end_ms": 63957,
+          "expectation": "全片 21 条最终烧录字幕必须逐条等于 reviewed SRT 的 DELIVERY_LOCAL 时间加且仅加一次 6.183 秒片头；不得出现 9.750 秒二次裁切、局部重置、累积漂移、空窗破坏或结尾截断。"
+        }
+      ]
+    },
+    {
+      "candidate_id": "auto_113028_1602_1698",
+      "subtitle_review_points": [
+        {
+          "point_id": "c4-intro-title-single-offset",
+          "final_video_start_ms": 5749,
+          "final_video_end_ms": 9839,
+          "expectation": "品牌片头必须在 5.749 秒结束，标题式前两条字幕须从最终视频 5.999 秒起依次显示《线上直播间 / 老公不可能是女生？！》问号感叹号并在 9.839 秒结束；不得再多出 9.750 秒延迟。"
+        },
+        {
+          "point_id": "c4-japanese-mixed-cue-single-offset",
+          "final_video_start_ms": 12039,
+          "final_video_end_ms": 14079,
+          "expectation": "“见面发现，あれ？”须在最终视频 12.039–14.079 秒与人声对齐（主片 6.290–8.330 秒加一次 5.749 秒片头）；不得重复应用裁切偏移。"
+        },
+        {
+          "point_id": "c4-gender-permutation-chain",
+          "final_video_start_ms": 56069,
+          "final_video_end_ms": 66409,
+          "expectation": "从“你李姐也是男的”到“男的也是女的”的七条男女身份排列字幕须在 56.069–66.409 秒连续按 reviewed SRT 次序与人声对齐，不得整体迟到、重排或漏句。"
+        },
+        {
+          "point_id": "c4-intentional-long-subtitle-gap",
+          "final_video_start_ms": 66409,
+          "final_video_end_ms": 95979,
+          "expectation": "身份排列结束后至末段“男的女的磕到了什么”开始前是受管长字幕空窗，66.409–95.979 秒不得残留、提前或拖尾任何烧录字幕。"
+        },
+        {
+          "point_id": "c4-ending-worldview-natural-end",
+          "final_video_start_ms": 95979,
+          "final_video_end_ms": 102539,
+          "expectation": "末三条须从“男的女的磕到了什么”完整到“男的女的违背这个直播间世界观了”，逐句与人声同步；最后字幕在 102.139 秒结束，成片在 102.539 秒自然收束，不得截断。"
+        },
+        {
+          "point_id": "c4-full-release-timebase-stability",
+          "final_video_start_ms": 5749,
+          "final_video_end_ms": 102539,
+          "expectation": "全片 20 条最终烧录字幕必须逐条等于 reviewed SRT 的 DELIVERY_LOCAL 时间加且仅加一次 5.749 秒片头；不得出现 9.750 秒二次裁切、局部重置、累积漂移、空窗破坏或结尾截断。"
         }
       ]
     }

@@ -15,14 +15,14 @@ REGISTRY_REPO_PATH = (
     "recovery_publication_authority_2026-08-25_c4_c5_timeaxis.v1.json"
 )
 REGISTRY_SHA256 = (
-    "sha256:a438157b6cbbe4b17005fe46a30db9dc0882eb0419c280bb7e3f1e4bfdfeaaf7"
+    "sha256:25ad60011739fdc661871eea0fc87e0ba61dfd3f034cbe9e5993999a473fe204"
 )
 STATE_AUTHORITY_REPO_PATH = (
     "assets/lidousha/"
     "published_recovery_state_authority_2026-08-25_c4_c5.v1.json"
 )
 STATE_AUTHORITY_SHA256 = (
-    "sha256:fdba4d77646acad918299be4a6e345dca046871d3261856f81c1e4ae6932bef1"
+    "sha256:3bf4974e2b723845443a235fde3d94f4820e9981b119fb85ea18572fff00a0ec"
 )
 _SHA256 = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _DATE = re.compile(r"20[0-9]{2}-[0-9]{2}-[0-9]{2}\Z")

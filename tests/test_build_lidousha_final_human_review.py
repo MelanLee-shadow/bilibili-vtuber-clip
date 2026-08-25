@@ -47,6 +47,28 @@ def _sha256(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def test_timeaxis_repair_contracts_bind_exact_final_video_windows() -> None:
+    _sha, contracts = human_review._review_contracts()  # noqa: SLF001
+    c5 = contracts["auto_113028_1271_1328"]
+    c4 = contracts["auto_113028_1602_1698"]
+    assert [
+        (point["final_video_start_ms"], point["final_video_end_ms"])
+        for point in c5
+    ] == [
+        (6183, 12553), (14500, 17000), (34363, 43013),
+        (51703, 63957), (6183, 63957),
+    ]
+    assert [
+        (point["final_video_start_ms"], point["final_video_end_ms"])
+        for point in c4
+    ] == [
+        (5749, 9839), (12039, 14079), (56069, 66409),
+        (66409, 95979), (95979, 102539), (5749, 102539),
+    ]
+    assert "9.750 秒二次裁切" in c5[-1]["expectation"]
+    assert "9.750 秒二次裁切" in c4[-1]["expectation"]
+
+
 @pytest.fixture
 def receipt_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     root = tmp_path / "package"

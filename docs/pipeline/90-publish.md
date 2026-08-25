@@ -87,7 +87,10 @@ outer receipt path/hash 冻结进 package attestation，`verify`、`repair-plan`
   泛化检查表无效。672 必须把 0:13“前半无声、后半有声、全段无我草”和 1:48“整条 L 问句
   无声并删除”作为两个独立 exact point 验收；850 必须分别验收 0:13 怪叫空白、0:59
   “他一副，一副”和 1:23“kmx欺负人”；1493 必须验收“下斗里”已按 Ivan 裁定修为
-  粉丝队玩梗专名“沙豆李”。
+  粉丝队玩梗专名“沙豆李”。C5 `auto_113028_1271_1328` 与 C4
+  `auto_113028_1602_1698` 的 2026-08-25 时间轴修复还必须按 committed contract 验收片头仅加一次、
+  首/中/尾定点、受管字幕空窗、完整自然结尾和全片 DELIVERY_LOCAL 单一 timebase；不得把机器 audit
+  代替 exact-final-video 全片感知复核。
 - receipt 同时绑定 create-only 提交的
   `lidousha-final-human-review-evidence.v2` 路径、SHA-256 与字节数，以及 package review
   manifest/audit、record、reviewed title、原 BVID/AID/CID publication target 和 final

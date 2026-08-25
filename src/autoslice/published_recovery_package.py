@@ -138,6 +138,33 @@ def _deployment_authority(runtime_root: Path) -> dict[str, str]:
         ) from exc
 
 
+def _require_deployed_publication_source(
+    repo: Path, authority: Mapping[str, object],
+) -> None:
+    relative = Path(str(authority.get("source_public_verify_repo_path") or ""))
+    if (
+        relative.is_absolute()
+        or ".." in relative.parts
+        or not relative.parts
+        or relative.parts[0] != "assets"
+    ):
+        raise ReviewedBaselineReplayError(
+            "PUBLISHED_RECOVERY_AUTHORITY_SOURCE_OUTSIDE_DEPLOYMENT"
+        )
+    try:
+        source = regular_binding(
+            repo / relative, label="PUBLISHED_RECOVERY_AUTHORITY_SOURCE"
+        )
+    except ReviewedBaselineReplayError as exc:
+        raise ReviewedBaselineReplayError(
+            "PUBLISHED_RECOVERY_AUTHORITY_SOURCE_DRIFT"
+        ) from exc
+    if source.sha256 != authority.get("source_public_verify_sha256"):
+        raise ReviewedBaselineReplayError(
+            "PUBLISHED_RECOVERY_AUTHORITY_SOURCE_DRIFT"
+        )
+
+
 def published_recovery_preflight(
     plan: ReplayPlan,
     *,
@@ -163,6 +190,7 @@ def published_recovery_preflight(
             "PUBLISHED_RECOVERY_AUTHORITY_INVALID"
         ) from exc
     authority = authorities[plan.candidate_id]
+    _require_deployed_publication_source(repo, authority)
     authority_bvid = str(authority.get("bvid") or "")
     if authority_bvid != expected_bvid:
         raise ReviewedBaselineReplayError("PUBLISHED_RECOVERY_BVID_MISMATCH")
@@ -278,6 +306,7 @@ def _revalidate_inputs(
         raise ReviewedBaselineReplayError(
             "PUBLISHED_RECOVERY_AUTHORITY_DRIFT"
         ) from exc
+    _require_deployed_publication_source(repo, current)
     if current != dict(preflight.publication_authority):
         raise ReviewedBaselineReplayError("PUBLISHED_RECOVERY_AUTHORITY_DRIFT")
     try:

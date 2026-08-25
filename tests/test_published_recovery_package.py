@@ -65,6 +65,13 @@ def test_committed_c4_c5_recovery_registry_is_hash_bound() -> None:
     assert c5_state["published_cid"] == 41264349440
     assert c4_state["published_cid"] == 41264153653
     assert c4_state["publication_authority_cid"] == 41244820167
+    for authority in authorities.values():
+        source = Path(str(authority["source_public_verify_repo_path"]))
+        assert source.parts[0] == "assets"
+        assert (ROOT / source).is_file()
+    predecessor = Path(str(c4_state["predecessor_completed"]["repo_path"]))
+    assert predecessor.parts[0] == "assets"
+    assert (ROOT / predecessor).is_file()
 
 
 def _tree_snapshot(root: Path) -> list[tuple[str, str, int, str | None]]:
@@ -102,12 +109,18 @@ def test_c4_published_state_remains_compatible_with_predecessor_repair(
         (ROOT / recovery_contract.STATE_AUTHORITY_REPO_PATH).read_bytes()
     )
     predecessor_relative = Path(
-        "reports/authorized_uploads/2026-08-25-c4-timeaxis-repair/"
-        "same-bv-repair-verify-live-20260825.json"
+        "assets/lidousha/published_recovery_evidence/"
+        "c4-predecessor-completed.json"
     )
     predecessor = repo / predecessor_relative
     predecessor.parent.mkdir(parents=True, exist_ok=True)
     predecessor.write_bytes((ROOT / predecessor_relative).read_bytes())
+    public_verify_relative = Path(
+        "assets/lidousha/published_recovery_evidence/"
+        "c4-original-public-verify.json"
+    )
+    public_verify = repo / public_verify_relative
+    public_verify.write_bytes((ROOT / public_verify_relative).read_bytes())
     record = tmp_path / "c4.record.json"
     record.write_text("{}\n")
     _write_json(
@@ -286,6 +299,23 @@ def _authority_fixture(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "REGISTRY_SHA256",
         "sha256:" + hashlib.sha256(registry.read_bytes()).hexdigest(),
     )
+
+
+def test_published_recovery_preflight_requires_deployed_publication_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _plan(tmp_path)
+    runtime = tmp_path / "runtime"
+    _authority_fixture(runtime, monkeypatch)
+    _write_json(runtime / "state" / f"{DATE}.json", _published_state())
+    (runtime / "repo/assets/lidousha/source.json").unlink()
+    with pytest.raises(
+        ReviewedBaselineReplayError,
+        match="PUBLISHED_RECOVERY_AUTHORITY_SOURCE_DRIFT",
+    ):
+        recovery.published_recovery_preflight(
+            plan, runtime_root=runtime, expected_bvid=BVID
+        )
 
 
 def test_published_recovery_preflight_binds_exact_state_and_authority(
@@ -717,6 +747,7 @@ def test_published_recovery_destination_never_replaces_existing_package(
     [
         ("record", "PUBLISHED_RECOVERY_SOURCE_RECORD_DRIFT"),
         ("registry", "PUBLISHED_RECOVERY_AUTHORITY_DRIFT"),
+        ("publication_source", "PUBLISHED_RECOVERY_AUTHORITY_SOURCE_DRIFT"),
         ("state_authority", "PUBLISHED_RECOVERY_STATE_AUTHORITY_DRIFT"),
         ("deployment", "PUBLISHED_RECOVERY_DEPLOYMENT_AUTHORITY_DRIFT"),
     ],
@@ -734,6 +765,8 @@ def test_prepare_published_recovery_revalidates_every_authority_surface(
         plan.record_path.write_text('{"tampered":true}\n')
     elif surface == "registry":
         (runtime / "repo" / recovery.REGISTRY_REPO_PATH).write_text("{}\n")
+    elif surface == "publication_source":
+        (runtime / "repo/assets/lidousha/source.json").unlink()
     elif surface == "state_authority":
         (runtime / "repo" / recovery_contract.STATE_AUTHORITY_REPO_PATH).write_text(
             "{}\n"

@@ -80,6 +80,9 @@ def test_committed_review_contract_extends_exact_recovery_five_for_daily_repairs
             "auto_200130_1323_1603",
             "auto_173005_934_1166",
             "auto_113022_354_496",
+        # 2026-08-25 reviewed-baseline time-axis same-BV repairs (C5 then C4).
+        "auto_113028_1271_1328",
+        "auto_113028_1602_1698",
     ]
     review = json.loads(
         (
