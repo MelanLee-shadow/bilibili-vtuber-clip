@@ -1,0 +1,100 @@
+{
+  "aid": 117154678638617,
+  "bvid": "BV1h7hg68E8Y",
+  "candidate_id": "auto_113028_1602_1698",
+  "live_snapshot": {
+    "creator": {
+      "aid": 117154678638617,
+      "available": true,
+      "bvid": "BV1h7hg68E8Y",
+      "metadata": {
+        "copyright": 2,
+        "cover": "//bilibili-cover-asset/bfs/archive/741cd04978ce2dff8f9602db99168354207083a1.png",
+        "desc": "https://live.bilibili.com/\n本切片由 bilibili-vtuber-clip 项目提供：https://github.com/MelanLee-shadow/bilibili-vtuber-clip\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+        "source": "https://live.bilibili.com/",
+        "tags": [
+          "李豆沙",
+          "直播切片",
+          "虚拟UP主",
+          "虚拟主播"
+        ],
+        "tid": 21,
+        "title": "【李豆沙】线上直播间老公不可能是女生，李姐开始男女身份排列组合，竟敢磕男的女的？违背直播间世界观了"
+      },
+      "state": 0,
+      "state_desc": "开放浏览",
+      "videos": [
+        {
+          "cid": 41264153653,
+          "filename": "n260826ad2ks9i2r4kfe633nkootucj4",
+          "title": "【李豆沙】线上直播间老公不可能是女生，李姐开始男女身份排列组合，竟敢磕男的女的？违背直播间世界观了"
+        }
+      ]
+    },
+    "public": {
+      "aid": 117154678638617,
+      "available": true,
+      "bvid": "BV1h7hg68E8Y",
+      "cid": 41264153653,
+      "metadata": {
+        "copyright": 2,
+        "cover": "//bilibili-cover-asset/bfs/archive/741cd04978ce2dff8f9602db99168354207083a1.png",
+        "desc": "https://live.bilibili.com/\n本切片由 bilibili-vtuber-clip 项目提供：https://github.com/MelanLee-shadow/bilibili-vtuber-clip\n李豆沙个人主页：https://space.bilibili.com/1703797642\n李豆沙直播间：https://live.bilibili.com/22966160",
+        "tags": [
+          "李豆沙",
+          "直播切片",
+          "虚拟UP主",
+          "虚拟主播"
+        ],
+        "tid": 21,
+        "title": "【李豆沙】线上直播间老公不可能是女生，李姐开始男女身份排列组合，竟敢磕男的女的？违背直播间世界观了"
+      },
+      "state": 0
+    },
+    "section": {
+      "available": true,
+      "matches": [
+        {
+          "aid": 117154678638617,
+          "bvid": "BV1h7hg68E8Y",
+          "cid": 41264153653,
+          "title": "【李豆沙】线上直播间老公不可能是女生，李姐开始男女身份排列组合，竟敢磕男的女的？违背直播间世界观了"
+        }
+      ],
+      "section_id": 9320779
+    }
+  },
+  "manifest": {
+    "path": "/opt/bilive/autoslice/private-c4-timeaxis-repair-20260825/out/2026-08-14/auto_113028_1602_1698/replacement_recuts/auto_113028_1602_1698.same-bv-repair.upload-manifest.json",
+    "sha256": "29e3e8e2b935bf74bb40a4b71939d0ec5ec807ddae66d022d2d6b426a45a1f00"
+  },
+  "new_cid": 41264153653,
+  "plan": {
+    "path": "/opt/bilive/autoslice/private-c4-timeaxis-repair-20260825/same-bv-repair-plan.v2.json",
+    "plan_id": "8f207e4e29c44432b50e75cba8ce548e",
+    "sha256": "eb8aa715d68c70db9d144da9dc8c760295c43f323a221301b80e450f66ab639c"
+  },
+  "rc": 0,
+  "remote_mutation": false,
+  "replacement": {
+    "cover": {
+      "bytes": 1064000,
+      "path": "/opt/bilive/autoslice/private-c4-timeaxis-repair-20260825/out/2026-08-14/auto_113028_1602_1698/replacement_recuts/auto_113028_1602_1698.cover.png",
+      "sha256": "8dcee64217c3e55c788626ae40f14b19ab9ad85d97ee845ed20f24c7c734b4e2"
+    },
+    "video": {
+      "bytes": 51279435,
+      "path": "/opt/bilive/autoslice/private-c4-timeaxis-repair-20260825/out/2026-08-14/auto_113028_1602_1698/replacement_recuts/auto_113028_1602_1698.mp4",
+      "sha256": "409868886d8eb234d4d1df8e7368b08c5f29388787f90e920593c4de7bc11b42"
+    }
+  },
+  "schema_version": "same-bv-repair-completed.v1",
+  "status": "VERIFIED_FRESH_LIVE",
+  "verified_at": "2026-08-25T17:15:37+0000",
+  "verified_journal_row": {
+    "at": "2026-08-25T17:15:24.812981+00:00",
+    "journal_path": "/opt/bilive/autoslice/reports/same_bv_repair_ledger.jsonl",
+    "row_sha256": "1423afd19870c8f82aaf499d9befacaec5423f8d0adb9cce43a8be5f89e1c2ac",
+    "seq": 48
+  }
+}

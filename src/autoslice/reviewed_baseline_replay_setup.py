@@ -23,6 +23,7 @@ def build_reviewed_baseline_replay_spec(
     baseline_config: Mapping[str, object],
     boundary: Mapping[str, object],
     error_factory: Callable[[str], Exception],
+    recovery_publication_authority: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Construct the bound replay spec without widening its authority surface."""
 
@@ -31,9 +32,18 @@ def build_reviewed_baseline_replay_spec(
     selection_hook = str(story.get("selection_hook") or "")
     if story.get("candidate_id") != candidate_id or not selection_hook:
         raise error_factory("REPLAY_STORY_CONTRACT_BINDING_DRIFT")
+    given_title = None
+    if recovery_publication_authority is not None:
+        from src.autoslice.recovery_title_authority import expected_recovery_publish_title
+
+        given_title = expected_recovery_publish_title(recovery_publication_authority)
     return {
         "date": date, "candidate_id": candidate_id, "output_root": str(output_root),
-        "given_title": None, "recovery_publication_authority": None,
+        "given_title": given_title,
+        "recovery_publication_authority": (
+            dict(recovery_publication_authority)
+            if recovery_publication_authority is not None else None
+        ),
         # Use the ordinary CID-injective Talk basename; never fall back to a
         # bare candidate id when a historical replay is prepared privately.
         "delivery_name": canonical_talk_delivery_basename(

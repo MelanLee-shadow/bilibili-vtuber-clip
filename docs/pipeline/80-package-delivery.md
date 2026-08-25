@@ -481,6 +481,25 @@ prepare 工作。一个被阻候选不得阻断其它候选。
   public identity、原 state、v2 route/host identity 和每个封面证据字节，再 create-only
   复制到隔离目标并写 typed marker。任何漂移、多个封面或 sidecar/marker 非法均拒绝；严格
   carry 不得调用 CPA 或生成新封面。无该显式 lane 时历史 `reuse_cover` 行为不因此放宽。
+- **已发布 reviewed-baseline package-only recovery**：候选当前 state 已是 `published` 时，禁止
+  找历史 state 或手工改回 `candidate_rejected` 来取得 after-image。显式
+  `--published-recovery-bvid` 只接受仓库 hash-bound C4/C5 publication registry、published-state
+  authority 与当前 state 的完整 BVID/AID/published-CID/reconciliation/title tuple 一致。C4 的
+  original-authority CID→当前 CID 差异只由指定 `same-bv-repair-completed.v1` predecessor 的精确
+  repo path/SHA/new CID 放行；普通 C5 不得借用该例外。`--full-dry-run` 不保留包，`--apply
+  --recovery-package-root <new-private-cid-root>` 只把 canonical finalizer、manual manifest 与
+  auditor 已通过的 package 在私有 sibling stage 内完成 receipt、root projection 与最终 drift
+  check，再用 atomic no-replace 一次落到新的 mode-0700 私有根；失败不得留下占位目标或覆盖旧包。
+  包内 `<cid>.published-recovery-preflight.json` 与
+  `<cid>.published-recovery-package-receipt.json` 都属于 audited inputs：前者固定 state SHA、完整
+  current-state/predecessor authority、deployment authority、publication authority、source-record SHA、
+  `state_transition=none` 与 `same_bv_only=true`；后者逐字绑定前者及最终 video/SRT/cover。manual
+  manifest 必须投影 typed receipt 路径/SHA，不能伪造 legacy corrected receipt；外层 VERIFIED
+  receipt 再绑定最终 video/SRT/audit/manifest/两份 recovery evidence。落包前后任一 state、registry、
+  predecessor、source record 或 deployed seal 漂移，目标已存在/父目录非私有，或 root-neutral
+  canonical re-audit 不一致均拒绝。这一步既不替换 production package，也不授权/执行上传；后续
+  `authorized_upload.py make-manifest/verify/repair-plan` 会重放 outer receipt、当前 state 与 live
+  authority 后，才可进入 90 的 same-BV journal 路径。
 - tag 按成品字幕重算（`upload_tag_policy.py` + `scripts/suggest_upload_tags.py`）。profile
   `upload-tag-policy.v2` 固定 4 个 base 位与最多 6 个 dynamic 位，总上限 10；专名（含
   `important_content_ips` 白名单中的高显著 IP/节目名）只由确定性 owner 从标题/最终 SRT 命中，

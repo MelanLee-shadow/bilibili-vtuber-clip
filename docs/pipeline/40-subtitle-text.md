@@ -201,6 +201,15 @@ timeline 上重放已绑定的 semantic verdict；第 8 阶段直接物化 autho
   前一 candidate 的 state 成功不得使后一 candidate 复用 stale whole-state image；任一 drift
   在正式 target/state 写前拒绝。这个 no-upload transaction 不获取 `upload.lock`，也不创建
   `AUTO_UPLOAD` 或 upload manifest；投稿仍只走 90 的 single-uploader 显式授权闭环。
+- 已发布候选不得伪造 `candidate_rejected` state 来调用上一路径。只有显式
+  `--published-recovery-bvid` 可进入 package-only recovery：PLAN 逐字绑定 committed same-BV
+  publication authority 与当前唯一 `published` state row；full-dry-run 只在私有 stage 验证；
+  apply 还必须给 create-only `--recovery-package-root`，只落 operator-private package，并声明
+  `state_transition=none / same_bv_only=true / upload_allowed=false`。最终 package 内的
+  `<cid>.published-recovery-preflight.json` 必须进入 canonical audit，绑定当时 production state SHA、
+  BVID/AID/CID/title、authority 与 source record；state 在 prepare、落包前后任一点漂移均拒绝。
+  该窄门不写 production state、正式 package、delivery、ledger 或 upload surface，正常 replay 的
+  `candidate_rejected` invariant 继续保持不变。
 - redelivery v2 在 coverage prefix/tail 唯一允许保留的 edge straddler，必须与**每一条**
   retained reviewed cue 都按半开区间零重叠；恰好边界相接的 0ms overlap 可披露为
   `BOUNDARY_STRADDLE_WITHOUT_REVIEWED_CUE_OVERLAP`。任何正重叠，包括 1ms，仍须报

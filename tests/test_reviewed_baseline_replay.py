@@ -642,12 +642,17 @@ def test_flatten_preserves_prepared_recut_basename_not_role_suffixes(
         "policy_epoch": package_audit.AUDIT_POLICY_EPOCH,
         "passed": True, "issue_count": 0, "blocking_issue_count": 0,
     })
+    (source_root / "carried-from-old-package.txt").write_text("carry\n")
     plan = replay.ReplayPlan(
-        DATE, CID, source_root.parent, source_root / f"{CID}.recut.record.json",
+        DATE, CID, tmp_path / "recovery-target" / CID,
+        source_root / f"{CID}.recut.record.json",
         source_root / "padded_0_1.mp4", 0, 1, "sha256:" + "0" * 64,
         object(), (),
     )
-    package = replay.flatten_and_audit_private_replay(finalization, plan=plan)
+    package = replay.flatten_and_audit_private_replay(
+        finalization, plan=plan, base_package_root=source_root,
+    )
+    assert (package.root / "carried-from-old-package.txt").read_text() == "carry\n"
     assert (package.root / f"{CID}.recut.publish.json").is_file()
     assert (package.root / f"{CID}.recut.speaker-final.json").is_file()
     assert (package.root / f"{CID}.publish.json").is_file()

@@ -13,6 +13,10 @@ from src.autoslice.addressee_attribution import rebuild_speaker_evidence
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.speaker_common import SPEAKER_FINALIZATION_SCHEMA
 from src.autoslice.source_fact_review import review_and_repair_source_facts
+from src.autoslice.published_recovery_package_contract import (
+    STATE_AUTHORITY_SHA256,
+    build_published_recovery_package_receipt,
+)
 from src.autoslice.recovery_title_authority import build_recovery_publication_authorities
 
 TITLE = "【李豆沙】手动包审计闭环用例标题够长了"
@@ -69,10 +73,10 @@ def _package(
     speaker_finalized: bool = False,
     candidate_id: str = "manual_cand_9",
     title: str = TITLE,
+    stem: str = "手动闭环用例",
 ) -> Path:
     pkg = tmp_path / "pkg"
     pkg.mkdir()
-    stem = "手动闭环用例"
 
     def w(name: str, payload: bytes) -> Path:
         path = pkg / name
@@ -568,3 +572,93 @@ def test_manual_builder_projects_replayed_typed_qixi_receipt(
         "mode": "EXACT_CANDIDATE_SET_NO_BACKFILL",
         "candidate_ids": [candidate_id],
     }
+
+
+def test_manual_builder_accepts_typed_published_recovery_package_receipt(
+    tmp_path: Path,
+) -> None:
+    root = Path(__file__).resolve().parents[1]
+    registry = root / "assets/lidousha/recovery_publication_authority_2026-08-25_c4_c5_timeaxis.v1.json"
+    candidate_id = "auto_113028_1271_1328"
+    authority = build_recovery_publication_authorities(
+        candidate_ids={candidate_id},
+        registry_path=registry,
+        expected_registry_sha256="sha256:" + _sha(registry),
+        repo_root=root,
+    )[candidate_id]
+    pkg = _package(
+        tmp_path,
+        candidate_id=candidate_id,
+        title=authority["observed_public_title"],
+        stem=candidate_id,
+    )
+    record_path = pkg / f"{candidate_id}.record.json"
+    publish_path = pkg / f"{candidate_id}.publish.json"
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    publish = json.loads(publish_path.read_text(encoding="utf-8"))
+    record["recovery_publication_authority"] = authority
+    record["publish_staging"]["recovery_publication_authority"] = authority
+    publish["recovery_publication_authority"] = authority
+    record["artifact_hashes"].update({
+        "chat_authority_audit_sha256": (
+            "sha256:" + _sha(pkg / f"{candidate_id}.chat-authority.json")
+        ),
+        "clip_context_file_sha256": (
+            "sha256:" + _sha(pkg / f"{candidate_id}.clip-context.json")
+        ),
+    })
+    record_path.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+    publish_path.write_text(json.dumps(publish, ensure_ascii=False), encoding="utf-8")
+    preflight = {
+        "schema_version": "published-same-bv-recovery-preflight.v1",
+        "candidate_id": candidate_id,
+        "date": "2026-08-14",
+        "state_transition": "none",
+        "upload_allowed": False,
+        "publication_allowed": False,
+        "same_bv_only": True,
+        "target": {
+            "bvid": authority["bvid"],
+            "aid": authority["aid"],
+            "current_state_cid": authority["cid"],
+            "title": authority["observed_public_title"],
+        },
+        "production_state": {
+            "path": str((tmp_path / "runtime/state/2026-08-14.json").absolute()),
+            "sha256": "sha256:" + "c" * 64,
+        },
+        "deployment_authority": {"deployed_commit": "a" * 40},
+        "published_state_authority": {
+            "candidate_id": candidate_id,
+            "status": "published",
+            "bvid": authority["bvid"],
+            "aid": authority["aid"],
+            "published_cid": authority["cid"],
+            "reconciliation_status": "VERIFIED_PUBLIC",
+            "reconciliation_cid": authority["cid"],
+            "title": authority["observed_public_title"],
+            "publication_authority_cid": authority["cid"],
+            "predecessor_completed": None,
+            "registry_sha256": STATE_AUTHORITY_SHA256,
+            "entry_sha256": "sha256:" + "f" * 64,
+        },
+        "publication_authority_sha256": authority["authority_sha256"],
+        "source_record_sha256": "sha256:" + "d" * 64,
+    }
+    preflight_path = pkg / f"{candidate_id}.published-recovery-preflight.json"
+    preflight_path.write_text(json.dumps(preflight, ensure_ascii=False), encoding="utf-8")
+    package_receipt = build_published_recovery_package_receipt(
+        package_root=pkg,
+        candidate_id=candidate_id,
+        recovery_publication_authority=authority,
+    )
+    receipt_path = pkg / f"{candidate_id}.published-recovery-package-receipt.json"
+    receipt_path.write_text(json.dumps(package_receipt, ensure_ascii=False), encoding="utf-8")
+
+    manifest = build_manual(pkg, operator="op", note="published package-only recovery")
+    item = manifest["items"][0]
+    assert item["published_recovery_package_receipt"] == receipt_path.name
+    assert item["published_recovery_package_receipt_sha256"] == "sha256:" + _sha(receipt_path)
+    assert item["recovery_publication_authority"] == authority
+    assert manifest["status"] == "finished_review_package_no_upload_pending_human_review"
+    assert manifest["upload_allowed"] is False

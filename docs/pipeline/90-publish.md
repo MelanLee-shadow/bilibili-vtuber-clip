@@ -28,13 +28,20 @@ title-cover QC 和 ledger 无歧义重放后，才可被排入串行候选；仍
 ## Reviewed-baseline replay 与上传隔离
 
 `scripts/replay_reviewed_subtitle_baseline.py` 的 PLAN、full-dry-run、apply 与 readiness
-graph 都是 no-upload package-recovery lane，不是本页的投稿入口。PLAN 只读 authority；full
-dry-run 在 private stage 完整验证 after-image 并输出 typed matrix；apply 可并行 private prepare，
-但每个 candidate 必须在短 runner lease 内以最新 state CAS 顺序 state-last commit。它不得创建
-`AUTO_UPLOAD`、authorized-upload manifest、upload ledger row 或获取 `upload.lock`。完成 package
-transaction 后仍须重新通过本页的 canonical audit、CPA title-cover QC、human/recovery evidence 和
-explicit Ivan manifest；只有 `authorized_upload.py` 在单一 `upload.lock` 下可产生上传副作用，且
-transport/状态歧义不得重试上传。
+graph 都是 no-upload package-recovery lane，不是本页的投稿入口。PLAN 只读 authority；普通 full
+dry-run 在 private stage 完整验证 after-image，普通 apply 仍只接受 `candidate_rejected` 并在短
+runner lease 内以最新 state CAS 顺序 state-last commit。候选已是 `published` 时，必须显式给
+`--published-recovery-bvid`；此时 full-dry-run 只验证 package-only after-image，apply 还必须给新的
+私有 `--recovery-package-root`，只落 `state_transition=none` 的 audited same-BV 包，绝不触碰
+production state/package/delivery。包内 preflight + typed package receipt 把当时 state SHA、完整
+published tuple、C4 predecessor（若适用）、deployment/publication authority 与最终媒体纳入 canonical
+inputs；外层 receipt 必须为 `VERIFIED_PRIVATE_PACKAGE`。在冻结授权 manifest 前还须重跑 PLAN，
+确认 current state/BVID 未漂移。两种模式都不得创建 `AUTO_UPLOAD`、authorized-upload manifest、
+upload ledger row 或获取 `upload.lock`。完成 package transaction 后仍须重新通过本页的 canonical
+audit、CPA title-cover QC、human/recovery evidence 和 explicit Ivan manifest；`make-manifest` 会把
+outer receipt path/hash 冻结进 package attestation，`verify`、`repair-plan` 与 live resume 会重放它；
+只有 `authorized_upload.py` 在单一
+`upload.lock` 下可产生上传副作用，且 transport/状态歧义不得重试上传。
 
 ## 发布准入
 
@@ -218,6 +225,11 @@ dry plan；本地存在代码/测试不等于 production 已可用，也不等�
 1. 先证明 `exact-talk-contract-closure.v1.status=COMPLETE`，且最终 state、重建 manifest 与
    selection contract 的 candidate 集合完全相等；五项整包未闭合时，不得先为已完成子集建立
    repair plan；
+1a. 若候选已经 `published` 且须按 reviewed baseline 重建 bytes，只能先走 40/80 的显式
+    package-only full-dry/apply；在第 4 步冻结授权 manifest **之前**必须再次运行同一
+    `--published-recovery-bvid ... --plan`，确认 package 内完整 state tuple/predecessor authority 仍
+    对应当前 state；`make-manifest` 必须消费 VERIFIED outer receipt 而非 pending/裸 package。
+    不得用历史 `candidate_rejected` 前像、手工 state 或 package copy 代替；
 2. 冻结最终包，重建 pending-human review manifest，运行 current canonical package audit；
 3. 先用 final-human-review builder 的 `--prepare-evidence-template` 冻结 v2 bindings；被如实
    命名的 reviewer 按 committed exact review contract 完整复核最终烧录字节、填写实际

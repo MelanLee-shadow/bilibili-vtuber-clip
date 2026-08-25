@@ -43,6 +43,9 @@ from scripts.build_lidousha_daily_review_manifest import (  # noqa: E402
 from src.autoslice.review_package_ass_audit import (  # noqa: E402
     uniform_host_fallback_declared,
 )
+from src.autoslice.published_recovery_package_contract import (  # noqa: E402
+    validate_published_recovery_package_receipt,
+)
 from src.autoslice.recovery_title_authority import (  # noqa: E402
     RecoveryTitleAuthorityError,
     validate_recovery_publication_authority,
@@ -100,6 +103,7 @@ class _PreparedQixiGate:
     chat_name: str
     clip_name: str
     successor_receipt: bool = False
+    published_recovery_receipt: bool = False
 
 
 def _prepare_qixi_gate(
@@ -112,7 +116,66 @@ def _prepare_qixi_gate(
     publish_doc: dict,
     qixi_repo_root: Path | None,
 ) -> _PreparedQixiGate:
-    """Preflight a typed Qixi receipt before candidate evidence can be copied."""
+    """Preflight a typed recovery receipt before candidate evidence can be copied."""
+
+    published_name = f"{candidate_id}.published-recovery-package-receipt.json"
+    published_path = _package_regular_file(
+        package_root, published_name, label="published recovery package receipt"
+    )
+    if published_path is not None:
+        try:
+            published_bytes = published_path.read_bytes()
+            published_receipt = json.loads(published_bytes.decode("utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise DailyManifestError(
+                "published recovery package receipt is unreadable"
+            ) from exc
+        publication_authority = record_doc.get("recovery_publication_authority")
+        staging = record_doc.get("publish_staging")
+        publish_authority = publish_doc.get("recovery_publication_authority")
+        staging_authority = (
+            staging.get("recovery_publication_authority")
+            if isinstance(staging, dict) else None
+        )
+        if not (
+            publication_authority is not None
+            and publication_authority == staging_authority == publish_authority
+        ):
+            raise DailyManifestError(
+                "published recovery publication authority drifts"
+            )
+        try:
+            publication_authority = validate_recovery_publication_authority(
+                publication_authority,
+                candidate_id=candidate_id,
+                expected_final_title=title,
+            )
+            validate_published_recovery_package_receipt(
+                published_receipt,
+                package_root=package_root,
+                candidate_id=candidate_id,
+                recovery_publication_authority=publication_authority,
+            )
+        except (RecoveryTitleAuthorityError, ValueError) as exc:
+            raise DailyManifestError(
+                "published recovery package receipt is invalid"
+            ) from exc
+        portable = _sync_record_bound_candidate_artifacts(
+            package_root=package_root,
+            candidate_id=candidate_id,
+            record_doc=record_doc,
+        )
+        return _PreparedQixiGate(
+            receipt_name=published_name,
+            receipt_present=True,
+            receipt=published_receipt,
+            receipt_bytes=published_bytes,
+            receipt_sha256="sha256:" + hashlib.sha256(published_bytes).hexdigest(),
+            publication_authority=publication_authority,
+            chat_name=portable["chat_authority"],
+            clip_name=portable["clip_context"],
+            published_recovery_receipt=True,
+        )
 
     successor_path = _package_regular_file(
         package_root, QIXI_SUCCESSOR_RECEIPT, label="Qixi cover successor receipt"
@@ -309,6 +372,14 @@ def _manual_manifest_item_and_terminal_projection(
         ),
         **(
             {
+                "published_recovery_package_receipt": qixi_gate.receipt_name,
+                "published_recovery_package_receipt_sha256": qixi_gate.receipt_sha256,
+            }
+            if qixi_gate.published_recovery_receipt
+            else {}
+        ),
+        **(
+            {
                 "speaker_finalization_manifest": packaged_speaker_manifest.name,
                 "speaker_finalization_manifest_sha256": "sha256:"
                 + _sha256(packaged_speaker_manifest),
@@ -327,7 +398,11 @@ def _manual_manifest_item_and_terminal_projection(
     finalized_qixi_same_bv = (
         corrected_receipt is not None and corrected_receipt_path is not None
     )
-    terminal = finalized_qixi_same_bv or qixi_gate.successor_receipt
+    terminal = (
+        finalized_qixi_same_bv
+        or qixi_gate.successor_receipt
+        or qixi_gate.published_recovery_receipt
+    )
     projection = (
         {
             "exact_candidate_ids": [candidate_id],
@@ -438,7 +513,7 @@ def build_manual(
     corrected_receipt = None
     corrected_receipt_path: Path | None = None
     receipt_candidate = package_root / qixi_gate.receipt_name
-    if (receipt_candidate.exists() or receipt_candidate.is_symlink()) and not qixi_gate.successor_receipt:
+    if (receipt_candidate.exists() or receipt_candidate.is_symlink()) and not qixi_gate.successor_receipt and not qixi_gate.published_recovery_receipt:
         corrected_receipt_path = _need(package_root, qixi_gate.receipt_name)
         try:
             raw_receipt = qixi_gate.receipt
@@ -460,7 +535,7 @@ def build_manual(
             != _sha256(cover)
         ):
             raise DailyManifestError("manual corrected same-BV receipt drifts from package")
-    if publication_authority is not None and corrected_receipt is None and not qixi_gate.successor_receipt:
+    if publication_authority is not None and corrected_receipt is None and not qixi_gate.successor_receipt and not qixi_gate.published_recovery_receipt:
         raise DailyManifestError("manual same-BV package lacks corrected receipt")
     if corrected_receipt is not None and publication_authority is None:
         raise DailyManifestError("corrected receipt lacks recovery publication authority")

@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import argparse
 import hashlib
 import json
@@ -7,11 +6,9 @@ import re
 import sys
 from pathlib import Path
 from typing import Any, Mapping
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-
 from src.autoslice.subtitle_rendering import (  # noqa: E402
     ASS_MAX_CHARS_PER_LINE,
     ASS_MAX_VISUAL_LINES,
@@ -54,6 +51,7 @@ from src.autoslice.selection_scorecard import (  # noqa: E402
     selection_scorecard_is_valid,
 )
 from src.autoslice.subtitle_validation import validate_srt_file  # noqa: E402
+from src.autoslice.published_recovery_package_contract import audit_published_recovery_manifest_binding  # noqa: E402
 from src.autoslice.review_package_ass_audit import (  # noqa: E402
     audit_review_package_ass,
 )
@@ -97,8 +95,6 @@ from src.autoslice.fastlane_c1_formal_adapter import (  # noqa: E402
     audit_fastlane_formal_package,
     is_fastlane_formal_manifest,
 )
-
-
 DEFAULT_MAX_VISUAL_LINES = 2
 DEFAULT_MAX_VISUAL_LINE_CHARS = 18
 LONG_STATIC_CUE_SECONDS = 10.0
@@ -133,6 +129,8 @@ _PORTABLE_ARTIFACT_SUFFIXES = (
     ".cover-route-evidence.json",
     ".selection-scorecard.json",
     ".story-contract.json",
+    ".published-recovery-preflight.json",
+    ".published-recovery-package-receipt.json",
 )
 
 
@@ -1609,6 +1607,8 @@ def _prepare_package_audit(
     ) = recovery_publication_authority_contract(manifest, items)
     for authority_issue in publication_contract_issues:
         _add_issue(issues, authority_issue.code, path=manifest_path, detail=authority_issue.detail)
+    for recovery_issue in audit_published_recovery_manifest_binding(root, recovery_publication_authorities, items):
+        _add_issue(issues, recovery_issue.code, path=recovery_issue.path, detail=recovery_issue.detail)
 
     story_contract_required = _story_contract_is_required(manifest)
     if story_contract_required:

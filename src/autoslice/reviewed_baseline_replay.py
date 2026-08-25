@@ -6,13 +6,11 @@ can replay the repository-sealed v2 reviewed baseline into a private stage.
 It cannot turn that partial stage into a public package: speaker, burn,
 title/cover, final-review and package-audit surfaces must all be rebuilt and
 sealed before a separate state-last delivery transaction may install anything.
-
 Keeping that distinction explicit prevents the historic failure mode where a
 failed rerun overwrote ``*.recut.mp4`` before its record after-image existed.
 """
 
 from __future__ import annotations
-
 import hashlib
 import json
 import os
@@ -25,7 +23,6 @@ from copy import deepcopy
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
-
 from src.autoslice.branding_intro import pin_existing_delivery_intro, require_branding_intro
 from src.autoslice.recut_materialization import (
     _accurate_reencode_recut_command,
@@ -912,14 +909,13 @@ def synthesize_replay_spec_and_finalize_private(
     exact_final_text_adapters: object | None = None,
     provider_invocation: Callable[[], None] | None = None,
     record_authority_resolver: Callable[..., RecordBoundFinalizerAuthority] | None = None,
+    recovery_publication_authority: Mapping[str, object] | None = None,
 ) -> PrivateReplayFinalization:
     """Call the canonical producer finalizer in an isolated prepare-only root.
-
     The synthetic spec is deliberately derived from bound record/provenance
-    fields only.  It leaves ``given_title`` and recovery authority null; the
-    lane-owned publish adapter carries the already validated frozen surface.
+    fields. ``given_title`` stays null; an optional recovery authority must
+    already be committed and validated by the published-recovery controller.
     """
-
     from src.autoslice.producer_package_finalization import (
         ProducerFinalizationOptions,
         finalize_producer_package,
@@ -1026,6 +1022,7 @@ def synthesize_replay_spec_and_finalize_private(
         clip_context=_load_json(clip, label="CLIP_CONTEXT"),
         baseline_config=plan.baseline.config, boundary=boundary,
         error_factory=ReviewedBaselineReplayError,
+        recovery_publication_authority=recovery_publication_authority,
     )
     # A text-only reviewed baseline does not authorize new speaker decisions.
     # It may, however, strictly rebind a prior READY artifact when every label,
@@ -1135,6 +1132,8 @@ def synthesize_replay_spec_and_finalize_private(
 def flatten_and_audit_private_replay(
     finalization: PrivateReplayFinalization, *, plan: ReplayPlan,
     projection: ReplayLiveProjection | None = None,
+    base_package_root: Path | None = None,
+    package_postprocessor: Callable[[Path], None] | None = None,
 ) -> PrivateReplayPackage:
     """Flatten the canonical prepared handle and require the package auditor.
 
@@ -1156,7 +1155,7 @@ def flatten_and_audit_private_replay(
     # cover inputs.  A tiny flattened subset can pass while the real package
     # later has a different audited-input binding.
     package = finalization.private_runtime_root / "audited-live-package"
-    _copy_verified_tree(_replay_package_root(plan), package)
+    _copy_verified_tree(base_package_root or _replay_package_root(plan), package)
     spec = _load_json(regular_binding(finalization.spec_path, label="PRIVATE_SPEC"), label="PRIVATE_SPEC")
     output_root = spec.get("output_root")
     if not isinstance(output_root, str):
@@ -1242,6 +1241,8 @@ def flatten_and_audit_private_replay(
         if target == source:
             continue
         _replace_private_artifact(source, target)
+    if package_postprocessor is not None:
+        package_postprocessor(package)
     try:
         manifest = build_manual(package, operator="Codex root", note="Reviewed-baseline replay private preflight; upload remains disabled.")
     except DailyManifestError as exc:

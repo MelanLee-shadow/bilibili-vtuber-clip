@@ -1,0 +1,34 @@
+{
+  "schema_version": "lidousha-recovery-publication-authority.v1",
+  "authority": "Ivan 2026-08-25 explicitly reported that the two published slice timelines are wrong and directed an in-place repair with Sol Max diagnosis; preserve each existing BVID and verified public title, and do not create a duplicate publication.",
+  "entries": [
+    {
+      "candidate_id": "auto_113028_1271_1328",
+      "title_mode": "verified_public_exact",
+      "observed_public_title": "【李豆沙】一次点歌巧合被小李解释成量子纠缠，kmx和李豆沙只要产生关系就会量子纠缠",
+      "required_given_end_ms": 67524,
+      "boundary_end_mode": "semantic_lower_bound",
+      "bvid": "BV1Sahj65ExM",
+      "aid": 117157295950921,
+      "cid": 41264349440,
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-08-25-c5-timeaxis-repair/auto_113028_1271_1328.public_verify.json",
+      "source_public_verify_sha256": "sha256:b00c0374aaf6a01de7be9bab859d48badcc0a9f27fbb2c18e63900fd515e9f03",
+      "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+      "source_public_verify_status": "VERIFIED_PUBLIC"
+    },
+    {
+      "candidate_id": "auto_113028_1602_1698",
+      "title_mode": "verified_public_exact",
+      "observed_public_title": "【李豆沙】线上直播间老公不可能是女生，李姐开始男女身份排列组合，竟敢磕男的女的？违背直播间世界观了",
+      "required_given_end_ms": 106540,
+      "boundary_end_mode": "semantic_lower_bound",
+      "bvid": "BV1h7hg68E8Y",
+      "aid": 117154678638617,
+      "cid": 41244820167,
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-08-25-c4-timeaxis-repair/auto_113028_1602_1698.public_verify.json",
+      "source_public_verify_sha256": "sha256:b6846c0b51985065b000a06d5c9ce5f2c8bf71d4fa829cf38244f8047fffeaab",
+      "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+      "source_public_verify_status": "VERIFIED_PUBLIC"
+    }
+  ]
+}

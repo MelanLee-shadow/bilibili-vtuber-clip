@@ -39,6 +39,7 @@ from scripts.audit_lidousha_review_package import (  # noqa: E402
 from src.autoslice import authorized_upload_cli_parser  # noqa: E402
 from src.autoslice import authorized_upload_recovery_cli as upload_recovery  # noqa: E402
 from src.autoslice import bilibili_member_api as member_api  # noqa: E402
+from src.autoslice import authorized_upload_published_recovery as published_recovery  # noqa: E402
 from src.autoslice.package_audit_binding import (
     audit_content_binding as _audit_content_binding,
 )
@@ -590,6 +591,7 @@ def _validate_v3_package_attestation(
     if not root_text or not root.is_dir():
         problems.append(f"package root missing: {root}")
         return problems
+    problems.extend(published_recovery.attestation_problems(attestation, root, live_authority_recheck=live_policy_recheck))
     if video.parent.resolve() != root:
         problems.append("reviewed video is not directly inside the audited package root")
     if not _is_within(cover, root):
@@ -1873,9 +1875,7 @@ def make_manifest(args: argparse.Namespace) -> int:
         "tags": tags,
         "tags_source": tags_source,
     }
-    package_problems = repair_binding.attach_package_recovery_publication_authority(
-        manifest, record, review_manifest, video
-    )
+    package_problems = published_recovery.attach_manifest_attestation(manifest, package_root) + repair_binding.attach_package_recovery_publication_authority(manifest, record, review_manifest, video)
     review_payload = _load_json_object(review_manifest, "review manifest", package_problems)
     if review_payload:
         package_problems.extend(

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Canonical no-upload replay of one or more reviewed subtitle baselines.
 
-``plan`` reads authority only.  ``full-dry-run`` creates candidate-private
-stages and validates complete sealed after-images; ``apply`` prepares in
-parallel and commits each valid candidate state-last under its own short lease.
-There are deliberately no caller-supplied target or state-after switches.
+``plan`` reads authority only. ``full-dry-run`` validates private after-images;
+normal ``apply`` commits candidate-rejected replay state-last. With explicit
+published same-BV authority, the same modes instead build a create-only private
+package with ``state_transition=none``; they never publish it.
 """
 from __future__ import annotations
 
@@ -42,6 +42,9 @@ from src.autoslice.reviewed_baseline_replay import (
     ReviewedBaselineReplayError, _canonical, _production_llm_call, _safe_directory, _sha,
     build_replay_plan, prepare_replay_after_image, rebind_replay_after_image_state, stage_replay,
     synthesize_replay_spec_and_finalize_private, regular_binding,
+)
+from src.autoslice.published_recovery_package import (
+    prepare_published_recovery_package, published_recovery_preflight,
 )
 from src.autoslice.reviewed_baseline_replay_transaction import (
     cleanup_prepared_after_image_stage, commit_prepared_after_image, stream_binding,
@@ -263,6 +266,8 @@ def _args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--date", required=True)
     parser.add_argument("--candidate-id", action="append", default=[])
     parser.add_argument("--private-stage-parent", type=Path)
+    parser.add_argument("--published-recovery-bvid")
+    parser.add_argument("--recovery-package-root", type=Path)
     args = parser.parse_args(argv)
     if not args.readiness_graph and not args.candidate_id:
         parser.error("--candidate-id is required outside --readiness-graph")
@@ -272,6 +277,15 @@ def _args(argv: list[str] | None) -> argparse.Namespace:
         parser.error("at most five candidates may be prepared together")
     if (args.full_dry_run or args.apply) and args.private_stage_parent is None:
         parser.error("full-dry-run/apply require --private-stage-parent")
+    if args.published_recovery_bvid:
+        if args.readiness_graph or len(args.candidate_id) != 1:
+            parser.error("published recovery requires exactly one candidate outside readiness-graph")
+        if args.apply and args.recovery_package_root is None:
+            parser.error("published recovery apply requires --recovery-package-root")
+        if not args.apply and args.recovery_package_root is not None:
+            parser.error("--recovery-package-root is accepted only by published recovery apply")
+    elif args.recovery_package_root is not None:
+        parser.error("--recovery-package-root requires --published-recovery-bvid")
     return args
 
 
@@ -648,6 +662,18 @@ def _matrix(
     return rows
 
 
+def _published_recovery_matrix(rows) -> list[dict[str, object]]:
+    rendered = [dict(row) for row in rows if row.get("predicate") != "UPLOAD_ALLOWED"]
+    rendered.extend((
+        {"predicate": "PUBLISHED_STATE_SAME_BV_AUTHORITY", "status": "PASS"},
+        {"predicate": "STATE_TRANSITION", "status": "PASS_NONE"},
+        {"predicate": "UPLOAD_ALLOWED", "status": "PASS_FALSE"},
+    ))
+    if len({str(row.get("predicate")) for row in rendered}) != len(rendered):
+        raise ReviewedBaselineReplayError("REPLAY_PREDICATE_MATRIX_DUPLICATE")
+    return rendered
+
+
 def _canon(value: object) -> bytes:
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
 
@@ -818,6 +844,8 @@ def _provider_receipt_sha256s(root: Path) -> tuple[str, ...]:
 def _prepare(
     plan, *, runtime: Path, stage_parent: Path, state_path: Path | None = None,
     record_authority_resolver=None, path_unavailable_diagnostic: Callable[[BaseException], object] | None = None,
+    published_recovery=None, recovery_package_root: Path | None = None,
+    persist_recovery: bool = False,
 ):
     """Build one complete no-target-write after-image outside the commit lease."""
     expected_stage = stage_parent / (
@@ -866,6 +894,10 @@ def _prepare(
             exact_final_text_adapters=_text_adapters(),
             provider_invocation=mark_provider_attempt,
             record_authority_resolver=record_authority_resolver,
+            **(
+                {"recovery_publication_authority": published_recovery.publication_authority}
+                if published_recovery is not None else {}
+            ),
         )
     except (Exception, SystemExit) as exc:
         stage_sha = _stage_manifest_sha256(stage)
@@ -882,11 +914,25 @@ def _prepare(
     stage_sha = _stage_manifest_sha256(stage)
     provider_hashes = _provider_receipt_sha256s(finalization.private_runtime_root)
     try:
-        if state_path is None:
-            raise ReviewedBaselineReplayError("REPLAY_STATE_PATH_REQUIRED")
-        after = prepare_replay_after_image(
-            plan, runtime_root=runtime, state_path=state_path, finalization=finalization,
-        )
+        if published_recovery is not None:
+            if recovery_package_root is None:
+                dry_parent = stage / "published-recovery-output"
+                dry_parent.mkdir(mode=0o700)
+                recovery_package_root = dry_parent / plan.candidate_id
+            after = prepare_published_recovery_package(
+                plan,
+                finalization=finalization,
+                runtime_root=runtime,
+                preflight=published_recovery,
+                package_outer_root=recovery_package_root,
+                persist=persist_recovery,
+            )
+        else:
+            if state_path is None:
+                raise ReviewedBaselineReplayError("REPLAY_STATE_PATH_REQUIRED")
+            after = prepare_replay_after_image(
+                plan, runtime_root=runtime, state_path=state_path, finalization=finalization,
+            )
     except (Exception, SystemExit) as exc:
         prepared_sha = _prepared_manifest_sha256(finalization)
         failure = _prepare_failure(exc=exc, stage=stage, plan=plan)
@@ -915,11 +961,21 @@ def main(
         plans = [build_replay_plan(repo_root=runtime / "repo", out_root=runtime / "out",
                                    date=args.date, candidate_id=cid)
                  for cid in args.candidate_id]
+        recovery_by_id = {}
+        if args.published_recovery_bvid:
+            recovery = published_recovery_preflight(
+                plans[0], runtime_root=runtime,
+                expected_bvid=args.published_recovery_bvid,
+            )
+            recovery_by_id[plans[0].candidate_id] = recovery
         if args.plan or not (args.full_dry_run or args.apply):
             print(json.dumps({"schema_version": "reviewed-baseline-replay-plan.v2", "mode": "PLAN",
                               "upload_allowed": False,
                               "candidates": [{"candidate_id": p.candidate_id,
-                                              "predicate_matrix": list(p.matrix)} for p in plans]},
+                                              "predicate_matrix": (
+                                                  _published_recovery_matrix(p.matrix)
+                                                  if p.candidate_id in recovery_by_id else list(p.matrix)
+                                              )} for p in plans]},
                              ensure_ascii=False, sort_keys=True))
             return 0
         _runtime_gate(runtime)
@@ -936,6 +992,12 @@ def main(
                 prepare_kwargs["record_authority_resolver"] = _record_authority_resolver
             if _path_unavailable_diagnostic is not None:
                 prepare_kwargs["path_unavailable_diagnostic"] = _path_unavailable_diagnostic
+            if recovery_by_id:
+                prepare_kwargs.update({
+                    "published_recovery": recovery_by_id[plans[0].candidate_id],
+                    "recovery_package_root": args.recovery_package_root,
+                    "persist_recovery": bool(args.apply),
+                })
             work = {
                 pool.submit(_prepare, plan, **prepare_kwargs): plan
                 for plan in plans
@@ -994,6 +1056,37 @@ def main(
                 result["candidates"].append(item)
                 continue
             stage, finalization, prepared_after, stage_sha, provider_hashes, provider_attempted = prepared[plan.candidate_id]
+            if plan.candidate_id in recovery_by_id:
+                recovery_receipt = dict(prepared_after.receipt)
+                try:
+                    _cleanup_private_stage(stage, parent=stage_parent)
+                    item = {
+                        "candidate_id": plan.candidate_id,
+                        "status": (
+                            "VERIFIED_PRIVATE_PACKAGE" if args.apply
+                            else "READY_PRIVATE_PACKAGE"
+                        ),
+                        "predicate_matrix": _published_recovery_matrix(
+                            _matrix(plan, status="PASS")
+                        ),
+                        "recovery_package": recovery_receipt,
+                        "upload_allowed": False,
+                    }
+                except (Exception, SystemExit):
+                    blocked = True
+                    item = {
+                        "candidate_id": plan.candidate_id,
+                        "status": "PRIVATE_PACKAGE_CLEANUP_UNCONFIRMED",
+                        "predicate_matrix": [
+                            *_published_recovery_matrix(_matrix(plan, status="PASS"))[:-1],
+                            {"predicate": "PRIVATE_STAGE_CLEANUP", "status": "FAIL"},
+                            {"predicate": "UPLOAD_ALLOWED", "status": "PASS_FALSE"},
+                        ],
+                        "recovery_package": recovery_receipt,
+                        "upload_allowed": False,
+                    }
+                result["candidates"].append(item)
+                continue
             after = prepared_after.after
             committed_journal = None
             commit_attempted = False

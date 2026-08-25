@@ -1,0 +1,38 @@
+{
+  "schema_version": "published-recovery-state-authority.v1",
+  "authority": "Bind the exact current production published row for package-only rebuilding. C4's current CID is permitted only through the exact prior same-BV completed receipt; neither entry authorizes publication or a state transition.",
+  "entries": [
+    {
+      "candidate_id": "auto_113028_1271_1328",
+      "status": "published",
+      "bvid": "BV1Sahj65ExM",
+      "aid": 117157295950921,
+      "published_cid": 41264349440,
+      "reconciliation_status": "VERIFIED_PUBLIC",
+      "reconciliation_cid": 41264349440,
+      "title": "【李豆沙】一次点歌巧合被小李解释成量子纠缠，kmx和李豆沙只要产生关系就会量子纠缠",
+      "publication_authority_cid": 41264349440,
+      "predecessor_completed": null
+    },
+    {
+      "candidate_id": "auto_113028_1602_1698",
+      "status": "published",
+      "bvid": "BV1h7hg68E8Y",
+      "aid": 117154678638617,
+      "published_cid": 41264153653,
+      "reconciliation_status": "VERIFIED_SAME_BV",
+      "reconciliation_cid": 41264153653,
+      "title": "【李豆沙】线上直播间老公不可能是女生，李姐开始男女身份排列组合，竟敢磕男的女的？违背直播间世界观了",
+      "publication_authority_cid": 41244820167,
+      "predecessor_completed": {
+        "repo_path": "reports/authorized_uploads/2026-08-25-c4-timeaxis-repair/same-bv-repair-verify-live-20260825.json",
+        "sha256": "sha256:265304913afa62c938a9adf69770d5ec55ae4f0a8fc113b74fc27630f3c6b1dc",
+        "schema_version": "same-bv-repair-completed.v1",
+        "status": "VERIFIED_FRESH_LIVE",
+        "bvid": "BV1h7hg68E8Y",
+        "aid": 117154678638617,
+        "new_cid": 41264153653
+      }
+    }
+  ]
+}
