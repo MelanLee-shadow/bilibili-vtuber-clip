@@ -38,11 +38,8 @@ from src.autoslice.reviewed_subtitle_baseline_registry import (
     load_candidate_reviewed_subtitle_baseline,
 )
 from src.autoslice.redelivery_time_domain import (
-    DELIVERY_LOCAL,
-    PIECE_LOCAL,
     RedeliveryTimeDomainError,
-    operator_v3_time_domain,
-    require_delivery_local_interval,
+    replay_diagnostic_duration_ms,
 )
 from src.autoslice.reviewed_baseline_replay_projection import (
     PreparedReplayAfterImage,
@@ -346,25 +343,13 @@ def build_replay_plan(*, repo_root: Path, out_root: Path, date: str, candidate_i
     ):
         raise ReviewedBaselineReplayError("REPLAY_RECORD_TIMING_INVALID")
     try:
-        time_domain = operator_v3_time_domain(config)
-        if time_domain == DELIVERY_LOCAL:
-            require_delivery_local_interval(
-                config,
-                absolute_start_ms=padded_start + start,
-                absolute_end_ms=padded_start + end,
-            )
-            diagnostic_duration_ms = end - start
-        elif time_domain == PIECE_LOCAL:
-            if (
-                config.get("absolute_source_start_ms") != padded_start
-                or config.get("absolute_source_end_ms") != padded_end
-            ):
-                raise RedeliveryTimeDomainError(
-                    "REDELIVERY_BASELINE_PIECE_INTERVAL_MISMATCH"
-                )
-            diagnostic_duration_ms = padded_end - padded_start
-        else:
-            diagnostic_duration_ms = padded_end - padded_start
+        diagnostic_duration_ms = replay_diagnostic_duration_ms(
+            config,
+            padded_start_ms=padded_start,
+            padded_end_ms=padded_end,
+            final_start_ms=start,
+            final_end_ms=end,
+        )
     except RedeliveryTimeDomainError as exc:
         raise ReviewedBaselineReplayError(str(exc)) from exc
     diagnostic = config.get("operator_truth_lanes", {}).get("pipeline_diagnostic")

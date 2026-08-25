@@ -56,3 +56,32 @@ def require_delivery_local_interval(
         raise RedeliveryTimeDomainError(
             "REDELIVERY_BASELINE_DELIVERY_INTERVAL_MISMATCH"
         )
+
+
+def replay_diagnostic_duration_ms(
+    config: Mapping[str, object],
+    *,
+    padded_start_ms: int,
+    padded_end_ms: int,
+    final_start_ms: int,
+    final_end_ms: int,
+) -> int:
+    """Validate a replay plan's domain and return its local SRT duration."""
+
+    domain = operator_v3_time_domain(config)
+    if domain == DELIVERY_LOCAL:
+        require_delivery_local_interval(
+            config,
+            absolute_start_ms=padded_start_ms + final_start_ms,
+            absolute_end_ms=padded_start_ms + final_end_ms,
+        )
+        return final_end_ms - final_start_ms
+    if domain == PIECE_LOCAL:
+        if (
+            config.get("absolute_source_start_ms") != padded_start_ms
+            or config.get("absolute_source_end_ms") != padded_end_ms
+        ):
+            raise RedeliveryTimeDomainError(
+                "REDELIVERY_BASELINE_PIECE_INTERVAL_MISMATCH"
+            )
+    return padded_end_ms - padded_start_ms

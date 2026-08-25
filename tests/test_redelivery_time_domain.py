@@ -143,6 +143,36 @@ def test_delivery_local_head_rejects_the_old_full_piece_projection() -> None:
     assert _redelivery_baseline_head_rel_ms(spec) == 9_750
 
 
+@pytest.mark.parametrize(
+    "candidate_id",
+    ["auto_113028_1271_1328", "auto_113028_1602_1698"],
+)
+def test_c4_c5_delivery_receipts_use_the_same_absolute_projection(
+    candidate_id: str,
+) -> None:
+    manifest = json.loads(
+        (ASSETS / f"{candidate_id}.subtitle-baseline.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    receipt = json.loads(
+        (
+            ROOT
+            / "docs/reviews"
+            / f"{candidate_id}-operator-reviewed-subtitle-baseline-delivery.v1.json"
+        ).read_text(encoding="utf-8")
+    )
+    source = receipt["source_recording"]
+    assert source["time_domain"] == manifest["time_domain"] == DELIVERY_LOCAL
+    assert (source["absolute_start_ms"], source["absolute_end_ms"]) == (
+        manifest["absolute_source_start_ms"],
+        manifest["absolute_source_end_ms"],
+    )
+    for row in receipt["changed_cues"]:
+        assert row["absolute_source_start_ms"] == source["absolute_start_ms"] + row["start_ms"]
+        assert row["absolute_source_end_ms"] == source["absolute_start_ms"] + row["end_ms"]
+
+
 def test_legacy_c3_exact_authority_synthesizes_only_its_sealed_domain() -> None:
     manifest = json.loads(
         (ASSETS / "auto_220021_561_670.subtitle-baseline.v1.json").read_text(
