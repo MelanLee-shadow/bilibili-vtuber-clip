@@ -7,19 +7,20 @@
     "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; exact line sha256 e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; durable mirror docs/reviews/2026-08-19-ivan-review-batch-rulings.md. Ivan ruling #7: 0:21 不可以就要 (read chat)."
   },
   "source_srt": {
-    "path": "/private/tmp/qixi-fastlane-srt.RcwK5o/auto_123036_727_785.pipeline.srt",
+    "path": "/private/tmp/vtuber-slice-timeaxis-domain-repair-20260825/assets/lidousha/reviewed_subtitle_baselines/auto_123036_727_785.pipeline-diagnostic.srt",
     "sha256": "6aba17462effe3c6bf1ae7b36e65bb09414a4545b4db2b73f03f6f0a09f93dcf"
   },
   "reviewed_srt": {
-    "path": "/private/tmp/qixi-fastlane-baselines-9bda/assets/lidousha/reviewed_subtitle_baselines/auto_123036_727_785.reviewed.srt",
+    "path": "/private/tmp/vtuber-slice-timeaxis-domain-repair-20260825/assets/lidousha/reviewed_subtitle_baselines/auto_123036_727_785.reviewed.srt",
     "sha256": "32bceb56a72f9689a4a968ef702fd3c0991b3632e1f596024a1b48743a1f6592"
   },
   "baseline_sha256": "32bceb56a72f9689a4a968ef702fd3c0991b3632e1f596024a1b48743a1f6592",
   "source_recording": {
     "basename": "22966160_20260814-12-30-36.mp4",
     "sha256": "0d1bb56caa00f056878524fe2647714333426ad8cedba3dc1beba08f0f92d7a5",
-    "absolute_start_ms": 717160,
-    "absolute_end_ms": 833950
+    "absolute_start_ms": 726910,
+    "absolute_end_ms": 786090,
+    "time_domain": "DELIVERY_LOCAL"
   },
   "cue_count": 29,
   "source_cue_count": 29,
@@ -31,8 +32,8 @@
       "source_index": "8",
       "start_ms": 14130,
       "end_ms": 15140,
-      "absolute_source_start_ms": 731290,
-      "absolute_source_end_ms": 732300,
+      "absolute_source_start_ms": 741040,
+      "absolute_source_end_ms": 742050,
       "before": "不可以这样",
       "after": "不可以就要",
       "disposition": "OPERATOR_EXACT_TEXT"

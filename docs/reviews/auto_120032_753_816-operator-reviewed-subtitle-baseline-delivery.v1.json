@@ -7,19 +7,20 @@
     "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; exact line sha256 e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; durable mirror docs/reviews/2026-08-19-ivan-review-batch-rulings.md. Ivan ruling #6: 1:01 naruhodo ne Japanese; follow the chat surface."
   },
   "source_srt": {
-    "path": "/private/tmp/qixi-fastlane-srt.RcwK5o/auto_120032_753_816.pipeline.srt",
+    "path": "/private/tmp/vtuber-slice-timeaxis-domain-repair-20260825/assets/lidousha/reviewed_subtitle_baselines/auto_120032_753_816.pipeline-diagnostic.srt",
     "sha256": "a3ac0efb39d5348f8e8e756712de9a18a6aa87123b0ccbd8fb9bd68c54afb8b1"
   },
   "reviewed_srt": {
-    "path": "/private/tmp/qixi-fastlane-baselines-9bda/assets/lidousha/reviewed_subtitle_baselines/auto_120032_753_816.reviewed.srt",
+    "path": "/private/tmp/vtuber-slice-timeaxis-domain-repair-20260825/assets/lidousha/reviewed_subtitle_baselines/auto_120032_753_816.reviewed.srt",
     "sha256": "3cfcf2954c1d32a078e99aaff5585213b5edbbedd6db8f87d62097d06775ea77"
   },
   "baseline_sha256": "3cfcf2954c1d32a078e99aaff5585213b5edbbedd6db8f87d62097d06775ea77",
   "source_recording": {
     "basename": "22966160_20260814-12-00-32.mp4",
     "sha256": "0f0770a9426c48fee5457cf9639a77e5a477f41ec806f4e4789e19c336e1aae5",
-    "absolute_start_ms": 743770,
-    "absolute_end_ms": 864000
+    "absolute_start_ms": 753540,
+    "absolute_end_ms": 816400,
+    "time_domain": "DELIVERY_LOCAL"
   },
   "cue_count": 22,
   "source_cue_count": 22,
@@ -31,8 +32,8 @@
       "source_index": "17",
       "start_ms": 51070,
       "end_ms": 53150,
-      "absolute_source_start_ms": 794840,
-      "absolute_source_end_ms": 796920,
+      "absolute_source_start_ms": 804610,
+      "absolute_source_end_ms": 806690,
       "before": "哦，是昨天的视频，搞忘了",
       "after": "哦，是昨天的视频。へぇ、なるほどね。",
       "disposition": "OPERATOR_EXACT_TEXT"

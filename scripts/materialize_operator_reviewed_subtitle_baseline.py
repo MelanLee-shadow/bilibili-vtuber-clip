@@ -28,7 +28,10 @@ from src.autoslice.qixi_cue21_diagnostic_evidence import (
     QixiCue21DiagnosticEvidenceError,
     validate_qixi_cue21_diagnostic_evidence,
 )
-from src.autoslice.redelivery_time_domain import SUPPORTED_TIME_DOMAINS
+from src.autoslice.redelivery_time_domain import (
+    SUPPORTED_TIME_DOMAINS,
+    require_baseline_receipt_parity,
+)
 
 
 REGISTRY_SCHEMA = "candidate-reviewed-subtitle-baseline.v1"
@@ -680,7 +683,6 @@ def main() -> int:
         decision_ledger_root=args.decision_ledger.parent,
         time_domain=args.time_domain,
     )
-    atomic_write_text(args.baseline_srt_out, str(result["baseline_srt"]))
     manifest = dict(result["baseline_manifest"])
     manifest["path"] = args.baseline_srt_out.name
     lanes = dict(manifest["operator_truth_lanes"])
@@ -697,6 +699,8 @@ def main() -> int:
         "path": args.diagnostic_diff_out.name,
     }
     manifest["operator_truth_lanes"] = lanes
+    require_baseline_receipt_parity(manifest, result["receipt"])
+    atomic_write_text(args.baseline_srt_out, str(result["baseline_srt"]))
     atomic_write_text(
         args.baseline_manifest_out,
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",

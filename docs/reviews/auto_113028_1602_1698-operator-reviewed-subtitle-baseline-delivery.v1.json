@@ -7,11 +7,11 @@
     "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; 2026-08-19T00:08:52.249Z; exact line sha256 e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; durable mirror docs/reviews/2026-08-19-ivan-review-batch-rulings.md. Ivan ruling #4: 0:13 见面发现 + Japanese あれ?; 0:36/0:52 花海 Japanese humming has no subtitle."
   },
   "source_srt": {
-    "path": "/private/tmp/qixi-fastlane-srt.RcwK5o/auto_113028_1602_1698.pipeline.srt",
+    "path": "/private/tmp/vtuber-slice-timeaxis-domain-repair-20260825/assets/lidousha/reviewed_subtitle_baselines/auto_113028_1602_1698.pipeline-diagnostic.srt",
     "sha256": "512f74a7159c36c88b6c49d48ef46055f9caa6b094d4c6bf77336fe29a8956d5"
   },
   "reviewed_srt": {
-    "path": "/private/tmp/qixi-fastlane-baselines-9bda/assets/lidousha/reviewed_subtitle_baselines/auto_113028_1602_1698.reviewed.srt",
+    "path": "/private/tmp/vtuber-slice-timeaxis-domain-repair-20260825/assets/lidousha/reviewed_subtitle_baselines/auto_113028_1602_1698.reviewed.srt",
     "sha256": "46e769a270867a3f3eb12047778d4628151771539ec7d67e4cb4040c02e31efd"
   },
   "baseline_sha256": "46e769a270867a3f3eb12047778d4628151771539ec7d67e4cb4040c02e31efd",

@@ -21,6 +21,7 @@ from src.autoslice.redelivery_time_domain import (
     PIECE_LOCAL,
     RedeliveryTimeDomainError,
     operator_v3_time_domain,
+    require_baseline_receipt_parity,
     require_delivery_local_interval,
 )
 
@@ -143,34 +144,68 @@ def test_delivery_local_head_rejects_the_old_full_piece_projection() -> None:
     assert _redelivery_baseline_head_rel_ms(spec) == 9_750
 
 
-@pytest.mark.parametrize(
-    "candidate_id",
-    ["auto_113028_1271_1328", "auto_113028_1602_1698"],
-)
-def test_c4_c5_delivery_receipts_use_the_same_absolute_projection(
-    candidate_id: str,
-) -> None:
+_RECEIPTS = {
+    "auto_203011_328_389": (
+        ASSETS
+        / "auto_203011_328_389.operator-reviewed-subtitle-baseline-delivery.v1.json"
+    ),
+    **{
+        candidate_id: (
+            ROOT
+            / "docs/reviews"
+            / f"{candidate_id}-operator-reviewed-subtitle-baseline-delivery.v1.json"
+        )
+        for candidate_id in (
+            "auto_113028_1271_1328",
+            "auto_113028_1602_1698",
+            "auto_120032_753_816",
+            "auto_123036_727_785",
+        )
+    },
+}
+
+
+@pytest.mark.parametrize("candidate_id", sorted(_RECEIPTS))
+def test_checked_in_v3_manifest_receipt_parity(candidate_id: str) -> None:
     manifest = json.loads(
         (ASSETS / f"{candidate_id}.subtitle-baseline.v1.json").read_text(
             encoding="utf-8"
         )
     )
-    receipt = json.loads(
-        (
-            ROOT
-            / "docs/reviews"
-            / f"{candidate_id}-operator-reviewed-subtitle-baseline-delivery.v1.json"
-        ).read_text(encoding="utf-8")
+    receipt = json.loads(_RECEIPTS[candidate_id].read_text(encoding="utf-8"))
+    require_baseline_receipt_parity(manifest, receipt)
+
+
+def test_manifest_receipt_parity_rejects_each_authority_axis() -> None:
+    candidate_id = "auto_113028_1271_1328"
+    manifest = json.loads(
+        (ASSETS / f"{candidate_id}.subtitle-baseline.v1.json").read_text(
+            encoding="utf-8"
+        )
     )
-    source = receipt["source_recording"]
-    assert source["time_domain"] == manifest["time_domain"] == DELIVERY_LOCAL
-    assert (source["absolute_start_ms"], source["absolute_end_ms"]) == (
-        manifest["absolute_source_start_ms"],
-        manifest["absolute_source_end_ms"],
-    )
-    for row in receipt["changed_cues"]:
-        assert row["absolute_source_start_ms"] == source["absolute_start_ms"] + row["start_ms"]
-        assert row["absolute_source_end_ms"] == source["absolute_start_ms"] + row["end_ms"]
+    receipt = json.loads(_RECEIPTS[candidate_id].read_text(encoding="utf-8"))
+    mutations = [
+        lambda value: value.__setitem__("candidate_id", "other"),
+        lambda value: value["source_recording"].__setitem__(
+            "time_domain", PIECE_LOCAL
+        ),
+        lambda value: value["source_recording"].__setitem__(
+            "absolute_start_ms", 0
+        ),
+        lambda value: value.__setitem__("baseline_sha256", "0" * 64),
+        lambda value: value["reviewed_srt"].__setitem__("sha256", "0" * 64),
+        lambda value: value["changed_cues"][0].__setitem__(
+            "absolute_source_start_ms", 0
+        ),
+    ]
+    for mutate in mutations:
+        changed = json.loads(json.dumps(receipt))
+        mutate(changed)
+        with pytest.raises(
+            RedeliveryTimeDomainError,
+            match="REDELIVERY_BASELINE_RECEIPT_PARITY_MISMATCH",
+        ):
+            require_baseline_receipt_parity(manifest, changed)
 
 
 def test_legacy_c3_exact_authority_synthesizes_only_its_sealed_domain() -> None:

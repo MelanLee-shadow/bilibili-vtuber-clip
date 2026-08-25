@@ -7,11 +7,11 @@
     "evidence_ref": "Ivan source event: Claude JSONL session 0df2296b-500a-4681-ab5e-6fb46dc39579; user 555195ed-ec18-418d-a311-558f7e54291f; raw JSONL line sha256 including LF e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; the exact C2 repairs are 0:14 小豆老公；； 不是你老公 and the 1:04 direct response to danmaku 小豆好吵（ as 小豆哪有好吵."
   },
   "source_srt": {
-    "path": "/private/tmp/vtuber-slice-fastlane-c2-minimal-20260824/assets/lidousha/c2-full-window-49du2tp9/source.srt",
+    "path": "/private/tmp/vtuber-slice-timeaxis-domain-repair-20260825/assets/lidousha/reviewed_subtitle_baselines/auto_203011_328_389.pipeline-diagnostic.srt",
     "sha256": "82a2acf76995030215e33cd03dc99aacc25f78eb9f619f7177675a74acd2247c"
   },
   "reviewed_srt": {
-    "path": "/private/tmp/vtuber-slice-fastlane-c2-minimal-20260824/assets/lidousha/c2-full-window-49du2tp9/reviewed.srt",
+    "path": "/private/tmp/vtuber-slice-timeaxis-domain-repair-20260825/assets/lidousha/reviewed_subtitle_baselines/auto_203011_328_389.reviewed.srt",
     "sha256": "7e078d8801a2a83b90ec344ec67cc3f4bd245ed15ce11bdf7810815057523ee6"
   },
   "baseline_sha256": "7e078d8801a2a83b90ec344ec67cc3f4bd245ed15ce11bdf7810815057523ee6",
@@ -19,7 +19,8 @@
     "basename": "22966160_20260813-20-30-11.mp4",
     "sha256": "b5a7861c7283914742783ccc740531d9a21bdf78da7f5b8f90a463cb9d7f209e",
     "absolute_start_ms": 318740,
-    "absolute_end_ms": 437660
+    "absolute_end_ms": 437660,
+    "time_domain": "PIECE_LOCAL"
   },
   "cue_count": 44,
   "source_cue_count": 44,

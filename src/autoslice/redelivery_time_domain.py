@@ -85,3 +85,52 @@ def replay_diagnostic_duration_ms(
                 "REDELIVERY_BASELINE_PIECE_INTERVAL_MISMATCH"
             )
     return padded_end_ms - padded_start_ms
+
+
+def require_baseline_receipt_parity(
+    config: Mapping[str, object], receipt: Mapping[str, object]
+) -> None:
+    """Bind a v3 manifest to its canonical materializer receipt."""
+
+    domain = operator_v3_time_domain(config)
+    if domain is None:
+        return
+    source = receipt.get("source_recording")
+    reviewed = receipt.get("reviewed_srt")
+    if not isinstance(source, Mapping) or not isinstance(reviewed, Mapping):
+        raise RedeliveryTimeDomainError("REDELIVERY_BASELINE_RECEIPT_PARITY_MISMATCH")
+    expected_start = config.get("absolute_source_start_ms")
+    expected_end = config.get("absolute_source_end_ms")
+    expected_sha = config.get("sha256")
+    if (
+        receipt.get("candidate_id") != config.get("candidate_id")
+        or source.get("time_domain") != domain
+        or source.get("absolute_start_ms") != expected_start
+        or source.get("absolute_end_ms") != expected_end
+        or receipt.get("baseline_sha256") != expected_sha
+        or reviewed.get("sha256") != expected_sha
+    ):
+        raise RedeliveryTimeDomainError("REDELIVERY_BASELINE_RECEIPT_PARITY_MISMATCH")
+    rows = receipt.get("changed_cues")
+    if not isinstance(rows, list) or isinstance(expected_start, bool) or not isinstance(
+        expected_start, int
+    ):
+        raise RedeliveryTimeDomainError("REDELIVERY_BASELINE_RECEIPT_PARITY_MISMATCH")
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise RedeliveryTimeDomainError(
+                "REDELIVERY_BASELINE_RECEIPT_PARITY_MISMATCH"
+            )
+        start_ms = row.get("start_ms")
+        end_ms = row.get("end_ms")
+        if (
+            isinstance(start_ms, bool)
+            or not isinstance(start_ms, int)
+            or isinstance(end_ms, bool)
+            or not isinstance(end_ms, int)
+            or row.get("absolute_source_start_ms") != expected_start + start_ms
+            or row.get("absolute_source_end_ms") != expected_start + end_ms
+        ):
+            raise RedeliveryTimeDomainError(
+                "REDELIVERY_BASELINE_RECEIPT_PARITY_MISMATCH"
+            )
