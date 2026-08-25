@@ -189,11 +189,17 @@ def test_manifest_receipt_parity_rejects_each_authority_axis() -> None:
         lambda value: value["source_recording"].__setitem__(
             "time_domain", PIECE_LOCAL
         ),
+        lambda value: value["source_recording"].__setitem__("sha256", "0" * 64),
+        lambda value: value["source_srt"].__setitem__("sha256", "0" * 64),
+        lambda value: value["truth_lanes"]["decision_ledger"].__setitem__(
+            "sha256", "0" * 64
+        ),
         lambda value: value["source_recording"].__setitem__(
             "absolute_start_ms", 0
         ),
         lambda value: value.__setitem__("baseline_sha256", "0" * 64),
         lambda value: value["reviewed_srt"].__setitem__("sha256", "0" * 64),
+        lambda value: value.__setitem__("changed_cue_count", 0),
         lambda value: value["changed_cues"][0].__setitem__(
             "absolute_source_start_ms", 0
         ),

@@ -96,14 +96,22 @@ def require_baseline_receipt_parity(
     if domain is None:
         return
     source = receipt.get("source_recording")
+    source_srt = receipt.get("source_srt")
     reviewed = receipt.get("reviewed_srt")
-    if not isinstance(source, Mapping) or not isinstance(reviewed, Mapping):
+    manifest_lanes = config.get("operator_truth_lanes")
+    receipt_lanes = receipt.get("truth_lanes")
+    if not all(
+        isinstance(value, Mapping)
+        for value in (source, source_srt, reviewed, manifest_lanes, receipt_lanes)
+    ):
         raise RedeliveryTimeDomainError("REDELIVERY_BASELINE_RECEIPT_PARITY_MISMATCH")
     expected_start = config.get("absolute_source_start_ms")
     expected_end = config.get("absolute_source_end_ms")
     expected_sha = config.get("sha256")
     if (
         receipt.get("candidate_id") != config.get("candidate_id")
+        or source.get("basename") != config.get("source_recording_basename")
+        or source.get("sha256") != config.get("source_sha256")
         or source.get("time_domain") != domain
         or source.get("absolute_start_ms") != expected_start
         or source.get("absolute_end_ms") != expected_end
@@ -111,9 +119,34 @@ def require_baseline_receipt_parity(
         or reviewed.get("sha256") != expected_sha
     ):
         raise RedeliveryTimeDomainError("REDELIVERY_BASELINE_RECEIPT_PARITY_MISMATCH")
+    for lane_name in (
+        "release_truth",
+        "pipeline_diagnostic",
+        "decision_ledger",
+        "diff_receipt",
+    ):
+        manifest_lane = manifest_lanes.get(lane_name)
+        receipt_lane = receipt_lanes.get(lane_name)
+        if (
+            not isinstance(manifest_lane, Mapping)
+            or not isinstance(receipt_lane, Mapping)
+            or manifest_lane.get("sha256") != receipt_lane.get("sha256")
+        ):
+            raise RedeliveryTimeDomainError(
+                "REDELIVERY_BASELINE_RECEIPT_PARITY_MISMATCH"
+            )
+    pipeline_lane = manifest_lanes.get("pipeline_diagnostic")
+    if (
+        not isinstance(pipeline_lane, Mapping)
+        or source_srt.get("sha256") != pipeline_lane.get("sha256")
+    ):
+        raise RedeliveryTimeDomainError("REDELIVERY_BASELINE_RECEIPT_PARITY_MISMATCH")
     rows = receipt.get("changed_cues")
-    if not isinstance(rows, list) or isinstance(expected_start, bool) or not isinstance(
-        expected_start, int
+    if (
+        not isinstance(rows, list)
+        or receipt.get("changed_cue_count") != len(rows)
+        or isinstance(expected_start, bool)
+        or not isinstance(expected_start, int)
     ):
         raise RedeliveryTimeDomainError("REDELIVERY_BASELINE_RECEIPT_PARITY_MISMATCH")
     for row in rows:
