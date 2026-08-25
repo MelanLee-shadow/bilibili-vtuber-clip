@@ -62,6 +62,9 @@ def prepare_stage_delivery_projection(
     fresh_srt_to_source_cues: Callable[..., object],
     write_source_range_srt: Callable[..., None],
     error: Callable[[str], Exception],
+    c5_start_clamp_proposal_path: Path | None = None,
+    c5_start_clamp_acceptance_path: Path | None = None,
+    recording_date: str | None = None,
 ) -> tuple[bytes, Mapping[str, object], dict[str, object] | None]:
     """Replay the full release and, only when needed, seal its 17-cue crop."""
 
@@ -123,6 +126,9 @@ def prepare_stage_delivery_projection(
             projection_record_sha256=getattr(record_binding, "sha256"), projection_record_boundary=boundary,
             projection_staged_media_sha256=getattr(rebuilt, "sha256"),
             projection_lane_bytes=lane_bytes,
+            c5_start_clamp_proposal_path=c5_start_clamp_proposal_path,
+            c5_start_clamp_acceptance_path=c5_start_clamp_acceptance_path,
+            recording_date=recording_date,
         )
     except FullWindowReplayError as exc:
         raise error(str(exc)) from exc

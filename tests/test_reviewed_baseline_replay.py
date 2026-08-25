@@ -355,6 +355,30 @@ def test_stage_rejects_rebuilt_video_that_is_not_the_old_record(tmp_path: Path, 
         replay.stage_replay(plan, stage_parent=private)
 
 
+def test_stage_projection_keeps_non_c5_candidates_on_the_generic_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out_root, media = _package(tmp_path)
+    plan = replay.build_replay_plan(repo_root=ROOT, out_root=out_root, date=DATE, candidate_id=CID)
+
+    def fake_run(command: list[str], **_kwargs: object) -> object:
+        Path(command[-1]).write_bytes(media)
+        return type("Completed", (), {"returncode": 0})()
+
+    seen: dict[str, object] = {}
+
+    def fake_projection(*_args: object, **kwargs: object) -> tuple[bytes, dict[str, str], None]:
+        seen.update(kwargs)
+        return b"1\n00:00:00,000 --> 00:00:01,000\nfrozen\n", {"status": "APPLIED"}, None
+
+    monkeypatch.setattr(replay.subprocess, "run", fake_run)
+    monkeypatch.setattr(replay, "prepare_stage_delivery_projection", fake_projection)
+    parent = tmp_path / "private"
+    parent.mkdir(mode=0o700)
+    replay.stage_replay(plan, stage_parent=parent, runtime_authority_root=tmp_path / "runtime")
+    assert not {"c5_start_clamp_proposal_path", "c5_start_clamp_acceptance_path", "recording_date"} & set(seen)
+
+
 def test_locator_projection_rewrites_only_mutable_private_paths(tmp_path: Path) -> None:
     private = tmp_path / "private-runtime"
     private_package = private / DATE / CID / "replacement_recuts"

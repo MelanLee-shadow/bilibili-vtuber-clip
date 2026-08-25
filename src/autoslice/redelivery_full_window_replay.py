@@ -251,6 +251,9 @@ def _build_full_release_delivery_projection_receipt(
     config: Mapping[str, object],
     staged_media_sha256: str,
     lane_bytes: Mapping[str, bytes],
+    c5_start_clamp_proposal_path: Path | None = None,
+    c5_start_clamp_acceptance_path: Path | None = None,
+    recording_date: str | None = None,
 ) -> dict[str, object] | None:
     """Prove an exact sealed full-release -> final-delivery projection.
 
@@ -368,16 +371,72 @@ def _build_full_release_delivery_projection_receipt(
                 "disposition": "OUTSIDE_FINAL_DELIVERY",
             })
             continue
-        if release.start_ms < final_start_ms or release.end_ms > final_end_ms:
+        start_clamp = release.start_ms < final_start_ms or release.end_ms > final_end_ms
+        if start_clamp and (
+            None in (
+                c5_start_clamp_proposal_path,
+                c5_start_clamp_acceptance_path,
+                recording_date,
+            )
+        ):
             raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_STRADDLER")
         if delivery_cursor >= len(delivery_cues):
             raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_DELIVERY_GRID_DRIFT")
         delivery = delivery_cues[delivery_cursor]
         delivery_index = delivery_cursor + 1
+        expected_start, expected_end = (
+            release.start_ms - final_start_ms,
+            release.end_ms - final_start_ms,
+        )
+        disposition = "RETAINED_FINAL_DELIVERY"
+        if start_clamp:
+            # No generic clipping authority exists.  The only exception is the
+            # accepted C5 cue-5 geometry, loaded from the runtime-private
+            # proposal and acceptance bytes at the first projection boundary.
+            from src.autoslice.c5_start_clamp import (
+                C5StartClampError,
+                C5_ACCEPTANCE_EXPECTATIONS,
+                CUE,
+                accepted_delivery_geometry,
+                load_accepted_authority,
+                load_proposal,
+            )
+            assert c5_start_clamp_proposal_path is not None
+            assert c5_start_clamp_acceptance_path is not None
+            assert recording_date is not None
+            try:
+                proposal, proposal_sha = load_proposal(c5_start_clamp_proposal_path)
+                acceptance = load_accepted_authority(
+                    c5_start_clamp_acceptance_path,
+                    proposal_path=c5_start_clamp_proposal_path,
+                    expectations=C5_ACCEPTANCE_EXPECTATIONS,
+                )
+                expected_start, expected_end = accepted_delivery_geometry(
+                    proposal_path=c5_start_clamp_proposal_path,
+                    proposal=proposal,
+                    proposal_file_sha256=proposal_sha,
+                    acceptance=acceptance,
+                    expectations=C5_ACCEPTANCE_EXPECTATIONS,
+                    candidate_id=candidate_id,
+                    recording_date=recording_date,
+                    final_start_ms=final_start_ms,
+                    final_end_ms=final_end_ms,
+                    source_index=old_ordinal,
+                    text=release.text,
+                    speaker_label=str(CUE["speaker_label"]),
+                    old_start_ms=release.start_ms,
+                    old_end_ms=release.end_ms,
+                    media_sha256=staged_media_sha256,
+                )
+            except C5StartClampError as exc:
+                raise FullWindowReplayError(
+                    "REDELIVERY_DELIVERY_PROJECTION_STRADDLER"
+                ) from exc
+            disposition = "RETAINED_FINAL_DELIVERY_START_CLAMP"
         if (
             delivery.index != str(delivery_index)
             or (delivery.start_ms, delivery.end_ms)
-            != (release.start_ms - final_start_ms, release.end_ms - final_start_ms)
+            != (expected_start, expected_end)
             or delivery.text != release.text
         ):
             raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_DELIVERY_GRID_DRIFT")
@@ -385,7 +444,7 @@ def _build_full_release_delivery_projection_receipt(
             "old_source_index": old_ordinal,
             "release_cue_index": release_index,
             "delivery_cue_index": delivery_index,
-            "disposition": "RETAINED_FINAL_DELIVERY",
+            "disposition": disposition,
             "release_start_ms": release.start_ms,
             "release_end_ms": release.end_ms,
             "delivery_start_ms": delivery.start_ms,
@@ -570,6 +629,9 @@ def replay_full_window_text_and_crop(
     projection_record_boundary: Mapping[str, object] | None = None,
     projection_staged_media_sha256: str | None = None,
     projection_lane_bytes: Mapping[str, bytes] | None = None,
+    c5_start_clamp_proposal_path: Path | None = None,
+    c5_start_clamp_acceptance_path: Path | None = None,
+    recording_date: str | None = None,
 ) -> tuple[bytes, dict]:
     """Apply an exact padded baseline and return a deterministic final crop."""
 
@@ -611,6 +673,9 @@ def replay_full_window_text_and_crop(
                 delivery_bytes=cropped, config=config,
                 staged_media_sha256=str(projection_staged_media_sha256),
                 lane_bytes=projection_lane_bytes,
+                c5_start_clamp_proposal_path=c5_start_clamp_proposal_path,
+                c5_start_clamp_acceptance_path=c5_start_clamp_acceptance_path,
+                recording_date=recording_date,
             )
             if receipt is not None:
                 assert projection_receipt_path is not None

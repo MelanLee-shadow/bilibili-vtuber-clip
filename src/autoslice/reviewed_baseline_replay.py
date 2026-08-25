@@ -409,6 +409,7 @@ def _write_private(path: Path, payload: bytes) -> None:
 
 def stage_replay(
     plan: ReplayPlan, *, stage_parent: Path, run_command: Sequence[str] | None = None,
+    runtime_authority_root: Path | None = None,
 ) -> dict[str, Any]:
     """Create a private recut/SRT/audit stage; no live target is named writable."""
 
@@ -443,10 +444,24 @@ def stage_replay(
     rebuilt = regular_binding(media, label="STAGED_VIDEO")
     if rebuilt.sha256 != plan.expected_video_sha256:
         raise ReviewedBaselineReplayError("REPLAY_OLD_RECORD_VIDEO_SHA256_MISMATCH")
+    c5_fields: dict[str, object] = {}
+    if (
+        plan.candidate_id == "auto_113028_1271_1328"
+        and plan.date == "2026-08-14"
+        and runtime_authority_root is not None
+    ):
+        from src.autoslice.c5_start_clamp import runtime_authority_paths
+        proposal_path, acceptance_path = runtime_authority_paths(runtime_authority_root)
+        c5_fields = {
+            "c5_start_clamp_proposal_path": proposal_path,
+            "c5_start_clamp_acceptance_path": acceptance_path,
+            "recording_date": plan.date,
+        }
     cropped_bytes, audit, projection_descriptor = prepare_stage_delivery_projection(
         plan, stage, rebuilt, regular_binding=regular_binding, load_json=_load_json,
         read_small_bytes=_read_small_bytes, fresh_srt_to_source_cues=_fresh_srt_to_source_cues,
         write_source_range_srt=_write_source_range_srt, error=ReviewedBaselineReplayError,
+        **c5_fields,
     )
     _write_private(stage / "reviewed.srt", cropped_bytes)
     _write_private(stage / "redelivery-baseline.json", _canonical(audit))

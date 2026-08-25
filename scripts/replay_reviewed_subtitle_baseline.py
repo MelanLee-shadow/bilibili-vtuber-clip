@@ -825,7 +825,9 @@ def _prepare(
         f"{_sha(_canonical({'date': plan.date, 'candidate_id': plan.candidate_id, 'record': regular_binding(plan.record_path, label='RECORD').sha256, 'baseline': 'sha256:' + plan.baseline.config['sha256']})).removeprefix('sha256:')[:16]}"
     )
     try:
-        staged = stage_replay(plan, stage_parent=stage_parent)
+        staged = stage_replay(
+            plan, stage_parent=stage_parent, runtime_authority_root=runtime,
+        )
     except (Exception, SystemExit) as exc:
         if expected_stage.exists() and not expected_stage.is_symlink():
             _cleanup_private_stage(expected_stage, parent=stage_parent)
