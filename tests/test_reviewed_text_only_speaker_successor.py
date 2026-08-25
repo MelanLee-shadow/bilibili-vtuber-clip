@@ -440,8 +440,8 @@ def test_successor_rejects_unsealed_drop_mapping_drift(
         _call(b, tmp_path)
 
 
-def test_c5_runtime_authority_loader_materializes_exact_clamp(tmp_path: Path, monkeypatch) -> None:
-    """Exercise the real 24->21->17 C5 grid through both authority loaders."""
+def test_c5_runtime_authority_cannot_materialize_revoked_clamp(tmp_path: Path, monkeypatch) -> None:
+    """The historical 24->21->17 projection is retained only as bad evidence."""
     root = Path(__file__).parents[1]
     assets = root / "assets" / "lidousha" / "reviewed_subtitle_baselines"
     diagnostic, reviewed = assets / "auto_113028_1271_1328.pipeline-diagnostic.srt", assets / "auto_113028_1271_1328.reviewed.srt"
@@ -475,24 +475,11 @@ def test_c5_runtime_authority_loader_materializes_exact_clamp(tmp_path: Path, mo
     original_sha = successor_module.sha256_file
     monkeypatch.setattr(successor_module, "sha256_file", lambda path: str(c5.BOUNDARY["media_sha256"]).removeprefix("sha256:") if Path(path) == media else original_sha(path))
     kwargs = dict(candidate_id=c5.CANDIDATE_ID, old_record=record, old_record_sha256=old_record_sha, old_manifest_path=manifest, old_manifest_sha256=_sha(manifest), old_diagnostic_path=diagnostic, old_diagnostic_sha256=_sha(diagnostic), reviewed_baseline_path=reviewed, reviewed_baseline_sha256=_sha(reviewed), ledger_path=ledger, ledger_sha256=_sha(ledger), truth_diff_path=truth, truth_diff_sha256=_sha(truth), delivery_projection_receipt_path=receipt, delivery_projection_receipt_sha256=_sha(receipt), c5_start_clamp_proposal_path=proposal_path, c5_start_clamp_acceptance_path=acceptance_path, recording_date="2026-08-14", new_plain_srt=delivery, new_media=media, expected_media_sha256=str(c5.BOUNDARY["media_sha256"]), output_srt=tmp_path/"out.srt", output_ass=tmp_path/"out.ass", output_manifest=tmp_path/"out.json")
-    result = materialize_text_only_speaker_successor(**kwargs)
-    cue5 = parse_srt(tmp_path / "out.srt")[0]
-    assert (cue5.start, cue5.end, cue5.text) == ("00:00:00,000", "00:00:00,330", "[李豆沙] 呃")
-    assert result["final_decisions"][0]["speaker"] == "李豆沙" and len(result["final_decisions"]) == 17
-    acceptance_path.unlink()
     with pytest.raises(ReviewedTextOnlySpeakerSuccessorError, match="DELIVERY_PROJECTION_STRADDLER"):
         materialize_text_only_speaker_successor(**kwargs)
-    bad = dict(acceptance); bad["reviewer_by"] = "wrong"; unsigned = dict(bad); unsigned.pop("self_sha256"); bad["self_sha256"] = c5._sha(unsigned)
-    acceptance_path.write_text(json.dumps(bad), encoding="utf-8")
-    with pytest.raises(ReviewedTextOnlySpeakerSuccessorError, match="DELIVERY_PROJECTION_STRADDLER"):
-        materialize_text_only_speaker_successor(**kwargs)
-    acceptance_path.unlink(); c5.materialize_accepted_authority(acceptance_path, proposal_path=proposal_path, proposal=proposal, proposal_file_sha256=proposal_sha, acceptance=acceptance, expectations=c5.C5_ACCEPTANCE_EXPECTATIONS)
-    kwargs["recording_date"] = "2026-08-15"
-    with pytest.raises(ReviewedTextOnlySpeakerSuccessorError, match="DELIVERY_PROJECTION_STRADDLER"):
-        materialize_text_only_speaker_successor(**kwargs)
-    kwargs["recording_date"] = "2026-08-14"; kwargs["c5_start_clamp_proposal_path"] = tmp_path / "missing-proposal.json"
-    with pytest.raises(ReviewedTextOnlySpeakerSuccessorError, match="DELIVERY_PROJECTION_STRADDLER"):
-        materialize_text_only_speaker_successor(**kwargs)
+    assert not (tmp_path / "out.srt").exists()
+    assert not (tmp_path / "out.ass").exists()
+    assert not (tmp_path / "out.json").exists()
 
 
 @pytest.mark.parametrize(("mutate", "reason"), [

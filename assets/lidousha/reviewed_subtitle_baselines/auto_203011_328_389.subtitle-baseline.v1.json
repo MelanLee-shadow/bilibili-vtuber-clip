@@ -4,6 +4,7 @@
   "schema_version": "subtitle-redelivery-baseline.v2",
   "mode": "preserve_text_outside_source_truth",
   "exact_interval_replay": true,
+  "time_domain": "PIECE_LOCAL",
   "path": "auto_203011_328_389.reviewed.srt",
   "sha256": "7e078d8801a2a83b90ec344ec67cc3f4bd245ed15ce11bdf7810815057523ee6",
   "authority": "Claude raw line e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa; content 0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b; exhaustive C2 fastlane repair.",

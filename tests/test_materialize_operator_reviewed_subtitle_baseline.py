@@ -246,10 +246,12 @@ def test_v3_drop_is_exhaustive_and_cannot_use_an_empty_release_cue(tmp_path: Pat
         source_srt=source, reviewed_srt=reviewed, candidate_id=CID,
         authority="Ivan exhaustive source-cue review", source_recording_basename="recording.mp4",
         source_recording_sha256="ab" * 32, absolute_source_start_ms=0,
-        absolute_source_end_ms=3_000,
+        absolute_source_end_ms=3_000, time_domain="PIECE_LOCAL",
         decision_ledger={"schema_version": "operator-reviewed-subtitle-decisions.v3", "candidate_id": CID, "report_scope": "EXHAUSTIVE", "pipeline_srt_sha256": source_sha, "operator_authority": {"kind": "IVAN_OPERATOR", "evidence_ref": "review: exhaustive"}, "cue_decisions": rows},
     )
     assert result["baseline_manifest"]["operator_text_full_ownership"]["operator_drop_cue_count"] == 1
+    assert result["baseline_manifest"]["time_domain"] == "PIECE_LOCAL"
+    assert result["receipt"]["source_recording"]["time_domain"] == "PIECE_LOCAL"
     assert json.loads(str(result["diagnostic_diff"]))["rows"][1]["release_truth_text"] is None
 
     root = tmp_path / "assets"
@@ -290,6 +292,7 @@ def test_v3_drop_is_exhaustive_and_cannot_use_an_empty_release_cue(tmp_path: Pat
             authority="Ivan exhaustive source-cue review", source_recording_basename="recording.mp4",
             source_recording_sha256="ab" * 32, absolute_source_start_ms=0,
             absolute_source_end_ms=3_000,
+            time_domain="PIECE_LOCAL",
             decision_ledger={"schema_version": "operator-reviewed-subtitle-decisions.v3", "candidate_id": CID, "report_scope": "EXHAUSTIVE", "pipeline_srt_sha256": source_sha, "operator_authority": {"kind": "IVAN_OPERATOR", "evidence_ref": "review: exhaustive"}, "cue_decisions": rows},
         )
     rows[2]["cue"] = 3
@@ -300,6 +303,7 @@ def test_v3_drop_is_exhaustive_and_cannot_use_an_empty_release_cue(tmp_path: Pat
             authority="Ivan exhaustive source-cue review", source_recording_basename="recording.mp4",
             source_recording_sha256="ab" * 32, absolute_source_start_ms=0,
             absolute_source_end_ms=3_000,
+            time_domain="PIECE_LOCAL",
             decision_ledger={"schema_version": "operator-reviewed-subtitle-decisions.v3", "candidate_id": CID, "report_scope": "EXHAUSTIVE", "pipeline_srt_sha256": source_sha, "operator_authority": {"kind": "IVAN_OPERATOR", "evidence_ref": "review: exhaustive"}, "cue_decisions": rows},
         )
 

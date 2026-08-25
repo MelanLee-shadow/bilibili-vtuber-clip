@@ -12,6 +12,12 @@ from src.autoslice.redelivery_full_window_replay import (
 from src.autoslice.redelivery_subtitle_baseline import (
     apply_redelivery_subtitle_baseline,
 )
+from src.autoslice.redelivery_time_domain import (
+    DELIVERY_LOCAL,
+    RedeliveryTimeDomainError,
+    operator_v3_time_domain,
+    require_delivery_local_interval,
+)
 from src.autoslice.fastlane_c3_private_stage import (
     C3PrivateStageAuthorityError,
     resolve_c3_private_stage_geometry,
@@ -74,7 +80,7 @@ def prepare_stage_delivery_projection(
     recording_date: str | None = None,
     c3_geometry: object | None = None,
 ) -> tuple[bytes, Mapping[str, object], dict[str, object] | None]:
-    """Replay the full release and, only when needed, seal its 17-cue crop."""
+    """Replay a baseline once in its declared domain and seal any real crop."""
 
     baseline = getattr(plan, "baseline")
     config = getattr(baseline, "config")
@@ -157,6 +163,55 @@ def prepare_stage_delivery_projection(
             )
         except ValueError as exc:
             raise error("C3_STAGE_FINAL_INTERVAL_GEOMETRY_INVALID") from exc
+        return reviewed.encode("utf-8"), audit, None
+    try:
+        time_domain = operator_v3_time_domain(config)
+    except RedeliveryTimeDomainError as exc:
+        raise error(str(exc)) from exc
+    if time_domain == DELIVERY_LOCAL:
+        local_start = getattr(plan, "local_start_ms")
+        local_end = getattr(plan, "local_end_ms")
+        if (
+            boundary.get("final_start_ms") != local_start
+            or boundary.get("final_end_ms") != local_end
+        ):
+            raise error("REPLAY_RECORD_DELIVERY_INTERVAL_MISMATCH")
+        absolute_start = padded_start + local_start
+        absolute_end = padded_start + local_end
+        try:
+            require_delivery_local_interval(
+                config,
+                absolute_start_ms=absolute_start,
+                absolute_end_ms=absolute_end,
+            )
+        except RedeliveryTimeDomainError as exc:
+            raise error(str(exc)) from exc
+        try:
+            fresh_srt_to_source_cues(
+                text,
+                window_start_ms=0,
+                duration_ms=local_end - local_start,
+            )
+            reviewed, audit = apply_redelivery_subtitle_baseline(
+                text,
+                config=config,
+                spec_parent=parent,
+                current_source_start_ms=absolute_start,
+                current_source_end_ms=absolute_end,
+                current_source_recording_basename=str(
+                    config["source_recording_basename"]
+                ),
+                current_source_sha256=str(config["source_sha256"]),
+            )
+            fresh_srt_to_source_cues(
+                reviewed,
+                window_start_ms=0,
+                duration_ms=local_end - local_start,
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise error("REPLAY_DELIVERY_LOCAL_BASELINE_INVALID") from exc
+        if audit.get("status") not in {"APPLIED", "ALREADY_SATISFIED"}:
+            raise error("REPLAY_BASELINE_APPLICATION_FAILED")
         return reviewed.encode("utf-8"), audit, None
     receipt = stage / "full-release-delivery-projection.json"
     crop = stage / ".reviewed-window.srt"

@@ -41,10 +41,11 @@ def test_c5_private_speaker_adapter_input_is_exact_24_to_21_drop_map() -> None:
     retained = [row["release_cue_index"] for row in diff["rows"] if row["disposition"] != "OPERATOR_DROP"]
     assert retained == list(range(1, 22))
     assert all(row["disposition"] == "OPERATOR_UNCHANGED_FREEZE" for row in rows if row["cue"] not in drops)
-    # The proposed C5-only adapter is allowed to clamp only this exact opening
-    # cue against the frozen 9750-ms delivery start.  All other drift stays
-    # outside the proposal and must fail closed.
+    # These coordinates are already DELIVERY_LOCAL.  The 9750-ms media crop
+    # lives on the piece-local axis and must never be compared to or subtracted
+    # from this cue a second time.
     assert diff["rows"][4]["disposition"] == "OPERATOR_UNCHANGED_FREEZE"
     assert (diff["rows"][4]["start_ms"], diff["rows"][4]["end_ms"]) == (9560, 10080)
-    assert 9560 < 9750 < 10080
-    assert (9750 - 9560, 10080 - 9750) == (190, 330)
+    manifest = json.loads((BASE / f"{CID}.subtitle-baseline.v1.json").read_text(encoding="utf-8"))
+    assert manifest["time_domain"] == "DELIVERY_LOCAL"
+    assert (manifest["absolute_source_start_ms"], manifest["absolute_source_end_ms"]) == (1270920, 1328694)

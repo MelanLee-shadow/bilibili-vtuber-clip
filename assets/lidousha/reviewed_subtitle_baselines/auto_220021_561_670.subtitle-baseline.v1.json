@@ -4,6 +4,7 @@
   "schema_version": "subtitle-redelivery-baseline.v2",
   "mode": "preserve_text_outside_source_truth",
   "exact_interval_replay": true,
+  "time_domain": "DELIVERY_LOCAL",
   "path": "auto_220021_561_670.reviewed.srt",
   "sha256": "d70a96c402df8313264ef6ca145d69d5dbb74e7a2c48eb512e78f3f417e8eecc",
   "authority": "Ivan/Claude line947 exhaustive C3 ruling",

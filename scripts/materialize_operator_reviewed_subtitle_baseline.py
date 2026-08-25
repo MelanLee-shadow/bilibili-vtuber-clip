@@ -28,6 +28,7 @@ from src.autoslice.qixi_cue21_diagnostic_evidence import (
     QixiCue21DiagnosticEvidenceError,
     validate_qixi_cue21_diagnostic_evidence,
 )
+from src.autoslice.redelivery_time_domain import SUPPORTED_TIME_DOMAINS
 
 
 REGISTRY_SCHEMA = "candidate-reviewed-subtitle-baseline.v1"
@@ -463,6 +464,7 @@ def compile_operator_baseline(
     absolute_source_end_ms: int,
     decision_ledger: object,
     decision_ledger_root: Path | None = None,
+    time_domain: str | None = None,
 ) -> dict[str, Any]:
     """Validate and return the baseline, manifest, and provenance receipt."""
 
@@ -503,6 +505,14 @@ def compile_operator_baseline(
             raise OperatorBaselineCompileError(f"reviewed SRT cue {ordinal} carries speaker annotation")
     source_sha = _sha256(source_srt)
     is_v3 = isinstance(decision_ledger, dict) and decision_ledger.get("schema_version") == DECISION_LEDGER_V3_SCHEMA
+    if is_v3 and time_domain not in SUPPORTED_TIME_DOMAINS:
+        raise OperatorBaselineCompileError(
+            "operator v3 baseline requires an explicit supported time domain"
+        )
+    if not is_v3 and time_domain is not None:
+        raise OperatorBaselineCompileError(
+            "time domain is reserved for operator v3 baselines"
+        )
     if is_v3:
         normalized_ledger, diagnostic_rows, exact_count, freeze_count, drop_count = _validate_v3_decision_ledger(
             ledger=decision_ledger, candidate_id=candidate_id, source_sha256=source_sha,
@@ -577,6 +587,7 @@ def compile_operator_baseline(
         "schema_version": BASELINE_SCHEMA,
         "mode": BASELINE_MODE,
         "exact_interval_replay": True,
+        **({"time_domain": time_domain} if is_v3 else {}),
         "path": f"{candidate_id}.reviewed.srt",
         "sha256": baseline_sha,
         "authority": authority,
@@ -612,6 +623,7 @@ def compile_operator_baseline(
             "sha256": source_recording_sha256,
             "absolute_start_ms": absolute_source_start_ms,
             "absolute_end_ms": absolute_source_end_ms,
+            **({"time_domain": time_domain} if is_v3 else {}),
         },
         "cue_count": len(reviewed_cues),
         **({"source_cue_count": len(source_cues), "operator_drop_cue_count": drop_count} if is_v3 else {}),
@@ -641,6 +653,7 @@ def main() -> int:
     parser.add_argument("--source-recording-sha256", required=True)
     parser.add_argument("--absolute-source-start-ms", required=True, type=int)
     parser.add_argument("--absolute-source-end-ms", required=True, type=int)
+    parser.add_argument("--time-domain", choices=sorted(SUPPORTED_TIME_DOMAINS))
     parser.add_argument("--decision-ledger", required=True, type=Path)
     parser.add_argument("--baseline-srt-out", required=True, type=Path)
     parser.add_argument("--baseline-manifest-out", required=True, type=Path)
@@ -665,6 +678,7 @@ def main() -> int:
         absolute_source_end_ms=args.absolute_source_end_ms,
         decision_ledger=decision_ledger,
         decision_ledger_root=args.decision_ledger.parent,
+        time_domain=args.time_domain,
     )
     atomic_write_text(args.baseline_srt_out, str(result["baseline_srt"]))
     manifest = dict(result["baseline_manifest"])

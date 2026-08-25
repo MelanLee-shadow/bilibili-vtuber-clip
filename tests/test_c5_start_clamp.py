@@ -32,9 +32,10 @@ def test_checked_in_proposal_is_exact_and_stays_unaccepted() -> None:
     assert proposal["accepted"] is False and proposal["upload_allowed"] is False
 
 
-def test_exact_acceptance_allows_only_the_190ms_geometry() -> None:
+def test_historical_acceptance_cannot_authorize_the_revoked_geometry() -> None:
     path, proposal, proposal_sha, expected, acceptance = _fixture()
-    assert c5.accepted_delivery_geometry(proposal_path=path, proposal=proposal, proposal_file_sha256=proposal_sha, acceptance=acceptance, expectations=expected, candidate_id=c5.CANDIDATE_ID, recording_date=c5.RECORDING_DATE, final_start_ms=9750, final_end_ms=67524, source_index=5, text="呃", speaker_label="李豆沙", old_start_ms=9560, old_end_ms=10080, media_sha256=str(c5.BOUNDARY["media_sha256"])) == (0, 330)
+    with pytest.raises(c5.C5StartClampError, match=c5.REVOKED_ERROR):
+        c5.accepted_delivery_geometry(proposal_path=path, proposal=proposal, proposal_file_sha256=proposal_sha, acceptance=acceptance, expectations=expected, candidate_id=c5.CANDIDATE_ID, recording_date=c5.RECORDING_DATE, final_start_ms=9750, final_end_ms=67524, source_index=5, text="呃", speaker_label="李豆沙", old_start_ms=9560, old_end_ms=10080, media_sha256=str(c5.BOUNDARY["media_sha256"]))
 
 
 @pytest.mark.parametrize("mutator", [

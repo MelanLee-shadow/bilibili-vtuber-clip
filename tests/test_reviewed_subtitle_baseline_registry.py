@@ -149,6 +149,45 @@ def test_present_invalid_manifest_fails_closed(tmp_path, mutate, message):
         load_candidate_reviewed_subtitle_baseline(tmp_path, "auto_1_2_3")
 
 
+def _copy_c5_v3_asset(root: Path) -> Path:
+    source = ROOT / "assets/lidousha/reviewed_subtitle_baselines"
+    candidate_id = "auto_113028_1271_1328"
+    root.mkdir(parents=True, exist_ok=True)
+    for suffix in (
+        ".reviewed.srt",
+        ".pipeline-diagnostic.srt",
+        ".operator-decisions.v3.json",
+        ".operator-truth-diff.v2.json",
+        ".subtitle-baseline.v1.json",
+    ):
+        (root / f"{candidate_id}{suffix}").write_bytes(
+            (source / f"{candidate_id}{suffix}").read_bytes()
+        )
+    return root / f"{candidate_id}.subtitle-baseline.v1.json"
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda doc: doc.pop("time_domain"), "TIME_DOMAIN_MISSING_OR_INVALID"),
+        (lambda doc: doc.update(time_domain="UNKNOWN"), "TIME_DOMAIN_MISSING_OR_INVALID"),
+        (
+            lambda doc: doc.update(absolute_source_end_ms=doc["absolute_source_start_ms"] + 500),
+            "TIME_DOMAIN_GEOMETRY_INVALID",
+        ),
+    ],
+)
+def test_operator_v3_time_domain_is_mandatory_and_bounds_the_srt(
+    tmp_path: Path, mutate, message: str,
+) -> None:
+    manifest = _copy_c5_v3_asset(tmp_path)
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    mutate(document)
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(ReviewedSubtitleBaselineRegistryError, match=message):
+        load_candidate_reviewed_subtitle_baseline(tmp_path, "auto_113028_1271_1328")
+
+
 def test_symlinked_baseline_fails_closed(tmp_path):
     manifest, baseline = _write_asset(tmp_path)
     target = tmp_path / "real.srt"

@@ -27,7 +27,6 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from src.autoslice.branding_intro import pin_existing_delivery_intro, require_branding_intro
-from src.autoslice.c5_start_clamp import finalizer_authority_kwargs
 from src.autoslice.recut_materialization import (
     _accurate_reencode_recut_command,
     _fresh_srt_to_source_cues,
@@ -37,6 +36,13 @@ from src.autoslice.reviewed_subtitle_baseline_registry import (
     ReviewedSubtitleBaseline,
     ReviewedSubtitleBaselineRegistryError,
     load_candidate_reviewed_subtitle_baseline,
+)
+from src.autoslice.redelivery_time_domain import (
+    DELIVERY_LOCAL,
+    PIECE_LOCAL,
+    RedeliveryTimeDomainError,
+    operator_v3_time_domain,
+    require_delivery_local_interval,
 )
 from src.autoslice.reviewed_baseline_replay_projection import (
     PreparedReplayAfterImage,
@@ -339,6 +345,28 @@ def build_replay_plan(*, repo_root: Path, out_root: Path, date: str, candidate_i
         or record.get("duration_ms") != end - start
     ):
         raise ReviewedBaselineReplayError("REPLAY_RECORD_TIMING_INVALID")
+    try:
+        time_domain = operator_v3_time_domain(config)
+        if time_domain == DELIVERY_LOCAL:
+            require_delivery_local_interval(
+                config,
+                absolute_start_ms=padded_start + start,
+                absolute_end_ms=padded_start + end,
+            )
+            diagnostic_duration_ms = end - start
+        elif time_domain == PIECE_LOCAL:
+            if (
+                config.get("absolute_source_start_ms") != padded_start
+                or config.get("absolute_source_end_ms") != padded_end
+            ):
+                raise RedeliveryTimeDomainError(
+                    "REDELIVERY_BASELINE_PIECE_INTERVAL_MISMATCH"
+                )
+            diagnostic_duration_ms = padded_end - padded_start
+        else:
+            diagnostic_duration_ms = padded_end - padded_start
+    except RedeliveryTimeDomainError as exc:
+        raise ReviewedBaselineReplayError(str(exc)) from exc
     diagnostic = config.get("operator_truth_lanes", {}).get("pipeline_diagnostic")
     if not isinstance(diagnostic, Mapping) or not isinstance(diagnostic.get("path"), str):
         raise ReviewedBaselineReplayError("REPLAY_PIPELINE_DIAGNOSTIC_MISSING")
@@ -350,13 +378,13 @@ def build_replay_plan(*, repo_root: Path, out_root: Path, date: str, candidate_i
         diagnostic_text = _read_small_bytes(
             diagnostic_binding, label="PIPELINE_DIAGNOSTIC"
         ).decode("utf-8")
-        # ``pipeline_diagnostic.srt`` is the padded-window local grid, not an
-        # absolute recording SRT.  Absolute coordinates enter only when the
-        # sealed v2 baseline maps this checked local window back to source.
+        # The diagnostic shares the reviewed baseline's explicit local grid.
+        # DELIVERY_LOCAL grids are checked against the final media duration;
+        # PIECE_LOCAL grids are checked against the padded source interval.
         _fresh_srt_to_source_cues(
             diagnostic_text,
             window_start_ms=0,
-            duration_ms=padded_end - padded_start,
+            duration_ms=diagnostic_duration_ms,
         )
     except (KeyError, TypeError, ValueError, UnicodeDecodeError) as exc:
         raise ReviewedBaselineReplayError(
@@ -366,6 +394,7 @@ def build_replay_plan(*, repo_root: Path, out_root: Path, date: str, candidate_i
         {"predicate": "RECORD_OLD_VIDEO_SHA256", "status": "PASS"},
         {"predicate": "PADDED_SOURCE_BINDING", "status": "PASS"},
         {"predicate": "REVIEWED_BASELINE_V2_V3_LEDGER", "status": "PASS"},
+        {"predicate": "REVIEWED_BASELINE_EXPLICIT_TIME_DOMAIN", "status": "PASS"},
         {"predicate": "PIPELINE_DIAGNOSTIC_HASH_AND_GEOMETRY", "status": "PASS"},
         {"predicate": "SPEAKER_ASS_BURN_REBUILD", "status": "PENDING_STAGE"},
         {"predicate": "TITLE_COVER_PRECONDITIONS", "status": "PENDING_STAGE"},
@@ -443,24 +472,10 @@ def stage_replay(
     rebuilt = regular_binding(media, label="STAGED_VIDEO")
     if rebuilt.sha256 != plan.expected_video_sha256:
         raise ReviewedBaselineReplayError("REPLAY_OLD_RECORD_VIDEO_SHA256_MISMATCH")
-    c5_fields: dict[str, object] = {}
-    if (
-        plan.candidate_id == "auto_113028_1271_1328"
-        and plan.date == "2026-08-14"
-        and runtime_authority_root is not None
-    ):
-        from src.autoslice.c5_start_clamp import runtime_authority_paths
-        proposal_path, acceptance_path = runtime_authority_paths(runtime_authority_root)
-        c5_fields = {
-            "c5_start_clamp_proposal_path": proposal_path,
-            "c5_start_clamp_acceptance_path": acceptance_path,
-            "recording_date": plan.date,
-        }
     cropped_bytes, audit, projection_descriptor = prepare_stage_delivery_projection(
         plan, stage, rebuilt, regular_binding=regular_binding, load_json=_load_json,
         read_small_bytes=_read_small_bytes, fresh_srt_to_source_cues=_fresh_srt_to_source_cues,
         write_source_range_srt=_write_source_range_srt, error=ReviewedBaselineReplayError,
-        **c5_fields,
     )
     _write_private(stage / "reviewed.srt", cropped_bytes)
     _write_private(stage / "redelivery-baseline.json", _canonical(audit))
@@ -1033,7 +1048,6 @@ def synthesize_replay_spec_and_finalize_private(
     # the sole text delta.  This wrapper is private-stage-only: it never points
     # at an installed package or writes a formal target.
     original_speaker_finalizer = getattr(adapters, "run_speaker_finalization", None)
-    c5_fields = finalizer_authority_kwargs(candidate_id=plan.candidate_id, recording_date=plan.date, runtime_root=runtime_authority_root)
     successor_fields = build_text_only_speaker_successor_fields(
         finalizer=finalizer, original_speaker_finalizer=original_speaker_finalizer,
         candidate_id=plan.candidate_id, record=record,
@@ -1047,7 +1061,6 @@ def synthesize_replay_spec_and_finalize_private(
         delivery_projection_receipt_sha256=projection_receipt_sha256,
         regular_binding=regular_binding, replay_error=ReviewedBaselineReplayError,
         error_factory=ReviewedBaselineReplayError,
-        **c5_fields,
     )
     spec_path = private_runtime_root / "replay-spec.json"
     _write_private(spec_path, _canonical(spec))

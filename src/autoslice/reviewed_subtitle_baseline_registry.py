@@ -36,6 +36,10 @@ from src.autoslice.reviewed_exact_source_interval import (
     ReviewedExactSourceIntervalError,
     validate_runtime_authority,
 )
+from src.autoslice.redelivery_time_domain import (
+    RedeliveryTimeDomainError,
+    operator_v3_time_domain,
+)
 
 
 REGISTRY_SCHEMA_VERSION = "candidate-reviewed-subtitle-baseline.v1"
@@ -772,6 +776,27 @@ def load_candidate_reviewed_subtitle_baseline(
             raise ReviewedSubtitleBaselineRegistryError(
                 "baseline absolute source interval is invalid"
             )
+        try:
+            time_domain = operator_v3_time_domain(document)
+        except RedeliveryTimeDomainError as exc:
+            raise ReviewedSubtitleBaselineRegistryError(str(exc)) from exc
+        if time_domain is not None:
+            try:
+                baseline_cues = parse_srt_cues(baseline.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, ValueError) as exc:
+                raise ReviewedSubtitleBaselineRegistryError(
+                    "baseline time-domain SRT is invalid"
+                ) from exc
+            interval_duration_ms = end - start
+            if not baseline_cues or any(
+                cue.start_ms < 0
+                or cue.end_ms <= cue.start_ms
+                or cue.end_ms > interval_duration_ms
+                for cue in baseline_cues
+            ):
+                raise ReviewedSubtitleBaselineRegistryError(
+                    "REDELIVERY_BASELINE_TIME_DOMAIN_GEOMETRY_INVALID"
+                )
         projection_mode = document.get(PROJECTION_MODE_CONFIG_KEY)
         if projection_mode is not None and projection_mode != PROJECTION_MODE:
             raise ReviewedSubtitleBaselineRegistryError(

@@ -21,6 +21,13 @@ from src.autoslice.redelivery_source_binding import V2RedeliverySourceBinding
 from src.autoslice.redelivery_subtitle_baseline import (
     apply_redelivery_subtitle_baseline,
 )
+from src.autoslice.redelivery_time_domain import (
+    DELIVERY_LOCAL,
+    PIECE_LOCAL,
+    RedeliveryTimeDomainError,
+    operator_v3_time_domain,
+    require_delivery_local_interval,
+)
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.source_subtitle_truth import source_truth_owner_windows
 
@@ -32,6 +39,14 @@ class FullWindowReplayError(RuntimeError):
 def exact_full_window_replay_enabled(
     config: Mapping[str, object], binding: V2RedeliverySourceBinding | None
 ) -> bool:
+    """Select full-window replay only for an explicitly piece-local v3 SRT."""
+
+    try:
+        time_domain = operator_v3_time_domain(config)
+    except RedeliveryTimeDomainError as exc:
+        raise FullWindowReplayError(str(exc)) from exc
+    if time_domain == DELIVERY_LOCAL:
+        return False
     return bool(
         binding is not None
         and config.get("exact_interval_replay") is True
@@ -39,7 +54,39 @@ def exact_full_window_replay_enabled(
         == binding.content_absolute_start_ms
         and config.get("absolute_source_end_ms")
         == binding.content_absolute_end_ms
+        and (time_domain is None or time_domain == PIECE_LOCAL)
     )
+
+
+def _require_v3_time_domain_binding(
+    config: Mapping[str, object], binding: V2RedeliverySourceBinding | None
+) -> str | None:
+    try:
+        time_domain = operator_v3_time_domain(config)
+        if time_domain is None:
+            return None
+        if binding is None or config.get("exact_interval_replay") is not True:
+            raise RedeliveryTimeDomainError(
+                "REDELIVERY_BASELINE_TIME_DOMAIN_SOURCE_BINDING_MISSING"
+            )
+        if time_domain == DELIVERY_LOCAL:
+            require_delivery_local_interval(
+                config,
+                absolute_start_ms=binding.absolute_source_start_ms,
+                absolute_end_ms=binding.absolute_source_end_ms,
+            )
+        elif (
+            config.get("absolute_source_start_ms")
+            != binding.content_absolute_start_ms
+            or config.get("absolute_source_end_ms")
+            != binding.content_absolute_end_ms
+        ):
+            raise RedeliveryTimeDomainError(
+                "REDELIVERY_BASELINE_PIECE_INTERVAL_MISMATCH"
+            )
+        return time_domain
+    except RedeliveryTimeDomainError as exc:
+        raise FullWindowReplayError(str(exc)) from exc
 
 
 def translate_final_local_protected_windows(
@@ -582,6 +629,7 @@ def replay_baseline_for_final_recut(
                 end_ms = min(final_end_ms - final_start_ms, owner_end - final_start_ms)
                 if start_ms < end_ms:
                     protected.append((start_ms, end_ms))
+    _require_v3_time_domain_binding(config, binding)
     if exact_full_window_replay_enabled(config, binding):
         assert binding is not None
         return replay_full_window_then_crop(
@@ -634,6 +682,20 @@ def replay_full_window_text_and_crop(
     recording_date: str | None = None,
 ) -> tuple[bytes, dict]:
     """Apply an exact padded baseline and return a deterministic final crop."""
+
+    try:
+        time_domain = operator_v3_time_domain(config)
+    except RedeliveryTimeDomainError as exc:
+        raise FullWindowReplayError(str(exc)) from exc
+    if time_domain == DELIVERY_LOCAL:
+        raise FullWindowReplayError(
+            "REDELIVERY_DELIVERY_LOCAL_BASELINE_CANNOT_REPLAY_FULL_WINDOW"
+        )
+    if time_domain == PIECE_LOCAL and (
+        config.get("absolute_source_start_ms") != padded_start_ms
+        or config.get("absolute_source_end_ms") != padded_end_ms
+    ):
+        raise FullWindowReplayError("REDELIVERY_BASELINE_PIECE_INTERVAL_MISMATCH")
 
     reviewed, audit = apply_redelivery_subtitle_baseline(
         text,

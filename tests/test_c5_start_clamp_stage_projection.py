@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from src.autoslice import c5_start_clamp as c5
+from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.recut_materialization import _write_source_range_srt
 from src.autoslice.redelivery_full_window_replay import (
     FullWindowReplayError,
@@ -20,10 +22,6 @@ from src.autoslice.reviewed_subtitle_baseline_registry import (
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "assets" / "lidousha" / "reviewed_subtitle_baselines"
-
-
-def _sha(path: Path) -> str:
-    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _c5_inputs(tmp_path: Path) -> dict[str, object]:
@@ -56,27 +54,18 @@ def _c5_inputs(tmp_path: Path) -> dict[str, object]:
     }
 
 
-def test_c5_finalizer_authority_kwargs_are_exactly_candidate_scoped(tmp_path: Path) -> None:
-    expected = {
-        "c5_start_clamp_proposal_path": c5.runtime_authority_paths(tmp_path)[0],
-        "c5_start_clamp_acceptance_path": c5.runtime_authority_paths(tmp_path)[1],
-        "recording_date": c5.RECORDING_DATE,
-    }
+def test_c5_start_clamp_is_revoked_for_every_runtime() -> None:
     assert c5.finalizer_authority_kwargs(
-        candidate_id=c5.CANDIDATE_ID, recording_date=c5.RECORDING_DATE,
-        runtime_root=tmp_path,
-    ) == expected
-    assert c5.finalizer_authority_kwargs(
-        candidate_id="auto_other", recording_date=c5.RECORDING_DATE,
-        runtime_root=tmp_path,
-    ) == {}
-    assert c5.finalizer_authority_kwargs(
-        candidate_id=c5.CANDIDATE_ID, recording_date="2026-08-15",
-        runtime_root=tmp_path,
+        candidate_id=c5.CANDIDATE_ID,
+        recording_date=c5.RECORDING_DATE,
+        runtime_root=Path("/runtime"),
     ) == {}
 
 
-def _replay_kwargs(tmp_path: Path) -> dict[str, object]:
+@pytest.mark.parametrize("include_historical_authority", [False, True])
+def test_delivery_local_c5_can_never_enter_full_window_crop(
+    tmp_path: Path, include_historical_authority: bool,
+) -> None:
     baseline = load_candidate_reviewed_subtitle_baseline(
         ASSETS, c5.CANDIDATE_ID, repo_root=ROOT,
     )
@@ -89,9 +78,8 @@ def _replay_kwargs(tmp_path: Path) -> dict[str, object]:
         for name, value in lanes.items()
         if name in {"pipeline_diagnostic", "decision_ledger", "diff_receipt"}
     }
-    diagnostic = lane_bytes["pipeline_diagnostic"].decode("utf-8")
-    return {
-        "text": diagnostic,
+    kwargs: dict[str, object] = {
+        "text": lane_bytes["pipeline_diagnostic"].decode("utf-8"),
         "config": config,
         "spec_parent": ASSETS,
         "padded_start_ms": 1_261_170,
@@ -108,25 +96,79 @@ def _replay_kwargs(tmp_path: Path) -> dict[str, object]:
         "projection_staged_media_sha256": str(c5.BOUNDARY["media_sha256"]),
         "projection_lane_bytes": lane_bytes,
     }
-
-
-def test_c5_stage_projection_requires_all_authority_inputs(tmp_path: Path) -> None:
-    kwargs = _replay_kwargs(tmp_path)
-    with pytest.raises(FullWindowReplayError, match="DELIVERY_PROJECTION_STRADDLER"):
+    if include_historical_authority:
+        kwargs.update(_c5_inputs(tmp_path))
+    with pytest.raises(
+        FullWindowReplayError,
+        match="DELIVERY_LOCAL_BASELINE_CANNOT_REPLAY_FULL_WINDOW",
+    ):
         replay_full_window_text_and_crop(**kwargs)
 
 
-def test_c5_stage_projection_uses_accepted_clamp_at_first_projection(tmp_path: Path) -> None:
-    kwargs = _replay_kwargs(tmp_path)
-    kwargs.update(_c5_inputs(tmp_path))
-    cropped, audit = replay_full_window_text_and_crop(**kwargs)
-    assert cropped.startswith(b"1\n00:00:00,000 --> 00:00:00,330\n\xe5\x91\x83\n")
-    receipt = kwargs["projection_receipt_path"]
-    assert isinstance(receipt, Path)
-    assert _sha(receipt) == audit["full_release_delivery_projection"]["receipt_sha256"]
+@pytest.mark.parametrize(
+    ("candidate_id", "padded_start", "padded_end", "local_start", "local_end", "cue_count", "anchor_index", "anchor_start", "anchor_text"),
+    [
+        ("auto_113028_1271_1328", 1_261_170, 1_376_550, 9_750, 67_524, 21, 5, 9_560, "呃"),
+        ("auto_113028_1602_1698", 1_592_760, 1_746_900, 9_750, 106_540, 20, 1, 250, "《线上直播间"),
+    ],
+)
+def test_delivery_local_stage_projection_is_identity_without_cue_loss(
+    tmp_path: Path,
+    candidate_id: str,
+    padded_start: int,
+    padded_end: int,
+    local_start: int,
+    local_end: int,
+    cue_count: int,
+    anchor_index: int,
+    anchor_start: int,
+    anchor_text: str,
+) -> None:
+    baseline = load_candidate_reviewed_subtitle_baseline(
+        ASSETS, candidate_id, repo_root=ROOT,
+    )
+    assert baseline is not None
+    record = tmp_path / "record.json"
+    record.write_text(json.dumps({
+        "boundary_audit": {
+            "final_start_ms": local_start,
+            "final_end_ms": local_end,
+        }
+    }), encoding="utf-8")
+    padded = tmp_path / f"padded_{padded_start}_{padded_end}.mp4"
+    plan = SimpleNamespace(
+        candidate_id=candidate_id,
+        record_path=record,
+        padded_path=padded,
+        local_start_ms=local_start,
+        local_end_ms=local_end,
+        baseline=baseline,
+    )
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    projected, audit, descriptor = replay.prepare_stage_delivery_projection(
+        plan,
+        stage,
+        SimpleNamespace(sha256="sha256:" + "1" * 64),
+        regular_binding=replay.regular_binding,
+        load_json=replay._load_json,
+        read_small_bytes=replay._read_small_bytes,
+        fresh_srt_to_source_cues=replay._fresh_srt_to_source_cues,
+        write_source_range_srt=replay._write_source_range_srt,
+        error=replay.ReviewedBaselineReplayError,
+    )
+    assert projected == baseline.baseline_path.read_bytes()
+    assert audit["status"] in {"APPLIED", "ALREADY_SATISFIED"}
+    assert descriptor is None
+    assert not (stage / "full-release-delivery-projection.json").exists()
+    cues = parse_srt_cues(projected.decode("utf-8"))
+    assert len(cues) == cue_count
+    assert cues[0].start_ms == 250
+    anchor = cues[anchor_index - 1]
+    assert (anchor.start_ms, anchor.text) == (anchor_start, anchor_text)
 
 
-def test_stage_replay_passes_only_c5_runtime_authority_to_early_projection(
+def test_stage_replay_never_passes_revoked_c5_authority(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     media = b"old-record-media"
@@ -153,15 +195,19 @@ def test_stage_replay_passes_only_c5_runtime_authority_to_early_projection(
 
     def fake_projection(*_args: object, **kwargs: object) -> tuple[bytes, dict[str, str], None]:
         seen.update(kwargs)
-        return b"1\n00:00:00,000 --> 00:00:00,330\n\xe5\x91\x83\n", {"status": "APPLIED"}, None
+        return b"1\n00:00:00,250 --> 00:00:01,000\ncorrect\n", {"status": "APPLIED"}, None
 
     monkeypatch.setattr(replay.subprocess, "run", fake_run)
     monkeypatch.setattr(replay, "prepare_stage_delivery_projection", fake_projection)
     parent = tmp_path / "private"
     parent.mkdir(mode=0o700)
-    runtime = tmp_path / "runtime"
-    replay.stage_replay(plan, stage_parent=parent, runtime_authority_root=runtime)
-    proposal_path, acceptance_path = c5.runtime_authority_paths(runtime)
-    assert seen["c5_start_clamp_proposal_path"] == proposal_path
-    assert seen["c5_start_clamp_acceptance_path"] == acceptance_path
-    assert seen["recording_date"] == c5.RECORDING_DATE
+    replay.stage_replay(
+        plan,
+        stage_parent=parent,
+        runtime_authority_root=tmp_path / "runtime",
+    )
+    assert not {
+        "c5_start_clamp_proposal_path",
+        "c5_start_clamp_acceptance_path",
+        "recording_date",
+    } & set(seen)

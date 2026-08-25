@@ -1,4 +1,9 @@
-"""C5's one reviewed start clamp; never a generic straddler exception."""
+"""Forensic validator for the revoked C5 start-clamp proposal.
+
+The proposal mistook a delivery-local cue for a piece-local cue.  Historical
+seals remain readable for incident evidence, but no runtime path may authorize
+or apply its geometry.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -14,6 +19,7 @@ RECORDING_DATE = "2026-08-14"
 SCHEMA = "c5-start-clamp-proposal.v1"
 ACCEPTANCE_SCHEMA = "c5-start-clamp-acceptance.v2"
 PERMITTED_OPERATION = "C5_EXACT_START_CLAMP_PRIVATE_PROJECTION"
+REVOKED_ERROR = "C5_START_CLAMP_REVOKED_TIME_DOMAIN_MISMATCH"
 PROPOSAL_DOC_SHA256 = "sha256:d8b2074bcc446180135fb3a554aec322f19b90c4a0915d17f3571180c4069d34"
 RULING_LINE_SHA256 = "sha256:e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa"
 HISTORICAL_CHAIN = {"record_sha256":"sha256:09646c35fdb2afd6a35cc4cf7c5aa4fbb61461f455a1866e9de3c8f35952ab95", "speaker_manifest_sha256":"sha256:cbed92f720d52d4da93f2b3fd58d1acaa02aefae0dc55a3a6cece13c3de248ec", "speaker_srt_sha256":"sha256:a014b0ece4a12234be58f08afb52bbb41a9ec7260d737b06a4ebfe8191932d20", "speaker_ass_sha256":"sha256:493e6aa6603b7a9dfe7ecb86e8b67d79cddc65ba1666ef2f499afb540106d94d", "diagnostic_srt_sha256":"sha256:5da5af9dba5ce3ff2fee7d585bda809eb3a9edb612a18868ace683cb94281043", "reviewed_srt_sha256":"sha256:9f33f247deb405b409d50f294bbfab08db7d5f43086241dd736fac0498faf64b", "ledger_sha256":"sha256:6fac5913ee143619c840483a8355e6ba63690f9bf47ddd27b3d34b9fcb5ce1a2", "truth_diff_sha256":"sha256:48142b7ebf737dde41472757030385794deb43ba9091289d1f4962885fd446b1"}
@@ -47,15 +53,9 @@ def runtime_authority_paths(runtime_root: Path) -> tuple[Path, Path]:
 def finalizer_authority_kwargs(
     *, candidate_id: str, recording_date: str, runtime_root: Path
 ) -> dict[str, object]:
-    """Return C5's sealed finalizer paths, or no extra fields for every other lane."""
-    if (candidate_id, recording_date) != (CANDIDATE_ID, RECORDING_DATE):
-        return {}
-    proposal_path, acceptance_path = runtime_authority_paths(runtime_root)
-    return {
-        "c5_start_clamp_proposal_path": proposal_path,
-        "c5_start_clamp_acceptance_path": acceptance_path,
-        "recording_date": recording_date,
-    }
+    """Return no runtime fields: the former private clamp is revoked."""
+    del candidate_id, recording_date, runtime_root
+    return {}
 
 def _canonical(value: object) -> bytes:
     return json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")).encode()
@@ -146,8 +146,9 @@ def load_accepted_authority(path: Path, *, proposal_path: Path, expectations: Ac
 
 def accepted_delivery_geometry(*, proposal_path: Path, proposal: Mapping[str, object], proposal_file_sha256: str, acceptance: Mapping[str, object], expectations: AcceptanceExpectations | None, candidate_id: str, recording_date: str, final_start_ms: int, final_end_ms: int, source_index: int, text: str, speaker_label: str, old_start_ms: int, old_end_ms: int, media_sha256: str) -> tuple[int,int]:
     validate_accepted_authority(proposal_path=proposal_path, proposal=proposal, proposal_file_sha256=proposal_file_sha256, acceptance=acceptance, expectations=expectations)
-    if (candidate_id,recording_date,final_start_ms,final_end_ms,source_index,text,speaker_label,old_start_ms,old_end_ms,media_sha256) != (CANDIDATE_ID,RECORDING_DATE,BOUNDARY["final_start_ms"],BOUNDARY["final_end_ms"],CUE["source_index"],CUE["text"],CUE["speaker_label"],CUE["old_start_ms"],CUE["old_end_ms"],BOUNDARY["media_sha256"]): raise C5StartClampError("C5_CLAMP_RUNTIME_BINDING_DRIFT")
-    return 0,330
+    del candidate_id, recording_date, final_start_ms, final_end_ms
+    del source_index, text, speaker_label, old_start_ms, old_end_ms, media_sha256
+    raise C5StartClampError(REVOKED_ERROR)
 
 def _write_all(fd: int, payload: bytes) -> None:
     position = 0

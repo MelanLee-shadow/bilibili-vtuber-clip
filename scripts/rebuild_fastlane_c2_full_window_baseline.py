@@ -144,7 +144,8 @@ def write_bundle(source: Path, out: Path, *, replace: bool) -> dict[str, object]
             source_srt=source_stage, reviewed_srt=reviewed_stage, candidate_id=CID,
             authority=AUTHORITY, source_recording_basename="22966160_20260813-20-30-11.mp4",
             source_recording_sha256=SOURCE_RECORDING_SHA256, absolute_source_start_ms=318_740,
-            absolute_source_end_ms=437_660, decision_ledger=ledger,
+            absolute_source_end_ms=437_660, time_domain="PIECE_LOCAL",
+            decision_ledger=ledger,
         )
     manifest = dict(result["baseline_manifest"])
     lanes = dict(manifest["operator_truth_lanes"])
