@@ -1,10 +1,11 @@
 import json
+from types import SimpleNamespace
+
 import pytest
 
 import src.autoslice.fastlane_c2_technical_receipt as technical_receipt
 from src.autoslice.fastlane_c2_formal_adapter import NAMES, TITLE, visual_inventory
 from src.autoslice.fastlane_c2_technical_receipt import (
-    READY,
     make_accepted_receipt,
     make_ready_proposal,
     validate_accepted_receipt,
@@ -30,6 +31,35 @@ def _proposal(root):
 
 def _write(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _passing_replay_audit(root: str) -> dict[str, object]:
+    return {
+        "schema_version": "lidousha-review-package-audit.v2",
+        "policy_epoch": "2026-07-31.final-artifact-gates.v5",
+        "policy_fingerprint": "sha256:" + "a" * 64,
+        "auditor_source_sha256": "sha256:" + "b" * 64,
+        "passed": True,
+        "root": root,
+        "audited_inputs": [{"path": "final.mp4", "sha256": "sha256:" + "c" * 64}],
+        "issues": [],
+        "issue_count": 0,
+        "blocking_issue_count": 0,
+    }
+
+
+def _replay_fixture(tmp_path, monkeypatch, *, saved_root: str | None = None):
+    root = _package(tmp_path)
+    saved = _passing_replay_audit(saved_root or "/frozen/c2-formal")
+    (root / "package_audit.json").write_text(json.dumps(saved), encoding="utf-8")
+    current = json.loads(json.dumps(saved))
+    current["root"] = str(root.absolute())
+
+    def fake_run(*_args, **_kwargs):
+        return SimpleNamespace(returncode=0, stdout=json.dumps(current))
+
+    monkeypatch.setattr(technical_receipt.subprocess, "run", fake_run)
+    return root, current
 
 
 @pytest.fixture
@@ -132,3 +162,54 @@ def test_c2_create_only_rejects_symlink_parent(tmp_path):
     linked_parent.symlink_to(real_parent, target_is_directory=True)
     with pytest.raises(ValueError):
         write_create_only_json(linked_parent / "receipt.json", {"x": 1})
+
+
+def test_c2_replay_allows_only_relocation_and_auditor_identity_churn(
+    tmp_path, monkeypatch
+):
+    root, current = _replay_fixture(tmp_path, monkeypatch)
+    current["policy_fingerprint"] = "sha256:" + "d" * 64
+    current["auditor_source_sha256"] = "sha256:" + "e" * 64
+
+    technical_receipt._replay_current_audit(root, allow_root_relocation=True)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda audit: audit.update(
+            audited_inputs=[{"path": "final.mp4", "sha256": "sha256:" + "f" * 64}]
+        ),
+        lambda audit: audit.update(
+            issues=[{"code": "NEW_BLOCK", "severity": "BLOCK"}],
+            issue_count=1,
+            blocking_issue_count=1,
+        ),
+        lambda audit: audit.update(schema_version="other-audit-schema.v1"),
+        lambda audit: audit.update(policy_epoch="other-policy-epoch"),
+        lambda audit: audit.update(passed=False),
+        lambda audit: audit.update(blocking_issue_count=1),
+        lambda audit: audit.update(issue_count=1),
+    ],
+)
+def test_c2_replay_rejects_content_or_verdict_drift(tmp_path, monkeypatch, mutate):
+    root, current = _replay_fixture(tmp_path, monkeypatch)
+    current["policy_fingerprint"] = "sha256:" + "d" * 64
+    current["auditor_source_sha256"] = "sha256:" + "e" * 64
+    mutate(current)
+
+    with pytest.raises(ValueError, match="C2_AUDIT_REPLAY_DRIFT"):
+        technical_receipt._replay_current_audit(root, allow_root_relocation=True)
+
+
+def test_c2_replay_without_relocation_keeps_exact_audit_identity(tmp_path, monkeypatch):
+    root, current = _replay_fixture(
+        tmp_path,
+        monkeypatch,
+        saved_root=str(tmp_path.absolute()),
+    )
+    current["policy_fingerprint"] = "sha256:" + "d" * 64
+    current["auditor_source_sha256"] = "sha256:" + "e" * 64
+
+    with pytest.raises(ValueError, match="C2_AUDIT_REPLAY_DRIFT"):
+        technical_receipt._replay_current_audit(root)

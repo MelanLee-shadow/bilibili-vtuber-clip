@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .fastlane_c2_formal_adapter import CID, NAMES, TITLE, sha256, visual_inventory
+from .package_audit_binding import audit_content_binding
 
 PROPOSAL_SCHEMA = "fastlane-c2-root-technical-receipt-proposal.v1"
 ACCEPTED_SCHEMA = "fastlane-c2-accepted-technical-receipt.v1"
@@ -260,8 +261,22 @@ def _replay_current_audit(root: Path, *, allow_root_relocation: bool = False) ->
     matches = current == saved
     if allow_root_relocation:
         saved_root, current_root = saved.get("root"), current.get("root")
-        current_cmp, saved_cmp = dict(current), dict(saved)
-        current_cmp.pop("root", None); saved_cmp.pop("root", None)
-        matches = (isinstance(saved_root, str) and Path(saved_root).is_absolute() and bool(saved_root) and current_root == str(root.absolute()) and current_cmp == saved_cmp)
+        # C2's accepted receipt is tied to the formal package's content
+        # verdict.  A create-only copy necessarily relocates ``root`` and an
+        # intervening deployed auditor may legitimately change only its own
+        # identity fields.  Keep every verdict/input field exact; this is not
+        # a generic policy bypass and is reachable only through C2's explicit
+        # receipt-replay mode.
+        current_cmp = audit_content_binding(current)
+        saved_cmp = audit_content_binding(saved)
+        current_cmp.pop("root", None)
+        saved_cmp.pop("root", None)
+        matches = (
+            isinstance(saved_root, str)
+            and Path(saved_root).is_absolute()
+            and bool(saved_root)
+            and current_root == str(root.absolute())
+            and current_cmp == saved_cmp
+        )
     if run.returncode or not matches or current.get("passed") is not True or current.get("blocking_issue_count") != 0:
         raise ValueError("C2_AUDIT_REPLAY_DRIFT")
