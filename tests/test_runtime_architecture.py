@@ -143,7 +143,7 @@ MODULE_DEBT_LEDGER = {
     # module; retain the exact lower bound so this entrypoint cannot regrow.
     # 2026-08-24：C2 sealed-release authority replay moved into its own bounded
     # module; retain the lower bound rather than compressing the upload gate.
-    "scripts/authorized_upload.py": 2_840,
+    "scripts/authorized_upload.py": 2_810,
     # 2026-08-01 新记：OSS 发布整备（Ivan 授权）把导出器扩成改名/patch/模板引擎；
     # 私库专用构建工具，导出时自剥离，不进 OSS 面。
     # 2026-08-02 +55：二轮测试修复（骨架逐键摘除治 governance:{} 必炸类、

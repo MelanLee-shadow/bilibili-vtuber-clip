@@ -37,6 +37,7 @@ from scripts.audit_lidousha_review_package import (  # noqa: E402
     audit_package,
 )
 from src.autoslice import authorized_upload_cli_parser  # noqa: E402
+from src.autoslice import authorized_upload_recovery_cli as upload_recovery  # noqa: E402
 from src.autoslice import bilibili_member_api as member_api  # noqa: E402
 from src.autoslice.package_audit_binding import (
     audit_content_binding as _audit_content_binding,
@@ -1559,10 +1560,7 @@ def _run_season_step(
 
 
 def _write_json_sidecar(path: Path, payload: dict) -> None:
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    upload_recovery.write_json_sidecar(path, payload)
 
 
 def _create_json_sidecar(path: Path, payload: dict) -> None:
@@ -2219,6 +2217,26 @@ def ledger_guard(ledger: Path, video_sha256: str) -> tuple[str | None, dict | No
     return None, None, []
 
 
+def _append_publication_verified(
+    ledger: Path,
+    guard_row: dict,
+    *,
+    bvid: str,
+    result: dict | None,
+    manifest_path: Path,
+) -> None:
+    upload_recovery.append_publication_verified(
+        ledger,
+        guard_row,
+        bvid=bvid,
+        result=result,
+        manifest_path=manifest_path,
+        append_ledger=append_ledger,
+        now=now,
+        public_verify_sidecar_path=public_verify_sidecar_path,
+    )
+
+
 def append_ledger(ledger: Path, entry: dict) -> None:
     """Durably append one JSONL row before releasing the shared upload lock."""
 
@@ -2409,10 +2427,26 @@ def upload(args: argparse.Namespace) -> int:
                 f"bvid={bvid or '?'}"
             )
             return completed.returncode
+        if not bvid:
+            print(
+                "LEDGER LEFT UNRESOLVED: uploader succeeded without a BVID; all further "
+                "uploads stay blocked until Creator Center reconciliation without re-uploading",
+                file=sys.stderr,
+            )
+            return 6
+        # The remote archive now exists.  Persist that fact before any sidecar,
+        # season or public-readback operation can fail (for example ENOSPC).
+        finished_row = {
+            "event": "UPLOAD_ATTEMPT_FINISHED",
+            "at": now(),
+            **common_ledger_fields,
+            "uploader_rc": 0,
+            "rc": 6,
+            "bvid": bvid,
+            "public_verify_status": "POSTED_UNVERIFIED",
+        }
+        append_ledger(ledger, finished_row)
 
-    # The STARTED row deliberately remains unresolved until every public surface
-    # passes.  Concurrent upload attempts therefore fail closed while this one
-    # waits for transcode/season propagation.
     if args.skip_season:
         post_rc, public_result = (
             6,
@@ -2435,34 +2469,16 @@ def upload(args: argparse.Namespace) -> int:
             args,
             quota_evidence=quota_evidence,
         )
-    if completed.returncode == 0 and not bvid:
-        print(
-            "LEDGER LEFT UNRESOLVED: uploader succeeded without a BVID; all further "
-            "uploads stay blocked until Creator Center reconciliation",
-            file=sys.stderr,
-        )
-        return 6
-    with exclusive_upload_lock(lock_path):
-        append_ledger(
-            ledger,
-            {
-                "event": "UPLOAD_ATTEMPT_FINISHED",
-                "at": now(),
-                **common_ledger_fields,
-                "uploader_rc": completed.returncode,
-                "rc": post_rc,
-                "bvid": bvid,
-                "public_verify_status": (
-                    public_result.get("status") if isinstance(public_result, dict) else None
-                ),
-                "public_verify_sha256": (
-                    sha256_file(public_verify_sidecar_path(manifest_path))
-                    if public_verify_sidecar_path(manifest_path).is_file()
-                    else None
-                ),
-            },
-        )
-    print(f"ledger += artifact {manifest['artifact_id']} rc={post_rc} bvid={bvid or '?'}")
+    if post_rc == 0:
+        with exclusive_upload_lock(lock_path):
+            _append_publication_verified(
+                ledger,
+                finished_row,
+                bvid=bvid,
+                result=public_result,
+                manifest_path=manifest_path,
+            )
+    print(f"ledger += artifact {manifest['artifact_id']} rc={post_rc} bvid={bvid}")
     return post_rc
 
 
@@ -2479,73 +2495,27 @@ def verify(args: argparse.Namespace) -> int:
 
 
 def season_add(args: argparse.Namespace) -> int:
-    """Finish/re-verify season membership for an already-posted manifest."""
-    manifest_path = Path(args.manifest)
-    manifest, problems = load_and_verify(manifest_path)
-    if problems:
-        # The archive is already public — hash drift of the LOCAL copy must not
-        # block finishing its season membership, but say it loudly.
-        for p in problems:
-            print(f"WARN (season-add continues): {p}", file=sys.stderr)
-        if manifest is None:
-            return 2
-    bvid = args.bvid
-    ledger = Path(args.ledger)
-    guard_row: dict | None = None
-    if not bvid:
-        status, row, ledger_problems = ledger_guard(ledger, manifest["video"]["sha256"])
-        if ledger_problems:
-            for problem in ledger_problems:
-                print(f"REFUSE: {problem}", file=sys.stderr)
-            return 5
-        if status not in {"uploaded", "posted_unverified"} or not row or not row.get("bvid"):
-            print(
-                "REFUSE: ledger has no successful upload with a bvid for this manifest's video; "
-                "pass --bvid explicitly if the post exists",
-                file=sys.stderr,
-            )
-            return 5
-        bvid = str(row["bvid"])
-        guard_row = row
-    if manifest.get("manifest_version") == 3:
-        rc, result = _run_postpublish_verification(manifest, manifest_path, bvid, args)
-        if rc == 0 and guard_row and guard_row.get("event") == "UPLOAD_ATTEMPT_FINISHED":
-            stable = {
-                key: guard_row.get(key)
-                for key in (
-                    "attempt_id",
-                    "artifact_id",
-                    "video_sha256",
-                    "cover_sha256",
-                    "manifest",
-                    "manifest_sha256",
-                    "uploader",
-                    "package_audit_sha256",
-                    "record_sha256",
-                    "subtitle_sha256",
-                    "review_manifest_sha256",
-                    "title_cover_qc_sha256",
-                    "title",
-                    "authorized_by",
-                    "authorization_quote",
-                    "tags",
-                )
-                if guard_row.get(key) is not None
-            }
-            append_ledger(
-                ledger,
-                {
-                    "event": "UPLOAD_PUBLICATION_VERIFIED",
-                    "at": now(),
-                    **stable,
-                    "rc": 0,
-                    "bvid": bvid,
-                    "public_verify_status": result.get("status") if result else None,
-                    "public_verify_sha256": sha256_file(public_verify_sidecar_path(manifest_path)),
-                },
-            )
-        return rc
-    return _run_season_step(manifest, manifest_path, bvid, args)
+    return upload_recovery.season_add(
+        args,
+        default_upload_lock=DEFAULT_UPLOAD_LOCK,
+        exclusive_upload_lock=exclusive_upload_lock,
+        load_and_verify=load_and_verify,
+        ledger_guard=ledger_guard,
+        read_ledger=read_ledger,
+        append_ledger=append_ledger,
+        build_season_http=_build_season_http,
+        run_postpublish_verification=_run_postpublish_verification,
+        run_season_step=_run_season_step,
+        public_verify_sidecar_path=public_verify_sidecar_path,
+        normalise_tags=_normalise_tags,
+        now=now,
+        view_api=VIEW_API,
+        tags_api=TAGS_API,
+        member_archive_view_api=MEMBER_ARCHIVE_VIEW_API,
+        expected_tid=EXPECTED_TID,
+        expected_copyright=EXPECTED_COPYRIGHT,
+        expected_source=EXPECTED_SOURCE,
+    )
 
 
 def _biliup_readonly_canary(cookie_json: Path, bvid: str) -> None:

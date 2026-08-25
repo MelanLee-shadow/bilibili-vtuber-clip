@@ -41,6 +41,7 @@ class FakeBili:
         self._title: str | None = None
         self._aid = 111
         self._cid = 222
+        self._bvid = "BV1TEST"
         self.member_source = au.EXPECTED_SOURCE
 
     def build(self, cookie_json):
@@ -105,7 +106,7 @@ class FakeBili:
                     "data": {
                         "archive": {
                             "aid": self._aid,
-                            "bvid": "BV1TEST",
+                            "bvid": self._bvid,
                             "title": self._title,
                             "desc": au.DEFAULT_DESCRIPTION,
                             "tag": TEST_TAGS,
@@ -125,7 +126,7 @@ class FakeBili:
                         "episodes": [
                             {
                                 "aid": self._aid,
-                                "bvid": "BV1TEST",
+                                "bvid": self._bvid,
                                 "title": self._title,
                             }
                         ],
@@ -264,6 +265,19 @@ def _uploader(tmp_path, bvid="BV1TEST"):
     stub.write_text(body, encoding="utf-8")
     stub.chmod(0o755)
     return stub
+
+
+def _write_started_row(ledger, manifest, *, attempt_id="recovery-attempt"):
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    row = {
+        "event": "UPLOAD_ATTEMPT_STARTED",
+        "at": "2026-08-25T06:15:38+0000",
+        "attempt_id": attempt_id,
+        **au.upload_recovery.manifest_ledger_binding(document, manifest),
+        "uploader": "/must/not/run",
+    }
+    au.append_ledger(ledger, row)
+    return row
 
 
 @pytest.mark.parametrize("schema", ["app", "biliup"])
@@ -476,6 +490,116 @@ def test_upload_pending_transcode_exits_6_and_season_add_retries(tmp_path, monke
     assert rc == 0
     assert fake.added_sections[0]["sectionId"] == 9320779
     assert json.loads((tmp_path / "clip.season_verify.json").read_text())["status"] == "IN_SEASON_PUBLIC"
+
+
+def test_explicit_bvid_recovers_one_started_attempt_without_uploader(
+    tmp_path, monkeypatch
+):
+    target_bvid = "BV1ABC234XYZ"
+    fake = FakeBili()
+    fake._title = TALK_TITLE
+    fake._bvid = target_bvid
+    monkeypatch.setattr(au, "_build_season_http", fake.build)
+    rc, manifest = _mk(tmp_path)
+    assert rc == 0
+    ledger = tmp_path / "ledger.jsonl"
+    started = _write_started_row(ledger, manifest)
+
+    def must_not_upload(*_args, **_kwargs):
+        raise AssertionError("explicit-BVID recovery must not call any uploader")
+
+    monkeypatch.setattr(au.subprocess, "run", must_not_upload)
+    command = [
+        "season-add",
+        "--manifest",
+        str(manifest),
+        "--ledger",
+        str(ledger),
+        "--bvid",
+        target_bvid,
+        "--cookie-json",
+        str(tmp_path / "unused.json"),
+    ]
+    assert au.main(command) == 0
+    rows = [json.loads(line) for line in ledger.read_text().splitlines()]
+    assert [row["event"] for row in rows] == [
+        "UPLOAD_ATTEMPT_STARTED",
+        "UPLOAD_ATTEMPT_FINISHED",
+        "UPLOAD_PUBLICATION_VERIFIED",
+    ]
+    assert {row["attempt_id"] for row in rows} == {started["attempt_id"]}
+    assert rows[1]["recovery_source"] == "season-add-explicit-bvid"
+    assert rows[1]["bvid"] == target_bvid
+    assert rows[1]["aid"] == fake._aid
+    assert rows[1]["cid"] == fake._cid
+    assert au.ledger_guard(
+        ledger, json.loads(manifest.read_text())["video"]["sha256"]
+    )[0] == "uploaded"
+
+    # A complete retry re-verifies public state but appends no duplicate rows.
+    before = ledger.read_bytes()
+    assert au.main(command) == 0
+    assert ledger.read_bytes() == before
+
+
+def test_explicit_bvid_recovery_rejects_wrong_archive_without_ledger_write(
+    tmp_path, monkeypatch
+):
+    fake = FakeBili()
+    fake._title = TALK_TITLE
+    fake._bvid = "BV1ABC234XYZ"
+    monkeypatch.setattr(au, "_build_season_http", fake.build)
+    rc, manifest = _mk(tmp_path)
+    assert rc == 0
+    ledger = tmp_path / "ledger.jsonl"
+    _write_started_row(ledger, manifest)
+    before = ledger.read_bytes()
+
+    assert au.main(
+        [
+            "season-add",
+            "--manifest",
+            str(manifest),
+            "--ledger",
+            str(ledger),
+            "--bvid",
+            "BV1ZZZ987QWE",
+            "--cookie-json",
+            str(tmp_path / "unused.json"),
+        ]
+    ) == 5
+    assert ledger.read_bytes() == before
+    assert fake.added_sections == []
+
+
+def test_explicit_bvid_recovery_rejects_multiple_unresolved_attempts(
+    tmp_path, monkeypatch
+):
+    rc, manifest = _mk(tmp_path)
+    assert rc == 0
+    ledger = tmp_path / "ledger.jsonl"
+    _write_started_row(ledger, manifest, attempt_id="attempt-one")
+    _write_started_row(ledger, manifest, attempt_id="attempt-two")
+    before = ledger.read_bytes()
+
+    def must_not_read_remote(*_args, **_kwargs):
+        raise AssertionError("ambiguous ledger must fail before remote reads")
+
+    monkeypatch.setattr(au, "_build_season_http", must_not_read_remote)
+    assert au.main(
+        [
+            "season-add",
+            "--manifest",
+            str(manifest),
+            "--ledger",
+            str(ledger),
+            "--bvid",
+            "BV1ABC234XYZ",
+            "--cookie-json",
+            str(tmp_path / "unused.json"),
+        ]
+    ) == 5
+    assert ledger.read_bytes() == before
 
 
 def test_season_add_treats_already_in_season_as_success(tmp_path, monkeypatch):

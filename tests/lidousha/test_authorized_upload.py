@@ -2578,7 +2578,11 @@ def test_upload_runs_uploader_with_manifest_args_and_ledgers(tmp_path, capsys):
     out = capsys.readouterr().out
     assert f"got: {video.resolve()} | {cover.resolve()} | {VALID_TITLE}" in out
     rows = _ledger_rows(ledger)
-    assert [row["event"] for row in rows] == ["UPLOAD_ATTEMPT_STARTED", "UPLOAD_ATTEMPT_FINISHED"]
+    assert [row["event"] for row in rows] == [
+        "UPLOAD_ATTEMPT_STARTED",
+        "UPLOAD_ATTEMPT_FINISHED",
+        "UPLOAD_PUBLICATION_VERIFIED",
+    ]
     assert rows[0]["attempt_id"] == rows[1]["attempt_id"]
     entry = rows[-1]
     assert entry["rc"] == 0 and entry["bvid"] == "BV1TEST"
@@ -2625,7 +2629,10 @@ def test_public_success_without_local_reconciliation_stays_posted_unverified(
     rows = _ledger_rows(ledger)
     assert rows[-1]["uploader_rc"] == 0
     assert rows[-1]["rc"] == 6
-    assert rows[-1]["public_verify_status"] == "VERIFIED_PUBLIC"
+    assert rows[-1]["public_verify_status"] == "POSTED_UNVERIFIED"
+    assert json.loads(au.public_verify_sidecar_path(manifest).read_text())["status"] == (
+        "VERIFIED_PUBLIC"
+    )
     assert au.uploaded_sidecar_path(manifest).is_file()
     assert "never re-upload" in capsys.readouterr().err
 
@@ -2639,7 +2646,7 @@ def test_upload_is_idempotent_by_video_hash(tmp_path, capsys):
     rc = au.main(["upload", "--manifest", str(manifest), "--ledger", str(ledger), "--uploader", str(stub)])
     assert rc == 3
     assert "already uploaded" in capsys.readouterr().err
-    assert len(ledger.read_text().splitlines()) == 2  # 拒绝的不追加第二个 attempt
+    assert len(ledger.read_text().splitlines()) == 3  # 拒绝的不追加第二个 attempt
 
 
 def test_upload_refuses_drifted_artifact(tmp_path, capsys):
@@ -2664,7 +2671,7 @@ def test_failed_upload_ledgered_but_retryable(tmp_path):
     # rc!=0 的账本条目不算已上传 → 重试不会被幂等门误拦
     assert au.main(["upload", "--manifest", str(manifest), "--ledger", str(ledger),
                     "--uploader", str(_stub_uploader(tmp_path))]) == 0
-    assert len(_ledger_rows(ledger)) == 4
+    assert len(_ledger_rows(ledger)) == 5
 
 
 def test_upload_holds_shared_lock_through_uploader_and_ledger_append(tmp_path, capsys):
@@ -2791,10 +2798,65 @@ def test_started_intent_is_fsynced_before_subprocess_and_terminal_is_durable(tmp
 
     assert au.main(["upload", "--manifest", str(manifest), "--ledger", str(ledger)]) == 0
     rows = _ledger_rows(ledger)
-    assert [row["event"] for row in rows] == ["UPLOAD_ATTEMPT_STARTED", "UPLOAD_ATTEMPT_FINISHED"]
+    assert [row["event"] for row in rows] == [
+        "UPLOAD_ATTEMPT_STARTED",
+        "UPLOAD_ATTEMPT_FINISHED",
+        "UPLOAD_PUBLICATION_VERIFIED",
+    ]
     assert rows[0]["attempt_id"] == rows[1]["attempt_id"]
     assert rows[1]["bvid"] == "BV1INTENT"
     assert len(fsync_calls) >= 4
+
+
+def test_postpublish_sidecar_failure_keeps_finished_only_and_never_reuploads(
+    tmp_path, monkeypatch, capsys
+):
+    _, _, manifest = _mk(tmp_path)
+    ledger = tmp_path / "ledger.jsonl"
+    uploader = _stub_uploader(tmp_path)
+
+    def fail_after_remote_post(*_args, **_kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(au, "_run_postpublish_verification", fail_after_remote_post)
+    with pytest.raises(OSError, match="No space left on device"):
+        au.main(
+            [
+                "upload",
+                "--manifest",
+                str(manifest),
+                "--ledger",
+                str(ledger),
+                "--uploader",
+                str(uploader),
+            ]
+        )
+    rows = _ledger_rows(ledger)
+    assert [row["event"] for row in rows] == [
+        "UPLOAD_ATTEMPT_STARTED",
+        "UPLOAD_ATTEMPT_FINISHED",
+    ]
+    assert rows[-1]["uploader_rc"] == 0
+    assert rows[-1]["rc"] == 6
+    assert rows[-1]["bvid"] == "BV1TEST"
+
+    def must_not_reupload(*_args, **_kwargs):
+        raise AssertionError("a FINISHED-only post must never call the uploader")
+
+    monkeypatch.setattr(au.subprocess, "run", must_not_reupload)
+    assert au.main(
+        [
+            "upload",
+            "--manifest",
+            str(manifest),
+            "--ledger",
+            str(ledger),
+            "--uploader",
+            str(uploader),
+        ]
+    ) == 6
+    assert "never re-upload" in capsys.readouterr().err
+    assert len(_ledger_rows(ledger)) == 2
 
 
 def test_crash_after_started_intent_blocks_all_later_uploads(tmp_path, monkeypatch, capsys):
