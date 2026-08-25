@@ -191,6 +191,9 @@ def test_manifest_receipt_parity_rejects_each_authority_axis() -> None:
         ),
         lambda value: value["source_recording"].__setitem__("sha256", "0" * 64),
         lambda value: value["source_srt"].__setitem__("sha256", "0" * 64),
+        lambda value: value["truth_lanes"]["release_truth"].__setitem__(
+            "srt_sha256", "0" * 64
+        ),
         lambda value: value["truth_lanes"]["decision_ledger"].__setitem__(
             "sha256", "0" * 64
         ),

@@ -127,10 +127,11 @@ def require_baseline_receipt_parity(
     ):
         manifest_lane = manifest_lanes.get(lane_name)
         receipt_lane = receipt_lanes.get(lane_name)
+        digest_key = "srt_sha256" if lane_name == "release_truth" else "sha256"
         if (
             not isinstance(manifest_lane, Mapping)
             or not isinstance(receipt_lane, Mapping)
-            or manifest_lane.get("sha256") != receipt_lane.get("sha256")
+            or manifest_lane.get(digest_key) != receipt_lane.get(digest_key)
         ):
             raise RedeliveryTimeDomainError(
                 "REDELIVERY_BASELINE_RECEIPT_PARITY_MISMATCH"
