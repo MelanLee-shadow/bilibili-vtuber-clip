@@ -11,7 +11,6 @@ from types import SimpleNamespace
 
 import pytest
 
-import src.autoslice.redelivery_full_window_replay as full_window_replay
 import src.autoslice.reviewed_baseline_replay as replay
 import src.autoslice.reviewed_baseline_replay_authority as replay_authority
 import src.autoslice.reviewed_baseline_replay_publish as replay_publish
