@@ -143,16 +143,6 @@ def test_delivery_local_head_rejects_the_old_full_piece_projection() -> None:
     assert _redelivery_baseline_head_rel_ms(spec) == 9_750
 
 
-@pytest.mark.parametrize(
-    ("candidate_id", "domain", "start", "end"),
-    [
-        ("auto_113028_1271_1328", DELIVERY_LOCAL, 1_270_920, 1_328_694),
-        ("auto_113028_1602_1698", DELIVERY_LOCAL, 1_602_510, 1_699_300),
-        ("auto_120032_753_816", DELIVERY_LOCAL, 753_540, 816_400),
-        ("auto_123036_727_785", DELIVERY_LOCAL, 726_910, 786_090),
-        ("auto_203011_328_389", PIECE_LOCAL, 318_740, 437_660),
-    ],
-)
 def test_legacy_c3_exact_authority_synthesizes_only_its_sealed_domain() -> None:
     manifest = json.loads(
         (ASSETS / "auto_220021_561_670.subtitle-baseline.v1.json").read_text(
@@ -169,6 +159,16 @@ def test_legacy_c3_exact_authority_synthesizes_only_its_sealed_domain() -> None:
     assert baseline.config["time_domain"] == DELIVERY_LOCAL
 
 
+@pytest.mark.parametrize(
+    ("candidate_id", "domain", "start", "end"),
+    [
+        ("auto_113028_1271_1328", DELIVERY_LOCAL, 1_270_920, 1_328_694),
+        ("auto_113028_1602_1698", DELIVERY_LOCAL, 1_602_510, 1_699_300),
+        ("auto_120032_753_816", DELIVERY_LOCAL, 753_540, 816_400),
+        ("auto_123036_727_785", DELIVERY_LOCAL, 726_910, 786_090),
+        ("auto_203011_328_389", PIECE_LOCAL, 318_740, 437_660),
+    ],
+)
 def test_checked_in_v3_assets_declare_observed_time_domain(
     candidate_id: str, domain: str, start: int, end: int,
 ) -> None:
