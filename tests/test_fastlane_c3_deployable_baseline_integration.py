@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 from src.autoslice.reviewed_subtitle_baseline_registry import (
+    _valid_speaker_authority,
     load_candidate_reviewed_subtitle_baseline,
 )
 
@@ -39,3 +40,15 @@ def test_c3_integration_binds_accepted_proposal_and_exact_baseline() -> None:
     assert baseline is not None
     assert baseline.config["sha256"] == "d70a96c402df8313264ef6ca145d69d5dbb74e7a2c48eb512e78f3f417e8eecc"
     assert baseline.config["absolute_source_end_ms"] - baseline.config["absolute_source_start_ms"] == 109040
+
+
+def test_c3_speaker_authority_exception_is_exactly_scoped() -> None:
+    assert _valid_speaker_authority(
+        candidate_id=CID, value="IVAN_LINE947_EXHAUSTIVE"
+    )
+    assert _valid_speaker_authority(
+        candidate_id="auto_other", value="NOT_CLAIMED_TEXT_ONLY"
+    )
+    for value in ("", "IVAN_LINE947_EXHAUSTIVE"):
+        assert not _valid_speaker_authority(candidate_id="auto_other", value=value)
+    assert not _valid_speaker_authority(candidate_id=CID, value="ARBITRARY_THIRD_VALUE")
