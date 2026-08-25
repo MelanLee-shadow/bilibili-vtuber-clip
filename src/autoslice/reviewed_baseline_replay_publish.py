@@ -158,6 +158,9 @@ def replay_publish_adapter(
             cues=kwargs["cues"], run_ffmpeg=bool(kwargs.get("run_ffmpeg")),
             title_llm_call=None, art_direction_llm_call=None, skip_cover=False,
             selection_hook=old_hook,
+            recovery_publication_authority=kwargs.get(
+                "recovery_publication_authority"
+            ),
             stage_cover=(None if root_reviewed else carry), source_fact_llm_call=source_fact_llm,
             private_artifact_root=None,
         )

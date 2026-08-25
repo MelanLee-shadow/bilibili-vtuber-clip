@@ -15,6 +15,13 @@ import src.autoslice.reviewed_baseline_replay as replay
 import src.autoslice.reviewed_baseline_replay_authority as replay_authority
 import src.autoslice.reviewed_baseline_replay_publish as replay_publish
 from src.autoslice import llm_client
+from src.autoslice.published_recovery_package_contract import (
+    REGISTRY_REPO_PATH,
+    REGISTRY_SHA256,
+)
+from src.autoslice.recovery_title_authority import (
+    build_recovery_publication_authorities,
+)
 from src.autoslice.repository_asset_authority import _canonical_sha256
 from src.autoslice.reviewed_baseline_replay_setup import resolve_replay_exact_final_reviewer
 
@@ -892,6 +899,150 @@ def test_after_image_refuses_deployment_drift_since_private_prepare(
             finalization=finalization, package=SimpleNamespace(package_audit=SimpleNamespace(path=tmp_path / "audit")),
             projection=SimpleNamespace(),
         )
+
+
+@pytest.mark.parametrize(
+    "authority_candidate",
+    [None, "auto_113028_1271_1328", "auto_113028_1602_1698"],
+)
+def test_replay_publish_adapter_forwards_only_explicit_recovery_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    authority_candidate: str | None,
+) -> None:
+    out_root, _ = _package(tmp_path)
+    plan = replay.build_replay_plan(
+        repo_root=ROOT, out_root=out_root, date=DATE, candidate_id=CID
+    )
+    package = plan.package_root / "replacement_recuts"
+    cover = package / "cover.png"
+    cover.write_bytes(b"cover")
+    plan.record_path.write_text(json.dumps({
+        "story_contract": {"candidate_id": CID, "selection_hook": "冻结钩子"},
+        "publish_staging": {
+            "title": "【李豆沙】冻结标题", "selection_hook": "冻结钩子",
+            "cover_path": str(cover),
+            "cover_generation": {"final_cover_sha256": _sha(b"cover")},
+        },
+        "artifact_hashes": {"cover_sha256": _sha(b"cover")},
+        # The wrapper must never infer from record content.
+        "recovery_publication_authority": {"forbidden": "record fallback"},
+    }))
+    private_package = tmp_path / "private-package"
+    private_package.mkdir()
+    monkeypatch.setattr(
+        replay, "_private_carried_cover_generation",
+        lambda *_args, **_kwargs: (
+            private_package / "cover.png",
+            {"final_cover_sha256": _sha(b"cover")},
+        ),
+    )
+    monkeypatch.setattr(
+        "src.autoslice.source_fact_review.source_fact_review_passes",
+        lambda _review: True,
+    )
+    authorities = build_recovery_publication_authorities(
+        candidate_ids={"auto_113028_1271_1328", "auto_113028_1602_1698"},
+        registry_path=ROOT / REGISTRY_REPO_PATH,
+        expected_registry_sha256=REGISTRY_SHA256,
+        repo_root=ROOT,
+    )
+    expected = authorities.get(authority_candidate) if authority_candidate else None
+    seen: list[object] = []
+
+    def stage_publish(_record: object, **kwargs: object) -> dict[str, object]:
+        observed = kwargs.get("recovery_publication_authority")
+        seen.append(observed)
+        return {
+            "story_contract": {"selection_hook": "冻结钩子"},
+            "publish_staging": {
+                "title": "【李豆沙】冻结标题",
+                "title_authority_error": None,
+                "source_fact_review": {"status": "PASS"},
+                "recovery_publication_authority": observed,
+            },
+        }
+
+    monkeypatch.setattr(
+        "src.autoslice.publish_staging._stage_publish_draft", stage_publish
+    )
+    adapter = replay.replay_publish_adapter(
+        plan,
+        source_fact_llm=lambda *_args, **_kwargs: "",
+        private_package=private_package,
+        runtime_authority_root=_runtime_authority(tmp_path),
+    )
+    kwargs: dict[str, object] = {"cues": [], "run_ffmpeg": False}
+    if authority_candidate is not None:
+        kwargs["recovery_publication_authority"] = expected
+    staged = adapter(
+        {"story_contract": {"selection_hook": "冻结钩子"}}, **kwargs
+    )
+    assert seen == [expected]
+    assert staged["publish_staging"]["recovery_publication_authority"] == expected
+
+
+def test_replay_publish_adapter_explicit_none_remains_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The parameterized test covers omission. This explicit-None call guards
+    # compatibility with the producer finalizer's normal non-recovery path.
+    out_root, _ = _package(tmp_path)
+    plan = replay.build_replay_plan(
+        repo_root=ROOT, out_root=out_root, date=DATE, candidate_id=CID
+    )
+    package = plan.package_root / "replacement_recuts"
+    cover = package / "cover.png"
+    cover.write_bytes(b"cover")
+    plan.record_path.write_text(json.dumps({
+        "story_contract": {"candidate_id": CID, "selection_hook": "冻结钩子"},
+        "publish_staging": {
+            "title": "冻结标题", "selection_hook": "冻结钩子",
+            "cover_path": str(cover),
+            "cover_generation": {"final_cover_sha256": _sha(b"cover")},
+        },
+        "artifact_hashes": {"cover_sha256": _sha(b"cover")},
+        "recovery_publication_authority": {"forbidden": "record fallback"},
+    }))
+    private_package = tmp_path / "private-package"
+    private_package.mkdir()
+    monkeypatch.setattr(
+        replay, "_private_carried_cover_generation",
+        lambda *_args, **_kwargs: (
+            private_package / "cover.png",
+            {"final_cover_sha256": _sha(b"cover")},
+        ),
+    )
+    monkeypatch.setattr(
+        "src.autoslice.source_fact_review.source_fact_review_passes",
+        lambda _review: True,
+    )
+    seen: list[object] = []
+
+    def stage_publish(_record: object, **kwargs: object) -> dict[str, object]:
+        seen.append(kwargs.get("recovery_publication_authority"))
+        return {
+            "story_contract": {"selection_hook": "冻结钩子"},
+            "publish_staging": {
+                "title": "冻结标题", "title_authority_error": None,
+                "source_fact_review": {"status": "PASS"},
+            },
+        }
+
+    monkeypatch.setattr(
+        "src.autoslice.publish_staging._stage_publish_draft", stage_publish
+    )
+    adapter = replay.replay_publish_adapter(
+        plan,
+        source_fact_llm=lambda *_args, **_kwargs: "",
+        private_package=private_package,
+        runtime_authority_root=_runtime_authority(tmp_path),
+    )
+    adapter(
+        {"story_contract": {"selection_hook": "冻结钩子"}},
+        cues=[], run_ffmpeg=False, recovery_publication_authority=None,
+    )
+    assert seen == [None]
 
 
 def test_replay_publish_adapter_refuses_source_fact_title_rewrite(
