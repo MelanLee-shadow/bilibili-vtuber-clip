@@ -1,0 +1,54 @@
+{
+  "schema_version": "fastlane-c3-deployable-baseline-authority.v1",
+  "authority_sha256": "sha256:f7705695e2d3902c9ad4716987da40779b7e3ceb0d46e016736ed6dd938697c1",
+  "acceptance": {
+    "accepted": false,
+    "reviewed_by": null,
+    "reviewed_at": null,
+    "decision_basis": "Ivan/Claude exhaustive ruling #3 and root-accepted exact final grid; proposal only, pending root review."
+  },
+  "candidate_id": "auto_220021_561_670",
+  "recording_date": "2026-08-13",
+  "permissions": {
+    "provider_calls": 0,
+    "provider_allowed": false,
+    "upload_allowed": false,
+    "state_allowed": false,
+    "deploy_allowed": false
+  },
+  "baseline": {
+    "manifest_path": "assets/lidousha/reviewed_subtitle_baselines/auto_220021_561_670.subtitle-baseline.v1.json",
+    "manifest_sha256": "sha256:fa1fee5f2ec29556d8713414963df32f3bdf2a0f2b6cdd56efc71937509adf30",
+    "reviewed_srt_path": "assets/lidousha/reviewed_subtitle_baselines/auto_220021_561_670.reviewed.srt",
+    "reviewed_srt_sha256": "sha256:d70a96c402df8313264ef6ca145d69d5dbb74e7a2c48eb512e78f3f417e8eecc",
+    "diagnostic_srt_path": "assets/lidousha/reviewed_subtitle_baselines/auto_220021_561_670.pipeline-diagnostic.srt",
+    "diagnostic_srt_sha256": "sha256:d70a96c402df8313264ef6ca145d69d5dbb74e7a2c48eb512e78f3f417e8eecc",
+    "operator_decisions_path": "assets/lidousha/reviewed_subtitle_baselines/auto_220021_561_670.operator-decisions.v3.json",
+    "operator_decisions_sha256": "sha256:54157e30df77040a4cf141c592f4508cfdc96113ed98aaed9d009c5c956c8472",
+    "operator_truth_diff_path": "assets/lidousha/reviewed_subtitle_baselines/auto_220021_561_670.operator-truth-diff.v2.json",
+    "operator_truth_diff_sha256": "sha256:473d0eafdde366db7a26ce35f8e1d0dcea3427f6ad3cf3b6ef41fa015612ae45",
+    "exact_interval_path": "assets/lidousha/fastlane_c3_deployable_baseline_authority/auto_220021_561_670.exact-interval.v1.json",
+    "exact_interval_sha256": "sha256:c25505b51185ee679cfc8ef7f1b9031e7c166ec0f3b6d1f2715531d9c95fbe0f"
+  },
+  "final_grid": {
+    "path": "assets/lidousha/fastlane_c3_final_grid_consumption/auto_220021_561_670.v1.json",
+    "authority_sha256": "sha256:6800bbb1bb12267abdfc6484148bd531ab7173b8187a144fc46a53ca6df860a6",
+    "text_srt_sha256": "sha256:d70a96c402df8313264ef6ca145d69d5dbb74e7a2c48eb512e78f3f417e8eecc",
+    "speaker_srt_sha256": "sha256:51eef37bf38a2e1a58e4412115c5f2a9699904df80a70f6d8a406d6dde206153",
+    "ass_sha256": "sha256:d3160f325648915db0ebb6f4f05e48cc6e6cf25caccf726759c654d02829838a",
+    "burned_video_sha256": "sha256:c5d49bdff6842298f9a9cc1907044faa20dc8cae3d7717e99e80bd51aa2f9faf",
+    "delivery_media_sha256": "sha256:2e94ba7ae18e64903baca4cadb647b9545915778b19082e3cd0582d32e20c84e"
+  },
+  "predecessor_to_final_mutation_audit": {
+    "predecessor_rebind_path": "assets/lidousha/fastlane_c3_private_record_chat_rebind/auto_220021_561_670.v1.json",
+    "predecessor_rebind_sha256": "sha256:a19084d53aba632730d25acf9f4abf221b493994ce4a3e01b2373447dd05c064",
+    "allowed_mutations": [
+      "speaker_video_separation",
+      "end_theme_omitted",
+      "cue_034_xinglan_response"
+    ],
+    "extra_mutation": "BLOCK",
+    "frozen_surfaces": ["title", "cover", "boundary", "tags", "story"]
+  },
+  "r7e_record_sha256": "sha256:444785698c67fec556e161448d76d135cf1cae956d053ddf2b6e50266f5817db"
+}

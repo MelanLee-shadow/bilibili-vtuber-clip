@@ -1,0 +1,58 @@
+{
+  "schema_version": "operator-reviewed-subtitle-decisions.v3",
+  "candidate_id": "auto_220021_561_670",
+  "report_scope": "EXHAUSTIVE",
+  "pipeline_srt_sha256": "d70a96c402df8313264ef6ca145d69d5dbb74e7a2c48eb512e78f3f417e8eecc",
+  "operator_authority": {
+    "kind": "IVAN_OPERATOR",
+    "evidence_ref": "Ivan/Claude line947 exhaustive fastlane ruling; C3 named 星兰 surface"
+  },
+  "cue_decisions": [
+    {
+      "cue": 1,
+      "disposition": "OPERATOR_EXACT_TEXT",
+      "release_text": "星兰不会死啊，她怎么可能会被美美杀死",
+      "decision_authority": "LEDGER_OPERATOR_AUTHORITY"
+    },
+    {
+      "cue": 2,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 3,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 4,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 5,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 6,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 7,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 8,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 9,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 10,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 11,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": "fastlane-c3-exact-final-boundary.v1",
+  "authority_sha256": "sha256:ead96ae15f7953c20cc8ea92bdfd472ee7d92de23f5d71cf63e1fc38c8549442",
+  "acceptance": {"accepted": false},
+  "candidate_id": "auto_220021_561_670",
+  "recording_date": "2026-08-13",
+  "local_start_ms": 0,
+  "local_end_ms": 109040,
+  "final_cue_index": 11,
+  "final_cue_end_ms": 108940,
+  "endpoint_cue_index": 34,
+  "endpoint_snapped_end_ms": 108940,
+  "source_witness_start_ms": 9690,
+  "source_witness_end_ms": 118730,
+  "source_witness_recommended_end_ms": 118630,
+  "endpoint_status": "PASS",
+  "source_witness_status": "PASS",
+  "authority_basis": "root-accepted final-grid receipt and Ivan/Claude exhaustive ruling #3; proposal only"
+}

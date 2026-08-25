@@ -1,0 +1,21 @@
+{
+  "schema_version": "fastlane-c3-deployable-baseline-acceptance.v1",
+  "acceptance_sha256": "sha256:9e3ff0d577b1190d4a75faf842b4def2379e12d0232dd39c74ace10fa422bef9",
+  "candidate_id": "auto_220021_561_670",
+  "recording_date": "2026-08-13",
+  "accepted": true,
+  "accepted_at": "2026-08-25T00:22:01Z",
+  "accepted_by": "Codex root",
+  "decision_basis": "Ivan/Claude exhaustive #3; root-accepted final-grid exact receipt; C3 proposal validation only. No new human or content review.",
+  "proposal": {
+    "path": "assets/lidousha/fastlane_c3_deployable_baseline_authority/auto_220021_561_670.v1.json",
+    "file_sha256": "sha256:0efb0425ea6355413578b49e8248cd49d3d73a78986fedf9e00835f343473e3d",
+    "authority_sha256": "sha256:f7705695e2d3902c9ad4716987da40779b7e3ceb0d46e016736ed6dd938697c1"
+  },
+  "exact_interval": {
+    "path": "assets/lidousha/fastlane_c3_deployable_baseline_authority/auto_220021_561_670.exact-interval.v1.json",
+    "file_sha256": "sha256:c25505b51185ee679cfc8ef7f1b9031e7c166ec0f3b6d1f2715531d9c95fbe0f",
+    "authority_sha256": "sha256:ead96ae15f7953c20cc8ea92bdfd472ee7d92de23f5d71cf63e1fc38c8549442"
+  },
+  "forbidden_operations": ["provider", "state", "ssh", "deploy", "upload", "new_content"]
+}

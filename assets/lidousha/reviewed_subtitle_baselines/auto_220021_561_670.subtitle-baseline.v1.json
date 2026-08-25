@@ -1,0 +1,50 @@
+{
+  "registry_schema_version": "candidate-reviewed-subtitle-baseline.v1",
+  "candidate_id": "auto_220021_561_670",
+  "schema_version": "subtitle-redelivery-baseline.v2",
+  "mode": "preserve_text_outside_source_truth",
+  "exact_interval_replay": true,
+  "path": "auto_220021_561_670.reviewed.srt",
+  "sha256": "d70a96c402df8313264ef6ca145d69d5dbb74e7a2c48eb512e78f3f417e8eecc",
+  "authority": "Ivan/Claude line947 exhaustive C3 ruling",
+  "source_recording_basename": "22966160_20260813-22-00-21.mp4",
+  "source_sha256": "e9ce6186f9d1f6e9bad8b3801054a63ef9833f4943878e1e721b5a338aae18da",
+  "absolute_source_start_ms": 561650,
+  "absolute_source_end_ms": 670690,
+  "operator_text_full_ownership": {
+    "schema_version": "operator-reviewed-text-full-ownership-pin.v3",
+    "baseline_sha256": "d70a96c402df8313264ef6ca145d69d5dbb74e7a2c48eb512e78f3f417e8eecc",
+    "pipeline_srt_sha256": "d70a96c402df8313264ef6ca145d69d5dbb74e7a2c48eb512e78f3f417e8eecc",
+    "decision_ledger_sha256": "54157e30df77040a4cf141c592f4508cfdc96113ed98aaed9d009c5c956c8472",
+    "diagnostic_diff_sha256": "473d0eafdde366db7a26ce35f8e1d0dcea3427f6ad3cf3b6ef41fa015612ae45",
+    "operator_authority": {
+      "kind": "IVAN_OPERATOR",
+      "evidence_ref": "Ivan/Claude line947 exhaustive fastlane ruling; C3 named 星兰 surface"
+    },
+    "source_cue_count": 11,
+    "release_cue_count": 11,
+    "changed_cue_count": 0,
+    "operator_exact_text_cue_count": 1,
+    "operator_unchanged_freeze_cue_count": 10,
+    "operator_drop_cue_count": 0,
+    "speaker_authority": "IVAN_LINE947_EXHAUSTIVE"
+  },
+  "operator_truth_lanes": {
+    "schema_version": "operator-reviewed-subtitle-truth-lanes.v2",
+    "release_truth": {
+      "srt_sha256": "d70a96c402df8313264ef6ca145d69d5dbb74e7a2c48eb512e78f3f417e8eecc"
+    },
+    "pipeline_diagnostic": {
+      "sha256": "d70a96c402df8313264ef6ca145d69d5dbb74e7a2c48eb512e78f3f417e8eecc",
+      "path": "auto_220021_561_670.pipeline-diagnostic.srt"
+    },
+    "decision_ledger": {
+      "sha256": "54157e30df77040a4cf141c592f4508cfdc96113ed98aaed9d009c5c956c8472",
+      "path": "auto_220021_561_670.operator-decisions.v3.json"
+    },
+    "diff_receipt": {
+      "sha256": "473d0eafdde366db7a26ce35f8e1d0dcea3427f6ad3cf3b6ef41fa015612ae45",
+      "path": "auto_220021_561_670.operator-truth-diff.v2.json"
+    }
+  }
+}

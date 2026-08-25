@@ -1,0 +1,128 @@
+{
+  "schema_version": "operator-reviewed-subtitle-truth-diff.v2",
+  "candidate_id": "auto_220021_561_670",
+  "pipeline_srt_sha256": "d70a96c402df8313264ef6ca145d69d5dbb74e7a2c48eb512e78f3f417e8eecc",
+  "release_truth_srt_sha256": "d70a96c402df8313264ef6ca145d69d5dbb74e7a2c48eb512e78f3f417e8eecc",
+  "decision_ledger_sha256": "54157e30df77040a4cf141c592f4508cfdc96113ed98aaed9d009c5c956c8472",
+  "cue_count": 11,
+  "source_cue_count": 11,
+  "release_cue_count": 11,
+  "operator_drop_cue_count": 0,
+  "changed_cue_count": 0,
+  "rows": [
+    {
+      "cue": 1,
+      "source_index": "1",
+      "start_ms": 26750,
+      "end_ms": 31550,
+      "pipeline_text": "星兰不会死啊，她怎么可能会被美美杀死",
+      "disposition": "OPERATOR_EXACT_TEXT",
+      "release_cue_index": 1,
+      "release_truth_text": "星兰不会死啊，她怎么可能会被美美杀死",
+      "decision_authority": {
+        "kind": "IVAN_OPERATOR",
+        "evidence_ref": "Ivan/Claude line947 exhaustive fastlane ruling; C3 named 星兰 surface"
+      }
+    },
+    {
+      "cue": 2,
+      "source_index": "2",
+      "start_ms": 33970,
+      "end_ms": 37370,
+      "pipeline_text": "没有了，只更新到这一集了",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 2,
+      "release_truth_text": "没有了，只更新到这一集了"
+    },
+    {
+      "cue": 3,
+      "source_index": "3",
+      "start_ms": 37450,
+      "end_ms": 39890,
+      "pipeline_text": "我们下次一起看",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 3,
+      "release_truth_text": "我们下次一起看"
+    },
+    {
+      "cue": 4,
+      "source_index": "4",
+      "start_ms": 64280,
+      "end_ms": 68440,
+      "pipeline_text": "李豆包，帮我生成《与你相恋到生命尽头》第七集",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 4,
+      "release_truth_text": "李豆包，帮我生成《与你相恋到生命尽头》第七集"
+    },
+    {
+      "cue": 5,
+      "source_index": "5",
+      "start_ms": 69610,
+      "end_ms": 72530,
+      "pipeline_text": "哎，大家会忍不住去看漫画吗？",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 5,
+      "release_truth_text": "哎，大家会忍不住去看漫画吗？"
+    },
+    {
+      "cue": 6,
+      "source_index": "6",
+      "start_ms": 72890,
+      "end_ms": 78090,
+      "pipeline_text": "还是决定要忍到下一集，下周看动画呀？",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 6,
+      "release_truth_text": "还是决定要忍到下一集，下周看动画呀？"
+    },
+    {
+      "cue": 7,
+      "source_index": "7",
+      "start_ms": 87310,
+      "end_ms": 90150,
+      "pipeline_text": "欧耶",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 7,
+      "release_truth_text": "欧耶"
+    },
+    {
+      "cue": 8,
+      "source_index": "8",
+      "start_ms": 91630,
+      "end_ms": 96670,
+      "pipeline_text": "宝，没有下一集啊，要等下周了。能忍住。",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 8,
+      "release_truth_text": "宝，没有下一集啊，要等下周了。能忍住。"
+    },
+    {
+      "cue": 9,
+      "source_index": "9",
+      "start_ms": 97140,
+      "end_ms": 100740,
+      "pipeline_text": "打算看完动画去补。",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 9,
+      "release_truth_text": "打算看完动画去补。"
+    },
+    {
+      "cue": 10,
+      "source_index": "10",
+      "start_ms": 102720,
+      "end_ms": 105040,
+      "pipeline_text": "对，因为漫画更新得很慢。",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 10,
+      "release_truth_text": "对，因为漫画更新得很慢。"
+    },
+    {
+      "cue": 11,
+      "source_index": "11",
+      "start_ms": 105900,
+      "end_ms": 108940,
+      "pipeline_text": "漫画你要看的话，其实一下子就看完了。",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 11,
+      "release_truth_text": "漫画你要看的话，其实一下子就看完了。"
+    }
+  ]
+}
