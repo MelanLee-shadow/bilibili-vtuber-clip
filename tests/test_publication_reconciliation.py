@@ -453,6 +453,190 @@ def test_generic_missing_record_keeps_original_error() -> None:
         reconciliation._candidate_and_date({"package_attestation": {}})  # noqa: SLF001
 
 
+def _exact_c2_manifest(tmp_path: Path) -> tuple[dict, Path, Path]:
+    bridge = reconciliation.fastlane_c2_authorized_upload.bridge
+    package = tmp_path / "portable-wrapper" / "package"
+    record_path = package / bridge.RECORD_NAME
+    review_path = package / "review_manifest.json"
+    record = {
+        "schema_version": "lidousha-c2-release-record.v1",
+        "candidate_id": bridge.CID,
+        "recording_date": bridge.DATE,
+        "upload_allowed": False,
+        "artifact_hashes": {},
+        "c2_tag_generation_receipt": {},
+        "legacy_execution_contract": {},
+        "publish_staging": {"title": bridge.TITLE},
+        "upload_tags": {},
+    }
+    review = {
+        "schema_version": bridge.SCHEMA,
+        "candidate_id": bridge.CID,
+        "recording_date": bridge.DATE,
+        "title": bridge.TITLE,
+        "scope": "C2_NAMED_FASTLANE_NEW_BV_ONLY",
+    }
+    _write_json(record_path, record)
+    _write_json(review_path, review)
+    return (
+        {
+            "package_attestation": {
+                "package_root": str(package.resolve()),
+                "record": _entry(record_path),
+                "review_manifest": _entry(review_path),
+            }
+        },
+        record_path,
+        review_path,
+    )
+
+
+def test_exact_verified_c2_uses_bridge_candidate_and_attested_review_date(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, _record_path, _review_path = _exact_c2_manifest(tmp_path)
+    bridge = reconciliation.fastlane_c2_authorized_upload.bridge
+    audit_roots: list[Path] = []
+    monkeypatch.setattr(
+        bridge,
+        "audit_fastlane_c2_release_package",
+        lambda root: audit_roots.append(root) or [],
+    )
+
+    assert reconciliation._candidate_and_date(manifest) == (  # noqa: SLF001
+        bridge.CID,
+        bridge.DATE,
+    )
+    assert audit_roots == [Path(manifest["package_attestation"]["package_root"])]
+
+
+def test_generic_top_level_candidate_only_remains_rejected(tmp_path: Path) -> None:
+    package = tmp_path / "generic" / DATE
+    record_path = package / "clip.record.json"
+    _write_json(record_path, {"candidate_id": CANDIDATE})
+    manifest = {
+        "package_attestation": {
+            "package_root": str(package.resolve()),
+            "record": _entry(record_path),
+        }
+    }
+
+    with pytest.raises(
+        reconciliation.PublicationReconciliationError,
+        match="no publication candidate_id",
+    ):
+        reconciliation._candidate_and_date(manifest)  # noqa: SLF001
+
+
+@pytest.mark.parametrize("drift", ["record", "review", "package_root"])
+def test_c2_bridge_candidate_resolution_rejects_identity_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, drift: str
+) -> None:
+    manifest, record_path, review_path = _exact_c2_manifest(tmp_path)
+    bridge = reconciliation.fastlane_c2_authorized_upload.bridge
+    monkeypatch.setattr(bridge, "audit_fastlane_c2_release_package", lambda _root: [])
+    if drift == "record":
+        payload = json.loads(record_path.read_text(encoding="utf-8"))
+        payload["candidate_id"] = "other"
+        _write_json(record_path, payload)
+        manifest["package_attestation"]["record"] = _entry(record_path)
+    elif drift == "review":
+        payload = json.loads(review_path.read_text(encoding="utf-8"))
+        payload["recording_date"] = "2026-08-12"
+        _write_json(review_path, payload)
+        manifest["package_attestation"]["review_manifest"] = _entry(review_path)
+    else:
+        manifest["package_attestation"]["package_root"] = str(
+            tmp_path / "wrong-package"
+        )
+
+    with pytest.raises(reconciliation.PublicationReconciliationError):
+        reconciliation._candidate_and_date(manifest)  # noqa: SLF001
+
+
+def test_c2_rejects_external_or_symlinked_manifest_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, record_path, _review_path = _exact_c2_manifest(tmp_path)
+    bridge = reconciliation.fastlane_c2_authorized_upload.bridge
+    monkeypatch.setattr(bridge, "audit_fastlane_c2_release_package", lambda _root: [])
+    external = tmp_path / "external.record.json"
+    external.write_bytes(record_path.read_bytes())
+    manifest["package_attestation"]["record"] = _entry(external)
+
+    with pytest.raises(
+        reconciliation.PublicationReconciliationError,
+        match="not the verified package record",
+    ):
+        reconciliation._candidate_and_date(manifest)  # noqa: SLF001
+
+    # A symlinked attestation must fail by the same physical-member binding.
+    linked = tmp_path / "linked.record.json"
+    linked.symlink_to(record_path)
+    manifest["package_attestation"]["record"] = {
+        "path": str(linked),
+        "sha256": _sha(record_path),
+        "bytes": record_path.stat().st_size,
+    }
+    with pytest.raises(
+        reconciliation.PublicationReconciliationError,
+        match="not the verified package record",
+    ):
+        reconciliation._candidate_and_date(manifest)  # noqa: SLF001
+
+
+@pytest.mark.parametrize(
+    ("record", "expected"),
+    [
+        (
+            {
+                "story_contract": {"candidate_id": CANDIDATE},
+                "delivery_candidate_id": "delivery-must-not-override-story",
+            },
+            CANDIDATE,
+        ),
+        ({"delivery_candidate_id": CANDIDATE}, CANDIDATE),
+    ],
+)
+def test_generic_story_and_delivery_candidate_resolution_is_unchanged(
+    tmp_path: Path, record: dict, expected: str
+) -> None:
+    package = tmp_path / "generic" / DATE
+    record_path = package / "clip.record.json"
+    _write_json(record_path, record)
+    manifest = {
+        "package_attestation": {
+            "package_root": str(package.resolve()),
+            "record": _entry(record_path),
+        }
+    }
+
+    assert reconciliation._candidate_and_date(manifest) == (  # noqa: SLF001
+        expected,
+        DATE,
+    )
+
+
+@pytest.mark.parametrize("target", ["record", "review"])
+def test_c2_rejects_record_or_review_hash_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str
+) -> None:
+    manifest, record_path, review_path = _exact_c2_manifest(tmp_path)
+    bridge = reconciliation.fastlane_c2_authorized_upload.bridge
+    monkeypatch.setattr(bridge, "audit_fastlane_c2_release_package", lambda _root: [])
+    if target == "record":
+        record_path.write_text("{}\n", encoding="utf-8")
+    else:
+        review_path.write_text(
+            review_path.read_text(encoding="utf-8") + "\n",
+            encoding="utf-8",
+        )
+    with pytest.raises(
+        reconciliation.PublicationReconciliationError, match="hash/bytes drifted"
+    ):
+        reconciliation._candidate_and_date(manifest)  # noqa: SLF001
+
+
 def test_new_bv_public_closure_reconciles_registry_and_failed_runner_row(
     tmp_path: Path,
 ) -> None:
