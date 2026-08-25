@@ -821,6 +821,127 @@ def _passing_package_audit(root):
     }
 
 
+def _write_c2_release_package(root):
+    root.mkdir(parents=True, exist_ok=True)
+    bridge = au.c2_upload.bridge
+    candidate_id = bridge.CID
+    title = bridge.TITLE
+    stem = f"{candidate_id}.recut.burned-final-speaker"
+    video = root / f"{stem}.mp4"
+    cover = root / f"{stem}.cover.png"
+    subtitle = root / f"{stem}.srt"
+    record = root / f"{stem}.record.json"
+    publish = root / f"{stem}.publish.json"
+    review = root / "review_manifest.json"
+    audit = root / "package_audit.json"
+    tags = ["李豆沙", "虚拟主播", "虚拟UP主", "直播切片"]
+    video.write_bytes(b"c2-video")
+    cover.write_bytes(b"c2-cover")
+    subtitle.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n测试\n", encoding="utf-8"
+    )
+    record.write_text(
+        json.dumps(
+            {
+                "schema_version": "lidousha-c2-release-record.v1",
+                "candidate_id": candidate_id,
+                "recording_date": bridge.DATE,
+                "upload_allowed": False,
+                "artifact_hashes": {
+                    "burned_video_sha256": "sha256:" + au.sha256_file(video),
+                    "cover_sha256": "sha256:" + au.sha256_file(cover),
+                    "delivery_subtitle_sha256": "sha256:" + au.sha256_file(subtitle),
+                },
+                "publish_staging": {"title": title},
+                "legacy_execution_contract": {},
+                "upload_tags": {"engine": "test", "status": "OK", "final_tags": tags},
+                "c2_tag_generation_receipt": {},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    publish.write_text(
+        json.dumps(
+            {
+                "schema_version": "lidousha-c2-release-publish.v1",
+                "candidate_id": candidate_id,
+                "title": title,
+                "cover_generation": {
+                    "final_cover": cover.name,
+                    "final_cover_sha256": au.sha256_file(cover),
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    review.write_text(
+        json.dumps(
+            {
+                "schema_version": bridge.SCHEMA,
+                "candidate_id": candidate_id,
+                "recording_date": bridge.DATE,
+                "title": title,
+                "scope": "C2_NAMED_FASTLANE_NEW_BV_ONLY",
+                "items": [
+                    {
+                        "candidate_id": candidate_id,
+                        "recording_date": bridge.DATE,
+                        "title": title,
+                        "video": video.name,
+                        "media": video.name,
+                        "cover": cover.name,
+                        "record": record.name,
+                        "record_json": record.name,
+                        "subtitle": subtitle.name,
+                        "subtitle_srt": subtitle.name,
+                        "publish": publish.name,
+                        "publish_json": publish.name,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    audit_payload = _passing_package_audit(root)
+    audit.write_text(json.dumps(audit_payload, ensure_ascii=False), encoding="utf-8")
+    title_cover_qc = _write_title_cover_qc(
+        cover, title, candidate_id=candidate_id
+    )
+    return {
+        "audit": audit,
+        "audit_payload": audit_payload,
+        "cover": cover,
+        "record": record,
+        "review": review,
+        "title": title,
+        "title_cover_qc": title_cover_qc,
+        "video": video,
+    }
+
+
+def _c2_make_manifest_args(paths, out):
+    return [
+        "make-manifest",
+        "--video",
+        str(paths["video"]),
+        "--cover",
+        str(paths["cover"]),
+        "--package-audit",
+        str(paths["audit"]),
+        "--title",
+        paths["title"],
+        "--quote",
+        "可以上传",
+        "--title-cover-qc",
+        str(paths["title_cover_qc"]),
+        "--out",
+        str(out),
+    ]
+
+
 def _mk(tmp_path, title=VALID_TITLE, quote="可以上传了"):
     tmp_path.mkdir(parents=True, exist_ok=True)
     video = tmp_path / "clip.mp4"
@@ -926,6 +1047,152 @@ def test_talk_without_story_contract_remains_fail_closed(
         ]
     ) == 2
     assert "record.json has no story_contract object" in (
+        capsys.readouterr().err
+    )
+
+
+def test_make_and_verify_accept_exact_c2_release_without_story_contract(
+    tmp_path, monkeypatch
+):
+    paths = _write_c2_release_package(tmp_path)
+    bridge_roots = []
+    monkeypatch.setattr(
+        au, "audit_package", lambda _root: dict(paths["audit_payload"])
+    )
+    monkeypatch.setattr(
+        au.c2_upload.bridge,
+        "audit_fastlane_c2_release_package",
+        lambda root: bridge_roots.append(root) or [],
+    )
+    manifest = tmp_path / "c2.upload_manifest.json"
+
+    assert au.main(_c2_make_manifest_args(paths, manifest)) == 0
+    assert au.main(["verify", "--manifest", str(manifest)]) == 0
+    assert "story_contract" not in json.loads(paths["record"].read_text())
+    assert bridge_roots and all(root == tmp_path for root in bridge_roots)
+
+
+def test_c2_release_without_passing_bridge_stays_fail_closed(
+    tmp_path, monkeypatch, capsys
+):
+    paths = _write_c2_release_package(tmp_path)
+    monkeypatch.setattr(
+        au, "audit_package", lambda _root: dict(paths["audit_payload"])
+    )
+    monkeypatch.setattr(
+        au.c2_upload.bridge,
+        "audit_fastlane_c2_release_package",
+        lambda _root: [{"code": "C2_RELEASE_CLOSURE_DRIFT"}],
+    )
+    manifest = tmp_path / "c2.upload_manifest.json"
+
+    assert au.main(_c2_make_manifest_args(paths, manifest)) == 2
+    assert not manifest.exists()
+    assert "record.json has no story_contract object" in capsys.readouterr().err
+
+
+def test_c2_release_bridge_exception_stays_fail_closed(
+    tmp_path, monkeypatch, capsys
+):
+    paths = _write_c2_release_package(tmp_path)
+    monkeypatch.setattr(
+        au, "audit_package", lambda _root: dict(paths["audit_payload"])
+    )
+
+    def bridge_error(_root):
+        raise OSError("bridge evidence unreadable")
+
+    monkeypatch.setattr(
+        au.c2_upload.bridge,
+        "audit_fastlane_c2_release_package",
+        bridge_error,
+    )
+    manifest = tmp_path / "c2.upload_manifest.json"
+
+    assert au.main(_c2_make_manifest_args(paths, manifest)) == 2
+    assert not manifest.exists()
+    assert "record.json has no story_contract object" in capsys.readouterr().err
+
+
+def test_c2_release_missing_required_root_record_field_stays_fail_closed(
+    tmp_path, monkeypatch, capsys
+):
+    paths = _write_c2_release_package(tmp_path)
+    record = json.loads(paths["record"].read_text(encoding="utf-8"))
+    record.pop("publish_staging")
+    paths["record"].write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(
+        au, "audit_package", lambda _root: dict(paths["audit_payload"])
+    )
+    monkeypatch.setattr(
+        au.c2_upload.bridge,
+        "audit_fastlane_c2_release_package",
+        lambda _root: [],
+    )
+    manifest = tmp_path / "c2.upload_manifest.json"
+
+    assert au.main(_c2_make_manifest_args(paths, manifest)) == 2
+    assert not manifest.exists()
+    assert "record.json has no story_contract object" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("target", "field", "value"),
+    [
+        ("record", "schema_version", "lidousha-c2-release-record.v0"),
+        ("record", "candidate_id", "other"),
+        ("record", "recording_date", "2026-08-14"),
+        ("review", "candidate_id", "other"),
+        ("review", "recording_date", "2026-08-14"),
+        ("review", "title", VALID_TITLE),
+        ("review", "scope", "C2_NAMED_FASTLANE_OTHER"),
+    ],
+)
+def test_c2_release_resolver_rejects_identity_and_scope_tamper(
+    tmp_path, monkeypatch, capsys, target, field, value
+):
+    paths = _write_c2_release_package(tmp_path)
+    path = paths[target]
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload[field] = value
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(
+        au, "audit_package", lambda _root: dict(paths["audit_payload"])
+    )
+    monkeypatch.setattr(
+        au.c2_upload.bridge,
+        "audit_fastlane_c2_release_package",
+        lambda _root: [],
+    )
+    manifest = tmp_path / "c2.upload_manifest.json"
+
+    assert au.main(_c2_make_manifest_args(paths, manifest)) == 2
+    assert not manifest.exists()
+    assert "record.json has no story_contract object" in capsys.readouterr().err
+
+
+def test_c2_release_preserves_qc_candidate_binding(
+    tmp_path, monkeypatch, capsys
+):
+    paths = _write_c2_release_package(tmp_path)
+    receipt = json.loads(paths["title_cover_qc"].read_text(encoding="utf-8"))
+    receipt["candidate_id"] = "other"
+    paths["title_cover_qc"].write_text(
+        json.dumps(receipt, ensure_ascii=False), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        au, "audit_package", lambda _root: dict(paths["audit_payload"])
+    )
+    monkeypatch.setattr(
+        au.c2_upload.bridge,
+        "audit_fastlane_c2_release_package",
+        lambda _root: [],
+    )
+    manifest = tmp_path / "c2.upload_manifest.json"
+
+    assert au.main(_c2_make_manifest_args(paths, manifest)) == 2
+    assert not manifest.exists()
+    assert "title+cover joint-QC candidate_id does not match record" in (
         capsys.readouterr().err
     )
 

@@ -48,6 +48,7 @@ from src.autoslice import same_bv_repair as repair_binding  # noqa: E402
 from src.autoslice import authorized_upload_cover_repair_cli as cover_repair_cli  # noqa: E402
 from src.autoslice import cover_only_audit_scope  # noqa: E402
 from src.autoslice import same_bv_live_verification  # noqa: E402
+from src.autoslice import fastlane_c2_authorized_upload as c2_upload  # noqa: E402
 from src.autoslice import fastlane_c1_technical_receipt as c1_projection  # noqa: E402
 from src.autoslice.subtitle_validation import validate_srt_file  # noqa: E402
 from src.autoslice.publication_title_exception import upload_manifest_title_policy_violations  # noqa: E402
@@ -700,7 +701,8 @@ def _validate_v3_package_attestation(
                 cover=cover,
                 subtitle=subtitle_path,
                 title=str(manifest.get("title") or ""),
-                story_contract_required=not verified_song,
+                story_contract_required=not verified_song
+                and c2_upload.verified_c2_release_candidate_id(root, record) is None,
             )
         )
         record_tags = (record.get("upload_tags") or {}).get("final_tags")
@@ -801,11 +803,8 @@ def _title_cover_qc_attestation_problems(
         _load_json_object(record_path, "record", record_problems) if record_path.is_file() else {}
     )
     problems.extend(record_problems)
-    story_contract = record.get("story_contract")
-    story_contract = story_contract if isinstance(story_contract, dict) else {}
-    expected_candidate = str(
-        story_contract.get("candidate_id") or record.get("delivery_candidate_id") or ""
-    )
+    package_root = Path(str(attestation.get("package_root") or "")).resolve()
+    expected_candidate = c2_upload.candidate_id_from_record(package_root, record)
     if not expected_candidate:
         problems.append("title+cover joint-QC cannot resolve candidate from record")
     elif receipt.get("candidate_id") != expected_candidate:
