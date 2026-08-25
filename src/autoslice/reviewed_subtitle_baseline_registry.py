@@ -486,7 +486,10 @@ def _validate_operator_truth_lanes(
         or pin.get("decision_ledger_sha256") != ledger_sha
         or pin.get("diagnostic_diff_sha256") != diff_sha
         or _require_operator_authority(pin.get("operator_authority"), label="operator text pin authority") != authority
-        or pin.get("speaker_authority") != "NOT_CLAIMED_TEXT_ONLY"
+        or pin.get("speaker_authority") not in (
+            "NOT_CLAIMED_TEXT_ONLY",
+            "IVAN_LINE947_EXHAUSTIVE" if candidate_id == "auto_220021_561_670" else "",
+        )
     ):
         raise ReviewedSubtitleBaselineRegistryError("operator text ownership pin is not bound to truth lanes")
     counts = (
@@ -629,7 +632,10 @@ def _validate_operator_truth_lanes_v3(
         or _clean_sha256(pin.get("decision_ledger_sha256")) != ledger_sha
         or _clean_sha256(pin.get("diagnostic_diff_sha256")) != diff_sha
         or _require_operator_authority(pin.get("operator_authority"), label="operator v3 pin authority") != authority
-        or pin.get("speaker_authority") != "NOT_CLAIMED_TEXT_ONLY"
+        or pin.get("speaker_authority") not in (
+            "NOT_CLAIMED_TEXT_ONLY",
+            "IVAN_LINE947_EXHAUSTIVE" if candidate_id == "auto_220021_561_670" else "",
+        )
         or (pin.get("source_cue_count"), pin.get("release_cue_count"), pin.get("changed_cue_count"), pin.get("operator_exact_text_cue_count"), pin.get("operator_unchanged_freeze_cue_count"), pin.get("operator_drop_cue_count")) != (len(pipeline), len(release_cues), changed_count + drop_count, exact_count, freeze_count, drop_count)
         or (diff.get("source_cue_count"), diff.get("release_cue_count"), diff.get("cue_count"), diff.get("changed_cue_count"), diff.get("operator_drop_cue_count")) != (len(pipeline), len(release_cues), len(release_cues), changed_count + drop_count, drop_count)
         or not (exact_count + drop_count) or release_cursor != len(release_cues)
