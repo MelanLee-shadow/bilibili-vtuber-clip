@@ -9,6 +9,13 @@ from src.autoslice.redelivery_full_window_replay import (
     FullWindowReplayError,
     replay_full_window_text_and_crop,
 )
+from src.autoslice.redelivery_subtitle_baseline import (
+    apply_redelivery_subtitle_baseline,
+)
+from src.autoslice.fastlane_c3_private_stage import (
+    C3PrivateStageAuthorityError,
+    resolve_c3_private_stage_geometry,
+)
 
 
 def stage_delivery_projection_receipt(
@@ -65,6 +72,7 @@ def prepare_stage_delivery_projection(
     c5_start_clamp_proposal_path: Path | None = None,
     c5_start_clamp_acceptance_path: Path | None = None,
     recording_date: str | None = None,
+    c3_geometry: object | None = None,
 ) -> tuple[bytes, Mapping[str, object], dict[str, object] | None]:
     """Replay the full release and, only when needed, seal its 17-cue crop."""
 
@@ -113,6 +121,43 @@ def prepare_stage_delivery_projection(
         fresh_srt_to_source_cues(text, window_start_ms=0, duration_ms=padded_end - padded_start)
     except ValueError as exc:
         raise error("REPLAY_PIPELINE_DIAGNOSTIC_GEOMETRY_INVALID") from exc
+    if c3_geometry is None:
+        try:
+            c3_geometry = resolve_c3_private_stage_geometry(plan)
+        except C3PrivateStageAuthorityError as exc:
+            raise error(str(exc)) from exc
+    if c3_geometry is not None:
+        binding = getattr(c3_geometry, "binding")
+        source_local_start = getattr(c3_geometry, "source_local_start_ms")
+        source_local_end = getattr(c3_geometry, "source_local_end_ms")
+        record_local_start = getattr(c3_geometry, "record_local_start_ms")
+        record_local_end = getattr(c3_geometry, "record_local_end_ms")
+        if (
+            source_local_start != 0
+            or source_local_end != getattr(binding, "absolute_source_end_ms") - getattr(binding, "absolute_source_start_ms")
+            or record_local_end - record_local_start != source_local_end
+        ):
+            raise error("C3_STAGE_FINAL_INTERVAL_DRIFT")
+        try:
+            reviewed, audit = apply_redelivery_subtitle_baseline(
+                text, config=config, spec_parent=parent,
+                current_source_start_ms=getattr(binding, "absolute_source_start_ms"),
+                current_source_end_ms=getattr(binding, "absolute_source_end_ms"),
+                current_source_recording_basename=getattr(binding, "source_recording_basename"),
+                current_source_sha256=getattr(binding, "source_sha256"),
+            )
+        except (TypeError, ValueError) as exc:
+            raise error("C3_STAGE_FINAL_INTERVAL_APPLICATION_INVALID") from exc
+        if audit.get("status") not in {"APPLIED", "ALREADY_SATISFIED"}:
+            raise error("REPLAY_BASELINE_APPLICATION_FAILED")
+        try:
+            fresh_srt_to_source_cues(
+                reviewed, window_start_ms=source_local_start,
+                duration_ms=source_local_end - source_local_start,
+            )
+        except ValueError as exc:
+            raise error("C3_STAGE_FINAL_INTERVAL_GEOMETRY_INVALID") from exc
+        return reviewed.encode("utf-8"), audit, None
     receipt = stage / "full-release-delivery-projection.json"
     crop = stage / ".reviewed-window.srt"
     try:
