@@ -40,6 +40,7 @@ from src.autoslice.selection_scorecard import normalize_selection_scorecard
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.review_package_ass_audit import audit_review_package_ass
 from src.autoslice.review_package_boundary_contract import (
+    _audit_redelivery_time_domain,
     audit_boundary_contract,
 )
 from src.autoslice.producer_boundary_owner_contract import (
@@ -62,6 +63,70 @@ from src.autoslice.story_contract import build_story_contract
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COVER_FONT = REPO_ROOT / "assets/lidousha/fonts/ZCOOLKuaiLe-Regular.ttf"
+
+
+@pytest.mark.parametrize(
+    ("stem", "bad_start", "bad_end", "good_start", "good_end"),
+    [
+        ("auto_113028_1271_1328", 1_261_170, 1_376_550, 1_270_920, 1_328_694),
+        ("auto_113028_1602_1698", 1_592_760, 1_746_900, 1_602_510, 1_699_300),
+    ],
+)
+def test_package_audit_rejects_old_delivery_local_double_projection(
+    tmp_path: Path,
+    stem: str,
+    bad_start: int,
+    bad_end: int,
+    good_start: int,
+    good_end: int,
+) -> None:
+    baseline = (
+        REPO_ROOT
+        / "assets/lidousha/reviewed_subtitle_baselines"
+        / f"{stem}.reviewed.srt"
+    )
+    subtitle = tmp_path / f"{stem}.srt"
+    subtitle.write_text(
+        "1\n00:00:00,000 --> 00:00:00,330\nold double projection\n",
+        encoding="utf-8",
+    )
+    record = {
+        "redelivery_baseline": {
+            "current_source_interval": {
+                "absolute_source_start_ms": bad_start,
+                "absolute_source_end_ms": bad_end,
+            }
+        }
+    }
+    issues: list[dict] = []
+    _audit_redelivery_time_domain(
+        issue_adder=lambda rows, code, **fields: rows.append({"code": code, **fields}),
+        issues=issues,
+        stem=stem,
+        record_path=tmp_path / f"{stem}.record.json",
+        subtitle_path=subtitle,
+        record=record,
+    )
+    assert {issue["code"] for issue in issues} == {
+        "REDELIVERY_BASELINE_DELIVERY_INTERVAL_MISMATCH",
+        "REDELIVERY_BASELINE_DELIVERY_LOCAL_SUBTITLE_MISMATCH",
+    }
+
+    subtitle.write_bytes(baseline.read_bytes())
+    record["redelivery_baseline"]["current_source_interval"] = {
+        "absolute_source_start_ms": good_start,
+        "absolute_source_end_ms": good_end,
+    }
+    clean: list[dict] = []
+    _audit_redelivery_time_domain(
+        issue_adder=lambda rows, code, **fields: rows.append({"code": code, **fields}),
+        issues=clean,
+        stem=stem,
+        record_path=tmp_path / f"{stem}.record.json",
+        subtitle_path=subtitle,
+        record=record,
+    )
+    assert clean == []
 
 
 def test_contained_package_artifact_rejects_symlinked_parent(
