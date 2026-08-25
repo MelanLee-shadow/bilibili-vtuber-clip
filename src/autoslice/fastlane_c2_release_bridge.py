@@ -39,8 +39,6 @@ AUTH_NAME = "auto_203011_328_389.release-authorization.v1.json"
 ROOT_RECEIPT_NAME = "c2.root-technical-receipt.accepted.decode-scope.v1.json"
 LEGACY_PROPOSAL_NAME = "c2.legacy-recovery.proposal.v1.json"
 LEGACY_CONTRACT_NAME = "c2.legacy-execution-contract.v1.json"
-LEGACY_ACCEPTED_REVIEWED_AT = "2026-08-24T22:57:54Z"
-LEGACY_ACCEPTED_DECISION_BASIS = "Root accepted proposal sha256:7a557906d9fb195fc6058e7afa7ebdd8a074907f6bf63487653a2773f3b8718d after exact formal-v4 content review, strict C2 audit [], generic audit passed with zero blockers, and source-bound authorization verification; private release-package materialization only, not CPA title-cover QC, manifest, duplicate canary, deploy, or upload approval."
 TAG_RECEIPT_NAME = "c2.tag-generation-receipt.v1.json"
 DIRECT_IVAN_LINES = {
     947: (
@@ -306,7 +304,18 @@ def _valid_tags(result: Mapping[str, object]) -> list[str]:
     return clean
 
 
-def _validate_legacy_execution_contract(formal: Path, proposal: Path, contract: Path, authorization: Path, receipt: Path, *, expected_reviewed_at: str | None = None, expected_decision_basis: str | None = None) -> None:
+def _validate_legacy_execution_contract(
+    formal: Path, proposal: Path, contract: Path, authorization: Path, receipt: Path
+) -> None:
+    """Accept only the current C2 reclosure, never a historical envelope.
+
+    ``validate_proposal`` binds the current formal inputs, authorization,
+    current package audit, and accepted technical receipt.  The accepted
+    execution contract is then self-sealed and bound to that exact proposal.
+    Do not pin a prior root timestamp or decision-basis string here: doing so
+    would reject a newly reviewed, create-only C2 reclosure despite all of its
+    current authority bindings being intact.
+    """
     from .fastlane_c2_legacy_recovery import validate_accepted_execution_contract, validate_proposal
     _regular(proposal, "C2 legacy proposal")
     _regular(contract, "C2 legacy execution contract")
@@ -314,7 +323,9 @@ def _validate_legacy_execution_contract(formal: Path, proposal: Path, contract: 
         raise C2ReleaseBridgeError("C2 legacy input basename drift")
     try:
         validate_proposal(_read_object(proposal, "C2 legacy proposal"), formal=formal, authorization=authorization, receipt=receipt)
-        validate_accepted_execution_contract(_read_object(contract, "C2 legacy execution contract"), proposal=proposal, expected_reviewed_at=expected_reviewed_at or LEGACY_ACCEPTED_REVIEWED_AT, expected_decision_basis=expected_decision_basis or LEGACY_ACCEPTED_DECISION_BASIS)
+        validate_accepted_execution_contract(
+            _read_object(contract, "C2 legacy execution contract"), proposal=proposal
+        )
     except ValueError as exc:
         raise C2ReleaseBridgeError("C2 legacy execution contract rejected") from exc
 

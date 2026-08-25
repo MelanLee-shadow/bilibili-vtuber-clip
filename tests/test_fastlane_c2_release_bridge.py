@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from src.autoslice import fastlane_c2_release_bridge as bridge
+from src.autoslice import fastlane_c2_legacy_recovery as legacy
 from src.autoslice.fastlane_c2_legacy_recovery import make_accepted_execution_contract, validate_accepted_execution_contract
 from src.autoslice.fastlane_c2_formal_adapter import NAMES
 
@@ -91,6 +92,75 @@ def _receipt_binding(path: Path, proposal: Path) -> None:
     }), encoding="utf-8")
 
 
+def _current_legacy_reclosure_fixture(tmp_path: Path, monkeypatch):
+    """Build a C2-only binding fixture without relaxing the bridge checks.
+
+    The real legacy validator owns the detailed C2 formal schema.  This
+    fixture models its four current file bindings so this bridge test can
+    isolate stale-envelope handling without manufacturing unrelated media.
+    """
+    formal = tmp_path / "formal"
+    formal.mkdir()
+    audit = formal / "package_audit.json"
+    formal_input = formal / "c2.formal.record.v1.json"
+    receipt = tmp_path / bridge.ROOT_RECEIPT_NAME
+    authorization = tmp_path / bridge.AUTH_NAME
+    proposal = tmp_path / bridge.LEGACY_PROPOSAL_NAME
+    contract = tmp_path / bridge.LEGACY_CONTRACT_NAME
+    audit.write_text('{"audit":"current"}', encoding="utf-8")
+    formal_input.write_text('{"formal":"current"}', encoding="utf-8")
+    receipt.write_text('{"receipt":"current"}', encoding="utf-8")
+    authorization.write_text('{"authorization":"current"}', encoding="utf-8")
+
+    def current_proposal() -> dict[str, str]:
+        return {
+            "candidate_id": bridge.CID,
+            "package_audit_sha256": "sha256:" + _sha(audit),
+            "technical_receipt_sha256": "sha256:" + _sha(receipt),
+            "authorization_sha256": "sha256:" + _sha(authorization),
+            "formal_input_sha256": "sha256:" + _sha(formal_input),
+        }
+
+    proposal.write_text(json.dumps(current_proposal()), encoding="utf-8")
+
+    def validate_current_proposal(value, *, formal: Path, authorization: Path, receipt: Path) -> None:
+        if (
+            formal != audit.parent
+            or authorization != authorization_path
+            or receipt != receipt_path
+            or value != current_proposal()
+        ):
+            raise ValueError("current C2 reclosure binding drift")
+
+    authorization_path, receipt_path = authorization, receipt
+    monkeypatch.setattr(legacy, "validate_proposal", validate_current_proposal)
+    current = make_accepted_execution_contract(
+        proposal=proposal,
+        reviewed_at="2026-08-25T00:08:18Z",
+        decision_basis="current root-accepted C2 reclosure fixture",
+    )
+    contract.write_text(json.dumps(current), encoding="utf-8")
+    return {
+        "formal": formal,
+        "audit": audit,
+        "formal_input": formal_input,
+        "receipt": receipt,
+        "authorization": authorization,
+        "proposal": proposal,
+        "contract": contract,
+    }
+
+
+def _validate_current_legacy_reclosure(paths: dict[str, Path]) -> None:
+    bridge._validate_legacy_execution_contract(
+        paths["formal"],
+        paths["proposal"],
+        paths["contract"],
+        paths["authorization"],
+        paths["receipt"],
+    )
+
+
 def test_c2_receipt_requires_its_exact_self_bound_proposal(tmp_path):
     formal = tmp_path / "formal"
     formal.mkdir()
@@ -136,12 +206,64 @@ def test_c2_legacy_execution_envelope_rejects_any_signature_surface_drift(tmp_pa
     accepted = make_accepted_execution_contract(proposal=proposal, reviewed_at="2026-08-24T20:00:00+00:00", decision_basis="root acceptance fixture")
     validate_accepted_execution_contract(accepted, proposal=proposal)
     for key, value in (("reviewed_by", "other"), ("reviewed_at", "2026-08-24T20:00:00"), ("decision_basis", "")):
-        drift = dict(accepted); drift[key] = value
+        drift = dict(accepted)
+        drift[key] = value
         with pytest.raises(ValueError):
             validate_accepted_execution_contract(drift, proposal=proposal)
     proposal.write_text('{"drift":true}', encoding="utf-8")
     with pytest.raises(ValueError, match="proposal binding"):
         validate_accepted_execution_contract(accepted, proposal=proposal)
+
+
+def test_c2_bridge_accepts_only_current_reclosure_not_historical_envelope(tmp_path, monkeypatch):
+    paths = _current_legacy_reclosure_fixture(tmp_path, monkeypatch)
+    _validate_current_legacy_reclosure(paths)
+
+    old_proposal = tmp_path / "old-c2.legacy-recovery.proposal.v1.json"
+    old_proposal.write_text('{"proposal":"before-reclosure"}', encoding="utf-8")
+    stale = make_accepted_execution_contract(
+        proposal=old_proposal,
+        reviewed_at="2026-08-24T22:57:54Z",
+        decision_basis="historical envelope fixture",
+    )
+    paths["contract"].write_text(json.dumps(stale), encoding="utf-8")
+    with pytest.raises(bridge.C2ReleaseBridgeError, match="legacy execution contract rejected"):
+        _validate_current_legacy_reclosure(paths)
+
+    current = make_accepted_execution_contract(
+        proposal=paths["proposal"],
+        reviewed_at="2026-08-25T00:08:18Z",
+        decision_basis="current root-accepted C2 reclosure fixture",
+    )
+    paths["contract"].write_text(json.dumps(current), encoding="utf-8")
+    _validate_current_legacy_reclosure(paths)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda value: value.__setitem__("reviewed_at", "2026-08-25T00:09:18Z"),
+        lambda value: value.__setitem__("decision_basis", "tampered basis"),
+        lambda value: value["proposal"].__setitem__("sha256", "sha256:" + "0" * 64),
+        lambda value: value.__setitem__("unexpected", True),
+    ],
+    ids=["timestamp", "decision-basis", "proposal", "extra-key"],
+)
+def test_c2_bridge_rejects_tampered_current_legacy_contract(tmp_path, monkeypatch, mutate):
+    paths = _current_legacy_reclosure_fixture(tmp_path, monkeypatch)
+    value = json.loads(paths["contract"].read_text(encoding="utf-8"))
+    mutate(value)
+    paths["contract"].write_text(json.dumps(value), encoding="utf-8")
+    with pytest.raises(bridge.C2ReleaseBridgeError, match="legacy execution contract rejected"):
+        _validate_current_legacy_reclosure(paths)
+
+
+@pytest.mark.parametrize("drift", ["receipt", "audit", "authorization", "formal_input"])
+def test_c2_bridge_rejects_current_reclosure_source_binding_drift(tmp_path, monkeypatch, drift):
+    paths = _current_legacy_reclosure_fixture(tmp_path, monkeypatch)
+    paths[drift].write_text('{"drift":true}', encoding="utf-8")
+    with pytest.raises(bridge.C2ReleaseBridgeError, match="legacy execution contract rejected"):
+        _validate_current_legacy_reclosure(paths)
 
 
 def test_c2_bridge_projects_strict_same_stem_package(monkeypatch, tmp_path):
