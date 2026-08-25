@@ -495,9 +495,7 @@ def _validate_operator_truth_lanes(
         or pin.get("decision_ledger_sha256") != ledger_sha
         or pin.get("diagnostic_diff_sha256") != diff_sha
         or _require_operator_authority(pin.get("operator_authority"), label="operator text pin authority") != authority
-        or not _valid_speaker_authority(
-            candidate_id=candidate_id, value=pin.get("speaker_authority")
-        )
+        or not _valid_speaker_authority(candidate_id=candidate_id, value=pin.get("speaker_authority"))
     ):
         raise ReviewedSubtitleBaselineRegistryError("operator text ownership pin is not bound to truth lanes")
     counts = (
