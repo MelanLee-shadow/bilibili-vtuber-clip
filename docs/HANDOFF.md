@@ -1,5 +1,61 @@
 # Current handoff
 
+## 2026-08-25T17:30Z C4 修复闭环与 C5 上传交接
+
+### 已完成
+
+- C4 `auto_113028_1602_1698` 已按同 BV 合同完成：`BV1h7hg68E8Y` 保持不变，原 CID `41244820167` 的独立 public authority 已保留；journal `APPEND_INTENT → append → exact two-P swap → fresh readback` 终态 `VERIFIED`，新 CID `41264153653`。fresh sidecar `/opt/bilive/autoslice/private-c4-timeaxis-repair-20260825/same-bv-repair-verify-live-20260825.json`，SHA-256 `265304913afa62c938a9adf69770d5ec55ae4f0a8fc113b74fc27630f3c6b1dc`：Creator/public/section、标题、tags、AID `117154678638617`、CID、新 section `9320779` 全部一致；未创建第二个 BVID。
+- C5 `auto_113028_1271_1328` 已严格通过 `/opt/bilive/autoslice/repo/scripts/authorized_upload.py` 上传，未调用 raw API：BVID `BV1Sahj65ExM`，AID `117157295950921`，CID `41264349440`；publication reconciliation 状态 `VERIFIED_PUBLIC`，season `8383206` / exact section `9320779`，标题、tags、Creator/public metadata 均匹配。manifest `/opt/bilive/autoslice/.private-c5-start-clamp-authority/c5-authorized-upload-manifest.v3.json` SHA-256 `2b4ad43f9e657a1aa4aaca4963db1031142bbb778db5c630b05f3b9fa129b663`；reconciliation SHA-256 `62b6f49bb4c1fd681e51708157404aba1a2a3e71a790b5c4cf7608de8b8c1a7d`。
+- live free 保持 `DISABLED`（mode `644`、空文件）；runtime/static registry 已由授权入口写入，当前 SHA 分别为 `0a52cfe979a066cfaab5108d2d4128a89499b2f5da85c84bf215badfdbde9a73`、`6efa26c7166018c6ba86d119221fbf406a64a0722cb6044fc70ca4c963ae435c`。
+
+### 当前明确阻塞
+
+- C6 `auto_120032_753_816` 不得上传。本轮保留隔离 worktree `/private/tmp/vtuber-slice-fastlane-c6-private-20260825`，HEAD `d8c9a905ffa889d6873e0e54b9454b9411998b8e`，dirty 4 files、`+559/-15`、历史仅 74 passed；当前 `state=candidate_rejected`。full-dry 确定性失败：`EXACT_DELIVERY_BOUNDARY_REVIEW=CONTENT_ANCHOR_NOT_COVERED`、`EXACT_FINAL_RELEASE_REVIEW=FINAL_REVIEW_BOUNDARY_SEMANTIC_BLOCKED`；另有 `SPEAKER_FINALIZATION_BLOCKED: FileNotFoundError`（缺 `/opt/bilive` 依赖），source-fact 曾为 `MISSING`，successor/prepared-handle/flatten/audit/final-human-review 未闭合。
+- 因此本轮不猜 C6 边界、不修改生产树、不合并 C6 dirty worktree、不创建 C6 upload intent；C6 不是“待补上传”，而是需先取得 source-bound exact authority、speaker finalization、package audit 与 final-human review 的 blocker。future reopen gate：C6 full-dry/private package PASS0、当前权威完整测试、最终人工复核、再由 `authorized_upload.py` 串行上传并做四面 readback。
+
+### 下一步
+
+1. 将本节与 C4/C5 真实回执提交并推送 GitHub；保留 `.codex-tmp/` 与 `--help.building/` 未跟踪文件不动。
+2. goal 只能保持 `blocked`，不得标记 completed，直到 C6 blocker 在后续隔离 worktree 中被 source-bound 解开。
+
+## 2026-08-25T05:15Z 快车道收尾交接
+
+### 目标
+
+按 Claude 的既有逐片详审结果完成快车道：只修 Claude 明确点名的错误，未点名内容冻结；七夕（Qixi）优先，其后按原审片顺序单次上传。此交接供下一位 agent 直接接手，不需要依赖聊天记录或重新发起 Ivan 内容复审。
+
+### 已完成
+
+- 职责边界已固定：root 只负责 goal、priority、authority、planning、review、acceptance、deploy approval，不实现 mutation；实现由 root 的直接 Terra/Luna worker 完成，拓扑 flat、禁止子代理，medium 默认、必要时最高 high，绝不 xhigh/exhigh。
+- 快车道唯一内容 authority 是 Claude JSONL：`/Users/ivan/.claude/projects/-Users-ivan-Project-vtuber-slice/0df2296b-500a-4681-ab5e-6fb46dc39579.jsonl`。物理 line 947 uuid `555195ed-ec18-418d-a311-558f7e54291f`，raw LF SHA `e64d4409…c2aa`，decoded SHA `0e0e69e5…f6b`；line 1643 SHA `2269c653…7609`；line 1745 SHA `7f97b7f8…3329`。固定 21 个候选（18 talk，含 7b；3 song）；只修逐片点名错误，未点名冻结；#12/#13 的“其他小错”只在对应片内授权；无需 Ivan 再审，Qixi first 后按原序直接上传。
+- 既有 durable 依据：`/Users/ivan/Project/vtuber-slice-c2-reconciliation-gap/docs/reviews/2026-08-19-ivan-review-batch-rulings.md`、`2026-08-24-claude-fastlane-exhaustive-tail-scan.md`、`2026-08-23-pipeline-speedup-source-bound.md`；相关 commits 是 deployed `234667cc` 的祖先。提速边界是 P0/P1 候选私有准备并行，commit/upload 串行；technical receipt 不是新内容门。
+- live authority 是 `free:/opt/bilive/autoslice`，deployed commit `234667cc453d6ea2b4a0d2af6bdd3e04d7523de2`；`DISABLED` 为 regular empty 0644，无 `AUTO_UPLOAD`/`deploy.guard`。截至 05:15Z：runtime registry SHA `b4c05e40…`、static registry SHA `64e169a3…`、ledger SHA `ef823b36…`。
+- 已 public，NEVER REUPLOAD：Qixi C19 `BV1Ud8F6fECS`；C1 `BV1os8q61Eya`；C2 `BV1gch36cEvN`（AID `117154208877538`，CID `41241805748`）；C8 `BV1fr8P6REDP`；C11 `BV1pW8E6eEq5`；C15 `BV133816tEiN`（AID `117138287300220`，CID `41157069221`）；C18 `BV1Pi8P6FEzS`（AID `117130183840023`，CID `41111389163`）；C20 `BV1Cn8E6iEf8`。C2 已只上传一次，并已 public/Creator/section reconciliation，绝不重传。
+- C4/C5 已 current canonical verify rc0，但尚无 registry/ledger/BVID。C4 manifest `/opt/bilive/autoslice/out/2026-08-14/auto_113028_1602_1698/replacement_recuts/auto_113028_1602_1698.upload_manifest.json` SHA `afc7b1cd…`，artifact SHA `359e1b3f…`，QC `e6e97864…`，audit `5c6361a6…`。C5 manifest `/opt/bilive/autoslice/.private-c5-start-clamp-authority/c5-authorized-upload-manifest.v3.json` SHA `2b4ad43f…`，artifact `0d4478b3…`，QC `0ba6a2b6…`，audit `0ca0ac0b…`；两者均使用 `cd /opt/bilive/autoslice/repo && python3 scripts/authorized_upload.py verify --manifest <path>` rc0。C5 generic rerun 的 speaker_guess 不是内容 blocker。
+- C5 code worktree `/private/tmp/vtuber-slice-c5-start-clamp-projection-20260825` HEAD `762ba575`，126 tests passed，clean。
+- C7 已完成：worktree `/private/tmp/vtuber-slice-fastlane-c7-cue8-authority-20260824`，commit `194f7754`，fresh package PASS0 `/private/tmp/c7-successor-audit-20260824-1787628447/package`，review manifest SHA `6577cc…`，224 tests passed；无 production/provider/state/deploy/upload mutation。
+
+### 进行中
+
+- C3 worktree `/private/tmp/vtuber-slice-c3-source-fact-supersession-20260825`，branch `codex/c3-source-fact-supersession-20260825`，HEAD `760a14f0b17cfdc58a327c93384f2865b564dace`。当前 dirty：`M src/autoslice/reviewed_baseline_replay.py`（+7/-1）及 untracked `tests/fixtures/fastlane_c3_source_fact_supersession.v1.json`（8300 bytes，SHA `3b3f00f1…c534646`）。这仍未验证/未完成；4ed 的 tautology tests 必须替换为真实 compact fixture 正负测试。
+- C3 accepted grid（仅允许 `speaker_video_separation`、`end_theme_omitted`、`cue_034_xinglan_response`）：plain `d70a96c4…`、speaker `51eef37b…`、ASS `d3160f32…`、burned `c5d49bdf…`、delivery `2e94ba7a…`、cover `7e77ab5d…`。最新 full-dry rc2，provider/state/deploy/upload 均 0；generic locator 已过 speaker_override，现卡 publish `/cover_generation/reference_image` 的历史/private path。
+- C6 worktree `/private/tmp/vtuber-slice-fastlane-c6-private-20260825`，HEAD `d8c9a905`，dirty 4 files：`src/autoslice/c6_private_replay.py`、`src/autoslice/producer_package_finalization.py`、`src/autoslice/reviewed_baseline_replay.py`、`tests/test_c6_private_replay.py`，+559/-15；未提交、未重测，较早仅 74 passed。当前卡 `SPEAKER_FINALIZATION_BLOCKED: FileNotFoundError`（speaker finalizer 缺 `/opt/bilive` 依赖）；provenance/branding/delivery-local/exact-final 已过，但 speaker successor/prepared handle/flatten/audit 未完成。
+- C7b 尚未闭合：current chat/clip closure mismatch。后续候选继续以 durable ruling/readiness 为准；#12 只有现成 artifact，不得误称已有 current canonical audit/QC/manifest。
+
+### 阻塞
+
+- C3 不得继续逐 pointer 打补丁。下一步应在 higher replay controller seam 使用 `prepare_c3_successor_delivery` 的 16-role sealed package direct consumer，绕过 generic `project_private_finalization_to_live`；补真实 compact fixture 测试并取得 private PASS0。
+- C6 dirty 不能视为完成；接手先审 exact diff 和旧 speaker manifest authority。若无法 source-bound，保持 blocker，不要猜测或扩大内容修复。
+- C5 曾有一次越界 diagnostic sidecar：`/opt/bilive/autoslice/reports/reviewed-baseline-replay-diagnostics/2026-08-14/auto_113028_1271_1328/3a7cd4f04bef3e88e3bfffb2a7ddbe1d739fce1ae439d6e4c47f80262c727d0e.json`，content SHA `b9c09f10…`，`provider_attempted=true` 但无 receipt，实际外部请求 unknown；除此无 state/registry/ledger/package 变化。严禁重跑或删除。
+- 24h ledger count=3，全部是 C2 rows。当前 root worktree branch `claude/session-live-context` HEAD `4bffab8e`，只有用户 untracked `--help.building/` 与 `.codex-tmp/`，绝不能碰。没有活跃 worker，应在此可恢复点继续。
+
+### 下一步
+
+1. 接手先读 `AGENTS.md`、pipeline 80/90 及 autoslice skill；fresh read `free` identity、locks、registry、ledger。
+2. 完成 C3 direct consumer、真实正负 tests、private PASS0；root exact diff review。
+3. C3 PASS0 后，由 Terra medium 基于 deployed 234 建独立 integration worktree，仅整合 C3 已验证 commits 及其必需依赖；focused + full suite 各做一次，root 批准一次 deploy。C4/C5 manifests 已在当前 deployed verify rc0，不得为了等 C6/C7 而阻塞 C3→C4→C5 发布，除非 exact diff 证明硬依赖。C6 须先另行完成并形成 tested commit，C7 在其原序轮到时再整合。
+4. 串行 C3 upload 并做 public/Creator/section readback；屏障后 C4、再 C5。C4/C5 BVID 返回后只 readback，不重跑。之后按原序 C6/C7/7b，跳过已 public；`review_ready` 不等于 publication。
+
 ## ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐ 2026-08-19 03:2xZ 审片战役执行波（后台自动推进中）
 
 ### 目标
