@@ -1,0 +1,82 @@
+{
+  "authority": "Permit only the exact directional C4 historical-single-registry to active-combined-registry lineage while preserving immutable publication identity and predecessor completion evidence.",
+  "migrations": [
+    {
+      "aid": 117154678638617,
+      "allowed_differing_fields": [
+        "authority_sha256",
+        "registry_authority",
+        "registry_repo_path",
+        "registry_sha256",
+        "source_public_verify_repo_path"
+      ],
+      "bvid": "BV1h7hg68E8Y",
+      "candidate_id": "auto_113028_1602_1698",
+      "from_authority": {
+        "aid": 117154678638617,
+        "authority_sha256": "sha256:8f16a9849b0df1be496f2ddd7578563d0f7f63dc5a1b9239a4c3b6652f1b7937",
+        "boundary_end_mode": "semantic_lower_bound",
+        "bvid": "BV1h7hg68E8Y",
+        "candidate_id": "auto_113028_1602_1698",
+        "cid": 41244820167,
+        "observed_public_title": "【李豆沙】线上直播间老公不可能是女生，李姐开始男女身份排列组合，竟敢磕男的女的？违背直播间世界观了",
+        "registry_authority": "Ivan 2026-08-25: reconcile the already-published C4 BVID BV1h7hg68E8Y before same-BV full-time-axis repair; preserve the verified public title, AID/CID, season/section membership, and original published endpoint authority; no new BVID is permitted.",
+        "registry_repo_path": "assets/lidousha/recovery_publication_authority_2026-08-25_c4_timeaxis.v1.json",
+        "registry_schema_version": "lidousha-recovery-publication-authority.v1",
+        "registry_sha256": "sha256:08d549fa718b41c6568a8d7577cb2a2d7d918917a0455604c4d6a579c3aeefc7",
+        "required_given_end_ms": 106540,
+        "schema_version": "recovery-same-bv-publication-authority.v1",
+        "source_kind": "committed_verified_publication_registry",
+        "source_public_verify_repo_path": "reports/authorized_uploads/2026-08-25-c4-timeaxis-repair/auto_113028_1602_1698.public_verify.json",
+        "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+        "source_public_verify_sha256": "sha256:b6846c0b51985065b000a06d5c9ce5f2c8bf71d4fa829cf38244f8047fffeaab",
+        "source_public_verify_status": "VERIFIED_PUBLIC",
+        "title_mode": "verified_public_exact"
+      },
+      "migration_id": "c4-2026-08-25-single-to-combined-v1",
+      "original_cid": 41244820167,
+      "predecessor_completed_sha256": "265304913afa62c938a9adf69770d5ec55ae4f0a8fc113b74fc27630f3c6b1dc",
+      "predecessor_plan_sha256": "eb8aa715d68c70db9d144da9dc8c760295c43f323a221301b80e450f66ab639c",
+      "require_preserve_existing_tags": true,
+      "required_equal_fields": [
+        "aid",
+        "boundary_end_mode",
+        "bvid",
+        "candidate_id",
+        "cid",
+        "observed_public_title",
+        "registry_schema_version",
+        "required_given_end_ms",
+        "schema_version",
+        "source_kind",
+        "source_public_verify_schema_version",
+        "source_public_verify_sha256",
+        "source_public_verify_status",
+        "title_mode"
+      ],
+      "schema_version": "recovery-publication-authority-migration.v1",
+      "to_authority": {
+        "aid": 117154678638617,
+        "authority_sha256": "sha256:69efe8489cc84bf45cad252281561449b7c5a75b7b70505323a56c20432639fc",
+        "boundary_end_mode": "semantic_lower_bound",
+        "bvid": "BV1h7hg68E8Y",
+        "candidate_id": "auto_113028_1602_1698",
+        "cid": 41244820167,
+        "observed_public_title": "【李豆沙】线上直播间老公不可能是女生，李姐开始男女身份排列组合，竟敢磕男的女的？违背直播间世界观了",
+        "registry_authority": "Ivan 2026-08-25 explicitly reported that the two published slice timelines are wrong and directed an in-place repair with Sol Max diagnosis; preserve each existing BVID and verified public title, and do not create a duplicate publication.",
+        "registry_repo_path": "assets/lidousha/recovery_publication_authority_2026-08-25_c4_c5_timeaxis.v1.json",
+        "registry_schema_version": "lidousha-recovery-publication-authority.v1",
+        "registry_sha256": "sha256:25ad60011739fdc661871eea0fc87e0ba61dfd3f034cbe9e5993999a473fe204",
+        "required_given_end_ms": 106540,
+        "schema_version": "recovery-same-bv-publication-authority.v1",
+        "source_kind": "committed_verified_publication_registry",
+        "source_public_verify_repo_path": "assets/lidousha/published_recovery_evidence/c4-original-public-verify.json",
+        "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+        "source_public_verify_sha256": "sha256:b6846c0b51985065b000a06d5c9ce5f2c8bf71d4fa829cf38244f8047fffeaab",
+        "source_public_verify_status": "VERIFIED_PUBLIC",
+        "title_mode": "verified_public_exact"
+      }
+    }
+  ],
+  "schema_version": "recovery-publication-authority-migrations.v1"
+}
