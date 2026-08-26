@@ -1,0 +1,20 @@
+{
+  "authority": "Ivan 2026-08-25: reconcile the already-published C4 BVID BV1h7hg68E8Y before same-BV full-time-axis repair; preserve the verified public title, AID/CID, season/section membership, and original published endpoint authority; no new BVID is permitted.",
+  "entries": [
+    {
+      "aid": 117154678638617,
+      "boundary_end_mode": "semantic_lower_bound",
+      "bvid": "BV1h7hg68E8Y",
+      "candidate_id": "auto_113028_1602_1698",
+      "cid": 41244820167,
+      "observed_public_title": "【李豆沙】线上直播间老公不可能是女生，李姐开始男女身份排列组合，竟敢磕男的女的？违背直播间世界观了",
+      "required_given_end_ms": 106540,
+      "source_public_verify_repo_path": "reports/authorized_uploads/2026-08-25-c4-timeaxis-repair/auto_113028_1602_1698.public_verify.json",
+      "source_public_verify_schema_version": "authorized-upload-public-verify.v2",
+      "source_public_verify_sha256": "sha256:b6846c0b51985065b000a06d5c9ce5f2c8bf71d4fa829cf38244f8047fffeaab",
+      "source_public_verify_status": "VERIFIED_PUBLIC",
+      "title_mode": "verified_public_exact"
+    }
+  ],
+  "schema_version": "lidousha-recovery-publication-authority.v1"
+}

@@ -36,6 +36,27 @@ PUBLISHED_RECALL_ASSET = (
     / "assets/lidousha"
     / "recovery_publication_authority_2026-07-24_1209.v1.json"
 )
+C4_PREDECESSOR_CANDIDATE_ID = "auto_113028_1602_1698"
+C4_PREDECESSOR_TITLE = (
+    "【李豆沙】线上直播间老公不可能是女生，李姐开始男女身份排列组合，"
+    "竟敢磕男的女的？违背直播间世界观了"
+)
+C4_PREDECESSOR_PUBLICATION_ASSET = (
+    ROOT
+    / "assets/lidousha"
+    / "recovery_publication_authority_2026-08-25_c4_timeaxis.v1.json"
+)
+C4_PREDECESSOR_PUBLICATION_ASSET_SHA256 = (
+    "sha256:08d549fa718b41c6568a8d7577cb2a2d7d918917a0455604c4d6a579c3aeefc7"
+)
+C4_PREDECESSOR_AUTHORITY_SHA256 = (
+    "sha256:8f16a9849b0df1be496f2ddd7578563d0f7f63dc5a1b9239a4c3b6652f1b7937"
+)
+COMBINED_C4_C5_PUBLICATION_ASSET = (
+    ROOT
+    / "assets/lidousha"
+    / "recovery_publication_authority_2026-08-25_c4_c5_timeaxis.v1.json"
+)
 
 
 def _authority():
@@ -331,6 +352,110 @@ def test_publication_authority_rejects_wrong_registry_hash():
             candidate_ids={CANDIDATE_ID},
             registry_path=PUBLICATION_ASSET,
             expected_registry_sha256="sha256:" + "0" * 64,
+        )
+
+
+def test_c4_predecessor_registry_replays_exact_historical_authority():
+    raw = C4_PREDECESSOR_PUBLICATION_ASSET.read_bytes()
+    assert "sha256:" + hashlib.sha256(raw).hexdigest() == (
+        C4_PREDECESSOR_PUBLICATION_ASSET_SHA256
+    )
+
+    authorities = build_recovery_publication_authorities(
+        candidate_ids={C4_PREDECESSOR_CANDIDATE_ID},
+        registry_path=C4_PREDECESSOR_PUBLICATION_ASSET,
+        expected_registry_sha256=(
+            C4_PREDECESSOR_PUBLICATION_ASSET_SHA256
+        ),
+        require_exact_candidate_set=True,
+    )
+
+    assert set(authorities) == {C4_PREDECESSOR_CANDIDATE_ID}
+    authority = authorities[C4_PREDECESSOR_CANDIDATE_ID]
+    assert authority["authority_sha256"] == (
+        C4_PREDECESSOR_AUTHORITY_SHA256
+    )
+    assert authority["registry_repo_path"] == (
+        "assets/lidousha/"
+        "recovery_publication_authority_2026-08-25_c4_timeaxis.v1.json"
+    )
+    assert authority["cid"] == 41244820167
+    assert validate_recovery_publication_authority(
+        authority,
+        candidate_id=C4_PREDECESSOR_CANDIDATE_ID,
+        expected_final_title=C4_PREDECESSOR_TITLE,
+    ) == authority
+
+
+@pytest.mark.parametrize(
+    ("damage", "error"),
+    [
+        ("missing", "RECOVERY_PUBLIC_TITLE_EVIDENCE_MISSING"),
+        ("single_byte", "RECOVERY_PUBLICATION_REGISTRY_SHA_MISMATCH"),
+        ("symlink", "RECOVERY_PUBLIC_TITLE_EVIDENCE_NOT_REGULAR"),
+        ("wrong_path", "RECOVERY_PUBLICATION_REGISTRY_SHA_MISMATCH"),
+        ("combined_only", "RECOVERY_PUBLIC_TITLE_EVIDENCE_MISSING"),
+    ],
+)
+def test_c4_predecessor_registry_binding_fails_closed(
+    tmp_path: Path,
+    damage: str,
+    error: str,
+):
+    repo = tmp_path / "repo"
+    historical_relative = Path(
+        "assets/lidousha/"
+        "recovery_publication_authority_2026-08-25_c4_timeaxis.v1.json"
+    )
+    historical_path = repo / historical_relative
+    historical_path.parent.mkdir(parents=True)
+    historical_path.write_bytes(C4_PREDECESSOR_PUBLICATION_ASSET.read_bytes())
+    registry = json.loads(historical_path.read_text(encoding="utf-8"))
+    source_relative = Path(
+        registry["entries"][0]["source_public_verify_repo_path"]
+    )
+    source_path = repo / source_relative
+    source_path.parent.mkdir(parents=True)
+    source_path.write_bytes((ROOT / source_relative).read_bytes())
+    authority = build_recovery_publication_authorities(
+        candidate_ids={C4_PREDECESSOR_CANDIDATE_ID},
+        registry_path=historical_path,
+        expected_registry_sha256=(
+            C4_PREDECESSOR_PUBLICATION_ASSET_SHA256
+        ),
+        require_exact_candidate_set=True,
+        repo_root=repo,
+    )[C4_PREDECESSOR_CANDIDATE_ID]
+
+    combined_relative = Path(
+        "assets/lidousha/"
+        "recovery_publication_authority_2026-08-25_c4_c5_timeaxis.v1.json"
+    )
+    combined_path = repo / combined_relative
+    if damage in {"wrong_path", "combined_only"}:
+        combined_path.write_bytes(COMBINED_C4_C5_PUBLICATION_ASSET.read_bytes())
+    if damage == "missing":
+        historical_path.unlink()
+    elif damage == "single_byte":
+        historical_path.write_bytes(historical_path.read_bytes() + b" ")
+    elif damage == "symlink":
+        target = historical_path.with_name("historical-target.json")
+        historical_path.replace(target)
+        historical_path.symlink_to(target)
+    elif damage == "wrong_path":
+        authority["registry_repo_path"] = combined_relative.as_posix()
+        _resign(authority)
+    elif damage == "combined_only":
+        historical_path.unlink()
+    else:
+        raise AssertionError(f"unknown damage mode: {damage}")
+
+    with pytest.raises(RecoveryTitleAuthorityError, match=error):
+        validate_recovery_publication_authority(
+            authority,
+            candidate_id=C4_PREDECESSOR_CANDIDATE_ID,
+            expected_final_title=C4_PREDECESSOR_TITLE,
+            repo_root=repo,
         )
 
 
