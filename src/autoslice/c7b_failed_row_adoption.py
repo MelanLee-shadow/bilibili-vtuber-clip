@@ -245,7 +245,15 @@ def _sealed_c7b_chain(*, repo_root: Path, config: Mapping[str, object], baseline
     diff = loaded["DIFF"]
     source = loaded["SOURCE_RECONCILIATION"]
     manifest = loaded["BASELINE_MANIFEST"]
-    if private.get("schema_version") != "fastlane-candidate-private-authority.v1" or private.get("candidate_id") != CANDIDATE_ID or private.get("recording_date") != RECORDING_DATE or private.get("reviewed_subtitle", {}).get("sha256") != _C7B_BASELINE_SHA256.removeprefix("sha256:") or private.get("title") != "李姐也是脑控大师，但即使被脑控仍然信不了李1是怎么回事呢":
+    reviewed_binding = private.get("reviewed_subtitle")
+    if (
+        not isinstance(reviewed_binding, Mapping)
+        or private.get("schema_version") != "fastlane-candidate-private-authority.v1"
+        or private.get("candidate_id") != CANDIDATE_ID
+        or private.get("recording_date") != RECORDING_DATE
+        or reviewed_binding.get("sha256") != _C7B_BASELINE_SHA256.removeprefix("sha256:")
+        or private.get("title") != "李姐也是脑控大师，但即使被脑控仍然信不了李1是怎么回事呢"
+    ):
         raise C7bFailedRowAdoptionError("C7B_ADOPTION_PRIVATE_AUTHORITY_INVALID")
     unsigned = dict(closure); declared = unsigned.pop("canonical_self_sha256", None)
     if closure.get("schema_version") != "fastlane-c7b-freeze-closure.v1" or closure.get("candidate_id") != CANDIDATE_ID or declared != hashlib.sha256(canonical_bytes(unsigned)).hexdigest():
