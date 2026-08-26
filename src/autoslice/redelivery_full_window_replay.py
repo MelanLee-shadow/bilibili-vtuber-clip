@@ -418,8 +418,39 @@ def _build_full_release_delivery_projection_receipt(
                 "disposition": "OUTSIDE_FINAL_DELIVERY",
             })
             continue
-        start_clamp = release.start_ms < final_start_ms or release.end_ms > final_end_ms
-        if start_clamp and (
+        start_clamp = release.start_ms < final_start_ms
+        end_clamp = release.end_ms > final_end_ms
+        c7b_start_geometry = None
+        if start_clamp and c7b_start_geometry is None:
+            from src.autoslice.fastlane_c7b_source_reconciliation import (
+                C7bSourceReconciliationError, resolve_c7b_delivery_start_clamp,
+            )
+            try:
+                c7b_start_geometry = resolve_c7b_delivery_start_clamp(
+                    repo_root=Path(__file__).resolve().parents[2], candidate_id=candidate_id, recording_date=recording_date, record_sha256=record_sha256, staged_media_sha256=staged_media_sha256, final_start_ms=final_start_ms, final_end_ms=final_end_ms, source_ordinal=old_ordinal, text=release.text, source_start_ms=release.start_ms, source_end_ms=release.end_ms,
+                )
+            except C7bSourceReconciliationError as exc:
+                raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_STRADDLER") from exc
+        if end_clamp:
+            from src.autoslice.fastlane_c7b_source_reconciliation import (
+                C7bSourceReconciliationError, resolve_c7b_delivery_end_clamp,
+            )
+            try:
+                c7b_geometry = resolve_c7b_delivery_end_clamp(
+                    repo_root=Path(__file__).resolve().parents[2], candidate_id=candidate_id,
+                    recording_date=recording_date, record_sha256=record_sha256,
+                    staged_media_sha256=staged_media_sha256, final_start_ms=final_start_ms,
+                    final_end_ms=final_end_ms, source_ordinal=old_ordinal,
+                    text=release.text, source_start_ms=release.start_ms,
+                    source_end_ms=release.end_ms,
+                )
+            except C7bSourceReconciliationError as exc:
+                raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_STRADDLER") from exc
+            if c7b_geometry is None:
+                raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_STRADDLER")
+            expected_start, expected_end = c7b_geometry
+            disposition = "RETAINED_FINAL_DELIVERY_END_CLAMP"
+        if start_clamp and c7b_start_geometry is None and (
             None in (
                 c5_start_clamp_proposal_path,
                 c5_start_clamp_acceptance_path,
@@ -431,12 +462,19 @@ def _build_full_release_delivery_projection_receipt(
             raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_DELIVERY_GRID_DRIFT")
         delivery = delivery_cues[delivery_cursor]
         delivery_index = delivery_cursor + 1
-        expected_start, expected_end = (
-            release.start_ms - final_start_ms,
-            release.end_ms - final_start_ms,
-        )
+        if c7b_start_geometry is not None:
+            expected_start, expected_end = c7b_start_geometry
+        elif not end_clamp:
+            expected_start, expected_end = (
+                release.start_ms - final_start_ms,
+                release.end_ms - final_start_ms,
+            )
         disposition = "RETAINED_FINAL_DELIVERY"
-        if start_clamp:
+        if c7b_start_geometry is not None:
+            disposition = "RETAINED_FINAL_DELIVERY_START_CLAMP"
+        if end_clamp:
+            disposition = "RETAINED_FINAL_DELIVERY_END_CLAMP"
+        if start_clamp and c7b_start_geometry is None:
             # No generic clipping authority exists.  The only exception is the
             # accepted C5 cue-5 geometry, loaded from the runtime-private
             # proposal and acceptance bytes at the first projection boundary.

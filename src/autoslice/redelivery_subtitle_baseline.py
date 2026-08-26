@@ -142,7 +142,7 @@ def _read_recording_basename(value: object, *, reason_code: str) -> str:
 
 
 def _sealed_operator_drop_release(
-    *, config: Mapping[str, Any], baseline: Sequence[SrtCue]
+    *, config: Mapping[str, Any], baseline: Sequence[SrtCue], spec_parent: Path,
 ) -> str | None:
     """Prove a v3 release was reconstructed from every sealed source cue.
 
@@ -161,9 +161,13 @@ def _sealed_operator_drop_release(
         pipeline_lane = lanes["pipeline_diagnostic"]
         if not isinstance(ledger_lane, Mapping) or not isinstance(pipeline_lane, Mapping):
             raise ValueError
-        ledger_path = Path(str(ledger_lane["path"]))
-        pipeline_path = Path(str(pipeline_lane["path"]))
-        if ledger_path.is_symlink() or pipeline_path.is_symlink() or not ledger_path.is_file() or not pipeline_path.is_file():
+        ledger_path = spec_parent / Path(str(ledger_lane["path"]))
+        pipeline_path = spec_parent / Path(str(pipeline_lane["path"]))
+        if (
+            ledger_path.parent != spec_parent or pipeline_path.parent != spec_parent
+            or ledger_path.is_symlink() or pipeline_path.is_symlink()
+            or not ledger_path.is_file() or not pipeline_path.is_file()
+        ):
             raise ValueError
         ledger_raw = ledger_path.read_bytes()
         pipeline_raw = pipeline_path.read_bytes()
@@ -198,7 +202,12 @@ def _sealed_operator_drop_release(
             if set(row) != common or str(release.text).strip() != before:
                 raise ValueError("REDELIVERY_OPERATOR_DROP_RELEASE_MAPPING_INVALID")
         elif row.get("disposition") == "OPERATOR_EXACT_TEXT":
-            if set(row) != common | {"release_text", "decision_authority"} or row.get("decision_authority") != "LEDGER_OPERATOR_AUTHORITY" or row.get("release_text") != str(release.text).strip():
+            authority = row.get("decision_authority")
+            pinned_operator = pin.get("operator_authority")
+            authority_valid = authority == "LEDGER_OPERATOR_AUTHORITY" or (
+                isinstance(pinned_operator, Mapping) and authority == pinned_operator
+            )
+            if set(row) != common | {"release_text", "decision_authority"} or not authority_valid or row.get("release_text") != str(release.text).strip():
                 raise ValueError("REDELIVERY_OPERATOR_DROP_RELEASE_MAPPING_INVALID")
         else:
             raise ValueError("REDELIVERY_OPERATOR_DROP_ROW_INVALID")
@@ -1020,6 +1029,7 @@ def _replay_exact_v2_interval(
     timeline: _V2Timeline,
     config: Mapping[str, Any],
     audit: dict[str, Any],
+    spec_parent: Path,
 ) -> tuple[str, dict[str, Any]] | None:
     """Replay reviewed cue timing only under an explicit exact-source grant."""
 
@@ -1072,7 +1082,9 @@ def _replay_exact_v2_interval(
         )
 
     try:
-        output = _sealed_operator_drop_release(config=config, baseline=baseline)
+        output = _sealed_operator_drop_release(
+            config=config, baseline=baseline, spec_parent=spec_parent,
+        )
     except ValueError as exc:
         return _fail(current_srt, audit, str(exc))
     if output is None:
@@ -1166,6 +1178,7 @@ def _apply_v2(
     current_source_end_ms: int | None,
     current_source_recording_basename: str | None,
     current_source_sha256: str | None,
+    spec_parent: Path,
 ) -> tuple[str, dict[str, Any]]:
     timeline = _read_v2_timeline(
         current_srt,
@@ -1187,6 +1200,7 @@ def _apply_v2(
         timeline=timeline,
         config=config,
         audit=audit,
+        spec_parent=spec_parent,
     )
     if exact_replay is not None:
         return exact_replay
@@ -1322,6 +1336,7 @@ def apply_redelivery_subtitle_baseline(
             current_source_end_ms=current_source_end_ms,
             current_source_recording_basename=current_source_recording_basename,
             current_source_sha256=current_source_sha256,
+            spec_parent=spec_parent,
         )
 
     current_indexes = [

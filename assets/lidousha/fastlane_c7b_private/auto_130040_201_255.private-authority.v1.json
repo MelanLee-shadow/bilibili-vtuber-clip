@@ -1,0 +1,47 @@
+{
+  "schema_version": "fastlane-candidate-private-authority.v1",
+  "candidate_id": "auto_130040_201_255",
+  "recording_date": "2026-08-14",
+  "source_recording": {
+    "basename": "22966160_20260814-13-00-40.mp4",
+    "sha256": "660f609ca46cf9b6a5d7618df290ffd8cf32e54677813be343067719d8616b54",
+    "absolute_interval_ms": [191190, 303140]
+  },
+  "ruling": {
+    "source": "docs/reviews/2026-08-19-ivan-review-batch-rulings.md",
+    "row": "7b",
+    "intent": "REVIVE_AND_FIX_THEN_FASTLANE",
+    "historical_content_boundary_rejection": "SUPERSEDED_FOR_REVIVAL_ONLY; CURRENT_LIVE_PREDECESSOR_BOUNDARY_RECEIPT_IS_PASS"
+  },
+  "private_predecessor": {
+    "path": "assets/lidousha/fastlane_c7b_private/predecessor/auto_130040_201_255.recut.srt",
+    "pipeline_diagnostic_sha256": "810a0f17e658184029543910dc8e1c22e1166f03edf7ca90afb82943b761bd94",
+    "cue_count": 36
+  },
+  "freeze_closure": {
+    "path": "assets/lidousha/fastlane_c7b_private/auto_130040_201_255.freeze-closure.v1.json",
+    "schema_version": "fastlane-c7b-freeze-closure.v1"
+  },
+  "reviewed_subtitle": {
+    "path": "assets/lidousha/fastlane_c7b_private/auto_130040_201_255.reviewed.srt",
+    "sha256": "e07e2e23d2eacebbeb95a4700c7fa4005fb4342a432c28d0adde1d4e68e98457",
+    "cue_count": 36,
+    "changed_cues": [10, 18, 19, 20],
+    "frozen_cue_count": 32,
+    "operator_drop_cue_count": 0
+  },
+  "exact_text_repairs": [
+    {"cue": 10, "clip_interval_ms": [22060, 24060], "text": "可能这就是kmx"},
+    {"cue": 18, "clip_interval_ms": [44960, 47000], "text": "脑控状态都信不了李1"},
+    {"cue": 19, "clip_interval_ms": [47000, 48560], "text": "怎么这样", "forbidden_text": "怎么了你"},
+    {"cue": 20, "clip_interval_ms": [49050, 52110], "text": "信李侄的是个什么状态", "forbidden_text": "女"}
+  ],
+  "title": "李姐也是脑控大师，但即使被脑控仍然信不了李1是怎么回事呢",
+  "scope": {
+    "subtitle_text": "ONLY_EXACT_TEXT_REPAIRS_PLUS_32_CUE_FREEZE",
+    "boundary_and_other_content": "FROZEN",
+    "cover": "CARRY_EXISTING_LIVE_COVER_ONLY",
+    "upload_authorized_by_this_asset": false
+  },
+  "cover_carry": {"live_locator": "/opt/bilive/autoslice/out/2026-08-14/auto_130040_201_255/replacement_recuts/covers/auto_130040_201_255.screenshot-title.cover.png", "sha256": "df3df8ae3902d7d0118c08f7d1c8aee0d577ed2cd12d4a87e62c747421b2a96f"}
+}

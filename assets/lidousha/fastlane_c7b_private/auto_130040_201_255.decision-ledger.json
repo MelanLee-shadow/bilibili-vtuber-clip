@@ -1,0 +1,176 @@
+{
+  "schema_version": "operator-reviewed-subtitle-decisions.v3",
+  "candidate_id": "auto_130040_201_255",
+  "report_scope": "EXHAUSTIVE",
+  "pipeline_srt_sha256": "810a0f17e658184029543910dc8e1c22e1166f03edf7ca90afb82943b761bd94",
+  "operator_authority": {
+    "kind": "IVAN_OPERATOR",
+    "evidence_ref": "docs/reviews/2026-08-19-ivan-review-batch-rulings.md#line947-row7b"
+  },
+  "cue_decisions": [
+    {
+      "cue": 1,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 2,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 3,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 4,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 5,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 6,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 7,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 8,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 9,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 10,
+      "disposition": "OPERATOR_EXACT_TEXT",
+      "decision_authority": {
+        "kind": "IVAN_OPERATOR",
+        "evidence_ref": "docs/reviews/2026-08-19-ivan-review-batch-rulings.md#line947-row7b"
+      },
+      "release_text": "可能这就是kmx"
+    },
+    {
+      "cue": 11,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 12,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 13,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 14,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 15,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 16,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 17,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 18,
+      "disposition": "OPERATOR_EXACT_TEXT",
+      "decision_authority": {
+        "kind": "IVAN_OPERATOR",
+        "evidence_ref": "docs/reviews/2026-08-19-ivan-review-batch-rulings.md#line947-row7b"
+      },
+      "release_text": "脑控状态都信不了李1"
+    },
+    {
+      "cue": 19,
+      "disposition": "OPERATOR_EXACT_TEXT",
+      "decision_authority": {
+        "kind": "IVAN_OPERATOR",
+        "evidence_ref": "docs/reviews/2026-08-19-ivan-review-batch-rulings.md#line947-row7b"
+      },
+      "release_text": "怎么这样"
+    },
+    {
+      "cue": 20,
+      "disposition": "OPERATOR_EXACT_TEXT",
+      "decision_authority": {
+        "kind": "IVAN_OPERATOR",
+        "evidence_ref": "docs/reviews/2026-08-19-ivan-review-batch-rulings.md#line947-row7b"
+      },
+      "release_text": "信李侄的是个什么状态"
+    },
+    {
+      "cue": 21,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 22,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 23,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 24,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 25,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 26,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 27,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 28,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 29,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 30,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 31,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 32,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 33,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 34,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 35,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    },
+    {
+      "cue": 36,
+      "disposition": "OPERATOR_UNCHANGED_FREEZE"
+    }
+  ]
+}

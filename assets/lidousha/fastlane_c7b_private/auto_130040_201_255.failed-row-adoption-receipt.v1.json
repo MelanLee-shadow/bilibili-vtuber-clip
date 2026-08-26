@@ -1,0 +1,74 @@
+{
+  "schema_version": "c7b-failed-row-adoption-receipt.v1",
+  "candidate_id": "auto_130040_201_255",
+  "recording_date": "2026-08-14",
+  "row_selector": {
+    "collection": "picks",
+    "index": 5,
+    "candidate_id": "auto_130040_201_255"
+  },
+  "live_row_fingerprint": {
+    "algorithm": "sha256",
+    "canonicalization": "json_sort_keys_utf8_no_whitespace",
+    "sha256": "sha256:5499491676681c5ed854128f03dd35e65d4c43c4bad4b30f352032f10178a854"
+  },
+  "failure_tuple": {
+    "status": "failed",
+    "rc": 1,
+    "failure_kind": "content_boundary",
+    "failure_stage": "final_review_boundary_semantic",
+    "failure_recoverable": false,
+    "failure_fingerprint": "sha256:ba8e802ba67bd284207fd706a758924afc122577398b038eff6fbb1197dfa606",
+    "failure_recovery_fingerprint": "sha256:270cd93e86e9612d4d3e3060b3cd300d3ce2c6f3a82b66f3fa99d64694a16caf"
+  },
+  "attempt_generation": {
+    "cover_route_regeneration_attempts": 1,
+    "cover_route_regeneration_fingerprint": "sha256:4d7a8d95549b0385d3ed8917b684b1d42087bfb2dde0318f3eaea663e2e83918",
+    "cover_generation_sha256": "sha256:7ef2ae295d7ab612bf5ee0f74af3571bab880dc31f6b8e9a9fe3398197aead60"
+  },
+  "source_collection": {
+    "basename": "22966160_20260814-13-00-40.mp4",
+    "sha256": "sha256:660f609ca46cf9b6a5d7618df290ffd8cf32e54677813be343067719d8616b54",
+    "absolute_interval_ms": [
+      191190,
+      303140
+    ]
+  },
+  "predecessor": {
+    "record_sha256": "sha256:b875d8ddedaa47971249e3af057b218f45e62fb002ddcf6c9733cd38d5bfd8f5",
+    "video_sha256": "sha256:09c42e6cab8b35891f7b307dcfd4e23323073f30915ffc36bcbe2f33acdb1798",
+    "srt_sha256": "sha256:810a0f17e658184029543910dc8e1c22e1166f03edf7ca90afb82943b761bd94",
+    "source_media_sha256": "sha256:660f609ca46cf9b6a5d7618df290ffd8cf32e54677813be343067719d8616b54",
+    "padded_source_sha256": "sha256:5b06a7bb19e22c0a8c368c83ee83170ff068b04d32fd07cf246859e8f09014f0"
+  },
+  "ivan_ruling": {
+    "path": "docs/reviews/2026-08-19-ivan-review-batch-rulings.md",
+    "ref": "line947-row7b"
+  },
+  "target": {
+    "reviewed_srt_sha256": "sha256:e07e2e23d2eacebbeb95a4700c7fa4005fb4342a432c28d0adde1d4e68e98457",
+    "title": "李姐也是脑控大师，但即使被脑控仍然信不了李1是怎么回事呢",
+    "changed_cue_ordinals": [
+      10,
+      18,
+      19,
+      20
+    ],
+    "frozen_cue_count": 32,
+    "operator_drop_count": 0
+  },
+  "authority_chain": {
+    "private_authority_sha256": "sha256:bf46c6d6ae743bfb7488c3387b79e5eb187182915284ecb3856569f9552b7d77",
+    "freeze_closure_sha256": "sha256:916eb1f10ff4e8a30db0b4b0164583c4de55fa4d9a785f2b2e905c060b9398e6",
+    "decision_ledger_sha256": "sha256:f91c50c410f265b472e32f4f7f57696876e75b0c82d2e527b62292cfa3ff0aca",
+    "truth_diff_sha256": "sha256:ea5b986c58dcd8ae70b6b947c41943ba563419623b1ae08b89f8a9d52a8f7e09",
+    "source_reconciliation_sha256": "sha256:c6c07f47c007736c8c85ec5691c6c63eb503ab2bea4188e2dfbc6cc1cee75a97"
+  },
+  "permissions": {
+    "provider_allowed": false,
+    "upload_allowed": false,
+    "state_write_allowed": false,
+    "source_state_class_waiver": true
+  },
+  "canonical_self_sha256": "sha256:e8e29bf1466ed31035d66e9df4f1cea80f61e921b2142398e863f98e80d34db8"
+}

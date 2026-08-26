@@ -24,6 +24,11 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 from src.autoslice.branding_intro import pin_existing_delivery_intro, require_branding_intro
+from src.autoslice.c5_start_clamp import finalizer_authority_kwargs
+from src.autoslice.fastlane_c7b_private_adapter import apply_replay_carry
+from src.autoslice.fastlane_c7b_source_reconciliation import (
+    C7bSourceReconciliationError, resolve_c7b_source_reconciliation,
+)
 from src.autoslice.recut_materialization import (
     _accurate_reencode_recut_command,
     _fresh_srt_to_source_cues,
@@ -87,6 +92,9 @@ class ReplayPlan:
     expected_video_sha256: str
     baseline: ReviewedSubtitleBaseline
     matrix: tuple[dict[str, str], ...]
+    materialization_start_ms: int | None = None
+    materialization_end_ms: int | None = None
+    technical_media_path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,7 +291,9 @@ def _baseline(*, repo_root: Path, candidate_id: str) -> ReviewedSubtitleBaseline
     return value
 
 
-def _padded_from_provenance(recut_root: Path) -> tuple[Path, dict[str, Any]]:
+def _padded_from_provenance(
+    recut_root: Path, *, date: str = "", candidate_id: str = "", record_sha256: str = ""
+) -> tuple[Path, dict[str, Any]]:
     candidates = sorted(recut_root.glob("*.recut.provenance.json"))
     if len(candidates) != 1:
         raise ReviewedBaselineReplayError("REPLAY_PROVENANCE_AMBIGUOUS")
@@ -296,7 +306,17 @@ def _padded_from_provenance(recut_root: Path) -> tuple[Path, dict[str, Any]]:
         raise ReviewedBaselineReplayError("REPLAY_PROVENANCE_INVALID")
     source = Path(raw)
     if source.parent != recut_root.parent:
-        raise ReviewedBaselineReplayError("REPLAY_PADDED_SOURCE_ESCAPES_CANDIDATE")
+        expected_parent = Path("/opt/bilive/autoslice/out/2026-08-14/auto_130040_201_255")
+        if not (
+            date == "2026-08-14"
+            and candidate_id == "auto_130040_201_255"
+            and record_sha256 == "sha256:b875d8ddedaa47971249e3af057b218f45e62fb002ddcf6c9733cd38d5bfd8f5"
+            and source.parent == expected_parent
+            and source.name == "padded_191190_303140.mp4"
+            and final.get("source_sha256") == "5b06a7bb19e22c0a8c368c83ee83170ff068b04d32fd07cf246859e8f09014f0"
+        ):
+            raise ReviewedBaselineReplayError("REPLAY_PADDED_SOURCE_ESCAPES_CANDIDATE")
+        source = recut_root.parent / source.name
     return source, dict(final)
 
 
@@ -313,14 +333,17 @@ def build_replay_plan(*, repo_root: Path, out_root: Path, date: str, candidate_i
     package_root = _safe_directory(out_root / date / candidate_id)
     recut_root = _safe_directory(package_root / "replacement_recuts")
     record_path = recut_root / f"{candidate_id}.record.json"
-    record = _load_json(regular_binding(record_path, label="RECORD"), label="RECORD")
+    record_binding = regular_binding(record_path, label="RECORD")
+    record = _load_json(record_binding, label="RECORD")
     artifacts = record.get("artifact_hashes")
     expected = artifacts.get("video_sha256") if isinstance(artifacts, Mapping) else None
     if not isinstance(expected, str) or _SHA.fullmatch(expected) is None:
         raise ReviewedBaselineReplayError("REPLAY_RECORD_VIDEO_BINDING_INVALID")
     baseline = _baseline(repo_root=repo_root, candidate_id=candidate_id)
     config = baseline.config
-    padded, final = _padded_from_provenance(recut_root)
+    padded, final = _padded_from_provenance(
+        recut_root, date=date, candidate_id=candidate_id, record_sha256=record_binding.sha256
+    )
     padded_binding = regular_binding(padded, label="PADDED_SOURCE")
     declared_padded = final.get("source_sha256")
     if declared_padded != padded_binding.sha256.removeprefix("sha256:"):
@@ -372,8 +395,41 @@ def build_replay_plan(*, repo_root: Path, out_root: Path, date: str, candidate_i
         raise ReviewedBaselineReplayError(
             "REPLAY_PIPELINE_DIAGNOSTIC_GEOMETRY_INVALID"
         ) from exc
+
+    # C7b is the only permitted stale-record media exception.  It is resolved
+    # only after the record, provenance, padded source and actual recut have
+    # all been independently bound; generic candidates retain the ordinary
+    # record-declared media path and hash.
+    provenance_path = recut_root / f"{candidate_id}.recut.provenance.json"
+    provenance_binding = regular_binding(provenance_path, label="PROVENANCE")
+    provenance = _load_json(provenance_binding, label="PROVENANCE")
+    actual_path = recut_root / f"{candidate_id}.recut.mp4"
+    actual_binding = None
+    if (date, candidate_id) == ("2026-08-14", "auto_130040_201_255"):
+        try:
+            actual_binding = regular_binding(actual_path, label="C7B_ACTUAL_RECUT")
+        except ReviewedBaselineReplayError as exc:
+            raise ReviewedBaselineReplayError("C7B_SOURCE_ACTUAL_RECUT_UNAVAILABLE") from exc
+    try:
+        reconciliation = resolve_c7b_source_reconciliation(
+            repo_root=repo_root, date=date, candidate_id=candidate_id,
+            record_binding=record_binding, record=record,
+            provenance_binding=provenance_binding, provenance=provenance,
+            padded_binding=padded_binding, actual_binding=actual_binding,
+        )
+    except C7bSourceReconciliationError as exc:
+        raise ReviewedBaselineReplayError(str(exc)) from exc
+    technical_expected = expected
+    technical_start = technical_end = None
+    technical_media = None
+    if reconciliation is not None:
+        technical_expected = reconciliation.expected_video_sha256
+        technical_start = reconciliation.materialization_start_ms
+        technical_end = reconciliation.materialization_end_ms
+        technical_media = reconciliation.actual_recut_path
     matrix = (
         {"predicate": "RECORD_OLD_VIDEO_SHA256", "status": "PASS"},
+        *(({"predicate": "C7B_PROVENANCE_BOUND_ACTUAL_RECUT", "status": "PASS"},) if reconciliation is not None else ()),
         {"predicate": "PADDED_SOURCE_BINDING", "status": "PASS"},
         {"predicate": "REVIEWED_BASELINE_V2_V3_LEDGER", "status": "PASS"},
         {"predicate": "REVIEWED_BASELINE_EXPLICIT_TIME_DOMAIN", "status": "PASS"},
@@ -385,7 +441,8 @@ def build_replay_plan(*, repo_root: Path, out_root: Path, date: str, candidate_i
     )
     return ReplayPlan(
         date, candidate_id, package_root, record_path, padded,
-        start, end, expected, baseline, matrix,
+        start, end, technical_expected, baseline, matrix,
+        technical_start, technical_end, technical_media,
     )
 
 
@@ -432,21 +489,28 @@ def stage_replay(
     stage = _mkdir_private(stage_parent / f"{plan.date}-{plan.candidate_id}-{seed[:16]}")
     media = stage / "recut.mp4"
     command = list(run_command or ())
-    if not command:
+    if plan.technical_media_path is not None:
+        if command:
+            raise ReviewedBaselineReplayError("C7B_SOURCE_EXACT_BYTE_CARRY_COMMAND_FORBIDDEN")
+        _copy_private_artifact(plan.technical_media_path, media)
+    elif not command:
         # Reuse the production accurate-recut command (including its coarse
         # seek and decode-before-trim path); a superficially equivalent local
         # ffmpeg spelling is not a safe source-bound replay authority.
         command = _accurate_reencode_recut_command(
             source_video=plan.padded_path,
             output_media=media,
-            start_ms=plan.local_start_ms,
-            duration_ms=plan.local_end_ms - plan.local_start_ms,
+            start_ms=plan.materialization_start_ms if plan.materialization_start_ms is not None else plan.local_start_ms,
+            duration_ms=(plan.materialization_end_ms - plan.materialization_start_ms)
+            if plan.materialization_start_ms is not None and plan.materialization_end_ms is not None
+            else plan.local_end_ms - plan.local_start_ms,
         )
-    if command[-1] != str(media):
-        raise ReviewedBaselineReplayError("REPLAY_COMMAND_TARGET_INVALID")
-    completed = subprocess.run(command, check=False, capture_output=True)
-    if completed.returncode != 0:
-        raise ReviewedBaselineReplayError("REPLAY_ACCURATE_RECUT_FAILED")
+    if plan.technical_media_path is None:
+        if not command or command[-1] != str(media):
+            raise ReviewedBaselineReplayError("REPLAY_COMMAND_TARGET_INVALID")
+        completed = subprocess.run(command, check=False, capture_output=True)
+        if completed.returncode != 0:
+            raise ReviewedBaselineReplayError("REPLAY_ACCURATE_RECUT_FAILED")
     try:
         os.chmod(media, 0o600)
     except OSError as exc:
@@ -454,10 +518,22 @@ def stage_replay(
     rebuilt = regular_binding(media, label="STAGED_VIDEO")
     if rebuilt.sha256 != plan.expected_video_sha256:
         raise ReviewedBaselineReplayError("REPLAY_OLD_RECORD_VIDEO_SHA256_MISMATCH")
+    c5_fields: dict[str, object] = {}
+    if plan.candidate_id == "auto_113028_1271_1328" and plan.date == "2026-08-14" and runtime_authority_root is not None:
+        from src.autoslice.c5_start_clamp import runtime_authority_paths
+        proposal_path, acceptance_path = runtime_authority_paths(runtime_authority_root)
+        c5_fields = {
+            "c5_start_clamp_proposal_path": proposal_path,
+            "c5_start_clamp_acceptance_path": acceptance_path,
+            "recording_date": plan.date,
+        }
+    elif plan.candidate_id == "auto_130040_201_255" and plan.date == "2026-08-14":
+        c5_fields = {"recording_date": plan.date}
     cropped_bytes, audit, projection_descriptor = prepare_stage_delivery_projection(
         plan, stage, rebuilt, regular_binding=regular_binding, load_json=_load_json,
         read_small_bytes=_read_small_bytes, fresh_srt_to_source_cues=_fresh_srt_to_source_cues,
         write_source_range_srt=_write_source_range_srt, error=ReviewedBaselineReplayError,
+        **c5_fields,
     )
     _write_private(stage / "reviewed.srt", cropped_bytes)
     _write_private(stage / "redelivery-baseline.json", _canonical(audit))
@@ -933,7 +1009,8 @@ def synthesize_replay_spec_and_finalize_private(
     provenance_path = next(plan.package_root.joinpath("replacement_recuts").glob("*.recut.provenance.json"), None)
     if provenance_path is None:
         raise ReviewedBaselineReplayError("REPLAY_PROVENANCE_AMBIGUOUS")
-    provenance = _load_json(regular_binding(provenance_path, label="PROVENANCE"), label="PROVENANCE")
+    provenance_binding = regular_binding(provenance_path, label="PROVENANCE")
+    provenance = _load_json(provenance_binding, label="PROVENANCE")
     source_piece = provenance.get("source_piece")
     padded = provenance.get("padded")
     final_recut = provenance.get("final_recut")
@@ -957,12 +1034,22 @@ def synthesize_replay_spec_and_finalize_private(
         raise ReviewedBaselineReplayError("REPLAY_SOURCE_PIECE_BINDING_INVALID")
     padded_binding = regular_binding(plan.padded_path, label="PADDED_SOURCE")
     observed_padded_sha = final_recut.get("source_sha256")
+    c7b_remote_padded = (
+        plan.date == "2026-08-14" and plan.candidate_id == "auto_130040_201_255"
+        and record_binding.sha256 == "sha256:b875d8ddedaa47971249e3af057b218f45e62fb002ddcf6c9733cd38d5bfd8f5"
+        and provenance_binding.sha256 == "sha256:7b13b5fa7a7f862e90c6e07bbef51a1809b0b9fb2792aeef7dc42d45a866d626"
+        and padded_binding.sha256 == "sha256:5b06a7bb19e22c0a8c368c83ee83170ff068b04d32fd07cf246859e8f09014f0"
+        and plan.expected_video_sha256 == "sha256:09c42e6cab8b35891f7b307dcfd4e23323073f30915ffc36bcbe2f33acdb1798"
+        and final_recut.get("source_path") == "/opt/bilive/autoslice/out/2026-08-14/auto_130040_201_255/padded_191190_303140.mp4"
+    )
+    allowed_padded_outputs = {None, str(plan.padded_path.resolve()), str(plan.padded_path)}
+    if c7b_remote_padded:
+        allowed_padded_outputs.add("/opt/bilive/autoslice/out/2026-08-14/auto_130040_201_255/padded_191190_303140.mp4")
     if (
-        final_recut.get("source_path") != str(plan.padded_path.resolve())
+        final_recut.get("source_path") != str(plan.padded_path.resolve()) and not c7b_remote_padded
         or not isinstance(observed_padded_sha, str)
-        or observed_padded_sha.removeprefix("sha256:")
-        != padded_binding.sha256.removeprefix("sha256:")
-        or padded.get("output_path") not in {None, str(plan.padded_path.resolve()), str(plan.padded_path)}
+        or observed_padded_sha.removeprefix("sha256:") != padded_binding.sha256.removeprefix("sha256:")
+        or padded.get("output_path") not in allowed_padded_outputs
     ):
         raise ReviewedBaselineReplayError("REPLAY_PROVENANCE_BINDING_DRIFT")
     boundary = record.get("boundary_audit")
@@ -1024,12 +1111,20 @@ def synthesize_replay_spec_and_finalize_private(
         error_factory=ReviewedBaselineReplayError,
         recovery_publication_authority=recovery_publication_authority,
     )
+    spec = apply_replay_carry(
+        spec, candidate_id=plan.candidate_id, recording_date=plan.date,
+        baseline_sha256="sha256:" + str(plan.baseline.config["sha256"]),
+    )
     # A text-only reviewed baseline does not authorize new speaker decisions.
     # It may, however, strictly rebind a prior READY artifact when every label,
     # decision, boundary and media binding survives and the sealed ledger names
     # the sole text delta.  This wrapper is private-stage-only: it never points
     # at an installed package or writes a formal target.
     original_speaker_finalizer = getattr(adapters, "run_speaker_finalization", None)
+    c5_fields = finalizer_authority_kwargs(
+        candidate_id=plan.candidate_id, recording_date=plan.date,
+        runtime_root=runtime_authority_root,
+    )
     successor_fields = build_text_only_speaker_successor_fields(
         finalizer=finalizer, original_speaker_finalizer=original_speaker_finalizer,
         candidate_id=plan.candidate_id, record=record,
@@ -1043,6 +1138,7 @@ def synthesize_replay_spec_and_finalize_private(
         delivery_projection_receipt_sha256=projection_receipt_sha256,
         regular_binding=regular_binding, replay_error=ReviewedBaselineReplayError,
         error_factory=ReviewedBaselineReplayError,
+        **c5_fields,
     )
     spec_path = private_runtime_root / "replay-spec.json"
     _write_private(spec_path, _canonical(spec))
@@ -1699,7 +1795,24 @@ def project_replay_state_after(
         row for row in picks
         if isinstance(row, dict) and str(row.get("cid") or row.get("candidate_id") or "") == plan.candidate_id
     ]
-    if len(matching) != 1 or matching[0].get("status") != "candidate_rejected":
+    if len(matching) != 1:
+        raise ReviewedBaselineReplayError("REPLAY_STATE_PICK_PREIMAGE_DRIFT")
+    adoption_receipt = None
+    if matching[0].get("status") == "failed":
+        # This is the deliberately narrow hook: the C7b receipt waives only
+        # the source-state class mismatch.  It does not construct an after
+        # image, bypass PASS0/QC, or grant a state write; the native replay
+        # transaction still performs the final exact-preimage CAS.
+        from src.autoslice.c7b_failed_row_adoption import (
+            C7bFailedRowAdoptionError, validate_c7b_failed_row_adoption,
+        )
+        try:
+            adoption_receipt, _seal = validate_c7b_failed_row_adoption(
+                repo_root=runtime_root / "repo", state=state, state_date=plan.date,
+            )
+        except C7bFailedRowAdoptionError as exc:
+            raise ReviewedBaselineReplayError(str(exc)) from exc
+    elif matching[0].get("status") != "candidate_rejected":
         raise ReviewedBaselineReplayError("REPLAY_STATE_PICK_PREIMAGE_DRIFT")
     delivered = _delivery_artifacts_from_prepared(
         plan, finalization=finalization, projection=projection,
@@ -1763,6 +1876,14 @@ def project_replay_state_after(
         "redelivery_baseline_status": "APPLIED",
         "talk_filler_audit": record.get("talk_filler_audit_path"),
     }
+    if adoption_receipt is not None:
+        summary["failed_row_adoption"] = {
+            "schema_version": "c7b-failed-row-adoption-receipt.v1",
+            "receipt_sha256": adoption_receipt["canonical_self_sha256"],
+            "source_state_class_waived": True,
+            "provider_allowed": False,
+            "upload_allowed": False,
+        }
     row.update({
         "status": "review_ready", "rc": 0, "summary": summary,
         "delivered": video["target"], "delivered_subtitle": subtitle["target"],

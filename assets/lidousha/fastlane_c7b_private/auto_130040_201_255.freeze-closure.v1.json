@@ -1,0 +1,21 @@
+{
+  "schema_version": "fastlane-c7b-freeze-closure.v1",
+  "candidate_id": "auto_130040_201_255",
+  "predecessor_srt_sha256": "810a0f17e658184029543910dc8e1c22e1166f03edf7ca90afb82943b761bd94",
+  "reviewed_srt_sha256": "e07e2e23d2eacebbeb95a4700c7fa4005fb4342a432c28d0adde1d4e68e98457",
+  "cue_count": 36,
+  "changed_ordinals": [10, 18, 19, 20],
+  "frozen_ordinal_count": 32,
+  "operator_drop_count": 0,
+  "changes": [
+    {"ordinal": 10, "timing": "00:00:22,060 --> 00:00:24,060", "old_text": "可能这就是钓kmx", "new_text": "可能这就是kmx"},
+    {"ordinal": 18, "timing": "00:00:44,960 --> 00:00:47,000", "old_text": "脑控状态都信不了", "new_text": "脑控状态都信不了李1"},
+    {"ordinal": 19, "timing": "00:00:47,000 --> 00:00:48,560", "old_text": "李1怎么这样", "new_text": "怎么这样"},
+    {"ordinal": 20, "timing": "00:00:49,050 --> 00:00:52,110", "old_text": "那那信李1的是个什么状态呢", "new_text": "信李侄的是个什么状态"}
+  ],
+  "human_approximate_timestamp_mapping": {
+    "status": "UNVERIFIED_NOT_USED_AS_EXACT_BINDING",
+    "reason": "The durable Ivan ruling records approximate clocks (about 0:29/0:53/0:58), while the retained candidate-private subtitle timeline exposes only its own local timing. No retained authority binds those two clocks with an exact intro offset. The unique named text contexts, not an inferred offset, bind these four repairs."
+  },
+  "canonical_self_sha256": "0275e7a607637a6e0557e656412331d6d566629ef18a16cb6188ffb4b4d8bb80"
+}

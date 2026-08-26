@@ -1,0 +1,390 @@
+{
+  "schema_version": "operator-reviewed-subtitle-truth-diff.v2",
+  "candidate_id": "auto_130040_201_255",
+  "pipeline_srt_sha256": "810a0f17e658184029543910dc8e1c22e1166f03edf7ca90afb82943b761bd94",
+  "release_truth_srt_sha256": "e07e2e23d2eacebbeb95a4700c7fa4005fb4342a432c28d0adde1d4e68e98457",
+  "decision_ledger_sha256": "f91c50c410f265b472e32f4f7f57696876e75b0c82d2e527b62292cfa3ff0aca",
+  "cue_count": 36,
+  "source_cue_count": 36,
+  "release_cue_count": 36,
+  "operator_drop_cue_count": 0,
+  "changed_cue_count": 4,
+  "rows": [
+    {
+      "cue": 1,
+      "source_index": "1",
+      "start_ms": 250,
+      "end_ms": 2350,
+      "pipeline_text": "每当kmx快被脑控的时候",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 1,
+      "release_truth_text": "每当kmx快被脑控的时候"
+    },
+    {
+      "cue": 2,
+      "source_index": "2",
+      "start_ms": 2350,
+      "end_ms": 4410,
+      "pipeline_text": "主包就会说点什么支持李1",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 2,
+      "release_truth_text": "主包就会说点什么支持李1"
+    },
+    {
+      "cue": 3,
+      "source_index": "3",
+      "start_ms": 4410,
+      "end_ms": 5690,
+      "pipeline_text": "因为是侄女在这",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 3,
+      "release_truth_text": "因为是侄女在这"
+    },
+    {
+      "cue": 4,
+      "source_index": "4",
+      "start_ms": 5690,
+      "end_ms": 7650,
+      "pipeline_text": "帮大家脱离脑控",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 4,
+      "release_truth_text": "帮大家脱离脑控"
+    },
+    {
+      "cue": 5,
+      "source_index": "5",
+      "start_ms": 8630,
+      "end_ms": 12230,
+      "pipeline_text": "呵呵，李豆沙还是太好了",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 5,
+      "release_truth_text": "呵呵，李豆沙还是太好了"
+    },
+    {
+      "cue": 6,
+      "source_index": "6",
+      "start_ms": 12430,
+      "end_ms": 15310,
+      "pipeline_text": "李豆沙对kmx还是太好了",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 6,
+      "release_truth_text": "李豆沙对kmx还是太好了"
+    },
+    {
+      "cue": 7,
+      "source_index": "7",
+      "start_ms": 15350,
+      "end_ms": 17590,
+      "pipeline_text": "还是有点就是",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 7,
+      "release_truth_text": "还是有点就是"
+    },
+    {
+      "cue": 8,
+      "source_index": "8",
+      "start_ms": 17920,
+      "end_ms": 20580,
+      "pipeline_text": "呃呃，太会保持平衡了",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 8,
+      "release_truth_text": "呃呃，太会保持平衡了"
+    },
+    {
+      "cue": 9,
+      "source_index": "9",
+      "start_ms": 20580,
+      "end_ms": 22060,
+      "pipeline_text": "太会钓kmx了",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 9,
+      "release_truth_text": "太会钓kmx了"
+    },
+    {
+      "cue": 10,
+      "source_index": "10",
+      "start_ms": 22060,
+      "end_ms": 24060,
+      "pipeline_text": "可能这就是钓kmx",
+      "disposition": "OPERATOR_EXACT_TEXT",
+      "release_cue_index": 10,
+      "release_truth_text": "可能这就是kmx",
+      "decision_authority": {
+        "kind": "IVAN_OPERATOR",
+        "evidence_ref": "docs/reviews/2026-08-19-ivan-review-batch-rulings.md#line947-row7b"
+      }
+    },
+    {
+      "cue": 11,
+      "source_index": "11",
+      "start_ms": 24060,
+      "end_ms": 26320,
+      "pipeline_text": "就是钓kmx的一种方式吧",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 11,
+      "release_truth_text": "就是钓kmx的一种方式吧"
+    },
+    {
+      "cue": 12,
+      "source_index": "12",
+      "start_ms": 26500,
+      "end_ms": 28540,
+      "pipeline_text": "对，我有我自己的节奏",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 12,
+      "release_truth_text": "对，我有我自己的节奏"
+    },
+    {
+      "cue": 13,
+      "source_index": "13",
+      "start_ms": 29620,
+      "end_ms": 34220,
+      "pipeline_text": "就是让kmx那个保持一个",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 13,
+      "release_truth_text": "就是让kmx那个保持一个"
+    },
+    {
+      "cue": 14,
+      "source_index": "14",
+      "start_ms": 34940,
+      "end_ms": 35620,
+      "pipeline_text": "呃",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 14,
+      "release_truth_text": "呃"
+    },
+    {
+      "cue": 15,
+      "source_index": "15",
+      "start_ms": 35620,
+      "end_ms": 39110,
+      "pipeline_text": "在入脑和不入脑的边缘",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 15,
+      "release_truth_text": "在入脑和不入脑的边缘"
+    },
+    {
+      "cue": 16,
+      "source_index": "16",
+      "start_ms": 39310,
+      "end_ms": 41790,
+      "pipeline_text": "这样子就是要控制",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 16,
+      "release_truth_text": "这样子就是要控制"
+    },
+    {
+      "cue": 17,
+      "source_index": "17",
+      "start_ms": 41790,
+      "end_ms": 44510,
+      "pipeline_text": "真该控制控制kmx了",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 17,
+      "release_truth_text": "真该控制控制kmx了"
+    },
+    {
+      "cue": 18,
+      "source_index": "18",
+      "start_ms": 44960,
+      "end_ms": 47000,
+      "pipeline_text": "脑控状态都信不了",
+      "disposition": "OPERATOR_EXACT_TEXT",
+      "release_cue_index": 18,
+      "release_truth_text": "脑控状态都信不了李1",
+      "decision_authority": {
+        "kind": "IVAN_OPERATOR",
+        "evidence_ref": "docs/reviews/2026-08-19-ivan-review-batch-rulings.md#line947-row7b"
+      }
+    },
+    {
+      "cue": 19,
+      "source_index": "19",
+      "start_ms": 47000,
+      "end_ms": 48560,
+      "pipeline_text": "李1怎么这样",
+      "disposition": "OPERATOR_EXACT_TEXT",
+      "release_cue_index": 19,
+      "release_truth_text": "怎么这样",
+      "decision_authority": {
+        "kind": "IVAN_OPERATOR",
+        "evidence_ref": "docs/reviews/2026-08-19-ivan-review-batch-rulings.md#line947-row7b"
+      }
+    },
+    {
+      "cue": 20,
+      "source_index": "20",
+      "start_ms": 49050,
+      "end_ms": 52110,
+      "pipeline_text": "那那信李1的是个什么状态呢",
+      "disposition": "OPERATOR_EXACT_TEXT",
+      "release_cue_index": 20,
+      "release_truth_text": "信李侄的是个什么状态",
+      "decision_authority": {
+        "kind": "IVAN_OPERATOR",
+        "evidence_ref": "docs/reviews/2026-08-19-ivan-review-batch-rulings.md#line947-row7b"
+      }
+    },
+    {
+      "cue": 21,
+      "source_index": "21",
+      "start_ms": 52110,
+      "end_ms": 54170,
+      "pipeline_text": "就是已经走火入魔的状态了吧",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 21,
+      "release_truth_text": "就是已经走火入魔的状态了吧"
+    },
+    {
+      "cue": 22,
+      "source_index": "22",
+      "start_ms": 54170,
+      "end_ms": 55370,
+      "pipeline_text": "你这样说的话",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 22,
+      "release_truth_text": "你这样说的话"
+    },
+    {
+      "cue": 23,
+      "source_index": "23",
+      "start_ms": 56020,
+      "end_ms": 58580,
+      "pipeline_text": "谢谢安妮girl的粉丝团灯牌",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 23,
+      "release_truth_text": "谢谢安妮girl的粉丝团灯牌"
+    },
+    {
+      "cue": 24,
+      "source_index": "24",
+      "start_ms": 58580,
+      "end_ms": 59320,
+      "pipeline_text": "谢谢你",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 24,
+      "release_truth_text": "谢谢你"
+    },
+    {
+      "cue": 25,
+      "source_index": "25",
+      "start_ms": 59320,
+      "end_ms": 61040,
+      "pipeline_text": "谢谢36的七朵小花花",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 25,
+      "release_truth_text": "谢谢36的七朵小花花"
+    },
+    {
+      "cue": 26,
+      "source_index": "26",
+      "start_ms": 61040,
+      "end_ms": 62380,
+      "pipeline_text": "谢谢我牛头泡泡机",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 26,
+      "release_truth_text": "谢谢我牛头泡泡机"
+    },
+    {
+      "cue": 27,
+      "source_index": "27",
+      "start_ms": 62380,
+      "end_ms": 64180,
+      "pipeline_text": "泡泡机，泡泡机、泡泡机",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 27,
+      "release_truth_text": "泡泡机，泡泡机、泡泡机"
+    },
+    {
+      "cue": 28,
+      "source_index": "28",
+      "start_ms": 64370,
+      "end_ms": 66890,
+      "pipeline_text": "应该多谢谢十麻乃的泡泡机",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 28,
+      "release_truth_text": "应该多谢谢十麻乃的泡泡机"
+    },
+    {
+      "cue": 29,
+      "source_index": "29",
+      "start_ms": 66890,
+      "end_ms": 67490,
+      "pipeline_text": "谢谢你",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 29,
+      "release_truth_text": "谢谢你"
+    },
+    {
+      "cue": 30,
+      "source_index": "30",
+      "start_ms": 67490,
+      "end_ms": 69210,
+      "pipeline_text": "泡泡机，泡泡机、泡泡机",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 30,
+      "release_truth_text": "泡泡机，泡泡机、泡泡机"
+    },
+    {
+      "cue": 31,
+      "source_index": "31",
+      "start_ms": 69570,
+      "end_ms": 71650,
+      "pipeline_text": "应该多谢谢你",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 31,
+      "release_truth_text": "应该多谢谢你"
+    },
+    {
+      "cue": 32,
+      "source_index": "32",
+      "start_ms": 72300,
+      "end_ms": 73300,
+      "pipeline_text": "ok",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 32,
+      "release_truth_text": "ok"
+    },
+    {
+      "cue": 33,
+      "source_index": "33",
+      "start_ms": 73460,
+      "end_ms": 74500,
+      "pipeline_text": "那我们",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 33,
+      "release_truth_text": "那我们"
+    },
+    {
+      "cue": 34,
+      "source_index": "34",
+      "start_ms": 75930,
+      "end_ms": 77310,
+      "pipeline_text": "是阿卡林状态",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 34,
+      "release_truth_text": "是阿卡林状态"
+    },
+    {
+      "cue": 35,
+      "source_index": "35",
+      "start_ms": 77310,
+      "end_ms": 79690,
+      "pipeline_text": "阿卡林状态这个话也显得很老人",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 35,
+      "release_truth_text": "阿卡林状态这个话也显得很老人"
+    },
+    {
+      "cue": 36,
+      "source_index": "36",
+      "start_ms": 79690,
+      "end_ms": 80690,
+      "pipeline_text": "老人渣",
+      "disposition": "OPERATOR_UNCHANGED_FREEZE",
+      "release_cue_index": 36,
+      "release_truth_text": "老人渣"
+    }
+  ]
+}
