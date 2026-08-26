@@ -1092,6 +1092,52 @@ def test_replay_publish_adapter_refuses_source_fact_title_rewrite(
         adapter({}, cues=[], run_ffmpeg=False)
 
 
+@pytest.mark.parametrize(
+    ("candidate_id", "date", "blocked"),
+    [
+        ("auto_120032_753_816", "2026-08-14", True),
+        (CID, DATE, False),
+    ],
+)
+def test_replay_exact_review_c6_does_not_fallback_but_other_candidates_do(
+    tmp_path: Path, candidate_id: str, date: str, blocked: bool,
+) -> None:
+    calls: list[str] = []
+
+    def fallback(*_args: object, **_kwargs: object) -> dict[str, str]:
+        calls.append("fallback")
+        return {"reviewer": "fallback"}
+
+    with_call = dict(
+        explicit_reviewer=None,
+        fallback_reviewer=fallback,
+        use_production=False,
+        entity_verifier=lambda *_args, **_kwargs: None,
+        text_adapters=None,
+        plan=SimpleNamespace(candidate_id=candidate_id, date=date),
+        candidate_id=candidate_id,
+        spec={"clip_context": {}},
+        spec_piece={"start_ms": 0, "end_ms": 1, "source_media_sha256": "sha256:" + "a" * 64},
+        padded=tmp_path / "padded.mp4",
+        out_root=tmp_path / "out",
+        runtime_authority_root=tmp_path / "runtime",
+        release_text_path=tmp_path / "release.srt",
+        read_text=lambda _path: "",
+        reconstruct_chat=lambda *_args, **_kwargs: [],
+        replay_reviewer=lambda *_args, **_kwargs: fallback,
+        provider_invocation=lambda: calls.append("provider"),
+        error_factory=ValueError,
+    )
+    if blocked:
+        with pytest.raises(ValueError, match="C6_EXACT_FINAL_REVIEWER_REQUIRED"):
+            resolve_replay_exact_final_reviewer(**with_call)
+        assert calls == []
+    else:
+        reviewer, _ = resolve_replay_exact_final_reviewer(**with_call)
+        assert reviewer is fallback
+        assert calls == []
+
+
 def test_replay_exact_review_prefers_production_over_adapter_fallback(tmp_path: Path) -> None:
     calls: list[str] = []
 

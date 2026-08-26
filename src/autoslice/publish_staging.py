@@ -900,10 +900,8 @@ def _stage_publish_draft(
         "artifact_hashes": artifact_hashes,
         **publish_staging_provenance_fields(record),
     }
-    publish_json_path.write_text(
-        json.dumps(publish_draft, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    publish_json = json.dumps(publish_draft, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    publish_json_path.write_text(publish_json, encoding="utf-8")
     record["artifact_hashes"] = artifact_hashes
     record["publish_staging"] = {
         "status": "STAGED" if title_authority_error is None else "BLOCKED_TITLE_AUTHORITY",
