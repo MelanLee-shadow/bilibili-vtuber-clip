@@ -1777,6 +1777,8 @@ def _prepared_package_names(
 def project_replay_state_after(
     plan: ReplayPlan, *, runtime_root: Path, state_path: Path,
     finalization: PrivateReplayFinalization, projection: ReplayLiveProjection,
+    package: PrivateReplayPackage | None = None,
+    sealed_after_image: object | None = None,
 ) -> ReplayStateProjection:
     """Build one successful Talk state after-image from sealed target facts.
 
@@ -1798,7 +1800,23 @@ def project_replay_state_after(
     if len(matching) != 1:
         raise ReviewedBaselineReplayError("REPLAY_STATE_PICK_PREIMAGE_DRIFT")
     adoption_receipt = None
+    post_success_idempotent = False
     if matching[0].get("status") == "failed":
+        # A failed-row projection is reachable only from the normal prepared
+        # package path (or a retained, already sealed after-image on retry).
+        # The receipt waives source-state class only; it is never a package/QC
+        # or PASS0 bypass.
+        if package is None and sealed_after_image is None:
+            raise ReviewedBaselineReplayError("REPLAY_FAILED_ROW_PREPARED_PACKAGE_REQUIRED")
+        if package is not None:
+            package_audit = _load_json(package.package_audit, label="PACKAGE_AUDIT")
+            if (
+                package_audit.get("schema_version") != "lidousha-review-package-audit.v2"
+                or package_audit.get("passed") is not True
+                or package_audit.get("issue_count") != 0
+                or package_audit.get("blocking_issue_count") != 0
+            ):
+                raise ReviewedBaselineReplayError("REPLAY_FAILED_ROW_PACKAGE_QC_REQUIRED")
         # This is the deliberately narrow hook: the C7b receipt waives only
         # the source-state class mismatch.  It does not construct an after
         # image, bypass PASS0/QC, or grant a state write; the native replay
@@ -1812,6 +1830,12 @@ def project_replay_state_after(
             )
         except C7bFailedRowAdoptionError as exc:
             raise ReviewedBaselineReplayError(str(exc)) from exc
+    elif matching[0].get("status") == "review_ready":
+        summary = matching[0].get("summary")
+        adoption = summary.get("failed_row_adoption") if isinstance(summary, Mapping) else None
+        if not isinstance(adoption, Mapping) or adoption.get("source_state_class_waived") is not True or adoption.get("receipt_sha256") != "sha256:e8e29bf1466ed31035d66e9df4f1cea80f61e921b2142398e863f98e80d34db8":
+            raise ReviewedBaselineReplayError("REPLAY_STATE_PICK_PREIMAGE_DRIFT")
+        post_success_idempotent = True
     elif matching[0].get("status") != "candidate_rejected":
         raise ReviewedBaselineReplayError("REPLAY_STATE_PICK_PREIMAGE_DRIFT")
     delivered = _delivery_artifacts_from_prepared(
@@ -1848,13 +1872,14 @@ def project_replay_state_after(
     # The standard result projector drops all failure/rejection plumbing once
     # an owned delivery exists.  Preserve legitimate revival history and
     # selection identity, but do not retain stale failure fingerprints.
-    for key in (
-        "failure_kind", "failure_stage", "failure_message", "failure_recoverable",
-        "failure_recovery_fingerprint", "failure_fingerprint", "failure_provider_class",
-        "failure_provider_status_codes", "rejected_status", "rejection_reason",
-        "error", "reason_codes", "subtitle_sha256",
-    ):
-        row.pop(key, None)
+    if not post_success_idempotent:
+        for key in (
+            "failure_kind", "failure_stage", "failure_message", "failure_recoverable",
+            "failure_recovery_fingerprint", "failure_fingerprint", "failure_provider_class",
+            "failure_provider_status_codes", "rejected_status", "rejection_reason",
+            "error", "reason_codes", "subtitle_sha256",
+        ):
+            row.pop(key, None)
     summary = {
         "candidate_id": plan.candidate_id,
         "final_end_ms": plan.local_end_ms,
@@ -1884,15 +1909,16 @@ def project_replay_state_after(
             "provider_allowed": False,
             "upload_allowed": False,
         }
-    row.update({
-        "status": "review_ready", "rc": 0, "summary": summary,
-        "delivered": video["target"], "delivered_subtitle": subtitle["target"],
-        "video_sha256": video["sha256"], "cover_status": "AI_COVER_READY",
-        "cover_path": str(publish["cover_path"]), "cover_sha256": cover["sha256"],
-        "cover_generation": publish.get("cover_generation"),
-        "red_flags": list(summary["red_flags"]),
-        "boundary_repairs": list(summary["boundary_repairs"]),
-    })
+    if not post_success_idempotent:
+        row.update({
+            "status": "review_ready", "rc": 0, "summary": summary,
+            "delivered": video["target"], "delivered_subtitle": subtitle["target"],
+            "video_sha256": video["sha256"], "cover_status": "AI_COVER_READY",
+            "cover_path": str(publish["cover_path"]), "cover_sha256": cover["sha256"],
+            "cover_generation": publish.get("cover_generation"),
+            "red_flags": list(summary["red_flags"]),
+            "boundary_repairs": list(summary["boundary_repairs"]),
+        })
     # ``record_path`` has never been a normal Talk runner result field; the
     # sealed delivery record is instead represented by its exact CID-bound
     # sidecar in the delivery summary/target map.
@@ -1936,7 +1962,7 @@ def build_replay_after_image(
     stage_binding = regular_binding(package.package_audit.path, label="PACKAGE_AUDIT")
     state = project_replay_state_after(
         plan, runtime_root=runtime, state_path=state_path,
-        finalization=finalization, projection=projection,
+        finalization=finalization, projection=projection, package=package,
     )
     delivery = state.delivered
     sources: dict[str, Path] = {}
@@ -2116,5 +2142,6 @@ def rebind_replay_after_image_state(
     state = project_replay_state_after(
         plan, runtime_root=runtime_root, state_path=state_path,
         finalization=finalization, projection=projection,
+        sealed_after_image=after,
     )
     return replace(after, state_before=state.before, state_after=state.after)

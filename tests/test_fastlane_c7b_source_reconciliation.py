@@ -81,6 +81,25 @@ def test_c7b_baseline_resolves_its_sealed_relative_lanes_from_manifest_parent() 
     assert audit["status"] in {"APPLIED", "ALREADY_SATISFIED"}
 
 
+def test_non_c7b_mapping_operator_authority_is_rejected() -> None:
+    import json
+    manifest = ROOT / "assets/lidousha/reviewed_subtitle_baselines" / f"{CID}.subtitle-baseline.v1.json"
+    config = json.loads(manifest.read_text(encoding="utf-8"))
+    pipeline = manifest.parent / config["operator_truth_lanes"]["pipeline_diagnostic"]["path"]
+    config["candidate_id"] = "ordinary_candidate"
+    source = pipeline.read_text(encoding="utf-8")
+    output, audit = apply_redelivery_subtitle_baseline(
+        source, config=config, spec_parent=manifest.parent,
+        current_source_start_ms=191190, current_source_end_ms=303140,
+        current_source_recording_basename="22966160_20260814-13-00-40.mp4",
+        current_source_sha256="660f609ca46cf9b6a5d7618df290ffd8cf32e54677813be343067719d8616b54",
+        candidate_id="ordinary_candidate", recording_date=DATE,
+    )
+    assert output == source
+    assert audit["status"] == "FAILED"
+    assert audit["failures"][0]["reason_code"] == "REDELIVERY_OPERATOR_DROP_RELEASE_MAPPING_INVALID"
+
+
 def test_c7b_boundary_clamps_are_exact_and_fail_closed() -> None:
     common = dict(repo_root=ROOT, candidate_id=CID, recording_date=DATE,
                   record_sha256="sha256:b875d8ddedaa47971249e3af057b218f45e62fb002ddcf6c9733cd38d5bfd8f5",

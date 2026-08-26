@@ -535,6 +535,24 @@ def test_state_projection_restores_canonical_talk_fields_and_drops_rejection_sta
     assert not {"failure_kind", "rejected_status", "rejection_reason", "subtitle_sha256"} & set(row)
 
 
+def test_failed_row_cannot_reach_state_projection_without_prepared_package(tmp_path: Path) -> None:
+    out_root, _ = _package(tmp_path)
+    plan = replay.build_replay_plan(
+        repo_root=ROOT, out_root=out_root, date=DATE, candidate_id=CID,
+    )
+    runtime = _runtime_authority(tmp_path)
+    state_path = runtime / "state" / f"{DATE}.json"
+    state_path.parent.mkdir()
+    original = json.dumps({"picks": [{"cid": CID, "status": "failed", "rc": 1}]}).encode()
+    state_path.write_bytes(original)
+    with pytest.raises(replay.ReviewedBaselineReplayError, match="PREPARED_PACKAGE_REQUIRED"):
+        replay.project_replay_state_after(
+            plan, runtime_root=runtime, state_path=state_path,
+            finalization=object(), projection=object(),
+        )
+    assert state_path.read_bytes() == original
+
+
 def test_rebind_reuses_sealed_live_projection_after_other_state_commit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

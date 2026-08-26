@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -59,25 +61,241 @@ def _mapping(value: object, *, label: str) -> Mapping[str, object]:
     return value
 
 
-def _regular_json(path: Path, *, label: str) -> tuple[dict[str, object], bytes]:
-    if path.is_symlink() or not path.is_file():
-        raise C7bFailedRowAdoptionError(f"C7B_ADOPTION_{label}_UNAVAILABLE")
+_PRIVATE_AUTHORITY_RELATIVE = Path(
+    "assets/lidousha/fastlane_c7b_private/"
+    "auto_130040_201_255.private-authority.v1.json"
+)
+_CLOSURE_RELATIVE = Path(
+    "assets/lidousha/fastlane_c7b_private/"
+    "auto_130040_201_255.freeze-closure.v1.json"
+)
+_DECISION_RELATIVE = Path(
+    "assets/lidousha/fastlane_c7b_private/"
+    "auto_130040_201_255.decisions.v3.json"
+)
+_DIFF_RELATIVE = Path(
+    "assets/lidousha/fastlane_c7b_private/"
+    "auto_130040_201_255.diff.json"
+)
+_SOURCE_RECONCILIATION_RELATIVE = Path(
+    "assets/lidousha/fastlane_c7b_private/"
+    "auto_130040_201_255.source-media-reconciliation-authority.v1.json"
+)
+_PIPELINE_RELATIVE = Path(
+    "assets/lidousha/fastlane_c7b_private/"
+    "auto_130040_201_255.pipeline-diagnostic.srt"
+)
+_PREDECESSOR_RELATIVE = Path(
+    "assets/lidousha/fastlane_c7b_private/predecessor/"
+    "auto_130040_201_255.recut.srt"
+)
+_TARGET_RELATIVE = Path(
+    "assets/lidousha/fastlane_c7b_private/"
+    "auto_130040_201_255.reviewed.srt"
+)
+_BASELINE_MANIFEST_RELATIVE = Path(
+    "assets/lidousha/reviewed_subtitle_baselines/"
+    "auto_130040_201_255.subtitle-baseline.v1.json"
+)
+_BASELINE_TARGET_RELATIVE = Path(
+    "assets/lidousha/reviewed_subtitle_baselines/"
+    "auto_130040_201_255.reviewed.srt"
+)
+_BASELINE_DECISION_RELATIVE = Path(
+    "assets/lidousha/reviewed_subtitle_baselines/"
+    "auto_130040_201_255.operator-decisions.v3.json"
+)
+_BASELINE_DIFF_RELATIVE = Path(
+    "assets/lidousha/reviewed_subtitle_baselines/"
+    "auto_130040_201_255.operator-truth-diff.v2.json"
+)
+_BASELINE_PIPELINE_RELATIVE = Path(
+    "assets/lidousha/reviewed_subtitle_baselines/"
+    "auto_130040_201_255.pipeline-diagnostic.srt"
+)
+_RULING_RELATIVE = Path("docs/reviews/2026-08-19-ivan-review-batch-rulings.md")
+
+_C7B_BASELINE_SHA256 = "sha256:e07e2e23d2eacebbeb95a4700c7fa4005fb4342a432c28d0adde1d4e68e98457"
+_C7B_PRIVATE_AUTHORITY_SHA256 = "sha256:bf46c6d6ae743bfb7488c3387b79e5eb187182915284ecb3856569f9552b7d77"
+_C7B_RECEIPT_SELF_SHA256 = "sha256:e8e29bf1466ed31035d66e9df4f1cea80f61e921b2142398e863f98e80d34db8"
+_C7B_OPERATOR_AUTHORITY = {
+    "kind": "IVAN_OPERATOR",
+    "evidence_ref": "docs/reviews/2026-08-19-ivan-review-batch-rulings.md#line947-row7b",
+}
+
+
+def _safe_chain_bytes(*, repo_root: Path, relative: Path, label: str) -> bytes:
+    """Read one fixed chain file through one stable, no-follow descriptor."""
     try:
-        payload = path.read_bytes()
-        value = json.loads(payload.decode("utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        root = repo_root.resolve(strict=True)
+    except OSError as exc:
+        raise C7bFailedRowAdoptionError(f"C7B_ADOPTION_{label}_UNAVAILABLE") from exc
+    if repo_root.is_symlink() or not root.is_dir() or relative.is_absolute() or ".." in relative.parts:
+        raise C7bFailedRowAdoptionError(f"C7B_ADOPTION_{label}_PATH_INVALID")
+    path = root / relative
+    cursor = root
+    try:
+        for part in relative.parts:
+            cursor = cursor / part
+            item = os.lstat(cursor)
+            if stat.S_ISLNK(item.st_mode) or not stat.S_ISDIR(item.st_mode) and cursor != path:
+                raise C7bFailedRowAdoptionError(f"C7B_ADOPTION_{label}_PATH_INVALID")
+        before = os.lstat(path)
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or not stat.S_IMODE(before.st_mode) & 0o400 or stat.S_IMODE(before.st_mode) & 0o022:
+            raise C7bFailedRowAdoptionError(f"C7B_ADOPTION_{label}_PERMISSION_INVALID")
+        identity = (before.st_dev, before.st_ino, stat.S_IMODE(before.st_mode), before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0))
+    except C7bFailedRowAdoptionError:
+        raise
+    except OSError as exc:
+        raise C7bFailedRowAdoptionError(f"C7B_ADOPTION_{label}_UNAVAILABLE") from exc
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1 or (
+            opened.st_dev, opened.st_ino, stat.S_IMODE(opened.st_mode), opened.st_size,
+            opened.st_mtime_ns, opened.st_ctime_ns
+        ) != identity:
+            raise C7bFailedRowAdoptionError(f"C7B_ADOPTION_{label}_DRIFT")
+        chunks: list[bytes] = []
+        while chunk := os.read(fd, 1024 * 1024):
+            chunks.append(chunk)
+        after_fd = os.fstat(fd)
+    except OSError as exc:
+        raise C7bFailedRowAdoptionError(f"C7B_ADOPTION_{label}_DRIFT") from exc
+    finally:
+        os.close(fd)
+    try:
+        after = os.lstat(path)
+    except OSError as exc:
+        raise C7bFailedRowAdoptionError(f"C7B_ADOPTION_{label}_DRIFT") from exc
+    after_identity = (after.st_dev, after.st_ino, stat.S_IMODE(after.st_mode), after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+    if after_identity != identity or (
+        after_fd.st_dev, after_fd.st_ino, stat.S_IMODE(after_fd.st_mode), after_fd.st_size,
+        after_fd.st_mtime_ns, after_fd.st_ctime_ns
+    ) != identity:
+        raise C7bFailedRowAdoptionError(f"C7B_ADOPTION_{label}_DRIFT")
+    return b"".join(chunks)
+
+
+def _chain_json(*, repo_root: Path, relative: Path, label: str, expected_sha256: str | None = None) -> dict[str, object]:
+    raw = _safe_chain_bytes(repo_root=repo_root, relative=relative, label=label)
+    if expected_sha256 is not None and "sha256:" + hashlib.sha256(raw).hexdigest() != expected_sha256:
+        raise C7bFailedRowAdoptionError(f"C7B_ADOPTION_{label}_HASH_DRIFT")
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise C7bFailedRowAdoptionError(f"C7B_ADOPTION_{label}_INVALID") from exc
     if not isinstance(value, dict):
         raise C7bFailedRowAdoptionError(f"C7B_ADOPTION_{label}_INVALID")
-    return value, payload
+    return value
+
+
+def _chain_digest(*, repo_root: Path, relative: Path, label: str) -> str:
+    raw = _safe_chain_bytes(repo_root=repo_root, relative=relative, label=label)
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
+def _sealed_c7b_chain(*, repo_root: Path, config: Mapping[str, object], baseline: Sequence[object], candidate_id: str | None, recording_date: str | None) -> dict[str, object]:
+    if (candidate_id, recording_date) != (CANDIDATE_ID, RECORDING_DATE):
+        raise C7bFailedRowAdoptionError("C7B_ADOPTION_IDENTITY_DRIFT")
+    if config.get("schema_version") != "subtitle-redelivery-baseline.v2" or config.get("mode") != "preserve_text_outside_source_truth" or config.get("exact_interval_replay") is not True:
+        raise C7bFailedRowAdoptionError("C7B_ADOPTION_BASELINE_INVALID")
+    if config.get("sha256") != _C7B_BASELINE_SHA256.removeprefix("sha256:") or config.get("source_recording_basename") != "22966160_20260814-13-00-40.mp4" or config.get("source_sha256") != "660f609ca46cf9b6a5d7618df290ffd8cf32e54677813be343067719d8616b54" or config.get("absolute_source_start_ms") != 191190 or config.get("absolute_source_end_ms") != 303140:
+        raise C7bFailedRowAdoptionError("C7B_ADOPTION_BASELINE_INVALID")
+    pin = config.get("operator_text_full_ownership")
+    if not isinstance(pin, Mapping) or pin != {
+        "schema_version": "operator-reviewed-text-full-ownership-pin.v3",
+        "baseline_sha256": _C7B_BASELINE_SHA256.removeprefix("sha256:"),
+        "pipeline_srt_sha256": "810a0f17e658184029543910dc8e1c22e1166f03edf7ca90afb82943b761bd94",
+        "decision_ledger_sha256": "f91c50c410f265b472e32f4f7f57696876e75b0c82d2e527b62292cfa3ff0aca",
+        "diagnostic_diff_sha256": "ea5b986c58dcd8ae70b6b947c41943ba563419623b1ae08b89f8a9d52a8f7e09",
+        "operator_authority": _C7B_OPERATOR_AUTHORITY,
+        "source_cue_count": 36, "release_cue_count": 36, "changed_cue_count": 4,
+        "operator_exact_text_cue_count": 4, "operator_unchanged_freeze_cue_count": 32,
+        "operator_drop_cue_count": 0, "speaker_authority": "NOT_CLAIMED_TEXT_ONLY",
+    }:
+        raise C7bFailedRowAdoptionError("C7B_ADOPTION_BASELINE_INVALID")
+    receipt, _seal = load_c7b_failed_row_adoption_receipt(repo_root=repo_root)
+    if receipt["canonical_self_sha256"] != _C7B_RECEIPT_SELF_SHA256:
+        raise C7bFailedRowAdoptionError("C7B_ADOPTION_RECEIPT_IDENTITY_DRIFT")
+    chain = receipt["authority_chain"]
+    if not isinstance(chain, Mapping) or chain.get("private_authority_sha256") != _C7B_PRIVATE_AUTHORITY_SHA256 or chain.get("freeze_closure_sha256") != "sha256:916eb1f10ff4e8a30db0b4b0164583c4de55fa4d9a785f2b2e905c060b9398e6" or chain.get("decision_ledger_sha256") != "sha256:f91c50c410f265b472e32f4f7f57696876e75b0c82d2e527b62292cfa3ff0aca" or chain.get("truth_diff_sha256") != "sha256:ea5b986c58dcd8ae70b6b947c41943ba563419623b1ae08b89f8a9d52a8f7e09" or chain.get("source_reconciliation_sha256") != "sha256:c6c07f47c007736c8c85ec5691c6c63eb503ab2bea4188e2dfbc6cc1cee75a97":
+        raise C7bFailedRowAdoptionError("C7B_ADOPTION_AUTHORITY_CHAIN_INVALID")
+    files = {
+        "PRIVATE_AUTHORITY": (_PRIVATE_AUTHORITY_RELATIVE, chain["private_authority_sha256"]),
+        "FREEZE_CLOSURE": (_CLOSURE_RELATIVE, chain["freeze_closure_sha256"]),
+        "DECISION": (_DECISION_RELATIVE, chain["decision_ledger_sha256"]),
+        "DIFF": (_DIFF_RELATIVE, chain["truth_diff_sha256"]),
+        "SOURCE_RECONCILIATION": (_SOURCE_RECONCILIATION_RELATIVE, chain["source_reconciliation_sha256"]),
+        "PIPELINE": (_PIPELINE_RELATIVE, "sha256:810a0f17e658184029543910dc8e1c22e1166f03edf7ca90afb82943b761bd94"),
+        "PREDECESSOR": (_PREDECESSOR_RELATIVE, "sha256:810a0f17e658184029543910dc8e1c22e1166f03edf7ca90afb82943b761bd94"),
+        "TARGET": (_TARGET_RELATIVE, _C7B_BASELINE_SHA256),
+        "BASELINE_MANIFEST": (_BASELINE_MANIFEST_RELATIVE, "sha256:ff24fe2d207e9600a8299bbe38d029da396db60ea28fa428051d8b8c461876ae"),
+        "BASELINE_TARGET": (_BASELINE_TARGET_RELATIVE, _C7B_BASELINE_SHA256),
+        "BASELINE_DECISION": (_BASELINE_DECISION_RELATIVE, chain["decision_ledger_sha256"]),
+        "BASELINE_DIFF": (_BASELINE_DIFF_RELATIVE, chain["truth_diff_sha256"]),
+        "BASELINE_PIPELINE": (_BASELINE_PIPELINE_RELATIVE, "sha256:810a0f17e658184029543910dc8e1c22e1166f03edf7ca90afb82943b761bd94"),
+    }
+    loaded = {label: _chain_json(repo_root=repo_root, relative=path, label=label, expected_sha256=digest) if label not in {"PIPELINE", "PREDECESSOR", "TARGET", "BASELINE_TARGET", "BASELINE_PIPELINE"} else _chain_digest(repo_root=repo_root, relative=path, label=label) for label, (path, digest) in files.items()}
+    if loaded["PIPELINE"] != files["PIPELINE"][1] or loaded["PREDECESSOR"] != files["PREDECESSOR"][1] or loaded["TARGET"] != _C7B_BASELINE_SHA256 or loaded["BASELINE_TARGET"] != _C7B_BASELINE_SHA256 or loaded["BASELINE_PIPELINE"] != files["BASELINE_PIPELINE"][1]:
+        raise C7bFailedRowAdoptionError("C7B_ADOPTION_SOURCE_HASH_DRIFT")
+    private = loaded["PRIVATE_AUTHORITY"]
+    closure = loaded["FREEZE_CLOSURE"]
+    ledger = loaded["DECISION"]
+    diff = loaded["DIFF"]
+    source = loaded["SOURCE_RECONCILIATION"]
+    manifest = loaded["BASELINE_MANIFEST"]
+    if private.get("schema_version") != "fastlane-candidate-private-authority.v1" or private.get("candidate_id") != CANDIDATE_ID or private.get("recording_date") != RECORDING_DATE or private.get("reviewed_subtitle", {}).get("sha256") != _C7B_BASELINE_SHA256.removeprefix("sha256:") or private.get("title") != "李姐也是脑控大师，但即使被脑控仍然信不了李1是怎么回事呢":
+        raise C7bFailedRowAdoptionError("C7B_ADOPTION_PRIVATE_AUTHORITY_INVALID")
+    unsigned = dict(closure); declared = unsigned.pop("canonical_self_sha256", None)
+    if closure.get("schema_version") != "fastlane-c7b-freeze-closure.v1" or closure.get("candidate_id") != CANDIDATE_ID or declared != hashlib.sha256(canonical_bytes(unsigned)).hexdigest():
+        raise C7bFailedRowAdoptionError("C7B_ADOPTION_FREEZE_CLOSURE_INVALID")
+    if ledger.get("schema_version") != "operator-reviewed-subtitle-decisions.v3" or ledger.get("candidate_id") != CANDIDATE_ID or ledger.get("report_scope") != "EXHAUSTIVE" or ledger.get("operator_authority") != _C7B_OPERATOR_AUTHORITY or not isinstance(ledger.get("cue_decisions"), list) or len(ledger["cue_decisions"]) != 36:
+        raise C7bFailedRowAdoptionError("C7B_ADOPTION_DECISION_INVALID")
+    if diff.get("schema_version") != "operator-reviewed-subtitle-truth-diff.v2" or diff.get("candidate_id") != CANDIDATE_ID or diff.get("pipeline_srt_sha256") != "810a0f17e658184029543910dc8e1c22e1166f03edf7ca90afb82943b761bd94" or diff.get("release_truth_srt_sha256") != _C7B_BASELINE_SHA256.removeprefix("sha256:") or not isinstance(diff.get("rows"), list) or len(diff["rows"]) != 36:
+        raise C7bFailedRowAdoptionError("C7B_ADOPTION_TRUTH_DIFF_INVALID")
+    if source.get("schema_version") != "c7b-source-media-reconciliation-authority.v1" or source.get("candidate_id") != CANDIDATE_ID or source.get("recording_date") != RECORDING_DATE or source.get("upload_allowed") is not False:
+        raise C7bFailedRowAdoptionError("C7B_ADOPTION_SOURCE_RECONCILIATION_INVALID")
+    if manifest.get("registry_schema_version") != "candidate-reviewed-subtitle-baseline.v1" or manifest.get("candidate_id") != CANDIDATE_ID or manifest.get("sha256") != _C7B_BASELINE_SHA256.removeprefix("sha256:"):
+        raise C7bFailedRowAdoptionError("C7B_ADOPTION_BASELINE_MANIFEST_INVALID")
+    ruling = _safe_chain_bytes(repo_root=repo_root, relative=_RULING_RELATIVE, label="RULING").decode("utf-8")
+    if "| 7b |" not in ruling or CANDIDATE_ID not in ruling or "这个切片非常好啊" not in ruling:
+        raise C7bFailedRowAdoptionError("C7B_ADOPTION_RULING_INVALID")
+    if len(baseline) != 36:
+        raise C7bFailedRowAdoptionError("C7B_ADOPTION_TARGET_INVALID")
+    return dict(_C7B_OPERATOR_AUTHORITY)
+
+
+def resolve_c7b_operator_authority(*, config: Mapping[str, object], baseline: Sequence[object], spec_parent: Path, candidate_id: str | None, recording_date: str | None) -> dict[str, object]:
+    """Resolve mapping authority only through the complete exact C7b chain."""
+    try:
+        root = spec_parent.resolve(strict=True).parents[2]
+    except OSError as exc:
+        raise C7bFailedRowAdoptionError("C7B_ADOPTION_REPO_UNAVAILABLE") from exc
+    if spec_parent.name != "reviewed_subtitle_baselines":
+        raise C7bFailedRowAdoptionError("C7B_ADOPTION_SCOPE_INVALID")
+    assets_dir = spec_parent.resolve(strict=True).parents[1]
+    if assets_dir.name != "assets" or assets_dir.is_symlink():
+        raise C7bFailedRowAdoptionError("C7B_ADOPTION_SCOPE_INVALID")
+    # ``assets`` must be the repository's direct child; no alternate checkout
+    # or symlinked authority root is accepted.
+    repo_root = assets_dir.parent
+    return _sealed_c7b_chain(repo_root=repo_root, config=config, baseline=baseline, candidate_id=candidate_id, recording_date=recording_date)
 
 
 def load_c7b_failed_row_adoption_receipt(
     *, repo_root: Path,
 ) -> tuple[dict[str, object], RepositoryAssetAuthority]:
     """Load and prove the checked-in receipt is current repository authority."""
-    path = repo_root / RECEIPT_RELATIVE_PATH
-    value, payload = _regular_json(path, label="RECEIPT")
+    payload = _safe_chain_bytes(
+        repo_root=repo_root, relative=RECEIPT_RELATIVE_PATH, label="RECEIPT"
+    )
+    try:
+        value = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise C7bFailedRowAdoptionError("C7B_ADOPTION_RECEIPT_INVALID") from exc
+    if not isinstance(value, dict):
+        raise C7bFailedRowAdoptionError("C7B_ADOPTION_RECEIPT_INVALID")
     try:
         seal = require_repository_asset_authority(
             repo_root=repo_root,
@@ -194,6 +412,8 @@ def validate_c7b_failed_row_adoption(
         raise C7bFailedRowAdoptionError("C7B_ADOPTION_ROW_INVALID")
     selector = receipt["row_selector"]
     assert isinstance(selector, Mapping)
+    if dict(selector) != {"collection": "picks", "index": 5, "candidate_id": CANDIDATE_ID}:
+        raise C7bFailedRowAdoptionError("C7B_ADOPTION_ROW_SELECTOR_DRIFT")
     if row.get("candidate_id") != CANDIDATE_ID or row.get("status") != "failed":
         raise C7bFailedRowAdoptionError("C7B_ADOPTION_ROW_STATE_DRIFT")
     if row_fingerprint(row) != receipt["live_row_fingerprint"]["sha256"]:

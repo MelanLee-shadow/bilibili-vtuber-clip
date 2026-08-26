@@ -151,6 +151,8 @@ def prepare_stage_delivery_projection(
                 current_source_end_ms=getattr(binding, "absolute_source_end_ms"),
                 current_source_recording_basename=getattr(binding, "source_recording_basename"),
                 current_source_sha256=getattr(binding, "source_sha256"),
+                candidate_id=getattr(plan, "candidate_id", None),
+                recording_date=getattr(plan, "date", None),
             )
         except (TypeError, ValueError) as exc:
             raise error("C3_STAGE_FINAL_INTERVAL_APPLICATION_INVALID") from exc
@@ -202,6 +204,8 @@ def prepare_stage_delivery_projection(
                     config["source_recording_basename"]
                 ),
                 current_source_sha256=str(config["source_sha256"]),
+                candidate_id=getattr(plan, "candidate_id", None),
+                recording_date=getattr(plan, "date", None),
             )
             fresh_srt_to_source_cues(
                 reviewed,

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 from pathlib import Path
 
 
@@ -24,12 +26,57 @@ class C7bPrivateAuthorityError(ValueError):
 
 
 def _bytes(path: Path) -> bytes:
-    if path.is_symlink() or not path.is_file():
-        raise C7bPrivateAuthorityError("C7B_PRIVATE_REGULAR_FILE_REQUIRED")
+    """Read a fixed private asset through one stable no-follow descriptor."""
     try:
-        return path.read_bytes()
-    except OSError as exc:
+        root = _ROOT.resolve(strict=True)
+        path = path.absolute()
+        path.relative_to(root)
+        cursor = root
+        for part in path.relative_to(root).parts:
+            cursor /= part
+            if cursor.is_symlink():
+                raise C7bPrivateAuthorityError("C7B_PRIVATE_REGULAR_FILE_REQUIRED")
+        before = os.lstat(path)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_nlink != 1
+            or not stat.S_IMODE(before.st_mode) & 0o400
+            or stat.S_IMODE(before.st_mode) & 0o022
+        ):
+            raise C7bPrivateAuthorityError("C7B_PRIVATE_REGULAR_FILE_REQUIRED")
+        identity = (before.st_dev, before.st_ino, stat.S_IMODE(before.st_mode), before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0))
+    except C7bPrivateAuthorityError:
+        raise
+    except FileNotFoundError as exc:
+        raise C7bPrivateAuthorityError("C7B_PRIVATE_REGULAR_FILE_REQUIRED") from exc
+    except (OSError, ValueError) as exc:
         raise C7bPrivateAuthorityError("C7B_PRIVATE_AUTHORITY_UNAVAILABLE") from exc
+    try:
+        opened = os.fstat(fd)
+        if (
+            not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1
+            or (opened.st_dev, opened.st_ino, stat.S_IMODE(opened.st_mode), opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns) != identity
+        ):
+            raise C7bPrivateAuthorityError("C7B_PRIVATE_AUTHORITY_DRIFT")
+        chunks = []
+        while chunk := os.read(fd, 1024 * 1024):
+            chunks.append(chunk)
+        after_fd = os.fstat(fd)
+    except OSError as exc:
+        raise C7bPrivateAuthorityError("C7B_PRIVATE_AUTHORITY_DRIFT") from exc
+    finally:
+        os.close(fd)
+    try:
+        after = os.lstat(path)
+    except OSError as exc:
+        raise C7bPrivateAuthorityError("C7B_PRIVATE_AUTHORITY_DRIFT") from exc
+    after_identity = (after.st_dev, after.st_ino, stat.S_IMODE(after.st_mode), after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+    if after_identity != identity or (
+        after_fd.st_dev, after_fd.st_ino, stat.S_IMODE(after_fd.st_mode), after_fd.st_size, after_fd.st_mtime_ns, after_fd.st_ctime_ns
+    ) != identity:
+        raise C7bPrivateAuthorityError("C7B_PRIVATE_AUTHORITY_DRIFT")
+    return b"".join(chunks)
 
 
 def _read(path: Path) -> dict[str, object]:

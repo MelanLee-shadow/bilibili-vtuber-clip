@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -57,13 +59,51 @@ def _plain_sha(value: object, code: str) -> str:
 
 
 def _read_repo_document(repo_root: Path, relative: Path) -> tuple[Mapping[str, Any], str]:
-    path = repo_root / relative
-    if path.is_symlink() or not path.is_file():
-        raise C7bSourceReconciliationError("C7B_SOURCE_AUTHORITY_UNAVAILABLE")
+    """Read one fixed authority document with no-follow, stable-byte binding."""
     try:
-        raw = path.read_bytes()
+        root = repo_root.resolve(strict=True)
+        if repo_root.is_symlink() or relative.is_absolute() or ".." in relative.parts:
+            raise ValueError
+        path = root / relative
+        cursor = root
+        for part in relative.parts:
+            cursor /= part
+            if cursor.is_symlink():
+                raise ValueError
+        before = os.lstat(path)
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or not stat.S_IMODE(before.st_mode) & 0o400 or stat.S_IMODE(before.st_mode) & 0o022:
+            raise ValueError
+        identity = (before.st_dev, before.st_ino, stat.S_IMODE(before.st_mode), before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0))
+    except (OSError, ValueError) as exc:
+        raise C7bSourceReconciliationError("C7B_SOURCE_AUTHORITY_UNAVAILABLE") from exc
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1 or (
+            opened.st_dev, opened.st_ino, stat.S_IMODE(opened.st_mode), opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns
+        ) != identity:
+            raise C7bSourceReconciliationError("C7B_SOURCE_AUTHORITY_DRIFT")
+        chunks = []
+        while chunk := os.read(fd, 1024 * 1024):
+            chunks.append(chunk)
+        after_fd = os.fstat(fd)
+    except OSError as exc:
+        raise C7bSourceReconciliationError("C7B_SOURCE_AUTHORITY_DRIFT") from exc
+    finally:
+        os.close(fd)
+    try:
+        after = os.lstat(path)
+    except OSError as exc:
+        raise C7bSourceReconciliationError("C7B_SOURCE_AUTHORITY_DRIFT") from exc
+    after_identity = (after.st_dev, after.st_ino, stat.S_IMODE(after.st_mode), after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+    if after_identity != identity or (
+        after_fd.st_dev, after_fd.st_ino, stat.S_IMODE(after_fd.st_mode), after_fd.st_size, after_fd.st_mtime_ns, after_fd.st_ctime_ns
+    ) != identity:
+        raise C7bSourceReconciliationError("C7B_SOURCE_AUTHORITY_DRIFT")
+    raw = b"".join(chunks)
+    try:
         value = json.loads(raw.decode("utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise C7bSourceReconciliationError("C7B_SOURCE_AUTHORITY_UNAVAILABLE") from exc
     return _mapping(value, "C7B_SOURCE_AUTHORITY_INVALID"), _SHA + hashlib.sha256(raw).hexdigest()
 
