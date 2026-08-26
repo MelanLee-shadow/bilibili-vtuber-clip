@@ -242,6 +242,7 @@ def test_no_input_mutation_and_no_publication_effects(tmp_path):
 
 def test_formal_safe_transform_preserves_finalized_and_original_disposition(tmp_path):
     request, record_root, state_path = _fixture(tmp_path)
+    original_state_bytes = state_path.read_bytes()
     receipt_path = tmp_path / "receipt.json"
     migrate(request, record_root=record_root, receipt_path=receipt_path, write=True)
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
@@ -253,7 +254,7 @@ def test_formal_safe_transform_preserves_finalized_and_original_disposition(tmp_
     assert transformed["source_dispositions"][request["old_disposition_relative"]] == receipt["old_disposition"]["row_snapshot"]
     assert transformed["source_disposition_migrations"][0]["ordinary_rebind"] is False
     assert transformed["source_disposition_migrations"][0]["adapter_consumption"] == "NOT_CONSUMED_BY_ADAPTER"
-    assert state_path.read_bytes() == state_path.read_bytes()
+    assert state_path.read_bytes() == original_state_bytes
     assert snapshot_diff(state_path, output)["top_level_added"] == ["source_disposition_migrations"]
 
 
