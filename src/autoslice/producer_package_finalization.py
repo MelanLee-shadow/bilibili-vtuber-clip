@@ -689,6 +689,14 @@ def _materialize_final_recut(
             if isinstance(row, Mapping)
         ]
         truth_reapply = bool(truth_rows)
+        replay_spec_parent = spec_parent or Path.cwd()
+        raw_baseline_path = (
+            baseline_config.get("path")
+            if isinstance(baseline_config, Mapping)
+            else None
+        )
+        if isinstance(raw_baseline_path, str) and Path(raw_baseline_path).is_absolute():
+            replay_spec_parent = Path(raw_baseline_path).parent
         try:
             output_text, redelivery_baseline_audit = replay_baseline_for_final_recut(
                 truth_audit=truth_audit,
@@ -697,7 +705,7 @@ def _materialize_final_recut(
                 sanitized=sanitized,
                 binding=v2_source_binding,
                 config=baseline_config,
-                spec_parent=(spec_parent or Path.cwd()),
+                spec_parent=replay_spec_parent,
                 final_start_ms=final_start,
                 final_end_ms=final_end,
                 subtitle_path=subtitle_path,
