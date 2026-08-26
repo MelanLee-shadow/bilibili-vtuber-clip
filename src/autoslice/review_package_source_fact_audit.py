@@ -22,6 +22,11 @@ from .qixi_operator_exact_title_source_fact import (
     validate_receipt as validate_qixi_operator_exact_title_receipt,
 )
 from .source_fact_review import validate_source_fact_review
+from .fastlane_c3_terminal_source_fact_preservation import (
+    CANDIDATE_ID as C3_SOURCE_FACT_CANDIDATE_ID,
+    DECISION as C3_SOURCE_FACT_DECISION,
+    validate_review as validate_c3_source_fact_review,
+)
 
 
 @dataclass(frozen=True)
@@ -74,6 +79,22 @@ def _source_fact_receipt_valid(
             speaker_evidence=rebuilt_speaker_evidence,
             repo_root=qixi_repo_root or Path(__file__).resolve().parents[2],
             **common,
+        )
+    if (
+        isinstance(receipt, dict)
+        and receipt.get("decision") == C3_SOURCE_FACT_DECISION
+        and common["candidate_id"] == C3_SOURCE_FACT_CANDIDATE_ID
+        and subtitle_path is not None
+    ):
+        return validate_c3_source_fact_review(
+            receipt,
+            repo_root=qixi_repo_root or Path(__file__).resolve().parents[2],
+            title=artifact_title,
+            selection_hook=common["selection_hook"],
+            selection_scorecard=story_contract.get("selection_scorecard"),
+            clip_context_prompt=str(story_contract.get("clip_context_prompt") or ""),
+            final_reviewed_srt_path=subtitle_path,
+            speaker_evidence=rebuilt_speaker_evidence,
         )
     return validate_source_fact_review(
         receipt,
