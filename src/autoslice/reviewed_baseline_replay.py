@@ -1809,7 +1809,10 @@ def project_replay_state_after(
         if package is None and sealed_after_image is None:
             raise ReviewedBaselineReplayError("REPLAY_FAILED_ROW_PREPARED_PACKAGE_REQUIRED")
         if package is not None:
-            package_audit = _load_json(package.package_audit, label="PACKAGE_AUDIT")
+            package_audit_binding = regular_binding(package.package_audit.path, label="PACKAGE_AUDIT")
+            if package_audit_binding.sha256 != package.package_audit.sha256:
+                raise ReviewedBaselineReplayError("REPLAY_FAILED_ROW_PACKAGE_QC_DRIFT")
+            package_audit = _load_json(package_audit_binding, label="PACKAGE_AUDIT")
             if (
                 package_audit.get("schema_version") != "lidousha-review-package-audit.v2"
                 or package_audit.get("passed") is not True
