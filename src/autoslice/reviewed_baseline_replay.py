@@ -365,21 +365,23 @@ def build_replay_plan(*, repo_root: Path, out_root: Path, date: str, candidate_i
     # Verify the attested baseline geometry before any private media write.
     # A v2 baseline may bind either the padded source or this record's exact
     # final interval, never an arbitrary third window.
-    baseline_application_interval(
-        config=config,
-        padded_start_ms=padded_start,
-        padded_end_ms=padded_end,
-        final_start_ms=start,
-        final_end_ms=end,
-        error=ReviewedBaselineReplayError,
-    )
-    try:
-        diagnostic_duration_ms = replay_diagnostic_duration_ms(
-            config,
+    replay_padded_start, replay_padded_end, replay_final_start, replay_final_end = (
+        baseline_application_interval(
+            config=config,
             padded_start_ms=padded_start,
             padded_end_ms=padded_end,
             final_start_ms=start,
             final_end_ms=end,
+            error=ReviewedBaselineReplayError,
+        )
+    )
+    try:
+        diagnostic_duration_ms = replay_diagnostic_duration_ms(
+            config,
+            padded_start_ms=replay_padded_start,
+            padded_end_ms=replay_padded_end,
+            final_start_ms=replay_final_start,
+            final_end_ms=replay_final_end,
         )
     except RedeliveryTimeDomainError as exc:
         raise ReviewedBaselineReplayError(str(exc)) from exc

@@ -896,8 +896,34 @@ def replay_baseline_for_final_recut(
                 end_ms = min(final_end_ms - final_start_ms, owner_end - final_start_ms)
                 if start_ms < end_ms:
                     protected.append((start_ms, end_ms))
-    _require_v3_time_domain_binding(config, binding)
-    if exact_full_window_replay_enabled(config, binding):
+    try:
+        time_domain = operator_v3_time_domain(config)
+    except RedeliveryTimeDomainError as exc:
+        raise FullWindowReplayError(str(exc)) from exc
+    exact_replay = exact_full_window_replay_enabled(config, binding)
+    piece_local_fallback = bool(
+        time_domain == PIECE_LOCAL
+        and isinstance(binding, V2RedeliverySourceBinding)
+        and config.get("exact_interval_replay") is True
+        and all(
+            isinstance(value, int) and not isinstance(value, bool)
+            for value in (
+                config.get("absolute_source_start_ms"),
+                config.get("absolute_source_end_ms"),
+                binding.content_absolute_start_ms,
+                binding.content_absolute_end_ms,
+            )
+        )
+        and (
+            config.get("absolute_source_start_ms")
+            != binding.content_absolute_start_ms
+            or config.get("absolute_source_end_ms")
+            != binding.content_absolute_end_ms
+        )
+        and binding.content_absolute_start_ms < binding.content_absolute_end_ms
+    )
+    if exact_replay:
+        _require_v3_time_domain_binding(config, binding)
         assert binding is not None
         return replay_full_window_then_crop(
             recut_dir=recut_dir,
@@ -914,6 +940,10 @@ def replay_baseline_for_final_recut(
             candidate_id=cid,
             recording_date=recording_date,
         )
+    if time_domain == DELIVERY_LOCAL or (
+        time_domain == PIECE_LOCAL and not piece_local_fallback
+    ):
+        _require_v3_time_domain_binding(config, binding)
     current_start = binding.absolute_source_start_ms if binding else None
     current_end = binding.absolute_source_end_ms if binding else None
     return apply_redelivery_subtitle_baseline(

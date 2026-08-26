@@ -24,6 +24,12 @@ from src.autoslice.fastlane_c3_private_stage import (
 )
 
 
+_PRIVATE_OPERATOR_STAGE_CANDIDATES = frozenset({
+    ("auto_130040_201_255", "2026-08-14"),
+    ("auto_130012_435_574", "2026-08-15"),
+})
+
+
 def baseline_application_interval(
     *,
     config: Mapping[str, object],
@@ -135,7 +141,7 @@ def prepare_stage_delivery_projection(
         private_stage_authority_gate
         and isinstance(pinned_operator, Mapping)
         and (getattr(plan, "candidate_id", None), getattr(plan, "date", None))
-        != ("auto_130040_201_255", "2026-08-14")
+        not in _PRIVATE_OPERATOR_STAGE_CANDIDATES
     ):
         raise error("REPLAY_BASELINE_APPLICATION_FAILED")
     record_path = getattr(plan, "record_path")
@@ -186,7 +192,7 @@ def prepare_stage_delivery_projection(
         error=error,
     )
     try:
-        fresh_srt_to_source_cues(text, window_start_ms=0, duration_ms=padded_end - padded_start)
+        fresh_srt_to_source_cues(text, window_start_ms=0, duration_ms=baseline_end - baseline_start)
     except ValueError as exc:
         raise error("REPLAY_PIPELINE_DIAGNOSTIC_GEOMETRY_INVALID") from exc
     if c3_geometry is None:
