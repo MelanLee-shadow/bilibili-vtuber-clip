@@ -1,6 +1,6 @@
 # Current handoff
 
-## 2026-08-26T15:00Z Fastlane integration / OCI3 source-substitution checkpoint
+## 2026-08-26T15:55Z Fastlane integration / OCI3 source-substitution checkpoint
 
 ### 目标
 
@@ -8,29 +8,31 @@
 
 ### 已完成
 
-- 集成 worktree：`codex/fastlane-integration-20260826`，HEAD `80d412aa`，clean。
-- C6/C7b/C9 与 OCI3 lane 的 changed-test 集合：`153 passed`；changed Python `py_compile`、Ruff、`git diff --check` 全部通过。
+- 集成 worktree：`codex/fastlane-integration-20260826`，HEAD `80f30501`，clean。
+- 两个安全修复提交：`e818e060`（structured subtitle authority gates）与 `80f30501`（malformed operator ledger fail-closed）。
+- 受影响 replay/authority 测试：`136 passed`；全量 pytest：`6946 passed in 354.46s`；`py_compile`、Ruff、`git diff --check` 及 active-module 2000 行上限检查均通过。
+- 普通 candidate 的 mapping-valued operator authority 现在只有在它与 SHA-validated decision ledger 的完整 authority object 相等时才可用；C7b 仍强制走独立 resolver；candidate/ledger identity drift 与 malformed ledger 均 fail closed。private stage 另外拒绝非 C7b 的 mapping authority，C5 revoked authority 不再进入 projection。
 - OCI3 migration lane 已通过 Sol review（仅 offline/private scope），工具已在 `~/oci3-source-migration-20260826/code/` 私有暂存，未部署到 adapter。
 - OCI3 已从当前 live state 冻结 snapshot `5c7f534ea34fcfaa0daf4558e5400db52704c79d457b8b6cfd732eb3d8438c2f`，并完成 dry-run 与 create-only receipt：receipt canonical SHA `337a1720cbb5659bfdb9fdebef9d0b19c084ecf7ccfb53b7054ad4b940ae88d0`；`identity_proven=false`、`source_substitution=true`、`ordinary_rebind=false`、`publication_authority=null`。
 - OCI3 transformed state 只增加 `source_disposition_migrations`；原 disposition row、finalized ledger、webhook index 均保持，ledger `adapter_consumption=NOT_CONSUMED_BY_ADAPTER`。没有写 `/opt/bilive/recording/adapter-state.json`、Docker、deploy、upload 或 publication。
+- historical runtime 已完整 offload 到 `oci3:/home/ubuntu/private-offload/free-opt-autoslice-private-fastlane-runtime`；source/destination manifest 均为 `ff914f414f2a87953975d118c40cb422a06d61f02d806d0b67b57c360fd9e355`，`39962` entries、`13219916794` file bytes。`OFFLOAD_SEAL.json` mode `0600`，raw SHA `a3b4ba2284b06727267d8d609ae981cb90f18f9e6e71a7cf8591969b3871d50c`；partial 已消失，quarantined orphan 保留，free source 保留。
 - C3 exact v2 bytes 已从 free private authority 复制到本地临时 evidence；v3 builder exact PASS（manifest raw `ecc19a…9f75`、tree `7afbc9…577f2`），但 canonical reclosure 仍精确失败 `C3_CLIP_CONTEXT_AUTHORITY_MISSING`。
 
 ### 进行中
 
-- 全量 pytest 已完成：`6942 passed, 4 failed`（344.96s）；四项失败均在 clean `981bc4ab` baseline 复现，不能归因于 C6/C7b/C9/OCI3 集成。
-- free historical runtime offload 已传至 OCI3 partial `~/private-offload/.free-opt-autoslice-private-fastlane-runtime.partial`（约 6.6G），但在继续 C2 batch 时触发 free SSH `kex_exchange_identification: Connection reset`；尚无 destination seal，source 保留且禁止删除。free 仍是唯一 publication authority。
+- overall fastlane 仍未完成；publication order 仍为 `C3 → C6 → C7 → C7b → C9 → C10 → C12 → C13 → C14 → C16 → C17`，且所有外部 publication 继续只能经 `free:/opt/bilive/autoslice` 的 `scripts/authorized_upload.py`。
+- OCI3 live adapter state 仍可能外部漂移；migration receipt 不代表 adapter cutover，也未写 ordinary FUSE identity binding。需后续 fresh snapshot/reconciliation 才能讨论 cutover。
 
 ### 阻塞
 
 - C3 当前 free v2 clip-context 文件 SHA `fb2d6711…3987`，但 v2 record/story contract 绑定旧 payload/prompt SHA（record artifact `01e215…8b6d`、prompt payload `b0af83…4987`）；现有 recovery receipt 明确标注 `semantic_reconstruction_not_byte_equivalent`，不能把它重签成 clip-context authority。不得发布 C3。
-- 全仓库仍有 4 个既有失败：2 个 C5 local-stage projection、1 个 revoked C5 authority、1 个 v3 empty-release-cue；四项均在 clean `981bc4ab` baseline 复现。集成分支已把 `reviewed_baseline_replay.py` 的 2001 行 active-module bound 修到 2000。
+- 因 C3 authority 未闭合，不得进行 free deploy、state CAS、authorized upload、public mutation 或 OCI3 production cutover；全量测试绿不等于 publication readiness。
 
 ### 下一步
 
-1. 收集 `bash-99`；保留真实全量结果并区分 baseline failures。
-2. 若需要下一轮 OCI3 cutover，先取得显式 operator authority，再设计独立 migration consumer；不得让普通 adapter 消费 inert ledger。
-3. 为 C3 取得真实同 candidate/date clip-context/story authority 或保持 blocker；不得用 recovery semantic reconstruction 替代。
-4. 在 full suite/base blockers 和 C3 authority 未闭合前，不做 free deploy、state CAS、authorized upload、public mutation 或 OCI3 production cutover。
+1. 为 C3 取得真实同 candidate/date clip-context/story authority，或保持 blocker；不得用 recovery semantic reconstruction 替代。
+2. 若需要下一轮 OCI3 cutover，先取得显式 operator authority，再设计独立 migration consumer；不得让普通 adapter 消费 inert ledger 或执行 ordinary rebind。
+3. C3 authority、publication package、offload seal 与 fresh runtime reconciliation 全部闭合后，再按串行 order 进行 authorized upload，并逐项做 public/Creator/section readback。
 
 ## 2026-08-26T02:17Z C4/C5 字幕时间域事故终态闭包
 
