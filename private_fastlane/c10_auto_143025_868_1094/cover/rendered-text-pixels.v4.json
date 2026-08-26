@@ -1,7 +1,7 @@
 {
   "schema_version": "lidousha-cover-rendered-text-pixels.v3",
   "status": "PASS",
-  "final_cover_sha256": "sha256:ae2065712fddbccc74ee1ed29efa404e25db812c20c770622552f99b4b288f82",
+  "final_cover_sha256": "sha256:eca4b467c3aecd75990dd2b97ef8b94a627fe25f098b3d3e456a41945ffb7c70",
   "pre_overlay_path": "/private/tmp/vtuber-slice-fastlane-c10-20260824/private_fastlane/c10_auto_143025_868_1094/cover/auto_143025_868_1094.private.cover-v3.pre-overlay.png",
   "pre_overlay_sha256": "sha256:2d4e6ec526e625c60b6bb1034914ec6f9ea3bbfd21677d21485288f51b5b297d",
   "canvas_size": [
@@ -9,12 +9,12 @@
     1080
   ],
   "text_pixel_bbox": [
-    525,
+    524,
     134,
-    1370,
+    1371,
     520
   ],
-  "text_pixel_width": 845,
+  "text_pixel_width": 847,
   "text_pixel_height": 386,
   "font_size": 180,
   "font_file_name": "ZCOOLKuaiLe-Regular.ttf",
@@ -61,7 +61,7 @@
             "text": "前辈的"
           }
         ],
-        "x": 186.5,
+        "x": 186.0,
         "y": 42
       },
       {
@@ -95,7 +95,7 @@
             "text": "改词应援歌"
           }
         ],
-        "x": 21.0,
+        "x": 20.0,
         "y": 241
       }
     ],
@@ -105,15 +105,15 @@
     ],
     "schema_version": "lidousha-cover-title-render-spec.v1"
   },
-  "render_spec_sha256": "sha256:387190f731335ae72ddc54cf916a9661bab22162ec62ffd7ab8c07e551ce8eec",
+  "render_spec_sha256": "sha256:f76b23e6d2ba6d19dca74dca7d570f17b3a35cb032fa459b14ede98ac9664ead",
   "overlay_position": {
     "x": 510,
     "y": 92
   },
   "mask_path": "/private/tmp/vtuber-slice-fastlane-c10-20260824/private_fastlane/c10_auto_143025_868_1094/cover/auto_143025_868_1094.private.cover-v3.title-mask.png",
-  "mask_sha256": "sha256:dc26a960750f7ef8b37ed3716c22e70e2ef81caf699f90cd40cde1e28cabdeef",
-  "mask_nonzero_pixels": 213970,
-  "changed_pixel_count": 212599,
-  "changed_pixel_ratio": 0.9935925597046315,
-  "masked_final_pixels_sha256": "sha256:387ae5186faec2fb8e0dfadd33e9041af9ae860cdb4bbe009c59adb1aa070bc8"
+  "mask_sha256": "sha256:67b550ec36c34b1e717437b147e5b90dcf7d023dcd61560d5ee16acb25f9c69f",
+  "mask_nonzero_pixels": 214238,
+  "changed_pixel_count": 212869,
+  "changed_pixel_ratio": 0.9936099104733987,
+  "masked_final_pixels_sha256": "sha256:7b8794e1779902e2133a808bfbdfea4359adb48d0e2e19b6c3607a45cada1cfd"
 }
