@@ -1,0 +1,82 @@
+{
+  "asked_scope": {
+    "meaning": "authorize a C3-specific derived boundary receipt binding final SRT d70a96 exact 11-cue grid to unchanged endpoint 108.940s",
+    "provider": false,
+    "question": "c3_boundary_authority",
+    "unchanged": [
+      "video",
+      "subtitle_text",
+      "cover",
+      "endpoint"
+    ]
+  },
+  "authority_scope": "c3_candidate_specific_boundary_rebind_only",
+  "authority_sha256": "sha256:d32351484c93d79a8899b672f570250c34d1aa38f7da7b15986b0b2e4c9647b6",
+  "authorization": {
+    "observed_at": "2026-08-26T12:01:43.899000Z",
+    "question_id": "c3_boundary_authority",
+    "response_json": "{\"answers\":[{\"id\":\"c3_boundary_authority\",\"selected\":[\"授权 11-cue → 108.940s 重绑定（Recommended）\"]}]}",
+    "response_sha256": "sha256:f68d837ed3c1efaae2e69f4322ecde2f3e5e0309cb055a2238e6d774b2d98546",
+    "selected": "授权 11-cue → 108.940s 重绑定（Recommended）",
+    "seq": 526487,
+    "session_id": "session-896490c8-ae47-4531-a7d1-a0ab2d81999e",
+    "step": 322,
+    "tool_call_id": "call_ugwFxQfoUrNvVeDVSR3GbJXG|fc_0b3cd3bcdc4f5bfb016a8e78df60ec87d1b5d53712dacded42",
+    "turn": 14,
+    "user_message_id": "f08d8ae-28c9-44f0-8648-21006686a8db"
+  },
+  "boundary": {
+    "delivery_end_ms": 109040,
+    "endpoint_ms": 108940,
+    "new_cue_count": 11,
+    "new_grid_sha256": "sha256:3b7b51328d413e8a3228b6d845c90b64b59251e588b01a20570863091634bf6e",
+    "old_cue_count": 34,
+    "old_grid_sha256": "sha256:53788f5a442de13a61d610c5ed81a74e61e4519e2ba21d317c6a01b05cee116b",
+    "superseded_reason_codes": [
+      "BOUNDARY_SEMANTIC_CUE_GRID_MISMATCH",
+      "BOUNDARY_SEMANTIC_ENDPOINT_CUE_MISMATCH"
+    ]
+  },
+  "candidate_id": "auto_220021_561_670",
+  "final_assets": {
+    "burned_video_sha256": "sha256:c5d49bdff6842298f9a9cc1907044faa20dc8cae3d7717e99e80bd51aa2f9faf",
+    "chat_sha256": "sha256:88728f603043603c59c77b0f57364309f8215640c9baa5a47d201df627e3981c",
+    "clip_context_sha256": "sha256:fb2d67110858fe3fcc348278856005e45f1ab790785a7d3dd0615103eb423987",
+    "cover_sha256": "sha256:7e77ab5d0141879caa7d24ae264f9d3ab94ea9fbdc80d7a4633e9a0a07758df3",
+    "delivery_video_sha256": "sha256:2e94ba7ae18e64903baca4cadb647b9545915778b19082e3cd0582d32e20c84e",
+    "plain_srt_sha256": "sha256:d70a96c402df8313264ef6ca145d69d5dbb74e7a2c48eb512e78f3f417e8eecc",
+    "publish_sha256": "sha256:f711b5db6522a7064570a548db48b413b5bf1a5c94614b36da82e544c493b09d",
+    "record_sha256": "sha256:76966e096593d1b132a1f9155d30093866b5b5f28df2141adb3794ce640c8a21",
+    "speaker_ass_sha256": "sha256:d3160f325648915db0ebb6f4f05e48cc6e6cf25caccf726759c654d02829838a",
+    "speaker_srt_sha256": "sha256:51eef37bf38a2e1a58e4412115c5f2a9699904df80a70f6d8a406d6dde206153"
+  },
+  "line947_c3_authority": {
+    "authority": "Ivan/Claude line947 exhaustive C3 ruling",
+    "uuid": "555195ed-ec18-418d-a311-558f7e54291f",
+    "raw_sha256": "sha256:e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa",
+    "content_sha256": "sha256:0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b",
+    "baseline_sha256": "sha256:d70a96c402df8313264ef6ca145d69d5dbb74e7a2c48eb512e78f3f417e8eecc",
+    "boundary_change": false
+  },
+  "permissions": {
+    "cover_change": false,
+    "deploy": false,
+    "endpoint_change": false,
+    "ledger": false,
+    "provider": false,
+    "registry": false,
+    "ssh": false,
+    "state": false,
+    "subtitle_text_change": false,
+    "upload": false,
+    "video_change": false
+  },
+  "recording_date": "2026-08-13",
+  "schema_version": "c3-boundary-reclosure-authority.v1",
+  "v3_manifest": {
+    "manifest_raw_sha256": "sha256:ecc19afdfa30bc3c978d1c29ef5a407f387251c04912b02ebcdbf37bc0de9f75",
+    "manifest_self_seal": "sha256:0a5465acbb7d6457894638f9d62cbda59320474209ef8374c9b91213f9c15fa2",
+    "root_tree_sha256": "sha256:7afbc9e4489f523890538402d497d2f9075a77387bbcf2c5ee3654547b7577f2",
+    "schema_version": "fastlane-c3-successor-authority-manifest.v3"
+  }
+}

@@ -1,0 +1,160 @@
+{
+  "authority_sha256": "sha256:1c0e06ef3a0c98e7b9b92d9bff48ad7925a57a85154575336c4459c139a95f87",
+  "candidate_id": "auto_220021_561_670",
+  "direct_host_cues": [
+    {
+      "cue": 1,
+      "end_ms": 31550,
+      "speaker": "李豆沙",
+      "start_ms": 26750,
+      "text": "星兰不会死啊，她怎么可能会被美美杀死"
+    },
+    {
+      "cue": 2,
+      "end_ms": 37370,
+      "speaker": "李豆沙",
+      "start_ms": 33970,
+      "text": "没有了，只更新到这一集了"
+    },
+    {
+      "cue": 4,
+      "end_ms": 68440,
+      "speaker": "李豆沙",
+      "start_ms": 64280,
+      "text": "李豆包，帮我生成《与你相恋到生命尽头》第七集"
+    },
+    {
+      "cue": 5,
+      "end_ms": 72530,
+      "speaker": "李豆沙",
+      "start_ms": 69610,
+      "text": "哎，大家会忍不住去看漫画吗？"
+    },
+    {
+      "cue": 6,
+      "end_ms": 78090,
+      "speaker": "李豆沙",
+      "start_ms": 72890,
+      "text": "还是决定要忍到下一集，下周看动画呀？"
+    },
+    {
+      "cue": 8,
+      "end_ms": 96670,
+      "speaker": "李豆沙",
+      "start_ms": 91630,
+      "text": "宝，没有下一集啊，要等下周了。能忍住。"
+    },
+    {
+      "cue": 9,
+      "end_ms": 100740,
+      "speaker": "李豆沙",
+      "start_ms": 97140,
+      "text": "打算看完动画去补。"
+    },
+    {
+      "cue": 10,
+      "end_ms": 105040,
+      "speaker": "李豆沙",
+      "start_ms": 102720,
+      "text": "对，因为漫画更新得很慢。"
+    },
+    {
+      "cue": 11,
+      "end_ms": 108940,
+      "speaker": "李豆沙",
+      "start_ms": 105900,
+      "text": "漫画你要看的话，其实一下子就看完了。"
+    }
+  ],
+  "historical_keep_receipt": {
+    "decision": "KEEP",
+    "final_selection_hook": "动画正看到关键处却没下一集，李豆沙急着请求生成第七集、担心角色死亡，又纠结要不要提前看漫画破坏追更乐趣。",
+    "final_title": "【李豆沙】动画正看到关键处却没下一集，李豆沙急着生成《与你相恋到生命尽头》第七集：星兰不会死啊！",
+    "original_selection_hook": "动画正看到关键处却没下一集，李豆沙急着请求生成第七集、担心角色死亡，又纠结要不要提前看漫画破坏追更乐趣。",
+    "original_title": "【李豆沙】动画正看到关键处却没下一集，李豆沙急着生成《与你相恋到生命尽头》第七集：星兰不会死啊！",
+    "passes": [
+      {
+        "addressee_attribution": [
+          {
+            "actual_addressee": "未提供可信说话人标签",
+            "actual_speaker": "未提供可信说话人标签",
+            "assertion": "李豆沙急着请求生成第七集",
+            "evidence": [],
+            "reason": "本片没有可信的说话人标签转写，无法核验该请求的说话人与受话人归属。",
+            "verdict": "UNVERIFIABLE"
+          },
+          {
+            "actual_addressee": "未提供可信说话人标签",
+            "actual_speaker": "未提供可信说话人标签",
+            "assertion": "李豆沙急着生成《与你相恋到生命尽头》第七集",
+            "evidence": [],
+            "reason": "本片没有可信的说话人标签转写，无法核验该生成请求的说话人与受话人归属。",
+            "verdict": "UNVERIFIABLE"
+          }
+        ],
+        "addressee_attribution_mode": "unverifiable_no_speaker_transcript",
+        "changed_surfaces": [],
+        "clip_context_prompt_sha256": "sha256:2e586da5aaf91a15a737eaa8ac1c088fb5e4fc678100f681ae7f8ce847ed0959",
+        "final_selection_hook": "动画正看到关键处却没下一集，李豆沙急着请求生成第七集、担心角色死亡，又纠结要不要提前看漫画破坏追更乐趣。",
+        "final_title": "【李豆沙】动画正看到关键处却没下一集，李豆沙急着生成《与你相恋到生命尽头》第七集：星兰不会死啊！",
+        "final_transcript_sha256": "sha256:a557277d751554c017860d21318075e90088c714b9a77f78d521ab7547c75e2d",
+        "reason_code": null,
+        "request_sha256": "sha256:2789bf39bd0752430b07416d98d9c529de6d5fac2aed236ecd2c1006b5f59f0e",
+        "response_sha256": "sha256:3bdd9169540682c30554804ba8a395f56561989243ce2575b6e7de95d186d99e",
+        "review_pass": 1,
+        "schema_version": "lidousha-source-fact-review.v1",
+        "selection_hook_sha256": "sha256:dfd5097629450053b022190c42f385d3dcac6d1196177dfddeb9f0c490ebf902",
+        "selection_scorecard_review": {
+          "reason": "selection_hook 未修改，原 selection_scorecard 无需复核兼容性。",
+          "status": "NOT_NEEDED"
+        },
+        "selection_scorecard_sha256": "sha256:f73a78b0bbc7ea1d43cd5a8cbf200461f902549661c7e45c6e9768178d443bb0",
+        "speaker_evidence_sha256": "sha256:7ad0672052878d79d0ad5f24e41ee57a6a8c401596b8954beb078ca45b39c989",
+        "speaker_transcript_sha256": null,
+        "status": "KEEP",
+        "summary": "两份文案中的动画断更、请求生成第七集、对星兰死亡的担忧，以及在等待动画和提前看漫画之间的犹豫，均可由最终字幕与同片绑定结构化弹幕共同支持；标题长度为48个字符，符合12–49字符要求。受话人归属因缺少可信说话人标签而不可核验。",
+        "supported_by": [
+          "final_transcript",
+          "structured_chat",
+          "same_clip_context"
+        ],
+        "title_policy_mode": "automatic",
+        "title_policy_violations": [],
+        "title_sha256": "sha256:41724dc351a790079a33cbd7a319bd78d632e194c5804b4eafa8212d89046c92"
+      }
+    ],
+    "provider_retries": [],
+    "receipt_sha256": "sha256:2e9eef6618d4b21146d2a071ac535be9342cb5c5b4be67f02c582596b223f31d",
+    "schema_version": "lidousha-source-fact-review.v1",
+    "speaker_evidence": {
+      "policy_ids": {
+        "absence": "speaker_mode_uniform_host/v1",
+        "alignment": "speaker_cue_subsegment_alignment/v1",
+        "text": "compact_ws/v1",
+        "timing": "half_open_integer_ms_exact/v1"
+      },
+      "reason": "speaker_mode_uniform_host",
+      "state": "AbsentAuthorized"
+    },
+    "speaker_evidence_sha256": "sha256:7ad0672052878d79d0ad5f24e41ee57a6a8c401596b8954beb078ca45b39c989",
+    "status": "PASS"
+  },
+  "line947": {
+    "durable_ruling_sha256": "sha256:29bc6e523645ecfbd9dbf15a5bea912dd741a6dced0b54ca41d4f906cebfde49",
+    "message_content_sha256": "sha256:0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b",
+    "raw_event_line_sha256": "sha256:e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa"
+  },
+  "schema_version": "fastlane-c3-terminal-source-fact-preservation-authority.v1",
+  "surfaces": {
+    "clip_context_prompt_sha256": "sha256:2e586da5aaf91a15a737eaa8ac1c088fb5e4fc678100f681ae7f8ce847ed0959",
+    "selection_hook": "动画正看到关键处却没下一集，李豆沙急着请求生成第七集、担心角色死亡，又纠结要不要提前看漫画破坏追更乐趣。",
+    "selection_hook_sha256": "sha256:dfd5097629450053b022190c42f385d3dcac6d1196177dfddeb9f0c490ebf902",
+    "selection_scorecard_sha256": "sha256:f73a78b0bbc7ea1d43cd5a8cbf200461f902549661c7e45c6e9768178d443bb0",
+    "speaker_evidence_sha256": "sha256:b4728d4da0491ca4580abf9c4e7adafaf5dffa6e69a67095a54db3e2be6d279b",
+    "speaker_finalization_sha256": "sha256:f6423e4477f8db100d26be453791598ea6a4af73a36a320c254d544bf598ee41",
+    "speaker_srt_sha256": "sha256:51eef37bf38a2e1a58e4412115c5f2a9699904df80a70f6d8a406d6dde206153",
+    "text_srt_sha256": "sha256:d70a96c402df8313264ef6ca145d69d5dbb74e7a2c48eb512e78f3f417e8eecc",
+    "title": "【李豆沙】动画正看到关键处却没下一集，李豆沙急着生成《与你相恋到生命尽头》第七集：星兰不会死啊！",
+    "title_sha256": "sha256:41724dc351a790079a33cbd7a319bd78d632e194c5804b4eafa8212d89046c92"
+  }
+}

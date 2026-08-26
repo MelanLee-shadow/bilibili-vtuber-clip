@@ -1,0 +1,41 @@
+{
+  "schema_version": "fastlane-c3-line947-speaker-authority.v2",
+  "candidate_id": "auto_220021_561_670",
+  "authority": "Ivan/Claude line947 exhaustive C3 ruling",
+  "user_event": {
+    "session_id": "0df2296b-500a-4681-ab5e-6fb46dc39579",
+    "uuid": "555195ed-ec18-418d-a311-558f7e54291f",
+    "timestamp": "2026-08-19T00:08:52.249Z",
+    "raw_event_line_sha256": "e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa",
+    "message_content_sha256": "0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b",
+    "jq_message_content_with_newline_sha256": "de4349ef57a61fd77418809e8531bda37c59c73b0b502f331cb5d88456e333d4"
+  },
+  "durable_ruling": {
+    "path": "docs/reviews/2026-08-19-ivan-review-batch-rulings.md",
+    "sha256": "29bc6e523645ecfbd9dbf15a5bea912dd741a6dced0b54ca41d4f906cebfde49"
+  },
+  "delivery": {
+    "source_recording": {"basename": "22966160_20260813-22-00-21.mp4", "sha256": "e9ce6186f9d1f6e9bad8b3801054a63ef9833f4943878e1e721b5a338aae18da", "absolute_start_ms": 561650, "absolute_end_ms": 670690},
+    "text_srt_sha256": "d70a96c402df8313264ef6ca145d69d5dbb74e7a2c48eb512e78f3f417e8eecc",
+    "delivery_media_sha256": "2e94ba7ae18e64903baca4cadb647b9545915778b19082e3cd0582d32e20c84e",
+    "predecessor_uniform_ass_sha256": "d861f8d87d3bc4e56f451dc3da1c6db4678274d23822b859b5f8f2d8ddc7f45c",
+    "predecessor_record_sha256": "3aa591979668295d3662d5d9110866c7e5f9a986f3545c5ba841bc78d07cdfc8",
+    "trim_provenance_sha256": "d4a1e004589091f45d45a383fabd2bce24e4d9036b884f54b59b897bb70c7dbd"
+  },
+  "omission_policy": {"watched_video_and_end_theme_cues": "NONE", "predicate": "no watched-video speech, soundtrack, or end-theme lyrics may appear"},
+  "cues": [
+    {"cue": 1, "start": "00:00:26,750", "end": "00:00:31,550", "text": "星兰不会死啊，她怎么可能会被美美杀死", "speaker": "李豆沙"},
+    {"cue": 2, "start": "00:00:33,970", "end": "00:00:37,370", "text": "没有了，只更新到这一集了", "speaker": "李豆沙"},
+    {"cue": 3, "start": "00:00:37,450", "end": "00:00:39,890", "text": "我们下次一起看", "speaker": "李豆沙"},
+    {"cue": 4, "start": "00:01:04,280", "end": "00:01:08,440", "text": "李豆包，帮我生成《与你相恋到生命尽头》第七集", "speaker": "李豆沙"},
+    {"cue": 5, "start": "00:01:09,610", "end": "00:01:12,530", "text": "哎，大家会忍不住去看漫画吗？", "speaker": "李豆沙"},
+    {"cue": 6, "start": "00:01:12,890", "end": "00:01:18,090", "text": "还是决定要忍到下一集，下周看动画呀？", "speaker": "李豆沙"},
+    {"cue": 7, "start": "00:01:27,310", "end": "00:01:30,150", "text": "欧耶", "speaker": "李豆沙"},
+    {"cue": 8, "start": "00:01:31,630", "end": "00:01:36,670", "text": "宝，没有下一集啊，要等下周了。能忍住。", "speaker": "李豆沙"},
+    {"cue": 9, "start": "00:01:37,140", "end": "00:01:40,740", "text": "打算看完动画去补。", "speaker": "李豆沙"},
+    {"cue": 10, "start": "00:01:42,720", "end": "00:01:45,040", "text": "对，因为漫画更新得很慢。", "speaker": "李豆沙"},
+    {"cue": 11, "start": "00:01:45,900", "end": "00:01:48,940", "text": "漫画你要看的话，其实一下子就看完了。", "speaker": "李豆沙"}
+  ],
+  "subtitle_text_authorized": false,
+  "upload_authorized": false
+}
