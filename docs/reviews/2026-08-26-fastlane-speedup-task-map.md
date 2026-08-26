@@ -161,7 +161,7 @@ Ivan 还要求回答 12 个“为什么没修成/为什么没入清单”问题�
 | P1 prepare outside lock / provider slots / short CAS / single uploader | 当前代码入口和 focused tests 已存在 | `IMPLEMENTED, CAMPAIGN IN USE` | combined full suite；用两个 candidate-private prepare 并行 + 一个串行 commit canary 验证无竞态 |
 | autoslice-only deploy 不因 unchanged adapter 等直播 | 当前 deploy 脚本有 `external_payload_unchanged_safe`，全外部 payload 相同则不碰 adapter；早期修复不是放宽内容门 | `CODE_PRESENT, LIVE STREAMING CANARY MISSING` | 在不改 adapter 的真实部署窗口做 no-op/auto-only canary；外部 payload drift 时仍 fail-closed |
 | AGY 超时与 Gemini paid fallback | commit `90a29c3` 是 deployed 祖先；用户要求 AGY 快时不要无谓超时、失败有 Gemini 兜底 | `CODE_PRESENT` | 当前 key/provider 版本做 bounded canary；确认只在允许的最后层触发且 receipt 可审计 |
-| free 磁盘与历史 scratch | historical runtime 已用 topology-aware seal offload；另有 7 个无引用 stale quarantine/tmp roots 完整 offload 后删除，protected/reference-bearing trees 保留 | `IMPROVED, STILL BELOW GATE`；free available `7301783552` bytes（约 7.30 GB），尚未达到 8–10 GiB | 只继续处理可恢复、非权威、无活跃进程且有完整 destination seal 的 exact allowlist；恢复至少 8–10 GiB headroom 后才媒体/部署 |
+| free 磁盘与历史 scratch | historical runtime 已用 topology-aware seal offload；另有 7 个无引用 stale quarantine/tmp roots 完整 offload 后删除，post-delete audit 仍零引用/零 FD，protected/reference-bearing trees 保留 | `IMPROVED, STILL BELOW GATE`；free available `7301038080` bytes（约 7.30 GB），尚未达到 8–10 GiB | 只继续处理可恢复、非权威、无活跃进程且有完整 destination seal 的 exact allowlist；恢复至少 8–10 GiB headroom 后才媒体/部署 |
 | OCI3 开发/验证机 | repo `23711fd4` clean；project `.venv` Python 3.13.5；111 GiB free | `PARTIAL` | 同步 combined commit；先作为测试/media verify surface，不写 publication authority |
 | OCI3 录制与最终迁移 | `/opt/bilive/recording/status.json` 当前 `service_reachable=false`，source disposition drift；`/opt/bilive/autoslice` 无 repo/state/out | `BLOCKED` | 修 recorder drift、全套 protocol acceptance、同步 runtime/data、设计 create-only cutover；最后 maintenance window 内 free→OCI3 唯一写者切换 |
 | Colab 并行 offload | 当前 active sessions = 0；C3 媒体 validation 已跑通并 verified fetch/stop | `AVAILABLE` | C7 current apply 后、C3/C6 新媒体需要时上传最小显式文件做 decode/QC；每次 verified fetch 后 stop |
@@ -169,13 +169,13 @@ Ivan 还要求回答 12 个“为什么没修成/为什么没入清单”问题�
 
 ## 7. 当前运行态检查点
 
-读取时间：2026-08-26T16:37Z 本战役检查。
+读取时间：2026-08-26T17:07Z 本战役检查。
 
 ### free（唯一 live authority）
 
 - deployed `981bc4abad395c2e00db7212ff8541f7ddc32ba0`
 - `DISABLED`: empty regular `0644`
-- filesystem：`394G / 394G`，available `7301783552` bytes（约 7.30 GB），99%；仍低于新媒体生产/部署准入所需的 8–10 GiB headroom
+- filesystem：`394G / 394G`，available `7301038080` bytes（约 7.30 GB），99%；仍低于新媒体生产/部署准入所需的 8–10 GiB headroom
 - recorder direct status：`service_reachable=true`、`streaming=false`、`recording=false`；历史 runtime report 仍记录 `19 closed recording(s) failed finalization`，尚未重新审计
 - 未观察到 `free_session_autoslice`、`deploy_free_autoslice`、`authorized_upload.py` mutation process
 - live SHA：static registry `503172e8…`；runtime registry `a197a19a…`；upload ledger `35b86573…`
