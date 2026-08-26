@@ -55,6 +55,23 @@ ALLOWED_DIFF_PATHS = frozenset(
 )
 EXPECTED_OLD_CUE17 = "哦，是昨天的视频，搞忘了"
 EXPECTED_NEW_CUE17 = "哦，是昨天的视频。へぇ、なるほどね。"
+# These are production pins from the clean 981 projection.  This module is
+# deliberately candidate-specific; keeping the pins here prevents a package
+# stage from accepting a receipt that merely has a valid shape and seal.
+EXPECTED_PERSISTED_STORY_SHA256 = "sha256:94b52484061524ce7d3865d9a8939b84773fcb87015b14287aa4e9f6794dcfd6"
+EXPECTED_FRESH_STORY_SHA256 = "sha256:e002cc5732ffb261274d255754c3ed6e6e17c95982ff4d9d86cd40c54a5c3a22"
+EXPECTED_AUTHORITY_SHA256 = "sha256:7395daf13d25062e9de5ed7de3b292ecdb085c7c729876735bb4aa5399e50d45"
+EXPECTED_BASELINE_SHA256 = "sha256:3cfcf2954c1d32a078e99aaff5585213b5edbbedd6db8f87d62097d06775ea77"
+EXPECTED_DECISION_LEDGER_SHA256 = "sha256:ecef045ba999ca94f3afa58a57562ce728fd004e9dc0d03cec949e0f27f737f3"
+EXPECTED_TRUTH_DIFF_SHA256 = "sha256:ee662f130cb91537db8dd471cddc777318e30179ed7b2c6e8fe7f203a3f23522"
+EXPECTED_PIPELINE_SRT_SHA256 = "sha256:a3ac0efb39d5348f8e8e756712de9a18a6aa87123b0ccbd8fb9bd68c54afb8b1"
+EXPECTED_OLD_TRANSCRIPT_SHA256 = "sha256:0933dd7c516c5dbc2a7d0dbe3c3aeefea059055c120d697dc8697914a936806e"
+EXPECTED_FRESH_TRANSCRIPT_SHA256 = "sha256:c00924ce0e63e9ee25c87d77256eaf7c24ad29588c0c22188d958eba4827a0c2"
+EXPECTED_CLIP_CONTEXT_SHA256 = "sha256:edf26d3d7cf0eeea0e94c8d3a0006b7a323441ed11bdb701818bb65da619100a"
+EXPECTED_INPUT_HOOK_SHA256 = "sha256:4abced4f63049a3dc91ffc5d703c1ab99c17894d26cd8bc1abddca60d28636fd"
+EXPECTED_RESOLVED_HOOK_SHA256 = "sha256:2565d16fa8b4063fb1b92e9f143a4a3221c1b8f64cb69a72592186c48939ff24"
+EXPECTED_TITLE_SHA256 = "sha256:420247526abe5962ad12024fbbf0a503c55bc4bedf3524eaa6e7422bdbb88885"
+EXPECTED_COVER_LINES_SHA256 = "sha256:fa948444200ed7399e5305f61ea8255a0c2dab06a3ed78e2395a481b09d95fd9"
 _RECEIPT_FIELDS = frozenset(
     {
         "schema_version", "status", "result_type", "candidate_id", "recording_date",
@@ -64,7 +81,7 @@ _RECEIPT_FIELDS = frozenset(
         "pipeline_srt_sha256", "old_transcript_sha256", "fresh_transcript_sha256",
         "fresh_artifact_hashes", "allowed_canonical_diff_paths", "cue17_transition",
         "subtitle_text_mutation_authorized", "speaker_label_mutation_authorized",
-        "upload_authorized", "registry_hold_released",
+        "upload_authorized", "registry_hold_released", "receipt_sha256",
     }
 )
 
@@ -89,6 +106,115 @@ def _sha256_bytes(value: bytes) -> str:
 
 def _canonical(value: object) -> bytes:
     return json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _receipt_seal(receipt: Mapping[str, object]) -> str:
+    unsigned = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    return _sha256_json(unsigned)
+
+
+def _normalized_fresh_story(story: Mapping[str, object]) -> dict[str, object]:
+    normalized = dict(story)
+    normalized.pop("source_fact_review", None)
+    return normalized
+
+
+def _validate_receipt_static(
+    receipt: object,
+    *,
+    fresh_story: Mapping[str, object],
+    authority: object,
+    old_story: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """Validate the complete C6 receipt identity shared by both consumers."""
+
+    if not isinstance(receipt, Mapping) or set(receipt) != _RECEIPT_FIELDS:
+        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_INVALID")
+    if (
+        receipt.get("schema_version") != SCHEMA_VERSION
+        or receipt.get("status") != "CONSUMED"
+        or receipt.get("result_type") != "DERIVED_REPLAY_CONSUMPTION"
+    ):
+        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_INVALID")
+    if receipt.get("receipt_sha256") != _receipt_seal(receipt):
+        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_SELF_SEAL_INVALID")
+    expected_bindings = {
+        "candidate_id": CANDIDATE_ID,
+        "recording_date": RECORDING_DATE,
+        "root_public_text_authority_sha256": EXPECTED_AUTHORITY_SHA256,
+        "clip_context_sha256": EXPECTED_CLIP_CONTEXT_SHA256,
+        "old_story_contract_sha256": EXPECTED_PERSISTED_STORY_SHA256,
+        "fresh_story_contract_sha256": EXPECTED_FRESH_STORY_SHA256,
+        "baseline_sha256": EXPECTED_BASELINE_SHA256,
+        "decision_ledger_sha256": EXPECTED_DECISION_LEDGER_SHA256,
+        "truth_diff_sha256": EXPECTED_TRUTH_DIFF_SHA256,
+        "pipeline_srt_sha256": EXPECTED_PIPELINE_SRT_SHA256,
+        "old_transcript_sha256": EXPECTED_OLD_TRANSCRIPT_SHA256,
+        "fresh_transcript_sha256": EXPECTED_FRESH_TRANSCRIPT_SHA256,
+    }
+    if any(receipt.get(key) != value for key, value in expected_bindings.items()):
+        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_BINDING_DRIFT")
+    if (
+        getattr(authority, "authority_sha256", None) != EXPECTED_AUTHORITY_SHA256
+        or getattr(authority, "clip_context_sha256", None) != EXPECTED_CLIP_CONTEXT_SHA256
+        or getattr(authority, "resolved_selection_hook", None) is None
+        or _sha256_text(str(authority.resolved_selection_hook)) != EXPECTED_RESOLVED_HOOK_SHA256
+        or _sha256_text(str(getattr(authority, "resolved_title", ""))) != EXPECTED_TITLE_SHA256
+        or _sha256_json(list(getattr(authority, "resolved_cover_lines", ()))) != EXPECTED_COVER_LINES_SHA256
+    ):
+        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_AUTHORITY_DRIFT")
+    normalized = _normalized_fresh_story(fresh_story)
+    if (
+        _sha256_json(normalized) != EXPECTED_FRESH_STORY_SHA256
+        or receipt.get("fresh_story_contract_sha256") != _sha256_json(normalized)
+        or fresh_story.get("candidate_id") != CANDIDATE_ID
+        or fresh_story.get("selection_hook") != getattr(authority, "resolved_selection_hook", None)
+    ):
+        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_STORY_DRIFT")
+    artifacts = receipt.get("fresh_artifact_hashes")
+    if not isinstance(artifacts, Mapping) or set(artifacts) != {
+        "story_contract_sha256", "selection_hook_sha256", "title_sha256",
+        "cover_lines_sha256", "reviewed_baseline_sha256",
+    } or artifacts != {
+        "story_contract_sha256": EXPECTED_FRESH_STORY_SHA256,
+        "selection_hook_sha256": EXPECTED_RESOLVED_HOOK_SHA256,
+        "title_sha256": EXPECTED_TITLE_SHA256,
+        "cover_lines_sha256": EXPECTED_COVER_LINES_SHA256,
+        "reviewed_baseline_sha256": EXPECTED_BASELINE_SHA256,
+    }:
+        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_ARTIFACT_DRIFT")
+    if receipt.get("allowed_canonical_diff_paths") != sorted(ALLOWED_DIFF_PATHS):
+        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_DIFF_DRIFT")
+    if receipt.get("cue17_transition") != {
+        "cue": 17, "before": EXPECTED_OLD_CUE17, "after": EXPECTED_NEW_CUE17,
+    }:
+        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_CUE17_DRIFT")
+    for key in (
+        "subtitle_text_mutation_authorized", "speaker_label_mutation_authorized",
+        "upload_authorized", "registry_hold_released",
+    ):
+        if receipt.get(key) is not False:
+            raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_SCOPE_DRIFT")
+    if old_story is not None:
+        if _sha256_json(dict(old_story)) != EXPECTED_PERSISTED_STORY_SHA256:
+            raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_OLD_STORY_DRIFT")
+        from src.autoslice.candidate_public_text_surface_authority import (
+            consume_candidate_public_text_surface_authority,
+        )
+        try:
+            root_consumption = consume_candidate_public_text_surface_authority(
+                authority, candidate_id=CANDIDATE_ID,
+                selection_hook=authority.input_selection_hook, story_contract=old_story,
+            )
+        except CandidatePublicTextSurfaceAuthorityError as exc:
+            raise C6ReplayPublicTextProjectionError(
+                "C6_DERIVED_RECEIPT_AUTHORITY_CONSUMPTION_INVALID"
+            ) from exc
+        if receipt.get("root_authority_consumption_sha256") != _sha256_json(root_consumption):
+            raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_AUTHORITY_CONSUMPTION_DRIFT")
+    elif not isinstance(receipt.get("root_authority_consumption_sha256"), str):
+        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_AUTHORITY_CONSUMPTION_INVALID")
+    return dict(receipt)
 
 
 def _diff_paths(old: object, new: object, path: str = "") -> set[str]:
@@ -152,6 +278,7 @@ def _sealed_baseline(plan: object, *, root: Path) -> tuple[dict[str, object], Pa
     if manifest_path != root / RELATIVE_BASELINE_MANIFEST:
         raise C6ReplayPublicTextProjectionError("C6_BASELINE_PATH_DRIFT")
     from src.autoslice.reviewed_subtitle_baseline_registry import (
+        ReviewedSubtitleBaselineRegistryError,
         load_candidate_reviewed_subtitle_baseline,
     )
     try:
@@ -160,7 +287,7 @@ def _sealed_baseline(plan: object, *, root: Path) -> tuple[dict[str, object], Pa
             CANDIDATE_ID,
             repo_root=root,
         )
-    except Exception as exc:
+    except (OSError, KeyError, TypeError, ValueError, ReviewedSubtitleBaselineRegistryError) as exc:
         raise C6ReplayPublicTextProjectionError("C6_BASELINE_AUTHORITY_INVALID") from exc
     if canonical is None or canonical.config != dict(config) or canonical.manifest_path != manifest_path or canonical.baseline_path != baseline_path:
         raise C6ReplayPublicTextProjectionError("C6_BASELINE_AUTHORITY_DRIFT")
@@ -180,6 +307,13 @@ def _sealed_baseline(plan: object, *, root: Path) -> tuple[dict[str, object], Pa
         raise C6ReplayPublicTextProjectionError("C6_BASELINE_AUTHORITY_INVALID") from exc
     if not expected_baseline.startswith("sha256:"):
         expected_baseline = "sha256:" + expected_baseline
+    if (
+        expected_baseline != EXPECTED_BASELINE_SHA256
+        or expected_ledger != EXPECTED_DECISION_LEDGER_SHA256
+        or expected_diff != EXPECTED_TRUTH_DIFF_SHA256
+        or expected_pipeline != EXPECTED_PIPELINE_SRT_SHA256
+    ):
+        raise C6ReplayPublicTextProjectionError("C6_BASELINE_AUTHORITY_DRIFT")
     if _sha256_bytes(baseline_path.read_bytes()) != expected_baseline:
         raise C6ReplayPublicTextProjectionError("C6_BASELINE_DIGEST_DRIFT")
     _read_sealed(baseline_path, root=root, expected_sha256=expected_baseline, label="BASELINE")
@@ -217,9 +351,15 @@ def _validate_cue_projection(*, pipeline_path: Path, baseline_path: Path, config
     declared = str(config.get("sha256") or "")
     if not declared.startswith("sha256:"):
         declared = "sha256:" + declared
-    if _sha256_bytes(baseline_path.read_bytes()) != declared:
+    pipeline_sha = _sha256_bytes(pipeline_path.read_bytes())
+    baseline_sha = _sha256_bytes(baseline_path.read_bytes())
+    if baseline_sha != declared or baseline_sha != EXPECTED_BASELINE_SHA256:
         raise C6ReplayPublicTextProjectionError("C6_BASELINE_DIGEST_DRIFT")
-    return transcript_old, transcript_new, _sha256_bytes(pipeline_path.read_bytes()), _sha256_bytes(baseline_path.read_bytes())
+    if pipeline_sha != EXPECTED_PIPELINE_SRT_SHA256:
+        raise C6ReplayPublicTextProjectionError("C6_PIPELINE_DIAGNOSTIC_DIGEST_DRIFT")
+    if transcript_old != EXPECTED_OLD_TRANSCRIPT_SHA256 or transcript_new != EXPECTED_FRESH_TRANSCRIPT_SHA256:
+        raise C6ReplayPublicTextProjectionError("C6_TRANSCRIPT_DIGEST_DRIFT")
+    return transcript_old, transcript_new, pipeline_sha, baseline_sha
 
 
 def _validate_story_diff(*, old_story: Mapping[str, object], fresh_story: Mapping[str, object], authority: object, old_transcript: str, new_transcript: str) -> set[str]:
@@ -249,39 +389,39 @@ def _validate_story_diff(*, old_story: Mapping[str, object], fresh_story: Mappin
 
 
 def _build_receipt(*, plan: object, authority: object, old_story: Mapping[str, object], fresh_story: Mapping[str, object], baseline_config: Mapping[str, object], baseline_path: Path, pipeline_path: Path, ledger_path: Path, diff_path: Path, root_authority_consumption: Mapping[str, object], diff_paths: set[str], transcript_old: str, transcript_new: str, pipeline_sha: str, baseline_sha: str) -> "C6ReplayPublicTextConsumption":
-    return C6ReplayPublicTextConsumption(
-        receipt={
-            "schema_version": SCHEMA_VERSION,
-            "status": "CONSUMED",
-            "result_type": "DERIVED_REPLAY_CONSUMPTION",
-            "candidate_id": CANDIDATE_ID,
-            "recording_date": RECORDING_DATE,
-            "root_public_text_authority_sha256": authority.authority_sha256,
-            "root_authority_consumption_sha256": _sha256_json(root_authority_consumption),
-            "old_story_contract_sha256": _sha256_json(dict(old_story)),
-            "fresh_story_contract_sha256": _sha256_json(dict(fresh_story)),
-            "clip_context_sha256": authority.clip_context_sha256,
-            "baseline_sha256": baseline_sha,
-            "decision_ledger_sha256": "sha256:" + str(baseline_config["operator_truth_lanes"]["decision_ledger"]["sha256"]),
-            "truth_diff_sha256": "sha256:" + str(baseline_config["operator_truth_lanes"]["diff_receipt"]["sha256"]),
-            "pipeline_srt_sha256": pipeline_sha,
-            "old_transcript_sha256": transcript_old,
-            "fresh_transcript_sha256": transcript_new,
-            "fresh_artifact_hashes": {
-                "story_contract_sha256": _sha256_json(dict(fresh_story)),
-                "selection_hook_sha256": _sha256_text(str(fresh_story["selection_hook"])),
-                "title_sha256": _sha256_text(authority.resolved_title),
-                "cover_lines_sha256": _sha256_json(list(authority.resolved_cover_lines)),
-                "reviewed_baseline_sha256": baseline_sha,
-            },
-            "allowed_canonical_diff_paths": sorted(diff_paths),
-            "cue17_transition": {"cue": 17, "before": EXPECTED_OLD_CUE17, "after": EXPECTED_NEW_CUE17},
-            "subtitle_text_mutation_authorized": False,
-            "speaker_label_mutation_authorized": False,
-            "upload_authorized": False,
-            "registry_hold_released": False,
-        }
-    )
+    receipt: dict[str, object] = {
+        "schema_version": SCHEMA_VERSION,
+        "status": "CONSUMED",
+        "result_type": "DERIVED_REPLAY_CONSUMPTION",
+        "candidate_id": CANDIDATE_ID,
+        "recording_date": RECORDING_DATE,
+        "root_public_text_authority_sha256": authority.authority_sha256,
+        "root_authority_consumption_sha256": _sha256_json(root_authority_consumption),
+        "old_story_contract_sha256": _sha256_json(dict(old_story)),
+        "fresh_story_contract_sha256": _sha256_json(_normalized_fresh_story(fresh_story)),
+        "clip_context_sha256": authority.clip_context_sha256,
+        "baseline_sha256": baseline_sha,
+        "decision_ledger_sha256": "sha256:" + str(baseline_config["operator_truth_lanes"]["decision_ledger"]["sha256"]),
+        "truth_diff_sha256": "sha256:" + str(baseline_config["operator_truth_lanes"]["diff_receipt"]["sha256"]),
+        "pipeline_srt_sha256": pipeline_sha,
+        "old_transcript_sha256": transcript_old,
+        "fresh_transcript_sha256": transcript_new,
+        "fresh_artifact_hashes": {
+            "story_contract_sha256": _sha256_json(_normalized_fresh_story(fresh_story)),
+            "selection_hook_sha256": _sha256_text(str(fresh_story["selection_hook"])),
+            "title_sha256": _sha256_text(authority.resolved_title),
+            "cover_lines_sha256": _sha256_json(list(authority.resolved_cover_lines)),
+            "reviewed_baseline_sha256": baseline_sha,
+        },
+        "allowed_canonical_diff_paths": sorted(diff_paths),
+        "cue17_transition": {"cue": 17, "before": EXPECTED_OLD_CUE17, "after": EXPECTED_NEW_CUE17},
+        "subtitle_text_mutation_authorized": False,
+        "speaker_label_mutation_authorized": False,
+        "upload_authorized": False,
+        "registry_hold_released": False,
+    }
+    receipt["receipt_sha256"] = _receipt_seal(receipt)
+    return C6ReplayPublicTextConsumption(receipt=receipt)
 
 
 @dataclass(frozen=True, slots=True)
@@ -297,58 +437,20 @@ class C6ReplayPublicTextConsumption:
 def validate_c6_replay_public_text_consumption_for_fresh_story(
     receipt: object, *, fresh_story: Mapping[str, object], authority: object
 ) -> dict[str, object]:
-    if not isinstance(receipt, Mapping) or set(receipt) != _RECEIPT_FIELDS or receipt.get("schema_version") != SCHEMA_VERSION or receipt.get("status") != "CONSUMED" or receipt.get("result_type") != "DERIVED_REPLAY_CONSUMPTION":
-        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_INVALID")
-    if receipt.get("candidate_id") != CANDIDATE_ID or receipt.get("recording_date") != RECORDING_DATE or receipt.get("root_public_text_authority_sha256") != authority.authority_sha256 or receipt.get("clip_context_sha256") != authority.clip_context_sha256:
-        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_BINDING_DRIFT")
-    if receipt.get("cue17_transition") != {"cue": 17, "before": EXPECTED_OLD_CUE17, "after": EXPECTED_NEW_CUE17}:
-        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_CUE17_DRIFT")
-    normalized_story = dict(fresh_story)
-    # The source-fact provider is allowed to append its fresh review after this
-    # pre-provider receipt is consumed.  That review is not part of the
-    # public-text projection identity and is validated by its own gate.
-    normalized_story.pop("source_fact_review", None)
-    if receipt.get("fresh_story_contract_sha256") != _sha256_json(normalized_story):
-        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_STORY_DRIFT")
-    artifacts = receipt.get("fresh_artifact_hashes")
-    if not isinstance(artifacts, Mapping) or artifacts.get("story_contract_sha256") != receipt.get("fresh_story_contract_sha256") or artifacts.get("selection_hook_sha256") != _sha256_text(str(fresh_story.get("selection_hook") or "")) or artifacts.get("title_sha256") != _sha256_text(authority.resolved_title) or artifacts.get("cover_lines_sha256") != _sha256_json(list(authority.resolved_cover_lines)):
-        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_ARTIFACT_DRIFT")
-    expected_paths = receipt.get("allowed_canonical_diff_paths")
-    if expected_paths != sorted(ALLOWED_DIFF_PATHS):
-        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_DIFF_DRIFT")
-    for key in ("subtitle_text_mutation_authorized", "speaker_label_mutation_authorized", "upload_authorized", "registry_hold_released"):
-        if receipt.get(key) is not False:
-            raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_SCOPE_DRIFT")
-    if fresh_story.get("selection_hook") != authority.resolved_selection_hook:
-        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_PUBLIC_SURFACE_DRIFT")
-    return dict(receipt)
+    # The source-fact provider may append its review after this pre-provider
+    # gate.  All projection-bound fields, including the old-side evidence
+    # digests, remain statically pinned and self-sealed here.
+    return _validate_receipt_static(
+        receipt, fresh_story=fresh_story, authority=authority,
+    )
 
 
 def validate_c6_replay_public_text_consumption(
     receipt: object, *, old_story: Mapping[str, object], fresh_story: Mapping[str, object], authority: object
 ) -> dict[str, object]:
-    if not isinstance(receipt, Mapping) or set(receipt) != _RECEIPT_FIELDS or receipt.get("schema_version") != SCHEMA_VERSION or receipt.get("status") != "CONSUMED" or receipt.get("result_type") != "DERIVED_REPLAY_CONSUMPTION":
-        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_INVALID")
-    if receipt.get("candidate_id") != CANDIDATE_ID or receipt.get("recording_date") != RECORDING_DATE or receipt.get("root_public_text_authority_sha256") != authority.authority_sha256:
-        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_BINDING_DRIFT")
-    normalized_fresh = dict(fresh_story)
-    normalized_fresh.pop("source_fact_review", None)
-    if receipt.get("old_story_contract_sha256") != _sha256_json(dict(old_story)) or receipt.get("fresh_story_contract_sha256") != _sha256_json(normalized_fresh):
-        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_STORY_DRIFT")
-    from src.autoslice.candidate_public_text_surface_authority import consume_candidate_public_text_surface_authority
-    root_consumption = consume_candidate_public_text_surface_authority(
-        authority, candidate_id=CANDIDATE_ID,
-        selection_hook=authority.input_selection_hook, story_contract=old_story,
+    return _validate_receipt_static(
+        receipt, old_story=old_story, fresh_story=fresh_story, authority=authority,
     )
-    if receipt.get("root_authority_consumption_sha256") != _sha256_json(root_consumption):
-        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_AUTHORITY_CONSUMPTION_DRIFT")
-    expected_paths = receipt.get("allowed_canonical_diff_paths")
-    if expected_paths != sorted(ALLOWED_DIFF_PATHS if "/cover_output_audits" in old_story else ALLOWED_DIFF_PATHS - {"/cover_output_audits"}):
-        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_DIFF_DRIFT")
-    for key in ("subtitle_text_mutation_authorized", "speaker_label_mutation_authorized", "upload_authorized", "registry_hold_released"):
-        if receipt.get(key) is not False:
-            raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_SCOPE_DRIFT")
-    return dict(receipt)
 
 
 def build_c6_replay_public_text_resolver(*, plan: object, root: Path) -> Callable[..., object]:
