@@ -4,6 +4,7 @@
   "schema_version": "subtitle-redelivery-baseline.v2",
   "mode": "preserve_text_outside_source_truth",
   "exact_interval_replay": true,
+  "time_domain": "PIECE_LOCAL",
   "path": "auto_130012_435_574.reviewed.srt",
   "sha256": "6903ce9acb826b5013ef09f26b70ca36f03718ec235ebc79ca65384584f77955",
   "authority": "Ivan current fastlane authorization for 2026-08-15 candidate #12: revive and publish, repair danmaku 写姐 normalized to 解 by context, and identify/fix remaining evidenced small errors within this candidate only; durable mirror docs/reviews/2026-08-19-ivan-review-batch-rulings.md #12.",

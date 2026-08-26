@@ -362,16 +362,6 @@ def build_replay_plan(*, repo_root: Path, out_root: Path, date: str, candidate_i
         or record.get("duration_ms") != end - start
     ):
         raise ReviewedBaselineReplayError("REPLAY_RECORD_TIMING_INVALID")
-    try:
-        diagnostic_duration_ms = replay_diagnostic_duration_ms(
-            config,
-            padded_start_ms=padded_start,
-            padded_end_ms=padded_end,
-            final_start_ms=start,
-            final_end_ms=end,
-        )
-    except RedeliveryTimeDomainError as exc:
-        raise ReviewedBaselineReplayError(str(exc)) from exc
     # Verify the attested baseline geometry before any private media write.
     # A v2 baseline may bind either the padded source or this record's exact
     # final interval, never an arbitrary third window.
@@ -383,6 +373,16 @@ def build_replay_plan(*, repo_root: Path, out_root: Path, date: str, candidate_i
         final_end_ms=end,
         error=ReviewedBaselineReplayError,
     )
+    try:
+        diagnostic_duration_ms = replay_diagnostic_duration_ms(
+            config,
+            padded_start_ms=padded_start,
+            padded_end_ms=padded_end,
+            final_start_ms=start,
+            final_end_ms=end,
+        )
+    except RedeliveryTimeDomainError as exc:
+        raise ReviewedBaselineReplayError(str(exc)) from exc
     diagnostic = config.get("operator_truth_lanes", {}).get("pipeline_diagnostic")
     if not isinstance(diagnostic, Mapping) or not isinstance(diagnostic.get("path"), str):
         raise ReviewedBaselineReplayError("REPLAY_PIPELINE_DIAGNOSTIC_MISSING")
