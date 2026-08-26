@@ -123,7 +123,7 @@ Ivan 还要求回答 12 个“为什么没修成/为什么没入清单”问题�
 | C3 | `2026-08-13 auto_220021_561_670` | 区分视频声/本人声、片尾曲不做字幕、星兰回应 | `ACTIVE_BLOCKER`；最新隔离 worktree HEAD `c4981739`，C3 相关测试 `27 passed`；canonical package/authority 输入仍缺失或 stale，不能形成 PASS0 | 补齐同一份 source-fact/clip-context authority → canonical audit 零 issue → private PASS0；不得回到逐 pointer locator 打补丁 |
 | C4 | `2026-08-14 auto_113028_1602_1698` | 见面发现/日语、哼歌不做字幕、指定标题方向 | `PUBLIC_VERIFIED_SAME_BV` `BV1h7hg68E8Y`，AID `117154678638617`，current CID `41270641488` | 永久跳过，不创建第二 BVID |
 | C5 | `2026-08-14 auto_113028_1271_1328` | niji 夏天/哼唱/热点 crawler | `PUBLIC_VERIFIED_SAME_BV` `BV1Sahj65ExM`，AID `117157295950921`，current CID `41267890237` | 永久跳过，不创建第二 BVID |
-| C6 | `2026-08-14 auto_120032_753_816` | naruhodo ne；回答选题理由；重做标题封面 | `ACTIVE_BLOCKER`；最新隔离 worktree HEAD `02aabdd7`；相关 focused `49 passed`；生产等价探针仍暴露 `C6_EXACT_PLAN_COORDINATE_OR_IDENTITY_DRIFT`，尚未整合/部署 | source-bound 区分 plan expected video `ba1e…` 与 frozen delivery `982e…` 的角色，修 split pins；provider-disabled probe 必须到 source-fact 边界且零写入 |
+| C6 | `2026-08-14 auto_120032_753_816` | naruhodo ne；回答选题理由；重做标题封面 | `ACTIVE_BLOCKER`；隔离修复 HEAD `7372484a`；相关 focused `50 passed`；overlay probe 已越过原 `C6_EXACT_PLAN_COORDINATE_OR_IDENTITY_DRIFT`，下一阻塞为 `C6_EXACT_BOUNDARY_AUDIT_HASH_MISMATCH`，尚未整合/部署 | 保留 replay/stage 与 frozen-delivery split pins；authority owner 统一 record boundary hash 与 `753000..816000` coordinate frame 后，再做 provider-disabled PASS0 |
 | C7 | `2026-08-14 auto_123036_727_785` | 0:21「不可以就要」（读弹幕） | `PRIVATE_READY`；deployed-lineage golden pilot `READY_TO_COMMIT`，full-dry rc `0`，all authoritative surfaces unchanged，stage empty；closure SHA `42c3b719…9b0b1` | C3/C6 后整合；apply 后对 current video `1a717d…` 做独立 Colab/OCI3 decode/QC，不能借历史不同 SHA 冒充 |
 | C7b | `2026-08-14 auto_130040_201_255` | failed/content_boundary 复活；kmx/脑控完整弹幕/指定标题 | `ACTIVE_BLOCKER`；failed-row adoption HEAD `f1d368d7`，完整 live-row SHA `549949…`，架构/C7b/replay 196 pass，CAS/idempotency 96 pass；未 private PASS0 | 第二次 strong review APPROVE → provider/state/upload-disabled private full-dry → cover/QC/package closure |
 | C8 | `2026-08-14 songvis_130040_670_11874655` | 园游会，过、可传 | `PUBLIC_VERIFIED` `BV1fr8P6REDP`，AID `117130116729073`，CID `41111260592` | 永久跳过 |
@@ -216,7 +216,7 @@ Ivan 还要求回答 12 个“为什么没修成/为什么没入清单”问题�
 
 1. **恢复 free 可用空间**：继续只处理可恢复历史 scratch，目标至少 8–10 GiB；验证 OCI3 destination tree seal 后再删 source。
 2. **C3**：消费 `f5d04382` 的新 boundary authority，定位 source-fact receipt stale 的 exact role/hash，取得 canonical audit PASS0。
-3. **C6**：完成 plan expected-video 与 frozen delivery 的 split-pin source provenance，补 deliberately-distinct tests；provider-disabled staged probe 必须到达 source-fact boundary。
+3. **C6**：保留 `7372484a` 的 plan/stage split-pin 修复；当前 provider-disabled overlay 已越过 identity drift，但停在 boundary hash/coordinate closure，不能继续放宽门或整合，需同一 provenance 重封 authority/record。
 4. **C7b/C9 并行私有收口**：C7b second strong review + full-dry；C9 实现本会话授权的 exact derived joint-QC 与 chat/exact-final/state-last 路径。C7 保留 READY 状态并在 current artifact 出现后 offload decode/QC。
 5. **整合与一次部署**：只 cherry-pick 通过 strong review 的 commits；跑 focused + full suite、architecture/debt gate、authority drift tests；root 批准一次 deploy。
 6. **串行发布**：严格按剩余顺序；每一项完成 public/Creator/section/registry/ledger readback 后才推进下一项；上传失败不得自动创建第二 BVID。

@@ -8,12 +8,11 @@
 
 ### 已完成
 
-- 集成 worktree：`codex/fastlane-integration-20260826`，HEAD `ebba4961`，clean。
-- 两个安全修复提交：`e818e060`（structured subtitle authority gates）与 `80f30501`（malformed operator ledger fail-closed）；`7837c5f5` 更新本交接。
+- 集成 worktree：`codex/fastlane-integration-20260826`，当前 docs checkpoint 为 `7b0b3fdc`（本次 handoff commit 前）；C6 isolated repair 为 `7372484a`，未 cherry-pick。- 两个安全修复提交：`e818e060`（structured subtitle authority gates）与 `80f30501`（malformed operator ledger fail-closed）；`7837c5f5` 更新本交接。
 - 受影响 replay/authority 测试：`136 passed`；全量 pytest：`6946 passed in 354.46s`；`py_compile`、Ruff、`git diff --check` 及 active-module 2000 行上限检查均通过。
 - 普通 candidate 的 mapping-valued operator authority 现在只有在它与 SHA-validated decision ledger 的完整 authority object 相等时才可用；C7b 仍强制走独立 resolver；candidate/ledger identity drift 与 malformed ledger 均 fail closed。private stage 另外拒绝非 C7b 的 mapping authority，C5 revoked authority 不再进入 projection。
 - C7 deployed-lineage private golden pilot：`READY_TO_COMMIT`、`full_dry_rc=0`、`all_authoritative_surfaces_unchanged=true`、`private_stage_empty=true`；closure 位于 `free:/opt/bilive/autoslice/private-fastlane-b1-c7-current-pilot-981bc4ab-20260826T041255Z/evidence/closure.json`，SHA `42c3b719d55843f598f133bb819e9e3e6f8dac33d307c64cc5698f50f1e9b0b1`；该结果仍是 private ready，不是 live publication。
-- 最新隔离 lane 只作工程证据：C3 worktree `c4981739` 的相关测试 `27 passed`，但 canonical package/authority 输入仍缺失；C6 worktree `02aabdd7` 的相关测试 `49 passed`，生产等价 probe 仍有 `C6_EXACT_PLAN_COORDINATE_OR_IDENTITY_DRIFT`，两者均未 cherry-pick 或部署。
+- 最新隔离 lane 只作工程证据：C3 worktree `c4981739` 的相关测试 `27 passed`，但 canonical package/authority 输入仍缺失；C6 worktree 新提交 `7372484a`（基于 `02aabdd7`）的相关测试 `50 passed`。对 sealed live inputs 的 overlay probe 已消除原 `C6_EXACT_PLAN_COORDINATE_OR_IDENTITY_DRIFT`，随后精确停在 `C6_EXACT_BOUNDARY_AUDIT_HASH_MISMATCH`；证据位于 `free:/opt/bilive/autoslice/private-c6-split-pin-probe-02aabdd7-20260826T171557Z/runs/overlay-run-5/closure.json`，仍未 cherry-pick 或部署。
 - live readiness graph（free deployed `981bc4ab`）只读返回 `770` rows，并有 `PUBLICATION_REGISTRY_INVALID` 与两个 `STATE_COLLECTION_INVALID` graph blockers；它不授权上传，现有 fastlane rows 仍按本交接中的 candidate blockers 处理。
 - OCI3 migration lane 已通过 Sol review（仅 offline/private scope），工具已在 `~/oci3-source-migration-20260826/code/` 私有暂存，未部署到 adapter。
 - OCI3 已从当前 live state 冻结 snapshot `5c7f534ea34fcfaa0daf4558e5400db52704c79d457b8b6cfd732eb3d8438c2f`，并完成 dry-run 与 create-only receipt：receipt canonical SHA `337a1720cbb5659bfdb9fdebef9d0b19c084ecf7ccfb53b7054ad4b940ae88d0`；`identity_proven=false`、`source_substitution=true`、`ordinary_rebind=false`、`publication_authority=null`。
@@ -30,7 +29,8 @@
 ### 阻塞
 
 - C3 当前 free v2 clip-context 文件 SHA `fb2d6711…3987`，但 v2 record/story contract 绑定旧 payload/prompt SHA（record artifact `01e215…8b6d`、prompt payload `b0af83…4987`）；现有 recovery receipt 明确标注 `semantic_reconstruction_not_byte_equivalent`，不能把它重签成 clip-context authority。不得发布 C3。
-- 因 C3 authority 未闭合、free headroom 仍低于目标，不得进行 free deploy、state CAS、authorized upload、public mutation 或 OCI3 production cutover；全量测试绿不等于 publication readiness。
+- C6 当前 live record raw SHA 是 `04b64d9a…76222f`，其 canonical `boundary_audit` SHA 是 `688c36ac…d4ffe`；root-accepted authority 与 C6 adapter pin 的 SHA 是 `5231b631…5aec1`，且 record/padded-local 派生区间 `753540..816400` 与 accepted `753000..816000` 相差 `+540/+400 ms`。`7372484a` 已修正 replay/stage pin 并在 provider-disabled overlay 中到达此边界，不能放宽 hash 或坐标门；需 authority owner 用同一 provenance/coordinate frame 重新封存 live record 与 accepted authority。
+- 因 C3/C6 authority 未闭合、free headroom 仍低于目标，不得进行 free deploy、state CAS、authorized upload、public mutation 或 OCI3 production cutover；全量测试绿不等于 publication readiness。
 
 ### 下一步
 
