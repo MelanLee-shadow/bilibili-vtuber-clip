@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ASSET = ROOT / "assets/lidousha/fastlane_c7b_private/auto_130040_201_255.private-authority.v1.json"
 CLOSURE = ROOT / "assets/lidousha/fastlane_c7b_private/auto_130040_201_255.freeze-closure.v1.json"
+BASELINE = ROOT / "assets/lidousha/reviewed_subtitle_baselines/auto_130040_201_255.subtitle-baseline.v1.json"
 
 
 def _sha256(path: Path) -> str:
@@ -29,6 +30,15 @@ def _canonical_self_hash(payload: dict) -> str:
     return hashlib.sha256(
         json.dumps(sealed, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+def test_c7b_baseline_declares_piece_local_time_domain() -> None:
+    baseline = json.loads(BASELINE.read_text(encoding="utf-8"))
+
+    assert baseline["schema_version"] == "subtitle-redelivery-baseline.v2"
+    assert baseline["operator_text_full_ownership"]["schema_version"] == "operator-reviewed-text-full-ownership-pin.v3"
+    assert baseline["time_domain"] == "PIECE_LOCAL"
+    assert [baseline["absolute_source_start_ms"], baseline["absolute_source_end_ms"]] == [191190, 303140]
 
 
 def test_c7b_private_authority_is_exact_and_narrow() -> None:

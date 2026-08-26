@@ -4,6 +4,7 @@
   "schema_version": "subtitle-redelivery-baseline.v2",
   "mode": "preserve_text_outside_source_truth",
   "exact_interval_replay": true,
+  "time_domain": "PIECE_LOCAL",
   "path": "auto_130040_201_255.reviewed.srt",
   "sha256": "e07e2e23d2eacebbeb95a4700c7fa4005fb4342a432c28d0adde1d4e68e98457",
   "authority": "Ivan line947 row7b",
