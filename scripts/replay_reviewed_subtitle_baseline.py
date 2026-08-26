@@ -43,6 +43,11 @@ from src.autoslice.reviewed_baseline_replay import (
     build_replay_plan, prepare_replay_after_image, rebind_replay_after_image_state, stage_replay,
     synthesize_replay_spec_and_finalize_private, regular_binding,
 )
+from src.autoslice.c6_exact_final_boundary_adapter import (
+    CANDIDATE_ID as C6_EXACT_CANDIDATE_ID,
+    RECORDING_DATE as C6_EXACT_RECORDING_DATE,
+    build_c6_exact_final_reviewer,
+)
 from src.autoslice.published_recovery_package import (
     prepare_published_recovery_package, published_recovery_preflight,
 )
@@ -870,6 +875,14 @@ def _prepare(
     # must use the dedicated exact-final builder once its fresh private spec is
     # available.  It is therefore impossible to misrepresent this as READY.
     provider_attempted = False
+    exact_final_reviewer = None
+    exact_final_production = True
+    exact_final_text_adapters = None
+    if plan.candidate_id == C6_EXACT_CANDIDATE_ID and plan.date == C6_EXACT_RECORDING_DATE:
+        # The C6 closure is constructed only after stage_replay and its exact
+        # stage manifest pin has been verified.  It is intentionally explicit:
+        # synthesize must not select a provider-backed or adapter fallback.
+        exact_final_production = False
 
     def mark_provider_attempt() -> None:
         nonlocal provider_attempted
@@ -882,6 +895,10 @@ def _prepare(
         return raw_source_fact_llm(prompt)
 
     try:
+        if plan.candidate_id == C6_EXACT_CANDIDATE_ID and plan.date == C6_EXACT_RECORDING_DATE:
+            exact_final_reviewer = build_c6_exact_final_reviewer(plan=plan, stage=stage)
+        else:
+            exact_final_text_adapters = _text_adapters()
         finalization = synthesize_replay_spec_and_finalize_private(
             plan, stage=stage, runtime_authority_root=runtime,
             # The replay controller runs under the system interpreter, but the
@@ -890,8 +907,9 @@ def _prepare(
             # normal production instead of silently using ``sys.executable``.
             speaker_python=runtime / _SPEAKER_RUNTIME_RELATIVE,
             source_fact_llm=source_fact_llm,
-            adapters=_adapters(), use_production_exact_final_reviewer=True,
-            exact_final_text_adapters=_text_adapters(),
+            adapters=_adapters(), exact_final_reviewer=exact_final_reviewer,
+            use_production_exact_final_reviewer=exact_final_production,
+            exact_final_text_adapters=exact_final_text_adapters,
             provider_invocation=mark_provider_attempt,
             record_authority_resolver=record_authority_resolver,
             **(

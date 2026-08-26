@@ -916,6 +916,11 @@ def synthesize_replay_spec_and_finalize_private(
     fields. ``given_title`` stays null; an optional recovery authority must
     already be committed and validated by the published-recovery controller.
     """
+    if plan.candidate_id == "auto_120032_753_816" and plan.date == "2026-08-14":
+        # C6's clean projection owns its exact-final closure.  Never permit a
+        # direct caller to silently fall back to the provider-backed reviewer.
+        if exact_final_reviewer is None or use_production_exact_final_reviewer:
+            raise ReviewedBaselineReplayError("C6_EXACT_FINAL_REVIEWER_REQUIRED")
     from src.autoslice.producer_package_finalization import (
         ProducerFinalizationOptions,
         finalize_producer_package,
