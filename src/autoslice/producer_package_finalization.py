@@ -67,22 +67,19 @@ from src.autoslice.final_review_contract import (
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import LlmConfig, build_llm_call
 from src.autoslice.producer_media import (
-    RECUT_PROVENANCE_SCHEMA,
     _resolved_optional_path,
     _validated_burned_ass_artifact,
     _validated_burned_artifact,
-    _write_json_atomic,
 )
 from src.autoslice.producer_delivery_prepare import (
     emit_talk_delivery_summary,
     prepare_and_emit_talk_delivery_from_finalization,
     talk_delivery_summary,
 )
-from src.autoslice.redelivery_source_binding import (
-    RedeliverySourceBindingError,
-    final_recut_absolute_source_interval,
-    resolve_v2_redelivery_source_binding,
+from src.autoslice.producer_final_recut_source_binding import (
+    resolve_final_recut_source,
 )
+from src.autoslice.producer_recut_provenance import write_final_recut_provenance
 # Exact projection replay is activated only by the resolver-selected grant.
 from src.autoslice.redelivery_boundary_projection import materialization_spec_for_selected_projection
 from src.autoslice.producer_text_finalization import (
@@ -477,47 +474,29 @@ def _materialize_final_recut(
     baseline_config = spec.get("subtitle_redelivery_baseline")
     if reviewed_baseline_replay_c12_projection is not None:
         baseline_config = require_c12_baseline_config(baseline_config)
-    try:
-        v2_source_binding = resolve_v2_redelivery_source_binding(
-            spec=spec,
-            piece_provenance_rows=piece_provenance_rows,
-            final_start=final_start,
-            final_end=final_end,
-        )
-    except RedeliverySourceBindingError as exc:
-        raise SystemExit(str(exc)) from exc
-    absolute_source_start_ms, absolute_source_end_ms = final_recut_absolute_source_interval(
-        spec,
+    (
+        v2_source_binding,
+        absolute_source_start_ms,
+        absolute_source_end_ms,
+    ) = resolve_final_recut_source(
+        spec=spec,
+        piece_provenance_rows=piece_provenance_rows,
         final_start=final_start,
         final_end=final_end,
-        v2_binding=v2_source_binding,
     )
     recut_dir = out_root / "replacement_recuts"
     recut_dir.mkdir(exist_ok=True)
     media_path = recut_dir / f"{cid}.recut.mp4"
     adapters.run_command(adapters.accurate_recut_command(source_video=padded, output_media=media_path, start_ms=final_start, duration_ms=final_end - final_start))
-    recut_provenance_path = media_path.with_suffix(".provenance.json")
-    _write_json_atomic(
-        recut_provenance_path,
-        {
-            "schema_version": RECUT_PROVENANCE_SCHEMA,
-            "source_piece": (
-                piece_provenance_rows[0]
-                if len(piece_provenance_rows) == 1
-                else piece_provenance_rows
-            ),
-            "padded": json.loads(padded_provenance_path.read_text(encoding="utf-8")),
-            "final_recut": {
-                "source_path": str(padded.resolve()),
-                "source_sha256": _sha256(padded),
-                "start_ms": final_start,
-                "end_ms": final_end,
-                "absolute_source_start_ms": absolute_source_start_ms,
-                "absolute_source_end_ms": absolute_source_end_ms,
-                "output_path": str(media_path.resolve()),
-                "output_sha256": _sha256(media_path),
-            },
-        },
+    recut_provenance_path = write_final_recut_provenance(
+        media_path=media_path,
+        padded=padded,
+        padded_provenance_path=padded_provenance_path,
+        piece_provenance_rows=piece_provenance_rows,
+        final_start=final_start,
+        final_end=final_end,
+        absolute_source_start_ms=absolute_source_start_ms,
+        absolute_source_end_ms=absolute_source_end_ms,
     )
     subtitle_path = media_path.with_suffix(".srt")
     text_manifest_path: Path | None = None

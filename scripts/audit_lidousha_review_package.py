@@ -77,6 +77,9 @@ from src.autoslice.review_package_title_audit import (  # noqa: E402
 from src.autoslice.title_policy import (  # noqa: E402
     CHANNEL_PROFILE,
 )
+from src.autoslice.review_package_policy_fingerprint import (  # noqa: E402
+    build_policy_fingerprint,
+)
 from src.autoslice.story_contract import (  # noqa: E402
     SCHEMA_VERSION as STORY_CONTRACT_SCHEMA,
     audit_story_artifact,
@@ -245,71 +248,12 @@ def _audited_inputs(root: Path) -> list[dict[str, Any]]:
 
 
 def _audit_policy_fingerprint() -> str:
-    sources = [
-        Path(__file__),
-        ROOT / "src/autoslice/subtitle_validation.py",
-        ROOT / "src/autoslice/final_review_contract.py",
-        ROOT / "src/autoslice/boundary_semantic_review.py",
-        ROOT / "src/autoslice/boundary_endpoint_binding.py",
-        ROOT / "src/autoslice/redelivery_boundary_projection.py",
-        ROOT / "src/autoslice/redelivery_subtitle_baseline.py",
-        ROOT / "src/autoslice/producer_boundary.py",
-        ROOT / "src/autoslice/producer_boundary_owner_contract.py",
-        ROOT / "src/autoslice/producer_boundary_resolution.py",
-        ROOT / "src/autoslice/producer_boundary_review_stage.py",
-        ROOT / "src/autoslice/producer_source_boundary_review.py",
-        ROOT / "src/autoslice/reviewed_exact_source_interval.py",
-        ROOT / "src/autoslice/producer_package_finalization.py",
-        ROOT / "src/autoslice/source_subtitle_truth.py",
-        ROOT / "src/autoslice/producer_text_finalization.py",
-        ROOT / "src/autoslice/expected_value_canon_supersession.py",
-        ROOT / "src/autoslice/producer_text_pipeline.py",
-        ROOT / "src/autoslice/pronoun_consistency.py",
-        ROOT / "src/autoslice/review_package_boundary_contract.py",
-        ROOT / "src/autoslice/review_package_boundary_validators.py",
-        ROOT / "src/autoslice/review_package_owner_audit.py",
-        ROOT / "src/autoslice/review_package_owner_audit_c12_supersession.py",
-        ROOT / "src/autoslice/review_package_portable_evidence.py",
-        ROOT / "src/autoslice/candidate_entity_projection.py",
-        ROOT / "src/autoslice/candidate_public_text_surface_authority.py",
-        ROOT / "src/autoslice/reviewed_subtitle_baseline_registry.py",
-        ROOT / "src/autoslice/title_policy.py",
-        ROOT / "src/autoslice/selection_scorecard.py",
-        ROOT / "src/autoslice/addressee_attribution.py",
-        ROOT / "src/autoslice/manual_title_keep_authority.py",
-        ROOT / "src/autoslice/deterministic_text_surface_resolution.py",
-        ROOT / "src/autoslice/publication_title_exception.py",
-        ROOT / "src/autoslice/review_package_title_audit.py",
-        ROOT / "src/autoslice/fastlane_c1_formal_adapter.py",
-        ROOT / "assets/lidousha/fastlane_c1_private/auto_173005_934_1166.subtitle-correction.v1.json",
-        ROOT / "assets/lidousha/fastlane_c1_private/auto_173005_934_1166.formal-adapter.v1.json",
-        ROOT / "src/autoslice/review_package_source_fact_audit.py",
-        ROOT / "src/autoslice/source_fact_review.py",
-        ROOT / "src/autoslice/cover_only_audit_scope.py",
-        ROOT / "src/autoslice/cover_route_evidence.py",
-        ROOT / "src/autoslice/cover_punch_semantics.py",
-        ROOT / "src/autoslice/cover_text_pixel_evidence.py",
-        ROOT / "src/autoslice/cover_title_rendering.py",
-        ROOT / "src/autoslice/cover_font_paths.py",
-        ROOT / "src/autoslice/cover_generation.py",
-        ROOT / "src/autoslice/cover_screenshot_poster.py",
-        CHANNEL_PROFILE.asset_file("title_policy"),
-        CHANNEL_PROFILE.asset_file("selection_score_calibration"),
-        CHANNEL_PROFILE.asset_file("subtitle_truth_ledger"),
-    ]
-    digest = hashlib.sha256()
-    digest.update(AUDIT_POLICY_EPOCH.encode("utf-8"))
-    for path in sources:
-        try:
-            label = path.relative_to(ROOT).as_posix()
-        except ValueError:
-            label = str(path.resolve())
-        digest.update(label.encode("utf-8"))
-        try:
-            digest.update(path.read_bytes())
-        except OSError as exc:
-            digest.update(f"<unreadable:{type(exc).__name__}>".encode("utf-8"))
-    return "sha256:" + digest.hexdigest()
+    return build_policy_fingerprint(
+        root=ROOT,
+        entrypoint=Path(__file__),
+        channel_profile=CHANNEL_PROFILE,
+        policy_epoch=AUDIT_POLICY_EPOCH,
+    )
 
 
 def _audit_result(root: Path, issues: list[dict[str, Any]]) -> dict[str, Any]:

@@ -450,6 +450,213 @@ def _project_protected_intervals(
     return projected
 
 
+def _build_delivery_projection_rows(
+    *,
+    candidate_id: str,
+    record_sha256: str,
+    staged_media_sha256: str,
+    old_cues: Sequence[object],
+    diff_rows: Sequence[object],
+    release_cues: Sequence[object],
+    delivery_cues: Sequence[object],
+    grid_start_ms: int,
+    grid_end_ms: int,
+    final_start_ms: int,
+    final_end_ms: int,
+    coordinate_projection: bool,
+    c5_start_clamp_proposal_path: Path | None,
+    c5_start_clamp_acceptance_path: Path | None,
+    recording_date: str | None,
+) -> tuple[list[dict[str, object]], int, int]:
+    rows: list[dict[str, object]] = []
+    release_cursor = 0
+    delivery_cursor = 0
+    for old_ordinal, (old, diff_row) in enumerate(zip(old_cues, diff_rows, strict=True), start=1):
+        if not isinstance(diff_row, Mapping) or diff_row.get("cue") != old_ordinal:
+            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_MAP_INVALID")
+        if diff_row.get("disposition") == "OPERATOR_DROP":
+            if diff_row.get("release_cue_index") is not None:
+                raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_MAP_INVALID")
+            rows.append({
+                "old_source_index": old_ordinal,
+                "release_cue_index": None,
+                "delivery_cue_index": None,
+                "disposition": "OPERATOR_DROP",
+            })
+            continue
+        if release_cursor >= len(release_cues):
+            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_MAP_INVALID")
+        release = release_cues[release_cursor]
+        release_index = release_cursor + 1
+        if (
+            diff_row.get("release_cue_index") != release_index
+            or (old.start_ms, old.end_ms) != (release.start_ms, release.end_ms)
+            or str(diff_row.get("release_truth_text") or "") != release.text
+        ):
+            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_MAP_INVALID")
+        release_cursor += 1
+        if release.end_ms <= grid_start_ms or release.start_ms >= grid_end_ms:
+            rows.append({
+                "old_source_index": old_ordinal,
+                "release_cue_index": release_index,
+                "delivery_cue_index": None,
+                "disposition": "OUTSIDE_FINAL_DELIVERY",
+            })
+            continue
+        clamp_start_bound = grid_start_ms if coordinate_projection else final_start_ms
+        clamp_end_bound = grid_end_ms if coordinate_projection else final_end_ms
+        start_clamp = release.start_ms < clamp_start_bound
+        end_clamp = release.end_ms > clamp_end_bound
+        c7b_start_geometry = None
+        c7b_geometry = None
+        if start_clamp:
+            from src.autoslice.fastlane_c7b_source_reconciliation import (
+                C7bSourceReconciliationError,
+                resolve_c7b_delivery_start_clamp,
+            )
+            try:
+                c7b_start_geometry = resolve_c7b_delivery_start_clamp(
+                    repo_root=Path(__file__).resolve().parents[2],
+                    candidate_id=candidate_id,
+                    recording_date=recording_date,
+                    record_sha256=record_sha256,
+                    staged_media_sha256=staged_media_sha256,
+                    final_start_ms=final_start_ms,
+                    final_end_ms=final_end_ms,
+                    source_ordinal=old_ordinal,
+                    text=release.text,
+                    source_start_ms=release.start_ms,
+                    source_end_ms=release.end_ms,
+                )
+            except C7bSourceReconciliationError as exc:
+                raise FullWindowReplayError(
+                    "REDELIVERY_DELIVERY_PROJECTION_STRADDLER"
+                ) from exc
+        if end_clamp:
+            from src.autoslice.fastlane_c7b_source_reconciliation import (
+                C7bSourceReconciliationError,
+                resolve_c7b_delivery_end_clamp,
+            )
+            try:
+                c7b_geometry = resolve_c7b_delivery_end_clamp(
+                    repo_root=Path(__file__).resolve().parents[2],
+                    candidate_id=candidate_id,
+                    recording_date=recording_date,
+                    record_sha256=record_sha256,
+                    staged_media_sha256=staged_media_sha256,
+                    final_start_ms=final_start_ms,
+                    final_end_ms=final_end_ms,
+                    source_ordinal=old_ordinal,
+                    text=release.text,
+                    source_start_ms=release.start_ms,
+                    source_end_ms=release.end_ms,
+                )
+            except C7bSourceReconciliationError as exc:
+                raise FullWindowReplayError(
+                    "REDELIVERY_DELIVERY_PROJECTION_STRADDLER"
+                ) from exc
+            if c7b_geometry is None:
+                raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_STRADDLER")
+            expected_start, expected_end = c7b_geometry
+        c5_authorized = None not in (
+            c5_start_clamp_proposal_path,
+            c5_start_clamp_acceptance_path,
+            recording_date,
+        )
+        if (
+            (release.start_ms < grid_start_ms or release.end_ms > grid_end_ms)
+            and c7b_start_geometry is None
+            and c7b_geometry is None
+            and not (start_clamp and c5_authorized)
+        ):
+            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_STRADDLER")
+        if start_clamp and c7b_start_geometry is None and not c5_authorized:
+            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_STRADDLER")
+        if delivery_cursor >= len(delivery_cues):
+            raise FullWindowReplayError(
+                "REDELIVERY_DELIVERY_PROJECTION_DELIVERY_GRID_DRIFT"
+            )
+        delivery = delivery_cues[delivery_cursor]
+        delivery_index = delivery_cursor + 1
+        if c7b_start_geometry is not None:
+            expected_start, expected_end = c7b_start_geometry
+        elif not end_clamp:
+            expected_start, expected_end = (
+                release.start_ms - grid_start_ms,
+                release.end_ms - grid_start_ms,
+            )
+        disposition = "RETAINED_FINAL_DELIVERY"
+        if c7b_start_geometry is not None:
+            disposition = "RETAINED_FINAL_DELIVERY_START_CLAMP"
+        if end_clamp:
+            disposition = "RETAINED_FINAL_DELIVERY_END_CLAMP"
+        if start_clamp and c7b_start_geometry is None:
+            # No generic clipping authority exists.  The only exception is the
+            # accepted C5 cue-5 geometry, loaded from the runtime-private
+            # proposal and acceptance bytes at the first projection boundary.
+            from src.autoslice.c5_start_clamp import (
+                C5StartClampError,
+                C5_ACCEPTANCE_EXPECTATIONS,
+                CUE,
+                accepted_delivery_geometry,
+                load_accepted_authority,
+                load_proposal,
+            )
+            assert c5_start_clamp_proposal_path is not None
+            assert c5_start_clamp_acceptance_path is not None
+            assert recording_date is not None
+            try:
+                proposal, proposal_sha = load_proposal(c5_start_clamp_proposal_path)
+                acceptance = load_accepted_authority(
+                    c5_start_clamp_acceptance_path,
+                    proposal_path=c5_start_clamp_proposal_path,
+                    expectations=C5_ACCEPTANCE_EXPECTATIONS,
+                )
+                expected_start, expected_end = accepted_delivery_geometry(
+                    proposal_path=c5_start_clamp_proposal_path,
+                    proposal=proposal,
+                    proposal_file_sha256=proposal_sha,
+                    acceptance=acceptance,
+                    expectations=C5_ACCEPTANCE_EXPECTATIONS,
+                    candidate_id=candidate_id,
+                    recording_date=recording_date,
+                    final_start_ms=final_start_ms,
+                    final_end_ms=final_end_ms,
+                    source_index=old_ordinal,
+                    text=release.text,
+                    speaker_label=str(CUE["speaker_label"]),
+                    old_start_ms=release.start_ms,
+                    old_end_ms=release.end_ms,
+                    media_sha256=staged_media_sha256,
+                )
+            except C5StartClampError as exc:
+                raise FullWindowReplayError(
+                    "REDELIVERY_DELIVERY_PROJECTION_STRADDLER"
+                ) from exc
+            disposition = "RETAINED_FINAL_DELIVERY_START_CLAMP"
+        if (
+            delivery.index != str(delivery_index)
+            or (delivery.start_ms, delivery.end_ms)
+            != (expected_start, expected_end)
+            or delivery.text != release.text
+        ):
+            raise FullWindowReplayError(
+                "REDELIVERY_DELIVERY_PROJECTION_DELIVERY_GRID_DRIFT"
+            )
+        rows.append({
+            "old_source_index": old_ordinal,
+            "release_cue_index": release_index,
+            "delivery_cue_index": delivery_index,
+            "disposition": disposition,
+            "release_start_ms": release.start_ms,
+            "release_end_ms": release.end_ms,
+            "delivery_start_ms": delivery.start_ms,
+            "delivery_end_ms": delivery.end_ms,
+        })
+        delivery_cursor += 1
+    return rows, release_cursor, delivery_cursor
+
+
 def _build_full_release_delivery_projection_receipt(
     *,
     candidate_id: str,
@@ -577,178 +784,24 @@ def _build_full_release_delivery_projection_receipt(
         return None
     if len(release_cues) < len(delivery_cues):
         raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_DELIVERY_GRID_DRIFT")
-    rows: list[dict[str, object]] = []
-    release_cursor = 0
-    delivery_cursor = 0
-    for old_ordinal, (old, diff_row) in enumerate(zip(old_cues, diff_rows, strict=True), start=1):
-        if not isinstance(diff_row, Mapping) or diff_row.get("cue") != old_ordinal:
-            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_MAP_INVALID")
-        if diff_row.get("disposition") == "OPERATOR_DROP":
-            if diff_row.get("release_cue_index") is not None:
-                raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_MAP_INVALID")
-            rows.append({
-                "old_source_index": old_ordinal,
-                "release_cue_index": None,
-                "delivery_cue_index": None,
-                "disposition": "OPERATOR_DROP",
-            })
-            continue
-        if release_cursor >= len(release_cues):
-            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_MAP_INVALID")
-        release = release_cues[release_cursor]
-        release_index = release_cursor + 1
-        if (
-            diff_row.get("release_cue_index") != release_index
-            or (old.start_ms, old.end_ms) != (release.start_ms, release.end_ms)
-            or str(diff_row.get("release_truth_text") or "") != release.text
-        ):
-            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_MAP_INVALID")
-        release_cursor += 1
-        if release.end_ms <= grid_start_ms or release.start_ms >= grid_end_ms:
-            rows.append({
-                "old_source_index": old_ordinal,
-                "release_cue_index": release_index,
-                "delivery_cue_index": None,
-                "disposition": "OUTSIDE_FINAL_DELIVERY",
-            })
-            continue
-        coordinate_projection = all(
-            value is not None
-            for value in (
-                baseline_source_start_ms,
-                baseline_source_end_ms,
-                baseline_crop_start_ms,
-                baseline_crop_end_ms,
-            )
-        )
-        clamp_start_bound = grid_start_ms if coordinate_projection else final_start_ms
-        clamp_end_bound = grid_end_ms if coordinate_projection else final_end_ms
-        start_clamp = release.start_ms < clamp_start_bound
-        end_clamp = release.end_ms > clamp_end_bound
-        c7b_start_geometry = None
-        c7b_geometry = None
-        if start_clamp:
-            from src.autoslice.fastlane_c7b_source_reconciliation import (
-                C7bSourceReconciliationError, resolve_c7b_delivery_start_clamp,
-            )
-            try:
-                c7b_start_geometry = resolve_c7b_delivery_start_clamp(
-                    repo_root=Path(__file__).resolve().parents[2], candidate_id=candidate_id, recording_date=recording_date, record_sha256=record_sha256, staged_media_sha256=staged_media_sha256, final_start_ms=final_start_ms, final_end_ms=final_end_ms, source_ordinal=old_ordinal, text=release.text, source_start_ms=release.start_ms, source_end_ms=release.end_ms,
-                )
-            except C7bSourceReconciliationError as exc:
-                raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_STRADDLER") from exc
-        if end_clamp:
-            from src.autoslice.fastlane_c7b_source_reconciliation import (
-                C7bSourceReconciliationError, resolve_c7b_delivery_end_clamp,
-            )
-            try:
-                c7b_geometry = resolve_c7b_delivery_end_clamp(
-                    repo_root=Path(__file__).resolve().parents[2], candidate_id=candidate_id,
-                    recording_date=recording_date, record_sha256=record_sha256,
-                    staged_media_sha256=staged_media_sha256, final_start_ms=final_start_ms,
-                    final_end_ms=final_end_ms, source_ordinal=old_ordinal,
-                    text=release.text, source_start_ms=release.start_ms,
-                    source_end_ms=release.end_ms,
-                )
-            except C7bSourceReconciliationError as exc:
-                raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_STRADDLER") from exc
-            if c7b_geometry is None:
-                raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_STRADDLER")
-            expected_start, expected_end = c7b_geometry
-            disposition = "RETAINED_FINAL_DELIVERY_END_CLAMP"
-        c5_authorized = None not in (
-            c5_start_clamp_proposal_path,
-            c5_start_clamp_acceptance_path,
-            recording_date,
-        )
-        if (
-            (release.start_ms < grid_start_ms or release.end_ms > grid_end_ms)
-            and c7b_start_geometry is None
-            and c7b_geometry is None
-            and not (start_clamp and c5_authorized)
-        ):
-            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_STRADDLER")
-        if start_clamp and c7b_start_geometry is None and not c5_authorized:
-            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_STRADDLER")
-            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_STRADDLER")
-        if delivery_cursor >= len(delivery_cues):
-            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_DELIVERY_GRID_DRIFT")
-        delivery = delivery_cues[delivery_cursor]
-        delivery_index = delivery_cursor + 1
-        if c7b_start_geometry is not None:
-            expected_start, expected_end = c7b_start_geometry
-        elif not end_clamp:
-            expected_start, expected_end = (
-                release.start_ms - grid_start_ms,
-                release.end_ms - grid_start_ms,
-            )
-        disposition = "RETAINED_FINAL_DELIVERY"
-        if c7b_start_geometry is not None:
-            disposition = "RETAINED_FINAL_DELIVERY_START_CLAMP"
-        if end_clamp:
-            disposition = "RETAINED_FINAL_DELIVERY_END_CLAMP"
-        if start_clamp and c7b_start_geometry is None:
-            # No generic clipping authority exists.  The only exception is the
-            # accepted C5 cue-5 geometry, loaded from the runtime-private
-            # proposal and acceptance bytes at the first projection boundary.
-            from src.autoslice.c5_start_clamp import (
-                C5StartClampError,
-                C5_ACCEPTANCE_EXPECTATIONS,
-                CUE,
-                accepted_delivery_geometry,
-                load_accepted_authority,
-                load_proposal,
-            )
-            assert c5_start_clamp_proposal_path is not None
-            assert c5_start_clamp_acceptance_path is not None
-            assert recording_date is not None
-            try:
-                proposal, proposal_sha = load_proposal(c5_start_clamp_proposal_path)
-                acceptance = load_accepted_authority(
-                    c5_start_clamp_acceptance_path,
-                    proposal_path=c5_start_clamp_proposal_path,
-                    expectations=C5_ACCEPTANCE_EXPECTATIONS,
-                )
-                expected_start, expected_end = accepted_delivery_geometry(
-                    proposal_path=c5_start_clamp_proposal_path,
-                    proposal=proposal,
-                    proposal_file_sha256=proposal_sha,
-                    acceptance=acceptance,
-                    expectations=C5_ACCEPTANCE_EXPECTATIONS,
-                    candidate_id=candidate_id,
-                    recording_date=recording_date,
-                    final_start_ms=final_start_ms,
-                    final_end_ms=final_end_ms,
-                    source_index=old_ordinal,
-                    text=release.text,
-                    speaker_label=str(CUE["speaker_label"]),
-                    old_start_ms=release.start_ms,
-                    old_end_ms=release.end_ms,
-                    media_sha256=staged_media_sha256,
-                )
-            except C5StartClampError as exc:
-                raise FullWindowReplayError(
-                    "REDELIVERY_DELIVERY_PROJECTION_STRADDLER"
-                ) from exc
-            disposition = "RETAINED_FINAL_DELIVERY_START_CLAMP"
-        if (
-            delivery.index != str(delivery_index)
-            or (delivery.start_ms, delivery.end_ms)
-            != (expected_start, expected_end)
-            or delivery.text != release.text
-        ):
-            raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_DELIVERY_GRID_DRIFT")
-        rows.append({
-            "old_source_index": old_ordinal,
-            "release_cue_index": release_index,
-            "delivery_cue_index": delivery_index,
-            "disposition": disposition,
-            "release_start_ms": release.start_ms,
-            "release_end_ms": release.end_ms,
-            "delivery_start_ms": delivery.start_ms,
-            "delivery_end_ms": delivery.end_ms,
-        })
-        delivery_cursor += 1
+    coordinate_projection = coordinate_values[0] is not None
+    rows, release_cursor, delivery_cursor = _build_delivery_projection_rows(
+        candidate_id=candidate_id,
+        record_sha256=record_sha256,
+        staged_media_sha256=staged_media_sha256,
+        old_cues=old_cues,
+        diff_rows=diff_rows,
+        release_cues=release_cues,
+        delivery_cues=delivery_cues,
+        grid_start_ms=grid_start_ms,
+        grid_end_ms=grid_end_ms,
+        final_start_ms=final_start_ms,
+        final_end_ms=final_end_ms,
+        coordinate_projection=coordinate_projection,
+        c5_start_clamp_proposal_path=c5_start_clamp_proposal_path,
+        c5_start_clamp_acceptance_path=c5_start_clamp_acceptance_path,
+        recording_date=recording_date,
+    )
     if release_cursor != len(release_cues) or delivery_cursor != len(delivery_cues) or not delivery_cues:
         raise FullWindowReplayError("REDELIVERY_DELIVERY_PROJECTION_MAP_INVALID")
     receipt: dict[str, object] = {
