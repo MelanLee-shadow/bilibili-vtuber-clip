@@ -702,6 +702,7 @@ def _materialize_final_recut(
                 final_end_ms=final_end,
                 subtitle_path=subtitle_path,
                 write_source_range_srt=adapters.write_source_range_srt,
+                recording_date=str(spec.get("date") or ""),
             )
         except FullWindowReplayError as exc:
             raise SystemExit(str(exc)) from exc

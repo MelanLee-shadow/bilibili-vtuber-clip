@@ -124,6 +124,37 @@ def test_c7b_full_window_replay_forwards_candidate_identity(
     assert seen["recording_date"] == DATE
 
 
+def test_c7b_final_recut_replay_forwards_candidate_identity_and_date(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(full_window, "_require_v3_time_domain_binding", lambda *_args: None)
+    monkeypatch.setattr(full_window, "exact_full_window_replay_enabled", lambda *_args: True)
+
+    def fake_replay(**kwargs: object) -> tuple[str, dict[str, object]]:
+        seen.update(kwargs)
+        return "", {"status": "APPLIED"}
+
+    monkeypatch.setattr(full_window, "replay_full_window_then_crop", fake_replay)
+    full_window.replay_baseline_for_final_recut(
+        truth_audit={},
+        recut_dir=tmp_path,
+        cid=CID,
+        sanitized=[],
+        binding=object(),
+        config={},
+        spec_parent=ROOT,
+        final_start_ms=9750,
+        final_end_ms=63920,
+        subtitle_path=tmp_path / "subtitle.srt",
+        write_source_range_srt=_write_source_range_srt,
+        recording_date=DATE,
+    )
+    assert seen["candidate_id"] == CID
+    assert seen["recording_date"] == DATE
+
+
 def test_non_c7b_mapping_operator_authority_is_rejected() -> None:
     import json
     manifest = ROOT / "assets/lidousha/reviewed_subtitle_baselines" / f"{CID}.subtitle-baseline.v1.json"

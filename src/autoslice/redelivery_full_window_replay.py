@@ -571,6 +571,8 @@ def replay_full_window_then_crop(
     final_end_ms: int,
     subtitle_path: Path,
     write_source_range_srt: Callable[[Sequence[SourceCue], int, int, Path], None],
+    candidate_id: str | None = None,
+    recording_date: str | None = None,
 ) -> tuple[str, dict]:
     """Replay the sealed full interval and atomically clean its private temp."""
 
@@ -603,6 +605,8 @@ def replay_full_window_then_crop(
             current_source_end_ms=binding.content_absolute_end_ms,
             current_source_recording_basename=binding.source_recording_basename,
             current_source_sha256=binding.source_sha256,
+            candidate_id=candidate_id,
+            recording_date=recording_date,
         )
         if audit.get("status") != "FAILED":
             full_cues = [
@@ -651,6 +655,7 @@ def replay_baseline_for_final_recut(
     final_end_ms: int,
     subtitle_path: Path,
     write_source_range_srt: Callable[[Sequence[SourceCue], int, int, Path], None],
+    recording_date: str | None = None,
 ) -> tuple[str, dict]:
     """Apply either final-local or exact full-window baseline authority."""
 
@@ -682,6 +687,8 @@ def replay_baseline_for_final_recut(
             final_end_ms=final_end_ms,
             subtitle_path=subtitle_path,
             write_source_range_srt=write_source_range_srt,
+            candidate_id=cid,
+            recording_date=recording_date,
         )
     current_start = binding.absolute_source_start_ms if binding else None
     current_end = binding.absolute_source_end_ms if binding else None
@@ -694,6 +701,8 @@ def replay_baseline_for_final_recut(
         current_source_end_ms=current_end,
         current_source_recording_basename=(binding.source_recording_basename if binding else None),
         current_source_sha256=(binding.source_sha256 if binding else None),
+        candidate_id=cid,
+        recording_date=recording_date,
     )
 
 
