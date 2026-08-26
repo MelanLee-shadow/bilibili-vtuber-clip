@@ -15,8 +15,6 @@ import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
-
 from src.autoslice.candidate_public_text_surface_authority import (
     CandidatePublicTextSurfaceAuthorityError,
 )
@@ -294,7 +292,7 @@ def _sealed_baseline(plan: object, *, root: Path) -> tuple[dict[str, object], Pa
     if not isinstance(manifest_path, Path) or not isinstance(baseline_path, Path) or not isinstance(config, Mapping):
         raise C6ReplayPublicTextProjectionError("C6_BASELINE_AUTHORITY_INVALID")
     try:
-        manifest_raw = _read_sealed(
+        _read_sealed(
             manifest_path, root=root,
             expected_sha256=_sha256_bytes(manifest_path.read_bytes()), label="BASELINE_MANIFEST",
         )

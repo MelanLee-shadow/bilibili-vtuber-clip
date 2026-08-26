@@ -13,7 +13,7 @@ import os
 import stat
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Mapping
 
 
 CANDIDATE_ID = "auto_130040_201_255"

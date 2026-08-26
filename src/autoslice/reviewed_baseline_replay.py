@@ -20,12 +20,11 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 from src.autoslice.branding_intro import pin_existing_delivery_intro, require_branding_intro
 from src.autoslice.c5_start_clamp import finalizer_authority_kwargs
+from src.autoslice.fastlane_c9_source_stage import stage_c9_source_action_private_replay  # noqa: F401
 from src.autoslice.fastlane_c7b_private_adapter import apply_replay_carry
 from src.autoslice.fastlane_c7b_source_reconciliation import (
     C7bSourceReconciliationError, resolve_c7b_source_reconciliation,
 )
-from src.autoslice.fastlane_c9_source_stage import stage_c9_source_action_private_replay
-validate_c9_root_acceptance_envelope = None
 from src.autoslice.recut_materialization import (
     _accurate_reencode_recut_command,
     _fresh_srt_to_source_cues,
@@ -54,6 +53,7 @@ from src.autoslice.reviewed_baseline_replay_stage_projection import (
     prepare_stage_delivery_projection,
     stage_delivery_projection_receipt,
 )
+validate_c9_root_acceptance_envelope = None
 REPLAY_STAGE_SCHEMA = "reviewed-baseline-replay-stage.v1"
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 _CID = re.compile(r"[A-Za-z0-9_-]{1,96}\Z")
@@ -556,7 +556,6 @@ def stage_replay(
     document["stage_sha256"] = _sha(_canonical(document))
     _write_private(stage / "stage.json", _canonical(document))
     return {"stage": str(stage), "stage_sha256": document["stage_sha256"], "predicate_matrix": document["predicate_matrix"]}
-
 
 def _copy_private_artifact(source: Path, target: Path) -> RegularBinding:
     source_binding = regular_binding(source, label="PRIVATE_SOURCE")

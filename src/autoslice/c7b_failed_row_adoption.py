@@ -10,7 +10,7 @@ import hashlib
 import json
 import os
 import stat
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from src.autoslice.repository_asset_authority import (
@@ -255,7 +255,8 @@ def _sealed_c7b_chain(*, repo_root: Path, config: Mapping[str, object], baseline
         or private.get("title") != "李姐也是脑控大师，但即使被脑控仍然信不了李1是怎么回事呢"
     ):
         raise C7bFailedRowAdoptionError("C7B_ADOPTION_PRIVATE_AUTHORITY_INVALID")
-    unsigned = dict(closure); declared = unsigned.pop("canonical_self_sha256", None)
+    unsigned = dict(closure)
+    declared = unsigned.pop("canonical_self_sha256", None)
     if closure.get("schema_version") != "fastlane-c7b-freeze-closure.v1" or closure.get("candidate_id") != CANDIDATE_ID or declared != hashlib.sha256(canonical_bytes(unsigned)).hexdigest():
         raise C7bFailedRowAdoptionError("C7B_ADOPTION_FREEZE_CLOSURE_INVALID")
     if ledger.get("schema_version") != "operator-reviewed-subtitle-decisions.v3" or ledger.get("candidate_id") != CANDIDATE_ID or ledger.get("report_scope") != "EXHAUSTIVE" or ledger.get("operator_authority") != _C7B_OPERATOR_AUTHORITY or not isinstance(ledger.get("cue_decisions"), list) or len(ledger["cue_decisions"]) != 36:
@@ -277,12 +278,12 @@ def _sealed_c7b_chain(*, repo_root: Path, config: Mapping[str, object], baseline
 def resolve_c7b_operator_authority(*, config: Mapping[str, object], baseline: Sequence[object], spec_parent: Path, candidate_id: str | None, recording_date: str | None) -> dict[str, object]:
     """Resolve mapping authority only through the complete exact C7b chain."""
     try:
-        root = spec_parent.resolve(strict=True).parents[2]
+        resolved_spec_parent = spec_parent.resolve(strict=True)
     except OSError as exc:
         raise C7bFailedRowAdoptionError("C7B_ADOPTION_REPO_UNAVAILABLE") from exc
-    if spec_parent.name != "reviewed_subtitle_baselines":
+    if resolved_spec_parent.name != "reviewed_subtitle_baselines":
         raise C7bFailedRowAdoptionError("C7B_ADOPTION_SCOPE_INVALID")
-    assets_dir = spec_parent.resolve(strict=True).parents[1]
+    assets_dir = resolved_spec_parent.parents[1]
     if assets_dir.name != "assets" or assets_dir.is_symlink():
         raise C7bFailedRowAdoptionError("C7B_ADOPTION_SCOPE_INVALID")
     # ``assets`` must be the repository's direct child; no alternate checkout

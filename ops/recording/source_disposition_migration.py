@@ -164,8 +164,9 @@ def _attest_regular_file(path: Path, field: str) -> tuple[dict[str, int], str]:
     parent_descriptor, descriptor, before = _open_regular_nofollow(path, field)
     digest = hashlib.sha256()
     try:
-        while block := os.read(descriptor, 1024 * 1024):
-            digest.update(block)
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            while block := handle.read(8 * 1024 * 1024):
+                digest.update(block)
         after = os.fstat(descriptor)
     except OSError as exc:
         raise MigrationError(f"cannot attest {field}: {path}") from exc
