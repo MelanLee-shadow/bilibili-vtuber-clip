@@ -1,0 +1,33 @@
+{
+  "schema_version": "fastlane-c3-canonical-reclosure-probe.v1",
+  "observed_at": "2026-08-26T18:43Z",
+  "candidate_id": "auto_220021_561_670",
+  "recording_date": "2026-08-13",
+  "code_worktree": "/private/tmp/vtuber-slice-c3-v3-pass0-20260826",
+  "code_head": "c4981739c7840ef24529a4502827500519f3e2d6",
+  "focused_test_command": "PYTHONDONTWRITEBYTECODE=1 /Users/ivan/Project/vtuber-slice/.venv/bin/pytest -q tests/test_c3_boundary_reclosure_authority.py tests/test_fastlane_c3_deployable_baseline_integration.py tests/test_fastlane_c3_private_stage.py tests/test_fastlane_c3_v3_direct.py",
+  "focused_test_result": "27 passed in 2.81s",
+  "input_v3_root": "/private/tmp/c3-v3-reclosure-from-free-20260826",
+  "input_v3_manifest_raw_sha256": "sha256:ecc19afdfa30bc3c978d1c29ef5a407f387251c04912b02ebcdbf37bc0de9f75",
+  "input_v3_manifest_self_seal": "sha256:0a5465acbb7d6457894638f9d62cbda59320474209ef8374c9b91213f9c15fa2",
+  "input_v3_root_tree_sha256": "sha256:7afbc9e4489f523890538402d497d2f9075a77387bbcf2c5ee3654547b7577f2",
+  "probe": {
+    "operation": "reclose_c3_canonical_package",
+    "repo_root": "/private/tmp/vtuber-slice-c3-v3-pass0-20260826",
+    "destination": "/private/tmp/c3-canonical-reclosure-latest-20260826",
+    "provider_called": false,
+    "result": "BLOCKED",
+    "error": "C3_CLIP_CONTEXT_AUTHORITY_MISSING",
+    "destination_exists_after_failure": false,
+    "transaction_leftovers_after_failure": []
+  },
+  "interpretation": "The approved v3 bytes and current C3 code reach canonical reclosure, but the clip-context prompt in the sealed record does not equal the prompt derived from the sealed clip-context document. A new source-bound clip-context/story authority is required; no semantic reconstruction or hash relabeling is allowed.",
+  "side_effects": {
+    "authoritative_state_changed": false,
+    "registry_changed": false,
+    "ledger_changed": false,
+    "deployment_changed": false,
+    "upload_performed": false,
+    "public_mutation_performed": false
+  }
+}
