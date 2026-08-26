@@ -79,11 +79,21 @@ def prepare_stage_delivery_projection(
     c5_start_clamp_acceptance_path: Path | None = None,
     recording_date: str | None = None,
     c3_geometry: object | None = None,
+    private_stage_authority_gate: bool = False,
 ) -> tuple[bytes, Mapping[str, object], dict[str, object] | None]:
     """Replay a baseline once in its declared domain and seal any real crop."""
 
     baseline = getattr(plan, "baseline")
     config = getattr(baseline, "config")
+    ownership = config.get("operator_text_full_ownership")
+    pinned_operator = ownership.get("operator_authority") if isinstance(ownership, Mapping) else None
+    if (
+        private_stage_authority_gate
+        and isinstance(pinned_operator, Mapping)
+        and (getattr(plan, "candidate_id", None), getattr(plan, "date", None))
+        != ("auto_130040_201_255", "2026-08-14")
+    ):
+        raise error("REPLAY_BASELINE_APPLICATION_FAILED")
     record_path = getattr(plan, "record_path")
     record_binding = regular_binding(record_path, label="RECORD")
     record = load_json(record_binding, label="RECORD")

@@ -486,23 +486,25 @@ def stage_replay(
     stage = _mkdir_private(stage_parent / f"{plan.date}-{plan.candidate_id}-{seed[:16]}")
     media = stage / "recut.mp4"
     command = list(run_command or ())
-    if plan.technical_media_path is not None:
+    technical_media_path = getattr(plan, "technical_media_path", None)
+    if technical_media_path is not None:
         if command:
             raise ReviewedBaselineReplayError("C7B_SOURCE_EXACT_BYTE_CARRY_COMMAND_FORBIDDEN")
-        _copy_private_artifact(plan.technical_media_path, media)
+        _copy_private_artifact(technical_media_path, media)
     elif not command:
         # Reuse the production accurate-recut command (including its coarse
         # seek and decode-before-trim path); a superficially equivalent local
         # ffmpeg spelling is not a safe source-bound replay authority.
+        materialization_start_ms, materialization_end_ms = getattr(plan, "materialization_start_ms", None), getattr(plan, "materialization_end_ms", None)
         command = _accurate_reencode_recut_command(
             source_video=plan.padded_path,
             output_media=media,
-            start_ms=plan.materialization_start_ms if plan.materialization_start_ms is not None else plan.local_start_ms,
-            duration_ms=(plan.materialization_end_ms - plan.materialization_start_ms)
-            if plan.materialization_start_ms is not None and plan.materialization_end_ms is not None
+            start_ms=materialization_start_ms if materialization_start_ms is not None else plan.local_start_ms,
+            duration_ms=(materialization_end_ms - materialization_start_ms)
+            if materialization_start_ms is not None and materialization_end_ms is not None
             else plan.local_end_ms - plan.local_start_ms,
         )
-    if plan.technical_media_path is None:
+    if technical_media_path is None:
         if not command or command[-1] != str(media):
             raise ReviewedBaselineReplayError("REPLAY_COMMAND_TARGET_INVALID")
         completed = subprocess.run(command, check=False, capture_output=True)
@@ -517,19 +519,15 @@ def stage_replay(
         raise ReviewedBaselineReplayError("REPLAY_OLD_RECORD_VIDEO_SHA256_MISMATCH")
     c5_fields: dict[str, object] = {}
     if plan.candidate_id == "auto_113028_1271_1328" and plan.date == "2026-08-14" and runtime_authority_root is not None:
-        from src.autoslice.c5_start_clamp import runtime_authority_paths
-        proposal_path, acceptance_path = runtime_authority_paths(runtime_authority_root)
-        c5_fields = {
-            "c5_start_clamp_proposal_path": proposal_path,
-            "c5_start_clamp_acceptance_path": acceptance_path,
-            "recording_date": plan.date,
-        }
+        from src.autoslice.c5_start_clamp import finalizer_authority_kwargs
+        c5_fields = finalizer_authority_kwargs(candidate_id=plan.candidate_id, recording_date=plan.date, runtime_root=runtime_authority_root)
     elif plan.candidate_id == "auto_130040_201_255" and plan.date == "2026-08-14":
         c5_fields = {"recording_date": plan.date}
     cropped_bytes, audit, projection_descriptor = prepare_stage_delivery_projection(
         plan, stage, rebuilt, regular_binding=regular_binding, load_json=_load_json,
         read_small_bytes=_read_small_bytes, fresh_srt_to_source_cues=_fresh_srt_to_source_cues,
         write_source_range_srt=_write_source_range_srt, error=ReviewedBaselineReplayError,
+        private_stage_authority_gate=True,
         **c5_fields,
     )
     _write_private(stage / "reviewed.srt", cropped_bytes)

@@ -167,8 +167,6 @@ def _sealed_operator_drop_release(
         # admissible inference is the exact C7b candidate's fixed date.
         recording_date = "2026-08-14"
     pinned_operator = pin.get("operator_authority")
-    if isinstance(pinned_operator, Mapping) and (candidate_id, recording_date) != ("auto_130040_201_255", "2026-08-14"):
-        raise ValueError("REDELIVERY_OPERATOR_DROP_RELEASE_MAPPING_INVALID")
     lanes = config.get("operator_truth_lanes")
     if not isinstance(lanes, Mapping):
         raise ValueError("REDELIVERY_OPERATOR_DROP_LANES_INVALID")
@@ -193,29 +191,46 @@ def _sealed_operator_drop_release(
         source = parse_srt_cues(pipeline_raw.decode("utf-8"))
     except (KeyError, OSError, UnicodeDecodeError, ValueError, TypeError) as exc:
         raise ValueError("REDELIVERY_OPERATOR_DROP_LANES_INVALID") from exc
+    if candidate_id is not None and (
+        ledger.get("candidate_id") != candidate_id
+        or (
+            isinstance(config.get("candidate_id"), str)
+            and config.get("candidate_id") != candidate_id
+        )
+    ):
+        raise ValueError("REDELIVERY_OPERATOR_DROP_RELEASE_MAPPING_INVALID")
     if isinstance(pinned_operator, Mapping):
-        # Mapping-valued authority is intentionally not a generic widening of
-        # the operator-v3 lane.  Only the exact C7b candidate/date and its
-        # independently sealed chain may resolve it.
-        try:
-            from src.autoslice.c7b_failed_row_adoption import (
-                resolve_c7b_operator_authority,
-            )
-            c7b_operator = resolve_c7b_operator_authority(
-                config=config,
-                baseline=baseline,
-                spec_parent=spec_parent,
-                candidate_id=candidate_id,
-                recording_date=recording_date,
-            )
-        except Exception as exc:
-            raise ValueError("REDELIVERY_OPERATOR_DROP_RELEASE_MAPPING_INVALID") from exc
-        if pinned_operator != c7b_operator:
+        if (candidate_id, recording_date) == ("auto_130040_201_255", "2026-08-14"):
+            # C7b retains its independent failed-row authority resolver; an
+            # equal-looking ledger object must not bypass that lane.
+            try:
+                from src.autoslice.c7b_failed_row_adoption import (
+                    resolve_c7b_operator_authority,
+                )
+                c7b_operator = resolve_c7b_operator_authority(
+                    config=config,
+                    baseline=baseline,
+                    spec_parent=spec_parent,
+                    candidate_id=candidate_id,
+                    recording_date=recording_date,
+                )
+            except Exception as exc:
+                raise ValueError("REDELIVERY_OPERATOR_DROP_RELEASE_MAPPING_INVALID") from exc
+            if pinned_operator != c7b_operator:
+                raise ValueError("REDELIVERY_OPERATOR_DROP_RELEASE_MAPPING_INVALID")
+        elif pinned_operator != ledger.get("operator_authority"):
+            # Ordinary candidates may use a structured operator authority, but
+            # only when the pin and the independently SHA-bound ledger agree
+            # as complete structured authority objects.
             raise ValueError("REDELIVERY_OPERATOR_DROP_RELEASE_MAPPING_INVALID")
     elif pinned_operator is not None:
         raise ValueError("REDELIVERY_OPERATOR_DROP_RELEASE_MAPPING_INVALID")
     rows = ledger.get("cue_decisions") if isinstance(ledger, Mapping) else None
-    if not isinstance(rows, list) or ledger.get("schema_version") != _OPERATOR_DROP_LEDGER_SCHEMA or len(rows) != len(source):
+    if (
+        not isinstance(rows, list)
+        or ledger.get("schema_version") != _OPERATOR_DROP_LEDGER_SCHEMA
+        or len(rows) != len(source)
+    ):
         raise ValueError("REDELIVERY_OPERATOR_DROP_LEDGER_INVALID")
     release_index = 0
     for ordinal, (source_cue, row) in enumerate(zip(source, rows, strict=True), start=1):
