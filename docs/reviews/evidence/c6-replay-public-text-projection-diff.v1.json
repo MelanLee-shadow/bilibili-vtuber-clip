@@ -1,0 +1,58 @@
+{
+  "schema_version": "c6-replay-public-text-projection-diff.v1",
+  "candidate_id": "auto_120032_753_816",
+  "recording_date": "2026-08-14",
+  "base_commit": "981bc4abad395c2e00db7212ff8541f7ddc32ba0",
+  "persisted_story_contract_sha256": "sha256:94b52484061524ce7d3865d9a8939b84773fcb87015b14287aa4e9f6794dcfd6",
+  "rebuilt_story_contract_sha256": "sha256:e002cc5732ffb261274d255754c3ed6e6e17c95982ff4d9d86cd40c54a5c3a22",
+  "persisted_transcript_sha256": "sha256:0933dd7c516c5dbc2a7d0dbe3c3aeefea059055c120d697dc8697914a936806e",
+  "rebuilt_transcript_sha256": "sha256:c00924ce0e63e9ee25c87d77256eaf7c24ad29588c0c22188d958eba4827a0c2",
+  "root_public_text_authority_sha256": "sha256:7395daf13d25062e9de5ed7de3b292ecdb085c7c729876735bb4aa5399e50d45",
+  "baseline_sha256": "sha256:3cfcf2954c1d32a078e99aaff5585213b5edbbedd6db8f87d62097d06775ea77",
+  "decision_ledger_sha256": "sha256:ecef045ba999ca94f3afa58a57562ce728fd004e9dc0d03cec949e0f27f737f3",
+  "truth_diff_sha256": "sha256:ee662f130cb91537db8dd471cddc777318e30179ed7b2c6e8fe7f203a3f23522",
+  "allowed_canonical_diff_paths": [
+    "/cover_output_audits",
+    "/input_audits/0/text_sha256",
+    "/input_audits/1/text_sha256",
+    "/selection_hook",
+    "/selection_hook_sha256",
+    "/source_fact_review",
+    "/transcript_sha256"
+  ],
+  "diff": {
+    "/selection_hook": {
+      "old": "她提醒开车的观众别发弹幕后，把弹幕里的“坏结果”听成“大结果”，一路联想到袁世凯窃取大结果和马斯克向上社交，最后承认自己完全没听懂视频黑话。",
+      "new": "弹幕原文是“点歌 坏结果”；李豆沙明确说自己没听过“坏结果”，只听过“大结果”，随后补充“哦，是昨天的视频。へぇ、なるほどね。”"
+    },
+    "/selection_hook_sha256": {
+      "old": "sha256:4abced4f63049a3dc91ffc5d703c1ab99c17894d26cd8bc1abddca60d28636fd",
+      "new": "sha256:2565d16fa8b4063fb1b92e9f143a4a3221c1b8f64cb69a72592186c48939ff24"
+    },
+    "/transcript_sha256": {
+      "old": "sha256:0933dd7c516c5dbc2a7d0dbe3c3aeefea059055c120d697dc8697914a936806e",
+      "new": "sha256:c00924ce0e63e9ee25c87d77256eaf7c24ad29588c0c22188d958eba4827a0c2"
+    },
+    "/input_audits/0/text_sha256": {
+      "old": "sha256:4abced4f63049a3dc91ffc5d703c1ab99c17894d26cd8bc1abddca60d28636fd",
+      "new": "sha256:2565d16fa8b4063fb1b92e9f143a4a3221c1b8f64cb69a72592186c48939ff24"
+    },
+    "/input_audits/1/text_sha256": {
+      "old": "sha256:0933dd7c516c5dbc2a7d0dbe3c3aeefea059055c120d697dc8697914a936806e",
+      "new": "sha256:c00924ce0e63e9ee25c87d77256eaf7c24ad29588c0c22188d958eba4827a0c2"
+    },
+    "/source_fact_review": {
+      "old": {"present": true, "canonical_sha256": "sha256:a69a29aa1f1f7b387b4598f5ae607d36905e954e69262c9df3f64f63c3b6717a"},
+      "new": null
+    },
+    "/cover_output_audits": {
+      "old": {"present": true, "canonical_sha256": "sha256:82540e525068857ce5cc261952091da42a92dc7140c494c865d0ac2f295a3746"},
+      "new": null
+    }
+  },
+  "cue17_transition": {
+    "cue": 17,
+    "old": "哦，是昨天的视频，搞忘了",
+    "new": "哦，是昨天的视频。へぇ、なるほどね。"
+  }
+}

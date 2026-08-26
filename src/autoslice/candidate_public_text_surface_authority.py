@@ -849,12 +849,26 @@ def validated_candidate_public_text_result_hook(
         raise CandidatePublicTextSurfaceAuthorityError(
             "PUBLIC_TEXT_RESULT_BINDING_MISMATCH"
         )
-    expected = consume_candidate_public_text_surface_authority(
-        authority,
-        candidate_id=candidate_id,
-        selection_hook=authority.resolved_selection_hook,
-        story_contract=story_contract,
-    )
+    c6_receipt = publish_staging.get("public_text_surface_authority_consumption")
+    if authority.is_root_reviewed_resolution and isinstance(c6_receipt, Mapping) and c6_receipt.get("schema_version") == "c6-replay-public-text-projection-consumption.v1":
+        try:
+            from src.autoslice.c6_replay_public_text_projection import (
+                validate_c6_replay_public_text_consumption_for_fresh_story,
+            )
+            expected = validate_c6_replay_public_text_consumption_for_fresh_story(
+                c6_receipt, fresh_story=story_contract, authority=authority
+            )
+        except Exception as exc:
+            raise CandidatePublicTextSurfaceAuthorityError(
+                "C6_DERIVED_PUBLIC_TEXT_CONSUMPTION_INVALID"
+            ) from exc
+    else:
+        expected = consume_candidate_public_text_surface_authority(
+            authority,
+            candidate_id=candidate_id,
+            selection_hook=authority.resolved_selection_hook,
+            story_contract=story_contract,
+        )
     expected_source = authority.title_source
     expected_status = "RESOLVED_PUBLIC_TEXT_SURFACE_AUTHORITY"
     if not (
@@ -956,12 +970,26 @@ def resolve_candidate_public_text_staging(
     story_contract: object,
     story_contract_rebuilder: Callable[[str], dict[str, object]] | None,
     root: Path = ROOT,
+    public_text_staging_resolver: Callable[..., CandidatePublicTextStagingResolution | None] | None = None,
 ) -> CandidatePublicTextStagingResolution | None:
-    """Apply the optional authority before title/source-fact/cover generation."""
+    """Apply the optional authority before title/source-fact/cover generation.
+
+    ``public_text_staging_resolver`` is an explicit lane hook.  The default
+    remains the strict direct resolver; replay lanes must opt in with a
+    candidate/date-bound proof rather than widening this generic function.
+    """
 
     authority = load_candidate_public_text_surface_authority(candidate_id, root=root)
     if authority is None:
         return None
+    if public_text_staging_resolver is not None:
+        return public_text_staging_resolver(
+            authority=authority,
+            candidate_id=candidate_id,
+            selection_hook=selection_hook,
+            story_contract=story_contract,
+            story_contract_rebuilder=story_contract_rebuilder,
+        )
     if not isinstance(story_contract, Mapping):
         raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_STORY_CONTRACT_REQUIRED")
     consume_candidate_public_text_surface_authority(
@@ -1033,6 +1061,7 @@ def resolve_candidate_public_text_title_state(
     title_authority_status: str,
     title_llm_call: object,
     manual_title: str | None,
+    public_text_staging_resolver: Callable[..., CandidatePublicTextStagingResolution | None] | None = None,
 ) -> CandidatePublicTextTitleState:
     """Resolve the narrow exact substitution before any model-generated title."""
 
@@ -1042,6 +1071,7 @@ def resolve_candidate_public_text_title_state(
             selection_hook=selection_hook,
             story_contract=story_contract,
             story_contract_rebuilder=story_contract_rebuilder,
+            public_text_staging_resolver=public_text_staging_resolver,
         )
     except CandidatePublicTextSurfaceAuthorityError as exc:
         return CandidatePublicTextTitleState(

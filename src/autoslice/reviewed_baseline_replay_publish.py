@@ -29,6 +29,7 @@ REPLAY_FROZEN_TITLE_AUTHORITY_ERROR = (
 REPLAY_FROZEN_SOURCE_FACT_REVIEW_MISSING = (
     f"{REPLAY_FROZEN_SOURCE_FACT_REVIEW}_MISSING"
 )
+REPLAY_FROZEN_PUBLIC_TEXT_PROJECTION_ERROR = "REPLAY_FROZEN_PUBLIC_TEXT_PROJECTION_ERROR"
 
 _SOURCE_FACT_REASON_CODES = {
     "CPA_TEXT_REVIEW_INVALID",
@@ -79,6 +80,20 @@ def replay_publish_adapter(
         load_candidate_public_text_surface_authority,
     )
     from src.autoslice import reviewed_baseline_replay as replay
+
+    c6_public_text_resolver = None
+    if (
+        getattr(plan, "candidate_id", None) == "auto_120032_753_816"
+        and getattr(plan, "date", None) == "2026-08-14"
+    ):
+        from src.autoslice.c6_replay_public_text_projection import (
+            build_c6_replay_public_text_resolver,
+        )
+        from src.autoslice.candidate_public_text_surface_authority import ROOT
+
+        c6_public_text_resolver = build_c6_replay_public_text_resolver(
+            plan=plan, root=ROOT
+        )
 
     def stage(record: Mapping[str, object], **kwargs: object) -> dict[str, object]:
         old = replay._load_json(
@@ -142,6 +157,13 @@ def replay_publish_adapter(
             }
 
         stage_record = dict(record)
+        if c6_public_text_resolver is not None:
+            if not isinstance(old_story, Mapping):
+                raise replay.ReviewedBaselineReplayError("REPLAY_STORY_CONTRACT_MISSING")
+            # The adapter must present the persisted predecessor to the C6
+            # proof.  The resolver then rebuilds the fresh StoryContract from
+            # the sealed release baseline before source-fact staging.
+            stage_record["story_contract"] = copy.deepcopy(dict(old_story))
         if carry_old_review:
             fresh_story = stage_record.get("story_contract")
             if not isinstance(fresh_story, Mapping):
@@ -162,6 +184,8 @@ def replay_publish_adapter(
                 "recovery_publication_authority"
             ),
             stage_cover=(None if root_reviewed else carry), source_fact_llm_call=source_fact_llm,
+            story_contract_rebuilder=kwargs.get("story_contract_rebuilder"),
+            public_text_staging_resolver=c6_public_text_resolver,
             private_artifact_root=None,
         )
         if not isinstance(staged, Mapping):
@@ -187,11 +211,15 @@ def replay_publish_adapter(
             and isinstance(staged_publish, dict)
         ):
             staged_publish["source_fact_review"] = copy.deepcopy(dict(old_review))
-        # Source-fact is the highest-precedence diagnosis.  A failed fresh
-        # review often also leaves a title-authority error; reporting the
-        # latter would misroute the candidate into the title gate and hide the
-        # actual missing truth review.
+        # A narrow C6 projection failure is a pre-provider composition error:
+        # expose it before the generic missing-review diagnosis.  Actual fresh
+        # provider failures retain the historical source-fact precedence.
         if not source_fact_verified:
+            title_error = str(staged_publish.get("title_authority_error") or "")
+            if title_error.startswith("candidate_public_text_surface_failed:C6_"):
+                raise replay.ReviewedBaselineReplayError(
+                    f"{REPLAY_FROZEN_PUBLIC_TEXT_PROJECTION_ERROR}:{title_error.split(':', 1)[-1]}"
+                )
             raise replay.ReviewedBaselineReplayError(_source_fact_failure_reason(review))
         if staged_publish.get("title") != expected_title:
             raise replay.ReviewedBaselineReplayError(REPLAY_FROZEN_STAGED_TITLE_MISMATCH)
