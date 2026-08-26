@@ -21,6 +21,7 @@
 - historical runtime 已用单流重建并修复 hardlink topology 后 offload 到 `oci3:/home/ubuntu/private-offload/free-opt-autoslice-private-fastlane-runtime`；content manifest `ff914f414f2a87953975d118c40cb422a06d61f02d806d0b67b57c360fd9e355`、`39962` entries、`13219916794` file bytes；topology SHA `37c54a031d6933ef7f32e2c303d8cf28e0380f9ac1c260080d70b7c047386452`、policy metadata SHA `1a321add5cf9a9e9251d4bc7aead56f20e3b6b2a2438957d196b96fe21bd15a6`。replacement `OFFLOAD_SEAL.json` mode `0600`，raw SHA `39575ea0e7fd30406d6ea9ba8b2259279433806c50f182379596ffca4a820ccf`；content-only previous copy、quarantined orphan 均保留。
 - 七个无 state/asset 引用且无活跃进程的 stale quarantine/tmp roots 已单流 offload 到 `oci3:/home/ubuntu/private-offload/free-cleanup-bundle-20260826`；seal mode `0600`、raw SHA `76047234f689e62b67a462d3d60d6c102f5079b0443d2906158dccc73e853d8c`，content SHA `7a2ad5e35e4016f787a2664ac9f842edbe81e385822198f20db8b64e6aea5282`、topology SHA `23d1c25cfdd85e72fb12a018427c6055df0777fe6cd18030b8a17af5f967309f`、metadata SHA `c8f4b72fed9865dccfe9a9b1e305113f353a07f9720a7ecfdf245c381c173f61`；just-in-time reference/process/open-FD scan 全 0 后才删除 source，post-delete audit 仍为 0，保护树仍存在。free available 从 0 增至 `7301038080` bytes；reference-bearing `out/2026-08-16`、`reports/operator`、`out/acceptance` 与 speaker-eval 未触碰。
 - C3 exact v2 bytes 已从 free private authority 复制到本地临时 evidence；v3 builder exact PASS（manifest raw `ecc19a…9f75`、tree `7afbc9…577f2`），但 canonical reclosure 仍精确失败 `C3_CLIP_CONTEXT_AUTHORITY_MISSING`。
+- C7b `auto_130040_201_255` 隔离修复已到 `440acaf1`；显式 `PIECE_LOCAL`、full-window/finalizer identity forwarding 与 canonical baseline-parent resolution 均已落地。C7b/replay/finalizer focused `205 passed`，Sol review `APPROVE`。provider-disabled private probe 已确认 `provider_callable_calls=0`、stage 清理、authoritative pre/post 不变；provider-enabled full-dry 已过 replay/finalizer gates，但 exact-final 停在 `FINAL_REVIEW_PROVIDER_OR_JSON_UNAVAILABLE`。详见 [`docs/reviews/2026-08-26-fastlane-c7b-private-replay.md`](reviews/2026-08-26-fastlane-c7b-private-replay.md)。
 
 ### 进行中
 
@@ -31,7 +32,8 @@
 
 - C3 当前 free v2 clip-context 文件 SHA `fb2d6711…3987`，但 v2 record/story contract 绑定旧 payload/prompt SHA（record artifact `01e215…8b6d`、prompt payload `b0af83…4987`）；现有 recovery receipt 明确标注 `semantic_reconstruction_not_byte_equivalent`，不能把它重签成 clip-context authority。不得发布 C3。
 - C6 当前 live record raw SHA 是 `04b64d9a…76222f`，其 canonical `boundary_audit` SHA 是 `688c36ac…d4ffe`；root-accepted authority 与 C6 adapter pin 的 SHA 是 `5231b631…5aec1`，且 record/padded-local 派生区间 `753540..816400` 与 accepted `753000..816000` 相差 `+540/+400 ms`。`7372484a` 已修正 replay/stage pin 并在 provider-disabled overlay 中到达此边界，不能放宽 hash 或坐标门；需 authority owner 用同一 provenance/coordinate frame 重新封存 live record 与 accepted authority。
-- 因 C3/C6 authority 未闭合、free headroom 仍低于目标，不得进行 free deploy、state CAS、authorized upload、public mutation 或 OCI3 production cutover；全量测试绿不等于 publication readiness。
+- C7b 的代码与 replay path 已通过本地测试及 no-provider private safety preflight，但 provider-enabled exact-final review 仍返回 `FINAL_REVIEW_PROVIDER_OR_JSON_UNAVAILABLE`；没有 provider/JSON closure 就不能把 private dry-run 当作 package readiness。
+- 因 C3/C6 authority 未闭合、C7b exact-final provider 仍阻塞、free headroom 仍低于目标，不得进行 free deploy、state CAS、authorized upload、public mutation 或 OCI3 production cutover；全量测试绿不等于 publication readiness。
 
 ### 下一步
 
