@@ -68,6 +68,7 @@ EXPECTED_PIPELINE_SRT_SHA256 = "sha256:a3ac0efb39d5348f8e8e756712de9a18a6aa87123
 EXPECTED_OLD_TRANSCRIPT_SHA256 = "sha256:0933dd7c516c5dbc2a7d0dbe3c3aeefea059055c120d697dc8697914a936806e"
 EXPECTED_FRESH_TRANSCRIPT_SHA256 = "sha256:c00924ce0e63e9ee25c87d77256eaf7c24ad29588c0c22188d958eba4827a0c2"
 EXPECTED_CLIP_CONTEXT_SHA256 = "sha256:edf26d3d7cf0eeea0e94c8d3a0006b7a323441ed11bdb701818bb65da619100a"
+EXPECTED_CLIP_CONTEXT_PROMPT_SHA256 = "sha256:ff0a633cdd9eb853d25278b24d71e939cfe35fac00d94c51617295164f07c4d8"
 EXPECTED_INPUT_HOOK_SHA256 = "sha256:4abced4f63049a3dc91ffc5d703c1ab99c17894d26cd8bc1abddca60d28636fd"
 EXPECTED_RESOLVED_HOOK_SHA256 = "sha256:2565d16fa8b4063fb1b92e9f143a4a3221c1b8f64cb69a72592186c48939ff24"
 EXPECTED_TITLE_SHA256 = "sha256:420247526abe5962ad12024fbbf0a503c55bc4bedf3524eaa6e7422bdbb88885"
@@ -117,6 +118,32 @@ def _normalized_fresh_story(story: Mapping[str, object]) -> dict[str, object]:
     normalized = dict(story)
     normalized.pop("source_fact_review", None)
     return normalized
+
+
+def _root_consumption(authority: object) -> dict[str, object]:
+    """Rebuild the root reviewed consumption hash without trusting old story bytes."""
+
+    return {
+        "schema_version": "candidate-public-text-surface-consumption.v1",
+        "status": "CONSUMED",
+        "candidate_id": CANDIDATE_ID,
+        "authority_sha256": EXPECTED_AUTHORITY_SHA256,
+        "algorithm_id": "exact-candidate-root-reviewed-public-surface-resolution.v1",
+        "clip_context_sha256": EXPECTED_CLIP_CONTEXT_SHA256,
+        "clip_context_prompt_sha256": EXPECTED_CLIP_CONTEXT_PROMPT_SHA256,
+        "selected_interval": {"absolute_start_ms": 753000, "absolute_end_ms": 816000},
+        "input_selection_hook_sha256": EXPECTED_INPUT_HOOK_SHA256,
+        "observed_selection_hook_sha256": EXPECTED_INPUT_HOOK_SHA256,
+        "resolved_selection_hook": authority.resolved_selection_hook,
+        "resolved_title": authority.resolved_title,
+        "resolved_cover_lines": list(authority.resolved_cover_lines),
+        "subtitle_text_mutation_authorized": False,
+        "speaker_label_mutation_authorized": False,
+        "upload_authorized": False,
+        "registry_hold_released": False,
+        "user_authorization": dict(authority.user_authorization),
+        "decision_authorization": dict(authority.decision_authorization or {}),
+    }
 
 
 def _validate_receipt_static(
@@ -212,8 +239,9 @@ def _validate_receipt_static(
             ) from exc
         if receipt.get("root_authority_consumption_sha256") != _sha256_json(root_consumption):
             raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_AUTHORITY_CONSUMPTION_DRIFT")
-    elif not isinstance(receipt.get("root_authority_consumption_sha256"), str):
-        raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_AUTHORITY_CONSUMPTION_INVALID")
+    else:
+        if receipt.get("root_authority_consumption_sha256") != _sha256_json(_root_consumption(authority)):
+            raise C6ReplayPublicTextProjectionError("C6_DERIVED_RECEIPT_AUTHORITY_CONSUMPTION_DRIFT")
     return dict(receipt)
 
 

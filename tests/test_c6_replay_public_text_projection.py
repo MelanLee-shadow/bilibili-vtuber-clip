@@ -53,7 +53,7 @@ def _receipt(old: dict[str, object], fresh: dict[str, object]) -> dict[str, obje
         "candidate_id": projection.CANDIDATE_ID,
         "recording_date": projection.RECORDING_DATE,
         "root_public_text_authority_sha256": projection.EXPECTED_AUTHORITY_SHA256,
-        "root_authority_consumption_sha256": _sha({"fixture": "root-consumption"}),
+        "root_authority_consumption_sha256": _sha(projection._root_consumption(AUTHORITY)),
         "old_story_contract_sha256": _sha(old),
         "fresh_story_contract_sha256": _sha(fresh),
         "clip_context_sha256": projection.EXPECTED_CLIP_CONTEXT_SHA256,
@@ -152,7 +152,7 @@ def test_full_validator_recomputes_root_consumption_and_story_identity(
     old, fresh, receipt = fixture_pair
     monkeypatch.setattr(
         "src.autoslice.candidate_public_text_surface_authority.consume_candidate_public_text_surface_authority",
-        lambda *args, **kwargs: {"fixture": "root-consumption"},
+        lambda *args, **kwargs: projection._root_consumption(AUTHORITY),
     )
     assert projection.validate_c6_replay_public_text_consumption(
         receipt, old_story=old, fresh_story=fresh, authority=AUTHORITY
