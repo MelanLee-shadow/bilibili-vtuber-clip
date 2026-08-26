@@ -120,10 +120,10 @@ Ivan 还要求回答 12 个“为什么没修成/为什么没入清单”问题�
 |---|---|---|---|---|
 | C1 | `2026-08-11 auto_173005_934_1166` | 薇欧拉/视频内声/弹幕原文/漏听/日语；指定标题 | `PUBLIC_VERIFIED` `BV1os8q61Eya` | 永久跳过，不重传 |
 | C2 | `2026-08-13 auto_203011_328_389` | 小豆老公；；、弹幕回应、标题两人化；重做标题封面 | `PUBLIC_VERIFIED` `BV1gch36cEvN` | 永久跳过；最终公开导出时对齐 static/runtime 表述 |
-| C3 | `2026-08-13 auto_220021_561_670` | 区分视频声/本人声、片尾曲不做字幕、星兰回应 | `ACTIVE_BLOCKER`；worktree HEAD `f5d04382`；C3 boundary authority 已自封存，focused 40 pass；canonical package 仍报 `source-fact review receipt is invalid or stale` | 闭合 source-fact receipt → canonical audit 零 issue → private PASS0；不得回到逐 pointer locator 打补丁 |
+| C3 | `2026-08-13 auto_220021_561_670` | 区分视频声/本人声、片尾曲不做字幕、星兰回应 | `ACTIVE_BLOCKER`；最新隔离 worktree HEAD `c4981739`，C3 相关测试 `27 passed`；canonical package/authority 输入仍缺失或 stale，不能形成 PASS0 | 补齐同一份 source-fact/clip-context authority → canonical audit 零 issue → private PASS0；不得回到逐 pointer locator 打补丁 |
 | C4 | `2026-08-14 auto_113028_1602_1698` | 见面发现/日语、哼歌不做字幕、指定标题方向 | `PUBLIC_VERIFIED_SAME_BV` `BV1h7hg68E8Y`，AID `117154678638617`，current CID `41270641488` | 永久跳过，不创建第二 BVID |
 | C5 | `2026-08-14 auto_113028_1271_1328` | niji 夏天/哼唱/热点 crawler | `PUBLIC_VERIFIED_SAME_BV` `BV1Sahj65ExM`，AID `117157295950921`，current CID `41267890237` | 永久跳过，不创建第二 BVID |
-| C6 | `2026-08-14 auto_120032_753_816` | naruhodo ne；回答选题理由；重做标题封面 | `ACTIVE_BLOCKER`；worktree HEAD `b50af01c`；focused 179 pass；旧 full suite 6870 pass/2 architecture fail 已由 b50 修复但未再跑 full；private stage SHA `b23b2a…` 正确，生产等价探针暴露 `C6_EXACT_PLAN_COORDINATE_OR_IDENTITY_DRIFT` | source-bound 区分 plan expected video `ba1e…` 与 frozen delivery `982e…` 的角色，修 split pins；provider-disabled probe 必须到 source-fact 边界且零写入 |
+| C6 | `2026-08-14 auto_120032_753_816` | naruhodo ne；回答选题理由；重做标题封面 | `ACTIVE_BLOCKER`；最新隔离 worktree HEAD `02aabdd7`；相关 focused `49 passed`；生产等价探针仍暴露 `C6_EXACT_PLAN_COORDINATE_OR_IDENTITY_DRIFT`，尚未整合/部署 | source-bound 区分 plan expected video `ba1e…` 与 frozen delivery `982e…` 的角色，修 split pins；provider-disabled probe 必须到 source-fact 边界且零写入 |
 | C7 | `2026-08-14 auto_123036_727_785` | 0:21「不可以就要」（读弹幕） | `PRIVATE_READY`；deployed-lineage golden pilot `READY_TO_COMMIT`，full-dry rc `0`，all authoritative surfaces unchanged，stage empty；closure SHA `42c3b719…9b0b1` | C3/C6 后整合；apply 后对 current video `1a717d…` 做独立 Colab/OCI3 decode/QC，不能借历史不同 SHA 冒充 |
 | C7b | `2026-08-14 auto_130040_201_255` | failed/content_boundary 复活；kmx/脑控完整弹幕/指定标题 | `ACTIVE_BLOCKER`；failed-row adoption HEAD `f1d368d7`，完整 live-row SHA `549949…`，架构/C7b/replay 196 pass，CAS/idempotency 96 pass；未 private PASS0 | 第二次 strong review APPROVE → provider/state/upload-disabled private full-dry → cover/QC/package closure |
 | C8 | `2026-08-14 songvis_130040_670_11874655` | 园游会，过、可传 | `PUBLIC_VERIFIED` `BV1fr8P6REDP`，AID `117130116729073`，CID `41111260592` | 永久跳过 |
@@ -176,7 +176,7 @@ Ivan 还要求回答 12 个“为什么没修成/为什么没入清单”问题�
 - deployed `981bc4abad395c2e00db7212ff8541f7ddc32ba0`
 - `DISABLED`: empty regular `0644`
 - filesystem：`394G / 394G`，available `7301783552` bytes（约 7.30 GB），99%；仍低于新媒体生产/部署准入所需的 8–10 GiB headroom
-- recorder：`service_reachable=true`、`streaming=false`、`recording=false`，但报告 `19 closed recording(s) failed finalization`
+- recorder direct status：`service_reachable=true`、`streaming=false`、`recording=false`；历史 runtime report 仍记录 `19 closed recording(s) failed finalization`，尚未重新审计
 - 未观察到 `free_session_autoslice`、`deploy_free_autoslice`、`authorized_upload.py` mutation process
 - live SHA：static registry `503172e8…`；runtime registry `a197a19a…`；upload ledger `35b86573…`
 

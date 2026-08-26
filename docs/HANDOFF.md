@@ -8,11 +8,13 @@
 
 ### 已完成
 
-- 集成 worktree：`codex/fastlane-integration-20260826`，HEAD `7837c5f5`，clean。
+- 集成 worktree：`codex/fastlane-integration-20260826`，HEAD `ebba4961`，clean。
 - 两个安全修复提交：`e818e060`（structured subtitle authority gates）与 `80f30501`（malformed operator ledger fail-closed）；`7837c5f5` 更新本交接。
 - 受影响 replay/authority 测试：`136 passed`；全量 pytest：`6946 passed in 354.46s`；`py_compile`、Ruff、`git diff --check` 及 active-module 2000 行上限检查均通过。
 - 普通 candidate 的 mapping-valued operator authority 现在只有在它与 SHA-validated decision ledger 的完整 authority object 相等时才可用；C7b 仍强制走独立 resolver；candidate/ledger identity drift 与 malformed ledger 均 fail closed。private stage 另外拒绝非 C7b 的 mapping authority，C5 revoked authority 不再进入 projection。
-- C7 deployed-lineage private golden pilot：`READY_TO_COMMIT`、`full_dry_rc=0`、`all_authoritative_surfaces_unchanged=true`、`private_stage_empty=true`；closure 位于 `free:/opt/bilive/autoslice/private-fastlane-b1-c7-current-pilot-981bc4ab-20260826T041255Z/evidence/closure.json`，SHA `42c3b719d55843f598f133bb819e9e3e6f8dac33d307c64cc5698f50f1e9b0b1`。
+- C7 deployed-lineage private golden pilot：`READY_TO_COMMIT`、`full_dry_rc=0`、`all_authoritative_surfaces_unchanged=true`、`private_stage_empty=true`；closure 位于 `free:/opt/bilive/autoslice/private-fastlane-b1-c7-current-pilot-981bc4ab-20260826T041255Z/evidence/closure.json`，SHA `42c3b719d55843f598f133bb819e9e3e6f8dac33d307c64cc5698f50f1e9b0b1`；该结果仍是 private ready，不是 live publication。
+- 最新隔离 lane 只作工程证据：C3 worktree `c4981739` 的相关测试 `27 passed`，但 canonical package/authority 输入仍缺失；C6 worktree `02aabdd7` 的相关测试 `49 passed`，生产等价 probe 仍有 `C6_EXACT_PLAN_COORDINATE_OR_IDENTITY_DRIFT`，两者均未 cherry-pick 或部署。
+- live readiness graph（free deployed `981bc4ab`）只读返回 `770` rows，并有 `PUBLICATION_REGISTRY_INVALID` 与两个 `STATE_COLLECTION_INVALID` graph blockers；它不授权上传，现有 fastlane rows 仍按本交接中的 candidate blockers 处理。
 - OCI3 migration lane 已通过 Sol review（仅 offline/private scope），工具已在 `~/oci3-source-migration-20260826/code/` 私有暂存，未部署到 adapter。
 - OCI3 已从当前 live state 冻结 snapshot `5c7f534ea34fcfaa0daf4558e5400db52704c79d457b8b6cfd732eb3d8438c2f`，并完成 dry-run 与 create-only receipt：receipt canonical SHA `337a1720cbb5659bfdb9fdebef9d0b19c084ecf7ccfb53b7054ad4b940ae88d0`；`identity_proven=false`、`source_substitution=true`、`ordinary_rebind=false`、`publication_authority=null`。
 - OCI3 transformed state 只增加 `source_disposition_migrations`；原 disposition row、finalized ledger、webhook index 均保持，ledger `adapter_consumption=NOT_CONSUMED_BY_ADAPTER`。没有写 `/opt/bilive/recording/adapter-state.json`、Docker、deploy、upload 或 publication。
