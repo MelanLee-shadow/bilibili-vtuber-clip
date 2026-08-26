@@ -2,6 +2,21 @@
 
 本文件是打包步骤的**分步权威**。入口：`src/autoslice/producer_package_finalization.py`。
 
+## C3 v3 direct PASS0 closure
+
+`scripts/build_fastlane_c3_v3_closure.py` and
+`src/autoslice/fastlane_c3_v3_direct.py` form the candidate-specific,
+provider-free closure lane for `auto_220021_561_670` on `2026-08-13`. It derives a new
+create-only `c3-successor-authority-v3` from the sealed v2 descriptor and exactly
+five allow-listed auxiliary byte preimages. It must validate the complete
+inventory, raw/self seals, root tree seal, v2 role hashes, line947/baseline
+binding, and every auxiliary ancestry before any private write. It never searches
+or falls back, hydrates v2, calls a provider, writes state/registry/ledger, or
+uploads. `replay_reviewed_subtitle_baseline.py --full-dry-run` dispatches this
+lane before generic replay/finalization when the v3 descriptor is present; its
+result is typed `PASS0` only after a fresh canonical package audit is PASS. `--apply`
+remains fail-closed until a state-after-image transaction is explicitly bound.
+
 ## 快车道与提速边界
 
 Claude line 947 已穷举授权的快车道候选，在该候选点名错误修完后直接进入既有 package/
