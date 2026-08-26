@@ -42,7 +42,6 @@ from src.autoslice.redelivery_time_domain import (
 from src.autoslice.reviewed_baseline_replay_projection import (
     PreparedReplayAfterImage,
     canonical_talk_delivery_basename,
-    exact_candidate_sidecar_target,
     validate_retained_projection,
 )
 from src.autoslice.reviewed_baseline_replay_authority import (
@@ -53,10 +52,11 @@ from src.autoslice.reviewed_baseline_replay_stage_projection import (
     baseline_application_interval, prepare_stage_delivery_projection,
     stage_delivery_projection_receipt,
 )
-validate_c9_root_acceptance_envelope = None
 from src.autoslice.reviewed_baseline_replay_c12_projection import (
     build_c12_final_delivery_projection,
 )
+
+validate_c9_root_acceptance_envelope = None
 REPLAY_STAGE_SCHEMA = "reviewed-baseline-replay-stage.v1"
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 _CID = re.compile(r"[A-Za-z0-9_-]{1,96}\Z")

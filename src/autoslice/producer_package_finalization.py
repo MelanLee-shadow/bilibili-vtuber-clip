@@ -488,7 +488,7 @@ def _materialize_final_recut(
     recut_dir.mkdir(exist_ok=True)
     media_path = recut_dir / f"{cid}.recut.mp4"
     adapters.run_command(adapters.accurate_recut_command(source_video=padded, output_media=media_path, start_ms=final_start, duration_ms=final_end - final_start))
-    recut_provenance_path = write_final_recut_provenance(
+    write_final_recut_provenance(
         media_path=media_path,
         padded=padded,
         padded_provenance_path=padded_provenance_path,
