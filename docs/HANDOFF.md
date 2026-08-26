@@ -8,7 +8,7 @@
 
 ### 已完成
 
-- 集成 worktree：`codex/fastlane-integration-20260826`，HEAD `71dae21693228eee512d2f8c338a09562614f344`，clean。
+- 集成 worktree：`codex/fastlane-integration-20260826`，HEAD `80d412aa`，clean。
 - C6/C7b/C9 与 OCI3 lane 的 changed-test 集合：`153 passed`；changed Python `py_compile`、Ruff、`git diff --check` 全部通过。
 - OCI3 migration lane 已通过 Sol review（仅 offline/private scope），工具已在 `~/oci3-source-migration-20260826/code/` 私有暂存，未部署到 adapter。
 - OCI3 已从当前 live state 冻结 snapshot `5c7f534ea34fcfaa0daf4558e5400db52704c79d457b8b6cfd732eb3d8438c2f`，并完成 dry-run 与 create-only receipt：receipt canonical SHA `337a1720cbb5659bfdb9fdebef9d0b19c084ecf7ccfb53b7054ad4b940ae88d0`；`identity_proven=false`、`source_substitution=true`、`ordinary_rebind=false`、`publication_authority=null`。
@@ -17,13 +17,13 @@
 
 ### 进行中
 
-- 后台 `bash-99`：集成 worktree 全量 pytest；基线已知 5 个 C5/runtime failures，已在 clean `981bc4ab` 上复现，因此不能归因于 C6/C7b/C9/OCI3 集成。
-- free historical runtime offload 仍需续传并在任何删除前重新 seal；free 仍是唯一 publication authority。
+- 全量 pytest 已完成：`6942 passed, 4 failed`（344.96s）；四项失败均在 clean `981bc4ab` baseline 复现，不能归因于 C6/C7b/C9/OCI3 集成。
+- free historical runtime offload 已传至 OCI3 partial `~/private-offload/.free-opt-autoslice-private-fastlane-runtime.partial`（约 6.6G），但在继续 C2 batch 时触发 free SSH `kex_exchange_identification: Connection reset`；尚无 destination seal，source 保留且禁止删除。free 仍是唯一 publication authority。
 
 ### 阻塞
 
 - C3 当前 free v2 clip-context 文件 SHA `fb2d6711…3987`，但 v2 record/story contract 绑定旧 payload/prompt SHA（record artifact `01e215…8b6d`、prompt payload `b0af83…4987`）；现有 recovery receipt 明确标注 `semantic_reconstruction_not_byte_equivalent`，不能把它重签成 clip-context authority。不得发布 C3。
-- 全仓库基线仍有 5 个既有失败：2 个 C5 local-stage projection、1 个 revoked C5 authority、1 个 v3 empty-release-cue、1 个 active-module bound（集成分支已把 2001 行降至 2000；其余 4 个在 981 基线同样失败）。
+- 全仓库仍有 4 个既有失败：2 个 C5 local-stage projection、1 个 revoked C5 authority、1 个 v3 empty-release-cue；四项均在 clean `981bc4ab` baseline 复现。集成分支已把 `reviewed_baseline_replay.py` 的 2001 行 active-module bound 修到 2000。
 
 ### 下一步
 
