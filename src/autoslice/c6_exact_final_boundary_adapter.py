@@ -22,12 +22,19 @@ PIPELINE_SRT_SHA256 = "sha256:a3ac0efb39d5348f8e8e756712de9a18a6aa87123b0ccbd8fb
 DECISION_LEDGER_SHA256 = "sha256:ecef045ba999ca94f3afa58a57562ce728fd004e9dc0d03cec949e0f27f737f3"
 TRUTH_DIFF_SHA256 = "sha256:ee662f130cb91537db8dd471cddc777318e30179ed7b2c6e8fe7f203a3f23522"
 RECORD_SHA256 = "sha256:04b64d9a1e19810948fa0f6cca90d132a4464cc518cdbb26ace9ed0f0876222f"
-VIDEO_SHA256 = "sha256:982e0fea91ef222302ec5cb30a965d0222164a87f4f3a3bc53e445048919de35"
+# These are intentionally different roles.  ``ReplayPlan.expected_video_sha256``
+# is read from the old record's ``artifact_hashes.video_sha256`` and therefore
+# identifies the unburned recut used to reproduce the old record.  The C6
+# authority and stage manifest instead pin the already-frozen burned delivery.
+REPLAY_PLAN_EXPECTED_VIDEO_SHA256 = "sha256:ba1eeec5f8904cbef91594ed3dc28e7bec9766d7195e0e1c4ef34d429e71736"
+FROZEN_DELIVERY_VIDEO_SHA256 = "sha256:982e0fea91ef222302ec5cb30a965d0222164a87f4f3a3bc53e445048919de35"
 CHAT_SHA256 = "sha256:fb7c0bb21ef6e775c22ebc7c75c83d09e6500d8623d80d35c9b2cb27ef0cd3a9"
 BOUNDARY_AUDIT_SHA256 = "sha256:5231b6319b2bfa827ce3b404da7fcf3a7c33ea226314a0cfefde8195b1c5aec1"
 AUTHORITY_SELF_HASH = "sha256:7d38e745cc75330dbc324a395ef3192693c672709451a18c2c6ff3cfd3f45eea"
 STAGE_JSON_SHA256 = "sha256:b23b2a7997a00c0f1a6ace98b797cf37091914e47435d7284e0aaf31de412116"
-SOURCE_MEDIA_SHA256 = "sha256:0f0770a9426c48fee5457cf9639a77e5a477f41ec806f4e4789e19c336e1aae5"
+# This is the source's sealed logical identity.  It is deliberately not
+# substituted for a byte hash of a separately located padded file.
+SOURCE_MEDIA_IDENTITY = "sha256:0f0770a9426c48fee5457cf9639a77e5a477f41ec806f4e4789e19c336e1aae5"
 
 # The plan callback is the source/padded-local record interval.  The reviewed
 # baseline itself is DELIVERY_LOCAL [0, 62860] inside that interval.
@@ -110,7 +117,7 @@ def _validate_authority() -> dict[str, object]:
     if not isinstance(authority, dict) or authority.get("canonical_self_hash") != AUTHORITY_SELF_HASH:
         _fail("C6_EXACT_ACCEPTED_AUTHORITY_INVALID")
     binding = authority.get("frozen_delivery_binding")
-    if not isinstance(binding, Mapping) or binding.get("candidate_media_sha256") != VIDEO_SHA256:
+    if not isinstance(binding, Mapping) or binding.get("candidate_media_sha256") != FROZEN_DELIVERY_VIDEO_SHA256:
         _fail("C6_EXACT_ACCEPTED_AUTHORITY_BINDING_INVALID")
     if (
         authority.get("candidate_id") != CANDIDATE_ID
@@ -127,15 +134,49 @@ def _validate_authority() -> dict[str, object]:
     return authority
 
 
-def _validate_stage(plan: object, stage: Path) -> tuple[dict[str, object], bytes]:
+def _validate_plan_identity(plan: object) -> None:
+    """Validate the replay input without conflating it with delivery bytes."""
+
     if (
         getattr(plan, "candidate_id", None) != CANDIDATE_ID
         or getattr(plan, "date", None) != RECORDING_DATE
         or getattr(plan, "local_start_ms", None) != SOURCE_LOCAL_START_MS
         or getattr(plan, "local_end_ms", None) != SOURCE_LOCAL_END_MS
-        or getattr(plan, "expected_video_sha256", None) != VIDEO_SHA256
+        or getattr(plan, "expected_video_sha256", None) != REPLAY_PLAN_EXPECTED_VIDEO_SHA256
     ):
         _fail("C6_EXACT_PLAN_COORDINATE_OR_IDENTITY_DRIFT")
+
+
+def _validate_plan_paths(plan: object) -> None:
+    """Retain the build-plan path topology as an identity invariant."""
+
+    package_root = getattr(plan, "package_root", None)
+    record_path = getattr(plan, "record_path", None)
+    padded_path = getattr(plan, "padded_path", None)
+    expected_record = (
+        Path(package_root) / "replacement_recuts" / f"{CANDIDATE_ID}.record.json"
+        if isinstance(package_root, Path) else None
+    )
+    if (
+        not isinstance(package_root, Path)
+        or not isinstance(record_path, Path)
+        or not isinstance(padded_path, Path)
+        or record_path != expected_record
+        or padded_path.parent != package_root
+    ):
+        _fail("C6_EXACT_PLAN_PATH_OR_IDENTITY_DRIFT")
+
+
+def _validate_stage(plan: object, stage: Path) -> tuple[dict[str, object], bytes]:
+    """Validate the frozen delivery manifest independently of recut identity.
+
+    The private stage's ``expected_video_sha256``/``artifacts.video`` fields
+    are the burned delivery role.  They must not be compared with the replay
+    plan's unburned recut identity.
+    """
+
+    _validate_plan_identity(plan)
+    _validate_plan_paths(plan)
     stage = Path(stage)
     document = _load_json(stage / "stage.json", STAGE_JSON_SHA256, label="STAGE_MANIFEST")
     unsigned = dict(document)
@@ -147,13 +188,13 @@ def _validate_stage(plan: object, stage: Path) -> tuple[dict[str, object], bytes
         or document.get("candidate_id") != CANDIDATE_ID
         or document.get("date") != RECORDING_DATE
         or document.get("record_sha256") != RECORD_SHA256
-        or document.get("expected_video_sha256") != VIDEO_SHA256
+        or document.get("expected_video_sha256") != FROZEN_DELIVERY_VIDEO_SHA256
         or document.get("baseline_sha256") != REVIEWED_SRT_SHA256
         or document.get("upload_allowed") is not False
     ):
         _fail("C6_EXACT_STAGE_BINDING_DRIFT")
     artifacts = document.get("artifacts")
-    if not isinstance(artifacts, Mapping) or artifacts.get("video") != VIDEO_SHA256 or artifacts.get("subtitle") != REVIEWED_SRT_SHA256:
+    if not isinstance(artifacts, Mapping) or artifacts.get("video") != FROZEN_DELIVERY_VIDEO_SHA256 or artifacts.get("subtitle") != REVIEWED_SRT_SHA256:
         _fail("C6_EXACT_STAGE_ARTIFACT_DRIFT")
     reviewed_path = stage / "reviewed.srt"
     _binding(reviewed_path, REVIEWED_SRT_SHA256, label="REVIEWED_SRT")
@@ -201,7 +242,7 @@ def _validate_truth_lanes(plan: object) -> None:
         config.get("sha256") != REVIEWED_SRT_SHA256.removeprefix("sha256:")
         or config.get("absolute_source_start_ms") != ABSOLUTE_SOURCE_START_MS
         or config.get("absolute_source_end_ms") != ABSOLUTE_SOURCE_END_MS
-        or config.get("source_sha256") != SOURCE_MEDIA_SHA256.removeprefix("sha256:")
+        or config.get("source_sha256") != SOURCE_MEDIA_IDENTITY.removeprefix("sha256:")
         or config.get("time_domain") != "DELIVERY_LOCAL"
     ):
         _fail("C6_EXACT_BASELINE_BINDING_DRIFT")

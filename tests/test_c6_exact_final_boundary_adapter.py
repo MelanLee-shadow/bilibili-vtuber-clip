@@ -41,10 +41,10 @@ def test_stage_pin_mismatch_fails_closed_before_any_provider_path(tmp_path: Path
         "date": adapter.RECORDING_DATE,
         "candidate_id": adapter.CANDIDATE_ID,
         "record_sha256": adapter.RECORD_SHA256,
-        "expected_video_sha256": adapter.VIDEO_SHA256,
+        "expected_video_sha256": adapter.FROZEN_DELIVERY_VIDEO_SHA256,
         "baseline_manifest": "manifest",
         "baseline_sha256": adapter.REVIEWED_SRT_SHA256,
-        "artifacts": {"video": adapter.VIDEO_SHA256, "subtitle": adapter.REVIEWED_SRT_SHA256},
+        "artifacts": {"video": adapter.FROZEN_DELIVERY_VIDEO_SHA256, "subtitle": adapter.REVIEWED_SRT_SHA256},
         "predicate_matrix": [],
         "upload_allowed": False,
     }
@@ -59,10 +59,150 @@ def test_stage_pin_mismatch_fails_closed_before_any_provider_path(tmp_path: Path
         date=adapter.RECORDING_DATE,
         local_start_ms=adapter.SOURCE_LOCAL_START_MS,
         local_end_ms=adapter.SOURCE_LOCAL_END_MS,
-        expected_video_sha256=adapter.VIDEO_SHA256,
+        expected_video_sha256=adapter.REPLAY_PLAN_EXPECTED_VIDEO_SHA256,
+        package_root=tmp_path / "package",
+        record_path=tmp_path / "package" / "replacement_recuts" / f"{adapter.CANDIDATE_ID}.record.json",
+        padded_path=tmp_path / "package" / "padded.mp4",
     )
     with pytest.raises(adapter.C6ExactFinalBoundaryAdapterError, match="STAGE_MANIFEST_HASH"):
         adapter._validate_stage(plan, stage)
+
+
+def test_split_pin_accepts_plan_identity_but_rejects_stale_delivery_identity() -> None:
+    plan = SimpleNamespace(
+        candidate_id=adapter.CANDIDATE_ID,
+        date=adapter.RECORDING_DATE,
+        local_start_ms=adapter.SOURCE_LOCAL_START_MS,
+        local_end_ms=adapter.SOURCE_LOCAL_END_MS,
+        expected_video_sha256=adapter.REPLAY_PLAN_EXPECTED_VIDEO_SHA256,
+    )
+    adapter._validate_plan_identity(plan)
+    plan.expected_video_sha256 = adapter.FROZEN_DELIVERY_VIDEO_SHA256
+    with pytest.raises(adapter.C6ExactFinalBoundaryAdapterError, match="PLAN_COORDINATE_OR_IDENTITY_DRIFT"):
+        adapter._validate_plan_identity(plan)
+
+
+@pytest.mark.parametrize("field", ["candidate_id", "date", "local_start_ms", "local_end_ms"])
+def test_split_pin_rejects_coordinate_mutations(field: str) -> None:
+    values = {
+        "candidate_id": adapter.CANDIDATE_ID,
+        "date": adapter.RECORDING_DATE,
+        "local_start_ms": adapter.SOURCE_LOCAL_START_MS,
+        "local_end_ms": adapter.SOURCE_LOCAL_END_MS,
+        "expected_video_sha256": adapter.REPLAY_PLAN_EXPECTED_VIDEO_SHA256,
+    }
+    values[field] = values[field] + 1 if isinstance(values[field], int) else "mutated"
+    with pytest.raises(adapter.C6ExactFinalBoundaryAdapterError, match="PLAN_COORDINATE_OR_IDENTITY_DRIFT"):
+        adapter._validate_plan_identity(SimpleNamespace(**values))
+
+
+def test_split_pin_rejects_plan_path_mutation(tmp_path: Path) -> None:
+    root = tmp_path / "package"
+    plan = SimpleNamespace(
+        candidate_id=adapter.CANDIDATE_ID, date=adapter.RECORDING_DATE,
+        local_start_ms=adapter.SOURCE_LOCAL_START_MS, local_end_ms=adapter.SOURCE_LOCAL_END_MS,
+        expected_video_sha256=adapter.REPLAY_PLAN_EXPECTED_VIDEO_SHA256,
+        package_root=root,
+        record_path=root / "wrong.record.json",
+        padded_path=tmp_path / "package" / "padded.mp4",
+    )
+    adapter._validate_plan_identity(plan)
+    with pytest.raises(adapter.C6ExactFinalBoundaryAdapterError, match="PLAN_PATH_OR_IDENTITY_DRIFT"):
+        adapter._validate_plan_paths(plan)
+
+
+def test_stage_delivery_pin_is_distinct_from_plan_pin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    reviewed = (LANE_ROOT / "auto_120032_753_816.reviewed.srt").read_bytes()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    (stage / "reviewed.srt").write_bytes(reviewed)
+    plan = SimpleNamespace(
+        candidate_id=adapter.CANDIDATE_ID,
+        date=adapter.RECORDING_DATE,
+        local_start_ms=adapter.SOURCE_LOCAL_START_MS,
+        local_end_ms=adapter.SOURCE_LOCAL_END_MS,
+        expected_video_sha256=adapter.REPLAY_PLAN_EXPECTED_VIDEO_SHA256,
+        package_root=tmp_path / "package",
+        record_path=tmp_path / "package" / "replacement_recuts" / f"{adapter.CANDIDATE_ID}.record.json",
+        padded_path=tmp_path / "package" / "padded.mp4",
+    )
+    unsigned = {
+        "schema_version": "reviewed-baseline-replay-stage.v1",
+        "candidate_id": adapter.CANDIDATE_ID,
+        "date": adapter.RECORDING_DATE,
+        "record_sha256": adapter.RECORD_SHA256,
+        "expected_video_sha256": adapter.FROZEN_DELIVERY_VIDEO_SHA256,
+        "baseline_sha256": adapter.REVIEWED_SRT_SHA256,
+        "artifacts": {"video": adapter.FROZEN_DELIVERY_VIDEO_SHA256, "subtitle": adapter.REVIEWED_SRT_SHA256},
+        "upload_allowed": False,
+    }
+    document = dict(unsigned)
+    document["stage_sha256"] = adapter._sha_bytes(adapter._canonical(unsigned))
+    monkeypatch.setattr(adapter, "_load_json", lambda *_args, **_kwargs: document)
+    monkeypatch.setattr(adapter, "_binding", lambda path, expected, label: SimpleNamespace(path=path, sha256=expected))
+    loaded, staged = adapter._validate_stage(plan, stage)
+    assert loaded["expected_video_sha256"] == adapter.FROZEN_DELIVERY_VIDEO_SHA256
+    assert staged == reviewed
+
+
+@pytest.mark.parametrize("wrong", [
+    adapter.REPLAY_PLAN_EXPECTED_VIDEO_SHA256,
+    "sha256:a5798e0000000000000000000000000000000000000000000000000000000000",
+    "sha256:0f7d9900000000000000000000000000000000000000000000000000000000000",
+])
+def test_stage_rejects_recut_or_source_identity_as_delivery_pin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, wrong: str,
+) -> None:
+    reviewed = (LANE_ROOT / "auto_120032_753_816.reviewed.srt").read_bytes()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    (stage / "reviewed.srt").write_bytes(reviewed)
+    plan = SimpleNamespace(
+        candidate_id=adapter.CANDIDATE_ID, date=adapter.RECORDING_DATE,
+        local_start_ms=adapter.SOURCE_LOCAL_START_MS, local_end_ms=adapter.SOURCE_LOCAL_END_MS,
+        expected_video_sha256=adapter.REPLAY_PLAN_EXPECTED_VIDEO_SHA256,
+        package_root=tmp_path / "package",
+        record_path=tmp_path / "package" / "replacement_recuts" / f"{adapter.CANDIDATE_ID}.record.json",
+        padded_path=tmp_path / "package" / "padded.mp4",
+    )
+    unsigned = {
+        "schema_version": "reviewed-baseline-replay-stage.v1", "candidate_id": adapter.CANDIDATE_ID,
+        "date": adapter.RECORDING_DATE, "record_sha256": adapter.RECORD_SHA256,
+        "expected_video_sha256": adapter.FROZEN_DELIVERY_VIDEO_SHA256,
+        "baseline_sha256": adapter.REVIEWED_SRT_SHA256,
+        "artifacts": {"video": wrong, "subtitle": adapter.REVIEWED_SRT_SHA256}, "upload_allowed": False,
+    }
+    document = dict(unsigned)
+    document["stage_sha256"] = adapter._sha_bytes(adapter._canonical(unsigned))
+    monkeypatch.setattr(adapter, "_load_json", lambda *_args, **_kwargs: document)
+    monkeypatch.setattr(adapter, "_binding", lambda path, expected, label: SimpleNamespace(path=path, sha256=expected))
+    with pytest.raises(adapter.C6ExactFinalBoundaryAdapterError, match="STAGE_ARTIFACT_DRIFT"):
+        adapter._validate_stage(plan, stage)
+
+
+def test_source_logical_identity_cannot_be_substituted_by_padded_file_pin(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = {
+        "sha256": adapter.REVIEWED_SRT_SHA256.removeprefix("sha256:"),
+        "absolute_source_start_ms": adapter.ABSOLUTE_SOURCE_START_MS,
+        "absolute_source_end_ms": adapter.ABSOLUTE_SOURCE_END_MS,
+        "source_sha256": adapter.SOURCE_MEDIA_IDENTITY.removeprefix("sha256:"),
+        "time_domain": "DELIVERY_LOCAL",
+        "operator_truth_lanes": {
+            "pipeline_diagnostic": {"sha256": adapter.PIPELINE_SRT_SHA256.removeprefix("sha256:"), "path": "pipeline.srt"},
+            "decision_ledger": {"sha256": adapter.DECISION_LEDGER_SHA256.removeprefix("sha256:"), "path": "ledger.json"},
+            "diff_receipt": {"sha256": adapter.TRUTH_DIFF_SHA256.removeprefix("sha256:"), "path": "diff.json"},
+        },
+    }
+    baseline = SimpleNamespace(
+        config=config, manifest_path=LANE_ROOT / "manifest.json",
+        baseline_path=LANE_ROOT / "auto_120032_753_816.reviewed.srt",
+    )
+    monkeypatch.setattr(adapter, "_binding", lambda path, expected, label: SimpleNamespace(path=path, sha256=expected))
+    plan = SimpleNamespace(baseline=baseline)
+    adapter._validate_truth_lanes(plan)
+    config["source_sha256"] = "0f7d9900000000000000000000000000000000000000000000000000000000000"
+    with pytest.raises(adapter.C6ExactFinalBoundaryAdapterError, match="BASELINE_BINDING_DRIFT"):
+        adapter._validate_truth_lanes(plan)
 
 
 def test_reviewer_is_deterministic_and_never_invokes_provider(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -73,7 +213,7 @@ def test_reviewer_is_deterministic_and_never_invokes_provider(monkeypatch: pytes
         date=adapter.RECORDING_DATE,
         local_start_ms=adapter.SOURCE_LOCAL_START_MS,
         local_end_ms=adapter.SOURCE_LOCAL_END_MS,
-        expected_video_sha256=adapter.VIDEO_SHA256,
+        expected_video_sha256=adapter.REPLAY_PLAN_EXPECTED_VIDEO_SHA256,
         baseline=SimpleNamespace(manifest_path=LANE_ROOT / "manifest.json"),
         package_root=Path("/private/c6-package"),
     )
