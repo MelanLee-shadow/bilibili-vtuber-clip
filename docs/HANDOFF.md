@@ -8,7 +8,7 @@
 
 ### 已完成
 
-- 私有集成 worktree：`codex/fastlane-private-integration-20260826`，HEAD `d5ea7da4`；docs-only worktree `codex/fastlane-integration-20260826` 仍保持 clean、HEAD `7c4dd581`。
+- 私有集成 worktree：`codex/fastlane-private-integration-20260826`，HEAD `7f5c7a8e`；docs-only worktree `codex/fastlane-integration-20260826` 仍保持 clean、HEAD `7c4dd581`。
 - C12 sealed `PIECE_LOCAL` interval、baseline application ordering、candidate-locked projection 与窄 fallback 已接通；C7b private operator stage allowlist 与 replay identity forwarding 保持 fail-closed。
 - 完成 replay after-image、producer source-binding/provenance、package-audit policy fingerprint 的窄模块拆分；runtime architecture ledger 已同步。
 - 当前分支 focused replay/architecture/CLI regression：`194 passed`；changed-file Ruff、compile、`git diff --check` 通过；完整 pytest：`7008 passed in 337.88s`。
