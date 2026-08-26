@@ -71,6 +71,28 @@ def test_builder_rejects_unapproved_fixture_even_when_self_sealed(tmp_path: Path
         c3.build_c3_v3_closure(v2_root=v2, auxiliary_root=aux, destination=tmp_path / "v3", repo_root=repo)
 
 
+def test_regular_reader_rejects_symlink_and_hardlink(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.write_bytes(b"x")
+    source.chmod(0o600)
+    hardlink = tmp_path / "hardlink"
+    hardlink.hardlink_to(source)
+    with pytest.raises(c3.C3V3ClosureError, match="NOT_REGULAR"):
+        c3._read_regular(hardlink, label="TEST")
+    symlink = tmp_path / "symlink"
+    symlink.symlink_to(source)
+    with pytest.raises(c3.C3V3ClosureError, match="UNAVAILABLE"):
+        c3._read_regular(symlink, label="TEST")
+
+
+def test_loader_rejects_prior_arbitrary_self_sealed_v3() -> None:
+    root = Path("/private/tmp/c3-v3-cli-prototype-2-20260826")
+    if not root.is_dir():
+        pytest.skip("local C3 prototype artifact is unavailable")
+    with pytest.raises(c3.C3V3ClosureError, match="APPROVED_MANIFEST_DRIFT"):
+        c3.load_c3_v3_authority(root=root)
+
+
 def test_builder_refuses_existing_destination(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     v2, aux, repo = _fixture(tmp_path, monkeypatch)
     destination = tmp_path / "v3"
