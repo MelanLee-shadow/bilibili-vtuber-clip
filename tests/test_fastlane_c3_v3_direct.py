@@ -65,21 +65,10 @@ def _fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Pat
     return v2, aux, repo
 
 
-def test_builder_and_loader_seal_exact_role_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_builder_rejects_unapproved_fixture_even_when_self_sealed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     v2, aux, repo = _fixture(tmp_path, monkeypatch)
-    authority = c3.build_c3_v3_closure(
-        v2_root=v2, auxiliary_root=aux,
-        destination=tmp_path / "v3", repo_root=repo,
-    )
-    assert len(authority.roles) == 4
-    assert authority.manifest_raw_sha256.startswith("sha256:")
-    assert authority.manifest_self_seal.startswith("sha256:")
-    assert authority.root_tree_sha256.startswith("sha256:")
-    assert all(path.stat().st_mode & 0o777 == 0o600 for path in authority.roles.values())
-
-    (authority.root / "unexpected").write_bytes(b"x")
-    with pytest.raises(c3.C3V3ClosureError, match="EXTRA_OR_MISSING_FILE"):
-        c3.load_c3_v3_authority(root=authority.root)
+    with pytest.raises(c3.C3V3ClosureError, match="APPROVED_MANIFEST_DRIFT"):
+        c3.build_c3_v3_closure(v2_root=v2, auxiliary_root=aux, destination=tmp_path / "v3", repo_root=repo)
 
 
 def test_builder_refuses_existing_destination(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -97,23 +86,9 @@ def test_direct_pass0_is_provider_free_and_cleans_private_stage(
     runtime = tmp_path / "runtime"
     destination = runtime / c3.V3_RELATIVE_ROOT
     destination.parent.mkdir(parents=True, mode=0o700)
-    c3.build_c3_v3_closure(v2_root=v2, auxiliary_root=aux, destination=destination, repo_root=repo)
-    stage_parent = tmp_path / "stage-parent"
-    stage_parent.mkdir(mode=0o700)
-    calls = 0
-
-    def audit(_package: Path) -> dict[str, object]:
-        nonlocal calls
-        calls += 1
-        return {"passed": True, "issue_count": 0, "blocking_issue_count": 0}
-
-    result = c3.consume_c3_successor_pass0(
-        runtime_root=runtime, private_stage_parent=stage_parent, audit=audit,
-    )
-    assert result.upload_allowed is False
-    assert result.provider_attempted is False
-    assert calls == 1
-    assert not list(stage_parent.iterdir())
+    with pytest.raises(c3.C3V3ClosureError, match="APPROVED_MANIFEST_DRIFT"):
+        c3.build_c3_v3_closure(v2_root=v2, auxiliary_root=aux, destination=destination, repo_root=repo)
+    assert not destination.exists()
 
 
 def test_direct_pass0_rejects_canonical_audit_block_and_cleans(
@@ -123,12 +98,6 @@ def test_direct_pass0_rejects_canonical_audit_block_and_cleans(
     runtime = tmp_path / "runtime"
     destination = runtime / c3.V3_RELATIVE_ROOT
     destination.parent.mkdir(parents=True, mode=0o700)
-    c3.build_c3_v3_closure(v2_root=v2, auxiliary_root=aux, destination=destination, repo_root=repo)
-    stage_parent = tmp_path / "stage-parent"
-    stage_parent.mkdir(mode=0o700)
-    with pytest.raises(c3.C3V3ClosureError, match="CANONICAL_AUDIT_BLOCKED"):
-        c3.consume_c3_successor_pass0(
-            runtime_root=runtime, private_stage_parent=stage_parent,
-            audit=lambda _path: {"passed": False, "issue_count": 1, "blocking_issue_count": 1},
-        )
-    assert not list(stage_parent.iterdir())
+    with pytest.raises(c3.C3V3ClosureError, match="APPROVED_MANIFEST_DRIFT"):
+        c3.build_c3_v3_closure(v2_root=v2, auxiliary_root=aux, destination=destination, repo_root=repo)
+    assert not destination.exists()

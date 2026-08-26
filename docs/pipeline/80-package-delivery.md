@@ -5,16 +5,16 @@
 ## C3 v3 direct PASS0 closure
 
 `scripts/build_fastlane_c3_v3_closure.py` and
-`src/autoslice/fastlane_c3_v3_direct.py` form the candidate-specific,
-provider-free closure lane for `auto_220021_561_670` on `2026-08-13`. It derives a new
-create-only `c3-successor-authority-v3` from the sealed v2 descriptor and exactly
-five allow-listed auxiliary byte preimages. It must validate the complete
-inventory, raw/self seals, root tree seal, v2 role hashes, line947/baseline
-binding, and every auxiliary ancestry before any private write. It never searches
-or falls back, hydrates v2, calls a provider, writes state/registry/ledger, or
-uploads. `replay_reviewed_subtitle_baseline.py --full-dry-run` dispatches this
-lane before generic replay/finalization when the v3 descriptor is present; its
-result is typed `PASS0` only after a fresh canonical package audit is PASS. `--apply`
+`src/autoslice/fastlane_c3_v3_direct.py` form the candidate-specific, provider-free
+closure lane for `auto_220021_561_670` on `2026-08-13`. The lane is fail-closed:
+it derives a create-only v3 authority only from the pinned v2 descriptor and five
+parent-pointer-bound auxiliary preimages, and validates every descriptor, origin,
+raw/self/tree seal, baseline, and source authority before any private write. It
+never searches, hydrates v2, calls a provider, writes state/registry/ledger, or
+uploads. `replay_reviewed_subtitle_baseline.py --full-dry-run` may dispatch the
+lane, but it must not report `PASS0` until a canonical package built from the
+sealed bytes has `build_manual` success and a zero-issue canonical audit. The
+current follow-up remains blocked at that canonical package gate; `--apply`
 remains fail-closed until a state-after-image transaction is explicitly bound.
 
 ## 快车道与提速边界

@@ -7,10 +7,12 @@ provider, or writes an authoritative target.
 """
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import json
 import os
 import stat
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping
@@ -23,6 +25,28 @@ V3_SCHEMA = "fastlane-c3-successor-authority-manifest.v3"
 _SCOPE = "private_exact_accepted_byte_carry_only"
 _FORBIDDEN = ["provider", "fresh_review", "state", "deploy", "upload"]
 _SHA = "sha256:"
+_APPROVED_V2_RAW_SHA = "sha256:a8a59579942ae9d55b8db0d4c3f8295b4ab3c178041c4b9dcb170021b1f35676"
+_APPROVED_V2_SELF_SEAL = "sha256:9d880c5ab92bb6217d88f62a6ca8a2a23519f88cdb04b92263bbc2e71c2cc1d4"
+_APPROVED_V3_RAW_SHA = "sha256:ecc19afdfa30bc3c978d1c29ef5a407f387251c04912b02ebcdbf37bc0de9f75"
+_APPROVED_V3_SELF_SEAL = "sha256:0a5465acbb7d6457894638f9d62cbda59320474209ef8374c9b91213f9c15fa2"
+_APPROVED_V3_TREE_SHA = "sha256:7afbc9e4489f523890538402d497d2f9075a77387bbcf2c5ee3654547b7577f2"
+_APPROVED_V2_SOURCE_AUTHORITIES = {
+    "final_grid_authority_sha256": "sha256:6800bbb1bb12267abdfc6484148bd531ab7173b8187a144fc46a53ca6df860a6",
+    "final_grid_file_sha256": "sha256:217feaddc1993a1b7ba8e7ae78228697faa06daa6fba4bc8bbdbe6752f1d18fd",
+    "r7e_final_grid_record_sha256": "sha256:444785698c67fec556e161448d76d135cf1cae956d053ddf2b6e50266f5817db",
+    "record_chat_rebind_authority_sha256": "sha256:edabdbd3212758b24e01f8bebfe8a01fb10ded1fcb068c5163872f434745e5a6",
+    "record_chat_rebind_file_sha256": "sha256:a19084d53aba632730d25acf9f4abf221b493994ce4a3e01b2373447dd05c064",
+}
+_APPROVED_V2_ENDPOINT = {
+    "final_closure_cue_index": 34,
+    "final_snapped_end_ms": 108940,
+    "source_final_end_ms": 118730,
+    "source_final_start_ms": 9690,
+}
+_APPROVED_BASELINE_FILE_SHA = "sha256:fa1fee5f2ec29556d8713414963df32f3bdf2a0f2b6cdd56efc71937509adf30"
+_APPROVED_DECISION_LEDGER_SHA = "54157e30df77040a4cf141c592f4508cfdc96113ed98aaed9d009c5c956c8472"
+_APPROVED_TRUTH_DIFF_SHA = "473d0eafdde366db7a26ce35f8e1d0dcea3427f6ad3cf3b6ef41fa015612ae45"
+_APPROVED_LINE947_AUTHORITY = "Ivan/Claude line947 exhaustive C3 ruling"
 
 # These are the only v2 roles admitted to the v3 closure.  Values are the
 # sealed live-v2 bytes, not a mutable runtime observation.
@@ -51,7 +75,21 @@ AUXILIARY_ROLES: Mapping[str, tuple[str, str, int, str, str]] = {
     "cover_pre_overlay": ("auto_220021_561_670.recut.burned-successor-v2.cover.pre-overlay.png", "cover_pre_overlay", 2471867, "sha256:7d83e83bc8d1961929020c387ec28b995c82c7189a461153975e3851132d6be2", "record.publish_staging.cover_generation.pre_overlay_path"),
     "cover_background": ("auto_220021_561_670.recut.burned-successor-v2.cover.ai-bg.png", "cover_background", 2471867, "sha256:7d83e83bc8d1961929020c387ec28b995c82c7189a461153975e3851132d6be2", "record.publish_staging.cover_generation.ai_background"),
     "cover_title_mask": ("auto_220021_561_670.recut.burned-successor-v2.cover.title-mask.png", "cover_title_mask", 24466, "sha256:7300cd4932d7050fe82463d20bb48581c0cbb215680538ed9b2cfc725d9f0741", "record.publish_staging.cover_generation.rendered_text_pixels.mask_path"),
-    "speaker_override": ("auto_220021_561_670.recut.burned-successor-v2.speaker-override.json", "speaker_override", 7475, "sha256:58daf1496d253b6e2e66a7997bbd42969fcea4325004bf5fc9c3ecf2e78e8581", "record.speaker_finalization.speaker_override"),
+    "speaker_override": ("auto_220021_561_670.recut.burned-successor-v2.speaker-override.json", "speaker_override", 7475, "sha256:58daf1496d253b6e2e66a7997bbd42969fcea4325004bf5fc9c3ecf2e78e8581", "speaker_manifest.speaker_override"),
+}
+_AUX_POINTER_BASENAMES = {
+    "cover_reference": "auto_220021_561_670.recut.burned-successor-v2.cover.cover-ref.png",
+    "cover_pre_overlay": "auto_220021_561_670.cover.pre-overlay.png",
+    "cover_background": "auto_220021_561_670.recut.burned-successor-v2.cover.ai-bg.png",
+    "cover_title_mask": "auto_220021_561_670.cover.title-mask.png",
+    "speaker_override": "auto_220021_561_670.recut.burned-successor-v2.speaker-override.json",
+}
+_AUX_PARENT_ROLES = {
+    "cover_reference": ("record", "reference_sha256"),
+    "cover_pre_overlay": ("record", "pre_overlay_sha256"),
+    "cover_background": ("record", "ai_background_sha256"),
+    "cover_title_mask": ("record", "mask_sha256"),
+    "speaker_override": ("speaker_manifest", "speaker_override_sha256"),
 }
 
 class C3V3ClosureError(ValueError):
@@ -93,16 +131,39 @@ def _safe_dir(path: Path, *, label: str) -> Path:
             raise C3V3ClosureError(f"C3_V3_{label}_UNSAFE")
     return path
 
+def _open_regular(path: Path, *, label: str, require_private_mode: bool = True) -> tuple[int, os.stat_result]:
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        row = os.fstat(fd)
+    except OSError as exc:
+        raise C3V3ClosureError(f"C3_V3_{label}_UNAVAILABLE") from exc
+    if not stat.S_ISREG(row.st_mode) or row.st_nlink != 1:
+        os.close(fd)
+        raise C3V3ClosureError(f"C3_V3_{label}_NOT_REGULAR")
+    if require_private_mode and stat.S_IMODE(row.st_mode) != 0o600:
+        os.close(fd)
+        raise C3V3ClosureError(f"C3_V3_{label}_MODE_DRIFT")
+    return fd, row
+
+
 def _read_regular(path: Path, *, label: str, require_private_mode: bool = True) -> bytes:
-    try: row = os.lstat(path)
-    except OSError as exc: raise C3V3ClosureError(f"C3_V3_{label}_UNAVAILABLE") from exc
-    if stat.S_ISLNK(row.st_mode) or not stat.S_ISREG(row.st_mode): raise C3V3ClosureError(f"C3_V3_{label}_NOT_REGULAR")
-    if require_private_mode and stat.S_IMODE(row.st_mode) != 0o600: raise C3V3ClosureError(f"C3_V3_{label}_MODE_DRIFT")
-    data = path.read_bytes()
-    try: after = os.lstat(path)
-    except OSError as exc: raise C3V3ClosureError(f"C3_V3_{label}_DRIFT") from exc
-    if (row.st_dev, row.st_ino, row.st_size) != (after.st_dev, after.st_ino, after.st_size): raise C3V3ClosureError(f"C3_V3_{label}_DRIFT")
-    return data
+    fd, row = _open_regular(path, label=label, require_private_mode=require_private_mode)
+    try:
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(fd, 1 << 20)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        after = os.fstat(fd)
+        if (row.st_dev, row.st_ino, row.st_size, row.st_nlink) != (after.st_dev, after.st_ino, after.st_size, after.st_nlink):
+            raise C3V3ClosureError(f"C3_V3_{label}_DRIFT")
+        data = b"".join(chunks)
+        if len(data) != row.st_size:
+            raise C3V3ClosureError(f"C3_V3_{label}_DRIFT")
+        return data
+    finally:
+        os.close(fd)
 
 def _write_exclusive(path: Path, data: bytes) -> None:
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
@@ -117,11 +178,42 @@ def _write_exclusive(path: Path, data: bytes) -> None:
     if stat.S_IMODE(os.lstat(path).st_mode) != 0o600: raise C3V3ClosureError("C3_V3_ROLE_MODE_DRIFT")
 
 def _copy_exact(source: Path, target: Path, *, expected_size: int, expected_sha: str, label: str, source_private_mode: bool = True) -> None:
+    """Copy from one opened source inode while hashing the bytes being copied."""
     _safe_dir(source.parent, label=f"{label}_SOURCE_PARENT")
-    if target.exists() or target.is_symlink(): raise C3V3ClosureError(f"C3_V3_{label}_COLLISION")
-    data = _read_regular(source, label=label, require_private_mode=source_private_mode)
-    if len(data) != expected_size or _sha(data) != expected_sha: raise C3V3ClosureError(f"C3_V3_{label}_HASH_DRIFT")
-    _write_exclusive(target, data)
+    if target.exists() or target.is_symlink():
+        raise C3V3ClosureError(f"C3_V3_{label}_COLLISION")
+    source_fd, before = _open_regular(source, label=label, require_private_mode=source_private_mode)
+    target_fd = -1
+    digest = hashlib.sha256()
+    copied = 0
+    try:
+        target_fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        while True:
+            chunk = os.read(source_fd, 1 << 20)
+            if not chunk:
+                break
+            digest.update(chunk)
+            copied += len(chunk)
+            view = memoryview(chunk)
+            while view:
+                count = os.write(target_fd, view)
+                if count <= 0:
+                    raise C3V3ClosureError("C3_V3_WRITE_FAILED")
+                view = view[count:]
+        after = os.fstat(source_fd)
+        if (before.st_dev, before.st_ino, before.st_size, before.st_nlink) != (after.st_dev, after.st_ino, after.st_size, after.st_nlink):
+            raise C3V3ClosureError(f"C3_V3_{label}_DRIFT")
+        if copied != expected_size or _SHA + digest.hexdigest() != expected_sha:
+            raise C3V3ClosureError(f"C3_V3_{label}_HASH_DRIFT")
+        os.fsync(target_fd)
+    except OSError as exc:
+        raise C3V3ClosureError(f"C3_V3_{label}_COPY_FAILED") from exc
+    finally:
+        if target_fd >= 0:
+            os.close(target_fd)
+        os.close(source_fd)
+    if stat.S_IMODE(os.lstat(target).st_mode) != 0o600:
+        raise C3V3ClosureError("C3_V3_ROLE_MODE_DRIFT")
 
 def _tree_sha256(entries: Mapping[str, Mapping[str, object]]) -> str:
     return _sha(_canonical({key: entries[key] for key in sorted(entries)}))
@@ -137,6 +229,13 @@ def _v2_manifest(v2_root: Path) -> tuple[dict, bytes, str]:
     declared = doc.get("manifest_sha256")
     unsigned = dict(doc); unsigned.pop("manifest_sha256", None)
     if not isinstance(declared, str) or declared != _sha(_canonical(unsigned)): raise C3V3ClosureError("C3_V3_V2_SELF_SEAL_DRIFT")
+    raw_sha = _sha(raw)
+    if raw_sha != _APPROVED_V2_RAW_SHA or declared != _APPROVED_V2_SELF_SEAL:
+        raise C3V3ClosureError("C3_V3_V2_APPROVED_MANIFEST_DRIFT")
+    if doc.get("source_authorities") != _APPROVED_V2_SOURCE_AUTHORITIES:
+        raise C3V3ClosureError("C3_V3_V2_SOURCE_AUTHORITIES_DRIFT")
+    if doc.get("endpoint") != _APPROVED_V2_ENDPOINT:
+        raise C3V3ClosureError("C3_V3_V2_ENDPOINT_DRIFT")
     if set(doc.get("roles", {})) != set(V2_ROLES): raise C3V3ClosureError("C3_V3_V2_ROLE_SET_DRIFT")
     for role, (name, size, digest) in V2_ROLES.items():
         entry = doc["roles"].get(role)
@@ -146,19 +245,99 @@ def _v2_manifest(v2_root: Path) -> tuple[dict, bytes, str]:
     return doc, raw, _sha(raw)
 
 def _validate_baseline_binding(repo_root: Path) -> None:
-    baseline = _safe_dir(repo_root / "assets/lidousha/reviewed_subtitle_baselines", label="BASELINE_PARENT") / f"{CANDIDATE_ID}.subtitle-baseline.v1.json"
+    base = _safe_dir(repo_root / "assets/lidousha/reviewed_subtitle_baselines", label="BASELINE_PARENT")
+    baseline = base / f"{CANDIDATE_ID}.subtitle-baseline.v1.json"
+    data = _read_regular(baseline, label="BASELINE", require_private_mode=False)
+    if _sha(data) != _APPROVED_BASELINE_FILE_SHA:
+        raise C3V3ClosureError("C3_V3_BASELINE_FILE_DRIFT")
     try:
-        row = os.lstat(baseline)
-    except OSError as exc:
-        raise C3V3ClosureError("C3_V3_BASELINE_UNAVAILABLE") from exc
-    if stat.S_ISLNK(row.st_mode) or not stat.S_ISREG(row.st_mode):
-        raise C3V3ClosureError("C3_V3_BASELINE_NOT_REGULAR")
-    data = baseline.read_bytes()
-    try: doc = json.loads(data.decode())
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc: raise C3V3ClosureError("C3_V3_BASELINE_INVALID") from exc
+        doc = json.loads(data.decode())
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise C3V3ClosureError("C3_V3_BASELINE_INVALID") from exc
     ownership = doc.get("operator_text_full_ownership", {})
-    if doc.get("candidate_id") != CANDIDATE_ID or doc.get("schema_version") != "subtitle-redelivery-baseline.v2" or doc.get("exact_interval_replay") is not True or ownership.get("speaker_authority") != "IVAN_LINE947_EXHAUSTIVE": raise C3V3ClosureError("C3_V3_BASELINE_BINDING_DRIFT")
-    if doc.get("sha256") != "d70a96c402df8313264ef6ca145d69d5dbb74e7a2c48eb512e78f3f417e8eecc": raise C3V3ClosureError("C3_V3_BASELINE_HASH_DRIFT")
+    if (doc.get("candidate_id"), doc.get("schema_version"), doc.get("exact_interval_replay"), doc.get("authority")) != (CANDIDATE_ID, "subtitle-redelivery-baseline.v2", True, _APPROVED_LINE947_AUTHORITY):
+        raise C3V3ClosureError("C3_V3_BASELINE_BINDING_DRIFT")
+    if doc.get("sha256") != "d70a96c402df8313264ef6ca145d69d5dbb74e7a2c48eb512e78f3f417e8eecc" or ownership.get("speaker_authority") != "IVAN_LINE947_EXHAUSTIVE":
+        raise C3V3ClosureError("C3_V3_BASELINE_HASH_DRIFT")
+    for name, expected in (("operator-decisions.v3.json", _APPROVED_DECISION_LEDGER_SHA), ("operator-truth-diff.v2.json", _APPROVED_TRUTH_DIFF_SHA)):
+        if _sha(_read_regular(base / f"{CANDIDATE_ID}.{name}", label=f"BASELINE_{name.upper()}", require_private_mode=False)) != _SHA + expected:
+            raise C3V3ClosureError("C3_V3_BASELINE_AUXILIARY_HASH_DRIFT")
+    lanes = doc.get("operator_truth_lanes", {})
+    if not isinstance(lanes, dict) or lanes.get("decision_ledger", {}).get("sha256") != _APPROVED_DECISION_LEDGER_SHA or lanes.get("diff_receipt", {}).get("sha256") != _APPROVED_TRUTH_DIFF_SHA:
+        raise C3V3ClosureError("C3_V3_BASELINE_AUXILIARY_BINDING_DRIFT")
+
+def _json_pointer(document: object, pointer: str) -> object:
+    current = document
+    for part in pointer.split(".")[1:]:
+        if not isinstance(current, dict) or part not in current:
+            raise C3V3ClosureError("C3_V3_AUXILIARY_POINTER_MISSING")
+        current = current[part]
+    return current
+
+
+def _validate_auxiliary_documents(parents: Mapping[str, Mapping[str, object]]) -> None:
+    for role, (name, _kind, size, digest, pointer) in AUXILIARY_ROLES.items():
+        parent_role, hash_field = _AUX_PARENT_ROLES[role]
+        value = _json_pointer(parents[parent_role], pointer)
+        if not isinstance(value, str) or Path(value).name != _AUX_POINTER_BASENAMES[role]:
+            raise C3V3ClosureError("C3_V3_AUXILIARY_POINTER_DRIFT")
+        parent = parents[parent_role]
+        # Hash fields live in the same cover_generation object as their path;
+        # the speaker manifest keeps the override hash beside its locator.
+        hash_value = None
+        if role == "cover_title_mask":
+            hash_value = _json_pointer(parent, "record.publish_staging.cover_generation.rendered_text_pixels." + hash_field)
+        elif role.startswith("cover_"):
+            hash_value = _json_pointer(parent, "record.publish_staging.cover_generation." + hash_field)
+        else:
+            hash_value = parent.get(hash_field)
+        if isinstance(hash_value, str) and not hash_value.startswith(_SHA):
+            hash_value = _SHA + hash_value
+        if hash_value != digest:
+            raise C3V3ClosureError("C3_V3_AUXILIARY_POINTER_HASH_DRIFT")
+
+
+def _validate_auxiliary_preimages(v2_root: Path, *, v2_raw_sha: str, v2_doc: Mapping[str, object]) -> None:
+    parents: dict[str, dict] = {}
+    for role in ("record", "speaker_manifest"):
+        try:
+            value = json.loads(_read_regular(v2_root / V2_ROLES[role][0], label=f"V2_{role.upper()}_PARENT").decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise C3V3ClosureError("C3_V3_AUXILIARY_PARENT_INVALID") from exc
+        if not isinstance(value, dict):
+            raise C3V3ClosureError("C3_V3_AUXILIARY_PARENT_INVALID")
+        parents[role] = value
+    _validate_auxiliary_documents(parents)
+
+
+def _publish_create_only(staging: Path, destination: Path) -> None:
+    """Publish a directory without replacing a concurrently-created target."""
+    if sys.platform == "darwin":
+        libc = ctypes.CDLL(None, use_errno=True)
+        renamex = getattr(libc, "renamex_np", None)
+        if renamex is None:
+            raise C3V3ClosureError("C3_V3_CREATE_ONLY_UNAVAILABLE")
+        renamex.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        renamex.restype = ctypes.c_int
+        if renamex(os.fsencode(staging), os.fsencode(destination), 0x00000004) != 0:
+            error = ctypes.get_errno()
+            if error == 17:
+                raise C3V3ClosureError("C3_V3_DESTINATION_EXISTS")
+            raise C3V3ClosureError("C3_V3_PUBLISH_FAILED")
+        return
+    # Linux's renameat2 is the only portable create-only directory primitive.
+    libc = ctypes.CDLL(None, use_errno=True)
+    renameat2 = getattr(libc, "renameat2", None)
+    if renameat2 is None:
+        raise C3V3ClosureError("C3_V3_CREATE_ONLY_UNAVAILABLE")
+    renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    renameat2.restype = ctypes.c_int
+    if renameat2(-100, os.fsencode(staging), -100, os.fsencode(destination), 1) != 0:
+        error = ctypes.get_errno()
+        if error == 17:
+            raise C3V3ClosureError("C3_V3_DESTINATION_EXISTS")
+        raise C3V3ClosureError("C3_V3_PUBLISH_FAILED")
+
 
 def build_c3_v3_closure(*, v2_root: Path, auxiliary_root: Path, destination: Path, repo_root: Path) -> C3V3Authority:
     """Derive one new create-only v3 root from verified byte preimages."""
@@ -168,6 +347,7 @@ def build_c3_v3_closure(*, v2_root: Path, auxiliary_root: Path, destination: Pat
     _safe_dir(destination.parent, label="DESTINATION_PARENT")
     if destination.exists() or destination.is_symlink(): raise C3V3ClosureError("C3_V3_DESTINATION_EXISTS")
     v2_doc, _v2_raw, v2_raw_sha = _v2_manifest(v2_root)
+    _validate_auxiliary_preimages(v2_root, v2_raw_sha=v2_raw_sha, v2_doc=v2_doc)
     _validate_baseline_binding(repo_root)
     staging = destination.parent / f".{destination.name}.build-{os.getpid()}"
     if staging.exists() or staging.is_symlink(): raise C3V3ClosureError("C3_V3_TEMP_EXISTS")
@@ -180,14 +360,14 @@ def build_c3_v3_closure(*, v2_root: Path, auxiliary_root: Path, destination: Pat
             roles[role] = {"locator": name, "mode": "0600", "size": size, "sha256": digest, "origin": {"kind": "v2_role", "v2_manifest_sha256": v2_raw_sha, "v2_manifest_self_seal": v2_doc["manifest_sha256"], "v2_pointer": f"roles.{role}"}}
         for role, (name, _kind, size, digest, pointer) in AUXILIARY_ROLES.items():
             _copy_exact(auxiliary_root / name, staging / name, expected_size=size, expected_sha=digest, label=f"AUX_{role.upper()}", source_private_mode=False)
-            roles[role] = {"locator": name, "mode": "0600", "size": size, "sha256": digest, "origin": {"kind": "allowlisted_auxiliary_preimage", "auxiliary_source": "explicit_recovery_store", "sealed_parent_role": "record", "v2_manifest_sha256": v2_raw_sha, "v2_manifest_self_seal": v2_doc["manifest_sha256"], "v2_pointer": pointer, "raw_hash": digest}}
+            parent_role, _hash_field = _AUX_PARENT_ROLES[role]
+            roles[role] = {"locator": name, "mode": "0600", "size": size, "sha256": digest, "origin": {"kind": "allowlisted_auxiliary_preimage", "auxiliary_source": "explicit_recovery_store", "sealed_parent_role": parent_role, "v2_manifest_sha256": v2_raw_sha, "v2_manifest_self_seal": v2_doc["manifest_sha256"], "v2_pointer": pointer, "raw_hash": digest}}
         tree = {role: {k: value for k, value in row.items() if k != "origin"} for role, row in roles.items()}
         manifest: dict[str, object] = {"schema_version": V3_SCHEMA, "candidate_id": CANDIDATE_ID, "recording_date": RECORDING_DATE, "authority_scope": _SCOPE, "forbidden_operations": list(_FORBIDDEN), "derived_from": {"schema_version": V2_SCHEMA, "manifest_raw_sha256": v2_raw_sha, "manifest_self_seal": v2_doc["manifest_sha256"]}, "roles": roles, "required_auxiliary_roles": sorted(AUXILIARY_ROLES), "root_tree_sha256": _tree_sha256(tree), "line947_binding": {"uuid": "555195ed-ec18-418d-a311-558f7e54291f", "raw_sha256": "sha256:e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa", "content_sha256": "sha256:0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b", "baseline_sha256": "sha256:d70a96c402df8313264ef6ca145d69d5dbb74e7a2c48eb512e78f3f417e8eecc"}}
         manifest["manifest_sha256"] = _sha(_canonical(manifest))
         _write_exclusive(staging / "manifest.json", _canonical(manifest))
         fd = os.open(staging, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)); os.fsync(fd); os.close(fd)
-        if destination.exists() or destination.is_symlink(): raise C3V3ClosureError("C3_V3_DESTINATION_EXISTS")
-        os.rename(staging, destination)
+        _publish_create_only(staging, destination)
         fd = os.open(destination.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)); os.fsync(fd); os.close(fd)
     except BaseException:
         if staging.exists() and not staging.is_symlink():
@@ -208,6 +388,8 @@ def load_c3_v3_authority(*, root: Path) -> C3V3Authority:
     if not isinstance(doc, dict) or doc.get("schema_version") != V3_SCHEMA or doc.get("candidate_id") != CANDIDATE_ID or doc.get("recording_date") != RECORDING_DATE or doc.get("authority_scope") != _SCOPE or doc.get("forbidden_operations") != _FORBIDDEN: raise C3V3ClosureError("C3_V3_IDENTITY_DRIFT")
     unsigned = dict(doc); declared = unsigned.pop("manifest_sha256", None)
     if not isinstance(declared, str) or declared != _sha(_canonical(unsigned)): raise C3V3ClosureError("C3_V3_SELF_SEAL_DRIFT")
+    if raw_sha != _APPROVED_V3_RAW_SHA or declared != _APPROVED_V3_SELF_SEAL:
+        raise C3V3ClosureError("C3_V3_APPROVED_MANIFEST_DRIFT")
     entries = doc.get("roles")
     if not isinstance(entries, dict) or set(entries) != set(V2_ROLES) | set(AUXILIARY_ROLES): raise C3V3ClosureError("C3_V3_ROLE_SET_DRIFT")
     expected_names = {str(entry.get("locator")) for entry in entries.values() if isinstance(entry, dict)} | {"manifest.json"}
@@ -216,16 +398,39 @@ def load_c3_v3_authority(*, root: Path) -> C3V3Authority:
     tree: dict[str, dict[str, object]] = {}
     for role, entry in entries.items():
         if not isinstance(entry, dict) or entry.get("mode") != "0600": raise C3V3ClosureError("C3_V3_ROLE_DESCRIPTOR_DRIFT")
+        expected = V2_ROLES.get(role) or AUXILIARY_ROLES.get(role)
+        if expected is None or entry.get("locator") != expected[0] or entry.get("size") != expected[2 if role in AUXILIARY_ROLES else 1] or entry.get("sha256") != expected[3 if role in AUXILIARY_ROLES else 2]:
+            raise C3V3ClosureError("C3_V3_ROLE_DESCRIPTOR_DRIFT")
         path = root / str(entry.get("locator")); data = _read_regular(path, label=f"ROLE_{role.upper()}")
         if len(data) != entry.get("size") or _sha(data) != entry.get("sha256"): raise C3V3ClosureError("C3_V3_ROLE_HASH_DRIFT")
+        if role in V2_ROLES:
+            origin = entry.get("origin")
+            if origin != {"kind": "v2_role", "v2_manifest_sha256": _APPROVED_V2_RAW_SHA, "v2_manifest_self_seal": _APPROVED_V2_SELF_SEAL, "v2_pointer": f"roles.{role}"}:
+                raise C3V3ClosureError("C3_V3_V2_ROLE_ORIGIN_DRIFT")
+        else:
+            origin = entry.get("origin")
+            parent_role, _hash_field = _AUX_PARENT_ROLES[role]
+            if origin != {"kind": "allowlisted_auxiliary_preimage", "auxiliary_source": "explicit_recovery_store", "sealed_parent_role": parent_role, "v2_manifest_sha256": _APPROVED_V2_RAW_SHA, "v2_manifest_self_seal": _APPROVED_V2_SELF_SEAL, "v2_pointer": AUXILIARY_ROLES[role][4], "raw_hash": AUXILIARY_ROLES[role][3]}:
+                raise C3V3ClosureError("C3_V3_AUXILIARY_ANCESTRY_DRIFT")
         roles[role] = path; tree[role] = {k: entry[k] for k in ("locator", "mode", "size", "sha256")}
     if doc.get("root_tree_sha256") != _tree_sha256(tree): raise C3V3ClosureError("C3_V3_TREE_SEAL_DRIFT")
+    if doc.get("root_tree_sha256") != _APPROVED_V3_TREE_SHA:
+        raise C3V3ClosureError("C3_V3_APPROVED_TREE_DRIFT")
+    parent_docs: dict[str, dict] = {}
+    for parent_role in ("record", "speaker_manifest"):
+        try:
+            parent = json.loads(_read_regular(roles[parent_role], label=f"ROLE_{parent_role.upper()}_PARENT").decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise C3V3ClosureError("C3_V3_AUXILIARY_PARENT_INVALID") from exc
+        if not isinstance(parent, dict):
+            raise C3V3ClosureError("C3_V3_AUXILIARY_PARENT_INVALID")
+        parent_docs[parent_role] = parent
+    _validate_auxiliary_documents(parent_docs)
     derived = doc.get("derived_from")
     if not isinstance(derived, dict) or derived.get("schema_version") != V2_SCHEMA or not isinstance(derived.get("manifest_raw_sha256"), str) or not isinstance(derived.get("manifest_self_seal"), str): raise C3V3ClosureError("C3_V3_V2_ANCESTRY_MISSING")
     if doc.get("required_auxiliary_roles") != sorted(AUXILIARY_ROLES): raise C3V3ClosureError("C3_V3_AUXILIARY_SET_DRIFT")
-    for role in AUXILIARY_ROLES:
-        origin = entries[role].get("origin")
-        if not isinstance(origin, dict) or origin.get("kind") != "allowlisted_auxiliary_preimage" or origin.get("sealed_parent_role") != "record" or origin.get("v2_manifest_sha256") != derived.get("manifest_raw_sha256") or origin.get("v2_manifest_self_seal") != derived.get("manifest_self_seal") or origin.get("v2_pointer") != AUXILIARY_ROLES[role][4] or origin.get("raw_hash") != AUXILIARY_ROLES[role][3]: raise C3V3ClosureError("C3_V3_AUXILIARY_ANCESTRY_DRIFT")
+    if derived != {"schema_version": V2_SCHEMA, "manifest_raw_sha256": _APPROVED_V2_RAW_SHA, "manifest_self_seal": _APPROVED_V2_SELF_SEAL}:
+        raise C3V3ClosureError("C3_V3_V2_ANCESTRY_DRIFT")
     line = doc.get("line947_binding")
     if line != {"uuid": "555195ed-ec18-418d-a311-558f7e54291f", "raw_sha256": "sha256:e64d4409aaf36193c27f3d67cd8e3fae69a6d3ae543a29a6c26f57c77d61c2aa", "content_sha256": "sha256:0e0e69e54fc06c88296536c6dfbca947181170873529c5de508a2af39aa93f6b", "baseline_sha256": "sha256:d70a96c402df8313264ef6ca145d69d5dbb74e7a2c48eb512e78f3f417e8eecc"}: raise C3V3ClosureError("C3_V3_LINE947_BINDING_DRIFT")
     return C3V3Authority(root, root / "manifest.json", raw_sha, declared, str(doc["root_tree_sha256"]), roles)
@@ -259,7 +464,10 @@ def consume_c3_successor_pass0(*, runtime_root: Path, private_stage_parent: Path
     package = stage / "package"; os.mkdir(package, 0o700)
     try:
         for role, source in authority.roles.items():
-            _copy_exact(source, package / source.name, expected_size=os.stat(source).st_size, expected_sha=_sha(source.read_bytes()), label=f"PRIVATE_{role.upper()}")
+            expected = V2_ROLES.get(role) or AUXILIARY_ROLES.get(role)
+            expected_size = expected[2 if role in AUXILIARY_ROLES else 1]
+            expected_sha = expected[3 if role in AUXILIARY_ROLES else 2]
+            _copy_exact(source, package / source.name, expected_size=expected_size, expected_sha=expected_sha, label=f"PRIVATE_{role.upper()}")
         package_binding = {"root_tree_sha256": authority.root_tree_sha256, "manifest_sha256": authority.manifest_raw_sha256, "artifact_count": len(authority.roles)}
         if audit is None: raise C3V3ClosureError("C3_V3_CANONICAL_AUDIT_CALLBACK_REQUIRED")
         try:
@@ -270,20 +478,18 @@ def consume_c3_successor_pass0(*, runtime_root: Path, private_stage_parent: Path
             codes = tuple(sorted({str(item.get("code")) for item in result.get("issues", ()) if isinstance(item, Mapping) and item.get("code")}))
             suffix = ",".join(codes) if codes else "UNKNOWN"
             raise C3V3ClosureError(f"C3_V3_CANONICAL_AUDIT_BLOCKED:{suffix}")
-        from src.autoslice.producer_delivery_transaction import PreparedDelivery
-        prepared_document = {
-            "schema_version": "c3-direct-prepared-delivery.v1",
+        if not isinstance(result.get("auditor_source_sha256"), str) or not isinstance(result.get("policy_fingerprint"), str):
+            raise C3V3ClosureError("C3_V3_AUDITOR_BINDING_MISSING")
+        prepared = {
+            "schema_version": "c3-direct-canonical-prepared-transaction-binding.v1",
             "lane": "talk", "candidate_id": CANDIDATE_ID,
             "upload_enabled": False, "provider_attempted": False,
-            "manifest_sha256": authority.manifest_raw_sha256,
-            "roles": sorted(authority.roles),
+            "authority_manifest_sha256": authority.manifest_raw_sha256,
+            "package_root_tree_sha256": authority.root_tree_sha256,
+            "review_manifest_sha256": result.get("review_manifest_sha256"),
         }
-        prepared_path = stage / "prepared-delivery.json"
-        prepared_raw = _canonical(prepared_document)
-        _write_exclusive(prepared_path, prepared_raw)
-        prepared = PreparedDelivery(stage, "talk", CANDIDATE_ID, _sha(prepared_raw), prepared_path)
-        audit_binding = {"schema_version": "c3-direct-pass0-audit-binding.v1", "passed": True, "audit_sha256": _sha(_canonical(result))}
-        matrix = tuple({"predicate": name, "status": "PASS"} for name in ("V3_DESCRIPTOR", "V2_BYTE_CARRY", "AUXILIARY_CLOSURE", "LINE947_BASELINE_BINDING", "CANONICAL_PACKAGE_AUDIT")) + ({"predicate": "UPLOAD_ALLOWED", "status": "PASS_FALSE"},)
+        audit_binding = {"schema_version": "c3-direct-pass0-audit-binding.v1", "passed": True, "audit_sha256": _sha(_canonical(result)), "auditor_source_sha256": result["auditor_source_sha256"], "policy_fingerprint": result["policy_fingerprint"]}
+        matrix = tuple({"predicate": name, "status": "PASS"} for name in ("V3_DESCRIPTOR", "V2_BYTE_CARRY", "AUXILIARY_CLOSURE", "LINE947_BASELINE_BINDING", "CANONICAL_PACKAGE_LAYOUT", "CANONICAL_PACKAGE_AUDIT", "AUDITOR_SOURCE_BINDING", "AUDITOR_POLICY_BINDING")) + ({"predicate": "UPLOAD_ALLOWED", "status": "PASS_FALSE"}, {"predicate": "PROVIDER_ATTEMPTED", "status": "PASS_FALSE"})
         return C3DirectPass0Result(prepared_delivery=prepared, private_package_binding=package_binding, private_audit_binding=audit_binding, predicate_matrix=matrix)
     finally:
         _remove_private_tree(stage)
