@@ -1,13 +1,8 @@
 """Fail-closed preparation for reviewed-subtitle baseline package replays.
 
-This is deliberately a Talk-only correction lane.  It can prove that an old
-record's media bytes can be reconstructed from the sealed padded source and it
-can replay the repository-sealed v2 reviewed baseline into a private stage.
-It cannot turn that partial stage into a public package: speaker, burn,
-title/cover, final-review and package-audit surfaces must all be rebuilt and
-sealed before a separate state-last delivery transaction may install anything.
-Keeping that distinction explicit prevents the historic failure mode where a
-failed rerun overwrote ``*.recut.mp4`` before its record after-image existed.
+This Talk-only correction lane reconstructs sealed source bytes into a private
+stage; speaker, burn, title/cover, final-review, audit, and state-last delivery
+remain separate gates.
 """
 
 from __future__ import annotations
@@ -1774,162 +1769,12 @@ def _prepared_package_names(
     return names
 
 
-def project_replay_state_after(
-    plan: ReplayPlan, *, runtime_root: Path, state_path: Path,
-    finalization: PrivateReplayFinalization, projection: ReplayLiveProjection,
-    package: PrivateReplayPackage | None = None,
-    sealed_after_image: object | None = None,
-) -> ReplayStateProjection:
-    """Build one successful Talk state after-image from sealed target facts.
-
-    The failed historical pick has no delivery path authority.  Consequently
-    every delivery field below comes from the prepared manifest projected by
-    the deployed channel profile, never from its rejected predecessor.
-    """
-
-    from src.autoslice.runner_state_writeback import state_bytes
-
-    state, before = _state_document(state_path, runtime_root=runtime_root)
-    picks = state.get("picks")
-    if not isinstance(picks, list):
-        raise ReviewedBaselineReplayError("REPLAY_STATE_PICK_INVALID")
-    matching = [
-        row for row in picks
-        if isinstance(row, dict) and str(row.get("cid") or row.get("candidate_id") or "") == plan.candidate_id
-    ]
-    if len(matching) != 1:
-        raise ReviewedBaselineReplayError("REPLAY_STATE_PICK_PREIMAGE_DRIFT")
-    adoption_receipt = None
-    post_success_idempotent = False
-    if matching[0].get("status") == "failed":
-        # A failed-row projection is reachable only from the normal prepared
-        # package path (or a retained, already sealed after-image on retry).
-        # The receipt waives source-state class only; it is never a package/QC
-        # or PASS0 bypass.
-        if package is None and sealed_after_image is None:
-            raise ReviewedBaselineReplayError("REPLAY_FAILED_ROW_PREPARED_PACKAGE_REQUIRED")
-        if package is not None:
-            package_audit_binding = regular_binding(package.package_audit.path, label="PACKAGE_AUDIT")
-            if package_audit_binding.sha256 != package.package_audit.sha256:
-                raise ReviewedBaselineReplayError("REPLAY_FAILED_ROW_PACKAGE_QC_DRIFT")
-            package_audit = _load_json(package_audit_binding, label="PACKAGE_AUDIT")
-            if (
-                package_audit.get("schema_version") != "lidousha-review-package-audit.v2"
-                or package_audit.get("passed") is not True
-                or package_audit.get("issue_count") != 0
-                or package_audit.get("blocking_issue_count") != 0
-            ):
-                raise ReviewedBaselineReplayError("REPLAY_FAILED_ROW_PACKAGE_QC_REQUIRED")
-        # This is the deliberately narrow hook: the C7b receipt waives only
-        # the source-state class mismatch.  It does not construct an after
-        # image, bypass PASS0/QC, or grant a state write; the native replay
-        # transaction still performs the final exact-preimage CAS.
-        from src.autoslice.c7b_failed_row_adoption import (
-            C7bFailedRowAdoptionError, validate_c7b_failed_row_adoption,
-        )
-        try:
-            adoption_receipt, _seal = validate_c7b_failed_row_adoption(
-                repo_root=runtime_root / "repo", state=state, state_date=plan.date,
-            )
-        except C7bFailedRowAdoptionError as exc:
-            raise ReviewedBaselineReplayError(str(exc)) from exc
-    elif matching[0].get("status") == "review_ready":
-        summary = matching[0].get("summary")
-        adoption = summary.get("failed_row_adoption") if isinstance(summary, Mapping) else None
-        if not isinstance(adoption, Mapping) or adoption.get("source_state_class_waived") is not True or adoption.get("receipt_sha256") != "sha256:e8e29bf1466ed31035d66e9df4f1cea80f61e921b2142398e863f98e80d34db8":
-            raise ReviewedBaselineReplayError("REPLAY_STATE_PICK_PREIMAGE_DRIFT")
-        post_success_idempotent = True
-    elif matching[0].get("status") != "candidate_rejected":
-        raise ReviewedBaselineReplayError("REPLAY_STATE_PICK_PREIMAGE_DRIFT")
-    delivered = _delivery_artifacts_from_prepared(
-        plan, finalization=finalization, projection=projection,
-    )
-    record = _load_json(projection.record, label="PROJECTED_RECORD")
-    publish = _load_json(projection.publish, label="PROJECTED_PUBLISH")
-    video = delivered["video"]
-    subtitle = delivered["subtitle"]
-    cover = delivered["cover"]
-    hashes = record.get("artifact_hashes")
-    if not isinstance(hashes, Mapping) or hashes.get("burned_video_sha256") != video["sha256"]:
-        raise ReviewedBaselineReplayError("REPLAY_PROJECTED_BURNED_VIDEO_HASH_INVALID")
-    publish_hashes = publish.get("artifact_hashes")
-    if (
-        not isinstance(publish_hashes, Mapping)
-        or publish_hashes.get("cover_sha256") != cover["sha256"]
-        or publish.get("cover_status") != "AI_COVER_READY"
-    ):
-        raise ReviewedBaselineReplayError("REPLAY_PROJECTED_COVER_HASH_STATUS_INVALID")
-    for value in (
-        record.get("media_path"), record.get("subtitle_path"),
-        publish.get("video_path"), publish.get("cover_path"),
-    ):
-        if not isinstance(value, str) or not Path(value).is_relative_to(_replay_package_root(plan)):
-            raise ReviewedBaselineReplayError("REPLAY_PROJECTED_LOCATOR_INVALID")
-    story = record.get("story_contract")
-    boundary = record.get("boundary_audit")
-    timing = record.get("subtitle_timing_qa")
-    speaker = _load_json(projection.speaker_manifest, label="PROJECTED_SPEAKER")
-    if not isinstance(story, Mapping) or story.get("candidate_id") != plan.candidate_id:
-        raise ReviewedBaselineReplayError("REPLAY_PROJECTED_STORY_CANDIDATE_INVALID")
-    row = matching[0]
-    # The standard result projector drops all failure/rejection plumbing once
-    # an owned delivery exists.  Preserve legitimate revival history and
-    # selection identity, but do not retain stale failure fingerprints.
-    if not post_success_idempotent:
-        for key in (
-            "failure_kind", "failure_stage", "failure_message", "failure_recoverable",
-            "failure_recovery_fingerprint", "failure_fingerprint", "failure_provider_class",
-            "failure_provider_status_codes", "rejected_status", "rejection_reason",
-            "error", "reason_codes", "subtitle_sha256",
-        ):
-            row.pop(key, None)
-    summary = {
-        "candidate_id": plan.candidate_id,
-        "final_end_ms": plan.local_end_ms,
-        "duration_ms": record.get("duration_ms"),
-        "closure_sentence": boundary.get("closure_sentence") if isinstance(boundary, Mapping) else None,
-        "boundary_verdict": boundary.get("verdict") if isinstance(boundary, Mapping) else None,
-        "red_flags": list(boundary.get("red_flags") or []) if isinstance(boundary, Mapping) else [],
-        "boundary_repairs": list(boundary.get("boundary_repairs") or []) if isinstance(boundary, Mapping) else [],
-        "timing_qa": timing.get("counts") if isinstance(timing, Mapping) else None,
-        "cover_status": "AI_COVER_READY",
-        "title": publish.get("title"),
-        "delivery": video["target"],
-        "subtitle": subtitle["target"],
-        "speaker_subtitle": delivered.get("speaker_srt", {}).get("target"),
-        "speaker_ass": delivered.get("speaker_ass", {}).get("target"),
-        "speaker_status": speaker.get("status"),
-        "speaker_guess": record.get("speaker_guess"),
-        "subtitle_regression_status": "NOT_CONFIGURED",
-        "redelivery_baseline_status": "APPLIED",
-        "talk_filler_audit": record.get("talk_filler_audit_path"),
-    }
-    if adoption_receipt is not None:
-        summary["failed_row_adoption"] = {
-            "schema_version": "c7b-failed-row-adoption-receipt.v1",
-            "receipt_sha256": adoption_receipt["canonical_self_sha256"],
-            "source_state_class_waived": True,
-            "provider_allowed": False,
-            "upload_allowed": False,
-        }
-    if not post_success_idempotent:
-        row.update({
-            "status": "review_ready", "rc": 0, "summary": summary,
-            "delivered": video["target"], "delivered_subtitle": subtitle["target"],
-            "video_sha256": video["sha256"], "cover_status": "AI_COVER_READY",
-            "cover_path": str(publish["cover_path"]), "cover_sha256": cover["sha256"],
-            "cover_generation": publish.get("cover_generation"),
-            "red_flags": list(summary["red_flags"]),
-            "boundary_repairs": list(summary["boundary_repairs"]),
-        })
-    # ``record_path`` has never been a normal Talk runner result field; the
-    # sealed delivery record is instead represented by its exact CID-bound
-    # sidecar in the delivery summary/target map.
-    return ReplayStateProjection(
-        before=before,
-        after=before if post_success_idempotent else state_bytes(state),
-        delivered=delivered,
-    )
+def project_replay_state_after(plan: ReplayPlan, *, runtime_root: Path, state_path: Path, finalization: PrivateReplayFinalization, projection: ReplayLiveProjection, package: PrivateReplayPackage | None = None, sealed_after_image: object | None = None) -> ReplayStateProjection:
+    if (plan.date, plan.candidate_id) == ("2026-08-14", "auto_130040_201_255"):
+        from src.autoslice.c7b_replay_projector import project_c7b_replay_state_after
+        return project_c7b_replay_state_after(plan, runtime_root=runtime_root, state_path=state_path, finalization=finalization, projection=projection, package=package, sealed_after_image=sealed_after_image)
+    from src.autoslice.reviewed_baseline_replay_state_projection import project_generic_replay_state_after
+    return project_generic_replay_state_after(plan, runtime_root=runtime_root, state_path=state_path, finalization=finalization, projection=projection, package=package, sealed_after_image=sealed_after_image)
 
 
 def build_replay_after_image(
