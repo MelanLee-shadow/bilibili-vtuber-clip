@@ -293,64 +293,30 @@ def test_plan_refuses_current_padded_source_hash_drift(tmp_path: Path) -> None:
         replay.build_replay_plan(repo_root=ROOT, out_root=out_root, date=DATE, candidate_id=CID)
 
 
-def test_stage_rebuilds_only_private_artifacts_and_preserves_expected_video_hash(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_non_c7b_mapping_authority_cannot_enter_private_stage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     out_root, media = _package(tmp_path)
     plan = replay.build_replay_plan(repo_root=ROOT, out_root=out_root, date=DATE, candidate_id=CID)
-
     def fake_run(command: list[str], **_kwargs: object) -> object:
         Path(command[-1]).write_bytes(media)
         return type("Completed", (), {"returncode": 0})()
-
     monkeypatch.setattr(replay.subprocess, "run", fake_run)
     stage_parent = tmp_path / "private"
     stage_parent.mkdir(mode=0o700)
-    result = replay.stage_replay(plan, stage_parent=stage_parent)
-
-    stage = Path(result["stage"])
-    assert {path.name for path in stage.iterdir()} == {
-        "recut.mp4", "reviewed.srt", "redelivery-baseline.json", "stage.json",
-    }
-    assert (stage / "recut.mp4").is_file()
-    reviewed = (stage / "reviewed.srt").read_text(encoding="utf-8")
-    assert reviewed == plan.baseline.baseline_path.read_text(encoding="utf-8")
-    assert len(replay._fresh_srt_to_source_cues(reviewed, window_start_ms=0, duration_ms=96_790)) == 20
-    assert "00:00:00,250" in reviewed
-    assert "《线上直播间" in reviewed
-    assert all(path.stat().st_mode & 0o777 == 0o600 for path in stage.iterdir() if path.name != "recut.mp4")
-    assert _sha((stage / "recut.mp4").read_bytes()) == plan.expected_video_sha256
-    stage_document = json.loads((stage / "stage.json").read_text(encoding="utf-8"))
-    assert "delivery_projection_receipt" not in stage_document
-    assert not list((out_root / DATE / CID / "replacement_recuts").glob("*.stage.json"))
+    with pytest.raises(replay.ReviewedBaselineReplayError, match="REPLAY_BASELINE_APPLICATION_FAILED"):
+        replay.stage_replay(plan, stage_parent=stage_parent)
 
 
-def test_stage_replays_delivery_local_baseline_without_second_crop(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A delivery-local reviewed grid is identity-projected onto final media."""
-
+def test_non_c7b_delivery_local_mapping_authority_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     out_root, media = _package(tmp_path)
     plan = replay.build_replay_plan(repo_root=ROOT, out_root=out_root, date=DATE, candidate_id=CID)
-
     def fake_run(command: list[str], **_kwargs: object) -> object:
         Path(command[-1]).write_bytes(media)
         return type("Completed", (), {"returncode": 0})()
-
     monkeypatch.setattr(replay.subprocess, "run", fake_run)
     parent = tmp_path / "private"
     parent.mkdir(mode=0o700)
-    result = replay.stage_replay(plan, stage_parent=parent)
-
-    audit = json.loads((Path(result["stage"]) / "redelivery-baseline.json").read_text())
-    assert audit["status"] in {"APPLIED", "ALREADY_SATISFIED"}
-    assert audit["application_strategy"] == "exact_reviewed_interval_replay"
-    assert audit["current_source_interval"] == {
-        "absolute_source_start_ms": 1_602_510,
-        "absolute_source_end_ms": 1_699_300,
-    }
-    reviewed = (Path(result["stage"]) / "reviewed.srt").read_text(encoding="utf-8")
-    assert reviewed == plan.baseline.baseline_path.read_text(encoding="utf-8")
+    with pytest.raises(replay.ReviewedBaselineReplayError, match="REPLAY_BASELINE_APPLICATION_FAILED"):
+        replay.stage_replay(plan, stage_parent=parent)
 
 
 def test_stage_rejects_rebuilt_video_that_is_not_the_old_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
