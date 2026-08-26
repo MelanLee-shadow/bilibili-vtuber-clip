@@ -25,6 +25,9 @@ REVIEWED_SRT = "sha256:f436e1913b8eb2bd948c37b18bce9c2a9970dd9be07cf114f309a9c16
 VIDEO_SHA = "sha256:40025aa2a2727493207a0deea69013d2a8f5f9c49b29003627f398349a847e7e"
 CLIP_CONTEXT_SHA = "sha256:ca38b6601e5401e35519cb76fc8e30764121e1300f7f404f92c1f645f1b0b00c"
 BOUNDARY_AUDIT_SHA = "sha256:57dccc07218635f612a26b6f03a77b7a9c2688160085b36af6f9253238c4a05e"
+CHAT_AUDIT_SHA = "sha256:61149fe0ef1e875a24ce0542c5f90ebdce2f04d5f2216a566969899f7b6c86b6"
+SOURCE_FACT_RECEIPT_SHA = "sha256:da34883b4952d46356cc44fb6cb695105ff51f34943158f29d218f51b14934bd"
+CHAT_CLOSURE_SCHEMA = "fastlane-c9-sealed-chat-closure.v1"
 
 
 class FastlaneC9SuccessorError(ValueError):
@@ -60,6 +63,36 @@ def _json(path: Path, *, label: str) -> dict[str, Any]:
     return value
 
 
+def _sealed_chat_closure(publish: Mapping[str, Any], clip_context: Mapping[str, Any]) -> dict[str, Any]:
+    """Consume only the already sealed source-fact/structured-chat evidence."""
+    review = publish.get("source_fact_review")
+    artifact_hashes = publish.get("artifact_hashes")
+    if not isinstance(review, Mapping) or not isinstance(artifact_hashes, Mapping) or artifact_hashes.get("chat_authority_audit_sha256") != CHAT_AUDIT_SHA or review.get("status") != "PASS" or review.get("receipt_sha256") != SOURCE_FACT_RECEIPT_SHA:
+        raise FastlaneC9SuccessorError("C9_SUCCESSOR_CHAT_AUTHORITY_UNAVAILABLE")
+    passes = review.get("passes")
+    if not isinstance(passes, list) or not passes or not isinstance(passes[-1], Mapping):
+        raise FastlaneC9SuccessorError("C9_SUCCESSOR_CHAT_AUTHORITY_UNAVAILABLE")
+    final = passes[-1]
+    if final.get("status") != "KEEP" or final.get("final_selection_hook") != (review.get("final_selection_hook")) or final.get("final_title") != review.get("final_title") or final.get("selection_scorecard_review", {}).get("status") != "COMPATIBLE" or "structured_chat" not in final.get("supported_by", []):
+        raise FastlaneC9SuccessorError("C9_SUCCESSOR_CHAT_AUTHORITY_UNAVAILABLE")
+    if clip_context.get("candidate_id") != CID or clip_context.get("recording_date") != DATE or not isinstance(clip_context.get("structured_chat"), list) or (clip_context.get("retrieval_budget") or {}).get("structured_chat_truncated") is not False:
+        raise FastlaneC9SuccessorError("C9_SUCCESSOR_CHAT_AUTHORITY_UNAVAILABLE")
+    closure: dict[str, Any] = {
+        "schema_version": CHAT_CLOSURE_SCHEMA,
+        "candidate_id": CID,
+        "recording_date": DATE,
+        "status": "PASS",
+        "provider_attempted": False,
+        "chat_authority_audit_sha256": CHAT_AUDIT_SHA,
+        "source_fact_receipt_sha256": SOURCE_FACT_RECEIPT_SHA,
+        "clip_context_sha256": CLIP_CONTEXT_SHA,
+        "structured_chat_rows": len(clip_context["structured_chat"]),
+        "basis": "sealed source-fact KEEP receipt with structured_chat support plus complete, hash-bound clip context; no provider call",
+    }
+    closure["self_sha256"] = _sha_bytes(_canon(closure))
+    return closure
+
+
 def _joint_receipt(repo_root: Path) -> tuple[dict[str, Any], str]:
     path = Path(repo_root) / BASE / JOINT_QC_NAME
     receipt = _json(path, label="JOINT_QC")
@@ -86,6 +119,8 @@ def materialize_c9_successor(*, repo_root: Path, snapshot: Path, out: Path) -> P
     if record.get("artifact_hashes", {}).get("subtitle_sha256") != OLD_SUBTITLE:
         raise FastlaneC9SuccessorError("C9_SUCCESSOR_PREDECESSOR_RECORD_INVALID")
     publish = _json(snapshot / "current.publish.json", label="PUBLISH")
+    clip_context = _json(snapshot / "current.clip-context.json", label="CLIP_CONTEXT")
+    chat_closure = _sealed_chat_closure(publish, clip_context)
     title = publish.get("title") or publish.get("final_title")
     hook = (
         (publish.get("cover_generation") or {}).get("story_hook")
@@ -114,6 +149,7 @@ def materialize_c9_successor(*, repo_root: Path, snapshot: Path, out: Path) -> P
     )
     for source, target in copies:
         shutil.copy2(source, out / target)
+    (out / "chat-closure.json").write_text(json.dumps(chat_closure, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     if _sha(out / "cover.png") != COVER_SHA:
         raise FastlaneC9SuccessorError("C9_SUCCESSOR_COVER_BYTES_DRIFT")
     successor: dict[str, Any] = {
@@ -139,6 +175,8 @@ def materialize_c9_successor(*, repo_root: Path, snapshot: Path, out: Path) -> P
             "cover_sha256": _sha(out / "cover.png"),
             "clip_context_sha256": _sha(out / "clip-context.json"),
             "joint_qc_sha256": joint_sha,
+            "chat_closure_sha256": _sha(out / "chat-closure.json"),
+            "chat_authority_audit_sha256": CHAT_AUDIT_SHA,
             "frozen_boundary_audit_sha256": BOUNDARY_AUDIT_SHA,
             "frozen_boundary_audit": record["boundary_audit"],
         },
@@ -159,6 +197,8 @@ def materialize_c9_successor(*, repo_root: Path, snapshot: Path, out: Path) -> P
         "successor_record": "successor-record.json",
         "joint_title_cover_qc": "joint-title-cover-qc.json",
         "joint_title_cover_qc_sha256": _sha(out / "joint-title-cover-qc.json"),
+        "chat_closure": "chat-closure.json",
+        "chat_closure_sha256": _sha(out / "chat-closure.json"),
         "typed_blocker": None,
     }
     (out / "review_manifest.json").write_text(json.dumps(review, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
@@ -183,9 +223,10 @@ def audit_c9_successor(root: Path, manifest: dict[str, Any]) -> list[dict[str, s
         "upload_allowed": False,
         "successor_record": "successor-record.json",
         "joint_title_cover_qc": "joint-title-cover-qc.json",
+        "chat_closure": "chat-closure.json",
         "typed_blocker": None,
     }
-    if set(manifest) != set(expected_manifest) | {"joint_title_cover_qc_sha256"} or any(manifest.get(key) != value for key, value in expected_manifest.items()):
+    if set(manifest) != set(expected_manifest) | {"joint_title_cover_qc_sha256", "chat_closure_sha256"} or any(manifest.get(key) != value for key, value in expected_manifest.items()):
         issues.append({"code": "C9_SUCCESSOR_MANIFEST_INVALID", "severity": "BLOCK"})
         return issues
     try:
@@ -207,6 +248,17 @@ def audit_c9_successor(root: Path, manifest: dict[str, Any]) -> list[dict[str, s
         source_action_sha = _sha(source_action)
         if source_action_sha != "sha256:32fb21e0703a5aec07920cfc544bb951201eaff0f59353fdc8152971f95dd2a4":
             issues.append({"code": "C9_SUCCESSOR_SOURCE_ACTION_DRIFT", "severity": "BLOCK"})
+        try:
+            publish = _json(root / "publish.json", label="PUBLISH")
+            clip_context = _json(root / "clip-context.json", label="CLIP_CONTEXT")
+            expected_chat = _sealed_chat_closure(publish, clip_context)
+            observed_chat = _json(root / "chat-closure.json", label="CHAT_CLOSURE")
+            if observed_chat != expected_chat:
+                issues.append({"code": "C9_SUCCESSOR_CHAT_CLOSURE_DRIFT", "severity": "BLOCK"})
+            if target.get("chat_closure_sha256") != _sha(root / "chat-closure.json") or target.get("chat_authority_audit_sha256") != CHAT_AUDIT_SHA or manifest.get("chat_closure_sha256") != _sha(root / "chat-closure.json"):
+                issues.append({"code": "C9_SUCCESSOR_CHAT_BINDING_INVALID", "severity": "BLOCK"})
+        except FastlaneC9SuccessorError as exc:
+            issues.append({"code": str(exc), "severity": "BLOCK"})
         boundary = target.get("frozen_boundary_audit") if isinstance(target, Mapping) else None
         if not isinstance(boundary, Mapping) or _sha_bytes(_canon(boundary)) != BOUNDARY_AUDIT_SHA:
             issues.append({"code": "C9_SUCCESSOR_BOUNDARY_DRIFT", "severity": "BLOCK"})
