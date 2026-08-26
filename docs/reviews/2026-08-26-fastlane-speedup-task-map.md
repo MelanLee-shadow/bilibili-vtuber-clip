@@ -124,7 +124,7 @@ Ivan 还要求回答 12 个“为什么没修成/为什么没入清单”问题�
 | C4 | `2026-08-14 auto_113028_1602_1698` | 见面发现/日语、哼歌不做字幕、指定标题方向 | `PUBLIC_VERIFIED_SAME_BV` `BV1h7hg68E8Y`，AID `117154678638617`，current CID `41270641488` | 永久跳过，不创建第二 BVID |
 | C5 | `2026-08-14 auto_113028_1271_1328` | niji 夏天/哼唱/热点 crawler | `PUBLIC_VERIFIED_SAME_BV` `BV1Sahj65ExM`，AID `117157295950921`，current CID `41267890237` | 永久跳过，不创建第二 BVID |
 | C6 | `2026-08-14 auto_120032_753_816` | naruhodo ne；回答选题理由；重做标题封面 | `ACTIVE_BLOCKER`；worktree HEAD `b50af01c`；focused 179 pass；旧 full suite 6870 pass/2 architecture fail 已由 b50 修复但未再跑 full；private stage SHA `b23b2a…` 正确，生产等价探针暴露 `C6_EXACT_PLAN_COORDINATE_OR_IDENTITY_DRIFT` | source-bound 区分 plan expected video `ba1e…` 与 frozen delivery `982e…` 的角色，修 split pins；provider-disabled probe 必须到 source-fact 边界且零写入 |
-| C7 | `2026-08-14 auto_123036_727_785` | 0:21「不可以就要」（读弹幕） | `PRIVATE_READY`；current full-dry closure `READY_TO_COMMIT`，所有 authoritative surfaces unchanged | C3/C6 后整合；apply 后对 current video `1a717d…` 做独立 Colab/OCI3 decode/QC，不能借历史不同 SHA 冒充 |
+| C7 | `2026-08-14 auto_123036_727_785` | 0:21「不可以就要」（读弹幕） | `PRIVATE_READY`；deployed-lineage golden pilot `READY_TO_COMMIT`，full-dry rc `0`，all authoritative surfaces unchanged，stage empty；closure SHA `42c3b719…9b0b1` | C3/C6 后整合；apply 后对 current video `1a717d…` 做独立 Colab/OCI3 decode/QC，不能借历史不同 SHA 冒充 |
 | C7b | `2026-08-14 auto_130040_201_255` | failed/content_boundary 复活；kmx/脑控完整弹幕/指定标题 | `ACTIVE_BLOCKER`；failed-row adoption HEAD `f1d368d7`，完整 live-row SHA `549949…`，架构/C7b/replay 196 pass，CAS/idempotency 96 pass；未 private PASS0 | 第二次 strong review APPROVE → provider/state/upload-disabled private full-dry → cover/QC/package closure |
 | C8 | `2026-08-14 songvis_130040_670_11874655` | 园游会，过、可传 | `PUBLIC_VERIFIED` `BV1fr8P6REDP`，AID `117130116729073`，CID `41111260592` | 永久跳过 |
 | C9 | `2026-08-15 auto_143025_1112_1285` | 视频内 vtuber 声/自带字幕全部弃掉 | `ACTIVE_BLOCKER`；source-action 66→41 cues 已穷举；Ivan 已授权 exact derived joint-QC；live row 仍 failed，successor 先前报 `C9_SUCCESSOR_CHAT_AUTHORITY_UNAVAILABLE` | 实现 hash-bound joint-QC consumption、chat successor、exact-final、failed-row state-last 路径；provider 必须保持 disabled |
@@ -161,7 +161,7 @@ Ivan 还要求回答 12 个“为什么没修成/为什么没入清单”问题�
 | P1 prepare outside lock / provider slots / short CAS / single uploader | 当前代码入口和 focused tests 已存在 | `IMPLEMENTED, CAMPAIGN IN USE` | combined full suite；用两个 candidate-private prepare 并行 + 一个串行 commit canary 验证无竞态 |
 | autoslice-only deploy 不因 unchanged adapter 等直播 | 当前 deploy 脚本有 `external_payload_unchanged_safe`，全外部 payload 相同则不碰 adapter；早期修复不是放宽内容门 | `CODE_PRESENT, LIVE STREAMING CANARY MISSING` | 在不改 adapter 的真实部署窗口做 no-op/auto-only canary；外部 payload drift 时仍 fail-closed |
 | AGY 超时与 Gemini paid fallback | commit `90a29c3` 是 deployed 祖先；用户要求 AGY 快时不要无谓超时、失败有 Gemini 兜底 | `CODE_PRESENT` | 当前 key/provider 版本做 bounded canary；确认只在允许的最后层触发且 receipt 可审计 |
-| free 磁盘与历史 scratch | 已把两个历史树 tree-seal 后 offload 到 OCI3；free 又回到 0 available | `CRITICAL_BLOCKER` | 继续只 offload 可恢复、非权威、无活跃进程的 nlink1 大树；destination exact tree seal 后才删 source；恢复至少 8–10 GiB headroom 后才媒体/部署 |
+| free 磁盘与历史 scratch | historical runtime 已用 topology-aware seal offload；另有 7 个无引用 stale quarantine/tmp roots 完整 offload 后删除，protected/reference-bearing trees 保留 | `IMPROVED, STILL BELOW GATE`；free available `7301783552` bytes（约 7.30 GB），尚未达到 8–10 GiB | 只继续处理可恢复、非权威、无活跃进程且有完整 destination seal 的 exact allowlist；恢复至少 8–10 GiB headroom 后才媒体/部署 |
 | OCI3 开发/验证机 | repo `23711fd4` clean；project `.venv` Python 3.13.5；111 GiB free | `PARTIAL` | 同步 combined commit；先作为测试/media verify surface，不写 publication authority |
 | OCI3 录制与最终迁移 | `/opt/bilive/recording/status.json` 当前 `service_reachable=false`，source disposition drift；`/opt/bilive/autoslice` 无 repo/state/out | `BLOCKED` | 修 recorder drift、全套 protocol acceptance、同步 runtime/data、设计 create-only cutover；最后 maintenance window 内 free→OCI3 唯一写者切换 |
 | Colab 并行 offload | 当前 active sessions = 0；C3 媒体 validation 已跑通并 verified fetch/stop | `AVAILABLE` | C7 current apply 后、C3/C6 新媒体需要时上传最小显式文件做 decode/QC；每次 verified fetch 后 stop |
@@ -169,13 +169,13 @@ Ivan 还要求回答 12 个“为什么没修成/为什么没入清单”问题�
 
 ## 7. 当前运行态检查点
 
-读取时间：2026-08-26 本战役检查。
+读取时间：2026-08-26T16:37Z 本战役检查。
 
 ### free（唯一 live authority）
 
 - deployed `981bc4abad395c2e00db7212ff8541f7ddc32ba0`
 - `DISABLED`: empty regular `0644`
-- filesystem：`394G / 394G`，available `0`，100%；这是当前任何新媒体生产和部署前的硬阻塞
+- filesystem：`394G / 394G`，available `7301783552` bytes（约 7.30 GB），99%；仍低于新媒体生产/部署准入所需的 8–10 GiB headroom
 - recorder：`service_reachable=true`、`streaming=false`、`recording=false`，但报告 `19 closed recording(s) failed finalization`
 - 未观察到 `free_session_autoslice`、`deploy_free_autoslice`、`authorized_upload.py` mutation process
 - live SHA：static registry `503172e8…`；runtime registry `a197a19a…`；upload ledger `35b86573…`
@@ -187,7 +187,7 @@ Ivan 还要求回答 12 个“为什么没修成/为什么没入清单”问题�
 - 111 GiB free
 - `/opt/bilive/autoslice/DISABLED` empty regular `0644`，但无 runtime `repo/`、`state/`；不是 publication host
 - recorder 当前 `service_reachable=false`、`streaming=false`、`recording=false`，因 2026-08-18 source disposition fingerprint drift
-- 可恢复 offload 已存在于 `/home/ubuntu/private-offload/`；它们不是 runtime authority
+- 可恢复 offload 已存在于 `/home/ubuntu/private-offload/`；runtime seal `0600`，含 topology-aware historical runtime 与 cleanup bundle；它们不是 runtime authority
 
 ### Colab
 

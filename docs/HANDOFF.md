@@ -1,6 +1,6 @@
 # Current handoff
 
-## 2026-08-26T15:55Z Fastlane integration / OCI3 source-substitution checkpoint
+## 2026-08-26T16:37Z Fastlane integration / OCI3 source-substitution checkpoint
 
 ### 目标
 
@@ -8,31 +8,34 @@
 
 ### 已完成
 
-- 集成 worktree：`codex/fastlane-integration-20260826`，HEAD `80f30501`，clean。
-- 两个安全修复提交：`e818e060`（structured subtitle authority gates）与 `80f30501`（malformed operator ledger fail-closed）。
+- 集成 worktree：`codex/fastlane-integration-20260826`，HEAD `7837c5f5`，clean。
+- 两个安全修复提交：`e818e060`（structured subtitle authority gates）与 `80f30501`（malformed operator ledger fail-closed）；`7837c5f5` 更新本交接。
 - 受影响 replay/authority 测试：`136 passed`；全量 pytest：`6946 passed in 354.46s`；`py_compile`、Ruff、`git diff --check` 及 active-module 2000 行上限检查均通过。
 - 普通 candidate 的 mapping-valued operator authority 现在只有在它与 SHA-validated decision ledger 的完整 authority object 相等时才可用；C7b 仍强制走独立 resolver；candidate/ledger identity drift 与 malformed ledger 均 fail closed。private stage 另外拒绝非 C7b 的 mapping authority，C5 revoked authority 不再进入 projection。
+- C7 deployed-lineage private golden pilot：`READY_TO_COMMIT`、`full_dry_rc=0`、`all_authoritative_surfaces_unchanged=true`、`private_stage_empty=true`；closure 位于 `free:/opt/bilive/autoslice/private-fastlane-b1-c7-current-pilot-981bc4ab-20260826T041255Z/evidence/closure.json`，SHA `42c3b719d55843f598f133bb819e9e3e6f8dac33d307c64cc5698f50f1e9b0b1`。
 - OCI3 migration lane 已通过 Sol review（仅 offline/private scope），工具已在 `~/oci3-source-migration-20260826/code/` 私有暂存，未部署到 adapter。
 - OCI3 已从当前 live state 冻结 snapshot `5c7f534ea34fcfaa0daf4558e5400db52704c79d457b8b6cfd732eb3d8438c2f`，并完成 dry-run 与 create-only receipt：receipt canonical SHA `337a1720cbb5659bfdb9fdebef9d0b19c084ecf7ccfb53b7054ad4b940ae88d0`；`identity_proven=false`、`source_substitution=true`、`ordinary_rebind=false`、`publication_authority=null`。
 - OCI3 transformed state 只增加 `source_disposition_migrations`；原 disposition row、finalized ledger、webhook index 均保持，ledger `adapter_consumption=NOT_CONSUMED_BY_ADAPTER`。没有写 `/opt/bilive/recording/adapter-state.json`、Docker、deploy、upload 或 publication。
-- historical runtime 已完整 offload 到 `oci3:/home/ubuntu/private-offload/free-opt-autoslice-private-fastlane-runtime`；source/destination manifest 均为 `ff914f414f2a87953975d118c40cb422a06d61f02d806d0b67b57c360fd9e355`，`39962` entries、`13219916794` file bytes。`OFFLOAD_SEAL.json` mode `0600`，raw SHA `a3b4ba2284b06727267d8d609ae981cb90f18f9e6e71a7cf8591969b3871d50c`；partial 已消失，quarantined orphan 保留，free source 保留。
+- historical runtime 已用单流重建并修复 hardlink topology 后 offload 到 `oci3:/home/ubuntu/private-offload/free-opt-autoslice-private-fastlane-runtime`；content manifest `ff914f414f2a87953975d118c40cb422a06d61f02d806d0b67b57c360fd9e355`、`39962` entries、`13219916794` file bytes；topology SHA `37c54a031d6933ef7f32e2c303d8cf28e0380f9ac1c260080d70b7c047386452`、policy metadata SHA `1a321add5cf9a9e9251d4bc7aead56f20e3b6b2a2438957d196b96fe21bd15a6`。replacement `OFFLOAD_SEAL.json` mode `0600`，raw SHA `39575ea0e7fd30406d6ea9ba8b2259279433806c50f182379596ffca4a820ccf`；content-only previous copy、quarantined orphan 均保留。
+- 七个无 state/asset 引用且无活跃进程的 stale quarantine/tmp roots 已单流 offload 到 `oci3:/home/ubuntu/private-offload/free-cleanup-bundle-20260826`；seal mode `0600`、raw SHA `76047234f689e62b67a462d3d60d6c102f5079b0443d2906158dccc73e853d8c`，content SHA `7a2ad5e35e4016f787a2664ac9f842edbe81e385822198f20db8b64e6aea5282`、topology SHA `23d1c25cfdd85e72fb12a018427c6055df0777fe6cd18030b8a17af5f967309f`、metadata SHA `c8f4b72fed9865dccfe9a9b1e305113f353a07f9720a7ecfdf245c381c173f61`；just-in-time reference/process/open-FD scan 全 0 后才删除 source。free available 从 0 增至 `7301783552` bytes；reference-bearing `out/2026-08-16`、`reports/operator`、`out/acceptance` 与 speaker-eval 未触碰。
 - C3 exact v2 bytes 已从 free private authority 复制到本地临时 evidence；v3 builder exact PASS（manifest raw `ecc19a…9f75`、tree `7afbc9…577f2`），但 canonical reclosure 仍精确失败 `C3_CLIP_CONTEXT_AUTHORITY_MISSING`。
 
 ### 进行中
 
 - overall fastlane 仍未完成；publication order 仍为 `C3 → C6 → C7 → C7b → C9 → C10 → C12 → C13 → C14 → C16 → C17`，且所有外部 publication 继续只能经 `free:/opt/bilive/autoslice` 的 `scripts/authorized_upload.py`。
-- OCI3 live adapter state 仍可能外部漂移；migration receipt 不代表 adapter cutover，也未写 ordinary FUSE identity binding。需后续 fresh snapshot/reconciliation 才能讨论 cutover。
+- free 当前仍约 `7.30 GiB` available，尚未达到任务图要求的 `8–10 GiB` headroom；deployed commit 仍为 `981bc4ab`，`DISABLED` 仍为空 regular `0644`。OCI3 live adapter state 仍可能外部漂移；migration receipt 不代表 adapter cutover，也未写 ordinary FUSE identity binding。
 
 ### 阻塞
 
 - C3 当前 free v2 clip-context 文件 SHA `fb2d6711…3987`，但 v2 record/story contract 绑定旧 payload/prompt SHA（record artifact `01e215…8b6d`、prompt payload `b0af83…4987`）；现有 recovery receipt 明确标注 `semantic_reconstruction_not_byte_equivalent`，不能把它重签成 clip-context authority。不得发布 C3。
-- 因 C3 authority 未闭合，不得进行 free deploy、state CAS、authorized upload、public mutation 或 OCI3 production cutover；全量测试绿不等于 publication readiness。
+- 因 C3 authority 未闭合、free headroom 仍低于目标，不得进行 free deploy、state CAS、authorized upload、public mutation 或 OCI3 production cutover；全量测试绿不等于 publication readiness。
 
 ### 下一步
 
 1. 为 C3 取得真实同 candidate/date clip-context/story authority，或保持 blocker；不得用 recovery semantic reconstruction 替代。
-2. 若需要下一轮 OCI3 cutover，先取得显式 operator authority，再设计独立 migration consumer；不得让普通 adapter 消费 inert ledger 或执行 ordinary rebind。
-3. C3 authority、publication package、offload seal 与 fresh runtime reconciliation 全部闭合后，再按串行 order 进行 authorized upload，并逐项做 public/Creator/section readback。
+2. 在不触碰 reference-bearing runtime trees 的前提下，决定是否继续只做有完整 offload/seal 的 private cleanup，先把 free headroom 推过准入线。
+3. 若需要下一轮 OCI3 cutover，先取得显式 operator authority，再设计独立 migration consumer；不得让普通 adapter 消费 inert ledger 或执行 ordinary rebind。
+4. C3 authority、publication package、offload seal 与 fresh runtime reconciliation 全部闭合后，再按串行 order 进行 authorized upload，并逐项做 public/Creator/section readback。
 
 ## 2026-08-26T02:17Z C4/C5 字幕时间域事故终态闭包
 
