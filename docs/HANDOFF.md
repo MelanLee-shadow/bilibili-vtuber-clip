@@ -8,7 +8,7 @@
 
 ### 已完成
 
-- 集成 worktree：`codex/fastlane-integration-20260826`，HEAD `2e61071f`，clean；C6 isolated repair 为 `7372484a`，未 cherry-pick。
+- 集成 worktree：`codex/fastlane-integration-20260826`，本交接更新前的 docs checkpoint 为 `be04cecd`，当前保持 clean；C6 isolated repair 为 `7372484a`，未 cherry-pick。
 - 两个安全修复提交：`e818e060`（structured subtitle authority gates）与 `80f30501`（malformed operator ledger fail-closed）；`7837c5f5` 更新本交接。
 - 受影响 replay/authority 测试：`136 passed`；全量 pytest：`6946 passed in 354.46s`；`py_compile`、Ruff、`git diff --check` 及 active-module 2000 行上限检查均通过。
 - 普通 candidate 的 mapping-valued operator authority 现在只有在它与 SHA-validated decision ledger 的完整 authority object 相等时才可用；C7b 仍强制走独立 resolver；candidate/ledger identity drift 与 malformed ledger 均 fail closed。private stage 另外拒绝非 C7b 的 mapping authority，C5 revoked authority 不再进入 projection。
