@@ -191,8 +191,10 @@ def _sealed_operator_drop_release(
         source = parse_srt_cues(pipeline_raw.decode("utf-8"))
     except (KeyError, OSError, UnicodeDecodeError, ValueError, TypeError) as exc:
         raise ValueError("REDELIVERY_OPERATOR_DROP_LANES_INVALID") from exc
+    ledger_candidate_id = ledger.get("candidate_id") if isinstance(ledger, Mapping) else None
+    ledger_operator = ledger.get("operator_authority") if isinstance(ledger, Mapping) else None
     if candidate_id is not None and (
-        ledger.get("candidate_id") != candidate_id
+        ledger_candidate_id != candidate_id
         or (
             isinstance(config.get("candidate_id"), str)
             and config.get("candidate_id") != candidate_id
@@ -218,7 +220,7 @@ def _sealed_operator_drop_release(
                 raise ValueError("REDELIVERY_OPERATOR_DROP_RELEASE_MAPPING_INVALID") from exc
             if pinned_operator != c7b_operator:
                 raise ValueError("REDELIVERY_OPERATOR_DROP_RELEASE_MAPPING_INVALID")
-        elif pinned_operator != ledger.get("operator_authority"):
+        elif pinned_operator != ledger_operator:
             # Ordinary candidates may use a structured operator authority, but
             # only when the pin and the independently SHA-bound ledger agree
             # as complete structured authority objects.
