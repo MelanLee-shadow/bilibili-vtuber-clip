@@ -1,5 +1,37 @@
 # Current handoff
 
+## 2026-08-26T15:00Z Fastlane integration / OCI3 source-substitution checkpoint
+
+### 目标
+
+在不绕过 free publication authority 的前提下，合并已批准的 C6/C7b/C9 私有 lanes，并为 OCI3 建立可审计的 source-substitution migration evidence；C3 仍必须等待真实 clip-context/story authority。
+
+### 已完成
+
+- 集成 worktree：`codex/fastlane-integration-20260826`，HEAD `71dae21693228eee512d2f8c338a09562614f344`，clean。
+- C6/C7b/C9 与 OCI3 lane 的 changed-test 集合：`153 passed`；changed Python `py_compile`、Ruff、`git diff --check` 全部通过。
+- OCI3 migration lane 已通过 Sol review（仅 offline/private scope），工具已在 `~/oci3-source-migration-20260826/code/` 私有暂存，未部署到 adapter。
+- OCI3 已从当前 live state 冻结 snapshot `5c7f534ea34fcfaa0daf4558e5400db52704c79d457b8b6cfd732eb3d8438c2f`，并完成 dry-run 与 create-only receipt：receipt canonical SHA `337a1720cbb5659bfdb9fdebef9d0b19c084ecf7ccfb53b7054ad4b940ae88d0`；`identity_proven=false`、`source_substitution=true`、`ordinary_rebind=false`、`publication_authority=null`。
+- OCI3 transformed state 只增加 `source_disposition_migrations`；原 disposition row、finalized ledger、webhook index 均保持，ledger `adapter_consumption=NOT_CONSUMED_BY_ADAPTER`。没有写 `/opt/bilive/recording/adapter-state.json`、Docker、deploy、upload 或 publication。
+- C3 exact v2 bytes 已从 free private authority 复制到本地临时 evidence；v3 builder exact PASS（manifest raw `ecc19a…9f75`、tree `7afbc9…577f2`），但 canonical reclosure 仍精确失败 `C3_CLIP_CONTEXT_AUTHORITY_MISSING`。
+
+### 进行中
+
+- 后台 `bash-99`：集成 worktree 全量 pytest；基线已知 5 个 C5/runtime failures，已在 clean `981bc4ab` 上复现，因此不能归因于 C6/C7b/C9/OCI3 集成。
+- free historical runtime offload 仍需续传并在任何删除前重新 seal；free 仍是唯一 publication authority。
+
+### 阻塞
+
+- C3 当前 free v2 clip-context 文件 SHA `fb2d6711…3987`，但 v2 record/story contract 绑定旧 payload/prompt SHA（record artifact `01e215…8b6d`、prompt payload `b0af83…4987`）；现有 recovery receipt 明确标注 `semantic_reconstruction_not_byte_equivalent`，不能把它重签成 clip-context authority。不得发布 C3。
+- 全仓库基线仍有 5 个既有失败：2 个 C5 local-stage projection、1 个 revoked C5 authority、1 个 v3 empty-release-cue、1 个 active-module bound（集成分支已把 2001 行降至 2000；其余 4 个在 981 基线同样失败）。
+
+### 下一步
+
+1. 收集 `bash-99`；保留真实全量结果并区分 baseline failures。
+2. 若需要下一轮 OCI3 cutover，先取得显式 operator authority，再设计独立 migration consumer；不得让普通 adapter 消费 inert ledger。
+3. 为 C3 取得真实同 candidate/date clip-context/story authority 或保持 blocker；不得用 recovery semantic reconstruction 替代。
+4. 在 full suite/base blockers 和 C3 authority 未闭合前，不做 free deploy、state CAS、authorized upload、public mutation 或 OCI3 production cutover。
+
 ## 2026-08-26T02:17Z C4/C5 字幕时间域事故终态闭包
 
 本节是当前 authority，并取代下方 `2026-08-25T17:30Z` 对 C4/C5 的历史快照；C6 是独立、
