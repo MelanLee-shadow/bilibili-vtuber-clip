@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+from src.autoslice.reviewed_baseline_replay_projection import exact_candidate_sidecar_target
+
 
 def build_replay_after_image(
     plan: object,
@@ -30,7 +32,6 @@ def build_replay_after_image(
         _prepared_package_names,
         _replay_package_root,
         _safe_directory,
-        exact_candidate_sidecar_target,
         project_replay_state_after,
         regular_binding,
     )
