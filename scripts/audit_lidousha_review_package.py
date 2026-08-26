@@ -95,6 +95,7 @@ from src.autoslice.fastlane_c1_formal_adapter import (  # noqa: E402
     audit_fastlane_formal_package,
     is_fastlane_formal_manifest,
 )
+from src.autoslice.fastlane_c9_successor import audit_c9_successor  # noqa: E402
 DEFAULT_MAX_VISUAL_LINES = 2
 DEFAULT_MAX_VISUAL_LINE_CHARS = 18
 LONG_STATIC_CUE_SECONDS = 10.0
@@ -133,7 +134,6 @@ _PORTABLE_ARTIFACT_SUFFIXES = (
     ".published-recovery-package-receipt.json",
 )
 
-
 def _load_json(path: Path) -> dict[str, Any]:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -149,7 +149,6 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
 
 def _is_dynamic_attestation(path: Path) -> bool:
     name = path.name
@@ -1695,7 +1694,6 @@ def audit_package(
     if not manifest:
         _add_issue(issues, "MANIFEST_MISSING_OR_INVALID", path=manifest_path)
         return _audit_result(root, issues)
-    from src.autoslice.fastlane_c9_successor import audit_c9_successor
     if (c9_issues := audit_c9_successor(root, manifest)) is not None:
         issues.extend(c9_issues)
         return _audit_result(root, issues)

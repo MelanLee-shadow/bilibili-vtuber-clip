@@ -1,0 +1,90 @@
+{
+  "authorization_label": "授权专属 derived joint-QC（Recommended）",
+  "candidate_id": "auto_143025_1112_1285",
+  "constraints": {
+    "canonical_delivery_allowed": false,
+    "exact_c9_only": true,
+    "generic_mapping_forbidden": true,
+    "other_candidate_date_hash_forbidden": true,
+    "provider_result_relabel_forbidden": true,
+    "remote_allowed": false,
+    "state_write_allowed": false,
+    "title_cover_bytes_frozen": true,
+    "upload_allowed": false
+  },
+  "cover_path": "assets/lidousha/fastlane_c9_private/auto_143025_1112_1285.cover.png",
+  "cover_sha256": "sha256:4222118c60e02b449aa75abf53ce36fef43a2b4a8f7ea34fb7b83428edec8d19",
+  "direct_authority": {
+    "answer_sha256": "sha256:6678e47d95a4a67fa834dcdcf667a44d8f8b8f16685baf1e17e8560268b9194f",
+    "assistant_message_id": "eda3f113-96a5-4926-a277-ba7a1b7c3678",
+    "epoch_ms": 1787747929999,
+    "sequence": 535090,
+    "step": 371,
+    "tool_call": "call_qBbVkqwbu1TfEsh1JKX7p8Xg|fc_0b3cd3bcdc4f5bfb016a8edacc2a6887d1a1bc868d5e96b950",
+    "tool_result_user_message_id": "59201f5f-35ec-483a-9c63-a349f6e1d454",
+    "turn": 14
+  },
+  "predecessors": {
+    "cpa_redraw": {
+      "candidate_id": "auto_143025_1112_1285",
+      "model": "gpt-5.6-sol",
+      "provider": "cpa",
+      "provider_status": "OBSERVED",
+      "receipt_path": "/opt/bilive/autoslice/out/2026-08-15/auto_143025_1112_1285/replacement_recuts/evidence/auto_143025_1112_1285.cover-source-composition-verification.json",
+      "receipt_sha256": "sha256:bf41946b6dbd5a73f3eeed028708edd4bc56d37f5249a3875e6c3308899d2c21",
+      "recording_date": "2026-08-15",
+      "schema_version": "lidousha-cover-source-composition-verification.v1",
+      "selected_treatment": "cpa_redraw",
+      "selection_hook_sha256": "sha256:241e2fb0046dd3d692f06133030ce5f9093f94e6b8ee6fd041c4f9db076c38cd",
+      "self_sha256": "sha256:d8904f717ff4e1af8ce443f77040e1be0eeac83a2df52ce7da4dde7d7266393e",
+      "source_bytes_sha256": "sha256:1138aa08326fd2f7df5e4a871e5c4cc96eddc12570a563856785bc4d1526f958",
+      "source_path": "/opt/bilive/autoslice/out/2026-08-15/auto_143025_1112_1285/replacement_recuts/cover_refs/auto_143025_1112_1285.cover-ref.png",
+      "status": "PASS",
+      "title_sha256": "sha256:334bb710f4099657c04beb2fa7ec9dc98c18b9817882a65eb23fa501222cd736",
+      "verdict": {
+        "cpa_redraw_recommended": true,
+        "faithful_crop_can_make_dominant": false,
+        "source_carries_story_reaction": false,
+        "source_face_complete": true
+      },
+      "witness_receipt_sha256": "sha256:98a707b1cc77732375ce7696cfcc16c6517528006115be0e558cf01cb6628b44"
+    },
+    "host_identity": {
+      "candidate_id": "auto_143025_1112_1285",
+      "comparison_bytes_sha256": "sha256:0923ac83fe752bedbff921e44fdc4e1476e690b2e3a2e71d7a520a40e9e306ea",
+      "comparison_path": "/opt/bilive/autoslice/out/2026-08-15/auto_143025_1112_1285/replacement_recuts/covers/auto_143025_1112_1285.ai-title.cover.host-identity-witness.png",
+      "final_cover_bytes_sha256": "sha256:4222118c60e02b449aa75abf53ce36fef43a2b4a8f7ea34fb7b83428edec8d19",
+      "final_cover_path": "/opt/bilive/autoslice/out/2026-08-15/auto_143025_1112_1285/replacement_recuts/covers/auto_143025_1112_1285.ai-title.cover.png",
+      "model": "gpt-5.6-sol",
+      "provider": "cpa",
+      "provider_status": "OBSERVED",
+      "recording_date": "2026-08-15",
+      "schema_version": "lidousha-cover-final-host-identity-verification.v3",
+      "selection_hook_sha256": "sha256:241e2fb0046dd3d692f06133030ce5f9093f94e6b8ee6fd041c4f9db076c38cd",
+      "self_sha256": "sha256:6af3b86de37189ef4e14edf71fbf8a78784eb047892ff67e549c0454a7dceb17",
+      "status": "PASS",
+      "title_sha256": "sha256:334bb710f4099657c04beb2fa7ec9dc98c18b9817882a65eb23fa501222cd736",
+      "verdict": {
+        "composition_conflicts": [],
+        "excessive_dead_space": false,
+        "identity_conflicts": [],
+        "meaningless_dominant_decoration": false,
+        "primary_subject_carries_story_reaction": true,
+        "primary_subject_face_is_large_and_clear": true,
+        "primary_subject_is_lidousha": true,
+        "primary_subject_is_visually_dominant": true,
+        "primary_subject_matches_other_source_participant": false,
+        "source_lidousha_located": true,
+        "thumbnail_has_clear_click_hook": true
+      },
+      "witness_response_sha256": "sha256:1bedd1956ddc8780e4186fd64326e14db438fa174c9f256ad4e0d40caf22f4ea"
+    }
+  },
+  "provider_attempted": false,
+  "recording_date": "2026-08-15",
+  "schema_version": "fastlane-c9-ivan-direct-title-cover-authority.v1",
+  "selection_hook_sha256": "sha256:241e2fb0046dd3d692f06133030ce5f9093f94e6b8ee6fd041c4f9db076c38cd",
+  "self_sha256": "sha256:3e6e85ba3cce1d5ebe9e0ff5e419627adeab7018f2b1adda37f71e57d84c9163",
+  "title": "【李豆沙】看到弹幕狂磕灰泽满和久远澪，小李认真划线：不认识的人不好评价，熟人我就可以乱说话",
+  "title_sha256": "sha256:334bb710f4099657c04beb2fa7ec9dc98c18b9817882a65eb23fa501222cd736"
+}
