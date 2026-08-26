@@ -1922,7 +1922,11 @@ def project_replay_state_after(
     # ``record_path`` has never been a normal Talk runner result field; the
     # sealed delivery record is instead represented by its exact CID-bound
     # sidecar in the delivery summary/target map.
-    return ReplayStateProjection(before=before, after=state_bytes(state), delivered=delivered)
+    return ReplayStateProjection(
+        before=before,
+        after=before if post_success_idempotent else state_bytes(state),
+        delivered=delivered,
+    )
 
 
 def build_replay_after_image(
