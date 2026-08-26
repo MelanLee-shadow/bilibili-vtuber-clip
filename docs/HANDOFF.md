@@ -1,5 +1,36 @@
 # Current handoff
 
+## 2026-08-26T22:44Z Private fastlane integration continuation
+
+### 目标
+
+继续在不越过 free publication authority、单写者和上传授权边界的前提下，完成 C7b/C10/C12 的代码修复、私有验证，并在外部 authority 闭合后再部署和公开回读。
+
+### 已完成
+
+- 私有集成 worktree：`codex/fastlane-private-integration-20260826`，HEAD `d5ea7da4`；docs-only worktree `codex/fastlane-integration-20260826` 仍保持 clean、HEAD `7c4dd581`。
+- C12 sealed `PIECE_LOCAL` interval、baseline application ordering、candidate-locked projection 与窄 fallback 已接通；C7b private operator stage allowlist 与 replay identity forwarding 保持 fail-closed。
+- 完成 replay after-image、producer source-binding/provenance、package-audit policy fingerprint 的窄模块拆分；runtime architecture ledger 已同步。
+- 当前分支 focused replay/architecture/CLI regression：`194 passed`；changed-file Ruff、compile、`git diff --check` 通过；完整 pytest：`7008 passed in 337.88s`。
+- 已从 live `free` 只读回读：deployed commit 仍为 `981bc4ab`，`DISABLED` 为空 regular `0644`；readiness graph scoped 34 rows（23 `READY_TO_PREPARE`、11 `STATE_DRIFT`），`upload_allowed=false`，含 `PUBLICATION_REGISTRY_INVALID`。
+
+### 进行中（无后台写入）
+
+- 等待 C3/C6/C7b 外部 authority/provider 条件闭合后，重新运行 current-HEAD private golden pilot；当前代码尚未部署到 free。
+
+### 阻塞
+
+- C3 canonical reclosure：`C3_CLIP_CONTEXT_AUTHORITY_MISSING`。
+- C6 repeat private probe：`C6_EXACT_BOUNDARY_AUDIT_HASH_MISMATCH`；不得 cherry-pick `7372484a`。
+- C7b provider-enabled private full-dry：`FINAL_REVIEW_PROVIDER_OR_JSON_UNAVAILABLE`；provider-disabled PASS0 已确认 zero callback、stage 清理、authoritative surfaces 不变。
+- 因上述 blocker，未执行 deployment、state/CAS、upload、public mutation/readback、OCI3 cutover 或 GitHub push。
+
+### 下一步
+
+1. 补齐 C3 source-bound clip-context/story authority、解决 C6 boundary audit hash authority，并恢复 exact-final provider/JSON 依赖。
+2. 用 current HEAD 重跑 provider-disabled 与 provider-enabled private closure；仅在 closure 通过后申请串行 deployment。
+3. deployment 后按 80/90 step 做 package/audit、manifest、single-writer upload gate 与三面 read-only joint acceptance。
+
 ## 2026-08-26T17:33Z Fastlane integration / C6 split-pin checkpoint
 
 ### 目标
