@@ -11,6 +11,9 @@ from src.autoslice.fastlane_c7b_source_reconciliation import (
     resolve_c7b_delivery_start_clamp,
     resolve_c7b_source_reconciliation,
 )
+from src.autoslice import redelivery_full_window_replay as full_window
+from src.autoslice.recut_materialization import _write_source_range_srt
+from src.autoslice.redelivery_full_window_replay import replay_full_window_text_and_crop
 from src.autoslice.redelivery_subtitle_baseline import apply_redelivery_subtitle_baseline
 
 
@@ -79,6 +82,46 @@ def test_c7b_baseline_resolves_its_sealed_relative_lanes_from_manifest_parent() 
         current_source_sha256="660f609ca46cf9b6a5d7618df290ffd8cf32e54677813be343067719d8616b54",
     )
     assert audit["status"] in {"APPLIED", "ALREADY_SATISFIED"}
+
+
+def test_c7b_full_window_replay_forwards_candidate_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    manifest = ROOT / "assets/lidousha/reviewed_subtitle_baselines" / f"{CID}.subtitle-baseline.v1.json"
+    config = json.loads(manifest.read_text(encoding="utf-8"))
+    text = (manifest.parent / config["operator_truth_lanes"]["pipeline_diagnostic"]["path"]).read_text(encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    def fake_apply(current: str, **kwargs: object) -> tuple[str, dict[str, object]]:
+        seen.update(kwargs)
+        return current, {"status": "APPLIED"}
+
+    monkeypatch.setattr(full_window, "apply_redelivery_subtitle_baseline", fake_apply)
+    monkeypatch.setattr(full_window, "_build_full_release_delivery_projection_receipt", lambda **_kwargs: None)
+    _cropped, audit = replay_full_window_text_and_crop(
+        text=text,
+        config=config,
+        spec_parent=manifest.parent,
+        padded_start_ms=191190,
+        padded_end_ms=303140,
+        final_start_ms=9750,
+        final_end_ms=63920,
+        write_source_range_srt=_write_source_range_srt,
+        crop_path=tmp_path / "reviewed.srt",
+        read_crop=lambda path: path.read_bytes(),
+        projection_receipt_path=tmp_path / "receipt.json",
+        projection_candidate_id=CID,
+        projection_record_sha256="sha256:" + "a" * 64,
+        projection_record_boundary={"final_start_ms": 9750, "final_end_ms": 63920},
+        projection_staged_media_sha256="sha256:" + "b" * 64,
+        projection_lane_bytes={},
+        recording_date=DATE,
+    )
+    assert audit["status"] == "APPLIED"
+    assert seen["candidate_id"] == CID
+    assert seen["recording_date"] == DATE
 
 
 def test_non_c7b_mapping_operator_authority_is_rejected() -> None:

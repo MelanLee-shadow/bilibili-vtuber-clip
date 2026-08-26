@@ -743,6 +743,8 @@ def replay_full_window_text_and_crop(
         current_source_end_ms=padded_end_ms,
         current_source_recording_basename=str(config["source_recording_basename"]),
         current_source_sha256=str(config["source_sha256"]),
+        candidate_id=projection_candidate_id,
+        recording_date=recording_date,
     )
     if audit.get("status") not in {"APPLIED", "ALREADY_SATISFIED"}:
         raise FullWindowReplayError("REPLAY_BASELINE_APPLICATION_FAILED")
