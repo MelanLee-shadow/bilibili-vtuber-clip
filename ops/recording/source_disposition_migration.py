@@ -49,30 +49,121 @@ def canonical_sha256(value: Any) -> str:
 
 
 def file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
+    """Hash one unique regular file through the descriptor-safe path walker."""
+
+    return _attest_regular_file(Path(path), "file")[1]
+
+
+_REQUIRED_SECURE_FLAGS = ("O_NOFOLLOW",)
+
+
+def _secure_flags(*names: str) -> int:
+    required = (*_REQUIRED_SECURE_FLAGS, *names)
+    missing = [name for name in required if not hasattr(os, name)]
+    if missing:
+        raise MigrationError(f"secure descriptor operations unavailable: {','.join(missing)}")
+    return sum(getattr(os, name) for name in set(required))
+
+
+def _path_parts(path: Path, field: str) -> tuple[str, tuple[str, ...]]:
+    path = Path(path)
+    if path == Path("."):
+        return ".", ()
+    if path.is_absolute() and path == Path(path.anchor):
+        return path.anchor, ()
+    if path.name in {"", ".", ".."}:
+        raise MigrationError(f"{field} must name a directory")
+    components = tuple(path.parts[1:]) if path.is_absolute() else tuple(path.parts)
+    if any(component in {"", ".", ".."} for component in components):
+        raise MigrationError(f"{field} contains unsafe path components")
+    return (path.anchor if path.is_absolute() else "."), components
+
+
+def _open_directory_walk(path: Path, field: str, *, create: bool) -> int:
+    """Open every parent component with O_NOFOLLOW, optionally creating dirs."""
+
+    anchor, components = _path_parts(path, field)
+    flags = _secure_flags("O_DIRECTORY")
     try:
-        with path.open("rb") as handle:
-            for block in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(block)
+        descriptor = os.open(anchor, os.O_RDONLY | flags)
     except OSError as exc:
-        raise MigrationError(f"cannot read {path}: {exc}") from exc
-    return digest.hexdigest()
+        raise MigrationError(f"cannot open {field} anchor: {path}") from exc
+    try:
+        for component in components:
+            try:
+                child = os.open(
+                    component,
+                    os.O_RDONLY | flags,
+                    dir_fd=descriptor,
+                )
+            except FileNotFoundError:
+                if not create:
+                    raise MigrationError(f"{field} parent path is missing: {path}")
+                try:
+                    os.mkdir(component, 0o700, dir_fd=descriptor)
+                except FileExistsError:
+                    pass
+                child = os.open(
+                    component,
+                    os.O_RDONLY | flags,
+                    dir_fd=descriptor,
+                )
+            except OSError as exc:
+                raise MigrationError(f"{field} parent path is unsafe: {path}") from exc
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except MigrationError:
+        os.close(descriptor)
+        raise
+    except OSError as exc:
+        os.close(descriptor)
+        raise MigrationError(f"{field} parent path is unsafe: {path}") from exc
+
+
+def _open_regular_nofollow(path: Path, field: str) -> tuple[int, int, os.stat_result]:
+    parent = Path(path).parent
+    name = Path(path).name
+    parent_descriptor = _open_directory_walk(parent, f"{field} parent", create=False)
+    try:
+        flags = _secure_flags()
+        descriptor = os.open(name, os.O_RDONLY | flags, dir_fd=parent_descriptor)
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+            raise MigrationError(f"{field} must be a regular file without symlink or hardlink")
+        return parent_descriptor, descriptor, before
+    except MigrationError:
+        os.close(parent_descriptor)
+        raise
+    except OSError as exc:
+        os.close(parent_descriptor)
+        raise MigrationError(f"{field} is missing or unsafe: {path}") from exc
+
+
+def _opened_bytes(path: Path, field: str) -> tuple[dict[str, int], bytes]:
+    parent_descriptor, descriptor, before = _open_regular_nofollow(path, field)
+    chunks: list[bytes] = []
+    try:
+        while block := os.read(descriptor, 1024 * 1024):
+            chunks.append(block)
+        after = os.fstat(descriptor)
+    except OSError as exc:
+        raise MigrationError(f"cannot read {field}: {path}") from exc
+    finally:
+        os.close(descriptor)
+        os.close(parent_descriptor)
+    before_fp = stat_fingerprint(before)
+    if before_fp != stat_fingerprint(after):
+        raise MigrationError(f"{field} changed while reading")
+    return before_fp, b"".join(chunks)
 
 
 def _attest_regular_file(path: Path, field: str) -> tuple[dict[str, int], str]:
-    """Hash through a no-follow descriptor and require a stable stat snapshot."""
+    """Hash through a descriptor-relative no-follow walk and stable stat snapshot."""
 
-    _lstat_regular(path, field)
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(path, flags)
-    except OSError as exc:
-        raise MigrationError(f"cannot open {field}: {path}") from exc
+    parent_descriptor, descriptor, before = _open_regular_nofollow(path, field)
     digest = hashlib.sha256()
     try:
-        before = os.fstat(descriptor)
-        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
-            raise MigrationError(f"{field} changed to a non-regular or hardlinked file")
         while block := os.read(descriptor, 1024 * 1024):
             digest.update(block)
         after = os.fstat(descriptor)
@@ -80,6 +171,7 @@ def _attest_regular_file(path: Path, field: str) -> tuple[dict[str, int], str]:
         raise MigrationError(f"cannot attest {field}: {path}") from exc
     finally:
         os.close(descriptor)
+        os.close(parent_descriptor)
     before_fp = stat_fingerprint(before)
     if before_fp != stat_fingerprint(after):
         raise MigrationError(f"{field} changed while hashing")
@@ -111,26 +203,8 @@ def _int(value: Any, field: str) -> int:
     return value
 
 
-def _lstat_regular(path: Path, field: str) -> os.stat_result:
-    try:
-        info = path.lstat()
-    except OSError as exc:
-        raise MigrationError(f"{field} is missing: {path}") from exc
-    if stat.S_ISLNK(info.st_mode):
-        raise MigrationError(f"{field} must not be a symlink: {path}")
-    if not stat.S_ISREG(info.st_mode):
-        raise MigrationError(f"{field} must be a regular file: {path}")
-    if info.st_nlink != 1:
-        raise MigrationError(f"{field} must not be a hardlink: {path}")
-    return info
-
-
 def _read_json(path: Path, field: str) -> tuple[dict[str, Any], bytes]:
-    _lstat_regular(path, field)
-    try:
-        raw = path.read_bytes()
-    except OSError as exc:
-        raise MigrationError(f"cannot read {field}: {exc}") from exc
+    _, raw = _opened_bytes(path, field)
     try:
         value = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -433,24 +507,42 @@ def validate_receipt(receipt: Any) -> dict[str, Any]:
 
 def _write_create_only(path: Path, payload: dict[str, Any]) -> bool:
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2).encode("utf-8") + b"\n"
-    path.parent.mkdir(parents=True, exist_ok=True)
+    parent_descriptor = _open_directory_walk(Path(path).parent, "output parent", create=True)
+    name = Path(path).name
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _secure_flags()
+    descriptor: int | None = None
+    created = False
     try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        existing, _ = _read_json(path, "existing migration receipt/state")
-        return canonical_bytes(existing) == canonical_bytes(payload)
-    try:
-        with os.fdopen(fd, "wb") as handle:
+        try:
+            descriptor = os.open(name, flags, 0o600, dir_fd=parent_descriptor)
+            created = True
+        except FileExistsError:
+            existing, _ = _read_json(path, "existing migration receipt/state")
+            return canonical_bytes(existing) == canonical_bytes(payload)
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+            raise MigrationError("create-only output is not a unique regular file")
+        with os.fdopen(descriptor, "wb", closefd=True) as handle:
+            descriptor = None
             handle.write(encoded)
             handle.flush()
             os.fsync(handle.fileno())
+        os.fsync(parent_descriptor)
+        return True
     except Exception:
-        try:
-            path.unlink()
-        except OSError:
-            pass
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        if created:
+            try:
+                os.unlink(name, dir_fd=parent_descriptor)
+            except OSError:
+                pass
         raise
-    return True
+    finally:
+        os.close(parent_descriptor)
 
 
 def migrate(request: dict[str, Any], *, record_root: Path, receipt_path: Path | None, write: bool) -> dict[str, Any]:

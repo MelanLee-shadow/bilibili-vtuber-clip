@@ -258,6 +258,32 @@ def test_formal_safe_transform_preserves_finalized_and_original_disposition(tmp_
     assert snapshot_diff(state_path, output)["top_level_added"] == ["source_disposition_migrations"]
 
 
+def test_secure_json_and_output_paths_reject_symlink_traversal(tmp_path):
+    request, record_root, state_path = _fixture(tmp_path)
+    linked_state = tmp_path / "state-link.json"
+    linked_state.symlink_to(state_path)
+    changed = deepcopy(request)
+    changed["old_state_snapshot"]["path"] = str(linked_state)
+    with pytest.raises(MigrationError, match="unsafe|missing"):
+        migrate(changed, record_root=record_root, receipt_path=None, write=False)
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    linked_parent = tmp_path / "receipt-parent"
+    linked_parent.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(MigrationError, match="unsafe|missing"):
+        migrate(request, record_root=record_root, receipt_path=linked_parent / "receipt.json", write=True)
+    assert not (outside / "receipt.json").exists()
+
+    target = tmp_path / "receipt-target.json"
+    target.write_text("{}", encoding="utf-8")
+    linked_receipt = tmp_path / "receipt-link.json"
+    linked_receipt.symlink_to(target)
+    with pytest.raises(MigrationError, match="unsafe|missing"):
+        migrate(request, record_root=record_root, receipt_path=linked_receipt, write=True)
+    assert target.read_text(encoding="utf-8") == "{}"
+
+
 def test_transform_is_dry_run_by_default(tmp_path):
     request, record_root, _ = _fixture(tmp_path)
     receipt = migrate(request, record_root=record_root, receipt_path=None, write=False)
