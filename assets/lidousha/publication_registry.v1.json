@@ -389,20 +389,24 @@
       "candidate_id": "auto_203011_328_389",
       "note": "Ivan direct Claude JSONL line 947 candidate fact: 0:14「小豆老公；； 不是你老公」；1:04 是回应弹幕「小豆好吵（」，不是念出该弹幕；current title wrongly treats 小李 and 李豆沙 as two people; redo title/cover. The named fixes are complete and Ivan's line-947 fastlane condition is retained in assets/lidousha/fastlane_c2_private/auto_203011_328_389.release-authorization.v1.json. This release only removes the historical hold; current package audit, accepted C2 technical receipt, exact-title/cover CPA joint QC, authorized manifest verify, serialized upload, and public/Creator/section reconciliation remain mandatory.",
       "recording_date": "2026-08-13",
-      "status": "released_for_upload",
-  "release_authorization": {
-    "path": "assets/lidousha/fastlane_c2_private/auto_203011_328_389.release-authorization.v1.json",
-    "bytes": 2200,
-    "sha256": "sha256:6eb5130f7c04524e549545fd44b6e3a951fef49ab479d7f82c0baae0bb4bd336",
-        "direct_ivan_lines": [947, 1643, 1745],
+      "release_authorization": {
+        "bytes": 2200,
+        "direct_ivan_lines": [
+          947,
+          1643,
+          1745
+        ],
+        "path": "assets/lidousha/fastlane_c2_private/auto_203011_328_389.release-authorization.v1.json",
         "remaining_machine_gates": [
-      "accepted C2 root technical receipt bound to current formal audit and artifacts",
-      "current C2 release-package audit",
-      "CPA title-cover joint QC for exact final title and cover",
-      "authorized-upload manifest verify",
-      "single serialized upload and public Creator section reconciliation"
-        ]
-      }
+          "accepted C2 root technical receipt bound to current formal audit and artifacts",
+          "current C2 release-package audit",
+          "CPA title-cover joint QC for exact final title and cover",
+          "authorized-upload manifest verify",
+          "single serialized upload and public Creator section reconciliation"
+        ],
+        "sha256": "sha256:6eb5130f7c04524e549545fd44b6e3a951fef49ab479d7f82c0baae0bb4bd336"
+      },
+      "status": "released_for_upload"
     },
     {
       "bvid": "BV133816tEiN",
@@ -453,6 +457,23 @@
         "status": "VERIFIED_SAME_BV"
       },
       "recording_date": "2026-08-11",
+      "status": "published"
+    },
+    {
+      "bvid": "BV1h7hg68E8Y",
+      "candidate_id": "auto_113028_1602_1698",
+      "note": "post-publish reconciliation; public authority hash-bound",
+      "publication_reconciliation": {
+        "authority": {
+          "bytes": 4269,
+          "path": "/opt/bilive/autoslice/private-c4-timeaxis-repair-02e062b9/evidence/c4-same-bv-repair-completed.json",
+          "sha256": "6b51c92dcebb9c98d7e06c12eb8fc2a0cb2cff498eece247c5cf6cc0db6c3bc9"
+        },
+        "reconciled_at": "2026-08-26T02:09:02+0000",
+        "schema_version": "publication-reconciliation.v1",
+        "status": "VERIFIED_SAME_BV"
+      },
+      "recording_date": "2026-08-14",
       "status": "published"
     }
   ],

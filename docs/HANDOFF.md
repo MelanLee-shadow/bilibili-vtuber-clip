@@ -1,6 +1,57 @@
 # Current handoff
 
-## 2026-08-25T17:30Z C4 修复闭环与 C5 上传交接
+## 2026-08-26T02:17Z C4/C5 字幕时间域事故终态闭包
+
+本节是当前 authority，并取代下方 `2026-08-25T17:30Z` 对 C4/C5 的历史快照；C6 是独立、
+out-of-scope 的旧 blocker，不再阻塞本次 C4/C5 修复目标完成。
+
+### 终态
+
+- C5 `auto_113028_1271_1328` 已先完成 canary 验收：保留 `BV1Sahj65ExM` / AID
+  `117157295950921`，错误 CID `41264349440` 已由同 BV CID `41267890237` 取代。public
+  acceptance SHA-256：`0ddb6712d94c6237c730b5bbec3e6b6528d97d9c6b38c54e8477844d07068fc8`。
+- C4 `auto_113028_1602_1698` 在 C5 验收后才执行：保留 `BV1h7hg68E8Y` / AID
+  `117154678638617`，错误前任 CID `41264153653` 已由同 BV CID `41270641488` 取代。actual
+  plan SHA-256 `cd15f9be119490d4c59f0f14abe8004b20c66eb3b52ea33c6484aafc9cddd0d2`；journal
+  终态 `VERIFIED`；fresh completed sidecar SHA-256
+  `6b51c92dcebb9c98d7e06c12eb8fc2a0cb2cff498eece247c5cf6cc0db6c3bc9`；public acceptance
+  SHA-256 `8080f8904fa3393809cb13c2eca60881ff70cc934a66f31b9b9ccf1bae6d49f3`。
+- 两次在线事务均只经 `/opt/bilive/autoslice/repo/scripts/authorized_upload.py`；没有新 BV、raw
+  upload API、legacy repair script 或手工 publication ledger 编辑。C4/C5 fresh public、Creator
+  和 exact section `9320779` 同时指向上述两个独立 BVID/CID。
+
+### 修复与验收 authority
+
+- 实现 commit：`0c81ef997e788c9104a5e81089670265c2ba5918`；patch digest：
+  `65f90289f40a41d058d807a6d16845c68784b4a6b112cac06c772dbaf88ae8cf`。部署前完整测试
+  `6864 passed in 330.53s`，Sol Max 最终 pre-mutation review 为 `APPROVE`。
+- C4 final package 保持 reviewed bytes：video
+  `11dbd4d851135e6bd0aaac827b00f9d2f945822d8909ff3a996f5482e27218cb`、SRT
+  `46e769a270867a3f3eb12047778d4628151771539ec7d67e4cb4040c02e31efd`、cover
+  `8dcee64217c3e55c788626ae40f14b19ab9ad85d97ee845ed20f24c7c734b4e2`。
+- C4 public q64 全解码通过（3076 video / 4809 audio frames）；public 对 package 音频相关
+  `0.9991591867` / `0ms`，public main 对单裁剪 source `0.9987145512` / `-30ms`，错误双裁剪
+  仅 `0.0681372971`；public cover 与 package 逐字节相同。
+- 公开画面复核：首 cue 在合同 `5.999s` 后出现；日语 cue `12.039–14.079s`；七段性别链
+  `56.069–66.409s`；intentional blank `66.409–95.979s`；末 cue `102.139s` 后清除，媒体
+  `102.581s` 自然结束。
+- Creator 全量 382 个已发布稿件扫描中，C4/C5 exact title 均只匹配唯一既有 BVID。active
+  static+runtime merged publication registry 对两个 candidate 都拒绝新上传。双 BV closure：
+  `/opt/bilive/autoslice/private-c4-timeaxis-repair-02e062b9/evidence/c4-c5-publication-closure.json`，
+  SHA-256 `4379d3189e93bc2de8a343386b8943891ac0203de92cc7d517f0b7dbafcde69c`。
+- `/opt/bilive/autoslice/DISABLED` 未改变：空 regular `0644`。
+
+### Colab / OCI3
+
+最终媒体校验分发到两台 Colab CPU VM，并与 OCI3 两进程并行交叉验证；结果一致。两台 Colab
+均在 verified fetch 后停止。本次 CPU 视频 workload 的 critical path 是 OCI3 `48.41s`、Colab
+`88.56s`，因此同类任务优先 OCI3；Colab 适合作为独立 provenance-verified 计算面，或用于后续
+真正能利用 GPU/多机拆分的任务。
+
+详细事故报告：
+[`docs/reviews/2026-08-25-c4-c5-subtitle-time-domain-incident.md`](reviews/2026-08-25-c4-c5-subtitle-time-domain-incident.md)。
+
+## 2026-08-25T17:30Z C4 修复闭环与 C5 上传交接（历史快照）
 
 ### 已完成
 
