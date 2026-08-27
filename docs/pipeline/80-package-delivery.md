@@ -65,8 +65,10 @@ current snapshot validation，不能只靠人工记得另跑一步。它分别�
 
 Ivan 的修改点完整性规则由 `operator_correction_policy.py` 强制：默认 1–2 个点整片复核；
 明确声明“只有这些错误”的 1–2 个点才可在实际 diff 全覆盖后定向复核；超过 3 个点标记为
-`EXHAUSTIVE_CANDIDATE`，但仍必须逐一覆盖所有 changed cue/window/ROI；恰好 3 个点按保守
-规则整片复核。该 receipt 只证明增量复核范围和覆盖情况，**不替代**最终 SRT、boundary、
+`EXHAUSTIVE_CANDIDATE`，但仍必须逐一覆盖所有 changed cue/window/ROI；CLI 的
+`--change-point` 对应 `COMPONENT:START_MS:END_MS`、`cover:X:Y:WIDTH:HEIGHT` 或
+`COMPONENT:full`；恰好 3 个点按保守规则整片复核。该 receipt 只证明增量复核范围和覆盖情况，
+**不替代**最终 SRT、boundary、
 package audit、title-cover QC、authorized manifest 或 upload gate。增量入口缺 receipt、
 receipt 过期或校验失败时只能阻断该增量路径，或明确转入现有全量/权威审核路径；不得按
 “没有 receipt 就没有变化”处理。
