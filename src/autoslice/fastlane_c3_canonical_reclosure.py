@@ -224,7 +224,7 @@ def _source_cues(path: Path) -> list[SourceCue]:
 
 
 def _final_transcript(cues: list[SourceCue]) -> str:
-    return "\\n".join(cue.text.strip() for cue in cues if cue.text.strip())
+    return "\n".join(cue.text.strip() for cue in cues if cue.text.strip())
 
 
 def _rebind_story_contract(
