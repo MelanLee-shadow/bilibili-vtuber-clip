@@ -8,6 +8,10 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from src.autoslice.final_review_contract import (
+    FinalReviewContractError,
+    validate_final_review_release,
+)
 from src.autoslice.incremental_artifact_audit import (
     ArtifactPaths,
     IncrementalArtifactAuditError,
@@ -437,3 +441,22 @@ def test_cli_hook_seals_and_revalidates_receipt(tmp_path: Path) -> None:
     assert plan_out.is_file() and receipt_out.is_file()
     receipt = json.loads(receipt_out.read_text(encoding="utf-8"))
     validate_incremental_receipt(receipt, current=current)
+
+
+def test_incremental_receipt_cannot_satisfy_final_review_gate(tmp_path: Path) -> None:
+    parent, current = _base_pair(tmp_path, subtitle=_srt("改后的第二句"))
+    plan = build_incremental_audit(
+        parent=parent,
+        current=current,
+        parent_authority_id="authority-old",
+        candidate_id=CID,
+        recording_date=DATE,
+        issue_count=2,
+    )
+    receipt = seal_incremental_review(
+        plan,
+        review_results={"subtitle": {"status": "PASS", "scope": "WHOLE_CLIP"}},
+        sealed_by="Codex root",
+    )
+    with pytest.raises(FinalReviewContractError, match="FINAL_REVIEW_AUDIT_SCHEMA_INVALID"):
+        validate_final_review_release(receipt)
