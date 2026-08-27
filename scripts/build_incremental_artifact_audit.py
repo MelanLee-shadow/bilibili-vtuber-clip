@@ -33,13 +33,26 @@ def _window(raw: str, *, label: str) -> dict[str, object]:
 
 
 def _point(raw: str) -> dict[str, object]:
-    try:
-        component, start, end = raw.split(":", 2)
-        result = _window(f"{start}:{end}", label="change point")
-    except ValueError as exc:
-        raise ValueError("change point must be COMPONENT:START_MS:END_MS") from exc
-    result["component"] = component
-    return result
+    parts = raw.split(":")
+    component = parts[0] if parts else ""
+    if component == "cover" and len(parts) == 5:
+        try:
+            roi = [int(value) for value in parts[1:]]
+        except ValueError as exc:
+            raise ValueError("cover change point must be cover:X:Y:WIDTH:HEIGHT") from exc
+        return {"component": component, "roi": roi}
+    if component in {"boundary", "title"} and parts[1:] == ["full"]:
+        return {"component": component, "full_component": True}
+    if len(parts) == 3:
+        try:
+            result = _window(f"{parts[1]}:{parts[2]}", label="change point")
+        except ValueError as exc:
+            raise ValueError("change point must be COMPONENT:START_MS:END_MS") from exc
+        result["component"] = component
+        return result
+    raise ValueError(
+        "change point must be COMPONENT:START_MS:END_MS, cover:X:Y:WIDTH:HEIGHT, or COMPONENT:full"
+    )
 
 
 
@@ -69,7 +82,12 @@ def main() -> int:
     parser.add_argument("--video-window", action="append", default=[])
     parser.add_argument("--video-edit-map-id")
     parser.add_argument("--cover-roi", nargs=4, type=int)
-    parser.add_argument("--change-point", action="append", default=[])
+    parser.add_argument(
+        "--change-point",
+        action="append",
+        default=[],
+        help="COMPONENT:START_MS:END_MS, cover:X:Y:WIDTH:HEIGHT, or COMPONENT:full",
+    )
     parser.add_argument("--issue-count", type=int)
     parser.add_argument("--explicitly-exhaustive", action="store_true")
     parser.add_argument("--only-these-errors", action="store_true")
