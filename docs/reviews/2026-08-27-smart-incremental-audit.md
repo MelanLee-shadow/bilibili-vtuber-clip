@@ -35,11 +35,12 @@ SRT、boundary、title-cover QC、authorized manifest 或 upload gate。
 
 - `tests/test_operator_correction_policy.py`
 - `tests/test_incremental_artifact_audit.py`
-- 结果：14 passed；Ruff 通过。
+- 结果：31 passed；Ruff 通过。
 
-测试覆盖 subtitle cue delta、1/2 点 whole-clip、明确 only-these-errors 定向、恰好 3 点
-whole-clip、超过 3 点覆盖缺失、cover ROI bbox、video edit-map fallback、current snapshot
-漂移和 create-only replacement。
+测试覆盖 subtitle cue delta、latest-record identity/projection、1/2 点 whole-clip、明确
+only-these-errors 定向、恰好 3 点 whole-clip、超过 3 点覆盖缺失、cover ROI bbox、video
+edit-map fallback、跨组件 coverage、current snapshot/receipt tamper、create-only replacement、
+CLI 自动 seal/validate、release-gate isolation。
 
 ## 与快车道的关系
 
