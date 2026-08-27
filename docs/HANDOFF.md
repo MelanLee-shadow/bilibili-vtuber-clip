@@ -1,5 +1,21 @@
 # Current handoff
 
+## 2026-08-27T06:52Z C3 canonical reclosure / package-audit checkpoint
+
+### 当前结论
+
+- C3 代码 worktree：`/private/tmp/vtuber-slice-fastlane-c3-integration-20260826`，HEAD `535f94ff`，clean；该分支包含基于当前 sidecar 的 line947 source-fact supersession、边界 reclosure、repository asset authority 校验，以及目录 fsync/rename failure 注入保护。
+- 现行 C3 v3 sealed input 仍是 manifest raw `ecc19a…9f75`、self-seal `0a5465…5fa2`、tree `7afbc9…577f2`。canonical reclosure 已成功，当前 prompt/context/final SRT 分别为 `ea7c56…8e91a` / `5cf64e…6629` / `d70a96…eecc`；record、publish staging、publish 的 source-fact receipt 逐字一致。
+- 受影响 C3 focused tests `5 passed`；全量 pytest `7029 passed in 377.15s`；changed-file Ruff、`git diff --check` 通过；`source_fact_review.py` 恰为 2000 行。
+- 完整 canonical package audit 仍为 `BLOCK`，schema `lidousha-review-package-audit.v2`、policy epoch `2026-07-31.final-artifact-gates.v5`，5 个明确 blocker：`FROZEN_BOUNDARY_OWNER_CONTRACT_MISSING_OR_INVALID`、`REQUIRED_BOUNDARY_OWNER_ATTESTATION_MISSING`、`FINAL_REVIEW_SRT_BINDING_MISMATCH`、`BOUNDARY_SOURCE_SEPARATION_WITNESS_INVALID`、`COVER_RENDERED_TEXT_PIXEL_ARTIFACT_MISMATCH`。机器输出见 [`docs/reviews/2026-08-26-fastlane-c3-canonical-reclosure-probe.json`](reviews/2026-08-26-fastlane-c3-canonical-reclosure-probe.json)。
+- 不得把旧 `FLAGGED` final-review、冲突 owner、无效 source-separation 或 cover pixel 证据改标为 PASS；不得用未被 v3/boundary authority 封存的 clean-chat 临时副本代替它们。C3 当前不是 `READY_FOR_SERIAL_UPLOAD`，因此严格序列尚未进入 C6。
+- 只读 live free 已确认提速部署先行：`/opt/bilive/autoslice/repo/DEPLOYED_COMMIT` 的 commit 为 `981bc4abad395c2e00db7212ff8541f7ddc32ba0`，task-map/pinned-replay symbols 命中 15；本 C3 branch 尚未部署。
+
+### 安全边界
+
+- 本 checkpoint 未写 production state、registry、ledger、deployment、upload、public surface、OCI3 adapter 或 GitHub；canonical package 只在 `/private/tmp/c3-current-canonical-package-20260826` 私有生成。
+- 在上述 5 个 package-audit blocker 由真实、hash-bound、可重算的 evidence 关闭前，保持 C3 冻结，不上传、不推进 C6 及后续候选。
+
 ## 2026-08-26T22:44Z Private fastlane integration continuation
 
 ### 目标
