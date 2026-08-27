@@ -36,6 +36,10 @@ from src.autoslice.candidate_public_text_surface_authority import (
 from src.autoslice.candidate_source_fact_refresh import (
     validate_candidate_public_text_source_fact_refresh_from_source_fact,
 )
+from src.autoslice.fastlane_c3_source_fact_supersession import (
+    DECISION as C3_TERMINAL_SOURCE_FACT_SUPERSESSION_DECISION,
+    validate_c3_source_fact_supersession,
+)
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.deterministic_text_surface_resolution import (
     CANDIDATE_ID as DETERMINISTIC_TEXT_NARROWING_CANDIDATE_ID,
@@ -1230,6 +1234,7 @@ def source_fact_review_passes(review: object) -> bool:
         manual_title_keep_decision=MANUAL_TITLE_KEEP_PASS_DECISION,
         deterministic_text_narrowing_decision=DETERMINISTIC_TEXT_NARROWING_PASS_DECISION,
         terminal_text_preservation_decision=QIXI_TERMINAL_TEXT_PRESERVATION_DECISION,
+        c3_terminal_source_fact_supersession_decision=C3_TERMINAL_SOURCE_FACT_SUPERSESSION_DECISION,
     )
 
 
@@ -1818,6 +1823,30 @@ def validate_source_fact_review(
     if review.get("decision") == "CANDIDATE_PUBLIC_TEXT_SOURCE_FACT_REFRESH":
         return validate_candidate_public_text_source_fact_refresh_from_source_fact(
             review, repo_root=qixi_repo_root or _REPO_ROOT, validation=locals()
+        )
+    if review.get("decision") == C3_TERMINAL_SOURCE_FACT_SUPERSESSION_DECISION:
+        if candidate_id != "auto_220021_561_670" or final_reviewed_srt_path is None:
+            return False
+        if not isinstance(story_contract, Mapping):
+            return False
+        consumption = review.get("c3_terminal_source_fact_supersession")
+        if not isinstance(consumption, Mapping):
+            return False
+        return validate_c3_source_fact_supersession(
+            review,
+            repo_root=qixi_repo_root or _REPO_ROOT,
+            candidate_id=candidate_id,
+            recording_date="2026-08-13",
+            selection_hook=selection_hook,
+            title=title,
+            final_transcript=final_transcript,
+            clip_context_prompt=clip_context_prompt,
+            selection_scorecard=selection_scorecard,
+            speaker_evidence=speaker_evidence,
+            speaker_finalization_sha256=str(
+                consumption.get("speaker_finalization_sha256") or ""
+            ),
+            final_reviewed_srt_path=final_reviewed_srt_path,
         )
     if review.get("decision") == MANUAL_TITLE_KEEP_PASS_DECISION:
         return _validate_manual_title_keep_receipt(

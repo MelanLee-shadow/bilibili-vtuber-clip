@@ -58,6 +58,11 @@ from src.autoslice.qixi_operator_exact_title_source_fact import (  # noqa: E402
     DECISION as QIXI_OPERATOR_EXACT_TITLE_DECISION,
     validate_receipt as validate_qixi_operator_exact_title_receipt,
 )
+from src.autoslice.fastlane_c3_terminal_source_fact_preservation import (  # noqa: E402
+    CANDIDATE_ID as C3_SOURCE_FACT_CANDIDATE_ID,
+    DECISION as C3_SOURCE_FACT_DECISION,
+    validate_review as validate_c3_source_fact_review,
+)
 
 
 CHANNEL_PROFILE = load_channel_profile(ROOT)
@@ -317,6 +322,26 @@ def _validate_source_fact_receipts(
             final_transcript=validation_kwargs["final_transcript"],
             candidate_id=validation_kwargs["candidate_id"],
             final_reviewed_srt_path=subtitle_path,
+        )
+    elif (
+        isinstance(receipt, dict)
+        and receipt.get("decision") == C3_SOURCE_FACT_DECISION
+        and validation_kwargs["candidate_id"] == C3_SOURCE_FACT_CANDIDATE_ID
+        and speaker_evidence is not _SPEAKER_EVIDENCE_UNSET
+    ):
+        # C3 is the sole repository-sealed terminal preservation decision.  It
+        # must still execute the same exact-byte review contract; this branch
+        # only selects the candidate-specific validator and cannot authorize a
+        # different candidate or a generic receipt.
+        valid = validate_c3_source_fact_review(
+            receipt,
+            repo_root=qixi_repo_root or ROOT,
+            title=validation_kwargs["title"],
+            selection_hook=validation_kwargs["selection_hook"],
+            selection_scorecard=validation_kwargs["selection_scorecard"],
+            clip_context_prompt=validation_kwargs["clip_context_prompt"],
+            final_reviewed_srt_path=subtitle_path,
+            speaker_evidence=speaker_evidence,
         )
     else:
         valid = validate_source_fact_review(receipt, **validation_kwargs)

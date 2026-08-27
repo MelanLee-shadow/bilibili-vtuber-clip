@@ -2,6 +2,33 @@
 
 本文件是打包步骤的**分步权威**。入口：`src/autoslice/producer_package_finalization.py`。
 
+## C3 v3 direct PASS0 closure
+
+`scripts/build_fastlane_c3_v3_closure.py` and
+`src/autoslice/fastlane_c3_v3_direct.py` form the candidate-specific, provider-free
+closure lane for `auto_220021_561_670` on `2026-08-13`. The lane is fail-closed:
+it derives a create-only v3 authority only from the pinned v2 descriptor and five
+parent-pointer-bound auxiliary preimages, and validates every descriptor, origin,
+raw/self/tree seal, baseline, and source authority before any private write. It
+never searches, hydrates v2, calls a provider, writes state/registry/ledger, or
+uploads. `replay_reviewed_subtitle_baseline.py --full-dry-run` may dispatch the
+lane, but it must not report `PASS0` until a canonical package built from the
+sealed bytes has `build_manual` success and a zero-issue canonical audit. The
+current follow-up remains blocked at that canonical package gate; `--apply`
+remains fail-closed until a state-after-image transaction is explicitly bound.
+
+C3 的 boundary reclosure 只消费已提交的
+`assets/lidousha/fastlane_c3_boundary_reclosure_authority/auto_220021_561_670.v1.json`。
+它把 Ivan 当前会话的明确选择逐字段绑定到 v3 manifest/tree、34→11 cue-grid、未变的
+108940ms endpoint 及最终媒体/SRT 哈希；typed receipt 仅可 supersede 两个已列出的
+semantic grid/index mismatch，且必须独立重算当前 11-cue SRT、owner/coverage PASS 和
+repository authority。该 receipt 不改变字幕文字、媒体、封面或 endpoint，也不授权 provider、
+SSH、state/registry/ledger、deploy 或 upload；非 C3 的 generic boundary gate 不受影响。
+
+The receipt is consumed before the provider-disabled C3 review path and is revalidated by the
+portable boundary validators; it is not a historical final-review verdict and cannot be used to
+waive auditor gates.
+
 ## 快车道与提速边界
 
 Claude line 947 已穷举授权的快车道候选，在该候选点名错误修完后直接进入既有 package/

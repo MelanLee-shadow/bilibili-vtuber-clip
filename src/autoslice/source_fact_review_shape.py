@@ -17,6 +17,7 @@ def source_fact_review_passes_shape(
         "QIXI_OPERATOR_EXACT_TITLE_WITH_HISTORICAL_PROVIDER_PASS"
     ),
     candidate_public_text_refresh_decision: str = "CANDIDATE_PUBLIC_TEXT_SOURCE_FACT_REFRESH",
+    c3_terminal_source_fact_supersession_decision: str = "FASTLANE_C3_TERMINAL_SOURCE_FACT_SUPERSESSION",
 ) -> bool:
     """Accept only one of the closed PASS receipt shapes."""
 
@@ -83,6 +84,13 @@ def source_fact_review_passes_shape(
             and isinstance(review.get("historical_provider_receipt"), Mapping)
             and isinstance(review.get("candidate_public_text_source_fact_refresh"), Mapping)
             and review["candidate_public_text_source_fact_refresh"].get("status") == "VALID"
+        )
+        or (
+            decision == c3_terminal_source_fact_supersession_decision
+            and isinstance(review.get("historical_provider_receipt"), Mapping)
+            and isinstance(review.get("sealed_outer_terminal_receipt"), Mapping)
+            and isinstance(review.get("c3_terminal_source_fact_supersession"), Mapping)
+            and review["c3_terminal_source_fact_supersession"].get("status") == "VALID"
         )
     )
     return bool(

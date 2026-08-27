@@ -1296,6 +1296,37 @@ def _prepare(
     return stage, finalization, after, stage_sha, provider_hashes, provider_attempted
 
 
+def _c3_direct_pass0(runtime: Path, *, date: str, candidate_ids: list[str], stage_parent: Path, apply: bool) -> tuple[dict[str, object], int] | None:
+    """Dispatch the sealed C3 v3 lane before generic replay/finalization."""
+    from src.autoslice.fastlane_c3_v3_direct import (
+        CANDIDATE_ID, C3V3ClosureError, V3_RELATIVE_ROOT, consume_c3_successor_pass0,
+    )
+    if date != "2026-08-13" or candidate_ids != [CANDIDATE_ID]:
+        return None
+    if not (runtime / V3_RELATIVE_ROOT).exists():
+        return None
+    if apply:
+        return ({"schema_version": "c3-direct-pass0.v1", "candidate_id": CANDIDATE_ID,
+                 "status": "BLOCKED", "reason_code": "C3_DIRECT_APPLY_STATE_AFTER_IMAGE_REQUIRED",
+                 "upload_allowed": False, "provider_attempted": False}, 2)
+    try:
+        from scripts.audit_lidousha_review_package import audit_package
+        result = consume_c3_successor_pass0(
+            runtime_root=runtime, private_stage_parent=stage_parent,
+            audit=audit_package,
+        )
+    except C3V3ClosureError as exc:
+        return ({"schema_version": "c3-direct-pass0.v1", "candidate_id": CANDIDATE_ID,
+                 "status": "BLOCKED", "reason_code": str(exc), "upload_allowed": False,
+                 "provider_attempted": False}, 2)
+    return ({"schema_version": "c3-direct-pass0.v1", "candidate_id": CANDIDATE_ID,
+             "status": "PASS0", "upload_allowed": False, "provider_attempted": False,
+             "prepared_delivery": result.prepared_delivery,
+             "private_package_binding": dict(result.private_package_binding),
+             "private_audit_binding": dict(result.private_audit_binding),
+             "predicate_matrix": list(result.predicate_matrix)}, 0)
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -1313,6 +1344,16 @@ def main(
             print(json.dumps(_readiness_graph(runtime=runtime, date=args.date,
                                                candidate_ids=args.candidate_id), ensure_ascii=False, sort_keys=True))
             return 0
+        if args.full_dry_run or args.apply:
+            _runtime_gate(runtime)
+            direct = _c3_direct_pass0(
+                runtime, date=args.date, candidate_ids=args.candidate_id,
+                stage_parent=_private_parent(args.private_stage_parent), apply=args.apply,
+            )
+            if direct is not None:
+                payload, status = direct
+                print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+                return status
         plans = [build_replay_plan(repo_root=runtime / "repo", out_root=runtime / "out",
                                    date=args.date, candidate_id=cid)
                  for cid in args.candidate_id]

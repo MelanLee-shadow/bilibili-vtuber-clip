@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from src.autoslice.boundary_semantic_review import (
@@ -143,6 +144,29 @@ def semantic_boundary_review_is_valid(
         and endpoint.get("semantic_cue_grid_sha256") == reviewed_grid
         and endpoint.get("final_cue_grid_sha256") == reviewed_grid
         and _SHA256_RX.fullmatch(str(endpoint.get("closure_text_sha256") or "")) is not None
+    )
+
+
+def c3_derived_boundary_receipt_is_valid(
+    receipt: object,
+    *,
+    review: Mapping[str, object],
+    cues: Sequence[object],
+    authority: Mapping[str, object],
+    owner_verification: Mapping[str, object],
+    coverage_verification: Mapping[str, object],
+) -> bool:
+    """Independently validate C3's narrow old-grid to 11-cue reclosure."""
+    from src.autoslice.c3_boundary_reclosure_authority import (
+        validate_derived_boundary_receipt,
+    )
+    return validate_derived_boundary_receipt(
+        receipt,
+        review=review,
+        cues=cues,
+        authority=authority,
+        owner_verification=owner_verification,
+        coverage_verification=coverage_verification,
     )
 
 
