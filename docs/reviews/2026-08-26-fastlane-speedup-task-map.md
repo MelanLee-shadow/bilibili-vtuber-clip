@@ -120,7 +120,7 @@ Ivan 还要求回答 12 个“为什么没修成/为什么没入清单”问题�
 |---|---|---|---|---|
 | C1 | `2026-08-11 auto_173005_934_1166` | 薇欧拉/视频内声/弹幕原文/漏听/日语；指定标题 | `PUBLIC_VERIFIED` `BV1os8q61Eya` | 永久跳过，不重传 |
 | C2 | `2026-08-13 auto_203011_328_389` | 小豆老公；；、弹幕回应、标题两人化；重做标题封面 | `PUBLIC_VERIFIED` `BV1gch36cEvN` | 永久跳过；最终公开导出时对齐 static/runtime 表述 |
-| C3 | `2026-08-13 auto_220021_561_670` | 区分视频声/本人声、片尾曲不做字幕、星兰回应 | `ACTIVE_BLOCKER`；隔离 HEAD `c4981739`，C3 相关测试 `27 passed`；approved v3 bytes 的 latest canonical reclosure probe 精确停在 `C3_CLIP_CONTEXT_AUTHORITY_MISSING`，destination/stage 均清理 | 补齐同一份 source-fact/clip-context authority → canonical audit 零 issue → private PASS0；不得回到逐 pointer locator 打补丁（probe：[`2026-08-26-fastlane-c3-canonical-reclosure-probe.json`](2026-08-26-fastlane-c3-canonical-reclosure-probe.json)） |
+| C3 | `2026-08-13 auto_220021_561_670` | 区分视频声/本人声、片尾曲不做字幕、星兰回应 | `ACTIVE_BLOCKER`；implementation HEAD `535f94ff`（docs checkpoints `e871df15`），focused `5 passed`、full `7031 passed`；canonical reclosure 已通过 current prompt/context/SRT/source-fact/boundary binding，但完整 package audit 仍 5 blockers | 只能取得同一 package 的真实 final-review/owner/source-separation/cover pixel evidence 后重跑 audit→PASS0；不得用未封存 clean-chat 或直接改标旧 receipt（probe：[`2026-08-26-fastlane-c3-canonical-reclosure-probe.json`](2026-08-26-fastlane-c3-canonical-reclosure-probe.json)） |
 | C4 | `2026-08-14 auto_113028_1602_1698` | 见面发现/日语、哼歌不做字幕、指定标题方向 | `PUBLIC_VERIFIED_SAME_BV` `BV1h7hg68E8Y`，AID `117154678638617`，current CID `41270641488` | 永久跳过，不创建第二 BVID |
 | C5 | `2026-08-14 auto_113028_1271_1328` | niji 夏天/哼唱/热点 crawler | `PUBLIC_VERIFIED_SAME_BV` `BV1Sahj65ExM`，AID `117157295950921`，current CID `41267890237` | 永久跳过，不创建第二 BVID |
 | C6 | `2026-08-14 auto_120032_753_816` | naruhodo ne；回答选题理由；重做标题封面 | `ACTIVE_BLOCKER`；隔离修复 HEAD `7372484a`；相关 focused `50 passed`；最终 sealed-input repeat（2 次）均越过原 `C6_EXACT_PLAN_COORDINATE_OR_IDENTITY_DRIFT`，稳定停在 `C6_EXACT_BOUNDARY_AUDIT_HASH_MISMATCH`，尚未整合/部署 | 保留 replay/stage 与 frozen-delivery split pins；authority owner 统一 record boundary hash 与 `753000..816000` coordinate frame 后，再做 provider-disabled PASS0 |
@@ -214,7 +214,7 @@ Ivan 还要求回答 12 个“为什么没修成/为什么没入清单”问题�
 
 ## 9. 接下来按此顺序执行
 
-1. **C3**：消费 `f5d04382` 的新 boundary authority，定位 source-fact receipt stale 的 exact role/hash，取得 canonical audit PASS0；当前仍缺真实 clip-context/story authority。
+1. **C3**：当前 source-fact/clip-context/boundary canonical reclosure 已通过；继续以 `995ebddd` implementation lineage 和 `docs/reviews/2026-08-26-fastlane-c3-canonical-reclosure-probe.json` 为准，取得同一 package 的真实 final-review、owner、source-separation、cover-pixel evidence 后再争取 canonical audit PASS0；未闭合前不得部署候选或上传。
 2. **C6**：保留 `7372484a` 的 plan/stage split-pin 修复；当前 provider-disabled overlay 已越过 identity drift，但停在 boundary hash/coordinate closure，不能继续放宽门或整合，需同一 provenance 重封 authority/record。
 3. **C7b/C9 并行私有收口**：C7b 已完成代码修复与 no-provider safety preflight，但 provider-enabled exact-final 仍 unavailable；C9 实现本会话授权的 exact derived joint-QC 与 chat/exact-final/state-last 路径。C7 保留 READY 状态并在 current artifact 出现后 offload decode/QC。
 4. **整合与一次部署**：只 cherry-pick 通过 strong review 的 commits；跑 focused + full suite、architecture/debt gate、authority drift tests；root 批准一次 deploy。
