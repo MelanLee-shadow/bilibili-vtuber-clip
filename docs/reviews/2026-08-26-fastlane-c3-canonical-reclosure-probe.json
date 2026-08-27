@@ -41,6 +41,17 @@
     "destination_exists_after_success": true,
     "transaction_leftovers_after_success": []
   },
+  "unsealed_clean_chat_probe": {
+    "path": "/private/tmp/c3-v2-run-receipt2.Monb1d/2026-08-13-auto_220021_561_670-f02d7eda94268e7b/finalizer-runtime/2026-08-13/auto_220021_561_670/auto_220021_561_670.chat-authority.json",
+    "raw_sha256": "sha256:cb8bad88aab90fc0a3f8e8db36f31bc5b5c2047052fca025557b333377cafea7",
+    "reported_final_review_status": "CLEAN",
+    "reported_reviewed_srt_sha256": "sha256:d70a96c402df8313264ef6ca145d69d5dbb74e7a2c48eb512e78f3f417e8eecc",
+    "in_v3_manifest": false,
+    "referenced_by_repository_sealed_receipt": false,
+    "same_package_record_publish_manifest": false,
+    "runner_path_error": "REPLAY_PATH_UNAVAILABLE",
+    "authority_decision": "REJECTED_AS_CURRENT_C3_AUTHORITY"
+  },
   "side_effects": {
     "authoritative_state_changed": false,
     "registry_changed": false,
