@@ -327,8 +327,8 @@ def reclose_c3_canonical_package(*, v3_root: Path, destination: Path, repo_root:
 
         record_path = stage / aliases["record"]
         publish_path = stage / aliases["publish"]
-        record, record_raw = _load_json(record_path, "C3_RECORD")
-        publish, publish_raw = _load_json(publish_path, "C3_PUBLISH")
+        record, _ = _load_json(record_path, "C3_RECORD")
+        publish, _ = _load_json(publish_path, "C3_PUBLISH")
         chat, _ = _load_json(stage / aliases["chat"], "C3_CHAT")
         subtitle_path = stage / f"{_STEM}.srt"
         speaker_srt_path = stage / f"{_STEM}.speaker.srt"
@@ -466,9 +466,9 @@ def reclose_c3_canonical_package(*, v3_root: Path, destination: Path, repo_root:
         chat_raw = _write_json(stage / aliases["chat"], chat)
         record["artifact_hashes"]["chat_authority_audit_sha256"] = _sha(chat_raw)
         publish.setdefault("artifact_hashes", {})["chat_authority_audit_sha256"] = _sha(chat_raw)
-        publish_raw_final = _write_json(publish_path, publish)
+        _write_json(publish_path, publish)
         _write_json(stage / f"{_DELIVERY_STEM}.publish.json", publish)
-        new_raws = {"record": _write_json(record_path, record), "publish": publish_raw_final, "chat": chat_raw}
+        _write_json(record_path, record)
         # All changed pointers are recorded against the immutable v3 role JSON.
         changes = []
         for name, old in before_docs.items():
