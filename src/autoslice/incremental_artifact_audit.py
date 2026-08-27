@@ -655,7 +655,7 @@ def _video_delta(
 
 def _operator_coverage(
     operator_plan: Mapping[str, object] | None,
-    subtitle_delta: Mapping[str, object],
+    deltas: Mapping[str, object],
     change_points: object,
 ) -> dict[str, object]:
     if operator_plan is None:
@@ -669,34 +669,85 @@ def _operator_coverage(
         if not isinstance(point, Mapping):
             return {"status": "INVALID", "covered": False, "reason_code": "OPERATOR_CHANGE_POINT_INVALID"}
         component = str(point.get("component") or "subtitle")
+        if component not in COMPONENTS:
+            return {"status": "INVALID", "covered": False, "reason_code": "OPERATOR_CHANGE_POINT_INVALID"}
         try:
-            windows = _parse_windows([point], label="operator change point")
+            windows = _parse_windows([point], label="operator change point") if (
+                "start_ms" in point or "end_ms" in point
+            ) else []
         except IncrementalArtifactAuditError:
             return {"status": "INVALID", "covered": False, "reason_code": "OPERATOR_CHANGE_POINT_INVALID"}
-        points.append({"component": component, "windows": windows})
-    subtitle_points = _merge_windows(
-        [window for point in points if point["component"] == "subtitle" for window in point["windows"]]
-    )
-    changed_windows = subtitle_delta.get("changed_windows")
-    if not isinstance(changed_windows, list):
-        changed_windows = []
-    uncovered = [
-        window
-        for window in changed_windows
-        if not any(window[0] < point[1] and point[0] < window[1] for point in subtitle_points)
-    ]
-    if uncovered:
+        roi = point.get("roi")
+        if roi is not None and not isinstance(roi, (list, tuple, Mapping)):
+            return {"status": "INVALID", "covered": False, "reason_code": "OPERATOR_CHANGE_POINT_INVALID"}
+        points.append(
+            {
+                "component": component,
+                "windows": windows,
+                "roi": roi,
+                "full_component": point.get("full_component") is True,
+            }
+        )
+
+    uncovered_components: list[str] = []
+    uncovered_windows: dict[str, list[list[int]]] = {}
+    for component in COMPONENTS:
+        delta = deltas.get(component)
+        if not isinstance(delta, Mapping):
+            return {"status": "INVALID", "covered": False, "reason_code": "COMPONENT_DELTA_MISSING"}
+        if delta.get("status") in {"UNCHANGED", "FORMAT_ONLY", "PIXELS_UNCHANGED_METADATA_ONLY"}:
+            continue
+        component_points = [point for point in points if point["component"] == component]
+        scope = delta.get("review_scope")
+        if scope in {"CUE_WINDOWS", "TIME_WINDOWS"}:
+            expected_windows = delta.get("changed_windows") or delta.get("declared_windows") or []
+            point_windows = _merge_windows(
+                [window for point in component_points for window in point["windows"]]
+            )
+            uncovered = [
+                window
+                for window in expected_windows
+                if not any(window[0] < point[1] and point[0] < window[1] for point in point_windows)
+            ]
+            if uncovered:
+                uncovered_components.append(component)
+                uncovered_windows[component] = uncovered
+        elif scope == "PIXEL_ROI":
+            bbox = delta.get("pixel_changed_bbox")
+            if not isinstance(bbox, list) or len(bbox) != 4:
+                uncovered_components.append(component)
+                continue
+            try:
+                bbox_tuple = tuple(int(value) for value in bbox)
+                if len(bbox_tuple) != 4 or bbox_tuple[2] <= 0 or bbox_tuple[3] <= 0:
+                    raise ValueError
+                covered = any(
+                    isinstance(point["roi"], (list, tuple))
+                    and len(point["roi"]) == 4
+                    and _bbox_inside(
+                        (bbox_tuple[0], bbox_tuple[1], bbox_tuple[0] + bbox_tuple[2], bbox_tuple[1] + bbox_tuple[3]),
+                        [int(value) for value in point["roi"]],
+                    )
+                    for point in component_points
+                )
+            except (TypeError, ValueError):
+                covered = False
+            if not covered:
+                uncovered_components.append(component)
+        elif not any(point["full_component"] for point in component_points):
+            uncovered_components.append(component)
+
+    if uncovered_components:
         return {
             "status": "INCOMPLETE",
             "covered": False,
-            "covered_windows": [window for window in changed_windows if window not in uncovered],
-            "uncovered_windows": uncovered,
+            "uncovered_components": uncovered_components,
+            "uncovered_windows": uncovered_windows,
             "reason_code": "OPERATOR_CHANGE_COVERAGE_INCOMPLETE",
         }
     return {
         "status": "COVERAGE_PASS",
         "covered": True,
-        "covered_windows": changed_windows,
         "point_count": len(change_points),
     }
 
@@ -763,7 +814,7 @@ def build_incremental_audit(
             explicitly_exhaustive=explicitly_exhaustive,
             only_these_errors=only_these_errors,
         )
-    coverage = _operator_coverage(operator_plan, subtitle_delta, operator_change_points)
+    coverage = _operator_coverage(operator_plan, deltas, operator_change_points)
     changed_components = [
         component
         for component in COMPONENTS

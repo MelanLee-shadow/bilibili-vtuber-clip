@@ -316,6 +316,28 @@ def test_video_without_edit_map_falls_back_to_full_component_review(tmp_path: Pa
     assert receipt["reviewed_components"] == ["video"]
 
 
+def test_operator_coverage_must_include_changed_video_component(tmp_path: Path) -> None:
+    parent, current = _base_pair(tmp_path, video=b"video-v2")
+    edit_map = build_video_edit_map(
+        parent_video=parent.video,
+        current_video=current.video,
+        edit_map_id="operation-1",
+        windows=[[4_000, 4_500]],
+    )
+    plan = build_incremental_audit(
+        parent=parent,
+        current=current,
+        parent_authority_id="authority-old",
+        candidate_id=CID,
+        recording_date=DATE,
+        declared_changes={"video": edit_map},
+        issue_count=4,
+        operator_change_points=[{"component": "subtitle", "start_ms": 4_000, "end_ms": 4_500}],
+    )
+    assert plan["operator_review"]["coverage"]["covered"] is False
+    assert plan["operator_review"]["coverage"]["uncovered_components"] == ["video"]
+
+
 def test_missing_boundary_or_title_input_cannot_be_sealed(tmp_path: Path) -> None:
     parent_full, current_full = _base_pair(tmp_path)
     parent = ArtifactPaths(parent_full.record, parent_full.video, parent_full.subtitle, parent_full.cover)
