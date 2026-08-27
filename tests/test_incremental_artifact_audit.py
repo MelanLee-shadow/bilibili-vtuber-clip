@@ -135,6 +135,26 @@ def test_subtitle_delta_is_cue_scoped_and_latest_record_is_bound(tmp_path: Path)
         validate_incremental_receipt(receipt, current=current)
 
 
+def test_receipt_self_hash_rejects_tampering(tmp_path: Path) -> None:
+    parent, current = _base_pair(tmp_path, subtitle=_srt("改后的第二句"))
+    plan = build_incremental_audit(
+        parent=parent,
+        current=current,
+        parent_authority_id="authority-old",
+        candidate_id=CID,
+        recording_date=DATE,
+        issue_count=2,
+    )
+    receipt = seal_incremental_review(
+        plan,
+        review_results={"subtitle": {"status": "PASS", "scope": "WHOLE_CLIP"}},
+        sealed_by="Codex root",
+    )
+    receipt["sealed_by"] = "tampered"
+    with pytest.raises(IncrementalArtifactAuditError, match="self-hash mismatch"):
+        validate_incremental_receipt(receipt, current=current)
+
+
 def test_one_or_two_points_default_to_whole_clip_but_explicit_only_is_scoped(tmp_path: Path) -> None:
     parent, current = _base_pair(tmp_path, subtitle=_srt("改后的第二句"))
     default_plan = build_incremental_audit(
@@ -166,6 +186,47 @@ def test_one_or_two_points_default_to_whole_clip_but_explicit_only_is_scoped(tmp
     )
     assert explicit_plan["operator_review"]["plan"]["mode"] == "TARGETED_REPAIR_PLUS_SYSTEMIC_FIX"
     assert explicit_plan["operator_review"]["coverage"]["covered"] is True
+
+
+@pytest.mark.parametrize(
+    ("issue_count", "only_these_errors", "expected_mode"),
+    [
+        (1, False, "WHOLE_CLIP_RERUN_AND_REVIEW"),
+        (2, False, "WHOLE_CLIP_RERUN_AND_REVIEW"),
+        (1, True, "TARGETED_REPAIR_PLUS_SYSTEMIC_FIX"),
+        (2, True, "TARGETED_REPAIR_PLUS_SYSTEMIC_FIX"),
+        (3, False, "WHOLE_CLIP_RERUN_AND_REVIEW"),
+        (4, False, "TARGETED_REPAIR_PLUS_SYSTEMIC_FIX"),
+        (5, True, "TARGETED_REPAIR_PLUS_SYSTEMIC_FIX"),
+    ],
+)
+def test_operator_scope_boundary_matrix(
+    tmp_path: Path,
+    issue_count: int,
+    only_these_errors: bool,
+    expected_mode: str,
+) -> None:
+    parent, current = _base_pair(tmp_path, subtitle=_srt("改后的第二句"))
+    plan = build_incremental_audit(
+        parent=parent,
+        current=current,
+        parent_authority_id="authority-old",
+        candidate_id=CID,
+        recording_date=DATE,
+        issue_count=issue_count,
+        only_these_errors=only_these_errors,
+        operator_change_points=(
+            [{"component": "subtitle", "start_ms": 1_000, "end_ms": 2_000}]
+            if issue_count <= 2 and only_these_errors or issue_count > 3
+            else None
+        ),
+    )
+    assert plan["operator_review"]["plan"]["mode"] == expected_mode
+    assert plan["operator_review"]["plan"]["reported_issue_count"] == issue_count
+    if expected_mode == "TARGETED_REPAIR_PLUS_SYSTEMIC_FIX":
+        assert plan["operator_review"]["coverage"]["covered"] is True
+    else:
+        assert plan["operator_review"]["coverage"]["status"] == "WHOLE_CLIP_REQUIRED"
 
 
 def test_exactly_three_points_are_conservative_whole_clip(tmp_path: Path) -> None:
@@ -456,6 +517,40 @@ def test_cli_hook_seals_and_revalidates_receipt(tmp_path: Path) -> None:
     assert plan_out.is_file() and receipt_out.is_file()
     receipt = json.loads(receipt_out.read_text(encoding="utf-8"))
     validate_incremental_receipt(receipt, current=current)
+
+
+def test_existing_package_and_release_gates_ignore_incremental_receipt(tmp_path: Path) -> None:
+    from scripts.audit_lidousha_review_package import audit_package
+
+    without_receipt = audit_package(tmp_path)
+    (tmp_path / "incremental-artifact-audit.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "incremental-artifact-audit.v1",
+                "receipt_status": "INCREMENTAL_REVIEW_COMPLETE",
+            }
+        ),
+        encoding="utf-8",
+    )
+    with_receipt = audit_package(tmp_path)
+    for key in ("passed", "blocking_issue_count", "issue_count"):
+        assert with_receipt[key] == without_receipt[key]
+    assert [issue["code"] for issue in with_receipt["issues"]] == [
+        issue["code"] for issue in without_receipt["issues"]
+    ]
+
+    root = Path(__file__).parents[1]
+    gate_sources = (
+        "scripts/audit_lidousha_review_package.py",
+        "scripts/build_lidousha_recovery_review_manifest.py",
+        "scripts/authorized_upload.py",
+        "src/autoslice/final_review_contract.py",
+        "src/autoslice/cover_route_evidence.py",
+    )
+    for relative in gate_sources:
+        source = (root / relative).read_text(encoding="utf-8")
+        assert "incremental_artifact_audit" not in source
+        assert "incremental-artifact-audit" not in source
 
 
 def test_incremental_receipt_cannot_satisfy_final_review_gate(tmp_path: Path) -> None:
