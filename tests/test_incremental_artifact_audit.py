@@ -177,6 +177,57 @@ def test_exhaustive_shortcut_requires_every_changed_window_to_be_reported(tmp_pa
         seal_incremental_review(plan, review_results={}, sealed_by="Codex root")
 
 
+def test_record_projections_supply_boundary_and_title_hashes(tmp_path: Path) -> None:
+    parent_full, current_full = _base_pair(tmp_path)
+    for path, start, title in (
+        (parent_full.record, 0, "标题一"),
+        (current_full.record, 10, "标题二"),
+    ):
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["boundary_audit"] = {"start_ms": start, "end_ms": 2_000}
+        record["publish_staging"] = {"title": title}
+        path.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+    parent = ArtifactPaths(parent_full.record, parent_full.video, parent_full.subtitle, parent_full.cover)
+    current = ArtifactPaths(current_full.record, current_full.video, current_full.subtitle, current_full.cover)
+    plan = build_incremental_audit(
+        parent=parent,
+        current=current,
+        parent_authority_id="authority-old",
+        candidate_id=CID,
+        recording_date=DATE,
+    )
+    assert plan["changed_components"] == ["boundary", "title"]
+    assert plan["component_deltas"]["boundary"]["changed_pointers"] == ["/start_ms"]
+    assert plan["component_deltas"]["title"]["review_scope"] == "FULL_COMPONENT"
+
+
+def test_boundary_and_title_hashes_are_independent_components(tmp_path: Path) -> None:
+    parent, current = _base_pair(
+        tmp_path,
+        boundary={"start_ms": 10, "end_ms": 2_000},
+        title="标题二",
+    )
+    plan = build_incremental_audit(
+        parent=parent,
+        current=current,
+        parent_authority_id="authority-old",
+        candidate_id=CID,
+        recording_date=DATE,
+    )
+    assert plan["changed_components"] == ["boundary", "title"]
+    assert plan["component_deltas"]["boundary"]["changed_pointers"] == ["/start_ms"]
+    assert plan["component_deltas"]["title"]["review_scope"] == "FULL_COMPONENT"
+    receipt = seal_incremental_review(
+        plan,
+        review_results={
+            "boundary": {"status": "PASS", "scope": "FULL_COMPONENT"},
+            "title": {"status": "PASS", "scope": "FULL_COMPONENT"},
+        },
+        sealed_by="Codex root",
+    )
+    assert receipt["reviewed_components"] == ["boundary", "title"]
+
+
 def test_cover_delta_scopes_real_pixels_and_rejects_outside_roi(tmp_path: Path) -> None:
     parent, current = _base_pair(tmp_path, cover_changed=True)
     plan = build_incremental_audit(

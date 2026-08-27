@@ -54,8 +54,9 @@ section 三个 read-only probes 可以并行，但 joint acceptance 是屏障，
   `PIXEL_ROI`，越界立即 fail closed；没有 ROI 或画布改变则回退整张封面复核。
 - 视频变动必须带 producer 的精确 edit-window map，并同时绑定 parent/current video raw hash 和
   operation id；只有窗口、没有双 hash 绑定时仍回退整段视频复核。
-- boundary/title 任何 canonical 变化都回退对应整组件复核；未提供这两类输入不能生成
-  完成 receipt。
+- boundary/title 任何 canonical 变化都回退对应整组件复核；可直接从 record 的
+  `boundary_audit`/`publish_staging.title` projection 取值，若显式 component 文件和 record
+  projection 都缺失则不能生成完成 receipt。
 - 新 receipt 以最新真实 record/media 为 current，旧 authority 只作为
   `parent_authority_id` 历史 lineage，不覆盖、不修改、不续期旧 receipt；current snapshot
   漂移时现场拒绝。
@@ -168,10 +169,10 @@ prepare 工作。一个被阻候选不得阻断其它候选。
   相等，缺失/非法 Dialogue 或任一投影漂移都阻断。
 - Ivan 报告成片字幕问题时，先运行
   `scripts/plan_operator_subtitle_correction.py` 固化修复范围：未明确“问题已列完”的 1–2
-  个问题视为抽样，必须整片重跑并复审；3 个及以上问题走
-  `TARGETED_REPAIR_PLUS_SYSTEMIC_FIX`，只修所列位置和背后的共享流水线通病，不随机全片重跑。
-  明确声明问题穷尽时，即使只有 1–2 个也可走定点修复。计划只决定复查范围，不放宽最终
-  package、same-BV、人审或上传门。
+  个问题视为抽样，必须整片重跑并复审；超过 3 个问题进入
+  `TARGETED_REPAIR_PLUS_SYSTEMIC_FIX` 的 exhaustive-candidate 分支，但必须逐 cue/window
+  覆盖实际 diff；恰好 3 个问题按保守规则整片重跑并复审。明确声明问题穷尽时，即使只有
+  1–2 个也可走定点修复。计划只决定复查范围，不放宽最终 package、same-BV、人审或上传门。
 - 定点修复是**发布真值轨**，不是对 autoslice 的覆盖式“纠正历史”。同一候选必须同时保存：
   (a) 独立、对人工真值盲的完整流水线 SRT，(b) 用于上传的人工真值 SRT，及 (c) hash-bound
   的逐 cue diff receipt；它们用于定位流水线失误，诊断轨不得回写发布真值，也不得把真值反哺

@@ -429,13 +429,19 @@ def _text_component_delta(
 
 
 
-def _record_identity(path: Path) -> dict[str, object]:
+def _load_record(path: Path) -> Mapping[str, object]:
     try:
         value = json.loads(_regular_file(path, label="record").read_text(encoding="utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise IncrementalArtifactAuditError("record is not valid UTF-8 JSON") from exc
     if not isinstance(value, Mapping):
         raise IncrementalArtifactAuditError("record must be a JSON object")
+    return value
+
+
+
+def _record_identity(path: Path) -> dict[str, object]:
+    value = _load_record(path)
     identity: dict[str, object] = {}
     for key in ("candidate_id", "recording_date", "date"):
         if key in value:
@@ -446,6 +452,71 @@ def _record_identity(path: Path) -> dict[str, object]:
             if key in story and key not in identity:
                 identity[key] = story[key]
     return identity
+
+
+
+def _record_projection(path: Path, component: str) -> tuple[object | None, str | None]:
+    value = _load_record(path)
+    if component == "boundary":
+        projected = value.get("boundary_audit")
+        return (projected, "record:/boundary_audit") if isinstance(projected, Mapping) else (None, None)
+    if component == "title":
+        staging = value.get("publish_staging")
+        if isinstance(staging, Mapping) and isinstance(staging.get("title"), str):
+            return staging["title"], "record:/publish_staging/title"
+        for key in ("title", "title_text"):
+            if isinstance(value.get(key), str):
+                return value[key], f"record:/{key}"
+        story = value.get("story_contract")
+        if isinstance(story, Mapping) and isinstance(story.get("title"), str):
+            return story["title"], "record:/story_contract/title"
+    return None, None
+
+
+
+def _record_value_entry(value: object, *, source: str, kind: str) -> dict[str, object]:
+    if kind == "boundary":
+        canonical = _canonical_json(value)
+    else:
+        if not isinstance(value, str):
+            raise IncrementalArtifactAuditError("record title projection is not text")
+        canonical = value.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+    return {
+        "source": source,
+        "bytes": len(canonical),
+        "sha256": _sha256_bytes(canonical),
+        "canonical_sha256": _sha256_bytes(canonical),
+    }
+
+
+
+def _record_component_delta(
+    parent_record: Path,
+    current_record: Path,
+    *,
+    component: str,
+) -> dict[str, object]:
+    before, before_source = _record_projection(parent_record, component)
+    current, current_source = _record_projection(current_record, component)
+    if before is None or current is None or before_source is None or current_source is None:
+        return {
+            "status": "INPUT_REQUIRED",
+            "review_scope": "INPUT_REQUIRED",
+            "reason_code": f"{component.upper()}_INPUT_MISSING",
+        }
+    before_entry = _record_value_entry(before, source=before_source, kind=component)
+    current_entry = _record_value_entry(current, source=current_source, kind=component)
+    changed = before_entry["canonical_sha256"] != current_entry["canonical_sha256"]
+    return {
+        "status": "FULL_COMPONENT_REVIEW_REQUIRED" if changed else "UNCHANGED",
+        "review_scope": "FULL_COMPONENT" if changed else "NONE",
+        "raw_changed": changed,
+        "canonical_changed": changed,
+        "changed_pointers": _json_diff_paths(before, current) if component == "boundary" and changed else [],
+        "changed_text": changed if component == "title" else None,
+        "parent": before_entry,
+        "current": current_entry,
+    }
 
 
 
@@ -469,8 +540,13 @@ def _snapshot(paths: ArtifactPaths) -> dict[str, object]:
                 if component == "boundary"
                 else _canonical_text_entry(path, label=component)
             )
-        else:
-            components[component] = {"status": "NOT_PROVIDED"}
+            continue
+        projected, source = _record_projection(paths.record, component)
+        components[component] = (
+            _record_value_entry(projected, source=source or "", kind=component)
+            if projected is not None and source is not None
+            else {"status": "INPUT_REQUIRED", "reason_code": f"{component.upper()}_INPUT_MISSING"}
+        )
     return {"record": record, "components": components}
 
 
@@ -664,21 +740,17 @@ def build_incremental_audit(
         "cover": _cover_delta(parent.cover, current.cover, _declared_component(declared, "cover")),
     }
     if parent.boundary is None and current.boundary is None:
-        deltas["boundary"] = {
-            "status": "INPUT_REQUIRED",
-            "review_scope": "INPUT_REQUIRED",
-            "reason_code": "BOUNDARY_INPUT_MISSING",
-        }
+        deltas["boundary"] = _record_component_delta(
+            parent.record, current.record, component="boundary"
+        )
     elif parent.boundary is None or current.boundary is None:
         raise IncrementalArtifactAuditError("boundary must be present in both versions or neither")
     else:
         deltas["boundary"] = _json_component_delta(parent.boundary, current.boundary, label="boundary")
     if parent.title is None and current.title is None:
-        deltas["title"] = {
-            "status": "INPUT_REQUIRED",
-            "review_scope": "INPUT_REQUIRED",
-            "reason_code": "TITLE_INPUT_MISSING",
-        }
+        deltas["title"] = _record_component_delta(
+            parent.record, current.record, component="title"
+        )
     elif parent.title is None or current.title is None:
         raise IncrementalArtifactAuditError("title must be present in both versions or neither")
     else:
