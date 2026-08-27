@@ -22,10 +22,11 @@
 - `scripts/build_incremental_artifact_audit.py`
 - `scripts/plan_operator_subtitle_correction.py`
 
-`build_incremental_audit` 只生成 component-delta plan；`seal_incremental_review` 在所有
-changed scope 有真实 PASS evidence 后生成 create-only receipt；`validate_incremental_receipt`
-现场重读 current bytes。receipt 明确不替代 package audit、最终 SRT、boundary、title-cover
-QC、authorized manifest 或 upload gate。
+`build_incremental_audit` 只生成 component-delta plan；CLI 在收到
+`--review-results --sealed-by --receipt-out` 后自动调用 `seal_incremental_review`，并先用
+`validate_incremental_receipt` 现场重读 current bytes，再以 create-only 写入 receipt。缺失或
+漂移会阻断增量路径。receipt 明确不替代 package audit、最终 SRT、boundary、title-cover QC、
+authorized manifest 或 upload gate。
 
 ## 验证
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +18,8 @@ from src.autoslice.incremental_artifact_audit import (  # noqa: E402
     IncrementalArtifactAuditError,
     build_incremental_audit,
     build_video_edit_map,
+    seal_incremental_review,
+    validate_incremental_receipt,
     write_create_only,
 )
 
@@ -39,6 +42,18 @@ def _point(raw: str) -> dict[str, object]:
     return result
 
 
+
+def _load_mapping(path: Path, *, label: str) -> Mapping[str, object]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{label} is not valid UTF-8 JSON") from exc
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{label} must be a JSON object")
+    return value
+
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate-id", required=True)
@@ -58,7 +73,10 @@ def main() -> int:
     parser.add_argument("--issue-count", type=int)
     parser.add_argument("--explicitly-exhaustive", action="store_true")
     parser.add_argument("--only-these-errors", action="store_true")
-    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--out", type=Path, required=True, help="create-only plan output")
+    parser.add_argument("--review-results", type=Path, help="JSON object of scoped PASS results")
+    parser.add_argument("--sealed-by", help="operator or service sealing the receipt")
+    parser.add_argument("--receipt-out", type=Path, help="create-only receipt output")
     args = parser.parse_args()
     try:
         parent = ArtifactPaths(
@@ -103,22 +121,33 @@ def main() -> int:
             operator_change_points=[_point(raw) for raw in args.change_point],
         )
         write_create_only(args.out, plan)
+        receipt = None
+        if any(value is not None for value in (args.review_results, args.sealed_by, args.receipt_out)):
+            if args.review_results is None or not args.sealed_by or args.receipt_out is None:
+                raise ValueError("--review-results, --sealed-by, and --receipt-out are required together")
+            if args.receipt_out.resolve() == args.out.resolve():
+                raise ValueError("plan and receipt outputs must be different create-only paths")
+            receipt = seal_incremental_review(
+                plan,
+                review_results=_load_mapping(args.review_results, label="review results"),
+                sealed_by=args.sealed_by,
+            )
+            validate_incremental_receipt(receipt, current=current)
+            write_create_only(args.receipt_out, receipt)
     except (IncrementalArtifactAuditError, OSError, ValueError) as exc:
         print(f"REFUSE: {exc}", file=sys.stderr)
         return 2
-    print(
-        json.dumps(
-            {
-                "plan": str(args.out.resolve()),
-                "plan_sha256": plan["plan_sha256"],
-                "candidate_id": plan["candidate_id"],
-                "recording_date": plan["recording_date"],
-                "changed_components": plan["changed_components"],
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-        )
-    )
+    output = {
+        "plan": str(args.out.resolve()),
+        "plan_sha256": plan["plan_sha256"],
+        "candidate_id": plan["candidate_id"],
+        "recording_date": plan["recording_date"],
+        "changed_components": plan["changed_components"],
+    }
+    if receipt is not None:
+        output["receipt"] = str(args.receipt_out.resolve())
+        output["receipt_sha256"] = receipt["receipt_sha256"]
+    print(json.dumps(output, ensure_ascii=False, sort_keys=True))
     return 0
 
 

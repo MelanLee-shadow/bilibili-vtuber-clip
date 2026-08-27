@@ -45,7 +45,9 @@ section 三个 read-only probes 可以并行，但 joint acceptance 是屏障，
 
 小改动不得再把整套交付物粗暴视为一个不可分的审计对象，但这只改变**复核范围**，不改变发布门。`src/autoslice/incremental_artifact_audit.py` 与
 `scripts/build_incremental_artifact_audit.py` 负责为最新真实 record/media 生成
-`incremental-artifact-audit.v1` plan/receipt，并分别记录 `video`、`subtitle`、`cover`、
+`incremental-artifact-audit.v1` plan/receipt；package/preparation 的增量入口必须调用该 CLI，
+并在 review results 齐全时用 `--review-results --sealed-by --receipt-out` 同步完成 seal 和
+current snapshot validation，不能只靠人工记得另跑一步。它分别记录 `video`、`subtitle`、`cover`、
 `boundary`、`title` 的 raw/canonical hash、父 authority、当前 record 和实际差异：
 
 - 字幕只变动部分 cue 时，自动生成 changed cue/window；换行等 canonical 不变只记
@@ -65,7 +67,9 @@ Ivan 的修改点完整性规则由 `operator_correction_policy.py` 强制：默
 明确声明“只有这些错误”的 1–2 个点才可在实际 diff 全覆盖后定向复核；超过 3 个点标记为
 `EXHAUSTIVE_CANDIDATE`，但仍必须逐一覆盖所有 changed cue/window/ROI；恰好 3 个点按保守
 规则整片复核。该 receipt 只证明增量复核范围和覆盖情况，**不替代**最终 SRT、boundary、
-package audit、title-cover QC、authorized manifest 或 upload gate。
+package audit、title-cover QC、authorized manifest 或 upload gate。增量入口缺 receipt、
+receipt 过期或校验失败时只能阻断该增量路径，或明确转入现有全量/权威审核路径；不得按
+“没有 receipt 就没有变化”处理。
 
 ## Qixi public-surface 的固定模式与 readiness
 

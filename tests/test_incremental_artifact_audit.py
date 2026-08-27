@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -374,3 +376,64 @@ def test_create_only_receipt_rejects_replacement(tmp_path: Path) -> None:
     write_create_only(output, receipt)
     with pytest.raises(IncrementalArtifactAuditError, match="already exists"):
         write_create_only(output, receipt)
+
+
+def test_cli_hook_seals_and_revalidates_receipt(tmp_path: Path) -> None:
+    parent, current = _base_pair(tmp_path, subtitle=_srt("改后的第二句"))
+    review_results = tmp_path / "review-results.json"
+    review_results.write_text(
+        json.dumps({"subtitle": {"status": "PASS", "scope": "WHOLE_CLIP"}}),
+        encoding="utf-8",
+    )
+    plan_out = tmp_path / "plan.json"
+    receipt_out = tmp_path / "receipt.json"
+    script = Path(__file__).parents[1] / "scripts" / "build_incremental_artifact_audit.py"
+    command = [
+        sys.executable,
+        str(script),
+        "--candidate-id",
+        CID,
+        "--recording-date",
+        DATE,
+        "--parent-authority-id",
+        "authority-old",
+        "--parent-record",
+        str(parent.record),
+        "--parent-video",
+        str(parent.video),
+        "--parent-subtitle",
+        str(parent.subtitle),
+        "--parent-cover",
+        str(parent.cover),
+        "--parent-boundary",
+        str(parent.boundary),
+        "--parent-title",
+        str(parent.title),
+        "--current-record",
+        str(current.record),
+        "--current-video",
+        str(current.video),
+        "--current-subtitle",
+        str(current.subtitle),
+        "--current-cover",
+        str(current.cover),
+        "--current-boundary",
+        str(current.boundary),
+        "--current-title",
+        str(current.title),
+        "--issue-count",
+        "2",
+        "--out",
+        str(plan_out),
+        "--review-results",
+        str(review_results),
+        "--sealed-by",
+        "test-hook",
+        "--receipt-out",
+        str(receipt_out),
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stderr
+    assert plan_out.is_file() and receipt_out.is_file()
+    receipt = json.loads(receipt_out.read_text(encoding="utf-8"))
+    validate_incremental_receipt(receipt, current=current)
