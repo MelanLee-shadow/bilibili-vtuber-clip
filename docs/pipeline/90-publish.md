@@ -25,6 +25,14 @@ title-cover QC 和 ledger 无歧义重放后，才可被排入串行候选；仍
 逐字授权，绝不把 graph 当 authority。单批、单部署与完整 suite 是实际 preparation/deploy
 的准入规则，不是该观察分类自动授予的后续动作。
 
+## 增量 receipt 与发布隔离
+
+`incremental-artifact-audit.v1` 只说明当前版本相对上一版本哪些组件、cue、时间窗或封面 ROI
+真的变化，以及哪些复核已完成。它不能把未变组件的历史 evidence 从 `FLAGGED` 或 hash
+漂移状态中“洗成”有效，也不能把 `review_ready` 变成上传授权。`authorized_upload.py` 仍在
+副作用前现场重跑 package audit、标题/封面 QC、manifest hash 和 ledger；任一 current
+record/media/authority 不一致都拒绝。
+
 ## Reviewed-baseline replay 与上传隔离
 
 `scripts/replay_reviewed_subtitle_baseline.py` 的 PLAN、full-dry-run、apply 与 readiness

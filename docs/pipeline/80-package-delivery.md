@@ -41,6 +41,30 @@ section 三个 read-only probes 可以并行，但 joint acceptance 是屏障，
 下一候选。全局 workflow 病因修复可并行，但不成为重新人工审片的节点；Qixi-first，随后按
 批次原顺序，`review_ready` 仍不等于 publication。
 
+## 增量审计与最新记录重绑定
+
+小改动不得再把整套交付物粗暴视为一个不可分的审计对象，但这只改变**复核范围**，不改变发布门。`src/autoslice/incremental_artifact_audit.py` 与
+`scripts/build_incremental_artifact_audit.py` 负责为最新真实 record/media 生成
+`incremental-artifact-audit.v1` plan/receipt，并分别记录 `video`、`subtitle`、`cover`、
+`boundary`、`title` 的 raw/canonical hash、父 authority、当前 record 和实际差异：
+
+- 字幕只变动部分 cue 时，自动生成 changed cue/window；换行等 canonical 不变只记
+  `FORMAT_ONLY`，不触发语义复核。
+- 封面变动时必须计算实际像素 bbox；声明的文字/图像 ROI 覆盖 bbox 才能使用
+  `PIXEL_ROI`，越界立即 fail closed；没有 ROI 或画布改变则回退整张封面复核。
+- 视频变动必须带 producer 的精确 edit-window map；没有 map 不猜测，回退整段视频复核。
+- boundary/title 任何 canonical 变化都回退对应整组件复核；未提供这两类输入不能生成
+  完成 receipt。
+- 新 receipt 以最新真实 record/media 为 current，旧 authority 只作为
+  `parent_authority_id` 历史 lineage，不覆盖、不修改、不续期旧 receipt；current snapshot
+  漂移时现场拒绝。
+
+Ivan 的修改点完整性规则由 `operator_correction_policy.py` 强制：默认 1–2 个点整片复核；
+明确声明“只有这些错误”的 1–2 个点才可在实际 diff 全覆盖后定向复核；超过 3 个点标记为
+`EXHAUSTIVE_CANDIDATE`，但仍必须逐一覆盖所有 changed cue/window/ROI；恰好 3 个点按保守
+规则整片复核。该 receipt 只证明增量复核范围和覆盖情况，**不替代**最终 SRT、boundary、
+package audit、title-cover QC、authorized manifest 或 upload gate。
+
 ## Qixi public-surface 的固定模式与 readiness
 
 候选专属 Qixi closure 只接受固定 CLI mode：默认/--plan 是浅只读 preflight，--diagnose

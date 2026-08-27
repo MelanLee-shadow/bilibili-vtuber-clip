@@ -26,6 +26,19 @@ timeline 上重放已绑定的 semantic verdict；第 8 阶段直接物化 autho
 任一精确 authority 失败都在本候选内 fail closed，不得把 disposable ASR 文字、closure cue
 近似匹配或另一轮随机好网格提升为人工真值。
 
+### 修改点完整性与增量复核
+
+Ivan 对同一候选明确列出超过 3 个修改点时，视为该次报告已穷举需要修复的点；但流水线仍
+必须把每个实际 changed cue 映射到报告点，无法覆盖的变化立即回退整片复核。1–2 个点默认
+需要整片复核，只有 Ivan 明确声明“确实只有这些错误”且 changed cue 全覆盖时才允许定向复核。
+恰好 3 个点按保守规则整片复核。这个策略由
+`src/autoslice/operator_correction_policy.py` 强制，不靠模型自行猜测。
+
+字幕-only 的新交付可使用 `incremental-artifact-audit.v1` 只复核 changed cue/window；未变的
+视频、封面、boundary 和 title 只能继承上一份**已通过且 hash-bound**证据，不能继承旧的
+FLAGGED/失效 receipt。最终 materialize 后仍必须重算 exact-final SRT、source separation、
+说话人和 package gates；增量 receipt 不是最终放行。
+
 语义修复引擎（专名/方言/语境不合适度）的设计与规则见
 [41-semantic-repair.md](41-semantic-repair.md)——那是本步的核心子权威。
 

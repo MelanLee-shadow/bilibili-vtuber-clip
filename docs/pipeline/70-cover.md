@@ -17,6 +17,11 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   exact `cover_text` 的 `lidousha-full-text-cover-contract.v1`
   （`authority=IVAN_EXPLICIT`、`scope=FULL_TEXT_COVER`）才可要求封面全文；歌切恒为
   `《歌名》`。
+- 封面增量复核必须把父/当前封面分别 hash，并从实际像素计算 changed bbox；只改标题字或局部图层时，
+  只有声明 ROI 完整覆盖 bbox 才可复核该 ROI。bbox 越界、画布尺寸改变、无法读取像素或未提供
+  ROI 都必须回退整张封面复核；不得因 raw 文件看似只改了几字节就跳过像素检查。该范围 receipt
+  由 `src/autoslice/incremental_artifact_audit.py` 生成，仍不能替代当前封面 route、最终像素和
+  title-cover joint-QC gates。
 - **竖屏源一律走 `cpa_redraw`，这是正常路由不是降级（Ivan 2026-08-10 逐字裁定）**：
   「并不是所有的都需要截图，特别是竖屏直播，通常不适合截图，只能重绘。」判据是**已抽出
   的参考帧几何**（不是选帧回执——override / hash-bound 重放手工拼的回执里没有几何，而重放
