@@ -72,6 +72,7 @@ def main() -> int:
     parser.add_argument("--candidate-id", required=True)
     parser.add_argument("--recording-date", required=True)
     parser.add_argument("--parent-authority-id", required=True)
+    parser.add_argument("--run-id", help="stable package/preparation run identifier")
     for prefix in ("parent", "current"):
         parser.add_argument(f"--{prefix}-record", type=Path, required=True)
         parser.add_argument(f"--{prefix}-video", type=Path, required=True)
@@ -132,6 +133,7 @@ def main() -> int:
             parent_authority_id=args.parent_authority_id,
             candidate_id=args.candidate_id,
             recording_date=args.recording_date,
+            run_id=args.run_id,
             declared_changes=declared,
             issue_count=args.issue_count,
             explicitly_exhaustive=args.explicitly_exhaustive,
@@ -158,6 +160,7 @@ def main() -> int:
     output = {
         "plan": str(args.out.resolve()),
         "plan_sha256": plan["plan_sha256"],
+        "run_id": plan["run_id"],
         "candidate_id": plan["candidate_id"],
         "recording_date": plan["recording_date"],
         "changed_components": plan["changed_components"],

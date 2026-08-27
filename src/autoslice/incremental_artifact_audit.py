@@ -34,6 +34,7 @@ from src.autoslice.operator_correction_policy import plan_operator_correction
 
 SCHEMA_VERSION = "incremental-artifact-audit.v1"
 POLICY_VERSION = "2026-08-27.incremental-artifact-scope.v1"
+PARENT_AUTHORITY_VALIDATION = "DELEGATED_TO_EXISTING_RELEASE_GATES"
 COMPONENTS = ("video", "subtitle", "cover", "boundary", "title")
 
 
@@ -760,6 +761,7 @@ def build_incremental_audit(
     parent_authority_id: str,
     candidate_id: str,
     recording_date: str,
+    run_id: str | None = None,
     declared_changes: Mapping[str, object] | None = None,
     issue_count: int | None = None,
     explicitly_exhaustive: bool = False,
@@ -772,6 +774,8 @@ def build_incremental_audit(
         raise IncrementalArtifactAuditError("parent_authority_id is required")
     if not candidate_id.strip() or not recording_date.strip():
         raise IncrementalArtifactAuditError("candidate identity is required")
+    if run_id is not None and not run_id.strip():
+        raise IncrementalArtifactAuditError("run_id must not be empty")
     parent_snapshot = _snapshot(parent)
     current_snapshot = _snapshot(current)
     for snapshot, label in ((parent_snapshot, "parent"), (current_snapshot, "current")):
@@ -822,12 +826,18 @@ def build_incremental_audit(
         if isinstance(deltas[component], Mapping)
         and deltas[component].get("status") not in {"UNCHANGED", "FORMAT_ONLY", "PIXELS_UNCHANGED_METADATA_ONLY"}
     ]
+    resolved_run_id = run_id or (
+        f"incremental:{candidate_id}:{recording_date}:"
+        f"{current_snapshot['record']['sha256']}"
+    )
     plan = {
         "schema_version": SCHEMA_VERSION,
         "policy_version": POLICY_VERSION,
+        "run_id": resolved_run_id,
         "candidate_id": candidate_id,
         "recording_date": recording_date,
         "parent_authority_id": parent_authority_id,
+        "parent_authority_validation": PARENT_AUTHORITY_VALIDATION,
         "parent_snapshot": parent_snapshot,
         "current_snapshot": current_snapshot,
         "changed_components": changed_components,
@@ -931,9 +941,11 @@ def seal_incremental_review(
         "policy_version": plan.get("policy_version"),
         "receipt_status": "INCREMENTAL_REVIEW_COMPLETE",
         "sealed_by": sealed_by,
+        "run_id": plan.get("run_id"),
         "candidate_id": plan.get("candidate_id"),
         "recording_date": plan.get("recording_date"),
         "parent_authority_id": plan.get("parent_authority_id"),
+        "parent_authority_validation": plan.get("parent_authority_validation"),
         "plan_sha256": plan.get("plan_sha256"),
         "parent_snapshot": plan.get("parent_snapshot"),
         "current_snapshot": plan.get("current_snapshot"),
@@ -941,6 +953,7 @@ def seal_incremental_review(
         "reviewed_components": reviewed,
         "inherited_components": inherited,
         "component_deltas": deltas,
+        "review_results": {component: results[component] for component in reviewed},
         "operator_review": operator_review,
         "release_gate_disclaimer": plan.get("release_gate_disclaimer"),
     }
@@ -1026,6 +1039,7 @@ __all__ = [
     "ArtifactPaths",
     "COMPONENTS",
     "IncrementalArtifactAuditError",
+    "PARENT_AUTHORITY_VALIDATION",
     "POLICY_VERSION",
     "SCHEMA_VERSION",
     "build_incremental_audit",

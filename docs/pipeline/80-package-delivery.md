@@ -60,8 +60,10 @@ current snapshot validation，不能只靠人工记得另跑一步。它分别�
   `boundary_audit`/`publish_staging.title` projection 取值，若显式 component 文件和 record
   projection 都缺失则不能生成完成 receipt。
 - 新 receipt 以最新真实 record/media 为 current，旧 authority 只作为
-  `parent_authority_id` 历史 lineage，不覆盖、不修改、不续期旧 receipt；current snapshot
-  漂移时现场拒绝。
+  `parent_authority_id` 历史 lineage，不覆盖、不修改、不续期旧 receipt；receipt 的
+  `parent_authority_validation=DELEGATED_TO_EXISTING_RELEASE_GATES` 明确不自行宣称旧 authority
+  有效，既有 gates 必须现场验证它；current snapshot 漂移时现场拒绝。CLI 可用 `--run-id`
+  绑定具体 package/preparation run，缺省 run id 由 current record hash 派生。
 
 Ivan 的修改点完整性规则由 `operator_correction_policy.py` 强制：默认 1–2 个点整片复核；
 明确声明“只有这些错误”的 1–2 个点才可在实际 diff 全覆盖后定向复核；超过 3 个点标记为

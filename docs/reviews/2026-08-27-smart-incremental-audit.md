@@ -24,9 +24,10 @@
 
 `build_incremental_audit` 只生成 component-delta plan；CLI 在收到
 `--review-results --sealed-by --receipt-out` 后自动调用 `seal_incremental_review`，并先用
-`validate_incremental_receipt` 现场重读 current bytes，再以 create-only 写入 receipt。缺失或
-漂移会阻断增量路径。receipt 明确不替代 package audit、最终 SRT、boundary、title-cover QC、
-authorized manifest 或 upload gate。
+`validate_incremental_receipt` 现场重读 current bytes，再以 create-only 写入 receipt。receipt
+还携带 `run_id` 和 `parent_authority_validation=DELEGATED_TO_EXISTING_RELEASE_GATES`，不会
+自行宣称旧 authority 有效。缺失或漂移会阻断增量路径。receipt 明确不替代 package audit、最终
+SRT、boundary、title-cover QC、authorized manifest 或 upload gate。
 
 ## 验证
 
