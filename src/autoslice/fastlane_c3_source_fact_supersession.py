@@ -255,3 +255,35 @@ def validate_c3_source_fact_supersession(
     except (OSError, TypeError, ValueError, KeyError):
         return False
     return dict(review) == expected
+
+
+def validate_c3_source_fact_review_from_validation(
+    review: object, *, validation: Mapping[str, object]
+) -> bool:
+    """Adapt the shared source-fact validator's locals without duplicating it."""
+    candidate_id = validation.get("candidate_id")
+    final_reviewed_srt_path = validation.get("final_reviewed_srt_path")
+    story_contract = validation.get("story_contract")
+    if (
+        candidate_id != CANDIDATE_ID
+        or not isinstance(final_reviewed_srt_path, Path)
+        or not isinstance(story_contract, Mapping)
+    ):
+        return False
+    consumption = review.get("c3_terminal_source_fact_supersession") if isinstance(review, Mapping) else None
+    if not isinstance(consumption, Mapping):
+        return False
+    return validate_c3_source_fact_supersession(
+        review,
+        repo_root=validation.get("qixi_repo_root") or Path(__file__).resolve().parents[2],
+        candidate_id=candidate_id,
+        recording_date=RECORDING_DATE,
+        selection_hook=str(validation.get("selection_hook") or ""),
+        title=str(validation.get("title") or ""),
+        final_transcript=str(validation.get("final_transcript") or ""),
+        clip_context_prompt=str(validation.get("clip_context_prompt") or ""),
+        selection_scorecard=validation.get("selection_scorecard"),
+        speaker_evidence=validation.get("speaker_evidence"),
+        speaker_finalization_sha256=str(consumption.get("speaker_finalization_sha256") or ""),
+        final_reviewed_srt_path=final_reviewed_srt_path,
+    )

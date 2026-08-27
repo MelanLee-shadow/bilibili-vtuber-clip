@@ -10,7 +10,6 @@ from src.autoslice.fastlane_c3_speaker_authority import load_c3_line947_authorit
 from src.autoslice.fastlane_c3_terminal_source_fact_preservation import load_authority as load_source_fact_authority
 from src.autoslice.c3_boundary_reclosure_authority import (
     C3BoundaryReclosureError,
-    DELIVERY_END_MS,
     NEW_GRID_SHA256,
     derive_current_boundary_review,
     validate_authority_document,
@@ -65,7 +64,7 @@ def test_authority_provenance_drift_rejects(path: str) -> None:
     authority[path] = deepcopy(authority[path])
     key = next(iter(authority[path]))
     authority[path][key] = "drift"
-    with pytest.raises(C3BoundaryReclosureError, match="DRIFT"): 
+    with pytest.raises(C3BoundaryReclosureError, match="DRIFT"):
         validate_authority_document(authority)
 
 

@@ -33,6 +33,7 @@ from src.autoslice.fastlane_c3_v3_direct import load_c3_v3_authority
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.clip_context import clip_context_prompt_text, validate_clip_context
 from src.autoslice.review_evidence import SourceCue
+from src.autoslice.repository_asset_authority import require_repository_asset_authority
 
 
 SCHEMA = "c3-canonical-package-reclosure-receipt.v1"
@@ -320,7 +321,16 @@ def reclose_c3_canonical_package(*, v3_root: Path, destination: Path, repo_root:
         _copy_alias(copied["cover_reference"], stage, f"{_STEM}.cover.cover-ref.png")
         _copy_alias(copied["speaker_truth"], stage, f"{_STEM}.operator-reviewed-speaker-truth.json")
         _copy_alias(copied["delivery_binding"], stage, f"{_STEM}.operator-reviewed-delivery-binding.json")
-        speaker_authority_bytes = _read_regular(repo_root / SPEAKER_AUTHORITY_ASSET, label="C3_SPEAKER_AUTHORITY")
+        speaker_authority_path = repo_root / SPEAKER_AUTHORITY_ASSET
+        speaker_authority_bytes = _read_regular(
+            speaker_authority_path,
+            label="C3_SPEAKER_AUTHORITY",
+        )
+        require_repository_asset_authority(
+            repo_root=repo_root,
+            relative_path=SPEAKER_AUTHORITY_ASSET,
+            observed_bytes=speaker_authority_bytes,
+        )
         _write_new(stage / f"{_STEM}.line947-speaker-authority.json", speaker_authority_bytes)
         _write_new(stage / f"{_DELIVERY_STEM}.line947-speaker-authority.json", speaker_authority_bytes)
         _write_new(stage / f"{_DELIVERY_STEM}.burned-final-speaker.line947-speaker-authority.json", speaker_authority_bytes)
