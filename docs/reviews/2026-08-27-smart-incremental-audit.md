@@ -7,7 +7,7 @@
 - video、subtitle、cover、boundary、title 分别保存 raw/canonical hash；
 - SRT 自动定位 changed cue/window；
 - cover 通过实际像素 bbox 验证声明 ROI；
-- video 必须有 producer edit-window map，否则回退整段复核；
+- video 必须有 producer edit-window map，且绑定 parent/current video raw hash 和 operation id，否则回退整段复核；
 - 最新真实 record/media 生成新 current lineage，旧 authority 只读保留；
 - 1–2 个用户修改点默认整片复核；明确“只有这些错误”且 diff 完整覆盖时可定向；
   超过 3 个点按 exhaustive candidate 处理但仍要求逐点覆盖；恰好 3 个点保守整片复核。

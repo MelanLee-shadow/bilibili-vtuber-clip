@@ -52,7 +52,8 @@ section 三个 read-only probes 可以并行，但 joint acceptance 是屏障，
   `FORMAT_ONLY`，不触发语义复核。
 - 封面变动时必须计算实际像素 bbox；声明的文字/图像 ROI 覆盖 bbox 才能使用
   `PIXEL_ROI`，越界立即 fail closed；没有 ROI 或画布改变则回退整张封面复核。
-- 视频变动必须带 producer 的精确 edit-window map；没有 map 不猜测，回退整段视频复核。
+- 视频变动必须带 producer 的精确 edit-window map，并同时绑定 parent/current video raw hash 和
+  operation id；只有窗口、没有双 hash 绑定时仍回退整段视频复核。
 - boundary/title 任何 canonical 变化都回退对应整组件复核；未提供这两类输入不能生成
   完成 receipt。
 - 新 receipt 以最新真实 record/media 为 current，旧 authority 只作为
