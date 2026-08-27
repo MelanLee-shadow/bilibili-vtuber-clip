@@ -7,7 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from src.autoslice.fastlane_c3_canonical_reclosure import reclose_c3_canonical_package
+import src.autoslice.fastlane_c3_canonical_reclosure as canonical_reclosure
+from src.autoslice.fastlane_c3_canonical_reclosure import (
+    C3CanonicalReclosureError,
+    reclose_c3_canonical_package,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +61,52 @@ def test_c3_reclosure_is_create_only_and_cleans_failed_destination(tmp_path: Pat
             repo_root=ROOT,
         )
     assert destination.is_dir()
+
+
+@pytest.mark.skipif(not V3_ROOT.is_dir(), reason="sealed C3 v3 probe input is unavailable")
+def test_c3_reclosure_rename_failure_cleans_unpublished_stage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    destination = tmp_path / "package"
+    original_replace = canonical_reclosure.os.replace
+
+    def fail_publish(source: str | bytes | Path, target: str | bytes | Path) -> None:
+        if Path(target) == destination:
+            raise OSError("injected rename failure")
+        original_replace(source, target)
+
+    monkeypatch.setattr(canonical_reclosure.os, "replace", fail_publish)
+    with pytest.raises(OSError, match="injected rename failure"):
+        reclose_c3_canonical_package(
+            v3_root=V3_ROOT,
+            destination=destination,
+            repo_root=ROOT,
+        )
+    assert not destination.exists()
+    assert not list(tmp_path.glob(".package.txn-*"))
+
+
+@pytest.mark.skipif(not V3_ROOT.is_dir(), reason="sealed C3 v3 probe input is unavailable")
+def test_c3_reclosure_reports_committed_when_parent_fsync_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destination = tmp_path / "package"
+    original_fsync_directory = canonical_reclosure._fsync_directory
+
+    def fail_parent_fsync(path: Path) -> None:
+        if Path(path) == tmp_path:
+            raise C3CanonicalReclosureError("injected directory fsync failure")
+        original_fsync_directory(path)
+
+    monkeypatch.setattr(canonical_reclosure, "_fsync_directory", fail_parent_fsync)
+    with pytest.raises(C3CanonicalReclosureError, match="C3_COMMITTED_BUT_DURABILITY_UNCONFIRMED"):
+        reclose_c3_canonical_package(
+            v3_root=V3_ROOT,
+            destination=destination,
+            repo_root=ROOT,
+        )
+    assert destination.is_dir()
+    assert (destination / "c3-canonical-reclosure-receipt.json").is_file()
+    assert not list(tmp_path.glob(".package.txn-*"))
 
 
 @pytest.mark.skipif(not V3_ROOT.is_dir(), reason="sealed C3 v3 probe input is unavailable")

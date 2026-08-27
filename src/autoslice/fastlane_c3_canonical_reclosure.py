@@ -102,6 +102,19 @@ def _read_regular(path: Path, *, label: str) -> bytes:
         raise C3CanonicalReclosureError(f"{label}_UNAVAILABLE") from exc
 
 
+def _fsync_directory(path: Path) -> None:
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    except OSError as exc:
+        raise C3CanonicalReclosureError("C3_DIRECTORY_FSYNC_FAILED") from exc
+    try:
+        os.fsync(fd)
+    except OSError as exc:
+        raise C3CanonicalReclosureError("C3_DIRECTORY_FSYNC_FAILED") from exc
+    finally:
+        os.close(fd)
+
+
 def _write_new(path: Path, payload: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
@@ -123,6 +136,7 @@ def _write_json(path: Path, value: object) -> bytes:
         temporary = path.with_name(f".{path.name}.reclosure-tmp")
         _write_new(temporary, payload)
         os.replace(temporary, path)
+        _fsync_directory(path.parent)
     else:
         _write_new(path, payload)
     return payload
@@ -282,6 +296,7 @@ def reclose_c3_canonical_package(*, v3_root: Path, destination: Path, repo_root:
     source_auth = load_source_fact_supersession_authority(repo_root=repo_root)
     boundary_auth = validate_authority_document(load_c3_boundary_authority(repo_root=repo_root))
     stage = Path(tempfile.mkdtemp(prefix=f".{destination.name}.txn-", dir=str(destination.parent)))
+    published = False
     try:
         copied: dict[str, Path] = {}
         for role in authority.roles:
@@ -487,10 +502,17 @@ def reclose_c3_canonical_package(*, v3_root: Path, destination: Path, repo_root:
         receipt["output"]["tree_sha256"] = _tree_sha(stage)
         receipt_raw = _write_json(stage / RECEIPT_NAME, receipt)
         receipt_sha = _sha(receipt_raw)
+        _fsync_directory(stage)
         os.replace(stage, destination)
+        published = True
+        try:
+            _fsync_directory(destination.parent)
+        except Exception as exc:
+            raise C3CanonicalReclosureError("C3_COMMITTED_BUT_DURABILITY_UNCONFIRMED") from exc
         return C3CanonicalReclosureResult(destination, destination / RECEIPT_NAME, receipt_sha)
     except Exception:
-        shutil.rmtree(stage, ignore_errors=True)
+        if not published:
+            shutil.rmtree(stage, ignore_errors=True)
         raise
 
 
