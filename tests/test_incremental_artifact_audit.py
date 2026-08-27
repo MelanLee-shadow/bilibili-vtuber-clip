@@ -81,6 +81,21 @@ def _base_pair(tmp_path: Path, **current_kwargs: object) -> tuple[ArtifactPaths,
     return parent, current
 
 
+def test_record_identity_is_required_for_latest_binding(tmp_path: Path) -> None:
+    parent, current = _base_pair(tmp_path)
+    record = json.loads(current.record.read_text(encoding="utf-8"))
+    record.pop("candidate_id")
+    current.record.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(IncrementalArtifactAuditError, match="record candidate identity drift"):
+        build_incremental_audit(
+            parent=parent,
+            current=current,
+            parent_authority_id="authority-old",
+            candidate_id=CID,
+            recording_date=DATE,
+        )
+
+
 def test_subtitle_delta_is_cue_scoped_and_latest_record_is_bound(tmp_path: Path) -> None:
     parent, current = _base_pair(tmp_path, subtitle=_srt("改后的第二句"))
     plan = build_incremental_audit(

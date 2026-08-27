@@ -776,13 +776,14 @@ def build_incremental_audit(
     current_snapshot = _snapshot(current)
     for snapshot, label in ((parent_snapshot, "parent"), (current_snapshot, "current")):
         identity = snapshot["record"]["identity"]
-        if isinstance(identity, Mapping):
-            observed_candidate = identity.get("candidate_id")
-            observed_date = identity.get("recording_date", identity.get("date"))
-            if observed_candidate is not None and observed_candidate != candidate_id:
-                raise IncrementalArtifactAuditError(f"{label} record candidate identity drift")
-            if observed_date is not None and observed_date != recording_date:
-                raise IncrementalArtifactAuditError(f"{label} record date identity drift")
+        if not isinstance(identity, Mapping):
+            raise IncrementalArtifactAuditError(f"{label} record identity is missing")
+        observed_candidate = identity.get("candidate_id")
+        observed_date = identity.get("recording_date", identity.get("date"))
+        if observed_candidate != candidate_id:
+            raise IncrementalArtifactAuditError(f"{label} record candidate identity drift")
+        if observed_date != recording_date:
+            raise IncrementalArtifactAuditError(f"{label} record date identity drift")
     declared = declared_changes if isinstance(declared_changes, Mapping) else {}
     subtitle_delta, _ = _srt_delta(parent.subtitle, current.subtitle)
     deltas: dict[str, object] = {
