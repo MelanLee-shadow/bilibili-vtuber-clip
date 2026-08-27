@@ -52,8 +52,6 @@ def plan_operator_correction(
             else "EXPLICITLY_LIMITED"
             if short_explicit_scope
             else "CONSERVATIVE_WHOLE_CLIP"
-            if whole_clip
-            else "CONSERVATIVE_WHOLE_CLIP"
         ),
         "mode": (
             "WHOLE_CLIP_RERUN_AND_REVIEW"
