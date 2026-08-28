@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.autoslice.incremental_artifact_audit import (  # noqa: E402
+    ARTIFACT_ROLES,
     ArtifactPaths,
     IncrementalArtifactAuditError,
     build_incremental_audit,
@@ -74,6 +75,12 @@ def main() -> int:
     parser.add_argument("--parent-authority-id", required=True)
     parser.add_argument("--run-id", help="stable package/preparation run identifier")
     for prefix in ("parent", "current"):
+        parser.add_argument(
+            f"--{prefix}-artifact-role",
+            required=True,
+            choices=sorted(ARTIFACT_ROLES),
+            help="RELEASE_CANDIDATE, DIAGNOSTIC_TRAINING, or HISTORICAL_EVIDENCE",
+        )
         parser.add_argument(f"--{prefix}-record", type=Path, required=True)
         parser.add_argument(f"--{prefix}-video", type=Path, required=True)
         parser.add_argument(f"--{prefix}-subtitle", type=Path, required=True)
@@ -105,6 +112,7 @@ def main() -> int:
             args.parent_cover,
             args.parent_boundary,
             args.parent_title,
+            args.parent_artifact_role,
         )
         current = ArtifactPaths(
             args.current_record,
@@ -113,6 +121,7 @@ def main() -> int:
             args.current_cover,
             args.current_boundary,
             args.current_title,
+            args.current_artifact_role,
         )
         declared: dict[str, object] = {}
         if args.video_window:
@@ -163,6 +172,8 @@ def main() -> int:
         "run_id": plan["run_id"],
         "candidate_id": plan["candidate_id"],
         "recording_date": plan["recording_date"],
+        "artifact_roles": plan["artifact_roles"],
+        "release_disposition": plan["artifact_roles"]["current_release_disposition"],
         "changed_components": plan["changed_components"],
     }
     if receipt is not None:

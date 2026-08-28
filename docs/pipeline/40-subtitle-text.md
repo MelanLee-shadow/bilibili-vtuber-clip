@@ -34,7 +34,7 @@ Ivan 对同一候选明确列出超过 3 个修改点时，视为该次报告已
 恰好 3 个点按保守规则整片复核。这个策略由
 `src/autoslice/operator_correction_policy.py` 强制，不靠模型自行猜测。
 
-字幕-only 的新交付可使用 `incremental-artifact-audit.v1` 只复核 changed cue/window；未变的
+字幕-only 的新交付可使用 `incremental-artifact-audit.v2` 只复核 changed cue/window；未变的
 视频、封面、boundary 和 title 只能继承上一份**已通过且 hash-bound**证据，不能继承旧的
 FLAGGED/失效 receipt。最终 materialize 后仍必须重算 exact-final SRT、source separation、
 说话人和 package gates；增量 receipt 不是最终放行。

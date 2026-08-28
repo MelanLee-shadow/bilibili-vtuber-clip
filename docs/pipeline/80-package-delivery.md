@@ -45,7 +45,7 @@ section 三个 read-only probes 可以并行，但 joint acceptance 是屏障，
 
 小改动不得再把整套交付物粗暴视为一个不可分的审计对象，但这只改变**复核范围**，不改变发布门。`src/autoslice/incremental_artifact_audit.py` 与
 `scripts/build_incremental_artifact_audit.py` 负责为最新真实 record/media 生成
-`incremental-artifact-audit.v1` plan/receipt；package/preparation 的增量入口必须调用该 CLI，
+`incremental-artifact-audit.v2` plan/receipt；package/preparation 的增量入口必须调用该 CLI，
 并在 review results 齐全时用 `--review-results --sealed-by --receipt-out` 同步完成 seal 和
 current snapshot validation，不能只靠人工记得另跑一步。它分别记录 `video`、`subtitle`、`cover`、
 `boundary`、`title` 的 raw/canonical hash、父 authority、当前 record 和实际差异：
@@ -64,6 +64,23 @@ current snapshot validation，不能只靠人工记得另跑一步。它分别�
   `parent_authority_validation=DELEGATED_TO_EXISTING_RELEASE_GATES` 明确不自行宣称旧 authority
   有效，既有 gates 必须现场验证它；current snapshot 漂移时现场拒绝。CLI 可用 `--run-id`
   绑定具体 package/preparation run，缺省 run id 由 current record hash 派生。
+
+### 产物角色与时间优先级
+
+同一 candidate 的每套 video/subtitle/cover/boundary/title/record 必须显式声明产物角色，不能只按
+文件修改时间决定发布资格。角色和完整 ancestor record hash 闭包必须写入并纳入 record 本身，
+CLI 的角色参数只是声明，不能替代 record/manifest 的绑定：
+
+- `RELEASE_CANDIDATE` 是可能进入既有发布门的当前候选，但仍必须通过 package audit、最终复核、
+  标题/封面质检、manifest 与授权上传门。
+- `DIAGNOSTIC_TRAINING` 是流水线输出与人工真值的对照样本，用于找出差异、优化流水线；它
+  永远是 `RELEASE_EXCLUDED`，不能继承父证据或被当作当前发布包。
+- `HISTORICAL_EVIDENCE` 是不可变历史依据，只能作为 parent，不能充当 current 发布产物。
+
+因此“最新”只在**同一角色、同一 lineage** 内按时间选择；较晚生成的诊断样本不会取代较早但已
+完成修复的发布候选。CLI 必须显式传入 `--parent-artifact-role` 与 `--current-artifact-role`，
+receipt 也会封存角色合同；旧诊断样本先保留为训练/测试证据，只有完成无引用扫描、封存与独立
+清理授权后才能删除。
 
 Ivan 的修改点完整性规则由 `operator_correction_policy.py` 强制：默认 1–2 个点整片复核；
 明确声明“只有这些错误”的 1–2 个点才可在实际 diff 全覆盖后定向复核；超过 3 个点标记为

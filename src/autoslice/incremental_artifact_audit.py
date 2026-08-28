@@ -32,10 +32,23 @@ from src.autoslice.jingting_chunker import SrtCue, parse_srt_cues
 from src.autoslice.operator_correction_policy import plan_operator_correction
 
 
-SCHEMA_VERSION = "incremental-artifact-audit.v1"
-POLICY_VERSION = "2026-08-27.incremental-artifact-scope.v1"
+SCHEMA_VERSION = "incremental-artifact-audit.v2"
+POLICY_VERSION = "2026-08-28.incremental-artifact-scope-and-lineage.v2"
 PARENT_AUTHORITY_VALIDATION = "DELEGATED_TO_EXISTING_RELEASE_GATES"
 COMPONENTS = ("video", "subtitle", "cover", "boundary", "title")
+ARTIFACT_ROLE_RELEASE_CANDIDATE = "RELEASE_CANDIDATE"
+ARTIFACT_ROLE_DIAGNOSTIC_TRAINING = "DIAGNOSTIC_TRAINING"
+ARTIFACT_ROLE_HISTORICAL_EVIDENCE = "HISTORICAL_EVIDENCE"
+ARTIFACT_ROLES = frozenset(
+    {
+        ARTIFACT_ROLE_RELEASE_CANDIDATE,
+        ARTIFACT_ROLE_DIAGNOSTIC_TRAINING,
+        ARTIFACT_ROLE_HISTORICAL_EVIDENCE,
+    }
+)
+RELEASE_EXCLUDED_ROLES = frozenset(
+    {ARTIFACT_ROLE_DIAGNOSTIC_TRAINING, ARTIFACT_ROLE_HISTORICAL_EVIDENCE}
+)
 
 
 class IncrementalArtifactAuditError(ValueError):
@@ -52,6 +65,146 @@ class ArtifactPaths:
     cover: Path
     boundary: Path | None = None
     title: Path | None = None
+    artifact_role: str = ""
+
+
+
+def _validate_artifact_role(role: object, *, label: str) -> str:
+    if not isinstance(role, str) or role not in ARTIFACT_ROLES:
+        allowed = ", ".join(sorted(ARTIFACT_ROLES))
+        raise IncrementalArtifactAuditError(
+            f"{label} artifact_role is required and must be one of: {allowed}"
+        )
+    return role
+
+
+
+def _normalize_artifact_lineage(
+    raw_lineage: object,
+    *,
+    label: str,
+) -> list[dict[str, str]]:
+    if not isinstance(raw_lineage, list):
+        raise IncrementalArtifactAuditError(
+            f"{label} artifact_lineage is required"
+        )
+    lineage: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for index, entry in enumerate(raw_lineage):
+        if not isinstance(entry, Mapping) or set(entry) != {
+            "artifact_role",
+            "record_sha256",
+        }:
+            raise IncrementalArtifactAuditError(
+                f"{label} artifact_lineage[{index}] is invalid"
+            )
+        role = _validate_artifact_role(
+            entry.get("artifact_role"),
+            label=f"{label} lineage[{index}]",
+        )
+        digest = entry.get("record_sha256")
+        if (
+            not isinstance(digest, str)
+            or not digest.startswith("sha256:")
+            or len(digest) != len("sha256:") + 64
+            or any(
+                char not in "0123456789abcdef"
+                for char in digest.removeprefix("sha256:")
+            )
+        ):
+            raise IncrementalArtifactAuditError(
+                f"{label} artifact_lineage[{index}] hash is invalid"
+            )
+        if digest in seen:
+            raise IncrementalArtifactAuditError(
+                f"{label} artifact_lineage contains duplicate hash"
+            )
+        seen.add(digest)
+        lineage.append({"artifact_role": role, "record_sha256": digest})
+    return lineage
+
+
+
+def _record_role_binding(
+    path: Path,
+    *,
+    expected_role: str,
+    label: str,
+) -> list[dict[str, str]]:
+    record = _load_record(path)
+    if record.get("artifact_role") != expected_role:
+        raise IncrementalArtifactAuditError(
+            f"{label} record artifact_role does not match its declared role"
+        )
+    return _normalize_artifact_lineage(
+        record.get("artifact_lineage"),
+        label=f"{label} record",
+    )
+
+
+
+def _artifact_role_contract(
+    parent_role: str,
+    current_role: str,
+    *,
+    parent_record_sha256: str,
+    parent_lineage: Sequence[Mapping[str, str]],
+    current_lineage: Sequence[Mapping[str, str]],
+) -> dict[str, object]:
+    if current_role == ARTIFACT_ROLE_HISTORICAL_EVIDENCE:
+        raise IncrementalArtifactAuditError(
+            "current artifact cannot be HISTORICAL_EVIDENCE"
+        )
+    parent_entry = {
+        "artifact_role": parent_role,
+        "record_sha256": parent_record_sha256,
+    }
+    if not current_lineage or dict(current_lineage[0]) != parent_entry:
+        raise IncrementalArtifactAuditError(
+            "current artifact_lineage must begin with its parent record"
+        )
+    for ancestor in parent_lineage:
+        if dict(ancestor) not in [dict(entry) for entry in current_lineage]:
+            raise IncrementalArtifactAuditError(
+                "current artifact_lineage is missing a parent ancestor"
+            )
+    diagnostic_ancestor_hashes = [
+        str(entry["record_sha256"])
+        for entry in current_lineage
+        if entry.get("artifact_role") == ARTIFACT_ROLE_DIAGNOSTIC_TRAINING
+    ]
+    if (
+        current_role == ARTIFACT_ROLE_RELEASE_CANDIDATE
+        and diagnostic_ancestor_hashes
+    ):
+        raise IncrementalArtifactAuditError(
+            "diagnostic artifact lineage cannot supply release candidate evidence"
+        )
+    current_release_disposition = (
+        "RELEASE_EXCLUDED"
+        if current_role == ARTIFACT_ROLE_DIAGNOSTIC_TRAINING
+        else "RELEASE_GATE_REQUIRED"
+    )
+    parent_evidence_use = {
+        ARTIFACT_ROLE_RELEASE_CANDIDATE: "PRIOR_RELEASE_CANDIDATE",
+        ARTIFACT_ROLE_DIAGNOSTIC_TRAINING: "NON_AUTHORITATIVE_DIAGNOSTIC",
+        ARTIFACT_ROLE_HISTORICAL_EVIDENCE: "HISTORY_ONLY",
+    }[parent_role]
+    return {
+        "parent": parent_role,
+        "current": current_role,
+        "lineage_depth": len(current_lineage),
+        "ancestor_roles": [str(entry["artifact_role"]) for entry in current_lineage],
+        "diagnostic_ancestor_hashes": diagnostic_ancestor_hashes,
+        "parent_evidence_use": parent_evidence_use,
+        "current_release_disposition": current_release_disposition,
+        "comparison_purpose": (
+            "PIPELINE_OUTPUT_VS_HUMAN_OR_RELEASE_BASELINE"
+            if current_role == ARTIFACT_ROLE_DIAGNOSTIC_TRAINING
+            else "RELEASE_CANDIDATE_INCREMENTAL_REVIEW"
+        ),
+        "history_policy": "PARENT_IMMUTABLE",
+    }
 
 
 
@@ -522,8 +675,16 @@ def _record_component_delta(
 
 
 def _snapshot(paths: ArtifactPaths) -> dict[str, object]:
+    role = _validate_artifact_role(paths.artifact_role, label="artifact")
+    lineage = _record_role_binding(
+        paths.record,
+        expected_role=role,
+        label="record",
+    )
     record = _raw_entry(paths.record, label="record")
     record["identity"] = _record_identity(paths.record)
+    record["artifact_role"] = role
+    record["artifact_lineage"] = lineage
     subtitle_entry, _ = _read_srt(paths.subtitle, label="subtitle")
     components: dict[str, object] = {
         "video": _raw_entry(paths.video, label="video"),
@@ -776,8 +937,17 @@ def build_incremental_audit(
         raise IncrementalArtifactAuditError("candidate identity is required")
     if run_id is not None and not run_id.strip():
         raise IncrementalArtifactAuditError("run_id must not be empty")
+    parent_role = _validate_artifact_role(parent.artifact_role, label="parent")
+    current_role = _validate_artifact_role(current.artifact_role, label="current")
     parent_snapshot = _snapshot(parent)
     current_snapshot = _snapshot(current)
+    artifact_roles = _artifact_role_contract(
+        parent_role,
+        current_role,
+        parent_record_sha256=str(parent_snapshot["record"]["sha256"]),
+        parent_lineage=parent_snapshot["record"]["artifact_lineage"],
+        current_lineage=current_snapshot["record"]["artifact_lineage"],
+    )
     for snapshot, label in ((parent_snapshot, "parent"), (current_snapshot, "current")):
         identity = snapshot["record"]["identity"]
         if not isinstance(identity, Mapping):
@@ -838,6 +1008,7 @@ def build_incremental_audit(
         "recording_date": recording_date,
         "parent_authority_id": parent_authority_id,
         "parent_authority_validation": PARENT_AUTHORITY_VALIDATION,
+        "artifact_roles": artifact_roles,
         "parent_snapshot": parent_snapshot,
         "current_snapshot": current_snapshot,
         "changed_components": changed_components,
@@ -909,6 +1080,41 @@ def seal_incremental_review(
     deltas = plan.get("component_deltas")
     if not isinstance(deltas, Mapping):
         raise IncrementalArtifactAuditError("component deltas are missing")
+    role_contract = plan.get("artifact_roles")
+    if not isinstance(role_contract, Mapping):
+        raise IncrementalArtifactAuditError("artifact role contract is missing")
+    parent_role = _validate_artifact_role(role_contract.get("parent"), label="parent")
+    current_role = _validate_artifact_role(role_contract.get("current"), label="current")
+    parent_snapshot = plan.get("parent_snapshot")
+    current_snapshot = plan.get("current_snapshot")
+    if not isinstance(parent_snapshot, Mapping) or not isinstance(current_snapshot, Mapping):
+        raise IncrementalArtifactAuditError("artifact role snapshots are missing")
+    parent_record = parent_snapshot.get("record")
+    current_record = current_snapshot.get("record")
+    if not isinstance(parent_record, Mapping) or not isinstance(current_record, Mapping):
+        raise IncrementalArtifactAuditError("artifact role record snapshots are missing")
+    if parent_record.get("artifact_role") != parent_role or current_record.get("artifact_role") != current_role:
+        raise IncrementalArtifactAuditError("artifact role snapshot mismatch")
+    parent_record_sha256 = parent_record.get("sha256")
+    if not isinstance(parent_record_sha256, str):
+        raise IncrementalArtifactAuditError("parent record snapshot hash is missing")
+    parent_lineage = _normalize_artifact_lineage(
+        parent_record.get("artifact_lineage"),
+        label="plan parent record",
+    )
+    current_lineage = _normalize_artifact_lineage(
+        current_record.get("artifact_lineage"),
+        label="plan current record",
+    )
+    expected_role_contract = _artifact_role_contract(
+        parent_role,
+        current_role,
+        parent_record_sha256=parent_record_sha256,
+        parent_lineage=parent_lineage,
+        current_lineage=current_lineage,
+    )
+    if dict(role_contract) != expected_role_contract:
+        raise IncrementalArtifactAuditError("artifact role contract is invalid")
     operator_review = plan.get("operator_review")
     operator_plan = (
         operator_review.get("plan")
@@ -946,6 +1152,7 @@ def seal_incremental_review(
         "recording_date": plan.get("recording_date"),
         "parent_authority_id": plan.get("parent_authority_id"),
         "parent_authority_validation": plan.get("parent_authority_validation"),
+        "artifact_roles": plan.get("artifact_roles"),
         "plan_sha256": plan.get("plan_sha256"),
         "parent_snapshot": plan.get("parent_snapshot"),
         "current_snapshot": plan.get("current_snapshot"),
@@ -993,6 +1200,41 @@ def validate_incremental_receipt(
     unsigned = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
     if receipt.get("receipt_sha256") != _sha256_bytes(_canonical_json(unsigned)):
         raise IncrementalArtifactAuditError("incremental receipt self-hash mismatch")
+    current_role = _validate_artifact_role(current.artifact_role, label="current")
+    role_contract = receipt.get("artifact_roles")
+    if not isinstance(role_contract, Mapping):
+        raise IncrementalArtifactAuditError("incremental receipt artifact role contract missing")
+    if role_contract.get("current") != current_role:
+        raise IncrementalArtifactAuditError("CURRENT_ARTIFACT_ROLE_MISMATCH")
+    parent_role = _validate_artifact_role(role_contract.get("parent"), label="parent")
+    parent_snapshot = receipt.get("parent_snapshot")
+    current_snapshot = receipt.get("current_snapshot")
+    if not isinstance(parent_snapshot, Mapping) or not isinstance(current_snapshot, Mapping):
+        raise IncrementalArtifactAuditError("incremental receipt role snapshots are missing")
+    parent_record = parent_snapshot.get("record")
+    current_record = current_snapshot.get("record")
+    if not isinstance(parent_record, Mapping) or not isinstance(current_record, Mapping):
+        raise IncrementalArtifactAuditError("incremental receipt role record snapshots are missing")
+    if parent_record.get("artifact_role") != parent_role or current_record.get("artifact_role") != current_role:
+        raise IncrementalArtifactAuditError("incremental receipt artifact role snapshot mismatch")
+    parent_record_sha256 = parent_record.get("sha256")
+    if not isinstance(parent_record_sha256, str):
+        raise IncrementalArtifactAuditError("incremental receipt parent record hash is missing")
+    expected_role_contract = _artifact_role_contract(
+        parent_role,
+        current_role,
+        parent_record_sha256=parent_record_sha256,
+        parent_lineage=_normalize_artifact_lineage(
+            parent_record.get("artifact_lineage"),
+            label="receipt parent record",
+        ),
+        current_lineage=_normalize_artifact_lineage(
+            current_record.get("artifact_lineage"),
+            label="receipt current record",
+        ),
+    )
+    if dict(role_contract) != expected_role_contract:
+        raise IncrementalArtifactAuditError("incremental receipt artifact role contract invalid")
     snapshot = _snapshot(current)
     if not _snapshot_equivalent(receipt.get("current_snapshot"), snapshot):
         raise IncrementalArtifactAuditError("CURRENT_ARTIFACT_SNAPSHOT_DRIFT")
@@ -1036,11 +1278,16 @@ def write_create_only(path: Path, receipt: Mapping[str, object]) -> None:
 
 
 __all__ = [
+    "ARTIFACT_ROLE_DIAGNOSTIC_TRAINING",
+    "ARTIFACT_ROLE_HISTORICAL_EVIDENCE",
+    "ARTIFACT_ROLE_RELEASE_CANDIDATE",
+    "ARTIFACT_ROLES",
     "ArtifactPaths",
     "COMPONENTS",
     "IncrementalArtifactAuditError",
     "PARENT_AUTHORITY_VALIDATION",
     "POLICY_VERSION",
+    "RELEASE_EXCLUDED_ROLES",
     "SCHEMA_VERSION",
     "build_incremental_audit",
     "build_video_edit_map",

@@ -27,11 +27,21 @@ title-cover QC 和 ledger 无歧义重放后，才可被排入串行候选；仍
 
 ## 增量 receipt 与发布隔离
 
-`incremental-artifact-audit.v1` 只说明当前版本相对上一版本哪些组件、cue、时间窗或封面 ROI
+`incremental-artifact-audit.v2` 只说明当前版本相对上一版本哪些组件、cue、时间窗或封面 ROI
 真的变化，以及哪些复核已完成。它不能把未变组件的历史 evidence 从 `FLAGGED` 或 hash
 漂移状态中“洗成”有效，也不能把 `review_ready` 变成上传授权。`authorized_upload.py` 仍在
 副作用前现场重跑 package audit、标题/封面 QC、manifest hash 和 ledger；任一 current
 record/media/authority 不一致都拒绝。
+
+增量入口还必须封存产物角色；角色与 ancestor record hash 闭包必须写入最终 record 并绑定到
+snapshot/manifest，CLI 参数只是显式声明，不是独立信任来源。`RELEASE_CANDIDATE` 才能进入发布门；
+`DIAGNOSTIC_TRAINING`
+只用于把流水线输出与人工真值逐项比较，强制 `RELEASE_EXCLUDED`，不能被较新的文件时间自动升级；
+`HISTORICAL_EVIDENCE` 只能保留为不可变 parent，不能成为 current 发布产物。时间优先级只适用于
+同一角色、同一 lineage。诊断样本默认保留，待无引用扫描、独立封存和清理授权完成后才可删除。
+
+因此，旧修复即使内容上符合 Ivan 要求，也必须先被重新绑定为同一 canonical package 的
+`RELEASE_CANDIDATE`，通过本页所有现有门禁；较晚的流水线诊断输出不得取代它，也不得被误传。
 
 ## Reviewed-baseline replay 与上传隔离
 

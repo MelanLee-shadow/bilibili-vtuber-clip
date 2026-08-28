@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -13,6 +14,9 @@ from src.autoslice.final_review_contract import (
     validate_final_review_release,
 )
 from src.autoslice.incremental_artifact_audit import (
+    ARTIFACT_ROLE_DIAGNOSTIC_TRAINING,
+    ARTIFACT_ROLE_HISTORICAL_EVIDENCE,
+    ARTIFACT_ROLE_RELEASE_CANDIDATE,
     ArtifactPaths,
     IncrementalArtifactAuditError,
     build_incremental_audit,
@@ -52,12 +56,20 @@ def _version(
     cover_changed: bool = False,
     boundary: dict | None = None,
     title: str = "标题一",
+    artifact_role: str = ARTIFACT_ROLE_RELEASE_CANDIDATE,
+    artifact_lineage: list[dict[str, str]] | None = None,
 ) -> ArtifactPaths:
     root.mkdir(parents=True, exist_ok=True)
     record = root / "record.json"
     record.write_text(
         json.dumps(
-            {"candidate_id": CID, "recording_date": DATE, "version": version},
+            {
+                "candidate_id": CID,
+                "recording_date": DATE,
+                "version": version,
+                "artifact_role": artifact_role,
+                "artifact_lineage": artifact_lineage or [],
+            },
             ensure_ascii=False,
         ),
         encoding="utf-8",
@@ -72,13 +84,302 @@ def _version(
     boundary_path.write_text(json.dumps(boundary or {"start_ms": 0, "end_ms": 2_000}), encoding="utf-8")
     title_path = root / "title.txt"
     title_path.write_text(title, encoding="utf-8")
-    return ArtifactPaths(record, video_path, subtitle_path, cover_path, boundary_path, title_path)
+    return ArtifactPaths(
+        record,
+        video_path,
+        subtitle_path,
+        cover_path,
+        boundary_path,
+        title_path,
+        artifact_role,
+    )
+
+
+def _record_sha(path: Path) -> str:
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _link_lineage(current: ArtifactPaths, *ancestors: ArtifactPaths) -> ArtifactPaths:
+    record = json.loads(current.record.read_text(encoding="utf-8"))
+    record["artifact_lineage"] = [
+        {
+            "artifact_role": ancestor.artifact_role,
+            "record_sha256": _record_sha(ancestor.record),
+        }
+        for ancestor in ancestors
+    ]
+    current.record.write_text(
+        json.dumps(record, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return current
 
 
 def _base_pair(tmp_path: Path, **current_kwargs: object) -> tuple[ArtifactPaths, ArtifactPaths]:
     parent = _version(tmp_path / "parent", version="old")
     current = _version(tmp_path / "current", version="new", **current_kwargs)
-    return parent, current
+    return parent, _link_lineage(current, parent)
+
+
+def test_diagnostic_artifact_is_explicitly_release_excluded(tmp_path: Path) -> None:
+    parent = _version(
+        tmp_path / "truth",
+        version="truth",
+        artifact_role=ARTIFACT_ROLE_HISTORICAL_EVIDENCE,
+    )
+    current = _version(
+        tmp_path / "pipeline",
+        version="pipeline",
+        subtitle=_srt("流水线输出"),
+        artifact_role=ARTIFACT_ROLE_DIAGNOSTIC_TRAINING,
+    )
+    current = _link_lineage(current, parent)
+    plan = build_incremental_audit(
+        parent=parent,
+        current=current,
+        parent_authority_id="human-truth",
+        candidate_id=CID,
+        recording_date=DATE,
+        issue_count=2,
+    )
+    assert plan["artifact_roles"] == {
+        "parent": ARTIFACT_ROLE_HISTORICAL_EVIDENCE,
+        "current": ARTIFACT_ROLE_DIAGNOSTIC_TRAINING,
+        "lineage_depth": 1,
+        "ancestor_roles": [ARTIFACT_ROLE_HISTORICAL_EVIDENCE],
+        "diagnostic_ancestor_hashes": [],
+        "parent_evidence_use": "HISTORY_ONLY",
+        "current_release_disposition": "RELEASE_EXCLUDED",
+        "comparison_purpose": "PIPELINE_OUTPUT_VS_HUMAN_OR_RELEASE_BASELINE",
+        "history_policy": "PARENT_IMMUTABLE",
+    }
+    receipt = seal_incremental_review(
+        plan,
+        review_results={"subtitle": {"status": "PASS", "scope": "WHOLE_CLIP"}},
+        sealed_by="diagnostic-runner",
+    )
+    assert receipt["artifact_roles"]["current_release_disposition"] == "RELEASE_EXCLUDED"
+    validate_incremental_receipt(receipt, current=current)
+
+
+def test_historical_artifact_cannot_be_current(tmp_path: Path) -> None:
+    parent, current = _base_pair(
+        tmp_path,
+        artifact_role=ARTIFACT_ROLE_HISTORICAL_EVIDENCE,
+    )
+    with pytest.raises(IncrementalArtifactAuditError, match="current artifact cannot be"):
+        build_incremental_audit(
+            parent=parent,
+            current=current,
+            parent_authority_id="authority-old",
+            candidate_id=CID,
+            recording_date=DATE,
+        )
+
+
+def test_diagnostic_parent_cannot_supply_release_candidate_evidence(tmp_path: Path) -> None:
+    parent = _version(
+        tmp_path / "parent",
+        version="old",
+        artifact_role=ARTIFACT_ROLE_DIAGNOSTIC_TRAINING,
+    )
+    current = _version(
+        tmp_path / "current",
+        version="new",
+        artifact_role=ARTIFACT_ROLE_RELEASE_CANDIDATE,
+    )
+    current = _link_lineage(current, parent)
+    with pytest.raises(IncrementalArtifactAuditError, match="diagnostic artifact lineage"):
+        build_incremental_audit(
+            parent=parent,
+            current=current,
+            parent_authority_id="authority-old",
+            candidate_id=CID,
+            recording_date=DATE,
+        )
+
+
+def test_receipt_rejects_current_artifact_role_drift(tmp_path: Path) -> None:
+    parent, current = _base_pair(tmp_path, subtitle=_srt("改后的第二句"))
+    plan = build_incremental_audit(
+        parent=parent,
+        current=current,
+        parent_authority_id="authority-old",
+        candidate_id=CID,
+        recording_date=DATE,
+        issue_count=2,
+    )
+    receipt = seal_incremental_review(
+        plan,
+        review_results={"subtitle": {"status": "PASS", "scope": "WHOLE_CLIP"}},
+        sealed_by="Codex root",
+    )
+    drifted = ArtifactPaths(
+        current.record,
+        current.video,
+        current.subtitle,
+        current.cover,
+        current.boundary,
+        current.title,
+        ARTIFACT_ROLE_DIAGNOSTIC_TRAINING,
+    )
+    with pytest.raises(IncrementalArtifactAuditError, match="CURRENT_ARTIFACT_ROLE_MISMATCH"):
+        validate_incremental_receipt(receipt, current=drifted)
+
+
+def test_diagnostic_ancestor_is_rejected_through_release_lineage(tmp_path: Path) -> None:
+    history = _version(
+        tmp_path / "history",
+        version="history",
+        artifact_role=ARTIFACT_ROLE_HISTORICAL_EVIDENCE,
+    )
+    diagnostic = _version(
+        tmp_path / "diagnostic",
+        version="diagnostic",
+        artifact_role=ARTIFACT_ROLE_DIAGNOSTIC_TRAINING,
+    )
+    diagnostic = _link_lineage(diagnostic, history)
+    prior_release = _version(
+        tmp_path / "prior-release",
+        version="prior-release",
+        artifact_role=ARTIFACT_ROLE_RELEASE_CANDIDATE,
+    )
+    prior_release = _link_lineage(prior_release, diagnostic, history)
+    current = _version(
+        tmp_path / "current",
+        version="current",
+        artifact_role=ARTIFACT_ROLE_RELEASE_CANDIDATE,
+    )
+    current = _link_lineage(current, prior_release, diagnostic, history)
+    with pytest.raises(IncrementalArtifactAuditError, match="diagnostic artifact lineage"):
+        build_incremental_audit(
+            parent=prior_release,
+            current=current,
+            parent_authority_id="authority-old",
+            candidate_id=CID,
+            recording_date=DATE,
+        )
+
+
+def test_diagnostic_second_parent_is_rejected_for_release_candidate(tmp_path: Path) -> None:
+    history = _version(
+        tmp_path / "history",
+        version="history",
+        artifact_role=ARTIFACT_ROLE_HISTORICAL_EVIDENCE,
+    )
+    diagnostic = _version(
+        tmp_path / "diagnostic",
+        version="diagnostic",
+        artifact_role=ARTIFACT_ROLE_DIAGNOSTIC_TRAINING,
+    )
+    current = _version(
+        tmp_path / "current",
+        version="current",
+        artifact_role=ARTIFACT_ROLE_RELEASE_CANDIDATE,
+    )
+    current = _link_lineage(current, history, diagnostic)
+    with pytest.raises(IncrementalArtifactAuditError, match="diagnostic artifact lineage"):
+        build_incremental_audit(
+            parent=history,
+            current=current,
+            parent_authority_id="authority-old",
+            candidate_id=CID,
+            recording_date=DATE,
+        )
+
+
+def test_record_role_binding_cannot_be_relabelled_by_cli_declaration(tmp_path: Path) -> None:
+    parent, current = _base_pair(tmp_path)
+    record = json.loads(current.record.read_text(encoding="utf-8"))
+    record["artifact_role"] = ARTIFACT_ROLE_DIAGNOSTIC_TRAINING
+    current.record.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(IncrementalArtifactAuditError, match="record artifact_role"):
+        build_incremental_audit(
+            parent=parent,
+            current=current,
+            parent_authority_id="authority-old",
+            candidate_id=CID,
+            recording_date=DATE,
+        )
+
+
+def test_missing_cli_artifact_role_is_rejected(tmp_path: Path) -> None:
+    parent, current = _base_pair(tmp_path)
+    current_without_role = ArtifactPaths(
+        current.record,
+        current.video,
+        current.subtitle,
+        current.cover,
+        current.boundary,
+        current.title,
+    )
+    with pytest.raises(IncrementalArtifactAuditError, match="artifact_role is required"):
+        build_incremental_audit(
+            parent=parent,
+            current=current_without_role,
+            parent_authority_id="authority-old",
+            candidate_id=CID,
+            recording_date=DATE,
+        )
+
+
+def test_record_without_lineage_is_rejected_before_diff(tmp_path: Path) -> None:
+    parent, current = _base_pair(tmp_path)
+    record = json.loads(current.record.read_text(encoding="utf-8"))
+    record.pop("artifact_lineage")
+    current.record.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(IncrementalArtifactAuditError, match="artifact_lineage is required"):
+        build_incremental_audit(
+            parent=parent,
+            current=current,
+            parent_authority_id="authority-old",
+            candidate_id=CID,
+            recording_date=DATE,
+        )
+
+
+def test_historical_parent_can_seed_release_candidate(tmp_path: Path) -> None:
+    parent = _version(
+        tmp_path / "history",
+        version="history",
+        artifact_role=ARTIFACT_ROLE_HISTORICAL_EVIDENCE,
+    )
+    current = _version(
+        tmp_path / "current",
+        version="current",
+        artifact_role=ARTIFACT_ROLE_RELEASE_CANDIDATE,
+    )
+    current = _link_lineage(current, parent)
+    plan = build_incremental_audit(
+        parent=parent,
+        current=current,
+        parent_authority_id="history-authority",
+        candidate_id=CID,
+        recording_date=DATE,
+    )
+    assert plan["artifact_roles"]["parent_evidence_use"] == "HISTORY_ONLY"
+    assert plan["artifact_roles"]["current_release_disposition"] == "RELEASE_GATE_REQUIRED"
+
+
+def test_legacy_receipt_schema_cannot_be_upgraded_to_current(tmp_path: Path) -> None:
+    parent, current = _base_pair(tmp_path, subtitle=_srt("改后的第二句"))
+    plan = build_incremental_audit(
+        parent=parent,
+        current=current,
+        parent_authority_id="authority-old",
+        candidate_id=CID,
+        recording_date=DATE,
+        issue_count=2,
+    )
+    receipt = seal_incremental_review(
+        plan,
+        review_results={"subtitle": {"status": "PASS", "scope": "WHOLE_CLIP"}},
+        sealed_by="Codex root",
+    )
+    legacy = dict(receipt)
+    legacy["schema_version"] = "incremental-artifact-audit.v1"
+    with pytest.raises(IncrementalArtifactAuditError, match="schema mismatch"):
+        validate_incremental_receipt(legacy, current=current)
 
 
 def test_record_identity_is_required_for_latest_binding(tmp_path: Path) -> None:
@@ -269,8 +570,21 @@ def test_record_projections_supply_boundary_and_title_hashes(tmp_path: Path) -> 
         record["boundary_audit"] = {"start_ms": start, "end_ms": 2_000}
         record["publish_staging"] = {"title": title}
         path.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
-    parent = ArtifactPaths(parent_full.record, parent_full.video, parent_full.subtitle, parent_full.cover)
-    current = ArtifactPaths(current_full.record, current_full.video, current_full.subtitle, current_full.cover)
+    current_full = _link_lineage(current_full, parent_full)
+    parent = ArtifactPaths(
+        parent_full.record,
+        parent_full.video,
+        parent_full.subtitle,
+        parent_full.cover,
+        artifact_role=parent_full.artifact_role,
+    )
+    current = ArtifactPaths(
+        current_full.record,
+        current_full.video,
+        current_full.subtitle,
+        current_full.cover,
+        artifact_role=current_full.artifact_role,
+    )
     plan = build_incremental_audit(
         parent=parent,
         current=current,
@@ -422,8 +736,20 @@ def test_operator_coverage_must_include_changed_video_component(tmp_path: Path) 
 
 def test_missing_boundary_or_title_input_cannot_be_sealed(tmp_path: Path) -> None:
     parent_full, current_full = _base_pair(tmp_path)
-    parent = ArtifactPaths(parent_full.record, parent_full.video, parent_full.subtitle, parent_full.cover)
-    current = ArtifactPaths(current_full.record, current_full.video, current_full.subtitle, current_full.cover)
+    parent = ArtifactPaths(
+        parent_full.record,
+        parent_full.video,
+        parent_full.subtitle,
+        parent_full.cover,
+        artifact_role=parent_full.artifact_role,
+    )
+    current = ArtifactPaths(
+        current_full.record,
+        current_full.video,
+        current_full.subtitle,
+        current_full.cover,
+        artifact_role=current_full.artifact_role,
+    )
     plan = build_incremental_audit(
         parent=parent,
         current=current,
@@ -477,6 +803,10 @@ def test_cli_hook_seals_and_revalidates_receipt(tmp_path: Path) -> None:
         DATE,
         "--parent-authority-id",
         "authority-old",
+        "--parent-artifact-role",
+        ARTIFACT_ROLE_RELEASE_CANDIDATE,
+        "--current-artifact-role",
+        ARTIFACT_ROLE_RELEASE_CANDIDATE,
         "--parent-record",
         str(parent.record),
         "--parent-video",
@@ -516,7 +846,40 @@ def test_cli_hook_seals_and_revalidates_receipt(tmp_path: Path) -> None:
     assert completed.returncode == 0, completed.stderr
     assert plan_out.is_file() and receipt_out.is_file()
     receipt = json.loads(receipt_out.read_text(encoding="utf-8"))
+    assert receipt["artifact_roles"]["parent"] == ARTIFACT_ROLE_RELEASE_CANDIDATE
+    assert receipt["artifact_roles"]["current"] == ARTIFACT_ROLE_RELEASE_CANDIDATE
+    assert receipt["artifact_roles"]["current_release_disposition"] == "RELEASE_GATE_REQUIRED"
     validate_incremental_receipt(receipt, current=current)
+
+
+def test_diagnostic_receipt_cannot_make_package_uploadable(tmp_path: Path) -> None:
+    from scripts.audit_lidousha_review_package import audit_package
+
+    parent = _version(
+        tmp_path / "truth",
+        version="truth",
+        artifact_role=ARTIFACT_ROLE_HISTORICAL_EVIDENCE,
+    )
+    current = _version(
+        tmp_path / "pipeline",
+        version="pipeline",
+        artifact_role=ARTIFACT_ROLE_DIAGNOSTIC_TRAINING,
+    )
+    current = _link_lineage(current, parent)
+    plan = build_incremental_audit(
+        parent=parent,
+        current=current,
+        parent_authority_id="human-truth",
+        candidate_id=CID,
+        recording_date=DATE,
+        issue_count=1,
+    )
+    receipt = seal_incremental_review(plan, review_results={}, sealed_by="diagnostic-runner")
+    assert receipt["artifact_roles"]["current_release_disposition"] == "RELEASE_EXCLUDED"
+    write_create_only(tmp_path / "incremental-artifact-audit.json", receipt)
+    result = audit_package(tmp_path)
+    assert result["passed"] is False
+    assert "MANIFEST_MISSING_OR_INVALID" in {issue["code"] for issue in result["issues"]}
 
 
 def test_existing_package_and_release_gates_ignore_incremental_receipt(tmp_path: Path) -> None:
