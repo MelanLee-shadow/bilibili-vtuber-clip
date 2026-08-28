@@ -1,5 +1,24 @@
 # Current handoff
 
+## 2026-08-28T00:20Z C3 repaired version versus pipeline diagnostic output
+
+### 人话结论
+
+- 2026-08-25 生成的 `c3-successor-authority-v2` 是按 Ivan 已知内容要求完成的**旧修复候选**：11 个字幕 cue 全部标为李豆沙本人，已去掉视频内声音/片尾音乐相关字幕；封存 speaker truth 为 `ALL_DELIVERY_CUES_HOST`，source-fact 为 `PASS`。
+- 2026-08-19 的 `replacement_recuts` 是更早的流水线成品/诊断对照：34 个 cue，封面状态 `BLOCKED`，没有 source-separation witness，不能作为发布候选；应只用于和人工真值比较流水线差异。
+- v2 仍不是可直接上传的发布包：它的语义修复与 15 个 role 文件 hash 均通过，但 authority scope 是 `private_exact_accepted_byte_carry_only`、`upload_authorized=false`；canonical package auditor 对 v2 和 replacement 输出都返回 `MANIFEST_MISSING_OR_INVALID`。
+
+### 生成原因与边界
+
+- 时间线显示：先有 2026-08-19 的普通 materialized 输出，之后为响应 C3 内容修复/重封存工作，于 2026-08-25 另建 private successor v1/v2；v2 record 的 media/subtitle/cover locator 仍指向 `/private/tmp/fastlane-c3-canonical-speaker-v2-20260824/package`，该路径在 free 上不存在。
+- 后续 successor 没有覆盖原始 record，而是保留旧产物并另存一份可比较的修复后 after-image。这正是“人工真值作为训练基准、流水线输出作为测试对照”的合理分层；但必须明确标记，不能把诊断输出误当发布包。
+
+### 仍需发布前验证
+
+- 把 v2 的实际 15 个文件重新绑定到 free 上的 canonical package 路径，不得继续引用失效的 `/private/tmp` locator。
+- 在同一 package 内补齐并重放 package manifest、最终标题/封面质检、package audit、最终 record/media hash 与明确的发布授权；在此之前保持 `candidate_rejected`、不上传。
+- 本节只记录只读核验；没有修改 production state、registry、ledger 或任何候选媒体。
+
 ## 2026-08-28T00:00Z Smart incremental-audit deployment / serial-publication gate
 
 ### 目标
