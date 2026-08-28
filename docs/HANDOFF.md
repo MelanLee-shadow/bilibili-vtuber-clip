@@ -21,13 +21,13 @@
 
 ### 阻塞
 
-- P0 C3 必须先获得新的、可追溯且 source-bound 的 Ivan authority，并绑定当前 package record/media；当前 package record 缺失或不唯一，human truth 缺失。不得尝试 C3/C6 private replay、repair、state CAS 或上传。
+- P0 C3 必须先确认当前适用的、可追溯且 source-bound 的 Ivan 内容 authority，并绑定当前 package record/media；现有 v2 manifest 本身可 self/hash 验证，但 scope 仅为 private exact-byte carry，当前 package 仍缺唯一 release binding，human truth/release evidence 未闭合。不得尝试 C3/C6 private replay、repair、state CAS 或上传。
 - live graph 另有 `PUBLICATION_REGISTRY_INVALID`；C6 为 `COVER_QC_MISSING`、`PACKAGE_ARTIFACT_HASH_DRIFT`、`STATE_ROW_NOT_REVIEW_READY`；C7b/C9 等也仍非 ready。readiness graph 不能授予上传授权。
 - `DISABLED` 的含义尚未有当前 authority 明确声明为可接受的 publication-runner 状态；按 fail-closed 保持不动。
 
 ### 下一步
 
-1. 等待并核验新的 C3 Ivan/source-bound authority、唯一 package record、完整同包 final review/owner/source-separation/cover evidence；否则保持 C3 blocked。
+1. 核验当前适用的 C3 Ivan/source-bound 内容 authority（可继续审查现有 v2，但不能把 private carry authority 当发布授权），并补齐唯一 package record、完整同包 final review/owner/source-separation/cover evidence；否则保持 C3 blocked。
 2. C3 全部通过 canonical replay、package audit、title/cover QC、ledger/manifest replay 且 graph 仅作观察后，才可进入 C6；每项 commit lease/state CAS/upload/public readback 严格串行。
 3. 在无新 authority 前只做 source-of-truth 只读查询；不得把测试、部署 SHA、CLI smoke、历史 record 或 incremental receipt 当作 `READY_FOR_SERIAL_UPLOAD`。
 
