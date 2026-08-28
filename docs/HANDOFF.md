@@ -1,5 +1,39 @@
 # Current handoff
 
+## 2026-08-28T18:45:44Z Explicit artifact roles deployed
+
+### 人话结论
+
+- 已把产物角色和完整历史谱系接入增量审计：`RELEASE_CANDIDATE` 才能进入既有发布门；
+  `DIAGNOSTIC_TRAINING` 永远标记为 `RELEASE_EXCLUDED`；`HISTORICAL_EVIDENCE` 只能作为不可变
+  parent，不能冒充 current 发布产物。
+- 角色不再由 CLI 参数单独决定。record 必须自身封存 `artifact_role` 与完整 ancestor
+  `record_sha256` 闭包；直接、间接或多 parent 中出现诊断产物时，release candidate 立即拒绝。
+  缺 role、缺 lineage 或旧 v1 receipt 均 fail closed，不会被默认升级为可发布版本。
+- 这解决的是“后生成诊断输出误替代旧修复候选”的管线风险，不是 C3 的发布授权。2026-08-25
+  `c3-successor-authority-v2` 仍需重新绑定到 free 上真实存在的 canonical package，并通过
+  manifest、package audit、最终复核、标题/封面 QC 与授权上传门；`upload_authorized=false`
+  和 `MANIFEST_MISSING_OR_INVALID` 保持不变。
+
+### 部署与验证证据
+
+- commit `a19771a9efdfa7bd6f14b4f72f04fc09a3cc8347` 已推送并部署到 free；
+  `scripts/deploy_free_autoslice.sh free` exit `0`，预部署完整 suite `7060 passed, 8 skipped`，
+  远端 `DEPLOYED_COMMIT` 与本地一致，runner md5 校验通过。
+- role-aware focused regression 为 `43 passed`；远端 `/usr/bin/python3` 可导入三种角色，
+  `build_incremental_artifact_audit.py --help` 已显示 parent/current role 参数。
+- 这次部署没有写 publication state、registry、ledger、candidate media 或 upload；free 既有
+  空 `DISABLED` regular file `0644` 被保留，也没有把它解释成上传授权。
+
+### 仍需发布前验证
+
+- 为旧修复候选建立带角色/谱系字段的新 canonical record：旧 `/private/tmp` locator 不得继续
+  使用；旧诊断 output 只登记为 training/history evidence，保留 lineage，未经无引用扫描、封存
+  和独立清理授权不得删除。
+- C3 仍必须先完成同包 manifest、package audit、最终人工复核、标题/封面 QC、ledger 与明确
+  upload authorization；只有 `READY_FOR_SERIAL_UPLOAD` 才能按 `C3 → C6 → C7 → C7b → C9 →
+  C10 → C12 → C13 → C14 → C16 → C17` 继续。
+
 ## 2026-08-28T00:20Z C3 repaired version versus pipeline diagnostic output
 
 ### 人话结论
