@@ -1,5 +1,37 @@
 # Current handoff
 
+## 2026-08-28T00:00Z Smart incremental-audit deployment / serial-publication gate
+
+### 目标
+
+完成 smart incremental-artifact audit 的真实部署验证，并严格按 `C3 → C6 → C7 → C7b → C9 → C10 → C12 → C13 → C14 → C16 → C17` 推进；任何候选未满足 `READY_FOR_SERIAL_UPLOAD` 前不得上传或改写 live authority。
+
+### 已完成
+
+- approved worktree `/private/tmp/vtuber-slice-fastlane-smart-audit-20260827` 的 HEAD `a21f08a529e3b7b791c1b031f07b36182667876e` 通过 canonical deploy；`scripts/deploy_free_autoslice.sh free` exit `0`，完整 suite `7048 passed, 8 skipped`，远端 `DEPLOYED_COMMIT` 同一提交。
+- free 远端四个 smart-audit 文件 SHA-256 与本地完全匹配；`DEPLOYED_AUTHORITY_MANIFEST.json` self-hash 验证通过，`entry_count=292`，manifest 绑定同一 deployed commit。
+- `/usr/bin/python3` 为 `3.13.5`、PIL `12.2.0`；deployed CLI `build_incremental_artifact_audit.py --help` exit `0`；temporary latest-record/subtitle-delta smoke 生成并验证 `INCREMENTAL_REVIEW_COMPLETE` receipt，`run_id=smoke-run-1`，无 production 写入。
+- live upload ledger 读取无 malformed rows；总 rows `251`，目标 C3/C6/C7/C7b/C9/C10/C12 集合无 ledger row，目标 upload count `0`，`AUTO_UPLOAD` 命名文件数 `0`。未上传候选。
+- full live readiness graph 与 C3 replay readiness graph 均为 observational-only；C3 `auto_220021_561_670` 明确为 `NEEDS_IVAN_TRUTH`，原因 `HUMAN_TRUTH_MISSING`、`PACKAGE_RECORD_MISSING_OR_AMBIGUOUS`、`STATE_ROW_NOT_REVIEW_READY`，`upload_allowed=false`。
+
+### 进行中（无后台作业）
+
+- 保持只读审计与 authority 保全；没有运行中的部署、replay、repair、runner 或上传作业。
+- free `/opt/bilive/autoslice/DISABLED` 仍为既有空 regular file `0644`；`deploy.guard` 不存在，未观察到 autoslice/authorized-upload 进程。该状态未被解释为上传许可，也未被修改。
+
+### 阻塞
+
+- P0 C3 必须先获得新的、可追溯且 source-bound 的 Ivan authority，并绑定当前 package record/media；当前 package record 缺失或不唯一，human truth 缺失。不得尝试 C3/C6 private replay、repair、state CAS 或上传。
+- live graph 另有 `PUBLICATION_REGISTRY_INVALID`；C6 为 `COVER_QC_MISSING`、`PACKAGE_ARTIFACT_HASH_DRIFT`、`STATE_ROW_NOT_REVIEW_READY`；C7b/C9 等也仍非 ready。readiness graph 不能授予上传授权。
+- `DISABLED` 的含义尚未有当前 authority 明确声明为可接受的 publication-runner 状态；按 fail-closed 保持不动。
+
+### 下一步
+
+1. 等待并核验新的 C3 Ivan/source-bound authority、唯一 package record、完整同包 final review/owner/source-separation/cover evidence；否则保持 C3 blocked。
+2. C3 全部通过 canonical replay、package audit、title/cover QC、ledger/manifest replay 且 graph 仅作观察后，才可进入 C6；每项 commit lease/state CAS/upload/public readback 严格串行。
+3. 在无新 authority 前只做 source-of-truth 只读查询；不得把测试、部署 SHA、CLI smoke、历史 record 或 incremental receipt 当作 `READY_FOR_SERIAL_UPLOAD`。
+
+
 ## 2026-08-27T06:52Z C3 canonical reclosure / package-audit checkpoint
 
 ### 当前结论
