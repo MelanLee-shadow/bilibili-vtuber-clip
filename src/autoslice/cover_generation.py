@@ -521,33 +521,33 @@ def _punch_layout_override(direction: LidoushaCoverArtDirection) -> LidoushaCove
 def _talk_font_floor_layout_override(
     direction: LidoushaCoverArtDirection, cover_text: str
 ) -> LidoushaCoverArtDirection:
-    """无梗字单行 talk 文案的 120px 下限版面自愈（维护者 拍板）。
+    """Keep talk emphasis at 120px; banner is chosen only after exact fitting.
 
-    他的原话：「120px 是硬性要求，只要满足这个无所谓是什么 layout，接受版面
-    切换」。梗字封面早就为同一原因强制 banner（窄栏 9 字只有 ~82px，banner 下
-    165px）。
-
-    只处理**单段、无词原子、无 LLM 分行**的情形——那是数学上确定撞下限的一种：
-    锁定的单行就是主强调行，字号 = zone 宽 × 0.98 / 行宽 em，窄分栏 700px 下
-    >5.7em 必然 <120px（8em 实测 92px）。多段 / 有原子的情形**不预测**：120px
-    下限只约束主强调行，其余行按比例缩小，生产两行成品长期合规（7/24-7/29 有
-    22 条），按最长段预测会把它们全误切成 banner、压扁正当的版面轮换；真撞了
-    下限还有渲染期 COVER_TITLE_TOO_SMALL + 梗字评审回收路径兜底。
-
-    必须在艺术指导阶段切而不是叠字时切——CPA 背景按 layout 构图（分栏图人物在
-    另一侧让位），叠字阶段换区会把文字压到人物上。banner 也救不了的（>9em 单段
-    本就会被分行权威门拦下）原样返回，走既有回收路径。
+    Single-line talk text keeps the cheap width estimate.
+    Explicit multiline text is measured with the renderer's exact font and fitter.
+    Only an undersized side layout may switch when banner reaches the floor.
+    Invalid line contracts remain the renderer's authority.
+    The decision runs before CPA generation so background composition stays aligned.
     """
 
-    if direction.is_song or direction.cover_punch or direction.layout == "banner":
+    if direction.is_song or direction.cover_punch or direction.layout == "banner" or direction.words or direction.line_breaks:
         return direction
-    if direction.words or direction.line_breaks:
-        return direction
-    segments = [
-        line.strip() for line in cover_text.splitlines() if line.strip()
-    ]
+    segments = [line.strip() for line in cover_text.splitlines() if line.strip()]
     if len(segments) > 1:
-        return direction
+        try:
+            font_path = _cover_font_for_text(cover_text)
+            locked_lines = _talk_locked_split(cover_text, art_direction=direction)
+            hook_rgb = _COVER_HOOK_COLORS.get(direction.hook_color, _COVER_HOOK_COLORS["yellow"])
+
+            def exact_size(layout: str) -> int:
+                render = _COVER_LAYOUT_RENDER[layout]
+                return max(line["size"] for line in _fit_cover_lines(cover_text, hook_word=direction.hook_word, base_fill=_COVER_BASE_FILL, hook_rgb=hook_rgb, zone=render["zone"], font_path=font_path, max_lines=min(render["max_lines"], COVER_THUMBNAIL_MAX_LINES), max_size=render["max_size"], forced_lines=direction.line_breaks, word_atoms=direction.words, locked_lines=locked_lines))
+
+            if not exact_size(direction.layout) < COVER_MIN_TALK_FONT_SIZE <= exact_size("banner"):
+                return direction
+        except (TypeError, ValueError):
+            return direction
+        return dataclass_replace(direction, layout="banner")
     flat = segments[0] if segments else cover_text.strip()
     flat_em = punch_line_em_width(flat)
     if flat_em <= 0:
