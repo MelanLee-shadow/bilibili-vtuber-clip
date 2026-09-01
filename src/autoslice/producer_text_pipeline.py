@@ -78,7 +78,7 @@ from src.autoslice.review_priority_candidates import (
     review_priority_candidate_counts as _review_priority_candidate_counts,  # noqa: F401
     review_priority_candidates as _review_priority_candidates,
 )
-from src.autoslice.final_source_language_owner import register_final_source_language_cpa_repairs
+from src.autoslice.final_source_language_owner import register_final_foreign_script_cpa_repairs, register_final_source_language_cpa_repairs
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import LlmConfig, build_llm_call, extract_json_object
 from src.autoslice.producer_chat_input import (
@@ -1330,8 +1330,10 @@ def _adjudicate_final_foreign_script(
     audit: dict[str, Any],
     out_root: Path,
     cid: str,
+    chat_authority_audit: dict[str, Any],
 ) -> tuple[str, dict[str, Any]]:
-    return adjudicate_foreign_script_audit(
+    input_srt = srt_text
+    srt_text, audit = adjudicate_foreign_script_audit(
         media_path=padded,
         srt_text=srt_text,
         audit=audit,
@@ -1339,6 +1341,8 @@ def _adjudicate_final_foreign_script(
         cid=cid,
         llm_call=_build_final_review_llm_call(),
     )
+    register_final_foreign_script_cpa_repairs(chat_authority_audit, input_srt=input_srt, output_srt=srt_text, foreign_script_audit=audit)
+    return srt_text, audit
 
 
 def _adjudicate_final_source_language(
@@ -1359,11 +1363,7 @@ def _adjudicate_final_source_language(
         llm_call=_build_final_review_llm_call(),
     )
     register_final_source_language_cpa_repairs(
-        chat_authority_audit,
-        input_srt=input_srt,
-        output_srt=srt_text,
-        source_language_audit=audit,
-    )
+        chat_authority_audit, input_srt=input_srt, output_srt=srt_text, source_language_audit=audit)
     return srt_text, audit
 
 
@@ -1481,7 +1481,7 @@ def _finalize_text_evidence(
         foreign_script_audit["cluster_retranscription"] = cluster_repair_audit
     if padded is not None:
         srt_text, foreign_script_audit = _adjudicate_final_foreign_script(
-            padded, srt_text, foreign_script_audit, out_root, cid
+            padded, srt_text, foreign_script_audit, out_root, cid, chat_authority_audit
         )
     chat_authority_audit["foreign_script_consistency_audit"] = foreign_script_audit
     srt_text, title_mark_balance_audit = apply_title_mark_balance_guard(srt_text)

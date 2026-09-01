@@ -117,7 +117,7 @@ formal journal/target/state 写前拒绝；已有 formal journal、或恰好一�
 private prepared store 的 resume 都不调用 provider；prepared store 缺失时才允许新的 prepare，多个或任何
 无效 store 一律拒绝。provider slots
 默认容量 2，饱和时有限等待而非立即失败；`AUTOSLICE_PROVIDER_CONCURRENCY` 只接受 1–5，
-`AUTOSLICE_PROVIDER_WAIT_SECONDS` 默认 600、只接受 1–900，且不包 deterministic audit/manifest replay。
+`AUTOSLICE_PROVIDER_WAIT_SECONDS` 默认 10800、只接受 1–10800，且不包 deterministic audit/manifest replay。
 
 scripts/publication_readiness_graph.py 输出所有 current unpublished state candidates 与 registry
 hold 行的只读观察图。它复用 registry、upload ledger、manifest replay 与当前 state 门；

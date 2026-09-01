@@ -301,6 +301,10 @@ def reclose_c3_canonical_package(*, v3_root: Path, destination: Path, repo_root:
         copied: dict[str, Path] = {}
         for role in authority.roles:
             copied[role] = _copy_role(authority, role, stage)
+        input_role_hashes = {
+            role: _sha(_read_regular(path, label=f"C3_INPUT_ROLE_{role.upper()}"))
+            for role, path in sorted(copied.items())
+        }
         # Canonical portable aliases are exact byte copies of pinned roles.
         aliases = {
             "record": f"{CANDIDATE_ID}.record.json",
@@ -491,14 +495,18 @@ def reclose_c3_canonical_package(*, v3_root: Path, destination: Path, repo_root:
         chat_raw = _write_json(stage / aliases["chat"], chat)
         record["artifact_hashes"]["chat_authority_audit_sha256"] = _sha(chat_raw)
         publish.setdefault("artifact_hashes", {})["chat_authority_audit_sha256"] = _sha(chat_raw)
+        if copied["chat"] != stage / aliases["chat"]:
+            _write_json(copied["chat"], chat)
         _write_json(publish_path, publish)
         _write_json(stage / f"{_DELIVERY_STEM}.publish.json", publish)
         _write_json(record_path, record)
+        if copied["record"] != record_path:
+            _write_json(copied["record"], record)
         # All changed pointers are recorded against the immutable v3 role JSON.
         changes = []
         for name, old in before_docs.items():
             changes.extend({"surface": name, **row} for row in _changed_pointers(old, {"record": record, "publish": publish, "chat": chat}[name]))
-        receipt = {"schema_version": SCHEMA, "candidate_id": CANDIDATE_ID, "input_v3": {"manifest_raw_sha256": authority.manifest_raw_sha256, "manifest_self_seal": authority.manifest_self_seal, "root_tree_sha256": authority.root_tree_sha256, "role_bytes": {role: _sha(path.read_bytes()) for role, path in sorted(copied.items())}}, "changed_json_pointers": changes, "source_fact_review": {"decision": source_fact["decision"], "receipt_sha256": source_fact["receipt_sha256"], "authority_sha256": source_fact["c3_terminal_source_fact_supersession"]["authority_sha256"]}, "boundary_reclosure": boundary["c3_derived_boundary_reclosure_receipt"], "speaker_authority": {"asset": str(SPEAKER_AUTHORITY_ASSET), "sha256": _sha((stage / f"{_STEM}.line947-speaker-authority.json").read_bytes())}, "direct_reviewer_authority": {"source_fact_authority_sha256": source_auth["authority_sha256"], "boundary_authority_sha256": boundary_auth["authority_sha256"]}, "output": {"tree_sha256": None, "provider": False, "upload": False, "state": False, "deploy": False}, "status": "PASS"}
+        receipt = {"schema_version": SCHEMA, "candidate_id": CANDIDATE_ID, "input_v3": {"manifest_raw_sha256": authority.manifest_raw_sha256, "manifest_self_seal": authority.manifest_self_seal, "root_tree_sha256": authority.root_tree_sha256, "role_bytes": input_role_hashes}, "changed_json_pointers": changes, "source_fact_review": {"decision": source_fact["decision"], "receipt_sha256": source_fact["receipt_sha256"], "authority_sha256": source_fact["c3_terminal_source_fact_supersession"]["authority_sha256"]}, "boundary_reclosure": boundary["c3_derived_boundary_reclosure_receipt"], "speaker_authority": {"asset": str(SPEAKER_AUTHORITY_ASSET), "sha256": _sha((stage / f"{_STEM}.line947-speaker-authority.json").read_bytes())}, "direct_reviewer_authority": {"source_fact_authority_sha256": source_auth["authority_sha256"], "boundary_authority_sha256": boundary_auth["authority_sha256"]}, "output": {"tree_sha256": None, "provider": False, "upload": False, "state": False, "deploy": False}, "status": "PASS"}
         receipt["output"]["tree_sha256"] = _tree_sha(stage)
         receipt_raw = _write_json(stage / RECEIPT_NAME, receipt)
         receipt_sha = _sha(receipt_raw)

@@ -26,6 +26,7 @@ from src.autoslice.final_review_contract import (
     validate_final_review_release,
 )
 from src.autoslice.final_source_language_owner import (
+    register_final_foreign_script_cpa_repairs,
     register_final_source_language_cpa_repairs,
 )
 from src.autoslice.producer_boundary_owner_contract import (
@@ -122,6 +123,13 @@ def test_late_source_language_cpa_retires_same_window_cpa_surface():
     input_srt = _srt("前文", current)
     output_srt = _srt("前文", proposed)
     chat_audit = {
+        "applied": [
+            {
+                "matched_start_ms": 10_000,
+                "matched_end_ms": 14_000,
+                "exact_text": "就是",
+            }
+        ],
         "entity_repairs": [
             {
                 "mode": "final_review_context_adjudication",
@@ -178,6 +186,7 @@ def test_late_source_language_cpa_retires_same_window_cpa_surface():
     owner = chat_audit["entity_repairs"][1]
     assert owner["structured_exact_text"] == proposed
     assert owner["superseded_entity_repair_indexes"] == [0]
+    assert owner["superseded_applied_indexes"] == [0]
     assert verify_chat_authority_final_surfaces(
         chat_audit,
         final_text_srt=output_srt,
@@ -185,6 +194,128 @@ def test_late_source_language_cpa_retires_same_window_cpa_surface():
         delivery_start_ms=0,
         delivery_end_ms=15_000,
     )
+
+
+def _foreign_script_cpa_audit(output_srt, *, current, proposed):
+    return {
+        "status": "CPA_ADJUDICATED_MIXED_PHRASE_AUDIO",
+        "applied_count": 1,
+        "output_srt_sha256": hashlib.sha256(output_srt.encode()).hexdigest(),
+        "cpa_adjudication_rows": [
+            {
+                "cue_index": 1,
+                "resolved": True,
+                "choice": "PROPOSED",
+                "decision_authority": "CPA_JUDGE",
+                "current": current,
+                "proposed": proposed,
+                "adjudication": {
+                    "schema_version": "acoustic-witness-adjudication.v1",
+                    "decision_authority": "CPA_JUDGE",
+                    "witness_authority": "EVIDENCE_ONLY",
+                    "judge": {
+                        "schema_version": "acoustic-witness-adjudication.v1",
+                        "status": "JUDGED",
+                        "choice": "PROPOSED",
+                        "prompt_sha256": "a" * 64,
+                        "completion_sha256": "b" * 64,
+                    },
+                },
+            }
+        ],
+    }
+
+
+def test_late_foreign_script_cpa_retires_exact_read_and_verifies_final_surface():
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    current = "还有 fruit list"
+    proposed = "哈哈还有弗罗斯特"
+    input_srt = _srt(current, "后文")
+    output_srt = _srt(proposed, "后文")
+    chat_audit = {
+        "applied": [
+            {
+                "matched_start_ms": 5_000,
+                "matched_end_ms": 9_000,
+                "exact_text": "fruit list",
+            }
+        ]
+    }
+    foreign_audit = _foreign_script_cpa_audit(
+        output_srt, current=current, proposed=proposed
+    )
+
+    register_final_foreign_script_cpa_repairs(
+        chat_audit,
+        input_srt=input_srt,
+        output_srt=output_srt,
+        foreign_script_audit=foreign_audit,
+    )
+
+    applied = chat_audit["applied"][0]
+    assert applied["reconciliation"] == {
+        "schema_version": "final-foreign-script-cpa-exact-read-supersession.v1",
+        "status": "SUPERSEDED_BY_FINAL_FOREIGN_SCRIPT_CPA",
+        "receipt_sha256": chat_audit["entity_repairs"][0][
+            "final_foreign_script_receipt_sha256"
+        ],
+        "before_sha256": "sha256:" + hashlib.sha256(current.encode()).hexdigest(),
+        "after_sha256": "sha256:" + hashlib.sha256(proposed.encode()).hexdigest(),
+        "timing_immutable": True,
+    }
+    owner = chat_audit["entity_repairs"][0]
+    assert owner["mode"] == "final_foreign_script_cpa_adjudication"
+    assert owner["structured_exact_text"] == proposed
+    assert owner["superseded_applied_indexes"] == [0]
+    assert chat_audit["final_foreign_script_cpa_surface_registrations"][0][
+        "superseded_applied_indexes"
+    ] == [0]
+    assert verify_chat_authority_final_surfaces(
+        chat_audit,
+        final_text_srt=output_srt,
+        final_speaker_srt=output_srt,
+        delivery_start_ms=0,
+        delivery_end_ms=15_000,
+    )
+
+
+@pytest.mark.parametrize(
+    ("matched_start_ms", "matched_end_ms", "proposed"),
+    (
+        (10_000, 14_000, "哈哈还有弗罗斯特"),
+        (5_000, 9_000, "哈哈还有 fruit list 弗罗斯特"),
+    ),
+)
+def test_late_foreign_script_cpa_keeps_non_matching_exact_read_predecessor(
+    matched_start_ms, matched_end_ms, proposed
+):
+    current = "还有 fruit list"
+    input_srt = _srt(current, "后文")
+    output_srt = _srt(proposed, "后文")
+    chat_audit = {
+        "applied": [
+            {
+                "matched_start_ms": matched_start_ms,
+                "matched_end_ms": matched_end_ms,
+                "exact_text": "fruit list",
+            }
+        ]
+    }
+    foreign_audit = _foreign_script_cpa_audit(
+        output_srt, current=current, proposed=proposed
+    )
+
+    register_final_foreign_script_cpa_repairs(
+        chat_audit,
+        input_srt=input_srt,
+        output_srt=output_srt,
+        foreign_script_audit=foreign_audit,
+    )
+
+    assert "reconciliation" not in chat_audit["applied"][0]
 
 
 def _adapters() -> pipeline.TextPipelineAdapters:

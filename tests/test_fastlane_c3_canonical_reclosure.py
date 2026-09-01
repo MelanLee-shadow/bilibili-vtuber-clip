@@ -16,6 +16,14 @@ from src.autoslice.fastlane_c3_canonical_reclosure import (
 
 ROOT = Path(__file__).resolve().parents[1]
 V3_ROOT = Path("/private/tmp/c3-v3-reclosure-from-free-20260826")
+C3_PROBE_AVAILABLE = V3_ROOT.is_dir() and all(
+    (ROOT / path).is_file()
+    for path in (
+        "assets/lidousha/fastlane_c3_boundary_reclosure_authority/auto_220021_561_670.v1.json",
+        "assets/lidousha/fastlane_c3_source_fact_supersession/auto_220021_561_670.v1.json",
+        "assets/lidousha/fastlane_c3_speaker_authorities/auto_220021_561_670.line947.v2.json",
+    )
+)
 OLD_PROMPT_SHA256 = "sha256:2e586da5aaf91a15a737eaa8ac1c088fb5e4fc678100f681ae7f8ce847ed0959"
 CURRENT_PROMPT_SHA256 = "sha256:ea7c56f1b0941cb5f6ba82be25ed3bed9b2c9e3f94641ed9da1979505078e91a"
 CURRENT_CONTEXT_SHA256 = "sha256:5cf64e8ab1b3fdd666df9c24b03a071d37834699d1ba9e232ea5df8d68486629"
@@ -25,7 +33,7 @@ def _load(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-@pytest.mark.skipif(not V3_ROOT.is_dir(), reason="sealed C3 v3 probe input is unavailable")
+@pytest.mark.skipif(not C3_PROBE_AVAILABLE, reason="sealed C3 probe inputs are unavailable")
 def test_c3_reclosure_projects_line947_prompt_as_single_current_authority(tmp_path: Path) -> None:
     result = reclose_c3_canonical_package(
         v3_root=V3_ROOT,
@@ -34,23 +42,60 @@ def test_c3_reclosure_projects_line947_prompt_as_single_current_authority(tmp_pa
     )
     package = result.package_root
     record = _load(package / "auto_220021_561_670.record.json")
+    same_stem_record = _load(
+        package / "auto_220021_561_670.recut.burned-successor-v2.record.json"
+    )
+    same_stem_chat = _load(
+        package / "auto_220021_561_670.recut.burned-successor-v2.chat-authority.json"
+    )
+    chat = _load(package / "auto_220021_561_670.chat-authority.json")
     publish = _load(package / "auto_220021_561_670.recut.publish.json")
     context = _load(package / "auto_220021_561_670.clip-context.json")
     story = record["story_contract"]
     source_fact = story["source_fact_review"]
 
+    assert same_stem_record == record
+    assert same_stem_chat == chat
     assert source_fact["decision"] == "FASTLANE_C3_TERMINAL_SOURCE_FACT_SUPERSESSION"
-    assert record["publish_staging"]["source_fact_review"] == source_fact
-    assert publish["source_fact_review"] == source_fact
+    assert (
+        story["source_fact_review"]
+        == record["publish_staging"]["source_fact_review"]
+        == publish["source_fact_review"]
+    )
     assert "sha256:" + hashlib.sha256(story["clip_context_prompt"].encode("utf-8")).hexdigest() == CURRENT_PROMPT_SHA256
     assert "sha256:" + hashlib.sha256(story["clip_context_prompt"].encode("utf-8")).hexdigest() != OLD_PROMPT_SHA256
     assert context["context_sha256"] == CURRENT_CONTEXT_SHA256
     assert story["clip_context_binding"]["context_sha256"] == CURRENT_CONTEXT_SHA256
     assert story["transcript_sha256"] == "sha256:0e1c094b719790beaec22f15204244c4810d8f4065708688998b7806bec9940b"
     assert result.receipt_path.is_file()
+    receipt = _load(result.receipt_path)
+    assert receipt["input_v3"]["role_bytes"]["record"] == (
+        "sha256:"
+        + hashlib.sha256(
+            (
+                V3_ROOT
+                / "auto_220021_561_670.recut.burned-successor-v2.record.json"
+            ).read_bytes()
+        ).hexdigest()
+    )
+    assert receipt["input_v3"]["role_bytes"]["publish"] == (
+        "sha256:"
+        + hashlib.sha256(
+            (
+                V3_ROOT
+                / "auto_220021_561_670.recut.burned-successor-v2.publish.json"
+            ).read_bytes()
+        ).hexdigest()
+    )
+    assert receipt["input_v3"]["role_bytes"]["chat"] == (
+        "sha256:"
+        + hashlib.sha256(
+            (V3_ROOT / "auto_220021_561_670.recut.burned-successor-v2.chat-authority.json").read_bytes()
+        ).hexdigest()
+    )
 
 
-@pytest.mark.skipif(not V3_ROOT.is_dir(), reason="sealed C3 v3 probe input is unavailable")
+@pytest.mark.skipif(not C3_PROBE_AVAILABLE, reason="sealed C3 probe inputs are unavailable")
 def test_c3_reclosure_is_create_only_and_cleans_failed_destination(tmp_path: Path) -> None:
     destination = tmp_path / "package"
     destination.mkdir()
@@ -63,7 +108,7 @@ def test_c3_reclosure_is_create_only_and_cleans_failed_destination(tmp_path: Pat
     assert destination.is_dir()
 
 
-@pytest.mark.skipif(not V3_ROOT.is_dir(), reason="sealed C3 v3 probe input is unavailable")
+@pytest.mark.skipif(not C3_PROBE_AVAILABLE, reason="sealed C3 probe inputs are unavailable")
 def test_c3_reclosure_rename_failure_cleans_unpublished_stage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     destination = tmp_path / "package"
     original_replace = canonical_reclosure.os.replace
@@ -84,7 +129,7 @@ def test_c3_reclosure_rename_failure_cleans_unpublished_stage(tmp_path: Path, mo
     assert not list(tmp_path.glob(".package.txn-*"))
 
 
-@pytest.mark.skipif(not V3_ROOT.is_dir(), reason="sealed C3 v3 probe input is unavailable")
+@pytest.mark.skipif(not C3_PROBE_AVAILABLE, reason="sealed C3 probe inputs are unavailable")
 def test_c3_reclosure_reports_committed_when_parent_fsync_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -109,7 +154,7 @@ def test_c3_reclosure_reports_committed_when_parent_fsync_fails(
     assert not list(tmp_path.glob(".package.txn-*"))
 
 
-@pytest.mark.skipif(not V3_ROOT.is_dir(), reason="sealed C3 v3 probe input is unavailable")
+@pytest.mark.skipif(not C3_PROBE_AVAILABLE, reason="sealed C3 probe inputs are unavailable")
 def test_c3_supersession_rejects_independent_prompt_hash_override() -> None:
     from src.autoslice.addressee_attribution import rebuild_speaker_evidence
     from src.autoslice.fastlane_c3_canonical_reclosure import _C3ReclosurePlan
