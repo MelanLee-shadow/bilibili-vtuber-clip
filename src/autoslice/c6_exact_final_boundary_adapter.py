@@ -22,6 +22,10 @@ PIPELINE_SRT_SHA256 = "sha256:a3ac0efb39d5348f8e8e756712de9a18a6aa87123b0ccbd8fb
 DECISION_LEDGER_SHA256 = "sha256:ecef045ba999ca94f3afa58a57562ce728fd004e9dc0d03cec949e0f27f737f3"
 TRUTH_DIFF_SHA256 = "sha256:ee662f130cb91537db8dd471cddc777318e30179ed7b2c6e8fe7f203a3f23522"
 RECORD_SHA256 = "sha256:04b64d9a1e19810948fa0f6cca90d132a4464cc518cdbb26ace9ed0f0876222f"
+# The callback receives the record-authorized finalized portable preimage,
+# whose speaker artifacts remain separate from the reviewed delivery text.
+FINAL_SPEAKER_SRT_SHA256 = "sha256:4345bf67af1d4d228d427fef85f17b5f55af3f65bfaedad12a78a2509ee2e294"
+SPEAKER_ASS_SHA256 = "sha256:f78a94d7154fd538de45c4bde41e5d85eb5cf97c099d6e3666666f7dd754e63e"
 # These are intentionally different roles.  ``ReplayPlan.expected_video_sha256``
 # is read from the old record's ``artifact_hashes.video_sha256`` and therefore
 # identifies the unburned recut used to reproduce the old record.  The C6
@@ -32,7 +36,9 @@ FROZEN_DELIVERY_VIDEO_SHA256 = "sha256:982e0fea91ef222302ec5cb30a965d0222164a87f
 CHAT_SHA256 = "sha256:fb7c0bb21ef6e775c22ebc7c75c83d09e6500d8623d80d35c9b2cb27ef0cd3a9"
 BOUNDARY_AUDIT_SHA256 = "sha256:5231b6319b2bfa827ce3b404da7fcf3a7c33ea226314a0cfefde8195b1c5aec1"
 AUTHORITY_SELF_HASH = "sha256:7d38e745cc75330dbc324a395ef3192693c672709451a18c2c6ff3cfd3f45eea"
-STAGE_JSON_SHA256 = "sha256:b23b2a7997a00c0f1a6ace98b797cf37091914e47435d7284e0aaf31de412116"
+# The split-pin correction changes stage.json twice plus its self-seal, so the
+# raw stage-byte pin must track the resulting deterministic document.
+STAGE_JSON_SHA256 = "sha256:9cd6915c22a97ac7aefb0ddd253f288da93cc12675b9ab595e2689ebfba75cdf"
 # This is the source's sealed logical identity.  It is deliberately not
 # substituted for a byte hash of a separately located padded file.
 SOURCE_MEDIA_IDENTITY = "sha256:0f0770a9426c48fee5457cf9639a77e5a477f41ec806f4e4789e19c336e1aae5"
@@ -210,7 +216,7 @@ def _validate_old_authority(plan: object) -> tuple[dict[str, object], dict[str, 
     if not isinstance(boundary, Mapping):
         _fail("C6_EXACT_BOUNDARY_AUDIT_INVALID")
     if (
-        record.get("candidate_id") != CANDIDATE_ID
+        record.get("candidate_id") not in (None, CANDIDATE_ID)
         or record.get("date") not in {None, RECORDING_DATE}
         or record.get("duration_ms") != DELIVERY_LOCAL_END_MS - DELIVERY_LOCAL_START_MS
         or boundary.get("final_start_ms") != SOURCE_LOCAL_START_MS
@@ -265,16 +271,75 @@ def _validate_truth_lanes(plan: object) -> None:
 def _chat_authority(plan: object) -> dict[str, object]:
     path = Path(getattr(plan, "package_root")) / f"{CANDIDATE_ID}.chat-authority.json"
     chat = _load_json(path, CHAT_SHA256, label="CHAT_AUTHORITY")
-    if (
-        chat.get("schema_version") != "chat-authority-audit.v2"
-        or chat.get("status") not in {"NO_MATCH", "APPLIED_AND_VERIFIED"}
-        or chat.get("final_status") != "FINAL_ARTIFACTS_VERIFIED"
-    ):
-        _fail("C6_EXACT_CHAT_AUTHORITY_STATUS_INVALID")
-    review = chat.get("final_review_audit")
-    if not isinstance(review, Mapping) or review.get("schema_version") != "final-review-audit.v2" or review.get("status") != "CLEAN" or review.get("reviewed_srt_sha256") != REVIEWED_SRT_SHA256:
-        _fail("C6_EXACT_CHAT_FINAL_REVIEW_BINDING_INVALID")
+    _validate_legacy_chat_authority(
+        chat,
+        status_error="C6_EXACT_CHAT_AUTHORITY_STATUS_INVALID",
+        review_error="C6_EXACT_CHAT_FINAL_REVIEW_BINDING_INVALID",
+    )
     return chat
+
+
+def _validate_legacy_chat_authority(
+    authority: object, *, status_error: str, review_error: str,
+) -> None:
+    if (
+        not isinstance(authority, Mapping)
+        or authority.get("schema_version") != "chat-authority-audit.v2"
+        or authority.get("status") != "APPLIED_AND_VERIFIED"
+        or "final_status" in authority
+    ):
+        _fail(status_error)
+    review = authority.get("final_review_audit")
+    ownership = review.get("truth_full_ownership") if isinstance(review, Mapping) else None
+    coverage = ownership.get("coverage") if isinstance(ownership, Mapping) else None
+    proof = coverage.get("proof") if isinstance(coverage, Mapping) else None
+    if (
+        not isinstance(review, Mapping)
+        or review.get("schema_version") != "final-review-audit.v1"
+        or review.get("status") != "SKIPPED_TRUTH_FULL_OWNERSHIP"
+        or not isinstance(ownership, Mapping)
+        or ownership.get("schema_version") != "operator_text_full_ownership.v1"
+        or ownership.get("status") != "OPERATOR_TEXT_FULL_OWNERSHIP"
+        or not isinstance(coverage, Mapping)
+        or not isinstance(proof, Mapping)
+        or proof.get("baseline_sha256") != REVIEWED_SRT_SHA256.removeprefix("sha256:")
+    ):
+        _fail(review_error)
+
+
+def _validate_finalized_chat_authority(authority: object) -> None:
+    """Accept only the record-bound chat shape after finalization."""
+
+    if (
+        not isinstance(authority, Mapping)
+        or authority.get("schema_version") != "chat-authority-audit.v2"
+        or authority.get("status") != "APPLIED_AND_VERIFIED"
+        or authority.get("final_status") != "FINAL_ARTIFACTS_VERIFIED"
+        or authority.get("final_output_srt_sha256") != REVIEWED_SRT_SHA256.removeprefix("sha256:")
+        or authority.get("final_text_srt_sha256") != PIPELINE_SRT_SHA256.removeprefix("sha256:")
+        or authority.get("final_speaker_srt_sha256") != FINAL_SPEAKER_SRT_SHA256.removeprefix("sha256:")
+        or authority.get("speaker_ass_sha256") != SPEAKER_ASS_SHA256.removeprefix("sha256:")
+    ):
+        _fail("C6_EXACT_CHAT_AUTHORITY_CALLBACK_INVALID")
+    structured = authority.get("structured_chat_binding_audit")
+    review = authority.get("final_review_audit")
+    baseline = authority.get("redelivery_subtitle_baseline_audit")
+    if (
+        not isinstance(structured, Mapping)
+        or structured.get("schema_version") != "structured-chat-binding-audit.v1"
+        or structured.get("status") != "PASS"
+        or not isinstance(review, Mapping)
+        or review.get("schema_version") != "final-review-audit.v2"
+        or review.get("status") != "CLEAN"
+        or review.get("release_gate") != "PASS"
+        or review.get("reviewed_srt_sha256") != PIPELINE_SRT_SHA256
+        or not isinstance(baseline, Mapping)
+        or baseline.get("schema_version") != "subtitle-redelivery-baseline-audit.v2"
+        or baseline.get("status") != "APPLIED"
+        or baseline.get("baseline_sha256") != REVIEWED_SRT_SHA256.removeprefix("sha256:")
+        or baseline.get("output_sha256") != REVIEWED_SRT_SHA256.removeprefix("sha256:")
+    ):
+        _fail("C6_EXACT_CHAT_AUTHORITY_CALLBACK_INVALID")
 
 
 def _compare_projection(pipeline: bytes, reviewed: bytes) -> str:
@@ -353,25 +418,16 @@ def build_c6_exact_final_reviewer(*, plan: object, stage: Path) -> Callable[[str
     _validate_truth_lanes(plan)
     _stage_document, staged_reviewed = _validate_stage(plan, stage)
     _record, boundary_review = _validate_old_authority(plan)
-    chat = _chat_authority(plan)
+    _chat_authority(plan)
     pipeline_path = Path(getattr(plan.baseline, "manifest_path")).parent / f"{CANDIDATE_ID}.pipeline-diagnostic.srt"
     pipeline = _binding(pipeline_path, PIPELINE_SRT_SHA256, label="PIPELINE").path.read_bytes()
     if _sha_bytes(staged_reviewed) != REVIEWED_SRT_SHA256:
         _fail("C6_EXACT_STAGE_REVIEWED_SRT_DRIFT")
     grid_sha = _compare_projection(pipeline, staged_reviewed)
-    expected_chat_review = copy.deepcopy(chat["final_review_audit"])
     frozen_audit = _audit(reviewed_sha=REVIEWED_SRT_SHA256, boundary_review=boundary_review, grid_sha=grid_sha)
-    if expected_chat_review.get("reviewed_srt_sha256") != REVIEWED_SRT_SHA256:
-        _fail("C6_EXACT_CHAT_REVIEW_SRT_DRIFT")
 
     def review(final_srt_text: str, verified_authority_audit: Mapping[str, object], timeline_offset_ms: int, source_final_end_ms: int) -> dict[str, object]:
-        if (
-            not isinstance(verified_authority_audit, Mapping)
-            or verified_authority_audit.get("schema_version") != "chat-authority-audit.v2"
-            or verified_authority_audit.get("status") not in {"NO_MATCH", "APPLIED_AND_VERIFIED"}
-            or verified_authority_audit.get("final_status") != "FINAL_ARTIFACTS_VERIFIED"
-        ):
-            _fail("C6_EXACT_CHAT_AUTHORITY_CALLBACK_INVALID")
+        _validate_finalized_chat_authority(verified_authority_audit)
         if timeline_offset_ms != SOURCE_LOCAL_START_MS or source_final_end_ms != SOURCE_LOCAL_END_MS:
             _fail("C6_EXACT_CALLBACK_COORDINATE_DRIFT")
         if final_srt_text.encode("utf-8") != staged_reviewed:

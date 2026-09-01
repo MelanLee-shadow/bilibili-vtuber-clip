@@ -470,22 +470,26 @@ def _materialize_final_recut(
     spec_parent: Path | None = None,
     chat_authority_audit: dict | None = None,
     reviewed_baseline_replay_c12_projection: C12FinalDeliveryProjection | None = None,
+    allow_existing_record: bool = False,
 ) -> FinalRecutArtifacts:
     baseline_config = spec.get("subtitle_redelivery_baseline")
     if reviewed_baseline_replay_c12_projection is not None:
         baseline_config = require_c12_baseline_config(baseline_config)
-    (
-        v2_source_binding,
-        absolute_source_start_ms,
-        absolute_source_end_ms,
-    ) = resolve_final_recut_source(
-        spec=spec,
-        piece_provenance_rows=piece_provenance_rows,
-        final_start=final_start,
-        final_end=final_end,
+    if baseline_config is not None and text_override_path is not None:
+        raise SystemExit("REDELIVERY_BASELINE_CONFLICTS_WITH_TEXT_OVERRIDE: use source truth windows for incident corrections")
+    v2_source_binding, absolute_source_start_ms, absolute_source_end_ms = resolve_final_recut_source(
+        spec=spec, piece_provenance_rows=piece_provenance_rows,
+        final_start=final_start, final_end=final_end
     )
     recut_dir = out_root / "replacement_recuts"
     recut_dir.mkdir(exist_ok=True)
+    existing_record_path = recut_dir / f"{cid}.record.json"
+    try:
+        existing_record = bool(os.lstat(existing_record_path))
+    except OSError as exc:
+        existing_record = not isinstance(exc, FileNotFoundError)
+    if baseline_config is not None and existing_record and not allow_existing_record:
+        raise SystemExit("REDELIVERY_BASELINE_EXISTING_RECORD_REQUIRES_PRIVATE_REPLAY")
     media_path = recut_dir / f"{cid}.recut.mp4"
     adapters.run_command(adapters.accurate_recut_command(source_video=padded, output_media=media_path, start_ms=final_start, duration_ms=final_end - final_start))
     write_final_recut_provenance(
@@ -524,11 +528,6 @@ def _materialize_final_recut(
     redelivery_baseline_audit_path: Path | None = None
     redelivery_baseline_audit: dict | None = None
     if baseline_config is not None:
-        if text_override_path is not None:
-            raise SystemExit(
-                "REDELIVERY_BASELINE_CONFLICTS_WITH_TEXT_OVERRIDE: use source truth "
-                "windows for incident corrections"
-            )
         truth_audit = (
             (chat_authority_audit or {}).get("source_subtitle_truth_audit") or {}
         )
@@ -656,7 +655,6 @@ def _materialize_final_recut(
             chat_authority_audit["redelivery_subtitle_baseline_audit"] = (
                 redelivery_baseline_audit
             )
-        subtitle_path.write_text(output_text, encoding="utf-8")
         if redelivery_baseline_audit["status"] == "FAILED":
             raise SystemExit(
                 f"REDELIVERY_SUBTITLE_BASELINE_FAILED: {redelivery_baseline_audit_path}"
@@ -676,6 +674,7 @@ def _materialize_final_recut(
                 f"TITLE_MARK_BALANCE_REQUIRED_AFTER_REDELIVERY: "
                 f"{redelivery_baseline_audit_path}"
             )
+        subtitle_path.write_text(output_text, encoding="utf-8")
     # This is the last text-mutating choke point.  The earlier text pipeline
     # already removes release-invalid slivers, but a hash-bound reviewed
     # baseline is replayed later and can legitimately restore the old cue grid.
@@ -2529,6 +2528,7 @@ def finalize_producer_package(
         reviewed_baseline_replay_c12_projection=(
             reviewed_baseline_replay_c12_projection
         ),
+        allow_existing_record=options.substrate == "reviewed-baseline-replay" and options.prepare_only,
     )
     exact_final_review = _run_exact_final_review_gate(
         cid=cid,

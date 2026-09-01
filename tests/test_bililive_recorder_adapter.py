@@ -598,6 +598,192 @@ def test_truncated_manifest_target_resume_validates_target(tmp_path: Path, monke
     assert calls["remux"] == 0
 
 
+def _truncated_target_timestamp_drift(target: Path) -> tuple[os.stat_result, os.stat_result]:
+    before = target.stat()
+    os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000))
+    after = target.stat()
+    assert after.st_size == before.st_size
+    assert after.st_mode == before.st_mode
+    assert after.st_dev == before.st_dev
+    assert after.st_ino == before.st_ino
+    assert after.st_mtime_ns != before.st_mtime_ns
+    assert after.st_ctime_ns != before.st_ctime_ns
+    return before, after
+
+
+def _truncated_applied_row(args: argparse.Namespace, source: Path) -> tuple[dict, dict]:
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    relative = str(source.relative_to(args.record_root))
+    return state, state["source_dispositions"][relative]
+
+
+def test_truncated_mp4_timestamp_drift_needs_operator_apply(tmp_path: Path, monkeypatch) -> None:
+    args, source, _xml, _manifest, _expected, _calls, _stage = _truncated_manifest_fixture(
+        tmp_path, monkeypatch
+    )
+    adapter.apply_truncated_source_manifest(args)
+    state, row = _truncated_applied_row(args, source)
+    _truncated_target_timestamp_drift(source.with_suffix(".mp4"))
+
+    with pytest.raises(adapter.AdapterError, match="metadata rebind is required"):
+        adapter.revalidate_source_dispositions(
+            state,
+            record_root=args.record_root,
+            room_id=args.room,
+        )
+    assert row["metadata_rebinds"] == []
+
+
+def test_truncated_mp4_timestamp_rebind_is_manifest_bound_and_idempotent(
+    tmp_path: Path, monkeypatch
+) -> None:
+    args, source, _xml, manifest, _expected, calls, _stage = _truncated_manifest_fixture(
+        tmp_path, monkeypatch
+    )
+    adapter.apply_truncated_source_manifest(args)
+    state_before, row_before = _truncated_applied_row(args, source)
+    old_fingerprint = {
+        key: row_before["outputs"]["mp4"][key] for key in adapter._FILE_FINGERPRINT_KEYS
+    }
+    old_state_bytes = args.state_path.read_bytes()
+    _truncated_target_timestamp_drift(source.with_suffix(".mp4"))
+
+    result = adapter.apply_truncated_source_manifest(args)
+    assert result["recovered"] == 1
+    assert calls["remux"] == 1
+    state_after, row_after = _truncated_applied_row(args, source)
+    receipts = row_after["metadata_rebinds"]
+    assert len(receipts) == 1
+    receipt = receipts[0]
+    assert receipt["manifest_sha256"] == manifest["canonical_integrity"]["canonical_json_sha256"]
+    assert receipt["previous_receipt_canonical_sha256"] is None
+    assert receipt["previous_fingerprint"] == {
+        "path": row_before["outputs"]["mp4"]["path"],
+        **old_fingerprint,
+    }
+    assert receipt["changed_fields"] == ["mtime_ns", "ctime_ns"]
+    assert receipt["output_sha256"] == row_before["outputs"]["mp4"]["sha256"]
+    assert receipt["canonical_integrity"] == {
+        "algorithm": "sha256",
+        "canonical_json_sha256": adapter._canonical_json_sha256(
+            {key: value for key, value in receipt.items() if key != "canonical_integrity"}
+        ),
+    }
+    assert row_after["canonical_integrity"] == {
+        "algorithm": "sha256",
+        "canonical_json_sha256": adapter._canonical_json_sha256(
+            {key: value for key, value in row_after.items() if key != "canonical_integrity"}
+        ),
+    }
+    state_after_bytes = args.state_path.read_bytes()
+    assert state_after_bytes != old_state_bytes
+
+    assert adapter.apply_truncated_source_manifest(args)["recovered"] == 1
+    assert calls["remux"] == 1
+    assert args.state_path.read_bytes() == state_after_bytes
+    assert state_after["source_dispositions"] != state_before["source_dispositions"]
+
+    first_receipt_sha256 = receipt["canonical_integrity"]["canonical_json_sha256"]
+    _truncated_target_timestamp_drift(source.with_suffix(".mp4"))
+    adapter.apply_truncated_source_manifest(args)
+    _state_chained, row_chained = _truncated_applied_row(args, source)
+    assert len(row_chained["metadata_rebinds"]) == 2
+    assert (
+        row_chained["metadata_rebinds"][1]["previous_receipt_canonical_sha256"]
+        == first_receipt_sha256
+    )
+
+
+def test_truncated_mp4_timestamp_rebind_rejects_wrong_manifest_sha(
+    tmp_path: Path, monkeypatch
+) -> None:
+    args, source, _xml, _manifest, _expected, _calls, _stage = _truncated_manifest_fixture(
+        tmp_path, monkeypatch
+    )
+    adapter.apply_truncated_source_manifest(args)
+    _truncated_target_timestamp_drift(source.with_suffix(".mp4"))
+    before = args.state_path.read_bytes()
+    args.expected_truncated_manifest_sha256 = "0" * 64
+
+    with pytest.raises(adapter.AdapterError, match="manifest SHA-256"):
+        adapter.apply_truncated_source_manifest(args)
+    assert args.state_path.read_bytes() == before
+    state, row = _truncated_applied_row(args, source)
+    assert row["metadata_rebinds"] == []
+    assert state["source_dispositions"]
+
+
+def test_truncated_mp4_non_timestamp_fingerprint_drift_is_rejected(
+    tmp_path: Path, monkeypatch
+) -> None:
+    args, source, _xml, _manifest, _expected, _calls, _stage = _truncated_manifest_fixture(
+        tmp_path, monkeypatch
+    )
+    adapter.apply_truncated_source_manifest(args)
+    state, row = _truncated_applied_row(args, source)
+    target = source.with_suffix(".mp4")
+    target.chmod(stat.S_IMODE(target.stat().st_mode) ^ stat.S_IXUSR)
+
+    with pytest.raises(adapter.AdapterError, match="fingerprint drifted"):
+        adapter.validate_truncated_source_disposition(
+            source,
+            row,
+            record_root=args.record_root,
+            webhook_files=state["webhook_files"],
+            finalized=state["finalized"],
+        )
+    assert row["metadata_rebinds"] == []
+
+
+def test_truncated_mp4_content_hash_drift_is_rejected(tmp_path: Path, monkeypatch) -> None:
+    args, source, _xml, _manifest, _expected, _calls, _stage = _truncated_manifest_fixture(
+        tmp_path, monkeypatch
+    )
+    adapter.apply_truncated_source_manifest(args)
+    state, row = _truncated_applied_row(args, source)
+    target = source.with_suffix(".mp4")
+    target.write_bytes(b"x" * target.stat().st_size)
+
+    with pytest.raises(adapter.AdapterError, match="SHA-256 drifted"):
+        adapter.validate_truncated_source_disposition(
+            source,
+            row,
+            record_root=args.record_root,
+            webhook_files=state["webhook_files"],
+            finalized=state["finalized"],
+        )
+    assert row["metadata_rebinds"] == []
+
+
+def test_truncated_mp4_metadata_rebind_chain_tamper_is_rejected(
+    tmp_path: Path, monkeypatch
+) -> None:
+    args, source, _xml, _manifest, _expected, _calls, _stage = _truncated_manifest_fixture(
+        tmp_path, monkeypatch
+    )
+    adapter.apply_truncated_source_manifest(args)
+    _state, _row = _truncated_applied_row(args, source)
+    _truncated_target_timestamp_drift(source.with_suffix(".mp4"))
+    adapter.apply_truncated_source_manifest(args)
+    state, row = _truncated_applied_row(args, source)
+    row["metadata_rebinds"][0]["changed_fields"] = ["mtime_ns"]
+    row["canonical_integrity"] = {
+        "algorithm": "sha256",
+        "canonical_json_sha256": adapter._canonical_json_sha256(
+            {key: value for key, value in row.items() if key != "canonical_integrity"}
+        ),
+    }
+
+    with pytest.raises(adapter.AdapterError, match="receipt integrity mismatch"):
+        adapter.validate_truncated_source_disposition(
+            source,
+            row,
+            record_root=args.record_root,
+            webhook_files=state["webhook_files"],
+            finalized=state["finalized"],
+        )
+
+
 def test_truncated_manifest_ignored_fragment_writes_no_outputs(tmp_path: Path, monkeypatch) -> None:
     args, source, _xml, manifest, expected, calls, _stage = _truncated_manifest_fixture(
         tmp_path, monkeypatch
@@ -3500,6 +3686,30 @@ def test_idle_status_does_not_probe_historical_flv_bytes(
     )
 
     assert status["latest_source"] is None
+
+
+def test_local_processing_error_keeps_graphql_reachability_and_idle_status(
+    tmp_path: Path,
+) -> None:
+    error = "source disposition drift: local processing error"
+    status = adapter.build_status(
+        room_id=123456,
+        room={
+            "streaming": False,
+            "recording": False,
+            "ioStats": {},
+            "recordingStats": {},
+        },
+        now_epoch=1.0,
+        record_root=tmp_path,
+        error=error,
+    )
+
+    assert status["service_reachable"] is True
+    assert status["running_status"] == "idle"
+    assert status["streaming"] is False
+    assert status["recording"] is False
+    assert status["error"] == error
 
 
 def test_closed_source_finalization_error_keeps_downstream_fail_closed(

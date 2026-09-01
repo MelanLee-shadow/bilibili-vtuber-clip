@@ -67,6 +67,13 @@ TRUNCATED_SOURCE_DISPOSITION_ERROR_CATEGORIES = frozenset(
 TRUNCATED_SOURCE_DISPOSITION_MAX_FRAGMENT_BYTES = 5_000_000
 TRUNCATED_SOURCE_DISPOSITION_MAX_FRAGMENT_DURATION_SECONDS = 12.0
 TRUNCATED_SOURCE_MANIFEST_SCHEMA_VERSION = "recording-truncated-source-manifest.v1"
+# A recovered row may only rebind output metadata through the explicit
+# manifest-apply path.  This is deliberately separate from the generic FUSE
+# identity-rebind ledger used by connection-stub rows.
+TRUNCATED_SOURCE_METADATA_REBIND_SCHEMA_VERSION = (
+    "recording-truncated-source-metadata-rebind.v1"
+)
+TRUNCATED_SOURCE_METADATA_REBIND_POLICY = "OUTPUT_MP4_MTIME_CTIME_REATTESTATION"
 # Current operator-attested FFmpeg warning projection.  Future warning text
 # requires a new manifest value; the normalization rule below remains narrow.
 TRUNCATED_SOURCE_CURRENT_NORMALIZED_WARNING_SHA256 = (
@@ -166,6 +173,24 @@ class SourceDispositionIdentityRebindRequired(AdapterError):
         super().__init__("source disposition FUSE identity rebind is required")
         self.validation = validation
         self.paths = paths
+
+
+class TruncatedSourceMetadataRebindRequired(AdapterError):
+    """A recovered row needs the explicit operator metadata-rebind apply."""
+
+    def __init__(
+        self,
+        *,
+        previous_fingerprint: dict[str, Any],
+        current_fingerprint: dict[str, Any],
+        previous_receipt_sha256: str | None,
+        output_sha256: str,
+    ) -> None:
+        super().__init__("truncated source output MP4 metadata rebind is required")
+        self.previous_fingerprint = previous_fingerprint
+        self.current_fingerprint = current_fingerprint
+        self.previous_receipt_sha256 = previous_receipt_sha256
+        self.output_sha256 = output_sha256
 
 
 _IDENTITY_REBIND_CHILDREN: dict[int, subprocess.Popen[bytes]] = {}
@@ -1466,7 +1491,9 @@ _TRUNCATED_ROW_COMMON_FIELDS = {
 _TRUNCATED_RECOVERED_FIELDS = _TRUNCATED_ROW_COMMON_FIELDS | {
     "outputs",
     "finalized_ledger",
+    "metadata_rebinds",
 }
+_TRUNCATED_RECOVERED_LEGACY_FIELDS = _TRUNCATED_RECOVERED_FIELDS - {"metadata_rebinds"}
 _TRUNCATED_IGNORED_FIELDS = _TRUNCATED_ROW_COMMON_FIELDS
 _TRUNCATED_XML_RECOVERY_FIELDS = {
     "repaired_sha256",
@@ -1536,6 +1563,22 @@ _TRUNCATED_RECOVERY_EXPECTED_FIELDS = {
     "output_sha256",
     "stream_copy_stderr_normalized_sha256",
     "full_decode_stderr_sha256",
+}
+_TRUNCATED_METADATA_REBIND_FIELDS = (
+    "path",
+    *_FILE_FINGERPRINT_KEYS,
+)
+_TRUNCATED_METADATA_REBIND_CHANGED_FIELDS = ["mtime_ns", "ctime_ns"]
+_TRUNCATED_METADATA_REBIND_RECEIPT_FIELDS = {
+    "schema_version",
+    "policy",
+    "manifest_sha256",
+    "previous_receipt_canonical_sha256",
+    "previous_fingerprint",
+    "current_fingerprint",
+    "changed_fields",
+    "output_sha256",
+    "canonical_integrity",
 }
 
 
@@ -1919,6 +1962,139 @@ def _truncated_output_binding(
     return value
 
 
+def _truncated_metadata_fingerprint(value: Any, *, field: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != set(_TRUNCATED_METADATA_REBIND_FIELDS):
+        raise _truncated_error(f"{field} fields are invalid")
+    if not isinstance(value.get("path"), str) or not value["path"]:
+        raise _truncated_error(f"{field}.path is invalid")
+    _truncated_fingerprint(
+        {key: value.get(key) for key in _FILE_FINGERPRINT_KEYS},
+        field=field,
+    )
+    return value
+
+
+def _truncated_metadata_fingerprint_from_binding(binding: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "path": binding.get("path"),
+        **{key: binding.get(key) for key in _FILE_FINGERPRINT_KEYS},
+    }
+
+
+def _validate_truncated_metadata_rebind_chain(
+    mp4: dict[str, Any],
+    metadata_rebinds: Any,
+) -> tuple[dict[str, Any], str | None]:
+    """Replay the row-local MP4 timestamp-rebind chain to its effective stat."""
+
+    if metadata_rebinds is None:
+        receipts: list[Any] = []
+    elif isinstance(metadata_rebinds, list):
+        receipts = metadata_rebinds
+    else:
+        raise _truncated_error("metadata rebind ledger is malformed")
+    previous = _truncated_metadata_fingerprint_from_binding(mp4)
+    previous_receipt_sha256: str | None = None
+    manifest_sha256: str | None = None
+    for receipt in receipts:
+        if not isinstance(receipt, dict) or set(receipt) != _TRUNCATED_METADATA_REBIND_RECEIPT_FIELDS:
+            raise _truncated_error("metadata rebind receipt is malformed")
+        if receipt.get("schema_version") != TRUNCATED_SOURCE_METADATA_REBIND_SCHEMA_VERSION:
+            raise _truncated_error("metadata rebind receipt schema version is invalid")
+        if receipt.get("policy") != TRUNCATED_SOURCE_METADATA_REBIND_POLICY:
+            raise _truncated_error("metadata rebind receipt policy is invalid")
+        receipt_manifest_sha256 = _truncated_hex(
+            receipt.get("manifest_sha256"),
+            field="metadata_rebind.manifest_sha256",
+        )
+        if manifest_sha256 is None:
+            manifest_sha256 = receipt_manifest_sha256
+        elif receipt_manifest_sha256 != manifest_sha256:
+            raise _truncated_error("metadata rebind manifest hash chain drifted")
+        receipt_previous_sha256 = receipt.get("previous_receipt_canonical_sha256")
+        if receipt_previous_sha256 is not None:
+            _truncated_hex(
+                receipt_previous_sha256,
+                field="metadata_rebind.previous_receipt_canonical_sha256",
+            )
+        if receipt_previous_sha256 != previous_receipt_sha256:
+            raise _truncated_error("metadata rebind receipt chain drifted")
+        integrity = receipt.get("canonical_integrity")
+        unsigned = {key: value for key, value in receipt.items() if key != "canonical_integrity"}
+        if integrity != {
+            "algorithm": "sha256",
+            "canonical_json_sha256": _canonical_json_sha256(unsigned),
+        }:
+            raise _truncated_error("metadata rebind receipt integrity mismatch")
+        if receipt.get("output_sha256") != mp4.get("sha256"):
+            raise _truncated_error("metadata rebind output SHA-256 drifted")
+        prior = _truncated_metadata_fingerprint(
+            receipt.get("previous_fingerprint"),
+            field="metadata_rebind.previous_fingerprint",
+        )
+        current = _truncated_metadata_fingerprint(
+            receipt.get("current_fingerprint"),
+            field="metadata_rebind.current_fingerprint",
+        )
+        if prior != previous or current["path"] != prior["path"]:
+            raise _truncated_error("metadata rebind fingerprint chain drifted")
+        if receipt.get("changed_fields") != _TRUNCATED_METADATA_REBIND_CHANGED_FIELDS:
+            raise _truncated_error("metadata rebind changed-fields projection drifted")
+        if any(
+            prior[key] != current[key]
+            for key in _FILE_FINGERPRINT_KEYS
+            if key not in _TRUNCATED_METADATA_REBIND_CHANGED_FIELDS
+        ) or any(
+            prior[key] == current[key] for key in _TRUNCATED_METADATA_REBIND_CHANGED_FIELDS
+        ):
+            raise _truncated_error("metadata rebind fingerprint projection drifted")
+        previous = current
+        previous_receipt_sha256 = str(receipt["canonical_integrity"]["canonical_json_sha256"])
+    return previous, previous_receipt_sha256
+
+
+def _append_truncated_metadata_rebind(
+    row: dict[str, Any],
+    *,
+    manifest_sha256: str,
+    required: TruncatedSourceMetadataRebindRequired,
+) -> None:
+    metadata_rebinds = row.get("metadata_rebinds")
+    if metadata_rebinds is None:
+        metadata_rebinds = []
+    if not isinstance(metadata_rebinds, list):
+        raise _truncated_error("metadata rebind ledger is malformed")
+    outputs = row.get("outputs")
+    mp4 = outputs.get("mp4") if isinstance(outputs, dict) else None
+    if not isinstance(mp4, dict):
+        raise _truncated_error("metadata rebind output binding is missing")
+    output_sha256 = _truncated_hex(mp4.get("sha256"), field="outputs.mp4.sha256")
+    if output_sha256 != required.output_sha256:
+        raise _truncated_error("metadata rebind output SHA-256 drifted")
+    receipt: dict[str, Any] = {
+        "schema_version": TRUNCATED_SOURCE_METADATA_REBIND_SCHEMA_VERSION,
+        "policy": TRUNCATED_SOURCE_METADATA_REBIND_POLICY,
+        "manifest_sha256": _truncated_hex(manifest_sha256, field="metadata rebind manifest SHA-256"),
+        "previous_receipt_canonical_sha256": required.previous_receipt_sha256,
+        "previous_fingerprint": required.previous_fingerprint,
+        "current_fingerprint": required.current_fingerprint,
+        "changed_fields": list(_TRUNCATED_METADATA_REBIND_CHANGED_FIELDS),
+        "output_sha256": output_sha256,
+    }
+    receipt["canonical_integrity"] = {
+        "algorithm": "sha256",
+        "canonical_json_sha256": _canonical_json_sha256(receipt),
+    }
+    metadata_rebinds.append(receipt)
+    row["metadata_rebinds"] = metadata_rebinds
+    row["canonical_integrity"] = {
+        "algorithm": "sha256",
+        "canonical_json_sha256": _canonical_json_sha256(
+            {key: value for key, value in row.items() if key != "canonical_integrity"}
+        ),
+    }
+
+
 def _truncated_finalized_ledger(
     value: Any,
     *,
@@ -2014,6 +2190,7 @@ def build_truncated_source_disposition(
             raise _truncated_error("recovered disposition requires outputs and finalized ledger")
         row["outputs"] = outputs
         row["finalized_ledger"] = finalized_ledger
+        row["metadata_rebinds"] = []
         _truncated_output_binding(outputs.get("mp4"), field="outputs.mp4", path=target, media=True)
         _truncated_output_binding(
             outputs.get("jsonl"), field="outputs.jsonl", path=source_flv.with_suffix(".jsonl"), media=False
@@ -2022,6 +2199,7 @@ def build_truncated_source_disposition(
             outputs.get("meta"), field="outputs.meta", path=source_flv.with_suffix(".meta.json"), media=False
         )
         _truncated_finalized_ledger(finalized_ledger, source=source_flv, target=target)
+        _validate_truncated_metadata_rebind_chain(outputs["mp4"], row["metadata_rebinds"])
     elif outputs is not None or finalized_ledger is not None:
         raise _truncated_error("ignored fragment cannot bind outputs or finalized ledger")
     row["canonical_integrity"] = {
@@ -2052,14 +2230,14 @@ def validate_truncated_source_disposition(
     action = row.get("action")
     if row.get("schema_version") != TRUNCATED_SOURCE_DISPOSITION_SCHEMA_VERSION:
         raise _truncated_error("schema version is invalid")
-    expected_fields = (
-        _TRUNCATED_RECOVERED_FIELDS
+    expected_field_sets = (
+        (_TRUNCATED_RECOVERED_FIELDS, _TRUNCATED_RECOVERED_LEGACY_FIELDS)
         if action == TRUNCATED_SOURCE_DISPOSITION_RECOVERED
-        else _TRUNCATED_IGNORED_FIELDS
+        else (_TRUNCATED_IGNORED_FIELDS,)
         if action == TRUNCATED_SOURCE_DISPOSITION_IGNORED
-        else set()
+        else ()
     )
-    if not expected_fields or set(row) != expected_fields:
+    if not expected_field_sets or set(row) not in expected_field_sets:
         raise _truncated_error("row field set or action is invalid")
     integrity = row.get("canonical_integrity")
     unsigned = {key: value for key, value in row.items() if key != "canonical_integrity"}
@@ -2154,6 +2332,12 @@ def validate_truncated_source_disposition(
         media=True,
         expected_relative=str(PurePosixPath(relative).with_suffix(".mp4")),
     )
+    if "metadata_rebinds" in row and not isinstance(row["metadata_rebinds"], list):
+        raise _truncated_error("metadata rebind ledger is malformed")
+    effective_mp4, previous_receipt_sha256 = _validate_truncated_metadata_rebind_chain(
+        mp4,
+        row.get("metadata_rebinds") if "metadata_rebinds" in row else None,
+    )
     jsonl_binding = _truncated_output_binding(
         outputs["jsonl"],
         field="outputs.jsonl",
@@ -2173,7 +2357,35 @@ def validate_truncated_source_disposition(
         (jsonl_binding, jsonl, True),
         (meta_binding, meta, True),
     ):
-        if _regular_file_fingerprint(path) != {key: binding.get(key) for key in _FILE_FINGERPRINT_KEYS}:
+        current_fingerprint = _regular_file_fingerprint(path)
+        expected_fingerprint = (
+            {key: effective_mp4[key] for key in _FILE_FINGERPRINT_KEYS}
+            if path == target
+            else {key: binding.get(key) for key in _FILE_FINGERPRINT_KEYS}
+        )
+        if current_fingerprint != expected_fingerprint:
+            if path == target:
+                changed_fields = [
+                    key
+                    for key in _FILE_FINGERPRINT_KEYS
+                    if expected_fingerprint[key] != current_fingerprint[key]
+                ]
+                current_sha256 = sha256_file(path)
+                if changed_fields == _TRUNCATED_METADATA_REBIND_CHANGED_FIELDS:
+                    if current_sha256 != binding.get("sha256"):
+                        raise _truncated_error("outputs.mp4 SHA-256 drifted")
+                    raise TruncatedSourceMetadataRebindRequired(
+                        previous_fingerprint={
+                            "path": mp4["path"],
+                            **expected_fingerprint,
+                        },
+                        current_fingerprint={
+                            "path": mp4["path"],
+                            **current_fingerprint,
+                        },
+                        previous_receipt_sha256=previous_receipt_sha256,
+                        output_sha256=str(binding["sha256"]),
+                    )
             raise _truncated_error(f"{path.name} fingerprint drifted")
         if check_hash and sha256_file(path) != binding.get("sha256"):
             raise _truncated_error(f"{path.name} SHA-256 drifted")
@@ -2885,7 +3097,7 @@ def _apply_truncated_source_manifest_locked(args: argparse.Namespace) -> dict[st
         if existing is not None:
             if not target.exists():
                 raise _truncated_error(f"existing recovered disposition target is missing: {relative}")
-            _truncated_recovery_from_stage(
+            recovery, _outputs, _commands = _truncated_recovery_from_stage(
                 context,
                 expected=expected,
                 packet_loss_maximum=manifest_row["packet_loss_maximum"],
@@ -2895,17 +3107,41 @@ def _apply_truncated_source_manifest_locked(args: argparse.Namespace) -> dict[st
                 ffprobe_bin=args.ffprobe,
                 remux=False,
             )
-            validate_truncated_source_disposition(
-                source,
-                existing,
-                record_root=args.record_root,
-                webhook_files=state["webhook_files"],
-                finalized=state["finalized"],
-            )
             _truncated_apply_recovery_matches_manifest(
-                existing["recovery"], manifest_row, existing.get("outputs")
+                recovery, manifest_row, existing.get("outputs")
             )
-            recovered_rows[relative] = existing
+            candidate = existing
+            try:
+                validate_truncated_source_disposition(
+                    source,
+                    candidate,
+                    record_root=args.record_root,
+                    webhook_files=state["webhook_files"],
+                    finalized=state["finalized"],
+                )
+            except TruncatedSourceMetadataRebindRequired as required:
+                current_fingerprint = _regular_file_fingerprint(target)
+                expected_current = {
+                    key: required.current_fingerprint[key] for key in _FILE_FINGERPRINT_KEYS
+                }
+                if current_fingerprint != expected_current:
+                    raise _truncated_error(
+                        f"existing recovered output changed during metadata rebind: {relative}"
+                    )
+                candidate = json.loads(json.dumps(existing))
+                _append_truncated_metadata_rebind(
+                    candidate,
+                    manifest_sha256=manifest_sha256,
+                    required=required,
+                )
+                validate_truncated_source_disposition(
+                    source,
+                    candidate,
+                    record_root=args.record_root,
+                    webhook_files=state["webhook_files"],
+                    finalized=state["finalized"],
+                )
+            recovered_rows[relative] = candidate
             continue
 
         output_path = target if target.exists() else stage
@@ -4810,7 +5046,7 @@ def build_status(
     if newest and current_size <= 0 and recording:
         current_size = int(newest["size_bytes"])
     network_mbps = float(io_stats.get("networkMbps") or 0.0)
-    service_reachable = room is not None and error is None
+    service_reachable = room is not None
     effective_error = error
     if effective_error is None and finalize_errors:
         effective_error = f"{len(finalize_errors)} closed recording(s) failed finalization"

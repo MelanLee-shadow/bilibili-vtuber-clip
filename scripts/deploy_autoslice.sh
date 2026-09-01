@@ -1356,6 +1356,7 @@ wait_adapter_runtime() {
            [ "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py 2>/dev/null | awk '{print $1}')" = "$expected_sha" ] && \
            python3 - /opt/bilive/recording/status.json "$restarted_after" "$require_clean" "$bootstrap_receipt" "$bootstrap_marker" "$backup/external/connection_stub_bootstrap_preimage/adapter-state.json" "$backup/external/connection_stub_bootstrap_preimage/status.json" <<'PY_ROLLBACK_FRESH'
 import json
+import re
 import sys
 import time
 
@@ -1376,6 +1377,16 @@ if require_clean:
     assert error is None
 else:
     clean = payload.get("service_reachable") is True and error is None
+    truncated_repair_preimage = (
+        payload.get("service_reachable") is True
+        and isinstance(error, str)
+        and re.fullmatch(
+            r"source disposition drift: 20\d{2}-\d{2}-\d{2}/22966160_[^:\n]+: "
+            r"truncated source output MP4 metadata rebind is required",
+            error,
+        )
+        and payload.get("finalize_errors") == []
+    )
     supported_preimage = (
         payload.get("service_reachable") is False
         and isinstance(error, str)
@@ -1456,7 +1467,7 @@ else:
             and payload.get("finalize_errors") == original.get("finalize_errors")
             and {entry.get("source") for entry in payload.get("finalize_errors", []) if isinstance(entry, dict)} == expected
         )
-    assert clean or supported_preimage or bootstrap_preimage
+    assert clean or truncated_repair_preimage or supported_preimage or bootstrap_preimage
 PY_ROLLBACK_FRESH
         then
             docker exec bililive_adapter timeout 15 find /adapter/Videos -mindepth 1 -maxdepth 1 -print -quit >/dev/null
@@ -2786,13 +2797,24 @@ from pathlib import Path
 
 payload = json.load(open(sys.argv[1], encoding="utf-8"))
 generated = float(payload["generated_at_epoch"])
+error = payload.get("error")
+truncated_repair_preimage = (
+    payload.get("service_reachable") is True
+    and isinstance(error, str)
+    and re.fullmatch(
+        r"source disposition drift: 20\d{2}-\d{2}-\d{2}/22966160_[^:\n]+: "
+        r"truncated source output MP4 metadata rebind is required",
+        error,
+    )
+    and payload.get("finalize_errors") == []
+)
 assert generated >= float(sys.argv[2])
 assert 0 <= time.time() - generated <= 90
 assert payload.get("service_reachable") is True
 assert payload.get("streaming") is False
 assert payload.get("recording") is False
 assert payload.get("finalizing") is False
-if payload.get("error") is not None:
+if error is not None and not truncated_repair_preimage:
     state_path = Path(sys.argv[3])
     info = state_path.lstat()
     assert stat.S_ISREG(info.st_mode) and not state_path.is_symlink()
@@ -2826,7 +2848,7 @@ if payload.get("error") is not None:
         assert (relative, error) not in pairs
         pairs.add((relative, error))
 else:
-    assert payload.get("error") is None
+    assert error is None or truncated_repair_preimage
 PY_FRESH
         then
             docker exec bililive_adapter timeout 15 find /adapter/Videos -mindepth 1 -maxdepth 1 -print -quit >/dev/null

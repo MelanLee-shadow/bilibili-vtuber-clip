@@ -183,7 +183,7 @@ def replay_publish_adapter(
             recovery_publication_authority=kwargs.get(
                 "recovery_publication_authority"
             ),
-            stage_cover=(None if root_reviewed else carry), source_fact_llm_call=source_fact_llm,
+            stage_cover=carry, source_fact_llm_call=source_fact_llm,
             story_contract_rebuilder=kwargs.get("story_contract_rebuilder"),
             public_text_staging_resolver=c6_public_text_resolver,
             private_artifact_root=None,

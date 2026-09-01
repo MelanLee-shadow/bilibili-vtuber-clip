@@ -118,6 +118,23 @@ def _normalized_fresh_story(story: Mapping[str, object]) -> dict[str, object]:
     return normalized
 
 
+def _preserve_persisted_story_boundary(
+    *, old_story: Mapping[str, object], fresh_story: Mapping[str, object]
+) -> dict[str, object]:
+    boundary = old_story.get("boundary_semantic_review")
+    if (
+        not isinstance(boundary, Mapping)
+        or boundary.get("candidate_id") != CANDIDATE_ID
+        or boundary.get("review_scope") != "final_delivery"
+    ):
+        raise C6ReplayPublicTextProjectionError(
+            "C6_OLD_STORY_BOUNDARY_REVIEW_INVALID"
+        )
+    normalized = dict(fresh_story)
+    normalized["boundary_semantic_review"] = copy.deepcopy(dict(boundary))
+    return normalized
+
+
 def _root_consumption(authority: object) -> dict[str, object]:
     """Rebuild the root reviewed consumption hash without trusting old story bytes."""
 
@@ -518,7 +535,9 @@ def build_c6_replay_public_text_resolver(*, plan: object, root: Path) -> Callabl
             raise C6ReplayPublicTextProjectionError("C6_FRESH_STORY_REBUILD_FAILED") from exc
         if not isinstance(fresh, Mapping):
             raise C6ReplayPublicTextProjectionError("C6_FRESH_STORY_CONTRACT_INVALID")
-        fresh_dict = dict(fresh)
+        fresh_dict = _preserve_persisted_story_boundary(
+            old_story=story_contract, fresh_story=fresh
+        )
         paths = _validate_story_diff(old_story=story_contract, fresh_story=fresh_dict, authority=authority, old_transcript=transcript_old, new_transcript=transcript_new)
         consumption = _build_receipt(plan=plan, authority=authority, old_story=story_contract, fresh_story=fresh_dict, baseline_config=baseline_config, baseline_path=baseline_path, pipeline_path=pipeline_path, ledger_path=ledger_path, diff_path=diff_path, root_authority_consumption=root_consumption, diff_paths=paths, transcript_old=transcript_old, transcript_new=transcript_new, pipeline_sha=pipeline_sha, baseline_sha=baseline_sha)
         return _staging_resolution(authority, fresh_dict, consumption.as_dict())

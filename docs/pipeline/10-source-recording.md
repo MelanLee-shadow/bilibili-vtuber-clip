@@ -188,8 +188,15 @@
   typed row 完整重验后抑制同一 relative path 的普通错误，inventory 记 `WARN`。
 - recovery row 的 canonical JSON hash、路径安全性、webhook/error projection、原件与
   输出 fingerprint 任一漂移均 fail closed；每分钟只比对 source/target fingerprint，
-  不重复读取大 FLV，XML/小 sidecar 才按绑定 SHA 重验。该 metadata drift ceiling 暂不
-  提供 CloudFS FUSE rebind；需要时另加 operator-attested rebind receipt。
+  不重复读取大 FLV，XML/小 sidecar 才按绑定 SHA 重验。MP4 仅有 `mtime_ns`、`ctime_ns`
+  漂移且 bytes/SHA、path/size/mode/device/inode 全等时，才可复用同一
+  `--apply-truncated-source-manifest` + exact
+  `--expected-truncated-manifest-sha256` + `--offline-confirmed` + state lock 入口，
+  在既有 recovered row 内追加 hash-bound `metadata_rebinds` receipt；receipt 保留
+  old/new fingerprint、changed fields、输出 SHA、manifest SHA、前 receipt hash 和自身
+  canonical seal，并将 row integrity 重算。validator 只重放这条 receipt chain 得到
+  effective fingerprint；source/XML/JSONL/meta、MP4 其他字段或 bytes 漂移仍拒绝，serve
+  不自动建 receipt，ordinary row 不适用，重复 apply 当前状态必须无新 receipt。
 - `scripts/session_autoslice.py` 只枚举封口后的
   `<ROOM>_*.mp4`；30 分钟段只是源容器，整场候选仍跨所有 segment 全局排序。
 
