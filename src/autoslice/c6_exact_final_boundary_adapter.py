@@ -36,9 +36,9 @@ FROZEN_DELIVERY_VIDEO_SHA256 = "sha256:982e0fea91ef222302ec5cb30a965d0222164a87f
 CHAT_SHA256 = "sha256:fb7c0bb21ef6e775c22ebc7c75c83d09e6500d8623d80d35c9b2cb27ef0cd3a9"
 BOUNDARY_AUDIT_SHA256 = "sha256:5231b6319b2bfa827ce3b404da7fcf3a7c33ea226314a0cfefde8195b1c5aec1"
 AUTHORITY_SELF_HASH = "sha256:7d38e745cc75330dbc324a395ef3192693c672709451a18c2c6ff3cfd3f45eea"
-# The split-pin correction changes stage.json twice plus its self-seal, so the
-# raw stage-byte pin must track the resulting deterministic document.
-STAGE_JSON_SHA256 = "sha256:9cd6915c22a97ac7aefb0ddd253f288da93cc12675b9ab595e2689ebfba75cdf"
+# This raw stage.json pin follows the stage_replay/live-record bytes.  Correcting
+# the adapter's old 63-digit replay-plan typo did not change those stage bytes.
+STAGE_JSON_SHA256 = "sha256:b23b2a7997a00c0f1a6ace98b797cf37091914e47435d7284e0aaf31de412116"
 # This is the source's sealed logical identity.  It is deliberately not
 # substituted for a byte hash of a separately located padded file.
 SOURCE_MEDIA_IDENTITY = "sha256:0f0770a9426c48fee5457cf9639a77e5a477f41ec806f4e4789e19c336e1aae5"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import stat
 import subprocess
@@ -140,6 +141,8 @@ def _fixture(tmp_path: Path, *, foreign_cron: str = "") -> tuple[Path, dict[str,
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
+    fixture_python = bin_dir / "python"
+    _write(fixture_python, f"#!/bin/sh\nexec {shlex.quote(sys.executable)} \"$@\"\n", 0o755)
     mount_probe = bin_dir / "findmnt"
     _write(mount_probe, f"#!/bin/sh\nprintf '%s fuse CloudFS\\n' '{mount}'\n", 0o755)
     flock = bin_dir / "flock"
@@ -182,9 +185,9 @@ def _fixture(tmp_path: Path, *, foreign_cron: str = "") -> tuple[Path, dict[str,
         "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
         "OCI3_NO_UPLOAD_SOAK_TEST_MODE": "1",
         "OCI3_NO_UPLOAD_SOAK_TEST_ROOT": str(root),
-        "OCI3_NO_UPLOAD_SOAK_TEST_MAIN_PYTHON": sys.executable,
-        "OCI3_NO_UPLOAD_SOAK_TEST_DIAR_PYTHON": sys.executable,
-        "OCI3_NO_UPLOAD_SOAK_TEST_ENGINE_PYTHON": sys.executable,
+        "OCI3_NO_UPLOAD_SOAK_TEST_MAIN_PYTHON": str(fixture_python),
+        "OCI3_NO_UPLOAD_SOAK_TEST_DIAR_PYTHON": str(fixture_python),
+        "OCI3_NO_UPLOAD_SOAK_TEST_ENGINE_PYTHON": str(fixture_python),
         "OCI3_NO_UPLOAD_SOAK_TEST_AGY": str(agy),
         "OCI3_NO_UPLOAD_SOAK_TEST_FINDMNT": str(mount_probe),
         "OCI3_NO_UPLOAD_SOAK_TEST_CRONTAB": str(crontab),

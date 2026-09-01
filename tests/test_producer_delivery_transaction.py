@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -130,8 +131,12 @@ def test_talk_summary_appends_suffix_without_replacing_a_dotted_hook(tmp_path: P
 def test_same_path_and_bytes_with_replaced_source_inode_gets_a_new_handle(tmp_path: Path):
     root, source, _target, original = _prepared(tmp_path)
     payload = source.read_bytes()
-    source.unlink()
-    source.write_bytes(payload)
+    source_inode = source.stat().st_ino
+    replacement = source.with_name(f".{source.name}.replacement")
+    replacement.write_bytes(payload)
+    replacement.chmod(source.stat().st_mode & 0o777)
+    assert replacement.stat().st_ino != source_inode
+    os.replace(replacement, source)
     replacement = prepare_delivery(
         runtime_root=root,
         lane="talk",
@@ -158,9 +163,12 @@ def test_replaced_same_bytes_staged_inode_writes_no_journal_or_target(tmp_path: 
     document = json.loads(prepared.manifest_path.read_text(encoding="utf-8"))
     staged = Path(document["artifacts"][0]["staged_path"])
     payload = staged.read_bytes()
-    staged.unlink()
-    staged.write_bytes(payload)
-    staged.chmod(0o600)
+    staged_inode = staged.stat().st_ino
+    replacement = staged.with_name(f".{staged.name}.replacement")
+    replacement.write_bytes(payload)
+    replacement.chmod(0o600)
+    assert replacement.stat().st_ino != staged_inode
+    os.replace(replacement, staged)
     with exclusive_runner_commit(root) as lease:
         with pytest.raises(ProducerDeliveryTransactionError, match="staged preimage drifts"):
             commit_prepared_delivery(handle=prepared, lease=lease)
