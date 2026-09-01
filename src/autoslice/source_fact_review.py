@@ -33,6 +33,10 @@ from src.autoslice.candidate_public_text_surface_authority import (
     build_public_text_source_fact_context,
     load_candidate_public_text_surface_authority,
 )
+from src.autoslice.candidate_source_fact_refresh import (
+    validate_candidate_public_text_source_fact_refresh_from_source_fact,
+)
+from src.autoslice.fastlane_c3_source_fact_supersession import DECISION as C3_TERMINAL_SOURCE_FACT_SUPERSESSION_DECISION, validate_c3_source_fact_review_from_validation
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.deterministic_text_surface_resolution import (
     CANDIDATE_ID as DETERMINISTIC_TEXT_NARROWING_CANDIDATE_ID,
@@ -54,14 +58,16 @@ from src.autoslice.manual_title_keep_authority import (
     read_regular_no_symlink,
     validate_manual_title_keep_authority,
 )
+from src.autoslice.qixi_source_fact_terminal_preservation import (
+    DECISION as QIXI_TERMINAL_TEXT_PRESERVATION_DECISION,
+    validate_terminal_preservation_source_fact_review,
+)
+from src.autoslice.source_fact_review_shape import source_fact_review_passes_shape
 from src.autoslice.surface_canon import (
-    CHANNEL_PROFILE,
-    canonicalize_hard_meme_surfaces,
+    CHANNEL_PROFILE, canonicalize_hard_meme_surfaces,
     hard_meme_surface_rules,
 )
 from src.autoslice.title_policy import publish_title_policy_violations
-
-
 SCHEMA_VERSION = "lidousha-source-fact-review.v1"
 RESCORE_CANDIDATE_SCHEMA_VERSION = "source-fact-rescore-candidate.v1"
 ENTITY_CONTEXT_SCHEMA_VERSION = "source-fact-entity-context.v1"
@@ -83,8 +89,6 @@ _CANDIDATE_RECUT_SUFFIX_RX = re.compile(r"r\d+$")
 _SHA256_VALUE_RX = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _SPEAKER_EVIDENCE_UNSET = object()
 DETERMINISTIC_TEXT_NARROWING_PASS_DECISION = "DETERMINISTIC_TEXT_NARROWING"
-
-
 @dataclass(frozen=True, slots=True)
 class _ResolvedEntityContext:
     """Runtime projection plus its relocation-safe receipt representation."""
@@ -580,19 +584,24 @@ def _evidence_row_is_bound(
         quoted_text = source_label.group(1)
         if _compact(quoted_text) and _compact(quoted_text) in _compact(final_transcript):
             return True
-        # ``final_transcript`` (unlike ``speaker_transcript``) carries no line
-        # numbers — see ``build_addressee_evidence``/``build_addressee_transcripts``,
-        # which join bare cue text.  When there is no numbered speaker
-        # transcript to anchor citations to (uniform_host's authorized
-        # absence, ``ABSENCE_POLICY_ID``), the judge sometimes invents a
-        # leading "N " / "N.M " index out of habit before quoting a real
-        # line.  Tolerate stripping exactly one such invented prefix — the
-        # remaining quoted text must still be an exact, literal substring of
-        # ``final_transcript``; this does not relax what counts as evidence,
-        # only the citation-label formatting around it.
-        unnumbered = re.sub(r"\A\s*\d+(?:\.\d+)?\s+", "", quoted_text, count=1)
-        if unnumbered != quoted_text and _compact(unnumbered):
-            return bool(_compact(unnumbered) in _compact(final_transcript))
+        # ``final_transcript`` joins bare cue text — no line numbers (unlike
+        # ``speaker_transcript``; see ``build_addressee_evidence``).  With no
+        # numbered transcript to anchor to (uniform_host authorized absence,
+        # ``ABSENCE_POLICY_ID``) the judge invents locators: a leading "N "
+        # index, or a whole fabricated SRT block (8/19 production, 七夕
+        # auto_113022_354_496).  Strip at most one invented index and one
+        # invented timestamp line; the remainder must still be an exact
+        # literal substring — this relaxes the citation shell, never what
+        # counts as evidence.
+        stripped = re.sub(r"\A\s*\d+(?:\.\d+)?\s+", "", quoted_text, count=1)
+        stripped = re.sub(
+            r"\A\s*\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}\s*\n?",
+            "",
+            stripped,
+            count=1,
+        )
+        if stripped != quoted_text and _compact(stripped):
+            return bool(_compact(stripped) in _compact(final_transcript))
         return False
     speaker_label = re.fullmatch(
         rf"\s*{re.escape(SPEAKER_TRANSCRIPT_LABEL)}\s*:\s*(.+?)\s*",
@@ -1216,36 +1225,12 @@ def review_and_repair_source_facts(
 
 
 def source_fact_review_passes(review: object) -> bool:
-    decision = review.get("decision") if isinstance(review, Mapping) else None
-    decision_shape_valid = (
-        decision in {"KEEP", "REPAIRED"}
-        or (
-            decision == MANUAL_TITLE_KEEP_PASS_DECISION
-            and isinstance(review.get("blocked_source_fact_review"), Mapping)
-            and isinstance(review.get("manual_title_keep_authority_consumption"), Mapping)
-            and review["manual_title_keep_authority_consumption"].get("status") == "CONSUMED"
-            and isinstance(review.get("recorded_dissent"), Mapping)
-            and review["recorded_dissent"].get("status") == "RECORDED_NON_BLOCKING"
-        )
-        or (
-            decision == DETERMINISTIC_TEXT_NARROWING_PASS_DECISION
-            and isinstance(review.get("blocked_source_fact_review"), Mapping)
-            and review["blocked_source_fact_review"].get("status") == "FAILED"
-            and isinstance(review.get("deterministic_text_surface_resolution"), Mapping)
-            and review["deterministic_text_surface_resolution"].get("status") == "VALID"
-            and review["deterministic_text_surface_resolution"].get("provider_call_required")
-            is False
-        )
-    )
-    return bool(
-        isinstance(review, Mapping)
-        and review.get("schema_version") == SCHEMA_VERSION
-        and review.get("status") == "PASS"
-        and decision_shape_valid
-        and isinstance(review.get("final_selection_hook"), str)
-        and bool(str(review.get("final_selection_hook")).strip())
-        and isinstance(review.get("final_title"), str)
-        and bool(str(review.get("final_title")).strip())
+    return source_fact_review_passes_shape(
+        review,
+        schema_version=SCHEMA_VERSION,
+        manual_title_keep_decision=MANUAL_TITLE_KEEP_PASS_DECISION,
+        deterministic_text_narrowing_decision=DETERMINISTIC_TEXT_NARROWING_PASS_DECISION,
+        terminal_text_preservation_decision=QIXI_TERMINAL_TEXT_PRESERVATION_DECISION, c3_terminal_source_fact_supersession_decision=C3_TERMINAL_SOURCE_FACT_SUPERSESSION_DECISION,
     )
 
 
@@ -1415,8 +1400,6 @@ def authorize_manual_title_keep(
             "recorded_dissent": dissent,
         }
     )
-
-
 def authorize_deterministic_text_narrowing(
     consumption: Mapping[str, object],
 ) -> dict[str, object]:
@@ -1805,9 +1788,10 @@ def validate_source_fact_review(
     candidate_id: str | None = None,
     final_reviewed_srt_path: Path | None = None,
     speaker_evidence: object = _SPEAKER_EVIDENCE_UNSET,
+    qixi_repo_root: Path | None = None,
+    story_contract: Mapping[str, object] | None = None,
 ) -> bool:
     """Recheck the persisted receipt without trusting selected top-level fields."""
-
     if not source_fact_review_passes(review) or not isinstance(review, Mapping):
         return False
     receipt = dict(review)
@@ -1816,6 +1800,27 @@ def validate_source_fact_review(
         return False
     if _finalize_receipt(receipt).get("receipt_sha256") != declared_receipt_sha256:
         return False
+    if review.get("decision") == QIXI_TERMINAL_TEXT_PRESERVATION_DECISION:
+        if candidate_id is None or final_reviewed_srt_path is None:
+            return False
+        return validate_terminal_preservation_source_fact_review(
+            review,
+            repo_root=qixi_repo_root or _REPO_ROOT,
+            final_reviewed_srt_path=final_reviewed_srt_path,
+            final_transcript=final_transcript,
+            title=title,
+            selection_hook=selection_hook,
+            clip_context_prompt=clip_context_prompt,
+            selection_scorecard=selection_scorecard,
+            candidate_id=candidate_id,
+            speaker_evidence=speaker_evidence,
+        )
+    if review.get("decision") == "CANDIDATE_PUBLIC_TEXT_SOURCE_FACT_REFRESH":
+        return validate_candidate_public_text_source_fact_refresh_from_source_fact(
+            review, repo_root=qixi_repo_root or _REPO_ROOT, validation=locals()
+        )
+    if review.get("decision") == C3_TERMINAL_SOURCE_FACT_SUPERSESSION_DECISION:
+        return validate_c3_source_fact_review_from_validation(review, validation=locals())
     if review.get("decision") == MANUAL_TITLE_KEEP_PASS_DECISION:
         return _validate_manual_title_keep_receipt(
             review,

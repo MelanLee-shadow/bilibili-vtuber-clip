@@ -26,11 +26,23 @@ from pathlib import Path
 from typing import Callable
 
 from src.autoslice.runner_proxy import RunnerProxy
+from src.autoslice.cover_route_evidence import (
+    validate_cover_route_decision,
+    validate_rendered_text_pixel_evidence,
+)
+from src.autoslice.cover_host_identity_gate import (
+    validate_final_host_identity_verification,
+)
 from src.autoslice.verified_io import (
     _matches_sha256,
     _normalized_sha256,
     _read_json_object,
     _document_video_hash,
+)
+from src.autoslice.producer_delivery_transaction import (
+    DeliveryArtifact,
+    deployment_authority_binding,
+    prepare_delivery,
 )
 
 
@@ -109,6 +121,53 @@ def cover_generation_is_song(generation: dict) -> bool:
     return generation.get("is_song") is True
 
 
+def final_song_cover_is_verified(record: dict) -> bool:
+    """Recompute the current final-cover fact for a materialized Song.
+
+    ``cover_release_gate`` belongs to the earlier selector/deferred-cover
+    decision.  A false value there is expected for the legitimate
+    ``SONG_FULL_BOUNDARY_READY`` deferred path and must never be projected as
+    a verdict on the later final cover.  Conversely, the presence of a
+    deferred-cover marker is not enough to close a cover fact: the final bytes,
+    their recorded hash, the route/identity receipt and the rendered-title
+    pixels all have to validate again.
+    """
+
+    recut = record.get("materialized_recut")
+    if not isinstance(recut, dict):
+        return False
+    staging = recut.get("publish_staging")
+    hashes = recut.get("artifact_hashes")
+    if not isinstance(staging, dict) or not isinstance(hashes, dict):
+        return False
+    cover_path = staging.get("cover_path")
+    cover_sha256 = hashes.get("cover_sha256")
+    generation = staging.get("cover_generation")
+    final_cover_path = generation.get("final_cover") if isinstance(generation, dict) else None
+    if (
+        staging.get("status") != "STAGED"
+        or staging.get("upload_enabled") is not False
+        or staging.get("cover_status") not in {"AI_COVER_READY", "REPAIRED_AI_COVER"}
+        or not isinstance(cover_path, str)
+        or not isinstance(cover_sha256, str)
+        or not isinstance(generation, dict)
+        or generation.get("status") not in {"AI_COVER_READY", "REPAIRED_AI_COVER"}
+        or not isinstance(final_cover_path, str)
+        or generation.get("final_cover_sha256") != cover_sha256
+        or not _matches_sha256(Path(cover_path), cover_sha256)
+        or not _matches_sha256(Path(final_cover_path), cover_sha256)
+        or not validate_cover_route_decision(generation, allow_legacy_v1=False)
+        or not validate_final_host_identity_verification(generation)
+        or not validate_rendered_text_pixel_evidence(generation)
+    ):
+        return False
+    pixels = generation.get("rendered_text_pixels")
+    return bool(
+        isinstance(pixels, dict)
+        and pixels.get("final_cover_sha256") == cover_sha256
+    )
+
+
 def song_delivery_artifacts(record: dict) -> dict:
     """Best-known materialized artifacts for a song record, with sha256 hashes
     whenever the pipeline recorded them (hash hygiene stays; SEMANTIC gating
@@ -137,7 +196,10 @@ def song_delivery_artifacts(record: dict) -> dict:
             out["recut_manifest_sha256"] = str(recut["manifest_sha256"])
     gate = recut.get("cover_release_gate")
     if isinstance(gate, dict):
-        out["cover_release_gate_satisfied"] = gate.get("satisfied")
+        # Keep the selector gate path as provenance, but project its
+        # satisfaction from today's final-cover evidence rather than from the
+        # historical deferred-cover decision.
+        out["cover_release_gate_satisfied"] = final_song_cover_is_verified(record)
         out["release_gate_path"] = str(gate.get("path") or "")
         gate_hashes = gate.get("artifact_hashes")
         if isinstance(gate_hashes, dict) and gate_hashes.get("burned_video_sha256"):
@@ -414,6 +476,7 @@ def _commit_verified_song_package(
     title: str,
     selector_rc: int,
     summary_authority_root: Path,
+    prepare_only: bool = False,
 ) -> dict:
     """Commit one already-proven song without rerunning ASR/LRC/AGY.
 
@@ -490,7 +553,8 @@ def _commit_verified_song_package(
 
     name = _song_delivery_basename(title, delivery_candidate_id)
     delivery = _runner.profile_delivery_root() / date
-    delivery.mkdir(parents=True, exist_ok=True)
+    if not prepare_only:
+        delivery.mkdir(parents=True, exist_ok=True)
     specs: dict[str, tuple[Path, Path, str]] = {
         "video": (burned, delivery / f"{name}.mp4", video_sha256),
     }
@@ -549,6 +613,59 @@ def _commit_verified_song_package(
                 )
             )
 
+    if prepare_only:
+        manifest_source, manifest_sha256 = _write_prepared_song_delivery_manifest(
+            candidate_id=delivery_candidate_id,
+            manifest_source=summary_authority_root / f".{name}.prepared-delivery.manifest.json",
+            artifact_specs=specs,
+            absent_artifacts={} if cover_ok else {"cover": delivery / f"{name}.cover.png"},
+        )
+        specs["delivery_manifest"] = (
+            manifest_source,
+            delivery / f"{name}.delivery.manifest.json",
+            manifest_sha256,
+        )
+        prepared = prepare_delivery(
+            runtime_root=_runner.BASE,
+            lane="song",
+            candidate_id=delivery_candidate_id,
+            artifacts=[
+                DeliveryArtifact(role, source, target, expected)
+                for role, (source, target, expected) in specs.items()
+            ],
+            deployed_authority=deployment_authority_binding(_runner.BASE),
+        )
+        intended = {
+            role: {"path": str(target), "sha256": expected}
+            for role, (_source, target, expected) in specs.items()
+        }
+        # Direct delivery reports the manifest separately, not as a public
+        # sidecar.  Preserve that exact result projection in prepare mode.
+        sidecar_roles = [role for role in intended if role != "video"]
+        prepared_result = {
+            # A prepared package has passed candidate-private verification but
+            # has not exposed a delivery target.  Do not use direct-delivery
+            # field names here: state/publication predicates treat them as a
+            # materialized package.
+            "intended_delivery": intended["video"],
+            "intended_delivery_sidecars": {role: intended[role] for role in sidecar_roles},
+            "prepared_delivery": {
+                "manifest_path": str(prepared.manifest_path),
+                "prepared_sha256": f"sha256:{prepared.prepared_sha256}",
+                "upload_enabled": False,
+            },
+            "intended_delivery_manifest": intended["delivery_manifest"],
+            "intended_cover_status": "AI_COVER_READY" if "cover" in intended else "BLOCKED_AI_COVER_REQUIRED",
+            "status": "delivery_prepared_no_target",
+        }
+        if "cover" in intended:
+            prepared_result["intended_cover"] = intended["cover"]
+            materialized = summary_record.get("materialized_recut")
+            staging = materialized.get("publish_staging") if isinstance(materialized, dict) else None
+            if isinstance(staging, dict):
+                prepared_result["prepared_cover_generation"] = staging.get("cover_generation")
+        return prepared_result
+
     receipt = _atomic_verified_song_delivery(
         candidate_id=delivery_candidate_id,
         manifest_path=delivery / f"{name}.delivery.manifest.json",
@@ -584,6 +701,14 @@ def _commit_verified_song_package(
     if receipt["cleanup_warnings"]:
         result["delivery_cleanup_warnings"] = receipt["cleanup_warnings"]
     return result
+
+
+def prepare_verified_song_package(**kwargs: object) -> dict:
+    """Explicit runner-facing Song prepare mode; never exposes delivery bytes."""
+
+    if "prepare_only" in kwargs:
+        raise SongDeliveryError("prepare mode is selected by this entry point")
+    return _commit_verified_song_package(**kwargs, prepare_only=True)
 
 
 VERIFIED_SONG_DELIVERY_SCHEMA_VERSION = "verified-song-delivery.v1"
@@ -892,3 +1017,54 @@ def _atomic_verified_song_delivery(
         "upload_enabled": False,
         "cleanup_warnings": cleanup_warnings,
     }
+
+
+def _write_prepared_song_delivery_manifest(
+    *,
+    candidate_id: str,
+    manifest_source: Path,
+    artifact_specs: dict[str, tuple[Path, Path, str]],
+    absent_artifacts: dict[str, Path],
+) -> tuple[Path, str]:
+    """Build the same no-upload delivery manifest as direct Song commit.
+
+    It remains candidate-private until the runner materializes the prepared
+    handle, but carries the public manifest's exact target inventory now.
+    """
+
+    manifest_artifacts: dict[str, dict[str, str]] = {}
+    for role, (source, destination, expected) in artifact_specs.items():
+        normalized = _normalized_sha256(expected)
+        manifest_artifacts[role] = {
+            "path": str(destination.absolute()),
+            "sha256": f"sha256:{normalized}",
+            "source_path": str(source.resolve(strict=True)),
+            "source_sha256": f"sha256:{normalized}",
+        }
+    document = {
+        "schema_version": VERIFIED_SONG_DELIVERY_SCHEMA_VERSION,
+        "status": "DELIVERED_NO_UPLOAD",
+        "candidate_id": candidate_id,
+        "upload_enabled": False,
+        "artifacts": manifest_artifacts,
+        "absent_artifacts": {
+            role: {"path": str(destination.absolute()), "status": "ABSENT"}
+            for role, destination in absent_artifacts.items()
+        },
+    }
+    payload = (json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(manifest_source, flags, 0o600)
+    except FileExistsError:
+        if manifest_source.is_symlink() or manifest_source.read_bytes() != payload:
+            raise SongDeliveryError("prepared song delivery manifest collision")
+    except OSError as exc:
+        raise SongDeliveryError(f"cannot create prepared song delivery manifest: {exc}") from exc
+    else:
+        try:
+            os.write(descriptor, payload)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    return manifest_source, "sha256:" + hashlib.sha256(payload).hexdigest()

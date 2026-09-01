@@ -143,6 +143,14 @@ def parse_args(
         ),
     )
     rp.add_argument("--dry-run", action="store_true")
+    rp.add_argument(
+        "--preserve-existing-tags",
+        action="store_true",
+        help=(
+            "same-BV only: freeze an exactly matching, non-empty Creator/public "
+            "live tag set as the sole metadata-preservation exception"
+        ),
+    )
     rp.set_defaults(func=handlers["repair_plan"])
 
     rr = sub.add_parser(

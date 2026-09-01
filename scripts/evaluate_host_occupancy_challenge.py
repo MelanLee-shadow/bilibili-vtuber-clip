@@ -25,6 +25,24 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the CLI contract without importing any evaluator dependencies."""
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--occupancy-report", type=Path, required=True)
+    parser.add_argument("--speaker-override", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    return parser
+
+
+# A deployment smoke invokes this entrypoint only for its usage text.  Exit
+# before loading diarization/profile modules, whose cold imports are unrelated
+# to the stable parser surface and can exceed that smoke's bounded timeout.
+if __name__ == "__main__" and {"--help", "-h"}.intersection(sys.argv[1:]):
+    build_parser().parse_args()
+
+
 from src.autoslice import host_occupancy as ho
 from src.autoslice.channel_profile import load_channel_profile
 from scripts import run_cue_aligned_speaker_shadow as cue_shadow
@@ -833,11 +851,7 @@ def _select_report(payload: object, candidate_id: str) -> Mapping[str, object]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--occupancy-report", type=Path, required=True)
-    parser.add_argument("--speaker-override", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    args = parser.parse_args(argv)
+    args = build_parser().parse_args(argv)
 
     truth, truth_summary = load_reviewed_truth(args.speaker_override)
     report_payload = json.loads(args.occupancy_report.read_text(encoding="utf-8"))

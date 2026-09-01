@@ -87,6 +87,11 @@ class VisualSongDiscoveryResult:
     config_sha256: str
     cache_hit: bool = False
     error: str | None = None
+    # Provider diagnostics are deliberately structured and bounded.  They are
+    # useful for the state writer (AGY absent/quota/error versus Gemini key
+    # ladder exhaustion) but must never contain a key value or raw provider
+    # response/error text.
+    provider_diagnostics: Mapping[str, object] | None = None
 
     def to_manifest(self) -> dict[str, object]:
         return {
@@ -98,10 +103,190 @@ class VisualSongDiscoveryResult:
             "config_sha256": self.config_sha256,
             "cache_hit": self.cache_hit,
             "error": self.error,
+            "provider_diagnostics": (
+                dict(self.provider_diagnostics)
+                if self.provider_diagnostics is not None
+                else None
+            ),
         }
 
 
 CommandRunner = Callable[..., subprocess.CompletedProcess]
+
+
+class VisualSongProviderError(RuntimeError):
+    """A provider failure with only safe, machine-readable context."""
+
+    def __init__(
+        self,
+        category: str,
+        *,
+        returncode: int | None = None,
+        error_type: str | None = None,
+    ) -> None:
+        self.category = str(category)[:96]
+        self.returncode = returncode
+        self.error_type = error_type
+        super().__init__(self.category)
+
+
+_MAX_PROVIDER_FAILURE_ROWS = 32
+
+
+def _bounded_category(value: object, *, fallback: str = "UNKNOWN") -> str:
+    """Keep diagnostics to controlled, secret-free category strings."""
+
+    text = str(value or "").strip()
+    if not text or len(text) > 96 or not re.fullmatch(r"[A-Za-z0-9_.:-]+", text):
+        return fallback
+    return text
+
+
+def _bounded_error_detail(exc: BaseException) -> str:
+    """Retain useful local validation detail without persisting raw secrets."""
+
+    detail = str(exc).strip()
+    # Provider exceptions are always represented by their structured category;
+    # arbitrary exception text can contain command output or credentials.
+    if isinstance(exc, VisualSongProviderError):
+        return _bounded_category(exc.category, fallback="VISUAL_PROVIDER_FAILED")
+    if re.search(r"(?i)(api[_ -]?key|secret|token|password|credential)", detail):
+        return type(exc).__name__
+    detail = re.sub(r"\s+", " ", detail)
+    if len(detail) > 180:
+        detail = detail[:177] + "..."
+    return f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__
+
+
+def _failure_row(
+    *,
+    provider: str,
+    category: str,
+    count: int = 1,
+    error_type: str | None = None,
+    returncode: int | None = None,
+    key_tier: str | None = None,
+    key_ordinal: int | None = None,
+    attempt_round: int | None = None,
+) -> dict[str, object]:
+    """Build one bounded provider diagnostic row (never raw exception text)."""
+
+    row: dict[str, object] = {
+        "provider": provider,
+        "category": _bounded_category(category),
+        "count": max(1, min(int(count), 99)),
+    }
+    if error_type:
+        row["error_type"] = _bounded_category(error_type, fallback="ProviderError")
+    if returncode is not None and isinstance(returncode, int) and not isinstance(returncode, bool):
+        row["returncode"] = returncode
+    if key_tier:
+        row["key_tier"] = _bounded_category(key_tier)
+    if key_ordinal is not None and isinstance(key_ordinal, int) and not isinstance(key_ordinal, bool):
+        row["key_ordinal"] = max(0, min(key_ordinal, 99))
+    if attempt_round is not None and isinstance(attempt_round, int) and not isinstance(attempt_round, bool):
+        row["attempt_round"] = max(0, min(attempt_round, 99))
+    return row
+
+
+def _summarize_provider_failures(
+    *,
+    agy_rows: Sequence[Mapping[str, object]],
+    gemini_rows: Sequence[Mapping[str, object]],
+    configured_key_count: int = 0,
+    gemini_attempt_count: int = 0,
+    paid_gate_reason: str | None = None,
+) -> dict[str, object]:
+    """Return a compact failure/count/gate receipt for state and operators."""
+
+    def safe_row(row: Mapping[str, object]) -> dict[str, object]:
+        """Copy only the fixed, non-secret fields emitted by ``_failure_row``."""
+
+        safe = _failure_row(
+            provider=_bounded_category(row.get("provider"), fallback="unknown"),
+            category=_bounded_category(row.get("category")),
+            count=row.get("count", 1)
+            if isinstance(row.get("count", 1), int)
+            and not isinstance(row.get("count", 1), bool)
+            else 1,
+        )
+        error_type = row.get("error_type")
+        if error_type:
+            safe["error_type"] = _bounded_category(
+                error_type, fallback="ProviderError"
+            )
+        returncode = row.get("returncode")
+        if isinstance(returncode, int) and not isinstance(returncode, bool):
+            safe["returncode"] = max(-9999, min(returncode, 9999))
+        key_tier = row.get("key_tier")
+        if key_tier:
+            safe["key_tier"] = _bounded_category(key_tier)
+        for field in ("key_ordinal", "attempt_round"):
+            value = row.get(field)
+            if isinstance(value, int) and not isinstance(value, bool):
+                safe[field] = max(0, min(value, 99))
+        return safe
+
+    def failure_rows(rows: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+        if len(rows) <= _MAX_PROVIDER_FAILURE_ROWS:
+            selected = rows
+        else:
+            # Keep the bounded prefix and the terminal attempt, which is the
+            # most useful view when a provider ladder unexpectedly loops.
+            selected = (*rows[: _MAX_PROVIDER_FAILURE_ROWS - 1], rows[-1])
+        return [safe_row(row) for row in selected]
+
+    def categories(rows: Sequence[Mapping[str, object]]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for row in rows:
+            category = _bounded_category(row.get("category"))
+            counts[category] = min(99, counts.get(category, 0) + 1)
+        return dict(sorted(counts.items()))
+
+    agy = {
+        "attempt_count": min(99, len(agy_rows)),
+        "failure_categories": categories(agy_rows),
+        "failures": failure_rows(agy_rows),
+    }
+    if agy_rows:
+        agy["last"] = safe_row(agy_rows[-1])
+    gemini: dict[str, object] = {
+        "attempt_count": min(99, max(gemini_attempt_count, len(gemini_rows))),
+        "configured_key_count": max(0, min(int(configured_key_count), 3)),
+        "failure_categories": categories(gemini_rows),
+        "failures": failure_rows(gemini_rows),
+    }
+    if gemini_rows:
+        gemini["last"] = safe_row(gemini_rows[-1])
+    if paid_gate_reason:
+        gemini["paid_gate_reason"] = _bounded_category(paid_gate_reason)
+    return {
+        "agy": agy,
+        "gemini": gemini,
+        "failure_count": min(99, len(agy_rows) + len(gemini_rows)),
+    }
+
+
+def _provider_failure_error(diagnostics: Mapping[str, object]) -> str:
+    """Render only bounded categories/counts/gate reason into state ``error``."""
+
+    agy = diagnostics.get("agy") if isinstance(diagnostics.get("agy"), Mapping) else {}
+    gemini = diagnostics.get("gemini") if isinstance(diagnostics.get("gemini"), Mapping) else {}
+    agy_categories = agy.get("failure_categories") if isinstance(agy, Mapping) else {}
+    gemini_categories = gemini.get("failure_categories") if isinstance(gemini, Mapping) else {}
+    agy_category = next(iter(agy_categories), "AGY_UNKNOWN") if isinstance(agy_categories, Mapping) else "AGY_UNKNOWN"
+    gemini_category = next(iter(gemini_categories), "GEMINI_UNKNOWN") if isinstance(gemini_categories, Mapping) else "GEMINI_UNKNOWN"
+    attempts = gemini.get("attempt_count", 0) if isinstance(gemini, Mapping) else 0
+    configured = gemini.get("configured_key_count", 0) if isinstance(gemini, Mapping) else 0
+    gate = gemini.get("paid_gate_reason", "NOT_RECORDED") if isinstance(gemini, Mapping) else "NOT_RECORDED"
+    return (
+        "GEMINI_VISUAL_SONG_DISCOVERY_FAILED: "
+        f"agy={_bounded_category(agy_category)}; "
+        f"gemini={_bounded_category(gemini_category)}; "
+        f"gemini_attempts={max(0, min(int(attempts), 99))}; "
+        f"configured_keys={max(0, min(int(configured), 3))}; "
+        f"paid_gate={_bounded_category(gate)}"
+    )[:512]
 
 
 def _canonical_json_sha256(payload: object) -> str:
@@ -241,7 +426,12 @@ def build_contact_sheets(
     )
     frames = sorted(frames_dir.glob("frame_*.png"))
     if completed.returncode != 0 or not frames:
-        raise RuntimeError(f"contact frame extraction failed: {completed.stderr[-300:]}")
+        # ffmpeg stderr can contain paths or provider-adjacent command output;
+        # the optional lane records only this bounded category.
+        raise VisualSongProviderError(
+            "VISUAL_CONTACT_SHEET_EXTRACTION_FAILED",
+            returncode=completed.returncode,
+        )
 
     try:
         from PIL import Image, ImageDraw, ImageFont
@@ -331,32 +521,50 @@ def _run_agy_once(
         f"Use only {job_dir}/prompt.md, {job_dir}/contact_*.jpg, and {job_dir}/visual_songs.json. "
         "Do not inspect any other file or use shell/terminal."
     )
-    completed = command_runner(
-        [
-            str(agy_bin),
-            "--sandbox",
-        "--dangerously-skip-permissions",
-            "--add-dir",
-            str(job_dir),
-            "--model",
-            config.model,
-            "-p",
-            short_prompt,
-            "--print-timeout",
-            f"{max(1, config.timeout_seconds // 60)}m",
-        ],
-        cwd=str(job_dir),
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=config.timeout_seconds,
-    )
+    try:
+        completed = command_runner(
+            [
+                str(agy_bin),
+                "--sandbox",
+                "--dangerously-skip-permissions",
+                "--add-dir",
+                str(job_dir),
+                "--model",
+                config.model,
+                "-p",
+                short_prompt,
+                "--print-timeout",
+                f"{max(1, config.timeout_seconds // 60)}m",
+            ],
+            cwd=str(job_dir),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=config.timeout_seconds,
+        )
+    except (OSError, subprocess.TimeoutExpired, TimeoutError) as exc:
+        raise VisualSongProviderError(
+            agy_gemini_client.classify_agy_launch_error(exc),
+            error_type=type(exc).__name__,
+        ) from exc
     if completed.returncode != 0:
-        raise RuntimeError(f"AGY visual song discovery failed rc={completed.returncode}: {completed.stderr[-300:]}")
+        raise VisualSongProviderError(
+            agy_gemini_client.classify_agy_failure(
+                completed.returncode,
+                completed.stdout or "",
+                completed.stderr or "",
+            ),
+            returncode=completed.returncode,
+        )
 
 
 def _run_gemini_vision_once(
-    job_dir: Path, sheets: Sequence[Path], *, duration_ms: int
+    job_dir: Path,
+    sheets: Sequence[Path],
+    *,
+    duration_ms: int,
+    provider_failures: list[dict[str, object]],
+    provider_metadata: dict[str, object],
 ) -> None:
     """Same contact sheets, same answer file — Gemini instead of local AGY.
 
@@ -376,6 +584,15 @@ def _run_gemini_vision_once(
     item_key = hashlib.sha256(
         b"".join(payload for payload, _mime in parts)
     ).hexdigest()
+    configured_keys = agy_gemini_client.free_api_keys()
+    provider_metadata["configured_key_count"] = len(configured_keys)
+    if not configured_keys:
+        provider_failures.append(
+            _failure_row(
+                provider="gemini_api",
+                category="GEMINI_API_NO_CONFIGURED_KEY",
+            )
+        )
 
     def observe(key: str) -> str:
         raw = agy_gemini_client.generate_content(
@@ -391,13 +608,60 @@ def _run_gemini_vision_once(
         parse_visual_song_response(raw, duration_ms=duration_ms)
         return raw
 
-    outcome = agy_gemini_client.run_gemini_key_ladder(
-        item_key=item_key,
-        observe=observe,
-        purpose="visual_song_discovery",
-    )
+    def record(failure: agy_gemini_client.GeminiAttemptFailure) -> None:
+        provider_failures.append(
+            _failure_row(
+                provider="gemini_api",
+                category=failure.category,
+                error_type=failure.error_type,
+                key_tier=failure.key_tier,
+                key_ordinal=failure.key_ordinal,
+                attempt_round=failure.attempt_round,
+            )
+        )
+
+    def record_paid_skipped(
+        key_ordinal: int, attempt_round: int, gate_reason: str
+    ) -> None:
+        provider_failures.append(
+            _failure_row(
+                provider="gemini_api",
+                category=f"PAID_BACKUP_SKIPPED:{_bounded_category(gate_reason)}",
+                key_tier=agy_gemini_client.gemini_backup_policy.PAID_KEY_TIER,
+                key_ordinal=key_ordinal,
+                attempt_round=attempt_round,
+            )
+        )
+
+    try:
+        outcome = agy_gemini_client.run_gemini_key_ladder(
+            item_key=item_key,
+            observe=observe,
+            purpose="visual_song_discovery",
+            record_failure=record,
+            record_paid_skipped=record_paid_skipped,
+            # A missing paid key is still useful state information for this
+            # fail-open lane; it is represented only as a bounded gate category.
+            silent_when_paid_unconfigured=False,
+        )
+    except Exception as exc:
+        provider_failures.append(
+            _failure_row(
+                provider="gemini_api",
+                category=agy_gemini_client.classify_gemini_failure(exc),
+                error_type=type(exc).__name__,
+            )
+        )
+        provider_metadata["attempt_count"] = len(provider_failures)
+        raise VisualSongProviderError(
+            "GEMINI_VISUAL_SONG_DISCOVERY_FAILED",
+            error_type=type(exc).__name__,
+        ) from exc
+    provider_metadata["configured_key_count"] = outcome.configured_key_count
+    provider_metadata["attempt_count"] = len(provider_failures)
+    provider_metadata["paid_gate_reason"] = outcome.paid_gate_reason
     if not outcome.accepted:
-        raise RuntimeError("GEMINI_VISUAL_SONG_DISCOVERY_FAILED")
+        raise VisualSongProviderError("GEMINI_VISUAL_SONG_DISCOVERY_FAILED")
     (job_dir / "visual_songs.json").write_text(outcome.observed, encoding="utf-8")
 
 
@@ -414,6 +678,10 @@ def discover_visual_songs(
 
     selected = config or VisualSongConfig()
     config_sha = _canonical_json_sha256(selected.cache_payload())
+    agy_failures: list[dict[str, object]] = []
+    gemini_failures: list[dict[str, object]] = []
+    gemini_metadata: dict[str, object] = {}
+    provider_diagnostics: dict[str, object] | None = None
     try:
         selected.validate()
         if duration_ms <= 0:
@@ -461,6 +729,13 @@ def discover_visual_songs(
         agy_present = agy_gemini_client.local_agy_available(
             agy_bin, env_names=("AUTOSLICE_AGY_BIN", "AGY_BIN")
         )
+        if not agy_present:
+            agy_failures.append(
+                _failure_row(
+                    provider="agy",
+                    category=agy_gemini_client.AGY_BINARY_ABSENT,
+                )
+            )
         with tempfile.TemporaryDirectory(prefix="visual_song_") as tmp:
             job_dir = Path(tmp)
             sheets = build_contact_sheets(
@@ -473,6 +748,7 @@ def discover_visual_songs(
             (job_dir / "prompt.md").write_text(
                 _prompt([path.name for path in sheets], duration_ms), encoding="utf-8"
             )
+            output = job_dir / "visual_songs.json"
             if agy_present:
                 try:
                     _run_agy_once(
@@ -481,14 +757,68 @@ def discover_visual_songs(
                         agy_bin=executable,
                         command_runner=command_runner,
                     )
-                except Exception:
-                    _run_gemini_vision_once(job_dir, sheets, duration_ms=duration_ms)
+                    if not output.is_file():
+                        raise VisualSongProviderError("AGY_VISUAL_SONG_OUTPUT_MISSING")
+                    candidates = parse_visual_song_response(
+                        output.read_text(encoding="utf-8"), duration_ms=duration_ms
+                    )
+                except Exception as exc:
+                    if isinstance(exc, VisualSongProviderError):
+                        category = exc.category
+                        returncode = exc.returncode
+                        error_type = exc.error_type
+                    elif isinstance(exc, (subprocess.TimeoutExpired, TimeoutError)):
+                        category = agy_gemini_client.AGY_TIMEOUT
+                        returncode = None
+                        error_type = type(exc).__name__
+                    else:
+                        category = "AGY_VISUAL_SONG_INVALID_OUTPUT"
+                        returncode = None
+                        error_type = type(exc).__name__
+                    agy_failures.append(
+                        _failure_row(
+                            provider="agy",
+                            category=category,
+                            error_type=error_type,
+                            returncode=returncode,
+                        )
+                    )
+                    gemini_metadata["fallback_used"] = True
+                    _run_gemini_vision_once(
+                        job_dir,
+                        sheets,
+                        duration_ms=duration_ms,
+                        provider_failures=gemini_failures,
+                        provider_metadata=gemini_metadata,
+                    )
+                    candidates = parse_visual_song_response(
+                        output.read_text(encoding="utf-8"), duration_ms=duration_ms
+                    )
             else:
-                _run_gemini_vision_once(job_dir, sheets, duration_ms=duration_ms)
-            output = job_dir / "visual_songs.json"
-            if not output.is_file():
-                raise RuntimeError("visual song provider returned success without visual_songs.json")
-            candidates = parse_visual_song_response(output.read_text(encoding="utf-8"), duration_ms=duration_ms)
+                _run_gemini_vision_once(
+                    job_dir,
+                    sheets,
+                    duration_ms=duration_ms,
+                    provider_failures=gemini_failures,
+                    provider_metadata=gemini_metadata,
+                )
+                if not output.is_file():
+                    raise VisualSongProviderError("GEMINI_VISUAL_SONG_OUTPUT_MISSING")
+                candidates = parse_visual_song_response(
+                    output.read_text(encoding="utf-8"), duration_ms=duration_ms
+                )
+
+        provider_diagnostics = _summarize_provider_failures(
+            agy_rows=agy_failures,
+            gemini_rows=gemini_failures,
+            configured_key_count=int(gemini_metadata.get("configured_key_count", 0) or 0),
+            gemini_attempt_count=int(gemini_metadata.get("attempt_count", 0) or 0),
+            paid_gate_reason=(
+                str(gemini_metadata["paid_gate_reason"])
+                if gemini_metadata.get("paid_gate_reason")
+                else None
+            ),
+        )
 
         cache_payload = {
             "schema_version": VISUAL_SONG_SCHEMA_VERSION,
@@ -506,17 +836,36 @@ def discover_visual_songs(
             cache_path=str(cache_path),
             content_fingerprint=content_fingerprint,
             config_sha256=config_sha,
+            provider_diagnostics=provider_diagnostics,
         )
     # This lane is optional recall enrichment.  Any provider/decoder/parser
     # defect must fail open so the independent ASR lane still runs.
     except Exception as exc:
+        if provider_diagnostics is None and (agy_failures or gemini_failures or gemini_metadata):
+            provider_diagnostics = _summarize_provider_failures(
+                agy_rows=agy_failures,
+                gemini_rows=gemini_failures,
+                configured_key_count=int(gemini_metadata.get("configured_key_count", 0) or 0),
+                gemini_attempt_count=int(gemini_metadata.get("attempt_count", 0) or 0),
+                paid_gate_reason=(
+                    str(gemini_metadata["paid_gate_reason"])
+                    if gemini_metadata.get("paid_gate_reason")
+                    else None
+                ),
+            )
+        error = (
+            _provider_failure_error(provider_diagnostics)
+            if provider_diagnostics and (agy_failures or gemini_failures)
+            else _bounded_error_detail(exc)
+        )
         return VisualSongDiscoveryResult(
             status="FAILED",
             candidates=(),
             cache_path=None,
             content_fingerprint=locals().get("content_fingerprint"),
             config_sha256=config_sha,
-            error=f"{type(exc).__name__}: {exc}",
+            error=error,
+            provider_diagnostics=provider_diagnostics,
         )
 
 

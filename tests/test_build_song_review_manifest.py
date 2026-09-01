@@ -294,6 +294,138 @@ def test_builds_portable_no_upload_song_review_package(
     assert (fx["package"] / "review_manifest.json").is_file()
 
 
+def _seal_talk_refresh_block(state: dict, *, recording_date: str) -> str:
+    """Build the exact canonical Talk-only refresh envelope for this state."""
+
+    talk_id = "auto_130040_201_255"
+    state["status"] = "semantic_chat_scorecard_refresh_blocked"
+    state["upload_allowed"] = False
+    state["pending_talk"] = [
+        {"candidate_id": talk_id, "lane": "semantic_recall"}
+    ]
+    state["operator_processing_scope"] = {
+        "schema_version": "operator-processing-scope-grant.v2",
+        "grant_id": "2026-08-14-维护者-uniform-host-rerender-20260819T0100Z",
+        "recording_date": recording_date,
+        "reason": "维护者 reviewed this named Talk repair and requires a no-upload rerun.",
+        "candidate_ids": [talk_id],
+        "user_authorization": {
+            "quote": "重新做一下这些切片，但不要上传，先交给我审阅。",
+            "timestamp": "2026-08-19T00:05:00Z",
+        },
+        "expires_at": "2099-08-22T00:00:00Z",
+        "intent": "RECOVER_NAMED_FAILED_PICKS",
+    }
+    receipt = {
+        "schema_version": "semantic-evidence-scorecard-refresh-run.v1",
+        "recording_date": recording_date,
+        "scope_grant_id": state["operator_processing_scope"]["grant_id"],
+        "scope_grant_sha256": builder.semantic_refresh._canonical_sha256(
+            state["operator_processing_scope"]
+        ),
+        "status": "BLOCKED",
+        "refreshed_candidate_ids": [],
+        "current_candidate_ids": [],
+        "blocked_candidate_ids": [talk_id],
+        "deferred_candidate_ids": [],
+        "duplicate_candidate_ids": [],
+        "missing_never_recalled_candidates_outside_scope": True,
+    }
+    receipt["receipt_sha256"] = builder.semantic_refresh._canonical_sha256(receipt)
+    state["semantic_evidence_scorecard_refresh_run"] = receipt
+    return talk_id
+
+
+def _reseal_talk_refresh_block(state: dict) -> None:
+    receipt = state["semantic_evidence_scorecard_refresh_run"]
+    assert isinstance(receipt, dict)
+    receipt["scope_grant_sha256"] = builder.semantic_refresh._canonical_sha256(
+        state["operator_processing_scope"]
+    )
+    receipt["receipt_sha256"] = builder.semantic_refresh._canonical_sha256(
+        {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    )
+
+
+def test_build_allows_completed_song_package_when_only_talk_refresh_is_blocked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """8/14 园游会 shape: Talk refresh remains blocked; Song stays no-upload."""
+    fx = _fixture(tmp_path)
+    state = json.loads(fx["state"].read_text(encoding="utf-8"))
+    row = state["songs"][0]
+    row["candidate_id"] = "songvis_130040_670_11874655"
+    row["selector_record_candidate_id"] = "seededsong_130040_670_11874655"
+    _seal_talk_refresh_block(state, recording_date="2026-07-25")
+    fx["state"].write_text(json.dumps(state), encoding="utf-8")
+
+    # This is deliberately a state-gate regression: the remaining builder
+    # stages separately replay every portable source binding and final cover.
+    assert builder._candidate_row(
+        state, "songvis_130040_670_11874655", recording_date="2026-07-25"
+    ) is row
+    assert state["status"] == "semantic_chat_scorecard_refresh_blocked"
+    assert state["upload_allowed"] is False
+
+
+def test_build_refuses_talk_refresh_block_without_typed_talk_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fx = _fixture(tmp_path)
+    state = json.loads(fx["state"].read_text(encoding="utf-8"))
+    state.update(
+        {
+            "status": "semantic_chat_scorecard_refresh_blocked",
+            "upload_allowed": False,
+        }
+    )
+    fx["state"].write_text(json.dumps(state), encoding="utf-8")
+
+    with pytest.raises(builder.SongReviewManifestError, match="not reviewable"):
+        _build(fx, monkeypatch)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("extra_key", "bad_hash", "wrong_date", "mixed_song", "expired", "malformed_grant"),
+)
+def test_build_refuses_noncanonical_or_non_talk_refresh_block(
+    tmp_path: Path, mutation: str
+) -> None:
+    fx = _fixture(tmp_path)
+    state = json.loads(fx["state"].read_text(encoding="utf-8"))
+    song_id = str(state["songs"][0]["candidate_id"])
+    talk_id = _seal_talk_refresh_block(state, recording_date="2026-07-25")
+    receipt = state["semantic_evidence_scorecard_refresh_run"]
+    scope = state["operator_processing_scope"]
+    assert isinstance(receipt, dict) and isinstance(scope, dict)
+    if mutation == "extra_key":
+        receipt["unexpected"] = True
+        _reseal_talk_refresh_block(state)
+    elif mutation == "bad_hash":
+        receipt["receipt_sha256"] = "sha256:" + "0" * 64
+    elif mutation == "wrong_date":
+        receipt["recording_date"] = "2026-07-26"
+        _reseal_talk_refresh_block(state)
+    elif mutation == "mixed_song":
+        scope["candidate_ids"].append(song_id)
+        state["pending_talk"].append(
+            {"candidate_id": song_id, "lane": "semantic_recall"}
+        )
+        receipt["blocked_candidate_ids"].append(song_id)
+        _reseal_talk_refresh_block(state)
+    elif mutation == "expired":
+        scope["expires_at"] = "2000-08-22T00:00:00Z"
+        _reseal_talk_refresh_block(state)
+    else:
+        scope["unexpected"] = True
+        _reseal_talk_refresh_block(state)
+    assert talk_id != song_id
+
+    with pytest.raises(builder.SongReviewManifestError, match="not reviewable"):
+        builder._candidate_row(state, song_id, recording_date="2026-07-25")
+
+
 def test_refuses_artifact_hash_drift_before_copy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -172,22 +172,35 @@ def produce_batch_windowed(
     song_window_pre_ms: int,
     song_window_post_ms: int,
     live_hold_active_fn: Callable[[], bool] | None = None,
+    prepare_only: bool = False,
+    on_result: Callable[[int, dict, dict], bool | None] | None = None,
 ) -> list[dict]:
     """Produce ``items`` concurrently, preserving input order.
 
     Each slice is an independent subprocess, so threads just wait on those; a
     crash in one becomes a failed result and never kills the batch.  Targeted
     talk repairs may opt into the talk lane's ``reuse_cover`` path through
-    their persisted queue item.
+    their persisted queue item.  When ``on_result`` is supplied, each
+    contiguous completed input-prefix result is delivered to it before the
+    dispatcher schedules another item.  Returning ``False`` yields the rest
+    of the queue while still draining already in-flight work.
     """
 
     def _one(item: dict) -> dict:
         try:
-            produce_kwargs = (
-                {"reuse_cover": True}
-                if produce_fn is produce_talk_fn and item.get("reuse_cover")
-                else {}
-            )
+            produce_kwargs = {"prepare_only": True} if prepare_only else {}
+            if produce_fn is produce_talk_fn and item.get("published_cover_carry_required") is True:
+                carry = item.get("published_cover_carry")
+                from src.autoslice.published_cover_carry import validate_materialized_marker
+                if not validate_materialized_marker(
+                    carry, base=base, date=date, candidate_id=str(item.get("cid") or "")
+                ):
+                    raise ValueError("PUBLISHED_COVER_CARRY_MARKER_INVALID")
+                produce_kwargs["reuse_cover"] = True
+            elif produce_fn is produce_talk_fn and item.get("reuse_cover"):
+                # Historical bare reuse remains supported only when it never
+                # asserted this stricter, typed published-carry policy.
+                produce_kwargs["reuse_cover"] = True
             result = produce_fn(date, item, **produce_kwargs)
             if item.get("session_id"):
                 result.setdefault("session_id", item["session_id"])
@@ -261,14 +274,23 @@ def produce_batch_windowed(
     log(f"producing {len(items)} slice(s), up to {workers} in parallel")
     deploy_guard = base / "deploy.guard"
     results_by_index: dict[int, dict] = {}
+    ready_by_index: dict[int, dict] = {}
+    result_prefix: list[dict] = []
+    next_callback_index = 0
     queue = list(enumerate(items))
     in_flight: dict[Any, tuple[int, frozenset[str], bool]] = {}
     active_source_keys: set[str] = set()
     exclusive_source_active = False
+    callback_gap_hold = False
     deploy_yield = False
     with ThreadPoolExecutor(max_workers=workers) as pool:
         while queue or in_flight:
-            while queue and len(in_flight) < workers and not deploy_yield:
+            while (
+                queue
+                and len(in_flight) < workers
+                and not deploy_yield
+                and not callback_gap_hold
+            ):
                 if deploy_guard.exists():
                     deploy_yield = True
                     log(
@@ -314,7 +336,29 @@ def produce_batch_windowed(
                 active_source_keys.difference_update(source_keys)
                 if source_unknown:
                     exclusive_source_active = False
-                results_by_index[index] = future.result()
+                result = future.result()
+                results_by_index[index] = result
+                if on_result is not None:
+                    ready_by_index[index] = result
+            if on_result is not None:
+                while next_callback_index in ready_by_index:
+                    result = ready_by_index.pop(next_callback_index)
+                    should_continue = on_result(
+                        next_callback_index, items[next_callback_index], result,
+                    )
+                    result_prefix.append(result)
+                    next_callback_index += 1
+                    if should_continue is False:
+                        deploy_yield = True
+                if ready_by_index and next_callback_index not in ready_by_index:
+                    # A later future may finish while the input-prefix head is
+                    # still running.  Do not launch another candidate past
+                    # that durable checkpoint gap; wait for the head first.
+                    callback_gap_hold = True
+                else:
+                    callback_gap_hold = False
+    if on_result is not None:
+        return result_prefix
     return [results_by_index[index] for index in sorted(results_by_index)]
 
 

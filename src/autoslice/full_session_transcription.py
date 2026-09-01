@@ -9,12 +9,15 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import uuid
 
 from scripts.run_auto_review_shadow_pipeline import AgyExecutionResult
 from src.autoslice import agy_gemini_client
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.jingting_remote_runner import (
     build_ssh_agy_runner as _attested_build_ssh_agy_runner,
+    is_local_host as _is_local_host,
+    _run_local_agy_job,
 )
 from src.autoslice.refinement_provenance import (
     agy_corroborating_witness as _agy_corroborating_witness,
@@ -30,6 +33,7 @@ from src.autoslice.subtitle_fidelity import (
 
 ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(ROOT)
+LOCAL_AGY_JOB_ROOT = "/opt/bilive/jingting_jobs"
 
 def profile_asset_file(key: str) -> Path:
     return CHANNEL_PROFILE.asset_file(key, repo_root=ROOT)
@@ -204,6 +208,109 @@ timeline below are TIME-PAIRED evidence.
 {glossary_block}{screen_text_block}{danmaku_block}"""
 
 
+def _run_fresh_agy_job(
+    host: str,
+    *,
+    job_dir: str,
+    media_path: Path,
+    prompt: str,
+    output_name: str,
+    stage: str,
+    model: str,
+    poll_deadline_seconds: int,
+    poll_interval_seconds: int,
+) -> str:
+    """Run one fresh whole-window AGY job over the selected transport."""
+
+    import shlex
+    import time as _time
+
+    from scripts.gemini_slice_jingting import strip_markdown_fence
+    from src.autoslice.source_context_executor import AgyRunnerError
+
+    def run(cmd: list[str], *, timeout: int = 2400) -> subprocess.CompletedProcess:
+        completed = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
+        if completed.returncode != 0:
+            raise RuntimeError(f"{cmd[0]} failed rc={completed.returncode}: {completed.stderr[-400:]}")
+        return completed
+
+    short_prompt = (
+        f"Open {job_dir}/prompt.md with view_file and follow it exactly. "
+        f"Use only {job_dir}/prompt.md, {job_dir}/input.mp4, and {job_dir}/{output_name}. "
+        "Do not inspect any other file or directory. Do not use shell or terminal."
+    )
+    if _is_local_host(host):
+        return strip_markdown_fence(
+            _run_local_agy_job(
+                job_dir,
+                input_path=media_path,
+                prompt=prompt,
+                output_name=output_name,
+                model=model,
+                short_prompt=short_prompt,
+                print_timeout="15m",
+                poll_deadline_seconds=poll_deadline_seconds,
+                poll_interval_seconds=poll_interval_seconds,
+                stage=stage,
+            )
+        )
+    run(["ssh", host, f"mkdir -p {shlex.quote(job_dir)}"])
+    with tempfile.TemporaryDirectory(prefix="fresh_tx_") as tmp:
+        prompt_file = Path(tmp) / "prompt.md"
+        prompt_file.write_text(prompt, encoding="utf-8")
+        run(["scp", "-q", str(media_path), f"{host}:{job_dir}/input.mp4"])
+        run(["scp", "-q", str(prompt_file), f"{host}:{job_dir}/prompt.md"])
+    agy_inner = (
+        f"{shlex.quote(agy_gemini_client.resolve_remote_agy_binary())} "
+        f"--sandbox --dangerously-skip-permissions --add-dir {shlex.quote(job_dir)} "
+        f"--model {shlex.quote(model)} -p {shlex.quote(short_prompt)} --print-timeout 15m"
+    )
+    agy_cmd = (
+        f"cd {shlex.quote(job_dir)} && script -qec {shlex.quote(agy_inner)} /dev/null "
+        f"> {shlex.quote(job_dir)}/agy.stdout 2> {shlex.quote(job_dir)}/agy.stderr; "
+        f"echo rc=$? > {shlex.quote(job_dir)}/agy.rc"
+    )
+    run(["ssh", host, f"nohup bash -c {shlex.quote(agy_cmd)} >/dev/null 2>&1 & echo started"])
+
+    deadline = _time.time() + poll_deadline_seconds
+    rc_line = ""
+    while _time.time() < deadline:
+        probe = subprocess.run(
+            ["ssh", host, f"cat {shlex.quote(job_dir)}/agy.rc 2>/dev/null"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        rc_line = probe.stdout.strip()
+        if rc_line:
+            break
+        _time.sleep(poll_interval_seconds)
+    if not rc_line:
+        subprocess.run(["ssh", host, f"pkill -f {shlex.quote(job_dir)} || true"], check=False, capture_output=True, timeout=60)
+        raise AgyRunnerError("AGY_TIMEOUT", f"{stage} did not finish; see {host}:{job_dir}")
+    if rc_line != "rc=0":
+        # 远端 rc=127 = 那台机器上没有 agy。分类归统一客户端，回执说
+        # AGY_BINARY_ABSENT 而不是含糊的 AGY_FAILED_RC。
+        category = agy_gemini_client.classify_remote_agy_rc(
+            agy_gemini_client.parse_remote_rc_line(rc_line)
+        )
+        if category == agy_gemini_client.AGY_BINARY_ABSENT:
+            raise AgyRunnerError(
+                agy_gemini_client.AGY_BINARY_ABSENT,
+                f"{stage}: no agy on {host} ({rc_line}); see {host}:{job_dir}",
+            )
+        raise AgyRunnerError("AGY_FAILED_RC", f"{stage} failed {rc_line}; see {host}:{job_dir}")
+    fetched = subprocess.run(
+        ["ssh", host, f"cat {shlex.quote(job_dir)}/{output_name}"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    return strip_markdown_fence(fetched.stdout) if fetched.returncode == 0 else ""
+
+
 def _build_ssh_agy_transcribe_runner(
     host: str,
     *,
@@ -222,10 +329,9 @@ def _build_ssh_agy_transcribe_runner(
     """
 
     import os
-    import shlex
     import time as _time
 
-    from scripts.gemini_slice_jingting import looks_like_srt, strip_markdown_fence
+    from scripts.gemini_slice_jingting import looks_like_srt
     from src.autoslice.danmaku_evidence import danmaku_in_window, format_danmaku_lines
     from src.autoslice.source_context_executor import AgyRunnerError
 
@@ -233,12 +339,6 @@ def _build_ssh_agy_transcribe_runner(
     poll_deadline_seconds = 1500
     poll_interval_seconds = 20
     attempts = 2
-
-    def run(cmd: list[str], *, timeout: int = 2400) -> subprocess.CompletedProcess:
-        completed = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
-        if completed.returncode != 0:
-            raise RuntimeError(f"{cmd[0]} failed rc={completed.returncode}: {completed.stderr[-400:]}")
-        return completed
 
     def build_screen_text_prompt(job_dir: str) -> str:
         return f"""Watch input.mp4 in this job directory ({job_dir}).
@@ -270,68 +370,6 @@ absurd parody titles are exactly what we need verbatim.
 JSON only, no markdown fences. An empty array is valid if there is none."""
 
     build_prompt = _build_fresh_transcription_prompt
-
-    def run_agy_job(job_dir: str, media_path: Path, prompt: str, output_name: str, *, stage: str) -> str:
-        run(["ssh", host, f"mkdir -p {shlex.quote(job_dir)}"])
-        with tempfile.TemporaryDirectory(prefix="fresh_tx_") as tmp:
-            prompt_file = Path(tmp) / "prompt.md"
-            prompt_file.write_text(prompt, encoding="utf-8")
-            run(["scp", "-q", str(media_path), f"{host}:{job_dir}/input.mp4"])
-            run(["scp", "-q", str(prompt_file), f"{host}:{job_dir}/prompt.md"])
-        short_prompt = (
-            f"Open {job_dir}/prompt.md with view_file and follow it exactly. "
-            f"Use only {job_dir}/prompt.md, {job_dir}/input.mp4, and {job_dir}/{output_name}. "
-            "Do not inspect any other file or directory. Do not use shell or terminal."
-        )
-        agy_inner = (
-            f"{shlex.quote(agy_gemini_client.resolve_remote_agy_binary())} "
-            f"--sandbox --dangerously-skip-permissions --add-dir {shlex.quote(job_dir)} "
-            f"--model {shlex.quote(model)} -p {shlex.quote(short_prompt)} --print-timeout 15m"
-        )
-        agy_cmd = (
-            f"cd {shlex.quote(job_dir)} && script -qec {shlex.quote(agy_inner)} /dev/null "
-            f"> {shlex.quote(job_dir)}/agy.stdout 2> {shlex.quote(job_dir)}/agy.stderr; "
-            f"echo rc=$? > {shlex.quote(job_dir)}/agy.rc"
-        )
-        run(["ssh", host, f"nohup bash -c {shlex.quote(agy_cmd)} >/dev/null 2>&1 & echo started"])
-
-        deadline = _time.time() + poll_deadline_seconds
-        rc_line = ""
-        while _time.time() < deadline:
-            probe = subprocess.run(
-                ["ssh", host, f"cat {shlex.quote(job_dir)}/agy.rc 2>/dev/null"],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            rc_line = probe.stdout.strip()
-            if rc_line:
-                break
-            _time.sleep(poll_interval_seconds)
-        if not rc_line:
-            subprocess.run(["ssh", host, f"pkill -f {shlex.quote(job_dir)} || true"], check=False, capture_output=True, timeout=60)
-            raise AgyRunnerError("AGY_TIMEOUT", f"{stage} did not finish; see {host}:{job_dir}")
-        if rc_line != "rc=0":
-            # 远端 rc=127 = 那台机器上没有 agy。分类归统一客户端，回执说
-            # AGY_BINARY_ABSENT 而不是含糊的 AGY_FAILED_RC。
-            category = agy_gemini_client.classify_remote_agy_rc(
-                agy_gemini_client.parse_remote_rc_line(rc_line)
-            )
-            if category == agy_gemini_client.AGY_BINARY_ABSENT:
-                raise AgyRunnerError(
-                    agy_gemini_client.AGY_BINARY_ABSENT,
-                    f"{stage}: no agy on {host} ({rc_line}); see {host}:{job_dir}",
-                )
-            raise AgyRunnerError("AGY_FAILED_RC", f"{stage} failed {rc_line}; see {host}:{job_dir}")
-        fetched = subprocess.run(
-            ["ssh", host, f"cat {shlex.quote(job_dir)}/{output_name}"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        return strip_markdown_fence(fetched.stdout) if fetched.returncode == 0 else ""
 
     def extract_screen_text(media_path: Path, stamp: str) -> list[dict]:
         """On-screen text with timestamps — the time-paired evidence track.
@@ -383,9 +421,27 @@ JSON only, no markdown fences. An empty array is valid if there is none."""
                 probe_path = media_path
                 probe_offset_ms = 0
 
-        job_dir = f"/opt/bilive/jingting_jobs/screentext-{Path(media_path).stem[:28]}-{stamp}"
+        local_job_suffix = (
+            f"-{os.getpid()}-{uuid.uuid4().hex[:12]}"
+            if _is_local_host(host)
+            else ""
+        )
+        job_dir = (
+            f"{LOCAL_AGY_JOB_ROOT}/screentext-{Path(media_path).stem[:28]}-"
+            f"{stamp}{local_job_suffix}"
+        )
         try:
-            raw = run_agy_job(job_dir, probe_path, build_screen_text_prompt(job_dir), "screen_text.json", stage="screen text extraction")
+            raw = _run_fresh_agy_job(
+                host,
+                job_dir=job_dir,
+                media_path=probe_path,
+                prompt=build_screen_text_prompt(job_dir),
+                output_name="screen_text.json",
+                stage="screen text extraction",
+                model=model,
+                poll_deadline_seconds=poll_deadline_seconds,
+                poll_interval_seconds=poll_interval_seconds,
+            )
             payload = json.loads(raw) if raw.strip() else []
             items = []
             for item in payload:
@@ -441,9 +497,27 @@ JSON only, no markdown fences. An empty array is valid if there is none."""
         last_error: Exception | None = None
         agy_absent = False
         for attempt in range(1, attempts + 1):
-            job_dir = f"/opt/bilive/jingting_jobs/fresh-{Path(media_path).stem[:32]}-{stamp}-a{attempt}"
+            local_job_suffix = (
+                f"-{os.getpid()}-{uuid.uuid4().hex[:12]}"
+                if _is_local_host(host)
+                else ""
+            )
+            job_dir = (
+                f"{LOCAL_AGY_JOB_ROOT}/fresh-{Path(media_path).stem[:32]}-"
+                f"{stamp}{local_job_suffix}-a{attempt}"
+            )
             try:
-                srt_text = run_agy_job(job_dir, media_path, prompt, "output.srt", stage="fresh transcription")
+                srt_text = _run_fresh_agy_job(
+                    host,
+                    job_dir=job_dir,
+                    media_path=media_path,
+                    prompt=prompt,
+                    output_name="output.srt",
+                    stage="fresh transcription",
+                    model=model,
+                    poll_deadline_seconds=poll_deadline_seconds,
+                    poll_interval_seconds=poll_interval_seconds,
+                )
                 if not looks_like_srt(srt_text):
                     raise AgyRunnerError("AGY_EMPTY_OUTPUT", f"fresh transcription produced no valid SRT; see {host}:{job_dir}")
                 return srt_text
@@ -755,7 +829,15 @@ def _agy_screen_text_lines(host: str, media_path: Path) -> list[str]:
     from src.autoslice.source_context_executor import AgyRunnerError
 
     stamp = _time.strftime("%Y%m%d-%H%M%S")
-    job_dir = f"/opt/bilive/jingting_jobs/screentext-{Path(media_path).stem[:28]}-{stamp}"
+    local_job_suffix = (
+        f"-{os.getpid()}-{uuid.uuid4().hex[:12]}"
+        if _is_local_host(host)
+        else ""
+    )
+    job_dir = (
+        f"{LOCAL_AGY_JOB_ROOT}/screentext-{Path(media_path).stem[:28]}-"
+        f"{stamp}{local_job_suffix}"
+    )
     prompt = (
         f"Watch input.mp4 in this job directory ({job_dir}).\n"
         "List readable on-screen text EXCEPT scrolling viewer danmaku: superchat / 醒目留言 cards "
@@ -775,39 +857,55 @@ def _agy_screen_text_lines(host: str, media_path: Path) -> list[str]:
         return c
 
     try:
-        run(["ssh", host, f"mkdir -p {shlex.quote(job_dir)}"])
-        with tempfile.TemporaryDirectory(prefix="screentext_") as tmp:
-            pf = Path(tmp) / "prompt.md"
-            pf.write_text(prompt, encoding="utf-8")
-            run(["scp", "-q", str(media_path), f"{host}:{job_dir}/input.mp4"])
-            run(["scp", "-q", str(pf), f"{host}:{job_dir}/prompt.md"])
         short = (
             f"Open {job_dir}/prompt.md with view_file and follow it exactly. "
             f"Use only {job_dir}/prompt.md, {job_dir}/input.mp4, and {job_dir}/screen_text.json. "
             "Do not inspect any other file or directory. Do not use shell or terminal."
         )
-        inner = (
-            f"{shlex.quote(agy_gemini_client.resolve_remote_agy_binary())} "
-            f"--sandbox --dangerously-skip-permissions --add-dir {shlex.quote(job_dir)} "
-            f"--model {shlex.quote(AGY_MODEL)} -p {shlex.quote(short)} --print-timeout 15m"
-        )
-        agy_cmd = (
-            f"cd {shlex.quote(job_dir)} && script -qec {shlex.quote(inner)} /dev/null "
-            f"> {shlex.quote(job_dir)}/agy.stdout 2> {shlex.quote(job_dir)}/agy.stderr; echo rc=$? > {shlex.quote(job_dir)}/agy.rc"
-        )
-        run(["ssh", host, f"nohup bash -c {shlex.quote(agy_cmd)} >/dev/null 2>&1 & echo started"])
-        deadline = _time.time() + 1200
-        rc_line = ""
-        while _time.time() < deadline:
-            probe = subprocess.run(["ssh", host, f"cat {shlex.quote(job_dir)}/agy.rc 2>/dev/null"], check=False, capture_output=True, text=True, timeout=120)
-            rc_line = probe.stdout.strip()
-            if rc_line:
-                break
-            _time.sleep(20)
-        if rc_line != "rc=0":
-            return []
-        fetched = subprocess.run(["ssh", host, f"cat {shlex.quote(job_dir)}/screen_text.json"], check=False, capture_output=True, text=True, timeout=120)
-        raw = strip_markdown_fence(fetched.stdout) if fetched.returncode == 0 else ""
+        if _is_local_host(host):
+            raw = strip_markdown_fence(
+                _run_local_agy_job(
+                    job_dir,
+                    input_path=media_path,
+                    prompt=prompt,
+                    output_name="screen_text.json",
+                    model=AGY_MODEL,
+                    short_prompt=short,
+                    print_timeout="15m",
+                    poll_deadline_seconds=1200,
+                    poll_interval_seconds=20,
+                    stage="screen text extraction",
+                )
+            )
+        else:
+            run(["ssh", host, f"mkdir -p {shlex.quote(job_dir)}"])
+            with tempfile.TemporaryDirectory(prefix="screentext_") as tmp:
+                pf = Path(tmp) / "prompt.md"
+                pf.write_text(prompt, encoding="utf-8")
+                run(["scp", "-q", str(media_path), f"{host}:{job_dir}/input.mp4"])
+                run(["scp", "-q", str(pf), f"{host}:{job_dir}/prompt.md"])
+            inner = (
+                f"{shlex.quote(agy_gemini_client.resolve_remote_agy_binary())} "
+                f"--sandbox --dangerously-skip-permissions --add-dir {shlex.quote(job_dir)} "
+                f"--model {shlex.quote(AGY_MODEL)} -p {shlex.quote(short)} --print-timeout 15m"
+            )
+            agy_cmd = (
+                f"cd {shlex.quote(job_dir)} && script -qec {shlex.quote(inner)} /dev/null "
+                f"> {shlex.quote(job_dir)}/agy.stdout 2> {shlex.quote(job_dir)}/agy.stderr; echo rc=$? > {shlex.quote(job_dir)}/agy.rc"
+            )
+            run(["ssh", host, f"nohup bash -c {shlex.quote(agy_cmd)} >/dev/null 2>&1 & echo started"])
+            deadline = _time.time() + 1200
+            rc_line = ""
+            while _time.time() < deadline:
+                probe = subprocess.run(["ssh", host, f"cat {shlex.quote(job_dir)}/agy.rc 2>/dev/null"], check=False, capture_output=True, text=True, timeout=120)
+                rc_line = probe.stdout.strip()
+                if rc_line:
+                    break
+                _time.sleep(20)
+            if rc_line != "rc=0":
+                return []
+            fetched = subprocess.run(["ssh", host, f"cat {shlex.quote(job_dir)}/screen_text.json"], check=False, capture_output=True, text=True, timeout=120)
+            raw = strip_markdown_fence(fetched.stdout) if fetched.returncode == 0 else ""
         items = json.loads(raw) if raw.strip() else []
         lines = []
         for it in items:
@@ -874,6 +972,19 @@ def _build_aggregate_asr_transcriber(
         # the highest-complexity lane; medium (not high) keeps long reconciles
         # inside the bridge's per-call 180s curl window, fallback 5.5 → 5.4.
         LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' medium", timeout_seconds=600.0)
+    )
+    # (维护者): _cpa_pronoun_ta_pass is its own dedicated config, not
+    # a reuse of cpa_llm_call above.  It is a closed 4-token
+    # (TA/他/她/它) classification over a short occurrence list, not the
+    # dual-source (BCUT+AGY) reconcile that justified `medium` for
+    # cpa_llm_call — so effort drops to `low`.  Model chain and 600s timeout
+    # are unchanged: the 600s budget is sized off llm_via_cpa.sh's own
+    # worst-case retry/deadline math (DEADLINE_SECONDS=400 + one in-flight
+    # curl --max-time 180 ≈ 580s), which is independent of prompt size, so
+    # shrinking it here would not track this pass's actually-smaller prompt
+    # and risks starving a legitimate retry cascade.
+    pronoun_llm_call = build_llm_call(
+        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' low", timeout_seconds=600.0)
     )
     topic_context_state = {"value": ""}
     session_topic_context = ""
@@ -1046,7 +1157,7 @@ def _build_aggregate_asr_transcriber(
         # Dedicated whole-clip final pronoun pass (TA/他/她/它 in either
         # direction); a discourse task the general correction cannot reliably
         # do inline. Later hash-bound human text decisions are final authority.
-        return _cpa_pronoun_ta_pass(corrected, cpa_llm_call=cpa_llm_call)
+        return _cpa_pronoun_ta_pass(corrected, cpa_llm_call=pronoun_llm_call)
 
     return transcriber
 
@@ -1058,5 +1169,5 @@ def _copy_draft_runner(media_path: Path, draft_srt_path: Path, output_srt_path: 
 
 # 删除死代码 _legacy_build_ssh_agy_runner。它自 _build_ssh_agy_runner
 # 被重新绑定到 jingting_remote_runner.build_ssh_agy_runner 之后就再无任何
-# 引用（全仓 grep 只剩它自己的 def），却还藏着一处写死的 /root/.local/bin/agy。
+# 引用（全仓 grep 只剩它自己的 def），却还藏着一处写死的 agy。
 _build_ssh_agy_runner = _attested_build_ssh_agy_runner

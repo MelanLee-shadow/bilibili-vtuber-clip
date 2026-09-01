@@ -32,7 +32,7 @@ COMPOSE_FILE="${AUTOSLICE_WATCHDOG_COMPOSE_FILE:-/opt/bilive/compose.yml}"
 QUARANTINE_ROOT="${AUTOSLICE_WATCHDOG_QUARANTINE_ROOT:-/opt/bilive/mount-fallback-quarantine}"
 
 HEARTBEAT="${AUTOSLICE_WATCHDOG_HEARTBEAT:-$BASE/reports/heartbeat.txt}"
-RUNNER_LOCK="${AUTOSLICE_WATCHDOG_RUNNER_LOCK:-$BASE/runner.lock}"
+TICK_LOCK="${AUTOSLICE_WATCHDOG_TICK_LOCK:-$BASE/tick.lock}"
 DISABLED_FLAG="${AUTOSLICE_WATCHDOG_DISABLED:-$BASE/DISABLED}"
 STALL_ALERT="${AUTOSLICE_WATCHDOG_STALL_ALERT:-$BASE/reports/ALERT_RUNNER_STALLED.txt}"
 STALL_AFTER_S="${AUTOSLICE_WATCHDOG_STALL_AFTER_S:-1800}"
@@ -65,16 +65,16 @@ stall_alert() {
     say "$*"
 }
 
-runner_lock_holders() {
+tick_lock_holders() {
     # /proc/locks identifies the locked file by MAJ:MIN:INODE (the kernel
     # prints "%02x:%02x:%lu"), so derive the same key from the lock file.
-    # runner.lock was held for seven hours by an orphaned process
+    # the tick lock was held for seven hours by an orphaned process
     # and every blocked cron tick exited silently — nobody could name the
     # holder afterwards because nothing ever recorded it.
-    [ -e "$RUNNER_LOCK" ] || return 0
+    [ -e "$TICK_LOCK" ] || return 0
     [ -r "$PROC_LOCKS" ] || return 0
-    dev_hex=$("$STAT_BIN" -c '%D' "$RUNNER_LOCK" 2>/dev/null) || return 0
-    inode=$("$STAT_BIN" -c '%i' "$RUNNER_LOCK" 2>/dev/null) || return 0
+    dev_hex=$("$STAT_BIN" -c '%D' "$TICK_LOCK" 2>/dev/null) || return 0
+    inode=$("$STAT_BIN" -c '%i' "$TICK_LOCK" 2>/dev/null) || return 0
     [ -n "$dev_hex" ] && [ -n "$inode" ] || return 0
     while [ "${#dev_hex}" -lt 4 ]; do dev_hex="0$dev_hex"; done
     maj=${dev_hex%??}
@@ -93,7 +93,7 @@ runner_lock_holders() {
 }
 
 check_runner_not_starved() {
-    # A cron tick rejected by `flock -n` writes NOTHING: no log line, no
+    # A cron tick rejected by `flock -n tick.lock` writes NOTHING: no log line, no
     # heartbeat, no alert.  On that silence hid a seven-hour outage.
     # The heartbeat's own age is the only signal that survives starvation.
     [ -e "$DISABLED_FLAG" ] && return 0   # paused on purpose (deploy/operator)
@@ -102,14 +102,14 @@ check_runner_not_starved() {
     [ -n "$last" ] || return 0
     age=$(( $(date +%s) - last ))
     [ "$age" -gt "$STALL_AFTER_S" ] || return 0
-    holders=$(runner_lock_holders)
+    holders=$(tick_lock_holders)
     # The heartbeat is only written at tick END, and a marathon batch legitimately
     # runs for hours (one healthy tick spanned 09:40→11:42).  A tick
     # holding its own lock is working, not starved — the incident shape is a
     # FOREIGN holder, so only that raises the alarm.  Crying wolf on every long
     # batch would retire this alert within a week.
     if echo "$holders" | grep -Eq "$SELF_HOLDER_RX"; then
-        say "runner.lock held by the runner's own tick for ${age}s — working, not starved"
+        say "tick.lock held by the runner's own tick for ${age}s — working, not starved"
         return 0
     fi
     if [ -z "$holders" ]; then
@@ -117,7 +117,7 @@ check_runner_not_starved() {
     else
         holders=$(echo "$holders" | tr '\n' ';')
     fi
-    stall_alert "runner STALLED: heartbeat ${age}s old (> ${STALL_AFTER_S}s) with no DISABLED flag; runner.lock holder(s): $holders — NEEDS HUMAN"
+    stall_alert "runner STALLED: heartbeat ${age}s old (> ${STALL_AFTER_S}s) with no DISABLED flag; tick.lock holder(s): $holders — NEEDS HUMAN"
 }
 
 mount_value() {

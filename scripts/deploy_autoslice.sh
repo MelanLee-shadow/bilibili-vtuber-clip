@@ -8,7 +8,7 @@
 #   AGENTS.md README.md; ignored files excluded)
 # - verifies the complete staged file list and SHA-256 manifest
 # - owns a remote deploy guard from initial observation through final cleanup
-# - pauses new runs, waits for runner.lock, then swaps every managed component with rollback
+# - pauses new runs, drains tick.lock then runner.lock, and swaps every managed component with rollback
 # - verifies rollback against a full path/type/mode/SHA-256 manifest
 # - seals DEPLOYED_COMMIT plus a commit-bound authority-asset manifest only
 #   after every runtime/external-file and complete-tree check succeeds
@@ -19,6 +19,990 @@ set -euo pipefail
 HOST="${1:-free}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+
+remote_ssh() {
+    local host=$1
+    shift
+    if [ "$host" != oci3 ]; then
+        ssh "$host" "$@"
+        return $?
+    fi
+    local remote_command escaped
+    if [ "$#" -eq 1 ]; then
+        # A single argument is an existing remote shell command (it may contain
+        # operators such as &&, ||, ;, or |); preserve that command as-is.
+        remote_command=$1
+    else
+        printf -v remote_command '%q ' "$@"
+    fi
+    printf -v escaped '%q' "$remote_command"
+    ssh "$host" "sudo -n bash -c $escaped"
+}
+
+if [ "${1:-}" = "--recover-deploy-guard" ]; then
+    RECOVERY_OWNER=${2:-}
+    RECOVERY_HOST=${3:-free}
+    if [ "$#" -lt 2 ] || [ "$#" -gt 3 ] || ! [[ "$RECOVERY_OWNER" =~ ^[0-9a-f]{40}-[0-9]{8}T[0-9]{6}Z-[0-9]+$ ]]; then
+        echo "usage: $0 --recover-deploy-guard <exact-owner> [host]" >&2
+        exit 2
+    fi
+    RECOVERY_STAGE_PROBE=$(remote_ssh "$RECOVERY_HOST" bash -s -- /opt/bilive/autoslice "$RECOVERY_OWNER" <<'REMOTE_PREBACKUP_STAGE_PROBE'
+set -euo pipefail
+base=$1
+owner=$2
+commit=${owner%%-*}
+guard=$base/deploy.guard
+backup=$base/repo.rollback-$commit
+stage=$base/repo.deploy-$commit
+refuse() { echo "REFUSE: $*" >&2; exit 1; }
+if [ ! -d "$guard" ] || [ -L "$guard" ]; then
+    refuse "deploy guard is missing, symlinked, or not a directory"
+fi
+if [ ! -f "$guard/owner" ] || [ -L "$guard/owner" ]; then
+    refuse "deploy guard owner is missing, symlinked, or not a regular file"
+fi
+if ! recorded_owner=$(cat "$guard/owner"); then
+    refuse "cannot read deploy guard owner"
+fi
+if [ "$recorded_owner" != "$owner" ]; then
+    refuse "deploy guard owner does not match requested owner"
+fi
+if ! guard_entries=$(find "$guard" -mindepth 1 -maxdepth 1 -exec printf . \; | wc -c); then
+    refuse "cannot enumerate deploy guard entries"
+fi
+if [ "$guard_entries" -ne 1 ]; then
+    refuse "deploy guard must contain exactly its owner file"
+fi
+if [ -L "$backup" ]; then
+    refuse "rollback tree is symlinked"
+fi
+if [ -e "$backup" ]; then
+    if [ ! -d "$backup" ]; then
+        refuse "rollback residue is not a directory"
+    fi
+    if [ -e "$stage" ] || [ -L "$stage" ]; then
+        if [ -L "$stage" ] || [ ! -d "$stage" ]; then
+            refuse "staging residue is symlinked or not a directory"
+        fi
+    fi
+    printf '%s\n' backup-present
+    exit 0
+fi
+if [ ! -e "$stage" ] && [ ! -L "$stage" ]; then
+    printf '%s\n' no-residue
+    exit 0
+fi
+if [ -L "$stage" ]; then
+    refuse "staging residue is symlinked"
+fi
+if [ ! -d "$stage" ]; then
+    refuse "staging residue is not a directory"
+fi
+python3 - "$stage" <<'PY_PREBACKUP_STAGE_INVENTORY'
+import hashlib
+import json
+import os
+import stat
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+entries = {"": {"type": "dir", "mode": stat.S_IMODE(root.stat().st_mode)}}
+for path in sorted(root.rglob("*")):
+    relative = path.relative_to(root).as_posix()
+    info = path.lstat()
+    mode = stat.S_IMODE(info.st_mode)
+    if path.is_symlink():
+        raise SystemExit(f"unsafe staging symlink: {relative}")
+    if path.is_dir():
+        entries[relative] = {"type": "dir", "mode": mode}
+    elif path.is_file():
+        entries[relative] = {
+            "type": "file",
+            "mode": mode,
+            "size": info.st_size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+    else:
+        raise SystemExit(f"unsafe staging entry: {relative}")
+canonical = json.dumps(entries, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+print(json.dumps({"schema_version": "deploy-prebackup-stage-inventory.v1", "entries": entries,
+                  "tree_sha256": hashlib.sha256(canonical).hexdigest()},
+                 ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+PY_PREBACKUP_STAGE_INVENTORY
+REMOTE_PREBACKUP_STAGE_PROBE
+)
+    if [ "$RECOVERY_STAGE_PROBE" != backup-present ] && [ "$RECOVERY_STAGE_PROBE" != no-residue ]; then
+        RECOVERY_STAGE_ANALYSIS=$(python3 - "$RECOVERY_OWNER" "$RECOVERY_STAGE_PROBE" <<'PY_LOCAL_PREBACKUP_STAGE'
+import hashlib
+import io
+import json
+import subprocess
+import sys
+import tarfile
+
+owner, raw = sys.argv[1:]
+commit = owner.split("-", 1)[0]
+inventory = json.loads(raw)
+assert inventory.get("schema_version") == "deploy-prebackup-stage-inventory.v1"
+entries = inventory.get("entries")
+assert isinstance(entries, dict)
+assert entries.get("") == {"type": "dir", "mode": 0o755}
+actual_files = {path: entry for path, entry in entries.items() if path and entry.get("type") == "file"}
+assert all(entry.get("type") in {"file", "dir"} for entry in entries.values())
+archive = subprocess.check_output([
+    "git", "archive", "--format=tar", commit,
+    "scripts", "src", "ops", "assets", "profiles", ".agent", "docs", "cleanup_manifests",
+    "AGENTS.md", "README.md",
+])
+expected_members = []
+with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as bundle:
+    for member in bundle:
+        if member.isdir():
+            expected_members.append(("dir", member.name.rstrip("/"), member.mode & ~0o022, None))
+        else:
+            assert member.isfile(), f"unexpected archive member: {member.name}"
+            expected_members.append(
+                ("file", member.name, member.mode & ~0o022, bundle.extractfile(member).read())
+            )
+seen = []
+partial = None
+stopped = False
+for kind, name, mode, content in expected_members:
+    if stopped:
+        break
+    if kind == "dir":
+        entry = entries.get(name)
+        assert entry is not None and entry.get("type") == "dir", name
+        continue
+    entry = actual_files.get(name)
+    if entry is None:
+        stopped = True
+        break
+    actual_size = entry.get("size")
+    assert isinstance(actual_size, int) and 0 < actual_size <= len(content)
+    if actual_size == len(content):
+        assert entry.get("mode") == mode, (name, entry.get("mode"), mode)
+        assert entry.get("sha256") == hashlib.sha256(content).hexdigest(), name
+        seen.append(name)
+        continue
+    assert partial is None
+    # GNU tar creates an interrupted member under its temporary 0600 mode;
+    # completed members have already had --no-same-permissions plus umask 022.
+    assert entry.get("mode") == 0o600, (name, entry.get("mode"), 0o600)
+    assert entry.get("sha256") == hashlib.sha256(content[:actual_size]).hexdigest(), name
+    partial = {"path": name, "size": actual_size, "sha256": entry["sha256"]}
+    seen.append(name)
+    stopped = True
+assert set(actual_files) == set(seen)
+expected_files = [(name, mode, content) for kind, name, mode, content in expected_members if kind == "file"]
+assert seen == [item[0] for item in expected_files[:len(seen)]]
+allowed_dirs = {""}
+for name in seen:
+    parts = name.split("/")[:-1]
+    for index in range(1, len(parts) + 1):
+        allowed_dirs.add("/".join(parts[:index]))
+actual_dirs = {path for path, entry in entries.items() if entry.get("type") == "dir"}
+assert actual_dirs == allowed_dirs
+active_ancestors = set()
+if partial is not None:
+    parts = partial["path"].split("/")[:-1]
+    for index in range(1, len(parts) + 1):
+        active_ancestors.add("/".join(parts[:index]))
+for path in actual_dirs:
+    if not path:
+        continue
+    expected_mode = 0o700 if path in active_ancestors else 0o755
+    assert entries[path].get("mode") == expected_mode, (path, entries[path].get("mode"), expected_mode)
+print(json.dumps({"tree_sha256": inventory["tree_sha256"], "partial": partial},
+                 ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+PY_LOCAL_PREBACKUP_STAGE
+)
+        RECOVERY_STAGE_TREE_SHA=$(python3 - "$RECOVERY_STAGE_ANALYSIS" <<'PY_TREE_SHA'
+import json
+import sys
+payload = json.loads(sys.argv[1])
+value = payload.get("tree_sha256")
+assert isinstance(value, str) and len(value) == 64
+print(value)
+PY_TREE_SHA
+)
+        remote_ssh "$RECOVERY_HOST" bash -s -- /opt/bilive/autoslice "$RECOVERY_OWNER" "$RECOVERY_STAGE_TREE_SHA" <<'REMOTE_PREBACKUP_GUARD_RECOVERY'
+set -euo pipefail
+base=$1
+owner=$2
+expected_tree_sha=$3
+commit=${owner%%-*}
+repo=$base/repo
+backup=$base/repo.rollback-$commit
+stage=$base/repo.deploy-$commit
+guard=$base/deploy.guard
+test -d "$guard" && test ! -L "$guard"
+test -f "$guard/owner" && test ! -L "$guard/owner"
+test "$(cat "$guard/owner")" = "$owner"
+test "$(find "$guard" -mindepth 1 -maxdepth 1 -exec printf . \; | wc -c)" -eq 1
+test ! -e "$backup"
+test ! -L "$backup"
+test -d "$stage" && test ! -L "$stage"
+python3 - "$repo" "$stage" "$expected_tree_sha" <<'PY_PREBACKUP_RECOVER'
+import hashlib
+import json
+import os
+import stat
+import sys
+from pathlib import Path
+
+repo = Path(sys.argv[1])
+stage = Path(sys.argv[2])
+expected_tree = sys.argv[3]
+entries = {"": {"type": "dir", "mode": stat.S_IMODE(stage.stat().st_mode)}}
+for path in sorted(stage.rglob("*")):
+    relative = path.relative_to(stage).as_posix()
+    info = path.lstat()
+    mode = stat.S_IMODE(info.st_mode)
+    if path.is_symlink():
+        raise SystemExit(f"unsafe staging symlink: {relative}")
+    if path.is_dir():
+        entries[relative] = {"type": "dir", "mode": mode}
+    elif path.is_file():
+        entries[relative] = {"type": "file", "mode": mode, "size": info.st_size,
+                             "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    else:
+        raise SystemExit(f"unsafe staging entry: {relative}")
+actual_tree = hashlib.sha256(json.dumps(entries, ensure_ascii=False, sort_keys=True,
+                                        separators=(",", ":")).encode()).hexdigest()
+assert actual_tree == expected_tree
+commit = (repo / "DEPLOYED_COMMIT").read_text(encoding="utf-8").split(maxsplit=1)[0]
+assert __import__("re").fullmatch(r"[0-9a-f]{40}", commit)
+sys.path.insert(0, str(repo))
+from src.autoslice.repository_asset_authority import build_deployed_authority_manifest
+manifest = json.loads((repo / "DEPLOYED_AUTHORITY_MANIFEST.json").read_text(encoding="utf-8"))
+registry = repo / "assets/lidousha/publication_registry.v1.json"
+authority_dir = repo / "assets/lidousha"
+assert registry.is_file() and not registry.is_symlink()
+assert authority_dir.is_dir() and not authority_dir.is_symlink()
+paths = [registry]
+for candidate in authority_dir.rglob("*"):
+    assert not candidate.is_symlink()
+    if candidate.is_file() and candidate.suffix in {".json", ".srt"}:
+        paths.append(candidate)
+expected_manifest = build_deployed_authority_manifest(
+    repo_root=repo, deployed_commit=commit, relative_paths=[path.relative_to(repo) for path in paths]
+)
+assert manifest == expected_manifest
+for source, destination in (
+    (repo / "scripts/mount_watchdog.sh", Path("/opt/bilive/autoslice/mount_watchdog.sh")),
+    (repo / "scripts/clouddrive_upload_fatal_sentinel.sh", Path("/opt/bilive/autoslice/upload_fatal_sentinel.sh")),
+    (repo / "scripts/do_upload.sh", Path("/opt/bilive/app/tmp_manual_upload/do_upload.sh")),
+    (repo / "ops/recording/bililive_recorder_adapter.py", Path("/opt/bilive/recording/bililive_recorder_adapter.py")),
+):
+    assert source.is_file() and not source.is_symlink()
+    assert destination.is_file() and not destination.is_symlink()
+    assert hashlib.sha256(source.read_bytes()).digest() == hashlib.sha256(destination.read_bytes()).digest()
+PY_PREBACKUP_RECOVER
+rm -rf -- "$stage"
+test "$(cat "$guard/owner")" = "$owner"
+rm -f "$guard/owner"
+rmdir "$guard"
+REMOTE_PREBACKUP_GUARD_RECOVERY
+        exit $?
+    fi
+    RECOVERY_KIND=$(remote_ssh "$RECOVERY_HOST" bash -s -- /opt/bilive/autoslice "$RECOVERY_OWNER" <<'REMOTE_RECOVERY_KIND'
+set -euo pipefail
+base=$1; owner=$2; commit=${owner%%-*}; repo=$base/repo; backup=$base/repo.rollback-$commit; stage=$base/repo.deploy-$commit
+if [ ! -f "$repo/DEPLOYED_COMMIT" ] || [ -L "$repo/DEPLOYED_COMMIT" ]; then
+    echo "REFUSE: deployed commit stamp is missing, symlinked, or not a regular file" >&2
+    exit 1
+fi
+current=$(awk 'NR==1 {print $1}' "$repo/DEPLOYED_COMMIT")
+if [ "${#current}" -ne 40 ] || [[ "$current" = *[!0-9a-f]* ]]; then
+    echo "REFUSE: deployed commit stamp is not a lowercase 40-hex SHA" >&2
+    exit 1
+fi
+if [ -e "$backup" ] || [ -L "$backup" ] || [ -e "$stage" ] || [ -L "$stage" ]; then
+test -f "$backup/DEPLOYED_COMMIT.old"
+test ! -L "$backup/DEPLOYED_COMMIT.old"
+old=$(awk 'NR==1 {print $1}' "$backup/DEPLOYED_COMMIT.old")
+test "${#old}" -eq 40
+[[ "$old" != *[!0-9a-f]* ]]
+if [ "$current" = "$commit" ] && [ "$old" != "$commit" ] && [ -n "$old" ]; then echo POSTCOMMIT_SUCCESS_CLEANUP
+elif [ "$current" = "$old" ] && [ "$current" != "$commit" ] && [ -n "$old" ]; then echo PRECOMMIT_OR_ROLLBACK
+else echo REFUSE_UNKNOWN_RECOVERY_RELATION; exit 1; fi
+else
+if [ "$current" = "$commit" ]; then echo POSTCOMMIT_GUARD_ONLY_CLEANUP
+else echo REFUSE_UNKNOWN_RECOVERY_RELATION >&2; exit 1; fi
+fi
+REMOTE_RECOVERY_KIND
+)
+    if [ "$RECOVERY_KIND" = POSTCOMMIT_SUCCESS_CLEANUP ]; then
+    # A successful swap can lose its final SSH connection before cleanup.  This
+    # is deliberately a separate recovery transaction: it never accepts the
+    # old rollback state as the live deployment.
+    if git ls-tree -r --name-only "${RECOVERY_OWNER%%-*}" | grep -E '(^|/)__pycache__/|\.pyc$' >/dev/null; then
+        echo "REFUSE: owner commit tracks bytecode cache content" >&2
+        exit 1
+    fi
+    POSTCOMMIT_TREE_SHA=$(git archive --format=tar "${RECOVERY_OWNER%%-*}" \
+        scripts src ops assets profiles .agent docs cleanup_manifests AGENTS.md README.md \
+        | python3 -c 'import hashlib,json,stat,sys,tarfile; t=tarfile.open(fileobj=sys.stdin.buffer,mode="r|"); e={}; [e.update({m.name.rstrip("/"):{"type":"dir","mode":m.mode & ~0o022} if m.isdir() else {"type":"file","mode":m.mode & ~0o022,"sha256":hashlib.sha256(t.extractfile(m).read()).hexdigest()}}) for m in t if m.isdir() or m.isfile()]; print(hashlib.sha256(json.dumps(e,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()).hexdigest())')
+    POSTCOMMIT_RUNNER_MD5=$(git show "${RECOVERY_OWNER%%-*}:scripts/session_autoslice.py" | python3 -c 'import hashlib,sys; print(hashlib.md5(sys.stdin.buffer.read()).hexdigest())')
+    remote_ssh "$RECOVERY_HOST" bash -s -- /opt/bilive/autoslice "$RECOVERY_OWNER" "$POSTCOMMIT_TREE_SHA" "$POSTCOMMIT_RUNNER_MD5" <<'REMOTE_POSTCOMMIT_GUARD_RECOVERY'
+set -euo pipefail
+base=$1; owner=$2; expected_tree=$3; expected_runner_md5=$4
+commit=${owner%%-*}; repo=$base/repo; backup=$base/repo.rollback-$commit; stage=$base/repo.deploy-$commit; guard=$base/deploy.guard
+test -d "$guard"
+test ! -L "$guard"
+test -f "$guard/owner"
+test ! -L "$guard/owner"
+test "$(cat "$guard/owner")" = "$owner"
+test "$(find "$guard" -mindepth 1 -maxdepth 1 -exec printf . \; | wc -c)" -eq 1
+test ! -e "$stage"
+test ! -L "$stage"
+test -d "$backup"
+test ! -L "$backup"
+test -f "$repo/DEPLOYED_COMMIT"
+test ! -L "$repo/DEPLOYED_COMMIT"
+test -f "$repo/DEPLOYED_AUTHORITY_MANIFEST.json"
+test ! -L "$repo/DEPLOYED_AUTHORITY_MANIFEST.json"
+test -f "$backup/DEPLOYED_COMMIT.old"
+test ! -L "$backup/DEPLOYED_COMMIT.old"
+test -f "$backup/repo.manifest.old.json"
+test ! -L "$backup/repo.manifest.old.json"
+current=$(awk 'NR==1 {print $1}' "$repo/DEPLOYED_COMMIT"); old=$(awk 'NR==1 {print $1}' "$backup/DEPLOYED_COMMIT.old")
+test "${#old}" -eq 40
+[[ "$old" != *[!0-9a-f]* ]]
+test "$current" = "$commit"
+test "$old" != "$commit"
+test -n "$old"
+test -f "$base/DISABLED"
+test ! -L "$base/DISABLED"
+test ! -e "$base/AUTO_UPLOAD"
+test ! -L "$base/AUTO_UPLOAD"
+# Hold the same runtime leases through cleanup; a probe would race the rm.
+for lock in tick.lock runner.lock upload.lock; do test -f "$base/$lock"; test ! -L "$base/$lock"; done
+exec 9<>"$base/tick.lock"; /usr/bin/flock -n 9
+exec 8<>"$base/runner.lock"; /usr/bin/flock -n 8
+exec 7<>"$base/upload.lock"; /usr/bin/flock -n 7
+test "$(cat "$guard/owner")" = "$owner"
+PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" <<'PY'
+import hashlib,json,stat,sys
+from pathlib import Path
+root=Path(sys.argv[1]); caches=[]
+for name in ('scripts','src','ops','assets','profiles','.agent','docs','cleanup_manifests'):
+ p=root/name
+ if not p.exists(): continue
+ for q in p.rglob('*.pyc'):
+  if q.parent.name != '__pycache__': raise SystemExit('stray bytecode file')
+ for d in p.rglob('*'):
+  if d.name != '__pycache__': continue
+  s=d.lstat()
+  if d.is_symlink() or not d.is_dir() or not stat.S_ISDIR(s.st_mode): raise SystemExit('unsafe bytecode cache dir')
+  rows=list(d.iterdir())
+  if not rows: raise SystemExit('empty bytecode cache')
+  for q in rows:
+   qs=q.lstat()
+   if q.is_symlink() or not q.is_file() or q.suffix != '.pyc' or not stat.S_ISREG(qs.st_mode): raise SystemExit('unsafe bytecode cache child')
+  caches.append((d, rows))
+receipt=[]
+for d,rows in caches:
+ for q in rows: receipt.append((q.relative_to(root).as_posix(),hashlib.sha256(q.read_bytes()).hexdigest()))
+print(json.dumps({'schema':'postcommit-bytecode-cache-cleanup.v1','count':len(receipt),'files':receipt},sort_keys=True,separators=(',',':')))
+for d,rows in sorted(caches,key=lambda x:len(x[0].parts),reverse=True):
+ for q in rows: q.unlink()
+ d.rmdir()
+PY
+PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" "$expected_tree" "$commit" "$backup/repo.manifest.old.json" "$backup" <<'PY'
+import hashlib,json,os,stat,sys
+from pathlib import Path
+root,expected,commit,old_manifest,backup=map(Path,sys.argv[1:])
+commit=str(commit)
+assert root.joinpath('DEPLOYED_COMMIT').read_text().split()[0] == commit
+entries={}
+for name in ('scripts','src','ops','assets','profiles','.agent','docs','cleanup_manifests','AGENTS.md','README.md'):
+ p=root/name
+ if not p.exists(): continue
+ for q in (p,*p.rglob('*')):
+  s=q.lstat(); rel=q.relative_to(root).as_posix(); mode=stat.S_IMODE(s.st_mode)
+  assert not q.is_symlink()
+  if q.is_dir(): entries[rel]={'type':'dir','mode':mode}
+  elif q.is_file(): entries[rel]={'type':'file','mode':mode,'sha256':hashlib.sha256(q.read_bytes()).hexdigest()}
+  else: raise AssertionError(rel)
+assert hashlib.sha256(json.dumps(entries,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()==str(expected)
+old=json.loads(old_manifest.read_text()); assert isinstance(old,dict) and old
+prior={}
+for name in ('scripts','src','ops','assets','profiles','.agent','docs','cleanup_manifests','AGENTS.md','README.md'):
+ p=backup/name
+ if not p.exists(): continue
+ for q in (p,*p.rglob('*')):
+  s=q.lstat(); rel=q.relative_to(backup).as_posix(); mode=stat.S_IMODE(s.st_mode)
+  assert not q.is_symlink()
+  if q.is_dir(): prior[rel]={'type':'dir','mode':mode}
+  elif q.is_file(): prior[rel]={'type':'file','mode':mode,'sha256':hashlib.sha256(q.read_bytes()).hexdigest()}
+  else: raise AssertionError(rel)
+assert prior == old
+PY
+PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" "$commit" <<'PY'
+import sys,json
+from pathlib import Path
+root=Path(sys.argv[1]); commit=sys.argv[2]; sys.path.insert(0,str(root))
+from src.autoslice.repository_asset_authority import build_deployed_authority_manifest
+manifest=json.loads((root/'DEPLOYED_AUTHORITY_MANIFEST.json').read_text())
+registry=root/'assets/lidousha/publication_registry.v1.json'; paths=[registry]
+for p in (root/'assets/lidousha').rglob('*'):
+ if p.is_symlink(): raise SystemExit('authority symlink')
+ if p.is_file() and p.suffix in {'.json','.srt'}: paths.append(p)
+assert manifest==build_deployed_authority_manifest(repo_root=root,deployed_commit=commit,relative_paths=[p.relative_to(root) for p in paths])
+PY
+for target in "$base/mount_watchdog.sh" "$base/upload_fatal_sentinel.sh" /opt/bilive/app/tmp_manual_upload/do_upload.sh /opt/bilive/recording/bililive_recorder_adapter.py; do test -f "$target"; test ! -L "$target"; done
+cmp -s "$repo/scripts/mount_watchdog.sh" "$base/mount_watchdog.sh"
+cmp -s "$repo/scripts/clouddrive_upload_fatal_sentinel.sh" "$base/upload_fatal_sentinel.sh"
+cmp -s "$repo/scripts/do_upload.sh" /opt/bilive/app/tmp_manual_upload/do_upload.sh
+cmp -s "$repo/ops/recording/bililive_recorder_adapter.py" /opt/bilive/recording/bililive_recorder_adapter.py
+test "$(md5sum "$repo/scripts/session_autoslice.py" | cut -d' ' -f1)" = "$expected_runner_md5"
+test "$(cat "$guard/owner")" = "$owner"
+rm -rf -- "$backup"
+test "$(cat "$guard/owner")" = "$owner"; rm -f -- "$guard/owner"; rmdir "$guard"
+REMOTE_POSTCOMMIT_GUARD_RECOVERY
+    exit $?
+    fi
+    if [ "$RECOVERY_KIND" = POSTCOMMIT_GUARD_ONLY_CLEANUP ]; then
+    # The deploy completed and already removed its rollback/stage trees, but
+    # the final SSH disconnect stranded only the owner guard.  This path is
+    # intentionally narrower than rollback-backed postcommit cleanup: all
+    # managed bytes must still exactly equal the committed owner tree.
+    if git ls-tree -r --name-only "${RECOVERY_OWNER%%-*}" | grep -E '(^|/)__pycache__/|\.pyc$' >/dev/null; then
+        echo "REFUSE: owner commit tracks bytecode cache content" >&2
+        exit 1
+    fi
+    POSTCOMMIT_TREE_SHA=$(git archive --format=tar "${RECOVERY_OWNER%%-*}" \
+        scripts src ops assets profiles .agent docs cleanup_manifests AGENTS.md README.md \
+        | python3 -c 'import hashlib,json,stat,sys,tarfile; t=tarfile.open(fileobj=sys.stdin.buffer,mode="r|"); e={}; [e.update({m.name.rstrip("/"): {"type":"dir","mode":m.mode & ~0o022} if m.isdir() else {"type":"file","mode":m.mode & ~0o022,"sha256":hashlib.sha256(t.extractfile(m).read()).hexdigest()}}) for m in t if m.isdir() or m.isfile()]; print(hashlib.sha256(json.dumps(e,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()).hexdigest())')
+    POSTCOMMIT_RUNNER_MD5=$(git show "${RECOVERY_OWNER%%-*}:scripts/session_autoslice.py" | python3 -c 'import hashlib,sys; print(hashlib.md5(sys.stdin.buffer.read()).hexdigest())')
+    remote_ssh "$RECOVERY_HOST" bash -s -- /opt/bilive/autoslice "$RECOVERY_OWNER" "$POSTCOMMIT_TREE_SHA" "$POSTCOMMIT_RUNNER_MD5" <<'REMOTE_GUARD_ONLY_POSTCOMMIT_GUARD_RECOVERY'
+set -euo pipefail
+base=$1; owner=$2; expected_tree=$3; expected_runner_md5=$4
+commit=${owner%%-*}; repo=$base/repo; backup=$base/repo.rollback-$commit; stage=$base/repo.deploy-$commit; guard=$base/deploy.guard
+test -d "$guard"
+test ! -L "$guard"
+test "$(stat -c '%a' "$guard")" = 755
+test -f "$guard/owner"
+test ! -L "$guard/owner"
+test "$(stat -c '%a' "$guard/owner")" = 600
+test "$(cat "$guard/owner")" = "$owner"
+test "$(find "$guard" -mindepth 1 -maxdepth 1 -exec printf . \; | wc -c)" -eq 1
+test ! -e "$backup"
+test ! -L "$backup"
+test ! -e "$stage"
+test ! -L "$stage"
+if find "$base" -mindepth 1 -maxdepth 1 \( -name 'repo.rollback-*' -o -name 'repo.deploy-*' \) -print -quit | grep -q .; then
+    echo "REFUSE: deploy residue exists" >&2
+    exit 1
+fi
+test -f "$repo/DEPLOYED_COMMIT"
+test ! -L "$repo/DEPLOYED_COMMIT"
+test "$(stat -c '%a' "$repo/DEPLOYED_COMMIT")" = 644
+current=$(awk 'NR==1 {print $1}' "$repo/DEPLOYED_COMMIT")
+test "${#current}" -eq 40
+[[ "$current" != *[!0-9a-f]* ]]
+test "$current" = "$commit"
+test -f "$repo/DEPLOYED_AUTHORITY_MANIFEST.json"
+test ! -L "$repo/DEPLOYED_AUTHORITY_MANIFEST.json"
+test "$(stat -c '%a' "$repo/DEPLOYED_AUTHORITY_MANIFEST.json")" = 644
+test -f "$base/DISABLED"
+test ! -L "$base/DISABLED"
+test "$(stat -c '%a' "$base/DISABLED")" = 644
+test ! -s "$base/DISABLED"
+test ! -e "$base/AUTO_UPLOAD"
+test ! -L "$base/AUTO_UPLOAD"
+for lock in tick.lock runner.lock; do
+    test -f "$base/$lock"
+    test ! -L "$base/$lock"
+    test "$(stat -c '%a' "$base/$lock")" = 644
+done
+test -f "$base/upload.lock"
+test ! -L "$base/upload.lock"
+test "$(stat -c '%a' "$base/upload.lock")" = 600
+exec 9<>"$base/tick.lock"; /usr/bin/flock -n 9
+exec 8<>"$base/runner.lock"; /usr/bin/flock -n 8
+exec 7<>"$base/upload.lock"; /usr/bin/flock -n 7
+test "$(cat "$guard/owner")" = "$owner"
+# Freeze a strict cache receipt without deleting anything.  Every remaining
+# predicate below runs while these derived bytes still exist; a failed gate
+# therefore leaves both cache and guard untouched.
+CACHE_RECEIPT=$(PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" <<'PY'
+import hashlib,json,stat,sys
+from pathlib import Path
+root=Path(sys.argv[1]); dirs=[]; files=[]
+for name in ('scripts','src','ops','assets','profiles','.agent','docs','cleanup_manifests'):
+ p=root/name
+ if not p.exists(): continue
+ for q in sorted(p.rglob('*.pyc')):
+  if q.parent.name != '__pycache__': raise SystemExit('stray bytecode file')
+ for d in sorted(p.rglob('__pycache__')):
+  s=d.lstat()
+  if d.is_symlink() or not d.is_dir() or not stat.S_ISDIR(s.st_mode): raise SystemExit('unsafe bytecode cache dir')
+  rows=sorted(d.iterdir())
+  if not rows: raise SystemExit('empty bytecode cache')
+  dirs.append(d.relative_to(root).as_posix())
+  for q in rows:
+   qs=q.lstat()
+   if q.is_symlink() or not q.is_file() or q.suffix != '.pyc' or not stat.S_ISREG(qs.st_mode): raise SystemExit('unsafe bytecode cache child')
+   files.append({'path':q.relative_to(root).as_posix(),'sha256':hashlib.sha256(q.read_bytes()).hexdigest()})
+print(json.dumps({'schema':'postcommit-bytecode-cache-cleanup.v1','dirs':dirs,'files':files},sort_keys=True,separators=(',',':')))
+PY
+)
+# The command substitution above strips Python's terminal newline.  A bash
+# here-string adds one byte back without placing this JSON in an argv entry;
+# remove that synthetic byte while measuring under the byte-oriented C locale.
+CACHE_RECEIPT_BYTES=$(LC_ALL=C wc -c <<<"$CACHE_RECEIPT")
+CACHE_RECEIPT_BYTES=$((CACHE_RECEIPT_BYTES - 1))
+if [ "$CACHE_RECEIPT_BYTES" -gt 65536 ]; then
+    echo "REFUSE: bytecode cache receipt exceeds argv-safe bound" >&2
+    exit 1
+fi
+PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" "$expected_tree" "$commit" "$CACHE_RECEIPT" <<'PY'
+import hashlib,json,stat,sys
+from pathlib import Path
+root=Path(sys.argv[1]); expected=sys.argv[2]; commit=sys.argv[3]; receipt=json.loads(sys.argv[4])
+assert receipt.get('schema') == 'postcommit-bytecode-cache-cleanup.v1'
+dirs=set(receipt.get('dirs') or []); files={row['path']:row['sha256'] for row in receipt.get('files') or []}
+assert len(files) == len(receipt.get('files') or [])
+assert root.joinpath('DEPLOYED_COMMIT').read_text().split()[0] == commit
+entries={}; seen_dirs=set(); seen_files=set()
+for name in ('scripts','src','ops','assets','profiles','.agent','docs','cleanup_manifests','AGENTS.md','README.md'):
+ p=root/name
+ if not p.exists(): continue
+ for q in (p,*p.rglob('*')):
+  s=q.lstat(); rel=q.relative_to(root).as_posix(); mode=stat.S_IMODE(s.st_mode)
+  assert not q.is_symlink()
+  if rel in dirs:
+   assert q.is_dir(); seen_dirs.add(rel); continue
+  if rel in files:
+   assert q.is_file() and hashlib.sha256(q.read_bytes()).hexdigest() == files[rel]; seen_files.add(rel); continue
+  assert not any(rel.startswith(directory + '/') for directory in dirs)
+  if q.is_dir(): entries[rel]={'type':'dir','mode':mode}
+  elif q.is_file(): entries[rel]={'type':'file','mode':mode,'sha256':hashlib.sha256(q.read_bytes()).hexdigest()}
+  else: raise AssertionError(rel)
+assert seen_dirs == dirs and seen_files == set(files)
+assert hashlib.sha256(json.dumps(entries,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()==expected
+PY
+PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" "$commit" <<'PY'
+import sys,json
+from pathlib import Path
+root=Path(sys.argv[1]); commit=sys.argv[2]; sys.path.insert(0,str(root))
+from src.autoslice.repository_asset_authority import build_deployed_authority_manifest
+manifest=json.loads((root/'DEPLOYED_AUTHORITY_MANIFEST.json').read_text())
+registry=root/'assets/lidousha/publication_registry.v1.json'; paths=[registry]
+if registry.is_symlink() or not registry.is_file(): raise SystemExit('unsafe publication registry')
+authority=root/'assets/lidousha'
+if authority.is_symlink() or not authority.is_dir(): raise SystemExit('unsafe authority tree')
+for p in authority.rglob('*'):
+ if p.is_symlink(): raise SystemExit('authority symlink')
+ if p.is_file() and p.suffix in {'.json','.srt'}: paths.append(p)
+assert manifest==build_deployed_authority_manifest(repo_root=root,deployed_commit=commit,relative_paths=[p.relative_to(root) for p in paths])
+PY
+for target in "$base/mount_watchdog.sh" "$base/upload_fatal_sentinel.sh" /opt/bilive/app/tmp_manual_upload/do_upload.sh /opt/bilive/recording/bililive_recorder_adapter.py; do
+    test -f "$target"
+    test ! -L "$target"
+done
+test "$(stat -c '%a' "$base/mount_watchdog.sh")" = 755
+test "$(stat -c '%a' "$base/upload_fatal_sentinel.sh")" = 755
+test "$(stat -c '%a' /opt/bilive/app/tmp_manual_upload/do_upload.sh)" = 700
+test "$(stat -c '%a' /opt/bilive/recording/bililive_recorder_adapter.py)" = 755
+cmp -s "$repo/scripts/mount_watchdog.sh" "$base/mount_watchdog.sh"
+cmp -s "$repo/scripts/clouddrive_upload_fatal_sentinel.sh" "$base/upload_fatal_sentinel.sh"
+cmp -s "$repo/scripts/do_upload.sh" /opt/bilive/app/tmp_manual_upload/do_upload.sh
+cmp -s "$repo/ops/recording/bililive_recorder_adapter.py" /opt/bilive/recording/bililive_recorder_adapter.py
+test "$(md5sum "$repo/scripts/session_autoslice.py" | cut -d' ' -f1)" = "$expected_runner_md5"
+test "$(cat "$guard/owner")" = "$owner"
+# Every pre-delete predicate has now passed.  Revalidate the frozen receipt in
+# full before the first unlink so an intervening cache drift cannot cause a
+# partial cleanup; a deletion error intentionally leaves the owner guard.
+PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" "$CACHE_RECEIPT" <<'PY'
+import hashlib,json,stat,sys
+from pathlib import Path
+root=Path(sys.argv[1]); receipt=json.loads(sys.argv[2])
+assert receipt.get('schema') == 'postcommit-bytecode-cache-cleanup.v1'
+dirs=[root / item for item in receipt.get('dirs') or []]
+files=[(root / row['path'], row['sha256']) for row in receipt.get('files') or []]
+assert len({path for path,_hash in files}) == len(files)
+for directory in dirs:
+ s=directory.lstat(); assert not directory.is_symlink() and directory.is_dir() and stat.S_ISDIR(s.st_mode)
+for path,expected in files:
+ s=path.lstat(); assert not path.is_symlink() and path.is_file() and stat.S_ISREG(s.st_mode)
+ assert path.parent in dirs and path.suffix == '.pyc'
+ assert hashlib.sha256(path.read_bytes()).hexdigest() == expected
+print(json.dumps(receipt,sort_keys=True,separators=(',',':')))
+for path,_expected in files: path.unlink()
+for directory in sorted(dirs,key=lambda item:len(item.parts),reverse=True): directory.rmdir()
+PY
+PYTHONDONTWRITEBYTECODE=1 python3 - "$repo" "$expected_tree" "$commit" <<'PY'
+import hashlib,json,stat,sys
+from pathlib import Path
+root=Path(sys.argv[1]); expected=sys.argv[2]; commit=sys.argv[3]
+assert root.joinpath('DEPLOYED_COMMIT').read_text().split()[0] == commit
+entries={}
+for name in ('scripts','src','ops','assets','profiles','.agent','docs','cleanup_manifests','AGENTS.md','README.md'):
+ p=root/name
+ if not p.exists(): continue
+ for q in (p,*p.rglob('*')):
+  s=q.lstat(); rel=q.relative_to(root).as_posix(); mode=stat.S_IMODE(s.st_mode)
+  assert not q.is_symlink()
+  if q.is_dir(): entries[rel]={'type':'dir','mode':mode}
+  elif q.is_file(): entries[rel]={'type':'file','mode':mode,'sha256':hashlib.sha256(q.read_bytes()).hexdigest()}
+  else: raise AssertionError(rel)
+assert hashlib.sha256(json.dumps(entries,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()==expected
+PY
+test "$(cat "$guard/owner")" = "$owner"
+rm -f -- "$guard/owner"
+rmdir "$guard"
+REMOTE_GUARD_ONLY_POSTCOMMIT_GUARD_RECOVERY
+    exit $?
+    fi
+    test "$RECOVERY_KIND" = PRECOMMIT_OR_ROLLBACK
+    RECOVERY_STAGE_ADAPTER_SHA=$(git show "${RECOVERY_OWNER%%-*}:ops/recording/bililive_recorder_adapter.py" | shasum -a 256 | awk '{print $1}')
+    remote_ssh "$RECOVERY_HOST" bash -s -- /opt/bilive/autoslice "$RECOVERY_OWNER" "$RECOVERY_STAGE_ADAPTER_SHA" <<'REMOTE_GUARD_RECOVERY'
+set -euo pipefail
+base=$1
+owner=$2
+expected_stage_adapter_sha=${3:-}
+commit=${owner%%-*}
+repo=$base/repo
+backup=$base/repo.rollback-$commit
+stage=$base/repo.deploy-$commit
+guard=$base/deploy.guard
+test -d "$guard"
+test ! -L "$guard"
+test -f "$guard/owner"
+test ! -L "$guard/owner"
+test "$(cat "$guard/owner")" = "$owner"
+test "$(find "$guard" -mindepth 1 -maxdepth 1 -exec printf . \; | wc -c)" -eq 1
+test -d "$backup"
+test ! -L "$backup"
+test -f "$backup/DEPLOYED_COMMIT.old"
+test -f "$backup/repo.manifest.old.json"
+test "$(awk 'NR==1 {print $1}' "$repo/DEPLOYED_COMMIT")" = "$(awk 'NR==1 {print $1}' "$backup/DEPLOYED_COMMIT.old")"
+python3 - "$repo" "$backup/repo.manifest.old.json" <<'PY_GUARD_RECOVERY_MANIFEST'
+import hashlib
+import json
+import os
+import stat
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+expected = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+actual = {}
+for component in (
+    "scripts", "src", "ops", "assets", "profiles", ".agent", "docs", "cleanup_manifests",
+    "AGENTS.md", "README.md",
+):
+    base = root / component
+    if not base.exists():
+        continue
+    for path in (base, *base.rglob("*")):
+        relative = path.relative_to(root).as_posix()
+        info = path.lstat()
+        mode = stat.S_IMODE(info.st_mode)
+        if path.is_symlink():
+            actual[relative] = {"type": "symlink", "target": os.readlink(path), "mode": mode}
+        elif path.is_dir():
+            actual[relative] = {"type": "dir", "mode": mode}
+        elif path.is_file():
+            actual[relative] = {
+                "type": "file", "mode": mode, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()
+            }
+        else:
+            actual[relative] = {"type": "other", "mode": mode}
+assert actual == expected
+PY_GUARD_RECOVERY_MANIFEST
+verify_external() {
+    label=$1
+    destination=$2
+    if [ -f "$backup/external/$label.present" ]; then
+        test -f "$backup/external/$label.file"
+        test ! -L "$backup/external/$label.file"
+        test -f "$destination"
+        test ! -L "$destination"
+        cmp -s "$backup/external/$label.file" "$destination"
+    elif [ -f "$backup/external/$label.absent" ]; then
+        test ! -e "$destination"
+    else
+        return 1
+    fi
+}
+verify_external watchdog /opt/bilive/autoslice/mount_watchdog.sh
+verify_external upload_sentinel /opt/bilive/autoslice/upload_fatal_sentinel.sh
+verify_external uploader /opt/bilive/app/tmp_manual_upload/do_upload.sh
+verify_external recorder_adapter /opt/bilive/recording/bililive_recorder_adapter.py
+marker=$backup/external/connection_stub_bootstrap.marker
+state_preimage=$backup/external/connection_stub_bootstrap_preimage/adapter-state.json
+status_preimage=$backup/external/connection_stub_bootstrap_preimage/status.json
+receipt=/opt/bilive/recording/connection-stub-bootstrap-receipts/$commit.json
+validate_bootstrap_snapshot() {
+    require_marker=$1
+    for path in "$state_preimage" "$status_preimage" "$receipt" \
+        /opt/bilive/recording/adapter-state.json /opt/bilive/recording/status.json; do
+        test -f "$path"
+        test ! -L "$path"
+    done
+    if [ "$require_marker" = 1 ]; then
+        test -f "$marker"
+        test ! -L "$marker"
+    else
+        test ! -e "$marker"
+        test -f "$backup/external/recorder_adapter.restart-required"
+        test ! -L "$backup/external/recorder_adapter.restart-required"
+        test -d "$stage"
+        test ! -L "$stage"
+    fi
+    python3 - "$marker" "$state_preimage" "$status_preimage" \
+        /opt/bilive/recording/adapter-state.json /opt/bilive/recording/status.json \
+        "$receipt" "$commit" "$require_marker" <<'PY_GUARD_RECOVERY_BOOTSTRAP'
+import hashlib
+import json
+import re
+import sys
+
+marker_path, state_path, status_path, live_state_path, live_status_path, receipt_path, expected_id, require_marker = sys.argv[1:]
+marker = json.load(open(marker_path, encoding="utf-8")) if require_marker == "1" else None
+receipt = json.load(open(receipt_path, encoding="utf-8"))
+state_raw = open(state_path, "rb").read()
+status_raw = open(status_path, "rb").read()
+state = json.loads(state_raw)
+status = json.loads(status_raw)
+live_state = json.load(open(live_state_path, encoding="utf-8"))
+live_status = json.load(open(live_status_path, encoding="utf-8"))
+
+def state_material(value):
+    assert isinstance(value, dict)
+    material = {key: item for key, item in value.items() if key != "last_room_status_epoch"}
+    cookie_health = material.get("cookie_health")
+    assert isinstance(cookie_health, dict)
+    material["cookie_health"] = {
+        key: item for key, item in cookie_health.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
+    return material
+
+def status_projection(value):
+    assert isinstance(value, dict)
+    projected = json.loads(json.dumps(value))
+    projected.pop("generated_at", None)
+    projected.pop("generated_at_epoch", None)
+    cookie_status = projected.get("bilibili_cookie")
+    assert isinstance(cookie_status, dict)
+    projected["bilibili_cookie"] = {
+        key: item for key, item in cookie_status.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
+    errors = projected.get("finalize_errors")
+    if isinstance(errors, list):
+        for entry in errors:
+            if isinstance(entry, dict) and isinstance(entry.get("error"), str):
+                entry["error"] = re.sub(r"0x[0-9a-fA-F]+", "0x<address>", entry["error"])
+    return projected
+
+def legacy_status_projection(value):
+    return {
+        key: value.get(key)
+        for key in (
+            "service_reachable", "streaming", "recording", "finalizing", "error", "finalize_errors"
+        )
+    }
+
+state_material_sha256 = lambda value: hashlib.sha256(
+    json.dumps(state_material(value), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+status_projection_sha256 = lambda value: hashlib.sha256(
+    json.dumps(status_projection(value), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+receipt_payload = dict(receipt)
+receipt_integrity = receipt_payload.pop("canonical_integrity", None)
+paths = receipt.get("source_relative_paths")
+expected_paths = [
+    "2026-08-20/22966160_20260820-21-00-20.flv",
+    "2026-08-20/22966160_20260820-21-56-14.flv",
+]
+expected_sources = {"/adapter/Videos/22966160/" + path for path in expected_paths}
+assert receipt.get("schema_version") == "recording-connection-stub-bootstrap.v1"
+assert receipt.get("receipt_id") == expected_id
+assert receipt.get("adapter_state_sha256") == hashlib.sha256(state_raw).hexdigest()
+if "adapter_state_material_sha256" in receipt:
+    assert status_projection_sha256(status) == receipt.get("adapter_status_preimage_sha256")
+else:
+    # The retained 3f0f622 pre-marker incident predates durable receipt
+    # projections.  Its legacy hash still binds the full exact error rows;
+    # live/preimage comparison below supplies the stricter durable check.
+    assert hashlib.sha256(
+        json.dumps(legacy_status_projection(status), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest() == receipt.get("adapter_status_preimage_sha256")
+assert state_material(live_state) == state_material(state)
+assert status_projection(live_status) == status_projection(status)
+assert isinstance(receipt_integrity, dict) and receipt_integrity.get("algorithm") == "sha256"
+assert receipt_integrity.get("canonical_json_sha256") == hashlib.sha256(
+    json.dumps(receipt_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+assert paths == expected_paths
+assert status.get("error") == "2 closed recording(s) failed finalization"
+errors = status.get("finalize_errors")
+assert isinstance(errors, list) and len(errors) == len(expected_paths)
+assert {entry.get("source") for entry in errors if isinstance(entry, dict)} == expected_sources
+if marker is not None:
+    marker_payload = dict(marker)
+    marker_integrity = marker_payload.pop("canonical_integrity", None)
+    assert marker.get("schema_version") == "recording-connection-stub-bootstrap-rollback-marker.v1"
+    assert marker.get("receipt_id") == expected_id
+    assert marker.get("receipt_path") == receipt_path
+    assert marker.get("receipt_sha256") == hashlib.sha256(open(receipt_path, "rb").read()).hexdigest()
+    assert marker.get("state_sha256") == hashlib.sha256(state_raw).hexdigest()
+    assert marker.get("status_sha256") == hashlib.sha256(status_raw).hexdigest()
+    assert marker.get("status_projection_sha256") == status_projection_sha256(status)
+    assert isinstance(marker_integrity, dict) and marker_integrity.get("algorithm") == "sha256"
+    assert marker_integrity.get("canonical_json_sha256") == hashlib.sha256(
+        json.dumps(marker_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+PY_GUARD_RECOVERY_BOOTSTRAP
+}
+timestamp_rebind_rollback_safe() {
+    test ! -e "$marker" && test ! -L "$marker"
+    test ! -e "$receipt" && test ! -L "$receipt"
+    test -f "$backup/external/recorder_adapter.restart-required"
+    test ! -L "$backup/external/recorder_adapter.restart-required"
+    test -d "$stage" && test ! -L "$stage"
+    test -f "$stage/ops/recording/bililive_recorder_adapter.py"
+    test ! -L "$stage/ops/recording/bililive_recorder_adapter.py"
+    test "$(sha256sum "$stage/ops/recording/bililive_recorder_adapter.py" | awk '{print $1}')" = "$expected_stage_adapter_sha"
+    old_adapter_sha=$(sha256sum "$backup/external/recorder_adapter.file" | awk '{print $1}')
+    test "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py | awk '{print $1}')" = "$old_adapter_sha"
+    for lock in tick runner upload; do test -f "$base/$lock.lock" && test ! -L "$base/$lock.lock"; done
+    exec 9<>"$base/tick.lock"; flock -n 9
+    exec 8<>"$base/runner.lock"; flock -n 8
+    exec 7<>"$base/upload.lock"; flock -n 7
+    test -f "$base/DISABLED" && test ! -L "$base/DISABLED" && test ! -s "$base/DISABLED" && test "$(stat -c '%a' "$base/DISABLED")" = 644
+    test ! -e "$base/AUTO_UPLOAD" && test ! -L "$base/AUTO_UPLOAD"
+    test "$(findmnt -T /path/to/cloud-drive/live-streaming -n -o TARGET)" = "/path/to/cloud-drive"
+    case "$(findmnt -T /path/to/cloud-drive/live-streaming -n -o FSTYPE)" in fuse*) ;; *) return 1 ;; esac
+    test "$(findmnt -T /path/to/cloud-drive/live-streaming -n -o SOURCE)" = CloudFS
+    for container in bililive_recorder bililive_adapter; do test "$(docker inspect -f '{{.State.Status}}' "$container")" = running; done
+    test "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' bililive_adapter)" = healthy
+    test "$(docker inspect -f '{{index .Config.Cmd 0}}|{{index .Config.Cmd 1}}' bililive_adapter)" = 'python3|/state/bililive_recorder_adapter.py'
+    test "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Source}}|{{.Type}}|{{.RW}}{{end}}{{end}}' bililive_adapter)" = '/opt/bilive/recording|bind|true'
+    timeout 15 find /path/to/cloud-drive/live-streaming -mindepth 1 -maxdepth 1 -print -quit >/dev/null
+    container_processes=$(docker top bililive_adapter -eo pid,args)
+    test -n "$container_processes"
+    if printf '%s\n' "$container_processes" | grep -F -- '--identity-rebind-hash-child' >/dev/null; then
+        return 1
+    fi
+    docker exec -i bililive_adapter python3 - <<'PY_TIMESTAMP_REBIND_GRAPHQL'
+from pathlib import Path
+import sys
+sys.path.insert(0, "/state")
+import bililive_recorder_adapter as adapter
+env = adapter.load_env_file(Path("/run/secrets/brec_http_env"))
+room = adapter.query_room_status("http://bililive-recorder:2356/graphql", 22966160, username=env.get("BREC_HTTP_BASIC_USER", ""), password=env.get("BREC_HTTP_BASIC_PASS", ""), timeout_seconds=5)
+assert room.get("streaming") is False and room.get("recording") is False
+PY_TIMESTAMP_REBIND_GRAPHQL
+    test -f "$state_preimage" && test ! -L "$state_preimage"
+    test -f "$status_preimage" && test ! -L "$status_preimage"
+    test -f /opt/bilive/recording/adapter-state.json && test ! -L /opt/bilive/recording/adapter-state.json
+    test -f /opt/bilive/recording/status.json && test ! -L /opt/bilive/recording/status.json
+    python3 - "$state_preimage" /opt/bilive/recording/adapter-state.json /opt/bilive/recording/status.json <<'PY_TIMESTAMP_REBIND_ROLLBACK'
+import hashlib
+import json
+import re
+import sys
+import time
+
+old = json.load(open(sys.argv[1], encoding="utf-8"))
+live = json.load(open(sys.argv[2], encoding="utf-8"))
+status = json.load(open(sys.argv[3], encoding="utf-8"))
+assert isinstance(old, dict) and isinstance(live, dict) and isinstance(status, dict)
+def normalized(value):
+    value = json.loads(json.dumps(value))
+    value.pop("last_room_status_epoch", None)
+    cookie = value.get("cookie_health")
+    assert isinstance(cookie, dict)
+    cookie.pop("checked_at", None); cookie.pop("checked_at_epoch", None)
+    return value
+old_value, live_value = normalized(old), normalized(live)
+old_rebinds = old_value.pop("source_disposition_identity_rebinds", {})
+live_rebinds = live_value.pop("source_disposition_identity_rebinds", {})
+assert isinstance(old_rebinds, dict) and isinstance(live_rebinds, dict) and old_value == live_value
+added = set(live_rebinds) - set(old_rebinds)
+assert len(added) == 1 and all(live_rebinds.get(key) == old_rebinds.get(key) for key in old_rebinds)
+rows = live_rebinds[next(iter(added))]
+assert isinstance(rows, list) and len(rows) == 1
+receipt = rows[0]
+assert isinstance(receipt, dict)
+integrity = receipt.get("canonical_integrity")
+bare = dict(receipt); bare.pop("canonical_integrity", None)
+assert isinstance(integrity, dict) and integrity.get("algorithm") == "sha256"
+assert integrity.get("canonical_json_sha256") == hashlib.sha256(json.dumps(bare, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+assert receipt.get("schema_version") == "recording-source-fuse-timestamp-rebind.v1"
+assert receipt.get("policy") == "FUSE_SUCCESSOR_MTIME_CTIME_REATTESTATION"
+assert receipt.get("changed_fields") == {"successor_mp4": ["mtime_ns", "ctime_ns"]}
+previous, current = receipt.get("previous_bindings"), receipt.get("current_bindings")
+assert isinstance(previous, dict) and isinstance(current, dict)
+expected = json.loads(json.dumps(previous))
+assert isinstance(expected.get("successor_mp4"), dict) and isinstance(current.get("successor_mp4"), dict)
+for field in ("mtime_ns", "ctime_ns"): expected["successor_mp4"][field] = current["successor_mp4"][field]
+assert expected == current
+old_sha, new_sha = previous["successor_mp4"].get("sha256"), current["successor_mp4"].get("sha256")
+assert old_sha == new_sha and isinstance(new_sha, str) and re.fullmatch(r"[0-9a-f]{64}", new_sha)
+assert all(previous["successor_mp4"][field] != current["successor_mp4"][field] for field in ("mtime_ns", "ctime_ns"))
+assert live.get("source_disposition_identity_rebind_tasks", {}) == {}
+age = time.time() - float(status["generated_at_epoch"])
+assert 0 <= age <= 90 and status.get("service_reachable") is True
+assert status.get("streaming") is False and status.get("recording") is False and status.get("finalizing") is False
+if status.get("error") is not None:
+    webhook, finalized, dispositions = old.get("webhook_files"), old.get("finalized"), old.get("source_dispositions")
+    assert all(isinstance(value, dict) for value in (webhook, finalized, dispositions))
+    errors = status.get("finalize_errors")
+    assert isinstance(errors, list) and errors and status["error"] == f"{len(errors)} closed recording(s) failed finalization"
+    allowed = re.compile(r"^(source size does not match BililiveRecorder FileClosed \(\d+ != \d+\)|source lacks BililiveRecorder FileClosed evidence|FileOpening has no matching FileClosed event|invalid BililiveRecorder XML [^:\n]+: .+\S)$")
+    pairs = set(); prefix = "/adapter/Videos/22966160/"
+    for entry in errors:
+        assert isinstance(entry, dict) and set(entry) == {"source", "error"}
+        source, error = entry["source"], entry["error"]
+        assert isinstance(source, str) and source.startswith(prefix) and isinstance(error, str) and allowed.fullmatch(error)
+        relative = source.removeprefix(prefix)
+        assert relative and not relative.startswith("/") and ".." not in relative.split("/") and relative in webhook and relative not in finalized and relative not in dispositions
+        assert (relative, error) not in pairs; pairs.add((relative, error))
+PY_TIMESTAMP_REBIND_ROLLBACK
+}
+if [ -e "$marker" ]; then
+    validate_bootstrap_snapshot 1
+elif [ -f "$backup/external/recorder_adapter.restart-required" ]; then
+    # This is the one known incomplete transaction: candidate bytes were
+    # installed, but activation did not create a marker and therefore no new
+    # daemon could have persisted receipt rows.  Do not turn this into a
+    # generic stale-guard remover.
+    if [ ! -e "$marker" ] && [ ! -L "$marker" ] && [ ! -e "$receipt" ] && [ ! -L "$receipt" ]; then
+        timestamp_rebind_rollback_safe
+    else
+        validate_bootstrap_snapshot 0
+    fi
+else
+    echo "REFUSE: guard is not an exact bootstrap rollback incident" >&2
+    exit 1
+fi
+if [ -e "$stage" ]; then
+    test -d "$stage"
+    test ! -L "$stage"
+fi
+rm -rf -- "$stage" "$backup"
+test "$(cat "$guard/owner")" = "$owner"
+rm -f "$guard/owner"
+rmdir "$guard"
+REMOTE_GUARD_RECOVERY
+    exit $?
+fi
+
+if [ "$HOST" = oci3 ]; then
+    echo "REFUSE: deploy_autoslice.sh is Free-only; use scripts/deploy_oci3_shadow_autoslice.sh for oci3." >&2
+    exit 2
+fi
 
 if [ -n "$(git status --porcelain)" ]; then
     echo "REFUSE: working tree is dirty — commit first, production deploys are commit-only." >&2
@@ -84,13 +1068,14 @@ cleanup() {
     rollback_ok=1
     if [ "$COMMITTED" -ne 1 ]; then
         if [ "$SWITCHED" -eq 1 ]; then
-            if ! ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
-                "$REMOTE_REPO" "$STAGE" "$BACKUP" "$OLD_COMMIT" <<'REMOTE_ROLLBACK'
+            if ! remote_ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/tick.lock" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
+                "$REMOTE_REPO" "$STAGE" "$BACKUP" "$OLD_COMMIT" "$COMMIT" <<'REMOTE_ROLLBACK'
 set -euo pipefail
 repo=$1
 stage=$2
 backup=$3
 old_commit=$4
+new_commit=$5
 test -d "$backup"
 test -f "$backup/repo.manifest.old.json"
 for component in scripts src ops assets profiles .agent docs cleanup_manifests AGENTS.md README.md; do
@@ -143,9 +1128,110 @@ restore_file() {
         return 1
     fi
 }
-restore_file watchdog /opt/bilive/autoslice/mount_watchdog.sh
-restore_file upload_sentinel /opt/bilive/autoslice/upload_fatal_sentinel.sh
-restore_file uploader /opt/bilive/app/tmp_manual_upload/do_upload.sh
+external_mutation_started=0
+if [ -e "$backup/external/external-mutation-started" ]; then
+    test -f "$backup/external/external-mutation-started"
+    test ! -L "$backup/external/external-mutation-started"
+    test "$(stat -c '%a' "$backup/external/external-mutation-started")" = 600
+    test "$(cat "$backup/external/external-mutation-started")" = external-mutation-started.v1
+    external_mutation_started=1
+fi
+if [ "$external_mutation_started" -eq 1 ]; then
+    restore_file watchdog /opt/bilive/autoslice/mount_watchdog.sh
+    restore_file upload_sentinel /opt/bilive/autoslice/upload_fatal_sentinel.sh
+    restore_file uploader /opt/bilive/app/tmp_manual_upload/do_upload.sh
+fi
+connection_stub_bootstrap_restored=0
+restore_connection_stub_bootstrap_preimage() {
+    marker=$backup/external/connection_stub_bootstrap.marker
+    state_preimage=$backup/external/connection_stub_bootstrap_preimage/adapter-state.json
+    status_preimage=$backup/external/connection_stub_bootstrap_preimage/status.json
+    receipt=/opt/bilive/recording/connection-stub-bootstrap-receipts/$new_commit.json
+    if [ ! -e "$marker" ]; then
+        return 0
+    fi
+    for path in "$marker" "$state_preimage" "$status_preimage" "$receipt"; do
+        test -f "$path"
+        test ! -L "$path"
+    done
+    python3 - "$marker" "$state_preimage" "$status_preimage" "$receipt" "$new_commit" <<'PY_BOOTSTRAP_ROLLBACK_MARKER'
+import hashlib
+import json
+import re
+import sys
+
+marker_path, state_path, status_path, receipt_path, expected_id = sys.argv[1:]
+marker = json.load(open(marker_path, encoding="utf-8"))
+receipt = json.load(open(receipt_path, encoding="utf-8"))
+state_raw = open(state_path, "rb").read()
+status_raw = open(status_path, "rb").read()
+status = json.loads(status_raw)
+def status_projection(value):
+    projected = json.loads(json.dumps(value))
+    projected.pop("generated_at", None)
+    projected.pop("generated_at_epoch", None)
+    cookie_status = projected.get("bilibili_cookie")
+    assert isinstance(cookie_status, dict)
+    projected["bilibili_cookie"] = {
+        key: item for key, item in cookie_status.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
+    errors = projected.get("finalize_errors")
+    if isinstance(errors, list):
+        for entry in errors:
+            if isinstance(entry, dict) and isinstance(entry.get("error"), str):
+                entry["error"] = re.sub(r"0x[0-9a-fA-F]+", "0x<address>", entry["error"])
+    return projected
+projection = status_projection(status)
+marker_payload = dict(marker)
+marker_integrity = marker_payload.pop("canonical_integrity", None)
+receipt_payload = dict(receipt)
+receipt_integrity = receipt_payload.pop("canonical_integrity", None)
+paths = receipt.get("source_relative_paths")
+expected_paths = [
+    "2026-08-20/22966160_20260820-21-00-20.flv",
+    "2026-08-20/22966160_20260820-21-56-14.flv",
+]
+expected_sources = {"/adapter/Videos/22966160/" + path for path in expected_paths}
+assert marker.get("schema_version") == "recording-connection-stub-bootstrap-rollback-marker.v1"
+assert marker.get("receipt_id") == expected_id == receipt.get("receipt_id")
+assert marker.get("receipt_path") == receipt_path
+assert marker.get("receipt_sha256") == hashlib.sha256(open(receipt_path, "rb").read()).hexdigest()
+assert marker.get("state_sha256") == hashlib.sha256(state_raw).hexdigest() == receipt.get("adapter_state_sha256")
+assert marker.get("status_sha256") == hashlib.sha256(status_raw).hexdigest()
+assert marker.get("status_projection_sha256") == hashlib.sha256(
+    json.dumps(projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest() == receipt.get("adapter_status_preimage_sha256")
+assert isinstance(marker_integrity, dict) and marker_integrity.get("algorithm") == "sha256"
+assert marker_integrity.get("canonical_json_sha256") == hashlib.sha256(
+    json.dumps(marker_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+assert isinstance(receipt_integrity, dict) and receipt_integrity.get("algorithm") == "sha256"
+assert receipt_integrity.get("canonical_json_sha256") == hashlib.sha256(
+    json.dumps(receipt_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+assert paths == expected_paths
+assert status.get("error") == "2 closed recording(s) failed finalization"
+errors = status.get("finalize_errors")
+assert isinstance(errors, list) and len(errors) == len(expected_paths)
+assert {entry.get("source") for entry in errors if isinstance(entry, dict)} == expected_sources
+PY_BOOTSTRAP_ROLLBACK_MARKER
+    for pair in \
+        "$state_preimage:/opt/bilive/recording/adapter-state.json" \
+        "$status_preimage:/opt/bilive/recording/status.json"; do
+        source=${pair%%:*}
+        destination=${pair#*:}
+        tmp=$destination.rollback.$$
+        cp -p "$source" "$tmp"
+        cmp -s "$source" "$tmp"
+        mv -f "$tmp" "$destination"
+        cmp -s "$source" "$destination"
+    done
+    connection_stub_bootstrap_restored=1
+}
+if [ "$external_mutation_started" -eq 1 ]; then
+    restore_connection_stub_bootstrap_preimage
+fi
 restore_adapter_atomic() {
     destination=/opt/bilive/recording/bililive_recorder_adapter.py
     tmp=$destination.rollback.$$
@@ -255,14 +1341,20 @@ wait_adapter_runtime() {
     restarted_after=$1
     expected_sha=$2
     require_clean=$3
-    for _attempt in $(seq 1 120); do
+    bootstrap_receipt=${4:-}
+    bootstrap_marker=${5:-}
+    # A source-disposition rebind starts at most one bounded hash child per
+    # adapter cycle.  Twelve persisted rows therefore need longer than the
+    # former ten-minute probe window to converge after the restart.  This is
+    # still a hard thirty-minute cap, not an acceptance of a pending child.
+    for _attempt in $(seq 1 360); do
         if [ "$(docker inspect -f '{{.State.Status}}' bililive_adapter 2>/dev/null || true)" = running ] && \
            [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' bililive_adapter 2>/dev/null || true)" = healthy ] && \
            [ "$(docker inspect -f '{{index .Config.Cmd 0}}|{{index .Config.Cmd 1}}' bililive_adapter 2>/dev/null || true)" = 'python3|/state/bililive_recorder_adapter.py' ] && \
            [ "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Source}}|{{.Type}}|{{.RW}}{{end}}{{end}}' bililive_adapter 2>/dev/null || true)" = '/opt/bilive/recording|bind|true' ] && \
            [ "$(sha256sum /opt/bilive/recording/bililive_recorder_adapter.py 2>/dev/null | awk '{print $1}')" = "$expected_sha" ] && \
            [ "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py 2>/dev/null | awk '{print $1}')" = "$expected_sha" ] && \
-           python3 - /opt/bilive/recording/status.json "$restarted_after" "$require_clean" <<'PY_ROLLBACK_FRESH'
+           python3 - /opt/bilive/recording/status.json "$restarted_after" "$require_clean" "$bootstrap_receipt" "$bootstrap_marker" "$backup/external/connection_stub_bootstrap_preimage/adapter-state.json" "$backup/external/connection_stub_bootstrap_preimage/status.json" <<'PY_ROLLBACK_FRESH'
 import json
 import sys
 import time
@@ -271,6 +1363,9 @@ payload = json.load(open(sys.argv[1], encoding="utf-8"))
 generated = float(payload["generated_at_epoch"])
 error = payload.get("error")
 require_clean = sys.argv[3] == "1"
+receipt_path = marker_path = state_preimage = status_preimage = None
+if len(sys.argv) == 8:
+    receipt_path, marker_path, state_preimage, status_preimage = map(__import__("pathlib").Path, sys.argv[4:])
 assert generated >= float(sys.argv[2])
 assert 0 <= time.time() - generated <= 90
 assert payload.get("streaming") is False
@@ -293,7 +1388,75 @@ else:
             }
         )
     )
-    assert clean or supported_preimage
+    bootstrap_preimage = False
+    if (
+        receipt_path is not None
+        and marker_path.is_file()
+        and receipt_path.is_file()
+        and state_preimage.is_file()
+        and status_preimage.is_file()
+        and not marker_path.is_symlink()
+        and not receipt_path.is_symlink()
+        and not state_preimage.is_symlink()
+        and not status_preimage.is_symlink()
+    ):
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        original = json.loads(status_preimage.read_text(encoding="utf-8"))
+        paths = receipt.get("source_relative_paths")
+        expected = {"/adapter/Videos/22966160/" + path for path in paths or []}
+        original_projection = {
+            key: original.get(key)
+            for key in (
+                "service_reachable",
+                "streaming",
+                "recording",
+                "finalizing",
+                "error",
+                "finalize_errors",
+            )
+        }
+        receipt_payload = dict(receipt)
+        integrity = receipt_payload.pop("canonical_integrity", None)
+        marker_payload = dict(marker)
+        marker_integrity = marker_payload.pop("canonical_integrity", None)
+        bootstrap_preimage = (
+            receipt.get("schema_version") == "recording-connection-stub-bootstrap.v1"
+            and receipt.get("receipt_id") == receipt_path.stem
+            and marker.get("schema_version") == "recording-connection-stub-bootstrap-rollback-marker.v1"
+            and marker.get("receipt_id") == receipt_path.stem
+            and marker.get("receipt_path") == str(receipt_path)
+            and marker.get("receipt_sha256") == __import__("hashlib").sha256(receipt_path.read_bytes()).hexdigest()
+            and isinstance(integrity, dict)
+            and integrity.get("algorithm") == "sha256"
+            and integrity.get("canonical_json_sha256")
+            == __import__("hashlib").sha256(
+                json.dumps(receipt_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            and isinstance(marker_integrity, dict)
+            and marker_integrity.get("algorithm") == "sha256"
+            and marker_integrity.get("canonical_json_sha256")
+            == __import__("hashlib").sha256(
+                json.dumps(marker_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            and receipt.get("adapter_state_sha256") == __import__("hashlib").sha256(state_preimage.read_bytes()).hexdigest()
+            and marker.get("state_sha256") == __import__("hashlib").sha256(state_preimage.read_bytes()).hexdigest()
+            and marker.get("status_sha256") == __import__("hashlib").sha256(status_preimage.read_bytes()).hexdigest()
+            and receipt.get("adapter_status_preimage_sha256")
+            == __import__("hashlib").sha256(
+                json.dumps(original_projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            and marker.get("status_projection_sha256")
+            == __import__("hashlib").sha256(
+                json.dumps(original_projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            and isinstance(paths, list) and len(paths) == 2
+            and payload.get("service_reachable") is True
+            and error == original.get("error") == f"{len(paths)} closed recording(s) failed finalization"
+            and payload.get("finalize_errors") == original.get("finalize_errors")
+            and {entry.get("source") for entry in payload.get("finalize_errors", []) if isinstance(entry, dict)} == expected
+        )
+    assert clean or supported_preimage or bootstrap_preimage
 PY_ROLLBACK_FRESH
         then
             docker exec bililive_adapter timeout 15 find /adapter/Videos -mindepth 1 -maxdepth 1 -print -quit >/dev/null
@@ -303,30 +1466,141 @@ PY_ROLLBACK_FRESH
     done
     return 1
 }
-restore_adapter_atomic
-if [ -f "$backup/external/crontab.present" ]; then
+if [ "$external_mutation_started" -eq 1 ]; then
+    restore_adapter_atomic
+fi
+connection_stub_bootstrap_pre_marker_safe() {
+    marker=$backup/external/connection_stub_bootstrap.marker
+    state_preimage=$backup/external/connection_stub_bootstrap_preimage/adapter-state.json
+    status_preimage=$backup/external/connection_stub_bootstrap_preimage/status.json
+    receipt=/opt/bilive/recording/connection-stub-bootstrap-receipts/$new_commit.json
+    test ! -e "$marker" || return 1
+    test -f "$backup/external/recorder_adapter.restart-required" || return 1
+    for path in "$state_preimage" "$status_preimage" "$receipt" \
+        /opt/bilive/recording/adapter-state.json /opt/bilive/recording/status.json; do
+        test -f "$path" && test ! -L "$path" || return 1
+    done
+    python3 - "$state_preimage" "$status_preimage" \
+        /opt/bilive/recording/adapter-state.json /opt/bilive/recording/status.json \
+        "$receipt" "$new_commit" <<'PY_ROLLBACK_PREMARKER'
+import hashlib
+import json
+import re
+import sys
+
+state_path, status_path, live_state_path, live_status_path, receipt_path, receipt_id = sys.argv[1:]
+state_raw = open(state_path, "rb").read()
+state = json.loads(state_raw)
+status = json.load(open(status_path, encoding="utf-8"))
+live_state = json.load(open(live_state_path, encoding="utf-8"))
+live_status = json.load(open(live_status_path, encoding="utf-8"))
+receipt = json.load(open(receipt_path, encoding="utf-8"))
+
+def state_material(value):
+    assert isinstance(value, dict)
+    material = {key: item for key, item in value.items() if key != "last_room_status_epoch"}
+    cookie_health = material.get("cookie_health")
+    assert isinstance(cookie_health, dict)
+    material["cookie_health"] = {
+        key: item for key, item in cookie_health.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
+    return material
+
+def status_projection(value):
+    assert isinstance(value, dict)
+    projected = json.loads(json.dumps(value))
+    projected.pop("generated_at", None)
+    projected.pop("generated_at_epoch", None)
+    cookie_status = projected.get("bilibili_cookie")
+    assert isinstance(cookie_status, dict)
+    projected["bilibili_cookie"] = {
+        key: item for key, item in cookie_status.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
+    errors = projected.get("finalize_errors")
+    if isinstance(errors, list):
+        for entry in errors:
+            if isinstance(entry, dict) and isinstance(entry.get("error"), str):
+                entry["error"] = re.sub(r"0x[0-9a-fA-F]+", "0x<address>", entry["error"])
+    return projected
+
+def legacy_status_projection(value):
+    return {
+        key: value.get(key)
+        for key in (
+            "service_reachable", "streaming", "recording", "finalizing", "error", "finalize_errors"
+        )
+    }
+
+receipt_payload = dict(receipt)
+integrity = receipt_payload.pop("canonical_integrity", None)
+paths = receipt.get("source_relative_paths")
+expected_paths = [
+    "2026-08-20/22966160_20260820-21-00-20.flv",
+    "2026-08-20/22966160_20260820-21-56-14.flv",
+]
+expected_sources = {"/adapter/Videos/22966160/" + path for path in expected_paths}
+assert receipt.get("schema_version") == "recording-connection-stub-bootstrap.v1"
+assert receipt.get("receipt_id") == receipt_id
+assert isinstance(integrity, dict) and integrity.get("algorithm") == "sha256"
+assert integrity.get("canonical_json_sha256") == hashlib.sha256(
+    json.dumps(receipt_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+assert receipt.get("adapter_state_sha256") == hashlib.sha256(state_raw).hexdigest()
+if "adapter_state_material_sha256" in receipt:
+    assert receipt.get("adapter_status_preimage_sha256") == hashlib.sha256(
+        json.dumps(status_projection(status), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+else:
+    assert receipt.get("adapter_status_preimage_sha256") == hashlib.sha256(
+        json.dumps(legacy_status_projection(status), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+assert state_material(live_state) == state_material(state)
+assert status_projection(live_status) == status_projection(status)
+assert paths == expected_paths
+assert status.get("error") == "2 closed recording(s) failed finalization"
+errors = status.get("finalize_errors")
+assert isinstance(errors, list) and len(errors) == len(expected_paths)
+assert {entry.get("source") for entry in errors if isinstance(entry, dict)} == expected_sources
+PY_ROLLBACK_PREMARKER
+}
+if [ "$external_mutation_started" -eq 1 ] && [ -f "$backup/external/crontab.present" ]; then
     crontab "$backup/external/crontab.file"
     crontab -l | cmp -s - "$backup/external/crontab.file"
-elif [ -f "$backup/external/crontab.absent" ]; then
+elif [ "$external_mutation_started" -eq 1 ] && [ -f "$backup/external/crontab.absent" ]; then
     crontab -r 2>/dev/null || true
     ! crontab -l >/dev/null 2>&1
-else
+elif [ "$external_mutation_started" -eq 1 ]; then
     echo "missing crontab rollback marker" >&2
     exit 1
 fi
-if [ -f "$backup/external/recorder_adapter.restart-required" ]; then
+if [ "$external_mutation_started" -eq 1 ] && [ -f "$backup/external/recorder_adapter.restart-required" ]; then
     test -f "$backup/external/recorder_adapter.file"
     cmp -s "$backup/external/recorder_adapter.file" /opt/bilive/recording/bililive_recorder_adapter.py
     old_adapter_sha=$(sha256sum "$backup/external/recorder_adapter.file" | awk '{print $1}')
-    if adapter_restart_safe "$old_adapter_sha"; then
+    rollback_restart_required=1
+    if connection_stub_bootstrap_pre_marker_safe; then
+        # Marker creation is immediately before `docker restart`; its absence
+        # plus the bound receipt proves the old process never loaded candidate
+        # bytes.  Preserve its heartbeat instead of restarting it.
+        adapter_restart_environment_safe "$old_adapter_sha"
+        rollback_restart_required=0
+    elif adapter_restart_safe "$old_adapter_sha"; then
         :
+    elif adapter_repair_restart_safe "$old_adapter_sha"; then
+        :
+    elif [ "$connection_stub_bootstrap_restored" -eq 1 ]; then
+        adapter_restart_environment_safe "$old_adapter_sha"
     else
-        adapter_repair_restart_safe "$old_adapter_sha"
+        exit 1
     fi
     adapter_identity_rebind_hash_child_absent
-    restart_epoch=$(python3 -c 'import time; print(time.time())')
-    docker restart bililive_adapter >/dev/null
-    wait_adapter_runtime "$restart_epoch" "$old_adapter_sha" 0
+    if [ "$rollback_restart_required" -eq 1 ]; then
+        restart_epoch=$(python3 -c 'import time; print(time.time())')
+        docker restart bililive_adapter >/dev/null
+        wait_adapter_runtime "$restart_epoch" "$old_adapter_sha" 0 "/opt/bilive/recording/connection-stub-bootstrap-receipts/$new_commit.json" "$backup/external/connection_stub_bootstrap.marker"
+    fi
     cmp -s "$backup/external/recorder_adapter.file" /opt/bilive/recording/bililive_recorder_adapter.py
 fi
 
@@ -388,12 +1662,12 @@ REMOTE_ROLLBACK
             # Only remove staging that this invocation definitely created.
             # A pre-existing rollback tree is recovery evidence and must never
             # be erased by a retry that has not yet switched production.
-            ssh "$HOST" "rm -rf '$STAGE'" >/dev/null 2>&1 || true
+            remote_ssh "$HOST" "rm -rf '$STAGE'" >/dev/null 2>&1 || true
         fi
     fi
     if [ "$DISABLED_TOUCHED" -eq 1 ] && [ "$HAD_DISABLED" -eq 0 ]; then
         if [ "$COMMITTED" -eq 1 ] || [ "$rollback_ok" -eq 1 ]; then
-            if ! ssh "$HOST" "rm -f '$DISABLED'; test ! -e '$DISABLED'" >/dev/null 2>&1; then
+            if ! remote_ssh "$HOST" "rm -f '$DISABLED'; test ! -e '$DISABLED'" >/dev/null 2>&1; then
                 echo "CRITICAL: deployment state is safe but $DISABLED could not be removed" >&2
                 [ "$rc" -ne 0 ] || rc=5
             fi
@@ -405,7 +1679,7 @@ REMOTE_ROLLBACK
         rc=4
     fi
     if [ "$GUARD_ACQUIRED" -eq 1 ] && [ "$rollback_ok" -eq 1 ]; then
-        if ! ssh "$HOST" bash -s -- "$DEPLOY_GUARD" "$DEPLOY_OWNER" <<'REMOTE_UNLOCK'
+        if ! remote_ssh "$HOST" bash -s -- "$DEPLOY_GUARD" "$DEPLOY_OWNER" <<'REMOTE_UNLOCK'
 set -euo pipefail
 guard=$1
 owner=$2
@@ -426,12 +1700,16 @@ REMOTE_UNLOCK
 # One deployment owns all remote state from the first observation through final
 # cleanup. A stale guard is deliberate recovery evidence and requires an
 # operator to inspect it rather than being stolen by a later commit.
-if ! ssh "$HOST" bash -s -- "$DEPLOY_GUARD" "$DEPLOY_OWNER" <<'REMOTE_LOCK'
+if ! remote_ssh "$HOST" bash -s -- "$DEPLOY_GUARD" "$DEPLOY_OWNER" <<'REMOTE_LOCK'
 set -euo pipefail
 guard=$1
 owner=$2
 if ! mkdir "$guard" 2>/dev/null; then
-    echo "REFUSE: deploy guard already exists (owner: $(cat "$guard/owner" 2>/dev/null || echo unknown))" >&2
+    if [ -e "$guard" ] || [ -L "$guard" ]; then
+        echo "REFUSE: deploy guard already exists (owner: $(cat "$guard/owner" 2>/dev/null || echo unknown))" >&2
+    else
+        echo "REFUSE: cannot create deploy guard $guard" >&2
+    fi
     exit 1
 fi
 umask 077
@@ -446,7 +1724,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 
-HAD_DISABLED=$(ssh "$HOST" "test -e '$DISABLED' && echo 1 || echo 0")
+HAD_DISABLED=$(remote_ssh "$HOST" "test -e '$DISABLED' && echo 1 || echo 0")
 if [ "$HAD_DISABLED" -eq 1 ]; then
     # 既有 DISABLED 会被本次部署尊重并保留（收尾不清除）。它可能是操作员
     # 有意的杀开关，也可能是上一次被超时/信号打断的部署留下的尸留（
@@ -454,14 +1732,14 @@ if [ "$HAD_DISABLED" -eq 1 ]; then
     echo "WARNING: $DISABLED already exists on $HOST and will be preserved." >&2
     echo "WARNING: if no operator set it intentionally, it is likely residue of an interrupted deploy — verify and remove it manually." >&2
 fi
-OLD_COMMIT=$(ssh "$HOST" "awk 'NR==1 {print \$1}' '$REMOTE_REPO/DEPLOYED_COMMIT'")
+OLD_COMMIT=$(remote_ssh "$HOST" "awk 'NR==1 {print \$1}' '$REMOTE_REPO/DEPLOYED_COMMIT'")
 if ! [[ "$OLD_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
     echo "REFUSE: deployed commit stamp is missing or malformed: $OLD_COMMIT" >&2
     exit 9
 fi
 
 # Stop new ticks and wait for any current producer to leave the shared lock.
-RESIDUAL=$(ssh "$HOST" "find '$REMOTE_BASE' -mindepth 1 -maxdepth 1 \( -name 'repo.deploy-*' -o -name 'repo.rollback-*' \) -print")
+RESIDUAL=$(remote_ssh "$HOST" "find '$REMOTE_BASE' -mindepth 1 -maxdepth 1 \( -name 'repo.deploy-*' -o -name 'repo.rollback-*' \) -print")
 if [ -n "$RESIDUAL" ]; then
     echo "REFUSE: residual deploy/rollback state exists; recover or clear it explicitly:" >&2
     echo "$RESIDUAL" >&2
@@ -523,8 +1801,61 @@ LOCAL_MANIFEST_PY
 # process is interrupted while the remote flock is still waiting, cleanup must
 # know that the empty stop file belongs to this deployment and remove it.
 DISABLED_TOUCHED=1
-ssh "$HOST" "touch '$DISABLED'; /usr/bin/flock -w 7200 '$REMOTE_BASE/runner.lock' true"
-ssh "$HOST" "test ! -e '$STAGE' && test ! -e '$BACKUP' && mkdir '$STAGE'"
+# Stop new cron work before draining it.  The long-lived lease belongs to the
+# entire runner tick; runner.lock remains a short commit mutex inside Python.
+# Every swap/seal critical section owns the leases in fixed tick -> runner
+# order.  The outer flock stays held while the inner is acquired, so no manual
+# commit can enter between a drained tick and the deployment mutation.
+remote_ssh "$HOST" "touch '$DISABLED'"
+remote_ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/tick.lock" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
+    "$REMOTE_BASE" <<'REMOTE_DRAIN_PRODUCER_BATCH'
+set -euo pipefail
+base=$1
+umask 077
+# A batch in PREPARED/INSTALLING owns private staged inodes and an exact
+# pre-deploy state image.  Swapping repository authority across it would make
+# recovery unsafe.  This deploy slice refuses such a runtime; the next tick
+# must replay it under the old deployed identity before a new deploy begins.
+python3 - "$base" <<'PY_PENDING_PRODUCER_BATCH'
+import os
+import stat
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+journals = root / ".producer-batch-journal"
+if not journals.exists() and not journals.is_symlink():
+    raise SystemExit(0)
+observed = os.lstat(journals)
+if (
+    stat.S_ISLNK(observed.st_mode)
+    or not stat.S_ISDIR(observed.st_mode)
+    or stat.S_IMODE(observed.st_mode) != 0o700
+):
+    raise SystemExit("REFUSE: producer batch journal namespace is unsafe")
+sys.path.insert(0, str(root / "repo"))
+try:
+    from src.autoslice.producer_batch_transaction import (
+        ProducerBatchTransactionError,
+        validate_committed_batch_journal_for_deploy,
+    )
+except Exception as exc:
+    raise SystemExit("REFUSE: cannot load canonical producer batch validator") from exc
+for path in journals.glob("*.json"):
+    observed = os.lstat(path)
+    if (
+        stat.S_ISLNK(observed.st_mode)
+        or not stat.S_ISREG(observed.st_mode)
+        or stat.S_IMODE(observed.st_mode) != 0o600
+    ):
+        raise SystemExit("REFUSE: producer batch journal entry is unsafe")
+    try:
+        validate_committed_batch_journal_for_deploy(runtime_root=root, path=path)
+    except ProducerBatchTransactionError as exc:
+        raise SystemExit(f"REFUSE: producer batch journal blocks deploy: {exc}") from exc
+PY_PENDING_PRODUCER_BATCH
+REMOTE_DRAIN_PRODUCER_BATCH
+remote_ssh "$HOST" "test ! -e '$STAGE' && test ! -e '$BACKUP' && mkdir '$STAGE'"
 STAGE_CREATED=1
 
 # `git archive` is the deployment source of truth: only COMMIT-tracked bytes can
@@ -532,9 +1863,9 @@ STAGE_CREATED=1
 # enrollment WAVs and the CAM++ model live outside repo/.
 git archive --format=tar "$COMMIT" \
     scripts src ops assets profiles .agent docs cleanup_manifests AGENTS.md README.md \
-    | ssh "$HOST" "umask 022; tar --no-same-permissions -xf - -C '$STAGE'"
+    | remote_ssh "$HOST" "umask 022; tar --no-same-permissions -xf - -C '$STAGE'"
 
-REMOTE_MANIFEST=$(ssh "$HOST" python3 - "$STAGE" <<'REMOTE_MANIFEST_PY'
+REMOTE_MANIFEST=$(remote_ssh "$HOST" python3 - "$STAGE" <<'REMOTE_MANIFEST_PY'
 import hashlib
 import json
 import os
@@ -587,7 +1918,7 @@ fi
 # Deployment is read-only toward those external assets: a new profile that does
 # not match the already-installed runtime fails and requires a separate,
 # explicitly transactional asset migration before code deployment.
-ssh "$HOST" bash -s -- "$STAGE" <<'REMOTE_VALIDATE'
+remote_ssh "$HOST" bash -s -- "$STAGE" <<'REMOTE_VALIDATE'
 set -euo pipefail
 cd "$1"
 PYTHONDONTWRITEBYTECODE=1 /opt/bilive/autoslice/venv-diar/bin/python -c \
@@ -712,12 +2043,13 @@ REMOTE_VALIDATE
 # (notably historical delivery media) stays in place. The remote trap rolls
 # back a partial component swap before releasing runner.lock.
 SWITCHED=1
-ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
-    "$REMOTE_REPO" "$STAGE" "$BACKUP" <<'REMOTE_SWITCH'
+remote_ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/tick.lock" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
+    "$REMOTE_REPO" "$STAGE" "$BACKUP" "$COMMIT" <<'REMOTE_SWITCH'
 set -euo pipefail
 repo=$1
 stage=$2
 backup=$3
+commit=$4
 umask 077
 mkdir -p "$backup"
 cp "$repo/DEPLOYED_COMMIT" "$backup/DEPLOYED_COMMIT.old"
@@ -820,6 +2152,92 @@ restore_file() {
         return 1
     fi
 }
+restore_connection_stub_bootstrap_preimage() {
+    marker=$backup/external/connection_stub_bootstrap.marker
+    state_preimage=$backup/external/connection_stub_bootstrap_preimage/adapter-state.json
+    status_preimage=$backup/external/connection_stub_bootstrap_preimage/status.json
+    receipt=/opt/bilive/recording/connection-stub-bootstrap-receipts/$commit.json
+    if [ ! -e "$marker" ]; then
+        return 0
+    fi
+    for path in "$marker" "$state_preimage" "$status_preimage" "$receipt"; do
+        test -f "$path"
+        test ! -L "$path"
+    done
+    python3 - "$marker" "$state_preimage" "$status_preimage" "$receipt" "$commit" <<'PY_BOOTSTRAP_ROLLBACK_MARKER'
+import hashlib
+import json
+import sys
+
+marker_path, state_path, status_path, receipt_path, expected_id = sys.argv[1:]
+marker = json.load(open(marker_path, encoding="utf-8"))
+receipt = json.load(open(receipt_path, encoding="utf-8"))
+state_raw = open(state_path, "rb").read()
+status_raw = open(status_path, "rb").read()
+status = json.loads(status_raw)
+def status_projection(value):
+    projected = json.loads(json.dumps(value))
+    projected.pop("generated_at", None)
+    projected.pop("generated_at_epoch", None)
+    cookie_status = projected.get("bilibili_cookie")
+    assert isinstance(cookie_status, dict)
+    projected["bilibili_cookie"] = {
+        key: item for key, item in cookie_status.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
+    errors = projected.get("finalize_errors")
+    if isinstance(errors, list):
+        import re
+        for entry in errors:
+            if isinstance(entry, dict) and isinstance(entry.get("error"), str):
+                entry["error"] = re.sub(r"0x[0-9a-fA-F]+", "0x<address>", entry["error"])
+    return projected
+projection = status_projection(status)
+marker_payload = dict(marker)
+marker_integrity = marker_payload.pop("canonical_integrity", None)
+receipt_payload = dict(receipt)
+receipt_integrity = receipt_payload.pop("canonical_integrity", None)
+paths = receipt.get("source_relative_paths")
+expected_paths = [
+    "2026-08-20/22966160_20260820-21-00-20.flv",
+    "2026-08-20/22966160_20260820-21-56-14.flv",
+]
+expected_sources = {"/adapter/Videos/22966160/" + path for path in expected_paths}
+assert marker.get("schema_version") == "recording-connection-stub-bootstrap-rollback-marker.v1"
+assert marker.get("receipt_id") == expected_id == receipt.get("receipt_id")
+assert marker.get("receipt_path") == receipt_path
+assert marker.get("receipt_sha256") == hashlib.sha256(open(receipt_path, "rb").read()).hexdigest()
+assert marker.get("state_sha256") == hashlib.sha256(state_raw).hexdigest() == receipt.get("adapter_state_sha256")
+assert marker.get("status_sha256") == hashlib.sha256(status_raw).hexdigest()
+assert marker.get("status_projection_sha256") == hashlib.sha256(
+    json.dumps(projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest() == receipt.get("adapter_status_preimage_sha256")
+assert isinstance(marker_integrity, dict) and marker_integrity.get("algorithm") == "sha256"
+assert marker_integrity.get("canonical_json_sha256") == hashlib.sha256(
+    json.dumps(marker_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+assert isinstance(receipt_integrity, dict) and receipt_integrity.get("algorithm") == "sha256"
+assert receipt_integrity.get("canonical_json_sha256") == hashlib.sha256(
+    json.dumps(receipt_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+assert paths == expected_paths
+assert status.get("error") == "2 closed recording(s) failed finalization"
+errors = status.get("finalize_errors")
+assert isinstance(errors, list) and len(errors) == len(expected_paths)
+assert {entry.get("source") for entry in errors if isinstance(entry, dict)} == expected_sources
+PY_BOOTSTRAP_ROLLBACK_MARKER
+    for pair in \
+        "$state_preimage:/opt/bilive/recording/adapter-state.json" \
+        "$status_preimage:/opt/bilive/recording/status.json"; do
+        source=${pair%%:*}
+        destination=${pair#*:}
+        tmp=$destination.rollback.$$
+        cp -p "$source" "$tmp"
+        cmp -s "$source" "$tmp"
+        mv -f "$tmp" "$destination"
+        cmp -s "$source" "$destination"
+    done
+}
 restore_repository_file() {
     label=$1
     destination=$2
@@ -854,16 +2272,9 @@ rollback() {
         "$repo/DEPLOYED_AUTHORITY_MANIFEST.json"
 cp "$backup/DEPLOYED_COMMIT.old" "$repo/DEPLOYED_COMMIT"
 cmp -s "$backup/DEPLOYED_COMMIT.old" "$repo/DEPLOYED_COMMIT"
-    restore_file watchdog /opt/bilive/autoslice/mount_watchdog.sh
-    restore_file upload_sentinel /opt/bilive/autoslice/upload_fatal_sentinel.sh
-    restore_file uploader /opt/bilive/app/tmp_manual_upload/do_upload.sh
-    if [ -f "$backup/external/crontab.present" ]; then
-        crontab "$backup/external/crontab.file"
-    elif [ -f "$backup/external/crontab.absent" ]; then
-        crontab -r 2>/dev/null || true
-    else
-        return 1
-    fi
+    # This transaction only switches the repository tree.  External targets,
+    # cron, and recorder state are first mutable in REMOTE_EXTERNAL_INSTALL;
+    # they must therefore remain untouched when this earlier switch fails.
 }
 trap 'rc=$?; trap - ERR; rollback; exit "$rc"' ERR
 trap 'trap - ERR HUP INT TERM; rollback; exit 130' INT
@@ -883,10 +2294,11 @@ REMOTE_SWITCH
 
 # Install external entrypoints only from the already-switched committed tree.
 # Temp + rename avoids exposing a truncated executable to cron/manual callers.
-ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
-    "$BACKUP" <<'REMOTE_EXTERNAL_INSTALL'
+remote_ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/tick.lock" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
+    "$BACKUP" "$COMMIT" <<'REMOTE_EXTERNAL_INSTALL'
 set -euo pipefail
 backup=$1
+commit=$2
 tmp=
 cleanup_tmp() { [ -z "$tmp" ] || rm -f "$tmp"; }
 trap cleanup_tmp EXIT
@@ -910,18 +2322,6 @@ install_atomic() {
     test "$(stat -c '%a' "$destination")" = "$mode"
     test "$(sha256sum "$source" | awk '{print $1}')" = "$(sha256sum "$destination" | awk '{print $1}')"
 }
-install_atomic \
-    /opt/bilive/autoslice/repo/scripts/mount_watchdog.sh \
-    /opt/bilive/autoslice/mount_watchdog.sh \
-    755
-install_atomic \
-    /opt/bilive/autoslice/repo/scripts/clouddrive_upload_fatal_sentinel.sh \
-    /opt/bilive/autoslice/upload_fatal_sentinel.sh \
-    755
-install_atomic \
-    /opt/bilive/autoslice/repo/scripts/do_upload.sh \
-    /opt/bilive/app/tmp_manual_upload/do_upload.sh \
-    700
 adapter_status_clean_idle() {
     python3 - /opt/bilive/recording/status.json <<'PY_CLEAN_ADAPTER_IDLE'
 import json
@@ -937,6 +2337,23 @@ assert payload.get("recording") is False
 assert payload.get("finalizing") is False
 assert payload.get("error") is None
 PY_CLEAN_ADAPTER_IDLE
+}
+adapter_status_zero_touch_fresh() {
+    test -f /opt/bilive/recording/status.json || return 1
+    test ! -L /opt/bilive/recording/status.json || return 1
+    python3 - /opt/bilive/recording/status.json <<'PY_ZERO_TOUCH_ADAPTER_STATUS'
+import json
+import sys
+import time
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+age = time.time() - float(payload["generated_at_epoch"])
+assert 0 <= age <= 90
+assert type(payload.get("service_reachable")) is bool
+assert "error" in payload and (payload["error"] is None or type(payload["error"]) is str)
+for field in ("streaming", "recording", "finalizing"):
+    assert type(payload.get(field)) is bool
+PY_ZERO_TOUCH_ADAPTER_STATUS
 }
 adapter_status_supported_repair_idle() {
     python3 - /opt/bilive/recording/status.json <<'PY_SUPPORTED_ADAPTER_REPAIR_IDLE'
@@ -968,7 +2385,7 @@ adapter_identity_rebind_hash_child_absent() {
     ! printf '%s\n' "$container_processes" \
         | grep -F -- '--identity-rebind-hash-child' >/dev/null
 }
-adapter_restart_environment_safe() {
+adapter_environment_healthy() {
     expected_adapter_sha=$1
     test "$(findmnt -T /path/to/cloud-drive/live-streaming -n -o TARGET)" = "/path/to/cloud-drive" || return 1
     case "$(findmnt -T /path/to/cloud-drive/live-streaming -n -o FSTYPE)" in fuse*) ;; *) return 1 ;; esac
@@ -976,6 +2393,7 @@ adapter_restart_environment_safe() {
     timeout 15 find /path/to/cloud-drive/live-streaming -mindepth 1 -maxdepth 1 -print -quit >/dev/null || return 1
     test "$(docker inspect -f '{{.State.Status}}' bililive_recorder)" = running || return 1
     test "$(docker inspect -f '{{.State.Status}}' bililive_adapter)" = running || return 1
+    test "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' bililive_adapter)" = healthy || return 1
     test "$(docker inspect -f '{{index .Config.Cmd 0}}|{{index .Config.Cmd 1}}' bililive_adapter)" = 'python3|/state/bililive_recorder_adapter.py' || return 1
     test "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Source}}|{{.Type}}|{{.RW}}{{end}}{{end}}' bililive_adapter)" = '/opt/bilive/recording|bind|true' || return 1
     case "$(docker exec bililive_recorder stat -f -c %T /rec/Videos)" in fuse*) ;; *) return 1 ;; esac
@@ -983,6 +2401,9 @@ adapter_restart_environment_safe() {
     docker exec bililive_adapter timeout 15 find /adapter/Videos -mindepth 1 -maxdepth 1 -print -quit >/dev/null || return 1
     test "$(sha256sum /opt/bilive/recording/bililive_recorder_adapter.py | awk '{print $1}')" = "$expected_adapter_sha" || return 1
     test "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py | awk '{print $1}')" = "$expected_adapter_sha" || return 1
+}
+adapter_restart_environment_safe() {
+    adapter_environment_healthy "$1" || return 1
     docker exec -i bililive_adapter python3 - <<'PY_LIVE_IDLE' || return 1
 from pathlib import Path
 import sys
@@ -1006,24 +2427,362 @@ adapter_restart_safe() {
     adapter_status_clean_idle || return 1
     adapter_restart_environment_safe "$1"
 }
+known_finalize_preinstall_safe() {
+    expected_finalizing=${2:-0}
+    minimum_generated_at=${3:-}
+    python3 - /opt/bilive/recording/status.json /opt/bilive/recording/adapter-state.json "$expected_finalizing" "$minimum_generated_at" <<'PY_KNOWN_FINALIZE_PREINSTALL' || return 1
+import json, re, sys, time
+from pathlib import Path
+status = json.load(open(sys.argv[1], encoding="utf-8")); state_path = Path(sys.argv[2])
+expected_finalizing = sys.argv[3] == "1" if len(sys.argv) > 3 else False
+minimum_generated_at = sys.argv[4] if len(sys.argv) > 4 else ""
+assert state_path.is_file() and not state_path.is_symlink()
+state = json.loads(state_path.read_text(encoding="utf-8"))
+generated = float(status["generated_at_epoch"])
+assert 0 <= time.time() - generated <= 90
+if minimum_generated_at:
+    assert generated > float(minimum_generated_at)
+assert status.get("service_reachable") is True and status.get("streaming") is False and status.get("recording") is False and status.get("finalizing") is expected_finalizing
+webhook, finalized, dispositions = state.get("webhook_files"), state.get("finalized"), state.get("source_dispositions")
+assert all(isinstance(value, dict) for value in (webhook, finalized, dispositions)) and state.get("source_disposition_identity_rebind_tasks", {}) == {}
+errors = status.get("finalize_errors"); assert isinstance(errors, list) and errors and status.get("error") == f"{len(errors)} closed recording(s) failed finalization"
+allowed = re.compile(r"^(source size does not match BililiveRecorder FileClosed \(\d+ != \d+\)|source lacks BililiveRecorder FileClosed evidence|FileOpening has no matching FileClosed event|invalid BililiveRecorder XML [^:\n]+: .+\S)$")
+pairs = set(); prefix = "/adapter/Videos/22966160/"
+for entry in errors:
+    assert isinstance(entry, dict) and set(entry) == {"source", "error"}
+    source, error = entry["source"], entry["error"]; assert isinstance(source, str) and source.startswith(prefix) and isinstance(error, str) and allowed.fullmatch(error)
+    relative = source.removeprefix(prefix); path = Path(relative)
+    assert relative and not path.is_absolute() and ".." not in path.parts and relative in webhook and relative not in finalized and relative not in dispositions and (relative, error) not in pairs
+    pairs.add((relative, error))
+PY_KNOWN_FINALIZE_PREINSTALL
+    if [ "$expected_finalizing" -eq 1 ]; then
+        return 0
+    fi
+    capture_connection_stub_bootstrap_preimage || return 1
+    discard_connection_stub_bootstrap_staging || return 1
+    adapter_restart_environment_safe "$1"
+}
+known_finalize_preinstall_busy_safe() {
+    known_finalize_preinstall_safe "" 1
+}
+known_finalize_preinstall_wait_safe() {
+    expected_adapter_sha=$1
+    known_finalize_preinstall_busy_safe || return 1
+    initial_epoch=$(python3 - /opt/bilive/recording/status.json <<'PY_KNOWN_FINALIZE_EPOCH'
+import json
+import sys
+
+print(json.load(open(sys.argv[1], encoding="utf-8"))["generated_at_epoch"])
+PY_KNOWN_FINALIZE_EPOCH
+    ) || return 1
+    for _attempt in $(seq 1 12); do
+        sleep 5
+        if known_finalize_preinstall_safe "$expected_adapter_sha" 0 "$initial_epoch"; then
+            return 0
+        fi
+        known_finalize_preinstall_busy_safe || return 1
+    done
+    return 1
+}
 adapter_repair_restart_safe() {
     adapter_status_supported_repair_idle || return 1
     adapter_restart_environment_safe "$1"
 }
+capture_connection_stub_bootstrap_preimage() {
+    stage=/opt/bilive/recording/.connection-stub-bootstrap-preimage-$commit
+    preimage=$backup/external/connection_stub_bootstrap_preimage
+    marker=$backup/external/connection_stub_bootstrap.marker
+    test ! -e "$stage"
+    test ! -e "$preimage"
+    test ! -e "$marker"
+    mkdir -m 700 "$stage" "$preimage"
+    for label in adapter-state.json status.json; do
+        source=/opt/bilive/recording/$label
+        if ! test -f "$source" || ! test ! -L "$source" || \
+            ! cp -p "$source" "$stage/$label" || ! cmp -s "$source" "$stage/$label" || \
+            ! cp -p "$stage/$label" "$preimage/$label" || ! cmp -s "$stage/$label" "$preimage/$label" || \
+            ! chmod 600 "$preimage/$label"; then
+            discard_connection_stub_bootstrap_staging
+            return 1
+        fi
+    done
+}
+discard_connection_stub_bootstrap_staging() {
+    stage=/opt/bilive/recording/.connection-stub-bootstrap-preimage-$commit
+    if [ ! -e "$stage" ]; then
+        return 0
+    fi
+    test -d "$stage"
+    test ! -L "$stage"
+    for label in adapter-state.json status.json; do
+        if [ -e "$stage/$label" ]; then
+            test -f "$stage/$label"
+            test ! -L "$stage/$label"
+            rm -f "$stage/$label"
+        fi
+    done
+    rmdir "$stage"
+}
+activate_connection_stub_bootstrap_marker() {
+    marker=$backup/external/connection_stub_bootstrap.marker
+    preimage=$backup/external/connection_stub_bootstrap_preimage
+    receipt=/opt/bilive/recording/connection-stub-bootstrap-receipts/$commit.json
+    test ! -e "$marker"
+    for path in \
+        "$preimage/adapter-state.json" \
+        "$preimage/status.json" \
+        /opt/bilive/recording/adapter-state.json \
+        /opt/bilive/recording/status.json \
+        "$receipt"; do
+        test -f "$path"
+        test ! -L "$path"
+    done
+    python3 - "$marker" "$preimage/adapter-state.json" "$preimage/status.json" \
+        /opt/bilive/recording/adapter-state.json /opt/bilive/recording/status.json \
+        "$receipt" "$commit" <<'PY_BOOTSTRAP_ACTIVATE_MARKER'
+import hashlib
+import json
+import os
+import sys
+
+marker_path, state_path, status_path, live_state_path, live_status_path, receipt_path, receipt_id = sys.argv[1:]
+state_raw = open(state_path, "rb").read()
+status_raw = open(status_path, "rb").read()
+state = json.loads(state_raw)
+status = json.loads(status_raw)
+live_state = json.load(open(live_state_path, encoding="utf-8"))
+live_status = json.load(open(live_status_path, encoding="utf-8"))
+receipt_raw = open(receipt_path, "rb").read()
+receipt = json.loads(receipt_raw)
+
+def state_material(payload):
+    assert isinstance(payload, dict)
+    material = {key: value for key, value in payload.items() if key != "last_room_status_epoch"}
+    cookie_health = material.get("cookie_health")
+    assert isinstance(cookie_health, dict)
+    material["cookie_health"] = {
+        key: value for key, value in cookie_health.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
+    return material
+
+def status_projection(payload):
+    assert isinstance(payload, dict)
+    projected = json.loads(json.dumps(payload))
+    projected.pop("generated_at", None)
+    projected.pop("generated_at_epoch", None)
+    cookie_status = projected.get("bilibili_cookie")
+    assert isinstance(cookie_status, dict)
+    projected["bilibili_cookie"] = {
+        key: value for key, value in cookie_status.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
+    errors = projected.get("finalize_errors")
+    if isinstance(errors, list):
+        import re
+        for entry in errors:
+            if isinstance(entry, dict) and isinstance(entry.get("error"), str):
+                entry["error"] = re.sub(r"0x[0-9a-fA-F]+", "0x<address>", entry["error"])
+    return projected
+
+state_material_sha256 = lambda payload: hashlib.sha256(
+    json.dumps(state_material(payload), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+status_projection_sha256 = lambda payload: hashlib.sha256(
+    json.dumps(status_projection(payload), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+expected_paths = [
+    "2026-08-20/22966160_20260820-21-00-20.flv",
+    "2026-08-20/22966160_20260820-21-56-14.flv",
+]
+expected_sources = {"/adapter/Videos/22966160/" + path for path in expected_paths}
+assert receipt.get("schema_version") == "recording-connection-stub-bootstrap.v1"
+assert receipt.get("receipt_id") == receipt_id
+assert receipt.get("adapter_state_sha256") == hashlib.sha256(state_raw).hexdigest()
+assert receipt.get("adapter_state_material_sha256") == state_material_sha256(state)
+assert receipt.get("adapter_status_preimage_sha256") == status_projection_sha256(status)
+assert state_material_sha256(live_state) == receipt.get("adapter_state_material_sha256")
+assert status_projection_sha256(live_status) == receipt.get("adapter_status_preimage_sha256")
+receipt_payload = dict(receipt)
+receipt_integrity = receipt_payload.pop("canonical_integrity", None)
+assert isinstance(receipt_integrity, dict) and receipt_integrity.get("algorithm") == "sha256"
+assert receipt_integrity.get("canonical_json_sha256") == hashlib.sha256(
+    json.dumps(receipt_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+assert receipt.get("source_relative_paths") == expected_paths
+assert status.get("error") == "2 closed recording(s) failed finalization"
+errors = status.get("finalize_errors")
+assert isinstance(errors, list) and len(errors) == len(expected_paths)
+assert {entry.get("source") for entry in errors if isinstance(entry, dict)} == expected_sources
+marker = {
+    "schema_version": "recording-connection-stub-bootstrap-rollback-marker.v1",
+    "receipt_id": receipt_id,
+    "receipt_path": receipt_path,
+    "receipt_sha256": hashlib.sha256(receipt_raw).hexdigest(),
+    "state_sha256": hashlib.sha256(state_raw).hexdigest(),
+    "status_sha256": hashlib.sha256(status_raw).hexdigest(),
+    "state_material_sha256": state_material_sha256(state),
+    "status_projection_sha256": status_projection_sha256(status),
+}
+marker["canonical_integrity"] = {
+    "algorithm": "sha256",
+    "canonical_json_sha256": hashlib.sha256(
+        json.dumps(marker, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest(),
+}
+encoded = (json.dumps(marker, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode()
+fd = os.open(marker_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+with os.fdopen(fd, "wb") as handle:
+    handle.write(encoded)
+    handle.flush()
+    os.fsync(handle.fileno())
+PY_BOOTSTRAP_ACTIVATE_MARKER
+}
+adapter_connection_stub_bootstrap_safe() {
+    old_sha=$1
+    new_sha=$2
+    receipt=/opt/bilive/recording/connection-stub-bootstrap-receipts/$commit.json
+    adapter_restart_environment_safe "$old_sha" || return 1
+    capture_connection_stub_bootstrap_preimage || return 1
+    if ! docker exec -i bililive_adapter timeout 360 python3 - \
+        --prepare-connection-stub-bootstrap \
+        --record-root /adapter/Videos/22966160 \
+        --state-path /state/.connection-stub-bootstrap-preimage-$commit/adapter-state.json \
+        --bootstrap-receipt-root /state/connection-stub-bootstrap-receipts \
+        --bootstrap-receipt-id "$commit" \
+        --bootstrap-candidate-adapter-sha256 "$new_sha" \
+        --bootstrap-installed-adapter-path /state/bililive_recorder_adapter.py \
+        --bootstrap-status-path /state/.connection-stub-bootstrap-preimage-$commit/status.json \
+        --bootstrap-source-relative 2026-08-20/22966160_20260820-21-00-20.flv \
+        --bootstrap-source-relative 2026-08-20/22966160_20260820-21-56-14.flv \
+        < "$new_adapter_source" >/dev/null
+    then
+        discard_connection_stub_bootstrap_staging
+        return 1
+    fi
+    if ! python3 - "$backup/external/connection_stub_bootstrap_preimage/adapter-state.json" "$backup/external/connection_stub_bootstrap_preimage/status.json" "$receipt" "$new_sha" "$old_sha" <<'PY_BOOTSTRAP_PREIMAGE'
+import hashlib
+import json
+import re
+import sys
+state_raw = open(sys.argv[1], "rb").read()
+state = json.loads(state_raw)
+payload = json.load(open(sys.argv[2], encoding="utf-8"))
+receipt = json.load(open(sys.argv[3], encoding="utf-8"))
+new_sha, old_sha = sys.argv[4:]
+paths = receipt.get("source_relative_paths")
+rows = receipt.get("rows")
+receipt_payload = dict(receipt)
+integrity = receipt_payload.pop("canonical_integrity", None)
+assert receipt.get("schema_version") == "recording-connection-stub-bootstrap.v1"
+assert receipt.get("candidate_adapter_sha256") == new_sha
+assert receipt.get("installed_adapter_sha256") == old_sha
+assert receipt.get("adapter_state_sha256") == hashlib.sha256(state_raw).hexdigest()
+
+def state_material(value):
+    assert isinstance(value, dict)
+    material = {key: item for key, item in value.items() if key != "last_room_status_epoch"}
+    cookie_health = material.get("cookie_health")
+    assert isinstance(cookie_health, dict)
+    material["cookie_health"] = {
+        key: item for key, item in cookie_health.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
+    return material
+
+def status_projection(value):
+    assert isinstance(value, dict)
+    projected = json.loads(json.dumps(value))
+    projected.pop("generated_at", None)
+    projected.pop("generated_at_epoch", None)
+    cookie_status = projected.get("bilibili_cookie")
+    assert isinstance(cookie_status, dict)
+    projected["bilibili_cookie"] = {
+        key: item for key, item in cookie_status.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
+    errors = projected.get("finalize_errors")
+    if isinstance(errors, list):
+        for entry in errors:
+            if isinstance(entry, dict) and isinstance(entry.get("error"), str):
+                entry["error"] = re.sub(r"0x[0-9a-fA-F]+", "0x<address>", entry["error"])
+    return projected
+
+assert receipt.get("adapter_state_material_sha256") == hashlib.sha256(
+    json.dumps(state_material(state), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+assert isinstance(integrity, dict) and integrity.get("algorithm") == "sha256"
+assert integrity.get("canonical_json_sha256") == hashlib.sha256(
+    json.dumps(receipt_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+assert isinstance(paths, list) and len(paths) == 2 and paths == sorted(paths)
+assert isinstance(rows, dict) and sorted(rows) == paths
+assert all(row.get("source_relative_path") == path for path, row in rows.items())
+assert payload.get("service_reachable") is True
+assert payload.get("streaming") is False
+assert payload.get("recording") is False
+assert payload.get("finalizing") is False
+errors = payload.get("finalize_errors")
+assert isinstance(errors, list) and len(errors) == len(paths)
+expected = {"/adapter/Videos/22966160/" + path for path in paths}
+assert {entry.get("source") for entry in errors if isinstance(entry, dict)} == expected
+assert payload.get("error") == f"{len(paths)} closed recording(s) failed finalization"
+assert receipt.get("adapter_status_preimage_sha256") == hashlib.sha256(
+    json.dumps(status_projection(payload), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+PY_BOOTSTRAP_PREIMAGE
+    then
+        discard_connection_stub_bootstrap_staging
+        return 1
+    fi
+    discard_connection_stub_bootstrap_staging
+}
+adapter_connection_stub_bootstrap_postcondition() {
+    receipt=/opt/bilive/recording/connection-stub-bootstrap-receipts/$commit.json
+    python3 - "$receipt" /opt/bilive/recording/adapter-state.json <<'PY_BOOTSTRAP_POSTCONDITION'
+import hashlib
+import json
+import sys
+
+receipt = json.load(open(sys.argv[1], encoding="utf-8"))
+state = json.load(open(sys.argv[2], encoding="utf-8"))
+receipt_payload = dict(receipt)
+integrity = receipt_payload.pop("canonical_integrity", None)
+assert receipt.get("schema_version") == "recording-connection-stub-bootstrap.v1"
+assert receipt.get("receipt_id") == __import__("pathlib").Path(sys.argv[1]).stem
+assert isinstance(integrity, dict) and integrity.get("algorithm") == "sha256"
+assert integrity.get("canonical_json_sha256") == hashlib.sha256(
+    json.dumps(receipt_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+paths = receipt.get("source_relative_paths")
+rows = receipt.get("rows")
+dispositions = state.get("source_dispositions")
+assert isinstance(paths, list) and len(paths) == 2
+assert isinstance(rows, dict) and sorted(rows) == paths
+assert isinstance(dispositions, dict)
+assert all(dispositions.get(path) == rows[path] for path in paths)
+PY_BOOTSTRAP_POSTCONDITION
+}
 wait_adapter_runtime() {
     restarted_after=$1
     expected_sha=$2
-    for _attempt in $(seq 1 120); do
+    # Keep the forward restart wait identical to rollback: rebind work is
+    # serialized by the adapter, and a clean status is still mandatory.
+    for _attempt in $(seq 1 360); do
         if [ "$(docker inspect -f '{{.State.Status}}' bililive_adapter 2>/dev/null || true)" = running ] && \
            [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' bililive_adapter 2>/dev/null || true)" = healthy ] && \
            [ "$(docker inspect -f '{{index .Config.Cmd 0}}|{{index .Config.Cmd 1}}' bililive_adapter 2>/dev/null || true)" = 'python3|/state/bililive_recorder_adapter.py' ] && \
            [ "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Source}}|{{.Type}}|{{.RW}}{{end}}{{end}}' bililive_adapter 2>/dev/null || true)" = '/opt/bilive/recording|bind|true' ] && \
            [ "$(sha256sum /opt/bilive/recording/bililive_recorder_adapter.py 2>/dev/null | awk '{print $1}')" = "$expected_sha" ] && \
            [ "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py 2>/dev/null | awk '{print $1}')" = "$expected_sha" ] && \
-           python3 - /opt/bilive/recording/status.json "$restarted_after" <<'PY_FRESH'
+           python3 - /opt/bilive/recording/status.json "$restarted_after" \
+               "$backup/external/connection_stub_bootstrap_preimage/adapter-state.json" <<'PY_FRESH'
 import json
+import re
+import stat
 import sys
 import time
+from pathlib import Path
 
 payload = json.load(open(sys.argv[1], encoding="utf-8"))
 generated = float(payload["generated_at_epoch"])
@@ -1033,7 +2792,41 @@ assert payload.get("service_reachable") is True
 assert payload.get("streaming") is False
 assert payload.get("recording") is False
 assert payload.get("finalizing") is False
-assert payload.get("error") is None
+if payload.get("error") is not None:
+    state_path = Path(sys.argv[3])
+    info = state_path.lstat()
+    assert stat.S_ISREG(info.st_mode) and not state_path.is_symlink()
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert isinstance(state, dict)
+    webhook_files = state.get("webhook_files")
+    finalized = state.get("finalized")
+    dispositions = state.get("source_dispositions")
+    assert all(isinstance(value, dict) for value in (webhook_files, finalized, dispositions))
+    assert state.get("source_disposition_identity_rebind_tasks", {}) == {}
+    errors = payload.get("finalize_errors")
+    assert isinstance(errors, list) and errors
+    assert payload["error"] == f"{len(errors)} closed recording(s) failed finalization"
+    prefix = "/adapter/Videos/22966160/"
+    allowed = re.compile(
+        r"^(source size does not match BililiveRecorder FileClosed \(\d+ != \d+\)|"
+        r"source lacks BililiveRecorder FileClosed evidence|"
+        r"FileOpening has no matching FileClosed event|"
+        r"invalid BililiveRecorder XML [^:\n]+: .+\S)$"
+    )
+    pairs = set()
+    for entry in errors:
+        assert isinstance(entry, dict) and set(entry) == {"source", "error"}
+        source, error = entry["source"], entry["error"]
+        assert isinstance(source, str) and source.startswith(prefix)
+        relative = source.removeprefix(prefix)
+        path = Path(relative)
+        assert relative and not path.is_absolute() and ".." not in path.parts
+        assert relative in webhook_files and relative not in finalized and relative not in dispositions
+        assert isinstance(error, str) and allowed.fullmatch(error)
+        assert (relative, error) not in pairs
+        pairs.add((relative, error))
+else:
+    assert payload.get("error") is None
 PY_FRESH
         then
             docker exec bililive_adapter timeout 15 find /adapter/Videos -mindepth 1 -maxdepth 1 -print -quit >/dev/null
@@ -1045,6 +2838,68 @@ PY_FRESH
 }
 new_adapter_source=/opt/bilive/autoslice/repo/ops/recording/bililive_recorder_adapter.py
 host_adapter_path=/opt/bilive/recording/bililive_recorder_adapter.py
+watchdog_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/watchdog.lock /opt/bilive/autoslice/mount_watchdog.sh >> /opt/bilive/autoslice/logs/watchdog.log 2>&1'
+runner_cron='*/10 * * * * /usr/bin/flock -n /opt/bilive/autoslice/tick.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && AUTOSLICE_BASE=/opt/bilive/autoslice AUTOSLICE_SPEAKER_MODE=uniform_host /usr/bin/python3 scripts/session_autoslice.py --once'\'' >> /opt/bilive/autoslice/logs/runner.log 2>&1'
+upload_fatal_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/upload-fatal-sentinel.lock /opt/bilive/autoslice/upload_fatal_sentinel.sh >> /opt/bilive/autoslice/logs/upload-fatal-sentinel.log 2>&1'
+timely_terms_cron='17 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/timely-terms.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_timely_terms.py --cache-dir /opt/bilive/autoslice/cache/timely-term-crawler --write /opt/bilive/autoslice/state/timely_terms.json'\'' >> /opt/bilive/autoslice/logs/timely-terms.log 2>&1'
+streamer_registry_cron='7 6 * * 0 /usr/bin/flock -n /opt/bilive/autoslice/streamer-registry.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_streamer_registry.py --cache-dir /opt/bilive/autoslice/cache/streamer-registry-crawler --write /opt/bilive/autoslice/state/streamer_registry.json'\'' >> /opt/bilive/autoslice/logs/streamer-registry.log 2>&1'
+psplive_roster_cron='12 6 * * 0 /usr/bin/flock -n /opt/bilive/autoslice/psplive-roster.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_psplive_roster.py --cache-dir /opt/bilive/autoslice/cache/psplive-roster-crawler --write /opt/bilive/autoslice/state/psplive_roster.json'\'' >> /opt/bilive/autoslice/logs/psplive-roster.log 2>&1'
+community_names_cron='27 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/community-names.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && set -a && source /opt/bilive/autoslice/cpa.env && set +a && python3 scripts/crawl_community_names.py --registry /opt/bilive/autoslice/state/streamer_registry.json --cache-dir /opt/bilive/autoslice/cache/community-name-crawler --state /opt/bilive/autoslice/state/community_name_state.json --write /opt/bilive/autoslice/state/community_names.json'\'' >> /opt/bilive/autoslice/logs/community-names.log 2>&1'
+topic_entity_cron='37 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/topic-entity.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_topic_entity_graph.py --timely-terms /opt/bilive/autoslice/state/timely_terms.json --cache-dir /opt/bilive/autoslice/cache/topic-entity-crawler --write /opt/bilive/autoslice/state/topic_entity_graph.json'\'' >> /opt/bilive/autoslice/logs/topic-entity.log 2>&1'
+streamer_dynamics_cron='47 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/streamer-dynamics.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_streamer_dynamics.py --cache-dir /opt/bilive/autoslice/cache/streamer-dynamics-crawler --write /opt/bilive/autoslice/state/streamer_dynamics.json'\'' >> /opt/bilive/autoslice/logs/streamer-dynamics.log 2>&1'
+managed_crontab_exact() {
+    existing_crontab=$(crontab -l) || return 1
+    for entry in \
+        "scripts/session_autoslice.py:$runner_cron" \
+        "mount_watchdog.sh:$watchdog_cron" \
+        "upload_fatal_sentinel.sh:$upload_fatal_cron" \
+        "scripts/crawl_timely_terms.py:$timely_terms_cron" \
+        "scripts/crawl_streamer_registry.py:$streamer_registry_cron" \
+        "scripts/crawl_psplive_roster.py:$psplive_roster_cron" \
+        "scripts/crawl_community_names.py:$community_names_cron" \
+        "scripts/crawl_topic_entity_graph.py:$topic_entity_cron" \
+        "scripts/crawl_streamer_dynamics.py:$streamer_dynamics_cron"; do
+        family=${entry%%:*}
+        canonical=${entry#*:}
+        test "$(printf '%s\n' "$existing_crontab" | grep -Fc -- "$family")" -eq 1 || return 1
+        printf '%s\n' "$existing_crontab" | grep -Fxq -- "$canonical" || return 1
+    done
+}
+external_payload_exact() {
+    label=$1
+    source=$2
+    destination=$3
+    source_mode=$4
+    destination_mode=$5
+    test ! -e "$backup/external/$label.absent" || return 1
+    test ! -L "$backup/external/$label.absent" || return 1
+    for path in "$source" "$destination" "$backup/external/$label.present" "$backup/external/$label.file"; do
+        test -f "$path" || return 1
+        test ! -L "$path" || return 1
+    done
+    test "$(stat -c '%a' "$source")" = "$source_mode" || return 1
+    test "$(stat -c '%a' "$destination")" = "$destination_mode" || return 1
+    test "$(stat -c '%a' "$backup/external/$label.file")" = "$destination_mode" || return 1
+    cmp -s "$source" "$destination" || return 1
+    cmp -s "$backup/external/$label.file" "$destination" || return 1
+}
+external_payload_unchanged_safe() {
+    expected_adapter_sha=$1
+    external_payload_exact watchdog \
+        /opt/bilive/autoslice/repo/scripts/mount_watchdog.sh \
+        /opt/bilive/autoslice/mount_watchdog.sh 755 755 || return 1
+    external_payload_exact upload_sentinel \
+        /opt/bilive/autoslice/repo/scripts/clouddrive_upload_fatal_sentinel.sh \
+        /opt/bilive/autoslice/upload_fatal_sentinel.sh 755 755 || return 1
+    external_payload_exact uploader \
+        /opt/bilive/autoslice/repo/scripts/do_upload.sh \
+        /opt/bilive/app/tmp_manual_upload/do_upload.sh 755 700 || return 1
+    external_payload_exact recorder_adapter \
+        "$new_adapter_source" "$host_adapter_path" 644 755 || return 1
+    adapter_status_zero_touch_fresh || return 1
+    adapter_environment_healthy "$expected_adapter_sha" || return 1
+    managed_crontab_exact
+}
 test -f "$backup/external/recorder_adapter.present"
 test -f "$backup/external/recorder_adapter.file"
 test -f "$new_adapter_source"
@@ -1057,49 +2912,86 @@ if ! cmp -s "$new_adapter_source" "$host_adapter_path"; then
     adapter_content_changed=1
 fi
 old_adapter_sha=$(sha256sum "$host_adapter_path" | awk '{print $1}')
+new_adapter_sha=$(sha256sum "$new_adapter_source" | awk '{print $1}')
+connection_stub_bootstrap=0
 test "$old_adapter_sha" = "$(sha256sum "$backup/external/recorder_adapter.file" | awk '{print $1}')"
-if [ "$adapter_content_changed" -eq 0 ]; then
-    adapter_restart_safe "$old_adapter_sha"
+external_payload_unchanged=0
+if external_payload_unchanged_safe "$old_adapter_sha"; then
+    # All four external targets already equal their committed payloads and the
+    # captured preimage.  Do not touch files, cron, or the live adapter.
+    external_payload_unchanged=1
+elif [ "$adapter_content_changed" -eq 0 ]; then
+    # A runner/cron-only external payload drift still needs a fresh adapter
+    # environment gate before its files may be installed.  The existing
+    # adapter bytes do not require the changed-bytes bootstrap path, though:
+    # a supported source-disposition repair-idle heartbeat is the same safe
+    # no-live/no-recording posture as clean idle for that purpose.
+    if adapter_restart_safe "$old_adapter_sha"; then
+        :
+    else
+        adapter_repair_restart_safe "$old_adapter_sha"
+    fi
 elif adapter_restart_safe "$old_adapter_sha"; then
     :
+elif known_finalize_preinstall_safe "$old_adapter_sha"; then
+    :
+elif known_finalize_preinstall_busy_safe; then
+    if ! known_finalize_preinstall_wait_safe "$old_adapter_sha"; then
+        echo "REFUSE: known finalization remained busy or drifted during settle wait" >&2
+        exit 1
+    fi
+elif adapter_connection_stub_bootstrap_safe "$old_adapter_sha" "$new_adapter_sha"; then
+    connection_stub_bootstrap=1
 else
-    # The only dirty preimage admitted here is the exact defect class that the
-    # changed adapter bytes are intended to repair. Every runtime/live/mount/hash
-    # gate still runs before any external byte is replaced.
     adapter_repair_restart_safe "$old_adapter_sha"
 fi
-adapter_identity_rebind_hash_child_absent
-install_atomic \
-    "$new_adapter_source" \
-    "$host_adapter_path" \
-    755
-new_adapter_sha=$(sha256sum "$new_adapter_source" | awk '{print $1}')
-test "$new_adapter_sha" = "$(sha256sum "$host_adapter_path" | awk '{print $1}')"
-test "$new_adapter_sha" = "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py | awk '{print $1}')"
-if [ "$adapter_content_changed" -eq 1 ]; then
+if [ "$external_payload_unchanged" -eq 0 ]; then
+    printf '%s\n' external-mutation-started.v1 > "$backup/external/external-mutation-started"
+    chmod 600 "$backup/external/external-mutation-started"
+    install_atomic \
+        /opt/bilive/autoslice/repo/scripts/mount_watchdog.sh \
+        /opt/bilive/autoslice/mount_watchdog.sh \
+        755
+    install_atomic \
+        /opt/bilive/autoslice/repo/scripts/clouddrive_upload_fatal_sentinel.sh \
+        /opt/bilive/autoslice/upload_fatal_sentinel.sh \
+        755
+    install_atomic \
+        /opt/bilive/autoslice/repo/scripts/do_upload.sh \
+        /opt/bilive/app/tmp_manual_upload/do_upload.sh \
+        700
+    adapter_identity_rebind_hash_child_absent
+    install_atomic \
+        "$new_adapter_source" \
+        "$host_adapter_path" \
+        755
+    test "$new_adapter_sha" = "$(sha256sum "$host_adapter_path" | awk '{print $1}')"
+    test "$new_adapter_sha" = "$(docker exec bililive_adapter sha256sum /state/bililive_recorder_adapter.py | awk '{print $1}')"
+fi
+if [ "$external_payload_unchanged" -eq 0 ] && [ "$adapter_content_changed" -eq 1 ]; then
     # Close the install-to-restart race with a second direct idle query. This
     # also imports the new bytes in a disposable process before the daemon is
     # restarted; failure here rolls the file back while the old daemon remains.
     adapter_restart_environment_safe "$new_adapter_sha"
     touch "$backup/external/recorder_adapter.restart-required"
     adapter_identity_rebind_hash_child_absent
+    if [ "$connection_stub_bootstrap" -eq 1 ]; then
+        activate_connection_stub_bootstrap_marker
+    fi
     restart_epoch=$(python3 -c 'import time; print(time.time())')
     docker restart bililive_adapter >/dev/null
     wait_adapter_runtime "$restart_epoch" "$new_adapter_sha"
-else
+    if [ "$connection_stub_bootstrap" -eq 1 ]; then
+        adapter_connection_stub_bootstrap_postcondition
+    fi
+elif [ "$external_payload_unchanged" -eq 0 ]; then
     test "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' bililive_adapter)" = healthy
 fi
-watchdog_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/watchdog.lock /opt/bilive/autoslice/mount_watchdog.sh >> /opt/bilive/autoslice/logs/watchdog.log 2>&1'
-upload_fatal_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/upload-fatal-sentinel.lock /opt/bilive/autoslice/upload_fatal_sentinel.sh >> /opt/bilive/autoslice/logs/upload-fatal-sentinel.log 2>&1'
-timely_terms_cron='17 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/timely-terms.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_timely_terms.py --cache-dir /opt/bilive/autoslice/cache/timely-term-crawler --write /opt/bilive/autoslice/state/timely_terms.json'\'' >> /opt/bilive/autoslice/logs/timely-terms.log 2>&1'
-streamer_registry_cron='7 6 * * 0 /usr/bin/flock -n /opt/bilive/autoslice/streamer-registry.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_streamer_registry.py --cache-dir /opt/bilive/autoslice/cache/streamer-registry-crawler --write /opt/bilive/autoslice/state/streamer_registry.json'\'' >> /opt/bilive/autoslice/logs/streamer-registry.log 2>&1'
-psplive_roster_cron='12 6 * * 0 /usr/bin/flock -n /opt/bilive/autoslice/psplive-roster.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_psplive_roster.py --cache-dir /opt/bilive/autoslice/cache/psplive-roster-crawler --write /opt/bilive/autoslice/state/psplive_roster.json'\'' >> /opt/bilive/autoslice/logs/psplive-roster.log 2>&1'
-community_names_cron='27 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/community-names.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && set -a && source /opt/bilive/autoslice/cpa.env && set +a && python3 scripts/crawl_community_names.py --registry /opt/bilive/autoslice/state/streamer_registry.json --cache-dir /opt/bilive/autoslice/cache/community-name-crawler --state /opt/bilive/autoslice/state/community_name_state.json --write /opt/bilive/autoslice/state/community_names.json'\'' >> /opt/bilive/autoslice/logs/community-names.log 2>&1'
-topic_entity_cron='37 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/topic-entity.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_topic_entity_graph.py --timely-terms /opt/bilive/autoslice/state/timely_terms.json --cache-dir /opt/bilive/autoslice/cache/topic-entity-crawler --write /opt/bilive/autoslice/state/topic_entity_graph.json'\'' >> /opt/bilive/autoslice/logs/topic-entity.log 2>&1'
-streamer_dynamics_cron='47 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/streamer-dynamics.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_streamer_dynamics.py --cache-dir /opt/bilive/autoslice/cache/streamer-dynamics-crawler --write /opt/bilive/autoslice/state/streamer_dynamics.json'\'' >> /opt/bilive/autoslice/logs/streamer-dynamics.log 2>&1'
+if [ "$external_payload_unchanged" -eq 0 ]; then
 existing_crontab=$(crontab -l 2>/dev/null || true)
 {
     printf '%s\n' "$existing_crontab" \
+        | grep -Fv 'scripts/session_autoslice.py' \
         | grep -Fv '/opt/bilive/autoslice/mount_watchdog.sh' \
         | grep -Fv '/opt/bilive/autoslice/upload_fatal_sentinel.sh' \
         | grep -Fv 'scripts/crawl_timely_terms.py' \
@@ -1108,6 +3000,7 @@ existing_crontab=$(crontab -l 2>/dev/null || true)
         | grep -Fv 'scripts/crawl_community_names.py' \
         | grep -Fv 'scripts/crawl_topic_entity_graph.py' \
         | grep -Fv 'scripts/crawl_streamer_dynamics.py' || true
+    printf '%s\n' "$runner_cron"
     printf '%s\n' "$watchdog_cron"
     printf '%s\n' "$upload_fatal_cron"
     printf '%s\n' "$streamer_registry_cron"
@@ -1117,6 +3010,8 @@ existing_crontab=$(crontab -l 2>/dev/null || true)
     printf '%s\n' "$topic_entity_cron"
     printf '%s\n' "$streamer_dynamics_cron"
 } | crontab -
+crontab -l | grep -Fxq "$runner_cron"
+test "$(crontab -l | grep -Fxc "$runner_cron")" -eq 1
 crontab -l | grep -Fxq "$watchdog_cron"
 test "$(crontab -l | grep -Fxc "$watchdog_cron")" -eq 1
 crontab -l | grep -Fxq "$upload_fatal_cron"
@@ -1133,16 +3028,22 @@ crontab -l | grep -Fxq "$topic_entity_cron"
 test "$(crontab -l | grep -Fxc "$topic_entity_cron")" -eq 1
 crontab -l | grep -Fxq "$streamer_dynamics_cron"
 test "$(crontab -l | grep -Fxc "$streamer_dynamics_cron")" -eq 1
+fi
+if [ "$external_payload_unchanged" -eq 1 ]; then
+    # Close the read-only fast-route interval: success is valid only while the
+    # same payload, cron, adapter and status closure remains true.
+    external_payload_unchanged_safe "$old_adapter_sha"
+fi
 REMOTE_EXTERNAL_INSTALL
 
 # verify: the deployed runner is byte-identical to the committed one
 LOCAL_MD5=$(md5 -q "$LOCAL_ARCHIVE_DIR/scripts/session_autoslice.py" 2>/dev/null || md5sum "$LOCAL_ARCHIVE_DIR/scripts/session_autoslice.py" | cut -d' ' -f1)
-REMOTE_MD5=$(ssh "$HOST" "md5sum /opt/bilive/autoslice/repo/scripts/session_autoslice.py" | cut -d' ' -f1)
+REMOTE_MD5=$(remote_ssh "$HOST" "md5sum /opt/bilive/autoslice/repo/scripts/session_autoslice.py" | cut -d' ' -f1)
 if [ "$LOCAL_MD5" != "$REMOTE_MD5" ]; then
     echo "DEPLOY VERIFY FAILED: runner md5 mismatch (local $LOCAL_MD5 remote $REMOTE_MD5)" >&2
     exit 3
 fi
-REMOTE_DEPLOYED_MANIFEST=$(ssh "$HOST" python3 - "$REMOTE_REPO" <<'REMOTE_DEPLOYED_MANIFEST_PY'
+REMOTE_DEPLOYED_MANIFEST=$(remote_ssh "$HOST" python3 - "$REMOTE_REPO" <<'REMOTE_DEPLOYED_MANIFEST_PY'
 import hashlib
 import json
 import os
@@ -1196,7 +3097,7 @@ fi
 # bytes. The manifest is installed before DEPLOYED_COMMIT, so a crash between
 # the two atomic renames fails closed (commit mismatch); both files are restored
 # from the rollback tree on every local or remote failure path.
-ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
+remote_ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/tick.lock" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
     "$REMOTE_REPO" "$BACKUP" "$COMMIT" <<'REMOTE_SEAL_DEPLOYMENT_IDENTITY'
 set -euo pipefail
 repo=$1
@@ -1382,5 +3283,5 @@ trap - ERR HUP INT TERM
 cleanup_tmp
 REMOTE_SEAL_DEPLOYMENT_IDENTITY
 COMMITTED=1
-ssh "$HOST" "rm -rf '$BACKUP'" || echo "WARN: deployed successfully but rollback-tree cleanup failed" >&2
+remote_ssh "$HOST" "rm -rf '$BACKUP'" || echo "WARN: deployed successfully but rollback-tree cleanup failed" >&2
 echo "deployed $COMMIT to $HOST (runner md5 verified)"

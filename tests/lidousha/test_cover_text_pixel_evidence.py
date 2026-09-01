@@ -4,13 +4,13 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageFont
 
+import src.autoslice.cover_text_pixel_evidence as pixel_evidence
 from src.autoslice.cover_route_evidence import (
     validate_rendered_text_pixel_evidence,
 )
 from src.autoslice.cover_text_pixel_evidence import (
-    materialize_rendered_text_pixel_evidence,
     verify_pre_overlay_route_background,
     verify_rendered_text_pixel_artifacts,
 )
@@ -64,12 +64,12 @@ def _materialize(
     )
     Image.open(route_background).save(pre_overlay)
     spec = _spec()
-    layer = render_title_layer(spec, font_path=FONT)
+    layer = pixel_evidence.render_title_layer(spec, font_path=FONT)
     with Image.open(pre_overlay) as source:
         final = source.convert("RGB")
     final.paste(layer, (300, 100), layer)
     final.save(final_cover)
-    evidence = materialize_rendered_text_pixel_evidence(
+    evidence = pixel_evidence.materialize_rendered_text_pixel_evidence(
         final_cover_path=final_cover,
         pre_overlay_path=pre_overlay,
         font_path=FONT,
@@ -100,6 +100,32 @@ def test_v3_replays_exact_visible_title_and_route_background(
         expected_route_background_sha256=sha256_file(route),
         text_backing="outline",
         scrim=False,
+    )
+
+
+def test_v3_replays_basic_layout_artifacts_on_raqm_hosts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if not ImageFont.core.HAVE_RAQM:
+        pytest.skip("RAQM is unavailable on this host")
+
+    original_renderer = pixel_evidence.render_title_layer
+
+    def basic_renderer(*args: object, **kwargs: object) -> Image.Image:
+        kwargs["layout_engine"] = ImageFont.Layout.BASIC
+        return original_renderer(*args, **kwargs)
+
+    monkeypatch.setattr(pixel_evidence, "render_title_layer", basic_renderer)
+    _route, pre, final, evidence = _materialize(tmp_path)
+    monkeypatch.undo()
+
+    assert verify_rendered_text_pixel_artifacts(
+        evidence,
+        final_cover_path=final,
+        pre_overlay_path=pre,
+        mask_path=Path(str(evidence["mask_path"])),
+        font_path=FONT,
+        expected_pre_overlay_sha256=evidence["pre_overlay_sha256"],
     )
 
 

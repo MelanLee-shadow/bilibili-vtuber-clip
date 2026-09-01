@@ -46,6 +46,10 @@ from src.autoslice.final_review_provider_budget_retry import (
 from src.autoslice.producer_boundary_owner_contract import (
     validate_frozen_boundary_owner_contract,
 )
+from src.autoslice.published_cover_carry import (
+    finalize_talk_delivery_status,
+    required_result_carry_projection,
+)
 from src.autoslice import provider_failure as _provider_failure
 from src.autoslice.infra_retry_policy import (
     talk_infra_retry_schedule as _talk_infra_retry_schedule,
@@ -83,6 +87,12 @@ from src.autoslice.talk_filler import (
     build_piece_specs,
     build_talk_filler_plan,
     verify_automatic_filler_plan,
+)
+from src.autoslice.producer_prepare_result import (
+    prepared_talk_result,
+    remove_candidate_private_recuts,
+    talk_delivery_basename,
+    talk_producer_command,
 )
 
 _runner = RunnerProxy()
@@ -346,7 +356,7 @@ def read_publish_meta(work_dir: Path) -> dict:
         except (OSError, ValueError):
             continue
         hashes = d.get("artifact_hashes") if isinstance(d.get("artifact_hashes"), dict) else {}
-        return {
+        result = {
             "title": d.get("title"), "title_source": d.get("title_source"),
             "title_authority_status": d.get("title_authority_status"), "title_authority_error": d.get("title_authority_error"),
             "cover_status": d.get("cover_status"),
@@ -356,22 +366,14 @@ def read_publish_meta(work_dir: Path) -> dict:
             "video_sha256": hashes.get("burned_video_sha256") or hashes.get("video_sha256"),
             **candidate_public_text_result_projection(work_dir=work_dir, publish_path=publish, publish=d),
         }
+        # Legacy publish metadata did not promise a subtitle digest.  Keep
+        # that public shape when none was produced; prepared delivery sealing
+        # validates a real subtitle hash independently before it can commit.
+        subtitle_sha256 = hashes.get("subtitle_sha256") or hashes.get("delivery_subtitle_sha256")
+        if isinstance(subtitle_sha256, str) and subtitle_sha256:
+            result["subtitle_sha256"] = subtitle_sha256
+        return result
     return {}
-
-
-def _talk_cover_delivery_ready(date: str, result: dict) -> bool:
-    """Prove the copied talk package has a route-bound cover, not just video."""
-
-    if result.get("cover_status") != "AI_COVER_READY":
-        return False
-    paths = _runner.delivered_paths(date, result)
-    if paths is None:
-        return False
-    mp4, cover = paths
-    return bool(
-        cover.is_file()
-        and _runner._initial_cover_proof_valid(date, result, mp4, cover)
-    )
 
 
 def _speaker_review_manifest_state(work_dir: Path) -> dict[str, tuple[int, int, int, int]]:
@@ -1699,17 +1701,25 @@ def _canonicalized_talk_item(item: Mapping[str, object]) -> dict[str, object]:
     return normalized
 
 
-def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
+def produce_talk(
+    date: str, item: dict, *, reuse_cover: bool = False, prepare_only: bool = False,
+) -> dict:
     """Run produce_slice_package for one pending talk item (plain-dict spec).
 
     Returns the result record; deterministic speaker uncertainty is preserved
     as ``speaker_review_required`` instead of a generic retryable failure.
-    A title_failed pick is cleaned up (no delivery with a cid title/cover) and
-    retried on a later resume.  ``reuse_cover`` keeps the existing delivered
+    A title_failed pick has no public delivery; its candidate-private evidence
+    is retained for a later retry rather than title-glob cleanup.  ``reuse_cover`` keeps the existing delivered
     cover (subtitle-only re-run) and skips the ~90s AI cover step.
     """
     item = _canonicalized_talk_item(item)
     cid = item["cid"]
+    carry_projection, carry_failure = required_result_carry_projection(
+        item, base=_runner.BASE, date=date, candidate_id=str(cid)
+    )
+    if carry_failure is not None:
+        return carry_failure
+    published_cover_carry = carry_projection.get("published_cover_carry")
     ledger_rejection = _provider_budget_ledger_preflight_rejection(
         item, candidate_id=str(cid)
     )
@@ -1731,7 +1741,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         return _carry_talk_recovery_result(item, filler_rejection)
     effective_duration_ms = int(filler_plan["effective_duration_ms"])
     out_root = _runner.BASE / "out" / date
-    delivery_name = _runner.safe_name(item.get("hook", ""), cid)
+    delivery_name = talk_delivery_basename(item.get("hook", ""), cid)
     # A manual lower bound beyond the semantic end shifts the boundary search
     # origin by the same amount, so the first materialized window must carry
     # that extra tail too or every such candidate needlessly burns a widened
@@ -1813,8 +1823,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
     )
     cmd = [sys.executable, str(_runner.REPO_ROOT / "scripts" / "produce_slice_package.py"),
            "--spec", str(spec_path), "--ssh-host", "localhost", "--speaker-mode", _runner.SPEAKER_MODE]
-    if reuse_cover:
-        cmd.append("--reuse-cover")
+    cmd = talk_producer_command(cmd, reuse_cover=reuse_cover, prepare_only=prepare_only)
     (
         completed,
         attempt_output,
@@ -1859,6 +1868,7 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         "talk_filler_removal_count": len(filler_plan.get("removals") or []),
         "talk_filler_plan_path": str(filler_plan_path),
         "pipeline_fingerprint": _runner.talk_pipeline_fingerprint(cid),
+        **carry_projection,
     }
     _copy_cover_regeneration_receipt(item, result)
     result.update(copied_refresh_receipt(item))
@@ -1920,17 +1930,10 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
             "TITLE_AUTHORITY_UNRESOLVED" in tail
             and str(result.get("title_authority_status") or "").startswith("UNRESOLVED")
         ):
-            # The producer now fails before delivery.  Keep cleanup for old
-            # partial/stale attempts, then classify this deterministic lane so
-            # the bounded title retry policy can act on it.
-            delivered = _runner.profile_delivery_root() / date
-            for f in delivered.glob(f"{delivery_name}.*"):
-                f.unlink(missing_ok=True)
-            recuts = out_root / cid / "replacement_recuts"
-            if recuts.is_dir():
-                import shutil
-
-                shutil.rmtree(recuts, ignore_errors=True)
+            # The producer fails before delivery.  Clear only this attempt's
+            # private recuts; title-prefix cleanup could delete a sibling with
+            # the same readable hook.
+            remove_candidate_private_recuts(out_root, cid)
             result["status"] = "title_failed"
             return _carry_talk_recovery_result(item, result)
         if "SPEAKER_REVIEW_REQUIRED" in attempt_output:
@@ -1970,28 +1973,28 @@ def produce_talk(date: str, item: dict, *, reuse_cover: bool = False) -> dict:
         )
         return _carry_talk_recovery_result(item, result)
     if str(result.get("title_authority_status") or "").startswith("UNRESOLVED"):
-        # No delivery with a cid title / cid-text cover — clean and retry later.
-        delivered = _runner.profile_delivery_root() / date
-        for f in delivered.glob(f"{delivery_name}.*"):
-            f.unlink(missing_ok=True)
-        recuts = out_root / cid / "replacement_recuts"
-        if recuts.is_dir():
-            import shutil
-
-            shutil.rmtree(recuts, ignore_errors=True)
+        # No delivery with a cid title / cid-text cover — clean this private
+        # attempt and retry later.  Never glob a public title prefix here.
+        remove_candidate_private_recuts(out_root, cid)
         result["status"] = "title_failed"
         return _carry_talk_recovery_result(item, result)
     # Boundary self-repair (维护者) replaced quarantine: a delivered
     # clip is clean by construction — red flags either got repaired (trail in
     # boundary_repairs) or the produce exited non-zero above (no delivery).
     summary = result.get("summary") or {}
+    if prepare_only:
+        return _carry_talk_recovery_result(item, prepared_talk_result(result))
+    exact_delivery = summary.get("delivery") if isinstance(summary, dict) else None
+    if isinstance(exact_delivery, str) and exact_delivery:
+        # CID-bound direct producer output is the durable path authority for
+        # immediate cover proof and later maintenance/recovery.
+        result["delivered"] = exact_delivery
+        exact_subtitle = summary.get("subtitle")
+        if isinstance(exact_subtitle, str) and exact_subtitle:
+            result["delivered_subtitle"] = exact_subtitle
     result["red_flags"] = list(summary.get("red_flags") or [])
     result["boundary_repairs"] = list(summary.get("boundary_repairs") or [])
-    from src.autoslice import speaker_guess  # 出处与理由见该模块 docstring
-    speaker_guess.finalize_delivered_talk_status(
-        result,
-        candidate_id=cid,
-        work_dir=out_root / cid,
-        cover_ready=_talk_cover_delivery_ready(date, result),
+    finalize_talk_delivery_status(
+        result, cid, out_root / cid, published_cover_carry, _runner, date
     )
     return _carry_talk_recovery_result(item, result)

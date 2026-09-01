@@ -52,6 +52,12 @@ from src.autoslice.reviewed_exact_source_interval import (
     ReviewedExactSourceIntervalError,
     resolve_exact_boundary,
 )
+from src.autoslice.redelivery_time_domain import (
+    DELIVERY_LOCAL,
+    PIECE_LOCAL,
+    RedeliveryTimeDomainError,
+    operator_v3_time_domain,
+)
 
 
 def _replayed_search_scope(
@@ -569,13 +575,32 @@ def _redelivery_baseline_head_rel_ms(spec: Mapping[str, object]) -> int | None:
         return None
     if config.get("schema_version") != "subtitle-redelivery-baseline.v2":
         return None
+    try:
+        time_domain = operator_v3_time_domain(config)
+    except RedeliveryTimeDomainError as exc:
+        raise SystemExit(str(exc)) from exc
+    if time_domain == PIECE_LOCAL:
+        # A piece-local baseline is cropped after replay; it must not move the
+        # media head to source-local zero.
+        return None
     start = config.get("absolute_source_start_ms")
     pieces = spec.get("pieces") or []
     if isinstance(start, bool) or not isinstance(start, int):
         return None
     try:
         content_index = single_content_piece_index(pieces)
-        return int(start) - int(pieces[content_index]["start_ms"])
+        piece_start = int(pieces[content_index]["start_ms"])
+        head = int(start) - piece_start
+        if time_domain == DELIVERY_LOCAL:
+            semantic_start = int(spec.get("semantic_start_ms", piece_start))
+            expected_head = max(0, semantic_start - piece_start - LEAD_AIR_MS)
+            if abs(head - expected_head) > 1_000:
+                raise SystemExit(
+                    "REDELIVERY_BASELINE_DELIVERY_HEAD_SEMANTIC_MISMATCH"
+                )
+        return head
+    except SystemExit:
+        raise
     except (KeyError, TypeError, ValueError):
         return None
 

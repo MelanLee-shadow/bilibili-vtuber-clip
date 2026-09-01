@@ -22,7 +22,7 @@ from src.autoslice.final_review_auditor import (
     FinalReviewAuditError,
     _request_final_review_findings,
 )
-from src.autoslice.llm_client import LlmCallError
+from src.autoslice.llm_client import LlmCallError, extract_json_object
 from src.autoslice.pronoun_consistency import (
     CandidatePronounAuditError,
     discover_candidate_pronoun_findings,
@@ -201,6 +201,80 @@ def test_candidate_pronoun_provider_error_carries_the_cascade():
     assert error.reason_code == "CANDIDATE_PRONOUN_PROVIDER_OR_JSON_UNAVAILABLE"
     assert error.detail == "LlmCallError"
     assert "http=408" in pf.provider_failure_detail_from_cause(error)
+
+
+def test_candidate_pronoun_preserves_only_a_closed_transport_reason():
+    def failing_call(_prompt: str) -> str:
+        raise LlmCallError("bridge diagnostic with token=secret", safe_reason="LLM_COMMAND_FAILED")
+
+    with pytest.raises(CandidatePronounAuditError) as excinfo:
+        discover_candidate_pronoun_findings(
+            "1\n00:00:00,000 --> 00:00:02,000\n她说她来了\n",
+            policy_text="（无）",
+            candidate_context_text="（无）",
+            llm_call=failing_call,
+            extract_json=json.loads,
+        )
+
+    assert excinfo.value.detail == "LLM_COMMAND_FAILED"
+    assert "secret" not in str(excinfo.value)
+
+
+def test_auditor_unavailable_discovery_keeps_closed_transport_reason():
+    assert _auditor_unavailable_discovery("LLM_COMMAND_TIMEOUT") == {
+        "status": "AUDITOR_UNAVAILABLE",
+        "detail": "LLM_COMMAND_TIMEOUT",
+        "provider_error_code": "LLM_COMMAND_TIMEOUT",
+    }
+
+
+def test_final_review_retries_only_a_typed_json_parse_failure():
+    prompts: list[str] = []
+    replies = iter(["provider completion with no object", '{"findings":[]}'])
+
+    assert _request_final_review_findings(
+        "exact prompt",
+        llm_call=lambda prompt: prompts.append(prompt) or next(replies),
+        extract_json=extract_json_object,
+    ) == []
+    assert prompts == ["exact prompt", "exact prompt"]
+
+
+def test_parse_retry_exhaustion_is_closed_and_never_preserves_completion_text():
+    secret = "completion-token=/private/prompt"
+    prompts: list[str] = []
+
+    with pytest.raises(FinalReviewAuditError) as raised:
+        _request_final_review_findings(
+            "exact prompt",
+            llm_call=lambda prompt: prompts.append(prompt) or secret,
+            extract_json=extract_json_object,
+        )
+
+    assert prompts == ["exact prompt", "exact prompt"]
+    assert raised.value.reason_code == "FINAL_REVIEW_PROVIDER_OR_JSON_UNAVAILABLE"
+    assert raised.value.detail == "LLM_JSON_NO_OBJECT"
+    assert secret not in str(raised.value)
+    discovery = _auditor_unavailable_discovery(
+        raised.value.detail, pf.provider_failure_detail_from_cause(raised.value)
+    )
+    assert discovery == {
+        "status": "AUDITOR_UNAVAILABLE",
+        "detail": "LLM_JSON_NO_OBJECT",
+        "provider_error_code": "LLM_JSON_NO_OBJECT",
+    }
+
+
+def test_parsed_final_review_schema_error_is_not_retried():
+    calls: list[str] = []
+    with pytest.raises(FinalReviewAuditError) as raised:
+        _request_final_review_findings(
+            "prompt",
+            llm_call=lambda prompt: calls.append(prompt) or "{}",
+            extract_json=extract_json_object,
+        )
+    assert raised.value.reason_code == "FINAL_REVIEW_RESPONSE_FINDINGS_MISSING"
+    assert calls == ["prompt"]
 
 
 def test_auditor_unavailable_discovery_labels_the_provider_failure():

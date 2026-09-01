@@ -23,10 +23,10 @@ from src.autoslice.cover_emote import (
 from src.autoslice.cover_punch_semantics import (
     COVER_THUMBNAIL_MAX_LINES,
     PUNCH_LINE_MAX_EM,
-    cover_text_requires_punch_for_thumbnail,
     cover_thumbnail_lines_are_readable,
     extractive_punch_fragment_is_source_safe,
     punch_fragment_whitespace_is_source_safe,
+    wrap_approved_punch_line,
     validate_full_text_cover_contract,
     punch_line_em_width,
     review_cover_punch_semantics,
@@ -37,15 +37,15 @@ from src.autoslice.cover_font_paths import (
     resolve_cover_fonts_dir,
     resolve_primary_cover_font,
 )
-from src.autoslice.cover_text_pixel_evidence import (
-    materialize_rendered_text_pixel_evidence,
-)
+from src.autoslice.cover_text_pixel_evidence import materialize_rendered_text_pixel_evidence
+from src.autoslice.cover_identity_landmark import exclusion_evidence, resolve_title_exclusion
 from src.autoslice.cover_title_rendering import (
     FEED_SAFE_X0,
     FEED_SAFE_X1,
     materialize_title_layer_spec,
 )
 from src.autoslice.llm_client import LlmCall, extract_json_object
+from src.autoslice.provider_slots import provider_transport
 
 ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(ROOT)
@@ -1073,6 +1073,7 @@ def _normalize_cover_canvas(path: Path) -> tuple[int, int]:
         return img.size
 
 
+@provider_transport(timeout_result=lambda: {"status": "FAILED", "reason_code": "CPA_IMAGE_EDIT_PROVIDER_CAPACITY", "detail": "provider capacity wait timed out", "attempted_models": []})
 def _call_cpa_image_edit(
     *,
     base_url: str,
@@ -1805,26 +1806,11 @@ def _regroup_lines(lines: Sequence[str], k: int) -> list[str]:
 
 
 def _punch_wrap(
-    fragment: str,
-    *,
-    max_em: float = PUNCH_LINE_MAX_EM,
-    max_lines: int = 2,
+    fragment: str, *, max_em: float = PUNCH_LINE_MAX_EM, max_lines: int = 2
 ) -> list[str]:
-    """Keep one CPA-approved punch fragment as one immutable physical line.
-
-    The semantic receipt is authority for the exact final lines.  Re-wrapping a
-    reviewed fragment here can split a proper name/word and makes rendered_lines
-    differ from that receipt, so oversized input fails closed and must go back
-    to CPA for a shorter extractive fragment.
-    """
-
-    del max_lines  # retained only for call compatibility
-    frag = fragment.strip()
-    if not frag:
-        return []
-    if _atom_em_width(frag) > max_em:
-        raise ValueError("COVER_PUNCH_LINE_REQUIRES_CPA_REVISE")
-    return [frag]
+    """Legacy entry point for the immutable reviewed-punch line contract."""
+    del max_lines
+    return wrap_approved_punch_line(fragment, max_em=max_em)
 
 
 def _fit_cover_punch_lines(punch_lines, *, zone, font_path, hook_rgb, base_fill, max_size):
@@ -1843,7 +1829,7 @@ def _fit_cover_punch_lines(punch_lines, *, zone, font_path, hook_rgb, base_fill,
     zone_h = (y1 - y0) * 0.96
     scratch = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
     main_lines = _punch_wrap(punch_lines[0])
-    sub_lines = [wrapped for frag in punch_lines[1:] for wrapped in _punch_wrap(frag)]
+    sub_lines = [line for frag in punch_lines[1:] for line in _punch_wrap(frag)]
 
     def build(emph: int):
         sub_size = max(56, int(round(emph * 0.5)))
@@ -2071,6 +2057,7 @@ def _overlay_cover_title(
     cover_text: str,
     art_direction: LidoushaCoverArtDirection | None = None,
     full_text_cover_contract: object = None,
+    identity_landmark_title_exclusion: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Overlay the multi-color artistic title onto the text-free CPA background.
 
@@ -2087,7 +2074,15 @@ def _overlay_cover_title(
     if art_direction is None:
         art_direction = _cover_art_direction(candidate_id="", title=cover_text, cover_text=cover_text)
     render = _COVER_LAYOUT_RENDER.get(art_direction.layout, _COVER_LAYOUT_RENDER["left-split"])
-    zone = render["zone"]
+    identity_exclusion = resolve_title_exclusion(
+        identity_landmark_title_exclusion,
+        background_sha256="sha256:" + _sha256(ai_background_path),
+    )
+    zone = (
+        tuple(identity_exclusion["title_zone"])
+        if identity_exclusion is not None
+        else render["zone"]
+    )
     angle = render["angle"]
     scrim = render["scrim"]
     hook_rgb = _COVER_HOOK_COLORS.get(art_direction.hook_color, _COVER_HOOK_COLORS["yellow"])
@@ -2309,6 +2304,9 @@ def _overlay_cover_title(
         font_size=font_size,
         rendered_text=rendered_text,
     )
+    identity_exclusion_evidence = exclusion_evidence(
+        identity_exclusion, text_pixel_bbox=rendered_text_pixels.get("text_pixel_bbox"),
+    )
     return {
         "font": font_path.name if font_path is not None else "PIL-default",
         "font_selection": font_selection,
@@ -2336,9 +2334,12 @@ def _overlay_cover_title(
         "pre_overlay_sha256": rendered_text_pixels["pre_overlay_sha256"],
         "text_backing": _COVER_TEXT_BACKING,
         "scrim": backing is not None,
+        **(
+            {"identity_landmark_title_exclusion": identity_exclusion_evidence}
+            if identity_exclusion_evidence is not None
+            else {}
+        ),
     }
-
-
 def _find_cover_font() -> Path:
     return resolve_primary_cover_font(
         channel_profile=CHANNEL_PROFILE, root=ROOT, fontsdir=_profile_fontsdir(None)

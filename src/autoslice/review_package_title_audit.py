@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -251,12 +252,26 @@ def audit_candidate_public_text_surfaces(
     try:
         if not isinstance(story_contract, dict):
             raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_STORY_CONTRACT_REQUIRED")
-        expected = consume_candidate_public_text_surface_authority(
-            authority,
-            candidate_id=candidate_id,
-            selection_hook=str(story_contract.get("selection_hook") or ""),
-            story_contract=story_contract,
-        )
+        if authority.is_root_reviewed_resolution and isinstance(
+            publish_staging.get("public_text_surface_authority_consumption"), Mapping
+        ) and str(
+            publish_staging["public_text_surface_authority_consumption"].get("schema_version")
+        ) == "c6-replay-public-text-projection-consumption.v1":
+            from src.autoslice.c6_replay_public_text_projection import (
+                validate_c6_replay_public_text_consumption_for_fresh_story,
+            )
+            expected = validate_c6_replay_public_text_consumption_for_fresh_story(
+                publish_staging["public_text_surface_authority_consumption"],
+                fresh_story=story_contract,
+                authority=authority,
+            )
+        else:
+            expected = consume_candidate_public_text_surface_authority(
+                authority,
+                candidate_id=candidate_id,
+                selection_hook=str(story_contract.get("selection_hook") or ""),
+                story_contract=story_contract,
+            )
         for value in (
             item_title,
             str(publish_staging.get("title") or ""),
@@ -284,7 +299,7 @@ def audit_candidate_public_text_surfaces(
         )
     staging_receipt = publish_staging.get("public_text_surface_authority_consumption")
     publish_receipt = publish.get("public_text_surface_authority_consumption")
-    expected_source = "deterministic_candidate_public_surface_resolution+reviewer_exact_substitution"
+    expected_source = authority.title_source
     if not (
         staging_receipt == publish_receipt == expected
         and publish_staging.get("title_source") == publish.get("title_source") == expected_source

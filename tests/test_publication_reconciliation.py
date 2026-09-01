@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.autoslice import publication_reconciliation as reconciliation
+from src.autoslice import fastlane_c1_technical_receipt
 from src.autoslice.batch_terminal_state import project_terminal_batch_state
 from src.autoslice.candidate_selection import exact_talk_contract_closure
 from src.autoslice.reporting import _current_compliant_delivery
@@ -261,6 +262,377 @@ def test_recording_date_rejects_conflicting_canonical_package_layouts(
     with pytest.raises(
         reconciliation.PublicationReconciliationError,
         match="conflicting canonical recording dates",
+    ):
+        reconciliation._candidate_and_date(manifest)  # noqa: SLF001
+
+
+def test_recording_date_qixi_portable_clone_uses_attested_review_date(
+    tmp_path: Path,
+) -> None:
+    package = (
+        tmp_path
+        / "qixi-cover-successor-portable-v3"
+        / "2026-08-24"
+        / f"{CANDIDATE}-root-reviewed-20260824T123852Z"
+        / "replacement_recuts"
+    )
+    record = package / f"{CANDIDATE}.record.json"
+    review = package / "review_manifest.json"
+    _write_json(record, {"story_contract": {"candidate_id": CANDIDATE}})
+    _write_json(review, {"candidate_id": CANDIDATE, "date": DATE})
+    manifest = {
+        "package_attestation": {
+            "package_root": str(package.resolve()),
+            "record": _entry(record),
+            "review_manifest": _entry(review),
+        }
+    }
+
+    assert reconciliation._candidate_and_date(manifest) == (  # noqa: SLF001
+        CANDIDATE,
+        DATE,
+    )
+
+
+@pytest.mark.parametrize(
+    ("review", "message"),
+    [
+        ({"candidate_id": "other", "date": DATE}, "candidate differs"),
+        ({"candidate_id": CANDIDATE, "date": "not-a-date"}, "single valid"),
+        (
+            {
+                "candidate_id": CANDIDATE,
+                "date": DATE,
+                "recording_date": "2026-07-28",
+            },
+            "single valid",
+        ),
+    ],
+)
+def test_recording_date_portable_clone_rejects_invalid_attested_review_manifest(
+    tmp_path: Path, review: dict, message: str
+) -> None:
+    package = tmp_path / "portable" / "2026-08-24" / CANDIDATE
+    record = package / f"{CANDIDATE}.record.json"
+    review_path = package / "review_manifest.json"
+    _write_json(record, {"story_contract": {"candidate_id": CANDIDATE}})
+    _write_json(review_path, review)
+    manifest = {
+        "package_attestation": {
+            "package_root": str(package.resolve()),
+            "record": _entry(record),
+            "review_manifest": _entry(review_path),
+        }
+    }
+
+    with pytest.raises(reconciliation.PublicationReconciliationError, match=message):
+        reconciliation._candidate_and_date(manifest)  # noqa: SLF001
+
+
+def test_recording_date_portable_clone_rejects_review_manifest_hash_drift(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "portable" / "2026-08-24" / CANDIDATE
+    record = package / f"{CANDIDATE}.record.json"
+    review = package / "review_manifest.json"
+    _write_json(record, {"story_contract": {"candidate_id": CANDIDATE}})
+    _write_json(review, {"candidate_id": CANDIDATE, "date": DATE})
+    manifest = {
+        "package_attestation": {
+            "package_root": str(package.resolve()),
+            "record": _entry(record),
+            "review_manifest": _entry(review),
+        }
+    }
+    _write_json(review, {"candidate_id": CANDIDATE, "date": "2026-07-28"})
+
+    with pytest.raises(
+        reconciliation.PublicationReconciliationError, match="hash/bytes drifted"
+    ):
+        reconciliation._candidate_and_date(manifest)  # noqa: SLF001
+
+
+def test_recording_date_legacy_wrapper_fallback_without_review_manifest(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "legacy" / DATE / CANDIDATE
+    record = package / f"{CANDIDATE}.record.json"
+    _write_json(record, {"story_contract": {"candidate_id": CANDIDATE}})
+    manifest = {
+        "package_attestation": {
+            "package_root": str(package.resolve()),
+            "record": _entry(record),
+        }
+    }
+
+    assert reconciliation._candidate_and_date(manifest) == (  # noqa: SLF001
+        CANDIDATE,
+        DATE,
+    )
+
+
+def _c1_manifest_without_record() -> dict:
+    title = "【李豆沙】经小李判断，薇欧拉对阿拉蕾就是铁暗恋！"
+    tags = [
+        "李豆沙", "虚拟主播", "虚拟UP主", "直播切片", "梦限大",
+        "夢限大みゅーたいぷ", "BanG Dream", "邦多利", "磕CP", "上头",
+    ]
+    return {
+        "manifest_version": 3,
+        "schema_version": "authorized-upload-manifest.v3",
+        "title": title,
+        "tags": tags,
+        "package_attestation": {
+            "package_root": "/private/c1-formal-package",
+            "review_manifest": {},
+            "package_audit": {},
+            "c1_technical_receipt": {},
+        },
+        "recovery_publication_authority": {
+            "schema_version": "fastlane-c1-authorized-same-bv-projection.v1",
+            "candidate_id": "auto_173005_934_1166",
+            "recording_date": "2026-08-11",
+            "bvid": "BV1os8q61Eya",
+            "aid": 117132650155234,
+            "cid": 41126267272,
+            "title": title,
+            "tags": tags,
+            "same_bv_only": True,
+        },
+    }
+
+
+def test_c1_reconciliation_resolves_missing_record_after_receipt_replay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = _c1_manifest_without_record()
+    replayed: list[object] = []
+
+    def validate(value: object) -> None:
+        replayed.append(value)
+
+    monkeypatch.setattr(
+        reconciliation.fastlane_c1_technical_receipt,
+        "validate_authorized_projection_manifest",
+        validate,
+    )
+    assert reconciliation._candidate_and_date(manifest) == (  # noqa: SLF001
+        "auto_173005_934_1166", "2026-08-11"
+    )
+    assert replayed == [manifest]
+
+
+@pytest.mark.parametrize(
+    "drift", ["receipt", "audit", "artifact", "authority", "title", "tags", "date", "candidate"]
+)
+def test_c1_reconciliation_rejects_any_failed_receipt_replay(
+    monkeypatch: pytest.MonkeyPatch, drift: str
+) -> None:
+    manifest = _c1_manifest_without_record()
+
+    def reject(_value: object) -> None:
+        raise fastlane_c1_technical_receipt.C1TechnicalReceiptError(drift)
+
+    monkeypatch.setattr(
+        reconciliation.fastlane_c1_technical_receipt,
+        "validate_authorized_projection_manifest",
+        reject,
+    )
+    with pytest.raises(
+        reconciliation.PublicationReconciliationError,
+        match="C1 manifest cannot resolve publication candidate/date",
+    ):
+        reconciliation._candidate_and_date(manifest)  # noqa: SLF001
+
+
+def test_generic_missing_record_keeps_original_error() -> None:
+    with pytest.raises(
+        reconciliation.PublicationReconciliationError,
+        match="manifest record binding is missing",
+    ):
+        reconciliation._candidate_and_date({"package_attestation": {}})  # noqa: SLF001
+
+
+def _exact_c2_manifest(tmp_path: Path) -> tuple[dict, Path, Path]:
+    bridge = reconciliation.fastlane_c2_authorized_upload.bridge
+    package = tmp_path / "portable-wrapper" / "package"
+    record_path = package / bridge.RECORD_NAME
+    review_path = package / "review_manifest.json"
+    record = {
+        "schema_version": "lidousha-c2-release-record.v1",
+        "candidate_id": bridge.CID,
+        "recording_date": bridge.DATE,
+        "upload_allowed": False,
+        "artifact_hashes": {},
+        "c2_tag_generation_receipt": {},
+        "legacy_execution_contract": {},
+        "publish_staging": {"title": bridge.TITLE},
+        "upload_tags": {},
+    }
+    review = {
+        "schema_version": bridge.SCHEMA,
+        "candidate_id": bridge.CID,
+        "recording_date": bridge.DATE,
+        "title": bridge.TITLE,
+        "scope": "C2_NAMED_FASTLANE_NEW_BV_ONLY",
+    }
+    _write_json(record_path, record)
+    _write_json(review_path, review)
+    return (
+        {
+            "package_attestation": {
+                "package_root": str(package.resolve()),
+                "record": _entry(record_path),
+                "review_manifest": _entry(review_path),
+            }
+        },
+        record_path,
+        review_path,
+    )
+
+
+def test_exact_verified_c2_uses_bridge_candidate_and_attested_review_date(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, _record_path, _review_path = _exact_c2_manifest(tmp_path)
+    bridge = reconciliation.fastlane_c2_authorized_upload.bridge
+    audit_roots: list[Path] = []
+    monkeypatch.setattr(
+        bridge,
+        "audit_fastlane_c2_release_package",
+        lambda root: audit_roots.append(root) or [],
+    )
+
+    assert reconciliation._candidate_and_date(manifest) == (  # noqa: SLF001
+        bridge.CID,
+        bridge.DATE,
+    )
+    assert audit_roots == [Path(manifest["package_attestation"]["package_root"])]
+
+
+def test_generic_top_level_candidate_only_remains_rejected(tmp_path: Path) -> None:
+    package = tmp_path / "generic" / DATE
+    record_path = package / "clip.record.json"
+    _write_json(record_path, {"candidate_id": CANDIDATE})
+    manifest = {
+        "package_attestation": {
+            "package_root": str(package.resolve()),
+            "record": _entry(record_path),
+        }
+    }
+
+    with pytest.raises(
+        reconciliation.PublicationReconciliationError,
+        match="no publication candidate_id",
+    ):
+        reconciliation._candidate_and_date(manifest)  # noqa: SLF001
+
+
+@pytest.mark.parametrize("drift", ["record", "review", "package_root"])
+def test_c2_bridge_candidate_resolution_rejects_identity_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, drift: str
+) -> None:
+    manifest, record_path, review_path = _exact_c2_manifest(tmp_path)
+    bridge = reconciliation.fastlane_c2_authorized_upload.bridge
+    monkeypatch.setattr(bridge, "audit_fastlane_c2_release_package", lambda _root: [])
+    if drift == "record":
+        payload = json.loads(record_path.read_text(encoding="utf-8"))
+        payload["candidate_id"] = "other"
+        _write_json(record_path, payload)
+        manifest["package_attestation"]["record"] = _entry(record_path)
+    elif drift == "review":
+        payload = json.loads(review_path.read_text(encoding="utf-8"))
+        payload["recording_date"] = "2026-08-12"
+        _write_json(review_path, payload)
+        manifest["package_attestation"]["review_manifest"] = _entry(review_path)
+    else:
+        manifest["package_attestation"]["package_root"] = str(
+            tmp_path / "wrong-package"
+        )
+
+    with pytest.raises(reconciliation.PublicationReconciliationError):
+        reconciliation._candidate_and_date(manifest)  # noqa: SLF001
+
+
+def test_c2_rejects_external_or_symlinked_manifest_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, record_path, _review_path = _exact_c2_manifest(tmp_path)
+    bridge = reconciliation.fastlane_c2_authorized_upload.bridge
+    monkeypatch.setattr(bridge, "audit_fastlane_c2_release_package", lambda _root: [])
+    external = tmp_path / "external.record.json"
+    external.write_bytes(record_path.read_bytes())
+    manifest["package_attestation"]["record"] = _entry(external)
+
+    with pytest.raises(
+        reconciliation.PublicationReconciliationError,
+        match="not the verified package record",
+    ):
+        reconciliation._candidate_and_date(manifest)  # noqa: SLF001
+
+    # A symlinked attestation must fail by the same physical-member binding.
+    linked = tmp_path / "linked.record.json"
+    linked.symlink_to(record_path)
+    manifest["package_attestation"]["record"] = {
+        "path": str(linked),
+        "sha256": _sha(record_path),
+        "bytes": record_path.stat().st_size,
+    }
+    with pytest.raises(
+        reconciliation.PublicationReconciliationError,
+        match="not the verified package record",
+    ):
+        reconciliation._candidate_and_date(manifest)  # noqa: SLF001
+
+
+@pytest.mark.parametrize(
+    ("record", "expected"),
+    [
+        (
+            {
+                "story_contract": {"candidate_id": CANDIDATE},
+                "delivery_candidate_id": "delivery-must-not-override-story",
+            },
+            CANDIDATE,
+        ),
+        ({"delivery_candidate_id": CANDIDATE}, CANDIDATE),
+    ],
+)
+def test_generic_story_and_delivery_candidate_resolution_is_unchanged(
+    tmp_path: Path, record: dict, expected: str
+) -> None:
+    package = tmp_path / "generic" / DATE
+    record_path = package / "clip.record.json"
+    _write_json(record_path, record)
+    manifest = {
+        "package_attestation": {
+            "package_root": str(package.resolve()),
+            "record": _entry(record_path),
+        }
+    }
+
+    assert reconciliation._candidate_and_date(manifest) == (  # noqa: SLF001
+        expected,
+        DATE,
+    )
+
+
+@pytest.mark.parametrize("target", ["record", "review"])
+def test_c2_rejects_record_or_review_hash_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str
+) -> None:
+    manifest, record_path, review_path = _exact_c2_manifest(tmp_path)
+    bridge = reconciliation.fastlane_c2_authorized_upload.bridge
+    monkeypatch.setattr(bridge, "audit_fastlane_c2_release_package", lambda _root: [])
+    if target == "record":
+        record_path.write_text("{}\n", encoding="utf-8")
+    else:
+        review_path.write_text(
+            review_path.read_text(encoding="utf-8") + "\n",
+            encoding="utf-8",
+        )
+    with pytest.raises(
+        reconciliation.PublicationReconciliationError, match="hash/bytes drifted"
     ):
         reconciliation._candidate_and_date(manifest)  # noqa: SLF001
 

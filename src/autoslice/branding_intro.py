@@ -204,6 +204,90 @@ def require_branding_intro(
     }
 
 
+def pin_existing_delivery_intro(
+    context: Mapping[str, object] | None,
+    recorded_binding: Mapping[str, object],
+) -> dict[str, object]:
+    """Pin a subtitle redelivery to the intro already bound to its delivery.
+
+    Normal talk-package creation deliberately rotates a verified roster from
+    the newly rendered main bytes.  A subtitle-only correction is different:
+    its new main bytes necessarily change, while the already delivered package
+    is the authority for which intro variant it carries.  Re-selecting the
+    roster would therefore make a text correction silently change branding.
+
+    This helper accepts only a prior ``PREPENDED`` binding, proves its selected
+    member is still present in the current fully verified roster, and returns
+    a single-member context.  It deliberately resolves the member through the
+    current manifest context rather than trusting an old absolute media path.
+    """
+
+    if context is None:
+        raise BrandingIntroError(
+            "existing delivery has a branding binding but current branding policy is unavailable"
+        )
+    if recorded_binding.get("status") != "PREPENDED":
+        raise BrandingIntroError("existing delivery branding binding is not PREPENDED")
+    intro_id = recorded_binding.get("intro_id")
+    if not isinstance(intro_id, str) or not intro_id:
+        raise BrandingIntroError("existing delivery branding binding has no intro_id")
+    recorded_sha = recorded_binding.get("intro_media_sha256")
+    if not isinstance(recorded_sha, str) or re.fullmatch(
+        r"(?:sha256:)?[0-9a-f]{64}", recorded_sha
+    ) is None:
+        raise BrandingIntroError(
+            "existing delivery branding binding has no valid intro_media_sha256"
+        )
+    offset = recorded_binding.get("intro_offset_ms")
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset <= 0:
+        raise BrandingIntroError(
+            "existing delivery branding binding has no positive intro_offset_ms"
+        )
+
+    candidates = context.get("candidates")
+    if not isinstance(candidates, list):
+        raise BrandingIntroError("current branding context has no verified roster")
+    matches = [
+        candidate
+        for candidate in candidates
+        if isinstance(candidate, Mapping) and candidate.get("intro_id") == intro_id
+    ]
+    if len(matches) != 1:
+        raise BrandingIntroError(
+            f"existing delivery intro_id {intro_id!r} is absent or ambiguous in current roster"
+        )
+    selected = matches[0]
+    current_sha = selected.get("media_sha256")
+    if not isinstance(current_sha, str) or (
+        current_sha.removeprefix("sha256:") != recorded_sha.removeprefix("sha256:")
+    ):
+        raise BrandingIntroError(
+            f"existing delivery intro {intro_id!r} media hash drifted from its recorded binding"
+        )
+    media_path = selected.get("media_path")
+    if not isinstance(media_path, Path) or not media_path.is_file():
+        raise BrandingIntroError(
+            f"existing delivery intro {intro_id!r} has no current verified media path"
+        )
+
+    pinned = dict(context)
+    pinned.update(
+        {
+            "intro_id": intro_id,
+            "media_path": media_path,
+            "media_sha256": current_sha,
+            "candidates": [dict(selected)],
+            "rotation_mode": "recorded-delivery-authority",
+            "recorded_delivery_binding": {
+                "intro_id": intro_id,
+                "intro_media_sha256": current_sha.removeprefix("sha256:"),
+                "intro_offset_ms": offset,
+            },
+        }
+    )
+    return pinned
+
+
 def _probe_media(path: Path) -> dict[str, object]:
     completed = _run(
         [
@@ -443,6 +527,8 @@ def _pick_intro(
                 "media_path": context["media_path"],
                 "media_sha256": context["media_sha256"],
             }, None
+        if not candidates:
+            raise BrandingIntroError("no verified intro candidate in branding context")
         return candidates[0], None
     ids = [str(c["intro_id"]) for c in candidates]
     override = os.environ.get(BRANDING_INTRO_PICK_ENV, "").strip()
@@ -483,6 +569,11 @@ def prepend_branding_intro(
         raise BrandingIntroError(f"main clip missing before intro prepend: {main_path}")
     main_sha_before = _sha256_file(main_path)
     picked, rotation_binding = _pick_intro(context, main_sha_before)
+    recorded_delivery_binding = context.get("recorded_delivery_binding")
+    if recorded_delivery_binding is not None and not isinstance(
+        recorded_delivery_binding, Mapping
+    ):
+        raise BrandingIntroError("recorded delivery branding binding is not an object")
     intro_path = Path(str(picked["media_path"]))
     expected_sha = str(picked["media_sha256"]).removeprefix("sha256:")
     actual_sha = _sha256_file(intro_path)
@@ -548,6 +639,27 @@ def prepend_branding_intro(
             "method": "concat-filter-reencode",
             "intro_offset_ms": int(intro_probe["duration_ms"]),
             "verification": verification,
+        }
+
+    if isinstance(recorded_delivery_binding, Mapping):
+        expected_id = recorded_delivery_binding.get("intro_id")
+        expected_sha = recorded_delivery_binding.get("intro_media_sha256")
+        expected_offset = recorded_delivery_binding.get("intro_offset_ms")
+        if not isinstance(expected_id, str) or expected_id != str(picked["intro_id"]):
+            raise BrandingIntroError("malformed recorded delivery branding binding")
+        if not isinstance(expected_sha, str) or expected_sha.removeprefix("sha256:") != actual_sha:
+            raise BrandingIntroError("recorded delivery intro media hash no longer matches")
+        if isinstance(expected_offset, bool) or not isinstance(expected_offset, int):
+            raise BrandingIntroError("recorded delivery branding offset is invalid")
+        if int(result["intro_offset_ms"]) != expected_offset:
+            raise BrandingIntroError(
+                "reburned intro offset drifted from the existing delivery binding"
+            )
+        rotation_binding = {
+            "mode": "recorded-delivery-authority",
+            "selector": "existing-delivery-binding",
+            "candidate_intro_ids": [str(picked["intro_id"])],
+            "picked_intro_id": str(picked["intro_id"]),
         }
 
     os.replace(output, main_path)

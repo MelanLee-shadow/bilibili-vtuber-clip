@@ -50,14 +50,34 @@ from src.autoslice.addressee_attribution import (  # noqa: E402
 from src.autoslice.source_fact_review import (  # noqa: E402
     validate_source_fact_review,
 )
+from src.autoslice.operator_exact_title_source_fact_authority import (  # noqa: E402
+    PASS_DECISION as OPERATOR_EXACT_TITLE_PASS_DECISION,
+    validate_operator_exact_title_source_fact_receipt,
+)
+from src.autoslice.qixi_operator_exact_title_source_fact import (  # noqa: E402
+    DECISION as QIXI_OPERATOR_EXACT_TITLE_DECISION,
+    validate_receipt as validate_qixi_operator_exact_title_receipt,
+)
+from src.autoslice.fastlane_c3_terminal_source_fact_preservation import (  # noqa: E402
+    CANDIDATE_ID as C3_SOURCE_FACT_CANDIDATE_ID,
+    DECISION as C3_SOURCE_FACT_DECISION,
+    validate_review as validate_c3_source_fact_review,
+)
 
 
 CHANNEL_PROFILE = load_channel_profile(ROOT)
 _SPEAKER_EVIDENCE_UNSET = object()
+_MANIFEST_REASON_CODE_RE = re.compile(r"[A-Z][A-Z0-9_]{2,159}\Z")
 
 
 class DailyManifestError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, reason_code: str | None = None) -> None:
+        self.reason_code = (
+            reason_code
+            if isinstance(reason_code, str) and _MANIFEST_REASON_CODE_RE.fullmatch(reason_code)
+            else None
+        )
+        super().__init__(message)
 
 
 def _sha256(path: Path) -> str:
@@ -238,6 +258,7 @@ def _validate_source_fact_receipts(
     publish_doc: dict,
     subtitle_path: Path,
     speaker_evidence: object = _SPEAKER_EVIDENCE_UNSET,
+    qixi_repo_root: Path | None = None,
 ) -> str:
     """Require one immutable source-fact receipt on all publish surfaces."""
 
@@ -267,10 +288,64 @@ def _validate_source_fact_receipts(
         "selection_scorecard": story_contract.get("selection_scorecard"),
         "candidate_id": str(story_contract.get("candidate_id") or ""),
         "final_reviewed_srt_path": subtitle_path,
+        "story_contract": story_contract,
     }
     if speaker_evidence is not _SPEAKER_EVIDENCE_UNSET:
         validation_kwargs["speaker_evidence"] = speaker_evidence
-    if not validate_source_fact_review(receipts[0], **validation_kwargs):
+    if qixi_repo_root is not None:
+        validation_kwargs["qixi_repo_root"] = qixi_repo_root
+    receipt = receipts[0]
+    if isinstance(receipt, dict) and receipt.get("decision") == OPERATOR_EXACT_TITLE_PASS_DECISION:
+        if speaker_evidence is _SPEAKER_EVIDENCE_UNSET:
+            raise DailyManifestError("operator title source-fact receipt requires speaker evidence")
+        valid = validate_operator_exact_title_source_fact_receipt(
+            receipt,
+            record=record_doc,
+            speaker_evidence=speaker_evidence,
+            repo_root=qixi_repo_root or ROOT,
+            selection_hook=validation_kwargs["selection_hook"],
+            title=validation_kwargs["title"],
+            final_transcript=validation_kwargs["final_transcript"],
+            candidate_id=validation_kwargs["candidate_id"],
+            final_reviewed_srt_path=subtitle_path,
+        )
+    elif isinstance(receipt, dict) and receipt.get("decision") == QIXI_OPERATOR_EXACT_TITLE_DECISION:
+        if speaker_evidence is _SPEAKER_EVIDENCE_UNSET:
+            raise DailyManifestError("Qixi operator title source-fact receipt requires speaker evidence")
+        valid = validate_qixi_operator_exact_title_receipt(
+            receipt,
+            record=record_doc,
+            speaker_evidence=speaker_evidence,
+            repo_root=qixi_repo_root or ROOT,
+            selection_hook=validation_kwargs["selection_hook"],
+            title=validation_kwargs["title"],
+            final_transcript=validation_kwargs["final_transcript"],
+            candidate_id=validation_kwargs["candidate_id"],
+            final_reviewed_srt_path=subtitle_path,
+        )
+    elif (
+        isinstance(receipt, dict)
+        and receipt.get("decision") == C3_SOURCE_FACT_DECISION
+        and validation_kwargs["candidate_id"] == C3_SOURCE_FACT_CANDIDATE_ID
+        and speaker_evidence is not _SPEAKER_EVIDENCE_UNSET
+    ):
+        # C3 is the sole repository-sealed terminal preservation decision.  It
+        # must still execute the same exact-byte review contract; this branch
+        # only selects the candidate-specific validator and cannot authorize a
+        # different candidate or a generic receipt.
+        valid = validate_c3_source_fact_review(
+            receipt,
+            repo_root=qixi_repo_root or ROOT,
+            title=validation_kwargs["title"],
+            selection_hook=validation_kwargs["selection_hook"],
+            selection_scorecard=validation_kwargs["selection_scorecard"],
+            clip_context_prompt=validation_kwargs["clip_context_prompt"],
+            final_reviewed_srt_path=subtitle_path,
+            speaker_evidence=speaker_evidence,
+        )
+    else:
+        valid = validate_source_fact_review(receipt, **validation_kwargs)
+    if not valid:
         raise DailyManifestError("source-fact review receipt is invalid or stale")
     return str(receipts[0]["receipt_sha256"])
 
@@ -290,6 +365,7 @@ def _source_fact_manifest_fields(
     publish_doc: dict,
     subtitle_path: Path,
     speaker_evidence: object = _SPEAKER_EVIDENCE_UNSET,
+    qixi_repo_root: Path | None = None,
 ) -> dict[str, object]:
     """Talk uses the CPA fact gate; Song keeps its lyric-proof lane."""
 
@@ -302,6 +378,7 @@ def _source_fact_manifest_fields(
             publish_doc=publish_doc,
             subtitle_path=subtitle_path,
             speaker_evidence=speaker_evidence,
+            qixi_repo_root=qixi_repo_root,
         ),
     }
 
@@ -313,6 +390,7 @@ def _lane_manifest_contract_fields(
     publish_doc: dict,
     subtitle_path: Path,
     speaker_evidence: object = _SPEAKER_EVIDENCE_UNSET,
+    qixi_repo_root: Path | None = None,
 ) -> dict[str, object]:
     if lane == "song":
         return {}
@@ -324,6 +402,7 @@ def _lane_manifest_contract_fields(
             publish_doc=publish_doc,
             subtitle_path=subtitle_path,
             speaker_evidence=speaker_evidence,
+            qixi_repo_root=qixi_repo_root,
         ),
     }
 
@@ -450,7 +529,8 @@ def _rebuild_package_speaker_evidence(
         )
     except SpeakerEvidenceRejected as exc:
         raise DailyManifestError(
-            f"source-fact speaker evidence rejected: {exc.code}: {exc.detail}"
+            "source-fact speaker evidence rejected",
+            reason_code=exc.code,
         ) from exc
     except OSError as exc:
         raise DailyManifestError("source-fact package speaker evidence is unreadable") from exc

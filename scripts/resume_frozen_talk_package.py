@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import fcntl
 import hashlib
 import json
 import os
@@ -40,6 +39,10 @@ from scripts.authorized_upload import (  # noqa: E402
     DEFAULT_UPLOAD_LOCK,
     UploadLockBusy,
     exclusive_upload_lock,
+)
+from src.autoslice.qixi_transaction_core import (  # noqa: E402
+    QixiTransactionCoreError,
+    exclusive_runner_commit,
 )
 from scripts.session_autoslice import (  # noqa: E402
     BASE,
@@ -1090,22 +1093,19 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not (BASE / "DISABLED").is_file():
         raise FrozenTalkResumeError("DISABLED must exist for a frozen production resume")
-    lock_path = BASE / "runner.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+") as lock_handle:
-        try:
-            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise FrozenTalkResumeError("runner.lock is busy") from exc
-        # Lock order is always runner -> upload.  DISABLED stops unattended
-        # ticks, but an already authorized manual uploader is serialized by a
-        # different lock and could otherwise read a delivery while we replace
-        # it.  Hold the production uploader's fixed lock for the entire tail.
-        try:
-            with exclusive_upload_lock(DEFAULT_UPLOAD_LOCK):
-                summary = resume(args.plan, speaker_python=args.speaker_python)
-        except UploadLockBusy as exc:
-            raise FrozenTalkResumeError("upload.lock is busy") from exc
+    try:
+        with exclusive_runner_commit(BASE):
+            # Lock order is always runner -> upload.  DISABLED stops unattended
+            # ticks, but an already authorized manual uploader is serialized by a
+            # different lock and could otherwise read a delivery while we replace
+            # it.  Hold the production uploader's fixed lock for the entire tail.
+            try:
+                with exclusive_upload_lock(DEFAULT_UPLOAD_LOCK):
+                    summary = resume(args.plan, speaker_python=args.speaker_python)
+            except UploadLockBusy as exc:
+                raise FrozenTalkResumeError("upload.lock is busy") from exc
+    except QixiTransactionCoreError as exc:
+        raise FrozenTalkResumeError("runner.lock is busy") from exc
     print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 

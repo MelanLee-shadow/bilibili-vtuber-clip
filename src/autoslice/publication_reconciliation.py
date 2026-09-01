@@ -23,6 +23,9 @@ from pathlib import Path
 
 import fcntl
 
+from . import fastlane_c1_technical_receipt
+from . import fastlane_c2_authorized_upload
+
 
 RECONCILIATION_SCHEMA = "publication-reconciliation.v1"
 RUNTIME_REGISTRY_SCHEMA = "publication-reconciliation-registry.v1"
@@ -244,8 +247,30 @@ def _candidate_and_date(manifest: Mapping[str, object]) -> tuple[str, str]:
             "manifest has no package_attestation"
         )
     record_entry = attestation.get("record")
+    if record_entry is None and "c1_technical_receipt" in attestation:
+        try:
+            fastlane_c1_technical_receipt.validate_authorized_projection_manifest(
+                manifest
+            )
+        except fastlane_c1_technical_receipt.C1TechnicalReceiptError as exc:
+            raise PublicationReconciliationError(
+                "C1 manifest cannot resolve publication candidate/date"
+            ) from exc
+        authority = manifest.get("recovery_publication_authority")
+        if not isinstance(authority, Mapping):
+            raise PublicationReconciliationError(
+                "C1 manifest has no recovery publication authority"
+            )
+        candidate_id = str(authority.get("candidate_id") or "")
+        recording_date = str(authority.get("recording_date") or "")
+        if not candidate_id or not _DATE_RX.fullmatch(recording_date):
+            raise PublicationReconciliationError(
+                "C1 recovery publication authority has invalid candidate/date"
+            )
+        return candidate_id, recording_date
     record_path = _validate_sha_entry(record_entry, "manifest record")
     record = _load_object(record_path, "manifest record")
+    package_root = Path(str(attestation.get("package_root") or ""))
     story = record.get("story_contract")
     candidate_id = (
         str(story.get("candidate_id") or "")
@@ -254,11 +279,63 @@ def _candidate_and_date(manifest: Mapping[str, object]) -> tuple[str, str]:
     )
     if not candidate_id:
         candidate_id = str(record.get("delivery_candidate_id") or "")
+    is_verified_c2 = False
+    if not candidate_id:
+        c2_candidate_id = (
+            fastlane_c2_authorized_upload.verified_c2_release_candidate_id(
+                package_root, record
+            )
+        )
+        if c2_candidate_id:
+            # The C2 resolver replays its sealed bridge, but the manifest must
+            # still bind the exact regular record directly inside that verified
+            # package.  Do not let an equal-bytes external/symlinked record
+            # stand in for the package member it audited.
+            expected_record = (
+                package_root
+                / fastlane_c2_authorized_upload.bridge.RECORD_NAME
+            ).resolve()
+            supplied_record = (
+                Path(str(record_entry.get("path") or ""))
+                if isinstance(record_entry, Mapping)
+                else Path()
+            )
+            if supplied_record.is_symlink() or record_path != expected_record:
+                raise PublicationReconciliationError(
+                    "C2 manifest record is not the verified package record"
+                )
+            candidate_id = c2_candidate_id
+            is_verified_c2 = True
     if not candidate_id:
         raise PublicationReconciliationError(
             "manifest record has no publication candidate_id"
         )
-    package_root = Path(str(attestation.get("package_root") or ""))
+
+    # C2's dated wrapper is not a recording-date authority.  Its bridge
+    # verifies identity, while the manifest-bound review manifest is the only
+    # permitted date source for reconciliation.
+    if is_verified_c2:
+        review_path = _validate_sha_entry(
+            attestation.get("review_manifest"), "manifest review manifest"
+        )
+        review = _load_object(review_path, "manifest review manifest")
+        if str(review.get("candidate_id") or "") != candidate_id:
+            raise PublicationReconciliationError(
+                "manifest review manifest candidate differs from record"
+            )
+        review_dates = {
+            str(review[key])
+            for key in ("date", "recording_date")
+            if key in review
+        }
+        if len(review_dates) != 1 or not _DATE_RX.fullmatch(
+            next(iter(review_dates), "")
+        ):
+            raise PublicationReconciliationError(
+                "manifest review manifest has no single valid recording date"
+            )
+        return candidate_id, next(iter(review_dates))
+
     parts = package_root.parts
     canonical_dates = {
         parts[index + 1]
@@ -272,6 +349,34 @@ def _candidate_and_date(manifest: Mapping[str, object]) -> tuple[str, str]:
         )
     if canonical_dates:
         return candidate_id, next(iter(canonical_dates))
+
+    # A portable reviewed clone can live below a dated recovery wrapper rather
+    # than its original out/<date> or lidousha/<date> tree.  Its attested
+    # review manifest is then the only current, hash-bound recording-date
+    # authority; never let the wrapper date redirect reconciliation to a new
+    # daily state.  Old manifests without this attestation retain the strict
+    # legacy package-root fallback below.
+    if "review_manifest" in attestation:
+        review_path = _validate_sha_entry(
+            attestation.get("review_manifest"), "manifest review manifest"
+        )
+        review = _load_object(review_path, "manifest review manifest")
+        if str(review.get("candidate_id") or "") != candidate_id:
+            raise PublicationReconciliationError(
+                "manifest review manifest candidate differs from record"
+            )
+        review_dates = {
+            str(review[key])
+            for key in ("date", "recording_date")
+            if key in review
+        }
+        if len(review_dates) != 1 or not _DATE_RX.fullmatch(
+            next(iter(review_dates), "")
+        ):
+            raise PublicationReconciliationError(
+                "manifest review manifest has no single valid recording date"
+            )
+        return candidate_id, next(iter(review_dates))
 
     # Legacy/test package roots can predate the canonical out/<date> and
     # lidousha/<date> layouts.  Retain their strict unique-date fallback, but

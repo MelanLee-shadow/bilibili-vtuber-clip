@@ -1,5 +1,5 @@
 #!/bin/bash
-# 单条手动上传（部署为 free:/opt/bilive/app/tmp_manual_upload/do_upload.sh）。
+# 单条手动上传（部署为 recording-host:/runtime/app/tmp_manual_upload/do_upload.sh）。
 # biliup 只跑一次; rc=0 即成功; 绝不为取 bvid 重跑 。
 #
 # 禁止裸调。必须经 scripts/authorized_upload.py upload

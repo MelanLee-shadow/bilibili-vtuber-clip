@@ -56,6 +56,31 @@
 
 ## 候选状态与人工点选
 
+### 关闭直播后的历史日一次性运行
+
+历史日不能用 `AUTOSLICE_IGNORE_LIVE_HOLD`、移走 `DISABLED` 或直接调用
+`process_date()` 绕过 tick。唯一例外是已部署的
+`scripts/renew_operator_processing_scope.py` 与
+`scripts/authorize_historical_autoslice_once.py`：两者默认 dry-run，前者只可把
+现有严格 `operator-processing-scope-grant.v2` 的 `grant_id` 与有界
+`expires_at` 以 raw-state CAS 续期，后者只可在 `DISABLED` **仍存在**、adapter
+clean-idle、direct recorder idle、完整的**目标日期**递归录制 tree（room root 可同时含
+其他日期）、canonical adapter-state disposition audit、deployed commit/authority、state 与
+scope 全部重验后创建一次性 receipt。目标日期必须早于 UTC 与北京当天；文件以流式 hash
+绑定，目录/路径/链接漂移均拒绝。receipt 仅绑定哈希和 JSON-pointer diff，不保存 维护者 原话。
+
+实际启动仍是普通 runner：
+`session_autoslice.py --once --historical-authority <receipt>`。该 flag 只能
+与 `--once` 连用，外层持 `tick.lock`，再由普通 runner 的短
+`RunnerCommitLease` 跑既有 gates；cron 无此 flag，因此全局 `DISABLED` 不会被自动
+激活。receipt 在 provider 前耐久地推进到 `STARTED`；START 时会在昂贵 source 重验后重新
+读取 fresh clean adapter status 并直接查询 recorder idle，记录第二份观察但不会把正常的
+heartbeat 字节变化误判为漂移。任何 crash 留下的 STARTED、过期、nonce 重用、
+source/state/deploy/adapter 漂移均拒绝重放；live=True/unknown 仍走普通 live hold，成功或
+失败只写 terminal receipt。
+它不授予上传（v2 scope 结构中也没有 `upload_allowed`），不改变 upload.lock 或任何
+发布 gate。
+
 - `picks`、`pending_talk`、`talk_backlog`、拒绝记录必须互斥投影；一个 candidate
   只能处于 `CURRENT`、`PENDING`、`PENDING_COVER`、`FAILURE`、`MISSING` 或
   `OUTSIDE_EXACT_CONTRACT` 之一。已经成为 `CURRENT + COMPLIANT` 成品或终态拒绝的
@@ -351,6 +376,23 @@
   typed authority，不能借历史 Talk scope 搭车。
 - 这条窄门只修复已知候选的历史评分，不保证找回旧 recall 从未生成的候选。后者需要
   per-segment transactional rediscovery/reconciliation，不能把本门夸大成整场重新发现。
+
+### Terminal selection-support-only override
+
+- `REFRESH_HOOK_UNSUPPORTED` 的三次 terminal receipt 不是 provider 缺额，也不能被
+  `COVER_QC_MISSING` 掩盖；readiness 必须先报告 `SELECTION_SUPPORT_TERMINAL_BLOCKED /
+  NEEDS_REVIEWER_TRUTH`。它既不改旧 scorecard，也不把 terminal receipt 标成 `REFRESHED`。
+- 唯一的窄例外是 `scripts/authorize_selection_support_override.py` 生成的
+  `selection-support-only-authority.v1`：只接受 deployed review ruling 中同时出现该 CID
+  的 `修` 和 维护者 的 conditional fastlane line，逐字绑定 current candidate/window/hook、
+  scorecard、完整 terminal receipt/self-seal/三次 history 与 terminal source-provenance、
+  state preimage、deployed seal 和 expiry。默认 dry-run；`--apply` 只在 `tick.lock → RunnerCommitLease` 下 PREPARED→COMMITTED
+  并精确 CAS state，永远 `upload_allowed=false`。
+- semantic refresh 只能在其他 scoped provider refresh targets 全部 settle 后、进入生产/交付前
+  消费一次已 staged 的 authority，留下独立
+  `selection-support-only-consumption.v1`，且保留原 scorecard 与 terminal receipt 字节语义。
+  authority/source/deploy/state/terminal drift、过期、重复消费或不相符 reason 一律拒绝；它
+  只释放 selection-support seam，标题、封面、package、human review 与 upload gates 不变。
 
 ## 修正 hook 后的独立 scorecard 重评分
 

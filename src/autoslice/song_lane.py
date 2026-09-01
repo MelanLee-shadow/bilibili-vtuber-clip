@@ -29,6 +29,7 @@ from src.autoslice.song_name_authority import (
     record_song_naming,
 )
 from src.autoslice.verified_io import _matches_sha256
+from src.autoslice.producer_prepare_result import prepared_song_result
 
 
 _runner = RunnerProxy()
@@ -561,7 +562,80 @@ def _apply_canonical_song_title(result: dict, *, summary_record: dict, cid: str)
         result["title"] = canonical_title
 
 
-def produce_song(date: str, item: dict) -> dict:
+def _deliver_or_prepare_song(
+    *, date: str, candidate_id: str, summary_record: dict, title: str,
+    selector_rc: int, summary_authority_root: Path, prepare_only: bool,
+) -> dict:
+    """Keep the long selector loop free of delivery-mode plumbing."""
+
+    kwargs = {
+        "date": date,
+        "delivery_candidate_id": candidate_id,
+        "summary_record": summary_record,
+        "title": title,
+        "selector_rc": selector_rc,
+        "summary_authority_root": summary_authority_root,
+    }
+    if prepare_only:
+        kwargs["prepare_only"] = True
+    return _runner._commit_verified_song_package(**kwargs)
+
+
+def _finish_song_delivery(
+    *, date: str, candidate_id: str, result: dict, summary_record: dict,
+    summary_path: Path, selector_rc: int, is_song: bool, reasons: list[str],
+    completion: dict, burned: Path | None, prepare_only: bool,
+) -> dict | None:
+    """Apply one verified Song delivery/prepare attempt and its recovery pin."""
+
+    authorized = burned is not None and burned.is_file() and _runner.song_delivery_ok(
+        selector_rc, is_song, reasons, completion
+    )
+    if authorized:
+        authorized = _published_song_delivery_allowed(result, summary_record)
+    if not authorized:
+        return None
+    try:
+        update = _deliver_or_prepare_song(
+            date=date, candidate_id=candidate_id, summary_record=summary_record,
+            title=str(result.get("title") or ""), selector_rc=selector_rc,
+            summary_authority_root=summary_path.parent, prepare_only=prepare_only,
+        )
+    except (OSError, SongDeliveryError, ValueError) as exc:
+        _runner.log(
+            f"song lane {candidate_id}: atomic verified delivery refused: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        result["delivery_error"] = f"{type(exc).__name__}: {exc}"
+        result["reason_codes"] = list(dict.fromkeys([
+            *(result.get("reason_codes") or []), "SONG_DELIVERY_ATOMIC_COPY_FAILED",
+        ]))
+        authority = _runner._song_delivery_recovery_authority(
+            date=date, outer_candidate_id=candidate_id,
+            summary_path=result.get("selector_summary_path"),
+            summary_sha256=result.get("selector_summary_sha256"),
+            source_candidate_id=result.get("selector_record_candidate_id"),
+            title=result.get("title"),
+        )
+        if authority is not None:
+            # Positive song/host proof has already passed.  Reserve this
+            # delivery slot so later songs cannot fill the quota before the
+            # exact hash-bound package is deterministically recovered.
+            result["verified_delivery_pending_commit"] = True
+            result["song_delivery_recovery_authority"] = authority
+        else:
+            # Without the complete authority envelope this reservation could
+            # neither recover nor requeue and would permanently consume a
+            # delivery slot.  Keep capacity open for one bounded fresh try.
+            result["reason_codes"] = list(dict.fromkeys([
+                *(result.get("reason_codes") or []),
+                "SONG_DELIVERY_RECOVERY_AUTHORITY_MISSING",
+            ]))
+        return None
+    return prepared_song_result(result, update, prepare_only=prepare_only)
+
+
+def produce_song(date: str, item: dict, *, prepare_only: bool = False) -> dict:
     """Run the fail-closed song pipeline; retry anchor bleed on the sung core."""
     early_block = _early_published_song_block(item)
     if early_block is not None:
@@ -735,59 +809,13 @@ def produce_song(date: str, item: dict) -> dict:
             _apply_canonical_song_title(result, summary_record=summary_record, cid=cid)
         if "cover_release_gate_satisfied" in artifacts:
             result["cover_release_gate_satisfied"] = artifacts["cover_release_gate_satisfied"]
-        delivery_authorized = burned is not None and burned.is_file() and _runner.song_delivery_ok(
-            completed.returncode, is_song, reasons, completion
-        )
-        if delivery_authorized:
-            delivery_authorized = _published_song_delivery_allowed(result, summary_record)
-        if delivery_authorized:
-            try:
-                delivery_update = _runner._commit_verified_song_package(
-                    date=date,
-                    delivery_candidate_id=cid,
-                    summary_record=summary_record,
-                    title=str(result.get("title") or ""),
-                    selector_rc=completed.returncode,
-                    summary_authority_root=summary_path.parent,
-                )
-            except (OSError, SongDeliveryError, ValueError) as exc:
-                _runner.log(
-                    f"song lane {cid}: atomic verified delivery refused: "
-                    f"{type(exc).__name__}: {exc}"
-                )
-                result["delivery_error"] = f"{type(exc).__name__}: {exc}"
-                result["reason_codes"] = list(
-                    dict.fromkeys([*(result.get("reason_codes") or []), "SONG_DELIVERY_ATOMIC_COPY_FAILED"])
-                )
-                # Positive song/host proof has already passed.  Reserve this
-                # delivery slot so later songs cannot fill the quota before
-                # the exact hash-bound package is deterministically recovered.
-                recovery_authority = _runner._song_delivery_recovery_authority(
-                    date=date,
-                    outer_candidate_id=cid,
-                    summary_path=result.get("selector_summary_path"),
-                    summary_sha256=result.get("selector_summary_sha256"),
-                    source_candidate_id=result.get("selector_record_candidate_id"),
-                    title=result.get("title"),
-                )
-                if recovery_authority is not None:
-                    result["verified_delivery_pending_commit"] = True
-                    result["song_delivery_recovery_authority"] = recovery_authority
-                else:
-                    # A reservation without its complete state envelope can
-                    # neither recover nor requeue, permanently consuming a
-                    # delivery slot.  Keep capacity open and allow one bounded
-                    # fresh attempt to recapture the missing authority.
-                    result["reason_codes"] = list(
-                        dict.fromkeys(
-                            [
-                                *(result.get("reason_codes") or []),
-                                "SONG_DELIVERY_RECOVERY_AUTHORITY_MISSING",
-                            ]
-                        )
-                    )
-            else:
-                result.update(delivery_update)
+        if (prepared := _finish_song_delivery(
+            date=date, candidate_id=cid, result=result, summary_record=summary_record,
+            summary_path=summary_path, selector_rc=completed.returncode,
+            is_song=is_song, reasons=reasons, completion=completion, burned=burned,
+            prepare_only=prepare_only,
+        )) is not None:
+            return prepared
         result["status"] = _runner.song_status(
             completed.returncode, bool(result.get("delivered"))
         )

@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Mapping
 
-from PIL import Image, ImageChops, ImageOps
+from PIL import Image, ImageChops, ImageFont, ImageOps
 
 from src.autoslice.cover_title_rendering import (
     CoverTitleRenderError,
@@ -297,14 +297,8 @@ def verify_rendered_text_pixel_artifacts(
     ):
         return False
     paste_xy = (int(position["x"]), int(position["y"]))
-    alpha_bbox = title_layer.getchannel("A").getbbox()
     if (
-        alpha_bbox is None
-        or paste_xy[0] + alpha_bbox[0] < 0
-        or paste_xy[1] + alpha_bbox[1] < 0
-        or paste_xy[0] + alpha_bbox[2] > final_rgb.width
-        or paste_xy[1] + alpha_bbox[3] > final_rgb.height
-        or spec_text != evidence.get("rendered_text")
+        spec_text != evidence.get("rendered_text")
         or not spec_font_sizes
         or any(
             isinstance(value, bool) or not isinstance(value, int)
@@ -316,6 +310,32 @@ def verify_rendered_text_pixel_artifacts(
     expected_mask = Image.new("L", final_rgb.size, 0)
     expected_mask.paste(title_layer.getchannel("A"), paste_xy)
     if ImageChops.difference(mask, expected_mask).getbbox() is not None:
+        try:
+            title_layer = render_title_layer(
+                render_spec,
+                font_path=font_path,
+                layout_engine=ImageFont.Layout.BASIC,
+            )
+        except (
+            OSError,
+            OverflowError,
+            ValueError,
+            CoverTitleRenderError,
+            Image.DecompressionBombError,
+        ):
+            return False
+        expected_mask = Image.new("L", final_rgb.size, 0)
+        expected_mask.paste(title_layer.getchannel("A"), paste_xy)
+        if ImageChops.difference(mask, expected_mask).getbbox() is not None:
+            return False
+    alpha_bbox = title_layer.getchannel("A").getbbox()
+    if (
+        alpha_bbox is None
+        or paste_xy[0] + alpha_bbox[0] < 0
+        or paste_xy[1] + alpha_bbox[1] < 0
+        or paste_xy[0] + alpha_bbox[2] > final_rgb.width
+        or paste_xy[1] + alpha_bbox[3] > final_rgb.height
+    ):
         return False
     bbox = mask.getbbox()
     bbox_list = list(bbox) if bbox is not None else None

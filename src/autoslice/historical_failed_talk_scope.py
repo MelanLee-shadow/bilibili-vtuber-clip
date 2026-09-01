@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 
 from src.autoslice.delivery_recovery import (
@@ -1352,9 +1352,18 @@ def work_flags(
     )
 
 
-def discover(date: str, state: dict, candidate_ids: tuple[str, ...] | None) -> None:
+def discover(
+    date: str,
+    state: dict,
+    candidate_ids: tuple[str, ...] | None,
+    *,
+    persist_state: Callable[[], None] | None = None,
+) -> None:
     if candidate_ids is None:
-        _runner.discover_segments(date, state)
+        if persist_state is None:
+            _runner.discover_segments(date, state)
+        else:
+            _runner.discover_segments(date, state, persist_state=persist_state)
 
 
 def prioritize_and_capture(

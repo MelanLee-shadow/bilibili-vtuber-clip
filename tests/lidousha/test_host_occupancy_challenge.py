@@ -209,6 +209,28 @@ def test_reviewed_truth_excludes_machine_only_cues(tmp_path: Path) -> None:
     assert summary["machine_only_cues_excluded"] == 1
 
 
+def test_parser_and_main_preserve_the_evaluator_contract(tmp_path: Path) -> None:
+    parser = challenge.build_parser()
+    parsed = parser.parse_args(
+        ["--occupancy-report", "report.json", "--speaker-override", "truth.json", "--output", "out.json"]
+    )
+    assert (parsed.occupancy_report, parsed.speaker_override, parsed.output) == (
+        Path("report.json"), Path("truth.json"), Path("out.json")
+    )
+    truth_path = _override(tmp_path / "truth.json")
+    report_path = tmp_path / "report.json"
+    report_path.write_text(json.dumps(_report()), encoding="utf-8")
+    output = tmp_path / "out.json"
+    assert challenge.main(
+        [
+            "--occupancy-report", str(report_path),
+            "--speaker-override", str(truth_path),
+            "--output", str(output),
+        ]
+    ) == 0
+    assert json.loads(output.read_text(encoding="utf-8"))["candidate_id"] == "candidate-a"
+
+
 def test_strategy_report_separates_false_host_from_abstention(tmp_path: Path) -> None:
     truth, summary = challenge.load_reviewed_truth(_override(tmp_path / "truth.json"))
     result = challenge.evaluate_report(
