@@ -60,7 +60,7 @@ def test_remote_binary_is_env_overridable_with_free_host_default(monkeypatch):
     但必须收在一个可覆盖的名字后面，而不是散在四处字符串字面量里。"""
 
     monkeypatch.delenv(agy_gemini_client.REMOTE_AGY_ENV, raising=False)
-    assert agy_gemini_client.resolve_remote_agy_binary() == "/root/.local/bin/agy"
+    assert agy_gemini_client.resolve_remote_agy_binary() == "agy"
     monkeypatch.setenv(agy_gemini_client.REMOTE_AGY_ENV, "/usr/local/bin/agy")
     assert agy_gemini_client.resolve_remote_agy_binary() == "/usr/local/bin/agy"
 

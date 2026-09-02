@@ -12,7 +12,7 @@
   "max_requests": 177,
   "comment_discovery_video_limit": 24,
   "comments_per_video": 20,
-  "prompt_batch_member_limit": 16,
+  "prompt_batch_member_limit": 4,
   "prompt_rows_per_member": 50,
   "request_interval_seconds": 10.0,
   "max_runtime_seconds": 2400,

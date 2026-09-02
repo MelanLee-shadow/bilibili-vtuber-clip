@@ -158,7 +158,7 @@ def test_pull_date_excludes_only_local_only_dirs(
         lambda command, **kwargs: commands.append(list(command)),
     )
 
-    pull_date("free", "/r", tmp_path, date(2026, 7, 19))
+    pull_date("recording-host", "/r", tmp_path, date(2026, 7, 19))
 
     assert commands == [
         [
@@ -167,7 +167,7 @@ def test_pull_date_excludes_only_local_only_dirs(
             "--delete",
             "--exclude=/正式补切-审阅/",
             "--timeout=120",
-            "free:/r/2026-07-19/",
+            "recording-host:/r/2026-07-19/",
             f"{destination}/",
         ]
     ]

@@ -130,6 +130,7 @@ def render_title_layer(
     *,
     font_path: Path,
     verify_output_size: bool = True,
+    layout_engine: ImageFont.Layout | None = None,
 ) -> Image.Image:
     """Strictly validate and replay one renderer-produced RGBA title layer."""
 
@@ -189,7 +190,9 @@ def render_title_layer(
             label="COVER_TITLE_RENDER_SEGMENT_PAD",
             maximum=512,
         )
-        font = ImageFont.truetype(str(font_path), size, index=face_index)
+        font = ImageFont.truetype(
+            str(font_path), size, index=face_index, layout_engine=layout_engine
+        )
         raw_outlines = raw_line.get("outlines")
         if (
             not isinstance(raw_outlines, list)

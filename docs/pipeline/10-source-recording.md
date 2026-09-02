@@ -7,10 +7,18 @@
 - adapter 状态/账本：部署主机 `recording/`；
 - 自动切片部署：`$AUTOSLICE_BASE/repo`（现查 `DEPLOYED_COMMIT`）；
 - 原始录播：你的录播根目录（按 `<room_id>/` 分房间目录）。
+- `oci3`（`recording-host`）在 Free 保持 active 的同时，可由已部署的
+  `scripts/oci3_no_upload_soak.sh activate` 开启独立的 continuous production-soak 切片线；
+  它固定使用 OCI3 的 `CloudFS` 录播根与 `/opt/bilive/autoslice/repo`，从
+  `2026-08-20` 起按有限的 oldest-unfinished backlog 逐批推进，真实 live hold、并行 1、
+  paid backup cap 0，且不建立任何上传环境。
+  该入口会在 cron readback 成功后才移除 OCI3 `DISABLED`；`verify`/`deactivate` 只管理本脚本的
+  exact cron。它不是 Free authority、不会替代 Free，也不改变本步骤的发布权威；OCI3 的 dev/test
+  workcopy 仍不是 production authority。
 
-## 唯一录制后端
+## free 主机录制栈
 
-- 生产唯一录制器是官方 BililiveRecorder/录播姬
+- free 上的该录制栈仅使用官方 BililiveRecorder/录播姬
   `ghcr.io/bililiverecorder/bililiverecorder:2.18.0`，部署锁定镜像 digest。
   `bilive_record` 仅保留为旧脚本的工具容器，里面不得启动 `blrec`。
   旧 `/etc/cron.d/bilive-live-watchdog` 必须不存在；否则它会绕过 compose，
@@ -91,7 +99,7 @@
   用户事件，XML 原字节及事件数均写入 typed row）、
   H.264 0×0 且 frame/packet 扫描均为空，以及同 session 的下一 opening。
   被排除文件必须是该 session 第一 opening，size <5 MiB、event duration 与
-  open-close wall duration 均 <10 秒；下一 opening gap 必须在 0–2 秒内且已
+  open-close wall duration 均 <10 秒；下一 opening gap 必须在 0–3 秒内且已
   CLOSED，其 source size 必须匹配 webhook 与 finalized ledger，真实 MP4 SHA-256
   必须匹配 ledger 且为可探测的正尺寸双流媒体。少任一项都不得 ignore，仍走普通
   finalization 并 fail closed。
@@ -108,18 +116,47 @@
   回执的 effective fingerprints 与 namespace-portable major:minor+FSTYPE+SOURCE
   投影；回执保留完整 namespace mount identity 供审计，但 Docker 重启单独改变
   mount_id/mount_point 时不得重复重绑。inventory 跨容器也验证同一 portable 投影。
-  后继 FLV 的旧 row
+  若已经有一条有效 identity-rebind 回执，而当前四个文件的 portable
+  `major:minor+FSTYPE+SOURCE` 投影仍相同、四个稳定字段不变、但当前 namespace
+  的完整 `mount_id` 与上一回执不同且四个 inode 同时重编号（device 可随之变化），adapter 只能按
+  `FUSE_REMOUNT_REUSED_PORTABLE_IDENTITY_REBIND` 再走同一 idle、子进程全字节
+  attest、前后 fingerprint/mount 稳定和链式回执流程。`mount_id` 只是同一
+  namespace 的新挂载见证，不是跨 namespace 的 portable truth；相同 portable
+  投影且相同 `mount_id` 的 inode 漂移仍 BLOCK，不能重签。后继 FLV 的旧 row
+  若同一次已见证 remount 还使**两个且仅两个**后继角色的 `mtime_ns`/`ctime_ns`
+  同时变化，必须用独立
+  `FUSE_REMOUNT_REUSED_PORTABLE_IDENTITY_SUCCESSOR_MTIME_CTIME_REATTESTATION`
+  回执：四个角色仍都要 inode 重编号，source/xml 仅允许 device/inode 变化，后继
+  两角色必须各自同时有 inode、mtime、ctime 变化，且同样全字节 attest、legacy
+  webhook/finalized 绑定、child/post-hash mount 稳定和链式 SHA 约束。单角色时间漂移、
+  size/mode/path/bytes 漂移、相同 mount epoch 或任何 receipt 篡改均 BLOCK。后继 FLV 的旧 row
+  还没有任何 rebind receipt 的旧 row 只能使用一次首链
+  `FUSE_FIRST_IDENTITY_SUCCESSOR_MTIME_CTIME_REATTESTATION`：它要求相同的四角色/
+  后继时间字段集合、一个共享当前 FUSE mount、`previous_receipt_canonical_sha256=null`
+  和无 previous mount；它不能被用于已有链的后续 receipt，不能代替上述 reused-portable
+  分支。后继 FLV 的旧 row
   没有历史 SHA-256，因此回执必须明确记录 legacy promotion：只沿用 path、稳定 stat、
   webhook file size、finalized ledger source size 及后继 MP4 历史 SHA 交叉绑定，不能宣称
-  后继 FLV 历史 hash 已匹配。另有且仅有一条 timestamp-only 恢复：后继 FLV 与 MP4
-  **两者**在同一当前 FUSE mount 上仅 `mtime_ns`/`ctime_ns` 漂移，source/XML 指纹不变，
+  后继 FLV 历史 hash 已匹配。另有严格的混合重挂恢复：source/XML **仅**
+  `device`/`inode` 变化，而后继 FLV/MP4 **同时且仅** `device`/`inode` 与
+  `mtime_ns`/`ctime_ns` 变化时，四个 exact path 必须同属当前 FUSE；若已有前序回执，
+  portable mount 投影须是新的 epoch。复用相同 idle/deadline/PID-token/重试子进程，对 source、XML、
+  后继 MP4 三个有历史 SHA 的角色全字节重验，并在子进程前后重验四个当前指纹。成功只追加
+  `recording-source-fuse-identity-timestamp-rebind.v1 /
+  FUSE_REMOUNT_IDENTITY_AND_SUCCESSOR_MTIME_CTIME_REATTESTATION` 链式回执；它必须保留
+  后继 FLV 的无历史 SHA legacy promotion，以及 webhook size、finalized source size 和
+  后继 MP4 历史 SHA 约束，不能把当前后继 FLV hash 写成历史 hash。除此以外，唯一的
+  metadata 恢复是 timestamp-only：后继 FLV 与 MP4
+  **两者**，或仅有历史 SHA 绑定的后继 MP4，在同一当前 FUSE mount 上仅
+  `mtime_ns`/`ctime_ns` 漂移，source/XML 指纹不变，
   四个 path 及 size/mode/device/inode 全不变时，复用同一 idle/deadline/PID-token/重试子进程，
   对 source、XML、后继 MP4 三个有历史 SHA 的角色做全字节重验，并在子进程前后重验四个
   当前指纹。成功只追加 canonical 链式
   `recording-source-fuse-timestamp-rebind.v1 / FUSE_SUCCESSOR_MTIME_CTIME_REATTESTATION`
   回执，逐角色记录 old/new metadata 与 exact changed fields；后继 FLV 仍保持无历史 hash，
   且回执显式绑定 webhook/finalized source size 和后继 MP4 历史 SHA。inventory 跨 namespace
-  按 portable mount 投影验证该链。单边 timestamp 漂移、再次漂移而无新回执、本地文件系统、
+  按 portable mount 投影验证该链。单边 timestamp 漂移（仅历史 SHA 绑定的后继 MP4 同时仅
+  `mtime_ns`/`ctime_ns` 漂移并通过全字节重验的例外除外）、再次漂移而无新回执、本地文件系统、
   跨 FUSE、mount 漂移或任何 size/mode/path/content/hash 漂移一律继续 BLOCK。
   CloudFS 可能在 finalized 后重写后继 FLV 的 mtime；row 因此分别保存 ledger 的
   历史 mtime 与签发时当前 source fingerprint，并要求两者之后各自稳定，不要求这两个
@@ -127,6 +164,39 @@
   finalized target SHA 仍必须全部吻合。
   合法、可解码的短视频不满足 0×0+零 frame/packet 条件，仍按普通规则
   finalization。
+- 截断尾部事故的唯一 operator-only 例外是
+  `recording-truncated-source-disposition.v1`，且 `action` 必须精确为
+  `RECOVERED_TRUNCATED_RECORDING` 或
+  `IGNORED_TRUNCATED_RECONNECT_FRAGMENT`；adapter 不自动发现或创建该行。
+  操作入口只接受 `--apply-truncated-source-manifest` 与
+  `--expected-truncated-manifest-sha256`；manifest 本身是唯一 durable intent，必须是
+  `state_path.parent` 的直接 regular child、`0600`、`nlink=1`，并与 state 同 uid/gid。
+  `--offline-confirmed` 仍要求最新的 service-reachable idle status；adapter `--serve`
+  生命周期与 apply 共用 state-derived non-blocking flock，争用直接 fail closed。
+  两种 action 都绑定原 FLV/XML 的原始 SHA-256、完整 regular-file fingerprint、
+  FileClosed/Webhook projection、XML 修复 SHA、丢弃尾部字节数和恢复事件数；原 FLV/XML
+  永不覆盖、移动或删除。
+- `RECOVERED_TRUNCATED_RECORDING` 还必须绑定同 stem MP4/JSONL/meta 的 SHA-256 与
+  fingerprint、双流正时长媒体证据、`-xerror` 全解码证据、`+genpts+discardcorrupt`
+  stream-copy、视频/音频 drop count 上限、stderr warning 的 normalized SHA/显式 allow、
+  原始 stderr SHA、full-decode stderr SHA，以及兼容的 `finalized` ledger。stage 已存在时
+  只完整验证其 manifest-bound hash/media/packets/decode；target 已存在时同样验证后继续，
+  不自动删除或重生成冲突。它才是 autoslice consumer segment。
+- `IGNORED_TRUNCATED_RECONNECT_FRAGMENT` 只适用于 manifest 明示的小残片：源文件严格
+  `<5,000,000` bytes、恢复后媒体 duration `<12` 秒、complete event count 为 `0`，且
+  不得有 MP4/JSONL/meta 或 `finalized` row；它不是 connection-stub 的 0×0 语义，只在
+  typed row 完整重验后抑制同一 relative path 的普通错误，inventory 记 `WARN`。
+- recovery row 的 canonical JSON hash、路径安全性、webhook/error projection、原件与
+  输出 fingerprint 任一漂移均 fail closed；每分钟只比对 source/target fingerprint，
+  不重复读取大 FLV，XML/小 sidecar 才按绑定 SHA 重验。MP4 仅有 `mtime_ns`、`ctime_ns`
+  漂移且 bytes/SHA、path/size/mode/device/inode 全等时，才可复用同一
+  `--apply-truncated-source-manifest` + exact
+  `--expected-truncated-manifest-sha256` + `--offline-confirmed` + state lock 入口，
+  在既有 recovered row 内追加 hash-bound `metadata_rebinds` receipt；receipt 保留
+  old/new fingerprint、changed fields、输出 SHA、manifest SHA、前 receipt hash 和自身
+  canonical seal，并将 row integrity 重算。validator 只重放这条 receipt chain 得到
+  effective fingerprint；source/XML/JSONL/meta、MP4 其他字段或 bytes 漂移仍拒绝，serve
+  不自动建 receipt，ordinary row 不适用，重复 apply 当前状态必须无新 receipt。
 - `scripts/session_autoslice.py` 只枚举封口后的
   `<ROOM>_*.mp4`；30 分钟段只是源容器，整场候选仍跨所有 segment 全局排序。
 
@@ -221,7 +291,18 @@
   CloudFS host/container mount 都为绿时才能重启 `bililive_adapter`；安装后的任一
   deploy 失败必须原子恢复 preimage 并在同样安全门下重启，无法证明时保留
   `DISABLED` 与 deploy guard。
-- adapter 外部字节未变化时，部署前状态必须 fresh、idle、
+- 若 watchdog、upload sentinel、uploader 与 adapter 四个 external payload 都与已切换 repo、各自
+  backup preimage 的 regular/non-symlink、字节及安装 mode 完全相等，部署走 no-external-change
+  路径：只读重验 adapter host/container SHA、容器 running/healthy、command/bind mount 与 host/container
+  CloudFS，并要求 status regular/non-symlink、fresh 且 `streaming`/`recording`/`finalizing` 都是 bool；
+  `service_reachable` 可为 true/false、`error` 必须存在且只能为 null/string。八条 managed cron command family 也必须各恰
+  一条且整行精确等于 canonical；缺失、重复、stale 或 legacy 行均退回 strict。该 repo-only zero-touch 路径只可
+  `crontab -l`，不调用 `install_atomic`、`crontab -`、restart 或 recorder state 写入，因此 live recording 可继续；
+  结束前必须重跑同一只读 closure，否则 TOCTOU 漂移失败。rollback 只在 strict 路径先写入的 mutation marker
+  存在时才回写 external 文件或 crontab。故 OCI3 迁移不改变 free runtime authority，但无关 adapter business error
+  不能阻塞已验证的 repo-only zero-touch deploy。任一 payload、mode、type、link、backup、cron、container 或
+  status-structure 条件漂移，必定退回下述 strict 路径，不能以 repo-only flag 绕过。
+- strict 路径在 adapter 外部字节未变化时，部署前状态必须 fresh、idle、
   `service_reachable=true` 且 `error=null`。只有待安装 adapter 字节确实变化时，才允许
   用单一修复例外越过旧 adapter 自己制造的错误：旧状态仍须 fresh/idle，且必须精确为
   `service_reachable=false`，且 `error` 为前缀 `source disposition drift:`，或精确等于
@@ -231,4 +312,38 @@
   idle 查询必须全部通过，且安装前、重启前及 rollback 重启前容器内不得存在仍活着的
   `--identity-rebind-hash-child` 进程。普通 hash pending、timed-out child 等错误一律拒绝。
   新字节重启后仍须等到 fresh clean 状态、新 SHA 与健康检查全绿；rollback 只可回到
-  clean 或同一精确 preimage。该例外不得成为普通 deploy 或 live-query bypass。
+  clean 或同一精确 preimage。adapter runtime 收敛等待固定为最多 360 次、每次 5 秒
+  （30 分钟）：它容纳至多十二条已持久化 rebind 的串行 hash child，但每一轮仍要求
+  SHA、mount、idle 与 fresh clean status；超时、pending child 或任一 drift 都失败。
+  rollback 使用同一有界等待；若回退的旧 adapter 尚不理解新 receipt，它只能保留
+  `source disposition drift:` 的 fail-closed repair-idle 状态，绝不能把 receipt 当 clean。
+  该例外不得成为普通 deploy 或 live-query bypass。
+- 若旧 adapter 因严格 connection-stub gap 上限而留下 closed-finalization 错误，唯一
+  bootstrap 例外是候选 adapter 在**不写 state/status/media**的 disposable container 中以
+  `--prepare-connection-stub-bootstrap` 为每条显式 relative path 生成 O_EXCL receipt。receipt
+  必须绑定候选/已安装 adapter SHA、当前 adapter-state SHA、原始 finalization-status projection
+  SHA 和完整 typed rows；部署只接受
+  `finalize_errors` source 集合与 receipt 精确相等的 fresh idle preimage。原子安装并重启后
+  只能由新 daemon 自己写 dispositions 与 `error=null`，然后重验 receipt rows；不得手写
+  status/state 或把任意 finalization error 归为 bootstrap。rollback 只有在 transaction-owned
+  marker 证明新 daemon 已可能写入 receipt rows 时，才会在启动旧 adapter 前原子还原与 receipt
+  byte/projection 绑定的 state/status preimage；普通 deploy rollback 绝不回写这两份运行态文件。
+  receipt 建立后旧 daemon 仍会更新 `last_room_status_epoch`、state
+  `cookie_health.checked_at(_epoch)`、status `generated_at(_epoch)` 与
+  `bilibili_cookie.checked_at(_epoch)`，且失败诊断中仅 ffmpeg 的 `0xHEX` 进程地址是已知瞬态值；
+  激活前因此只允许这些逐字面投影差异（两个 cookie 对象本身必须仍是 dict），状态的
+  其他任意字段、state 的其他任意 key、两条 exact source、error 文本/计数与 typed rows 都必须仍与
+  preimage/receipt 相等。不得以正则或“任意 finalization error”放宽该门。若外部安装在 marker
+  之前失败，旧进程从未加载新字节：outer rollback 只在无 marker、`restart-required`、exact receipt
+  与 preimage 全部验证且上述 durable projection 一致时保留旧 heartbeat 而不重启。遗留 guard 也只能
+  用 `scripts/deploy_autoslice.sh --recover-deploy-guard <exact-owner> [host]` 走同一 exact-owner、
+  old-manifest、旧外部 adapter、preimage/receipt 绑定验证后清理；普通 stale guard、缺失/链接/漂移
+  preimage 或不同错误一律拒绝，禁止手工删除 guard。
+  若 SSH 在 archive streaming 时中断、guard 已创建但 `repo.rollback-<commit>` 尚未存在，则同一
+  recovery CLI 只接受 exact owner 的 pre-backup stage：旧 repo 的 deployed authority manifest 与四个
+  外部入口字节必须仍闭合，stage 必须是无链接的 committed `git archive` 连续前缀（root `0755`；在
+  `umask 022; tar --no-same-permissions` 下，完整目录及完整非执行/执行文件分别为 `0755`/`0644`/`0755`；
+  唯一最后 partial blob 必为临时 `0600`，且仅它的祖先目录可保留 tar 尚未 finalize 的 `0700`），完整成员
+  哈希/模式精确；最多一个非空的最后 blob prefix，且字节必须等于该 commit blob 的同长度前缀，不能有后续成员
+  或额外项。验证时以 canonical stage-tree SHA 重新绑定 cleanup，随后只删
+  此 stage 与 exact owner guard；出现 backup、repo/外部漂移、未知项、链接或第二个/错误 partial 都拒绝。

@@ -85,12 +85,12 @@ import json
 import os
 import re
 import shutil
-import stat
 import subprocess
 import sys
 import tempfile
 import time
 import urllib.request
+from collections.abc import Mapping
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -103,6 +103,7 @@ from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.runtime_candidate_asset import bind_runtime_candidate_asset
 from src.autoslice.game_context import bind_session_game_context
 from src.autoslice.streamer_dynamics import bind_session_theme_hints
+from src.autoslice.start_date_backlog_policy import START_DATE_TERMINAL_STATUSES, _parse_start_date, select_start_date_backlog, start_date_is_terminal
 from src.autoslice.host_vocal_proof import verify_host_vocal_proof_claim
 from src.autoslice.reviewed_subtitle_baseline_registry import (
     ReviewedSubtitleBaseline,
@@ -122,6 +123,37 @@ from src.autoslice import (
     publication_reconciliation,
     runner_state_writeback,
     semantic_evidence_scorecard_refresh as semantic_chat_refresh,
+)
+from src.autoslice.producer_batch_transaction import (
+    ProducerBatchTransactionError,
+    resume_pending_batch,
+)
+from src.autoslice.producer_batch_runner_integration import (
+    commit_projected_prefix,
+    dispatch_prepared_lane,
+    finish_producer_date,
+    initialize_date_state,
+    make_talk_result_checkpoint,
+    maintain_selected_source_fact_recovery,
+    pre_dispatch_block_message,
+    project_prepared_results,
+    reject_materialized_prepare_results,
+    resume_prepared_batch_if_present,
+)
+from src.autoslice.runner_batch_dispatch import produce_batch as _dispatch_produce_batch
+from src.autoslice.runner_heartbeat import write_heartbeat as _write_heartbeat
+from src.autoslice.runner_alerts import write_alert as _write_alert
+from src.autoslice.runner_pipeline_fingerprints import (
+    pipeline_fingerprint as _pipeline_fingerprint,
+    song_pipeline_fingerprint as _song_pipeline_fingerprint,
+)
+from src.autoslice.qixi_transaction_core import exclusive_runner_commit
+from src.autoslice.historical_fastlane_authority import (
+    HistoricalFastlaneAuthorityError,
+    exclusive_tick as historical_exclusive_tick,
+    finish_historical_run,
+    load_and_start_historical_run,
+    normalize_historical_room_id,
 )
 from src.autoslice.live_gate import format_live_basis, live_signal_divergence
 from src.autoslice.selection_scorecard import (
@@ -174,6 +206,11 @@ from src.autoslice.structured_chat_binding import (
     StructuredChatBindingError,
     resolve_structured_chat_binding as _resolve_structured_chat_binding,
 )
+from src.autoslice.cpa_runtime import (
+    build_cpa_qa_command as _build_cpa_qa_command,
+    probe_cpa_health as _probe_cpa_health,
+    resolve_cpa_env_path as _resolve_cpa_env_path,
+)
 
 CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
 PROFILE_ID = CHANNEL_PROFILE.profile_id
@@ -223,6 +260,7 @@ def profile_tool(key: str) -> Path:
 
 
 BASE = Path(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice"))
+os.environ.setdefault("AUTOSLICE_BASE", str(BASE))
 # 维护者: during the speaker data-accumulation phase every delivered
 # clip keeps the single host (李豆沙) subtitle style and speaker uncertainty
 # must never reject a delivery. "required"/"auto" stay available for the
@@ -251,10 +289,22 @@ RECORDER_STATUS_PATH = Path(os.environ.get("AUTOSLICE_RECORDER_STATUS_PATH", "/o
 RECORDER_ADAPTER_STATE_PATH = Path(
     os.environ.get("AUTOSLICE_RECORDER_ADAPTER_STATE_PATH", "/opt/bilive/recording/adapter-state.json")
 )
+HISTORICAL_RECORDER_ENDPOINT = "http://127.0.0.1:23566/graphql"
+HISTORICAL_RECORDER_ENV = Path("/opt/bilive/recorder.env")
 RECORDER_STATUS_MAX_AGE_SECONDS = int(os.environ.get("AUTOSLICE_RECORDER_STATUS_MAX_AGE_SECONDS", "180"))
 LIVE_WITHOUT_RECORDING_WARN_SECONDS = int(os.environ.get("AUTOSLICE_LIVE_WITHOUT_RECORDING_WARN_SECONDS", "1800"))
 BILIVE_ENV = Path("/opt/bilive/.env")
 CPA_ENV = BASE / "cpa.env"
+GEMINI_ENV_NAMES = (
+    "GEMINI_API_KEY",
+    "GEMINI_API_KEY_2",
+    "GEMINI_API_KEY_3",
+    "GEMINI_KEY_BACKUP",
+)
+
+
+def _cpa_env_path() -> Path:
+    return _resolve_cpa_env_path(CPA_ENV, environment=os.environ)
 HOST_VOCAL_PYTHON = Path(os.environ.get("AUTOSLICE_HOST_VOCAL_PYTHON", str(BASE / "venv-diar/bin/python")))
 HOST_VOCAL_PROFILE = Path(
     os.environ.get(
@@ -346,9 +396,30 @@ BCUT_MAX_ATTEMPTS = 2
 TITLE_MAX_ATTEMPTS = 3
 COVER_REPAIR_MAX_ATTEMPTS = 3  # one attempt per tick → retries spread ~10min apart
 COVER_REPAIR_LIFETIME_ATTEMPT_CAP = 9  # three bounded repair generations; never loop forever
-MAX_PARALLEL_PRODUCE = 5  # slices are independent; produce them concurrently (each is
-# network-bound on AGY/CPA/gpt-image-2, so a few in flight
-# cut wall-clock ~3x; bounded by free CPU + CPA concurrency)
+MAX_PARALLEL_PRODUCE_ENV = "AUTOSLICE_MAX_PARALLEL_PRODUCE"
+MAX_PARALLEL_PRODUCE_DEFAULT = 5
+def _parse_max_parallel_produce(raw: str | None = None) -> int:
+    """Parse the bounded producer concurrency override before provider work."""
+
+    value = os.environ.get(MAX_PARALLEL_PRODUCE_ENV) if raw is None else str(raw)
+    if value is None:
+        value = str(MAX_PARALLEL_PRODUCE_DEFAULT)
+    if re.fullmatch(r"[1-5]", value) is None:
+        raise ValueError(
+            f"{MAX_PARALLEL_PRODUCE_ENV} must be an integer from 1 to 5"
+        )
+    return int(value)
+
+
+# Parse at import so malformed concurrency fails before a provider-bearing
+# child can be started. ``main`` rechecks environments changed after import.
+MAX_PARALLEL_PRODUCE = _parse_max_parallel_produce()
+
+
+AUTOSLICE_START_DATE = _parse_start_date()
+# slices are independent; produce them concurrently (each is network-bound on
+# AGY/CPA/gpt-image-2, so a few in flight cut wall-clock ~3x; bounded by free
+# CPU + CPA concurrency)
 # Top-5 is a ceiling, not a promise to ship five weak events.  The 
 # 0.78-confidence 《夏雪冬花》 candidate was admitted only because the session
 # still had an empty seat; that is the same quota-pressure failure mode that
@@ -418,155 +489,19 @@ CPA_CMD_STRUCTURED = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file
 
 
 def pipeline_fingerprint() -> str:
-    """Proof-closure fingerprint used to retry old recoverable BLOCKs.
+    """Proof-closure fingerprint used to retry old recoverable BLOCKs."""
 
-    Hash every deployed code/config surface that can affect recall, boundary,
-    lyrics, voice identity, packaging, or evidence authority.  The voiceprint
-    profile contains the expected external model/reference digests; deployment
-    refuses a runtime whose private assets disagree with that profile.
-    """
-
-    hasher = hashlib.sha256()
-    explicit = {
-        "scripts/session_autoslice.py",
-        "scripts/free_asr_client.py",
-        "scripts/apply_subtitle_text_overrides.py",
-        "scripts/cpa_semantic_qa_llm.py",
-        "scripts/gemini_slice_jingting.py",
-        "scripts/llm_via_cpa.sh",
-        "scripts/produce_slice_package.py",
-        "scripts/repair_reviewed_covers.py",
-        "scripts/resume_frozen_talk_package.py",
-        "scripts/run_auto_review_shadow_pipeline.py",
-        "scripts/run_full_session_selector_cpa_shadow.py",
-    }
-    paths = [REPO_ROOT / relative for relative in explicit]
-    paths.append(profile_tool("cover_regenerator"))
-    paths.extend(CHANNEL_PROFILE.fingerprint_paths(repo_root=REPO_ROOT))
-    autoslice_src = REPO_ROOT / "src" / "autoslice"
-    paths.extend(
-        path
-        for path in (autoslice_src.rglob("*.py") if autoslice_src.is_dir() else [])
-        if path.relative_to(REPO_ROOT).as_posix() not in PIPELINE_FINGERPRINT_EXCLUSIONS
+    return _pipeline_fingerprint(
+        repo_root=REPO_ROOT, profile_tool=profile_tool, channel_profile=CHANNEL_PROFILE,
+        exclusions=PIPELINE_FINGERPRINT_EXCLUSIONS,
+        speaker_authority=_speaker_routing_provider_authority,
+        speaker_authority_errors=(OSError, TypeError, ValueError, SpeakerRoutingError),
     )
-
-    def path_label(path: Path) -> str:
-        try:
-            return path.relative_to(REPO_ROOT).as_posix()
-        except ValueError:
-            return str(path)
-
-    missing = [path for path in paths if not path.is_file()]
-    for path in missing:
-        hasher.update(path_label(path).encode("utf-8") + b"\0MISSING\0")
-    paths = [path for path in paths if path.is_file()]
-    for path in sorted(paths, key=path_label):
-        relative = path_label(path)
-        hasher.update(relative.encode("utf-8") + b"\0")
-        hasher.update(path.read_bytes())
-        hasher.update(b"\0")
-    for key in (
-        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_COMMAND_JSON",
-        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_NAME",
-        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_ALGORITHM_ID",
-        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_ARTIFACTS_JSON",
-    ):
-        hasher.update(b"runtime-config\0" + key.encode("utf-8") + b"\0")
-        hasher.update(os.environ.get(key, "").encode("utf-8") + b"\0")
-    # Wake recoverable work when configured provider bytes change at the same
-    # path.  Invalid/missing authority is hashed as an explicit unavailable
-    # state and remains fail-closed in prepare_speaker_routing.
-    try:
-        authority = _speaker_routing_provider_authority()
-    except (OSError, TypeError, ValueError, SpeakerRoutingError) as exc:
-        hasher.update(f"provider-authority-unavailable:{type(exc).__name__}".encode())
-    else:
-        if authority is not None:
-            hasher.update(json.dumps(authority, sort_keys=True, separators=(",", ":")).encode())
-    return "sha256:" + hasher.hexdigest()
 
 
 def song_pipeline_fingerprint() -> str:
-    """Hash only surfaces that can change song proof or song delivery.
+    """Hash only surfaces that can change Song proof or Song delivery."""
 
-    The historical global fingerprint includes every talk subtitle/entity
-    module and asset.  Using it for song BLOCK recovery made a talk-only entity
-    fix requeue every old LRC failure and consume the paid Gemini fallback.
-    Keep song recovery sensitive to its real proof closure while excluding
-    talk-only ASR/entity authority.
-    """
-
-    explicit = {
-        "scripts/cpa_semantic_qa_llm.py",
-        "scripts/free_asr_client.py",
-        "scripts/gemini_slice_jingting.py",
-        "scripts/llm_via_cpa.sh",
-        "scripts/run_full_session_selector_cpa_shadow.py",
-        "src/autoslice/agy_lrc_alignment.py",
-        "src/autoslice/boundary_resolver.py",
-        "src/autoslice/candidate_selection.py",
-        "src/autoslice/channel_profile.py",
-        "src/autoslice/content_evidence.py",
-        "src/autoslice/cover_emote.py",
-        "src/autoslice/cover_generation.py",
-        "src/autoslice/cpa_semantic_qa.py",
-        "src/autoslice/danmaku_evidence.py",
-        "src/autoslice/delivery_recovery.py",
-        "src/autoslice/full_session_candidate_selector.py",
-        "src/autoslice/full_session_transcription.py",
-        "src/autoslice/gemini_backup_policy.py",
-        "src/autoslice/host_vocal_proof.py",
-        "src/autoslice/jingting_chunker.py",
-        "src/autoslice/llm_client.py",
-        "src/autoslice/publish_staging.py",
-        "src/autoslice/published_song_history.py",
-        "src/autoslice/render_qa.py",
-        "src/autoslice/review_evidence.py",
-        "src/autoslice/semantic_candidate_selector.py",
-        "src/autoslice/source_context_executor.py",
-        "src/autoslice/source_context_planner.py",
-        "src/autoslice/source_integrity.py",
-        "src/autoslice/style_profile.py",
-        "src/autoslice/subtitle_rendering.py",
-        "src/autoslice/title_policy.py",
-        "src/autoslice/upload_tag_policy.py",
-        "src/autoslice/verified_io.py",
-        "src/autoslice/visual_song_discovery.py",
-    }
-    paths = [REPO_ROOT / relative for relative in explicit]
-    paths.extend((REPO_ROOT / "src" / "autoslice").glob("song_*.py"))
-    # Optional profile assets join the closure only when the profile registers
-    # them (asset_file raises on unregistered keys; the emote library is opt-in).
-    if "emote_library" in CHANNEL_PROFILE.asset_files:
-        paths.append(profile_asset_file("emote_library"))
-    paths.extend(
-        (
-            REPO_ROOT / "profiles" / PROFILE_ID / "profile.json",
-            profile_tool("cover_regenerator"),
-            profile_asset_file("cover_identity_prompt"),
-            profile_asset_file("known_songs"),
-            profile_asset_file("published_songs"),
-            profile_asset_file("persona"),
-            profile_asset_file("slice_selection_metric"),
-            profile_asset_file("title_policy"),
-            profile_asset_file("title_style"),
-            profile_asset_file("upload_tag_policy"),
-            profile_asset_file("voiceprint_profile"),
-        )
-    )
-    fonts = profile_asset_directory("fonts")
-    paths.extend(fonts.rglob("*") if fonts.is_dir() else [])
-
-    hasher = hashlib.sha256()
-    hasher.update(b"song-pipeline-fingerprint.v1\0")
-    for path in sorted(set(paths), key=lambda item: str(item)):
-        try:
-            relative = path.relative_to(REPO_ROOT).as_posix()
-        except ValueError:
-            relative = str(path)
-        hasher.update(relative.encode("utf-8") + b"\0")
-        hasher.update(path.read_bytes() if path.is_file() else b"MISSING")
-        hasher.update(b"\0")
     policy = {
         "max_songs_per_session": MAX_SONGS_PER_SESSION,
         "song_attempt_cap": SONG_ATTEMPT_CAP,
@@ -589,8 +524,11 @@ def song_pipeline_fingerprint() -> str:
         "cpa_standard_command": CPA_CMD_STANDARD,
         "cpa_structured_command": CPA_CMD_STRUCTURED,
     }
-    hasher.update(json.dumps(policy, sort_keys=True, separators=(",", ":")).encode("utf-8"))
-    return "sha256:" + hasher.hexdigest()
+    return _song_pipeline_fingerprint(
+        repo_root=REPO_ROOT, profile_id=PROFILE_ID, channel_profile=CHANNEL_PROFILE,
+        profile_tool=profile_tool, profile_asset_file=profile_asset_file,
+        profile_asset_directory=profile_asset_directory, policy=policy,
+    )
 
 
 def human_truth_mode() -> str:
@@ -765,9 +703,6 @@ from src.autoslice.published_song_history import (  # noqa: E402
     PublishedSongHistoryError,
     published_song_match as _published_song_match,
 )
-from src.autoslice.produce_dispatch import (  # noqa: E402
-    produce_batch_windowed,
-)
 from src.autoslice.talk_lane import (  # noqa: E402
     danmaku_hints,
     danmaku_count_in,
@@ -840,6 +775,7 @@ from src.autoslice.candidate_selection import (  # noqa: E402
     prioritize, replace_scoped_pending_talk_items, scoped_pending_talk_items,
 )
 from src.autoslice import historical_failed_talk_scope, operator_processing_scope as operator_scope  # noqa: E402
+from src.autoslice import selected_source_fact_recovery_persistence  # noqa: E402
 from src.autoslice.exact_talk_recovery_scope import (
     suppress_exact_talk_recovery_song_work,
 )  # noqa: E402
@@ -998,6 +934,13 @@ def talk_failure_recovery_fingerprint(failure_kind: str | None, candidate_id: st
             profile_asset_file("voiceprint_profile"),
         )
     paths = [relative if isinstance(relative, Path) else REPO_ROOT / relative for relative in relatives]
+    # A sealed exhaustive reviewed baseline is a candidate-specific repair for
+    # subtitle-authority failures.  Include only its own hash-bound closure;
+    # an unrelated candidate baseline must not consume this retry's budget.
+    if failure_kind == "subtitle_authority":
+        reviewed_baseline = candidate_reviewed_subtitle_baseline(candidate_id)
+        if reviewed_baseline is not None:
+            paths.extend(reviewed_baseline.fingerprint_paths)
     override = candidate_text_override_path(candidate_id) if failure_kind == "subtitle_authority" else (
         candidate_speaker_override_path(candidate_id) if failure_kind in {"speaker_evidence", "runtime_prerequisite"} else None
     )
@@ -1030,19 +973,10 @@ def song_selector_env(date: str) -> dict[str, str]:
 
 
 def cpa_qa_cmd() -> str:
-    # ``produce_song`` is also a supported/manual repair entry point and does
-    # not pass through ``main()``, which injects cpa.env into os.environ.  Read
-    # the same credential file as child_env() so the judge command and its
-    # subprocess environment cannot disagree (empty --api-base used to make a
-    # manual rerun die in argparse before song proof even started).
-    env_file = load_env_file(CPA_ENV)
-    base = (env_file.get("CPA_BASE_URL") or os.environ.get("CPA_BASE_URL") or "").rstrip("/")
-    if not base:
-        raise RuntimeError(f"CPA_BASE_URL missing from environment and {CPA_ENV}")
-    return (
-        "python3 scripts/cpa_semantic_qa_llm.py --request {request_json} --response {response_json} "
-        f"--transport direct --model gpt-5.6-luna --fallback-model gpt-5.5 --api-mode responses "
-        f"--reasoning-effort medium --max-tokens 16000 --retries 3 --api-base {base} --api-key-env CPA_API_KEY"
+    return _build_cpa_qa_command(
+        _cpa_env_path(),
+        load_env_file=load_env_file,
+        environment=os.environ,
     )
 
 
@@ -1050,7 +984,7 @@ def log(msg: str) -> None:
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
 
 
-def load_env_file(path: Path) -> dict[str, str]:
+def load_env_file(path: Path, allowed_keys: tuple[str, ...] | None = None) -> dict[str, str]:
     out: dict[str, str] = {}
     try:
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -1060,10 +994,17 @@ def load_env_file(path: Path) -> dict[str, str]:
             line = line.removeprefix("export ").strip()
             if "=" in line:
                 key, value = line.split("=", 1)
-                out[key.strip()] = value.strip().strip('"').strip("'")
+                key = key.strip()
+                if allowed_keys is None or key in allowed_keys:
+                    out[key] = value.strip().strip('"').strip("'")
     except OSError:
         pass
     return out
+
+
+def load_gemini_credentials() -> dict[str, str]:
+    bilive_env = load_env_file(BILIVE_ENV, GEMINI_ENV_NAMES)
+    return {key: bilive_env[key] for key in GEMINI_ENV_NAMES if bilive_env.get(key)}
 
 
 def child_env() -> dict[str, str]:
@@ -1074,23 +1015,8 @@ def child_env() -> dict[str, str]:
     # 产线子进程的 stdout 进日志 sink（非 TTY）：不关缓冲的话 libc 全缓冲，
     # 每候选日志十几分钟 0 字节、退出才 dump——观察者只能猜死没死。
     env.setdefault("PYTHONUNBUFFERED", "1")
-    env.update(load_env_file(CPA_ENV))
-    # Gemini API is the automatic source-context failover when the AGY account
-    # is quota-limited.  Import only these named secrets from the recorder env;
-    # do not leak unrelated credentials into child processes.
-    bilive_env = load_env_file(BILIVE_ENV)
-    # GEMINI_KEY_BACKUP is the PAID last-resort key (维护者); the
-    # gemini_backup_policy module gates every use (>= 3 free-chain failure
-    # rounds per item + daily cap), so importing it here only makes the
-    # fallback REACHABLE, never routine.
-    for key in (
-        "GEMINI_API_KEY",
-        "GEMINI_API_KEY_2",
-        "GEMINI_API_KEY_3",
-        "GEMINI_KEY_BACKUP",
-    ):
-        if bilive_env.get(key):
-            env[key] = bilive_env[key]
+    env.update(load_env_file(_cpa_env_path()))
+    env.update(load_gemini_credentials())
     env.setdefault("HOME", "/root")
     truth_mode = human_truth_mode()
     selected_assets = {}
@@ -1189,36 +1115,13 @@ def cpa_healthy() -> bool:
     the retry loop.
     """
 
-    env = load_env_file(CPA_ENV)
-    base = (env.get("CPA_BASE_URL") or os.environ.get("CPA_BASE_URL", "")).rstrip("/")
-    key = env.get("CPA_API_KEY") or os.environ.get("CPA_API_KEY", "")
-    if not base or not key:
-        return False
-    for model in ("gpt-5.6-sol", "gpt-5.5", "gpt-5.4"):
-        body = json.dumps(
-            {
-                "model": model,
-                "input": "回复:OK",
-                "reasoning": {"effort": "low"},
-                "max_output_tokens": 2000,
-            }
-        ).encode()
-        req = urllib.request.Request(
-            f"{base}/responses",
-            data=body,
-            headers={
-                "Authorization": f"Bearer {key}",
-                "Content-Type": "application/json",
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-            },
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                if resp.status == 200:
-                    return True
-        except Exception:  # noqa: BLE001 — any failure means this model is down
-            continue
-    return False
+    return _probe_cpa_health(
+        _cpa_env_path(),
+        load_env_file=load_env_file,
+        environment=os.environ,
+        request_factory=urllib.request.Request,
+        urlopen=urllib.request.urlopen,
+    )
 
 
 def cjk_font_present() -> bool:
@@ -1237,10 +1140,14 @@ def recorder_live_status() -> bool | None:
     )
 
 
-def live_hold_recheck() -> bool:
+def live_hold_recheck(*, allow_eval_hold_override: bool = True) -> bool:
     """Positive-only mid-tick live gate (src.autoslice.live_gate)."""
 
-    return live_gate.positive_live_hold_recheck(RECORDER_STATUS_PATH, recorder_live_status, _live_hold_active)
+    return live_gate.positive_live_hold_recheck(
+        RECORDER_STATUS_PATH,
+        recorder_live_status,
+        lambda live: _live_hold_active(live, allow_eval_hold_override=allow_eval_hold_override),
+    )
 
 
 def live_determination_basis(live: bool | None) -> dict:
@@ -1251,6 +1158,10 @@ def live_determination_basis(live: bool | None) -> dict:
 
 def state_path(date: str) -> Path:
     return BASE / "state" / f"{date}.json"
+
+
+def _start_date_is_terminal(date: str) -> bool:
+    return start_date_is_terminal(date, state_path)
 
 
 def _apply_runtime_publication_projection(date: str, state: dict) -> dict:
@@ -1327,22 +1238,17 @@ def read_state(date: str) -> dict:
     return runner_state_writeback.track_state(state_path(date), _read_state_untracked(date))
 
 
-def write_state(date: str, state: dict) -> None:
-    runner_state_writeback.write_state(
-        state_path(date),
-        state,
-        updated_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-        log=log,
-    )
+write_state = runner_state_writeback.make_date_state_writer(
+    state_path,
+    runtime_root=lambda: BASE,
+    updated_at=lambda: time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    log=lambda message: log(message),
+)
 
 
 def write_alert(name: str, message: str) -> None:
-    """Append-only alert files under reports/ — the Mac launchd pull is the
-    delivery channel (维护者's rule: alerts travel via report files, not chat)."""
-    path = BASE / "reports" / f"ALERT_{name}.txt"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as sink:
-        sink.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} {message}\n")
+    """Append a local alert; the Mac launchd pull is the delivery channel."""
+    _write_alert(BASE, name, message)
 
 
 def source_health_error() -> str | None:
@@ -1401,6 +1307,8 @@ def list_dates() -> list[str]:
     except OSError as exc:
         log(f"list_dates: recordings root unreadable: {exc}")
         return []
+    if AUTOSLICE_START_DATE is not None:
+        return select_start_date_backlog(names, AUTOSLICE_START_DATE, state_path)
     selected = set(sorted(names)[-3:])
     # A historical date with a known finalized-source gap must not age out of
     # the latest-three cron window before the new recovery lane can repair it.
@@ -1546,24 +1454,14 @@ _TRAILING_PUNCT_RX = re.compile(r"[\s,.!?~～，。！？、·…\-_]+$")
 _SRT_TS_RX = re.compile(r"(\d\d):(\d\d):(\d\d),(\d\d\d)\s*-->\s*(\d\d):(\d\d):(\d\d),(\d\d\d)")
 
 
-def produce_batch(date: str, items: list[dict], produce_fn) -> list[dict]:
+def produce_batch(
+    date: str, items: list[dict], produce_fn, *, prepare_only: bool = False,
+    on_result=None,
+) -> list[dict]:
     """Windowed concurrent production with deploy-yield (src.autoslice.produce_dispatch)."""
-
-    return produce_batch_windowed(
-        date,
-        items,
-        produce_fn,
-        produce_talk_fn=produce_talk,
-        produce_song_fn=produce_song,
-        base=BASE,
-        max_parallel=MAX_PARALLEL_PRODUCE,
-        log=log,
-        talk_pipeline_fingerprint=talk_pipeline_fingerprint,
-        pipeline_fingerprint=pipeline_fingerprint,
-        song_pipeline_fingerprint=song_pipeline_fingerprint,
-        song_window_pre_ms=SONG_WINDOW_PRE_MS,
-        song_window_post_ms=SONG_WINDOW_POST_MS,
-        live_hold_active_fn=live_hold_recheck,
+    return _dispatch_produce_batch(
+        date, items, produce_fn, globals(), prepare_only=prepare_only,
+        on_result=on_result,
     )
 
 
@@ -1593,23 +1491,23 @@ def _project_terminal_batch_state(state: dict, *, mutate_songs: bool = True) -> 
 
 
 def process_date(date: str) -> None:
-    state = read_state(date)
-    state.setdefault("run_mode", "PRODUCTION")
-    state.setdefault("source_authority", "RECORDER")
-    state.setdefault("upload_allowed", False)
-    if state.get("status") == "state_corrupt_blocked":
-        write_alert(
-            "STATE_CORRUPT",
-            f"{date}: {state.get('state_error', 'state file corrupt')} — date BLOCKED, needs human",
-        )
-        log(f"{date}: state corrupt — blocked, not reprocessing (would re-deliver everything)")
+    # A durable producer batch is always replayed before any health/provider
+    # gate or new dispatch.  Its private handles already bind all artifacts;
+    # recovery therefore never reruns CPA/AGY/cover work.
+    try:
+        resumed = resume_prepared_batch_if_present(runtime_root=BASE, date=date)
+    except ProducerBatchTransactionError as exc:
+        log(f"{date}: producer batch recovery blocked: {exc}")
         return
-    if state.get("status") == "publication_reconciliation_blocked":
-        write_alert(
-            "PUBLICATION_RECONCILIATION_BLOCKED",
-            f"{date}: {state.get('publication_reconciliation_error', 'invalid publication authority')}",
-        )
-        log(f"{date}: publication reconciliation invalid — blocked fail-closed")
+    except Exception as exc:
+        log(f"{date}: runner commit lease unavailable for producer recovery: {exc}")
+        return
+    if resumed is not None:
+        log(f"{date}: resumed prepared producer batch without provider dispatch")
+    state = initialize_date_state(read_state, date)
+    if (blocked := pre_dispatch_block_message(state, date=date)) is not None:
+        write_alert(blocked[0], blocked[1])
+        log(blocked[2])
         return
     frozen_talk_candidate_ids = historical_failed_talk_scope.freeze(state, date=date)
     song_preimage = operator_scope.snapshot_song_state_collections(state) if frozen_talk_candidate_ids is not None else None
@@ -1677,22 +1575,14 @@ def process_date(date: str) -> None:
         requeued_talks,
         requeued_songs,
         song_fingerprint_baseline_changed,
-    ) = historical_failed_talk_scope.maintain(date, state, automatic_maintenance=automatic_maintenance, candidate_ids=frozen_talk_candidate_ids)
-    if recovered_song_deliveries:
-        persist_state()
-        log(
-            f"{date}: recovered {recovered_song_deliveries} verified song delivery "
-            "package(s) without selector/ASR/LRC rerun"
-        )
-    if any((requeued_stale_talks, requeued_talks, requeued_songs)) or (song_fingerprint_baseline_changed):
-        persist_state()
-    if requeued_stale_talks or requeued_talks or requeued_songs:
-        log(
-            f"{date}: requeued {requeued_stale_talks} stale CURRENT talk package(s), "
-            f"{requeued_talks} recoverable talk failure(s), and "
-            f"{requeued_songs} recoverable song BLOCK(s) for song pipeline "
-            f"{song_pipeline_fingerprint()[:19]}…"
-        )
+    ) = maintain_selected_source_fact_recovery(
+        runtime_root=BASE,
+        maintain=selected_source_fact_recovery_persistence.maintain_and_persist,
+        date=date, state=state, automatic_maintenance=automatic_maintenance,
+        candidate_ids=frozen_talk_candidate_ids, persist=persist_state,
+        readback=lambda: json.loads(state_path(date).read_text(encoding="utf-8")),
+        log=log, song_pipeline_fingerprint=song_pipeline_fingerprint,
+    )
     has_new, has_pending, needs_cover = historical_failed_talk_scope.work_flags(date, state, automatic_maintenance=automatic_maintenance, candidate_ids=frozen_talk_candidate_ids)
     if not has_new and not has_pending and not needs_cover:
         terminal = _project_terminal_batch_state(state, mutate_songs=frozen_talk_candidate_ids is None)
@@ -1715,7 +1605,9 @@ def process_date(date: str) -> None:
     state.setdefault("songs", [])
     state["status"] = "processing"
     persist_state()
-    historical_failed_talk_scope.discover(date, state, frozen_talk_candidate_ids)
+    historical_failed_talk_scope.discover(
+        date, state, frozen_talk_candidate_ids, persist_state=persist_state
+    )
     if frozen_talk_candidate_ids is None:
         suppress_exact_talk_recovery_song_work(state, phase="after_segment_discovery")
     # Session sealing: transcription/recall above runs as segments appear, but
@@ -1758,39 +1650,44 @@ def process_date(date: str) -> None:
         if rescore_blocked_items:
             log(f"{date}: {len(rescore_blocked_items)} talk item(s) held for pending source-fact rescore")
         production_preimage = historical_failed_talk_scope.production_preimage(state, frozen_talk_candidate_ids)
-        results = produce_batch(date, talk_items, produce_talk)
+        with exclusive_runner_commit(BASE):
+            checkpoint_before = runner_state_writeback.read_exact_state_preimage(
+                state_path(date), runtime_root=BASE,
+            )
+        checkpoint_talk_result, talk_checkpoint = make_talk_result_checkpoint(
+            runtime_root=BASE, date=date, state_path=state_path(date), state=state,
+            talk_items=talk_items, rescore_blocked_items=rescore_blocked_items,
+            frozen_talk_candidate_ids=frozen_talk_candidate_ids,
+            production_preimage=production_preimage, exact_contract_ids=exact_contract_ids,
+            runner=sys.modules[__name__], checkpoint_before=checkpoint_before,
+            replace_pending=replace_scoped_pending_talk_items,
+            seal_transition=historical_failed_talk_scope.seal_production_transition,
+            apply_rejection=apply_talk_backfill_rejection_policy,
+            delivered_statuses=DELIVERED_TALK_STATUSES,
+            cover_pending_status=TALK_COVER_PENDING_STATUS,
+            title_max_attempts=TITLE_MAX_ATTEMPTS,
+            persist_state=persist_state, log=log,
+        )
+
+        try:
+            _, results, _ = dispatch_prepared_lane(
+                runtime_root=BASE, date=date, lane="talk", items=talk_items,
+                state_path=state_path(date), state=state, produce_batch=produce_batch,
+                produce_fn=produce_talk, runner=sys.modules[__name__],
+                on_result=checkpoint_talk_result,
+            )
+        except (runner_state_writeback.RunnerStateWritebackError, ValueError) as exc:
+            log(f"{date}: Talk prepare protocol rejected: {exc}")
+            return
+        except Exception as exc:  # noqa: BLE001 — checkpoint failure must stop the tick
+            log(f"{date}: prepared talk checkpoint deferred: {exc}")
+            return
+        retry = talk_checkpoint.retry
+        rejected = talk_checkpoint.rejected
+        recoverable_failure = talk_checkpoint.recoverable_failure
         # deploy-yield 只返回已开工项（输入序前缀）；未派发的尾巴必须留在
         # 队列里等下个 tick，否则候选无声蒸发。
         deferred_tail = talk_items[len(results) :] + rescore_blocked_items
-        retry: list[dict] = []
-        rejected = 0
-        recoverable_failure = False
-        for item, result in zip(talk_items, results):
-            if result.get("status") == "title_failed":
-                item["title_attempts"] = item.get("title_attempts", 0) + 1
-                log(f"{item['cid']}: title generation failed (attempt {item['title_attempts']})")
-                if item["title_attempts"] < TITLE_MAX_ATTEMPTS:
-                    retry.append(item)
-                    continue
-                result["status"] = "failed"
-                result["error"] = "title generation failed 3x"
-            candidate_id = str(item.get("cid") or item.get("candidate_id") or "")
-            if apply_talk_backfill_rejection_policy(result, exact_selected=candidate_id in exact_contract_ids):
-                rejected += 1
-            if result.get("failure_recoverable") is True:
-                recoverable_failure = True
-            if result.get("status") in DELIVERED_TALK_STATUSES:
-                result["bundle_lifecycle"] = "CURRENT"
-                result["bundle_compliance"] = "COMPLIANT"
-            elif result.get("status") == TALK_COVER_PENDING_STATUS:
-                result["bundle_lifecycle"] = "PENDING_COVER"
-                result["bundle_compliance"] = "COVER_REQUIRED"
-            state["picks"].append(result)
-        replace_scoped_pending_talk_items(state, frozen_talk_candidate_ids, retry + deferred_tail)
-        if not historical_failed_talk_scope.seal_production_transition(date, state, frozen_talk_candidate_ids, production_preimage):
-            persist_state()
-            return
-        persist_state()
         if retry:  # some title lanes flaky → back off, resume the rest next tick
             state["status"] = "paused_cpa_down"
             persist_state()
@@ -1826,53 +1723,68 @@ def process_date(date: str) -> None:
     # the backlog runs dry, or SONG_ATTEMPT_CAP is hit.
     while frozen_talk_candidate_ids is None and state["pending_song"]:
         song_items = list(state["pending_song"])
-        song_results = produce_batch(date, song_items, produce_song)
-        state["songs"].extend(song_results)
-        # 同 talk：deploy-yield 未派发的歌尾巴留队，不许无声蒸发。
-        state["pending_song"] = song_items[len(song_results) :]
+        with exclusive_runner_commit(BASE):
+            checkpoint_before = runner_state_writeback.read_exact_state_preimage(
+                state_path(date), runtime_root=BASE,
+            )
+
+        def checkpoint_song_result(
+            index: int, item: Mapping[str, object], result: dict,
+        ) -> bool:
+            """Project and persist one completed Song before dispatch advances."""
+
+            nonlocal checkpoint_before
+            entries = project_prepared_results(
+                runtime_root=BASE, date=date, lane="song", items=(item,),
+                results=(result,), runner=sys.modules[__name__],
+            )
+            state["songs"].append(result)
+            state["pending_song"] = song_items[index + 1 :]
+            if entries:
+                commit_projected_prefix(
+                    runtime_root=BASE, date=date, state_path=state_path(date),
+                    state_before=checkpoint_before, state=state, entries=entries,
+                )
+                checkpoint_before = runner_state_writeback.state_bytes(state)
+            else:
+                persist_state()
+                checkpoint_before = runner_state_writeback.state_bytes(state)
+            return True
+
+        try:
+            _, song_results, _ = dispatch_prepared_lane(
+                runtime_root=BASE, date=date, lane="song", items=song_items,
+                state_path=state_path(date), state=state, produce_batch=produce_batch,
+                produce_fn=produce_song, runner=sys.modules[__name__],
+                on_result=checkpoint_song_result,
+            )
+        except (runner_state_writeback.RunnerStateWritebackError, ValueError) as exc:
+            log(f"{date}: Song prepare protocol rejected: {exc}")
+            return
+        except Exception as exc:  # noqa: BLE001 — checkpoint failure must stop the tick
+            log(f"{date}: prepared song checkpoint deferred: {exc}")
+            return
+        # 同 talk：deploy-yield 未派发的歌尾巴已由逐项 checkpoint 留队，不许无声蒸发。
         if state["pending_song"]:
-            write_state(date, state)
             log(f"{date}: {len(state['pending_song'])} song item(s) deferred for deploy — resuming next tick")
             break
         refill_songs(state)
         persist_state()
-    historical_failed_talk_scope.repair_covers(date, state, automatic_maintenance=automatic_maintenance, candidate_ids=frozen_talk_candidate_ids)
-    terminal = _project_terminal_batch_state(state, mutate_songs=frozen_talk_candidate_ids is None)
-    picks = terminal["picks"]
-    songs = terminal["songs"]
-    delivered_talk = terminal["delivered_talk"]
-    repaired = terminal["repaired"]
-    delivered_songs = terminal["delivered_songs"]
-    blocked_songs = terminal["blocked_songs"]
-    rejected_songs = terminal["rejected_songs"]
-    failures = terminal["failures"]
-    persist_state()
-    write_reports(date, state)
-    log(
-        f"{date} batch finished [{state['status']}]: talk {len(delivered_talk)}/{len(picks)} delivered"
-        f" ({len(repaired)} boundary-self-repaired), song {len(delivered_songs)} delivered"
-        f" / {len(blocked_songs)} retry-blocked / {len(rejected_songs)} rejected"
-        f" / {len(songs)} attempted, {len(failures)} failure(s)"
+    finish_producer_date(
+        runtime_root=BASE, date=date, state=state, mutate_songs=frozen_talk_candidate_ids is None,
+        repair_covers=historical_failed_talk_scope.repair_covers,
+        automatic_maintenance=automatic_maintenance, candidate_ids=frozen_talk_candidate_ids,
+        project_terminal=_project_terminal_batch_state, persist_state=persist_state,
+        write_reports=write_reports, log=log, capture_candidates=capture_candidates,
+        routing_claim=routing_claim, queue_collab=queue_collab_evidence_capture,
     )
-    # Production is already committed to state/reports above.  Only now may a
-    # rare collab trigger enqueue the separately bounded evidence worker.
-    queue_collab_evidence_capture(
-        date,
-        state,
-        capture_candidates,
-        routing_claim=routing_claim,
-    )
-    persist_state()
-    write_reports(date, state)
 
 
 def write_heartbeat(body: str) -> None:
-    heartbeat = BASE / "reports" / "heartbeat.txt"
-    heartbeat.parent.mkdir(parents=True, exist_ok=True)
-    heartbeat.write_text(f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} {body}\n", encoding="utf-8")
+    _write_heartbeat(BASE, body)
 
 
-def _live_hold_active(live: bool | None) -> bool:
+def _live_hold_active(live: bool | None, *, allow_eval_hold_override: bool = True) -> bool:
     """直播期间冻结处理（True/未知都冻结，fail-safe；src.autoslice.live_gate）。"""
 
     return live_gate.live_hold_active(
@@ -1880,12 +1792,18 @@ def _live_hold_active(live: bool | None) -> bool:
         rec_root=REC_ROOT,
         list_dates=list_dates,
         log=log,
-        ignore_hold=os.environ.get("AUTOSLICE_IGNORE_LIVE_HOLD", "") == "1",
+        # A historical authority is deliberately *not* an ignore-hold token:
+        # only clean live=False reaches its normal tick.  The existing eval
+        # switch is retained solely for non-historical isolated bases.
+        ignore_hold=(
+            allow_eval_hold_override
+            and os.environ.get("AUTOSLICE_IGNORE_LIVE_HOLD", "") == "1"
+        ),
     )
 
 
-def tick() -> int:
-    if (BASE / "DISABLED").exists():
+def tick(*, historical_date: str | None = None) -> int:
+    if (BASE / "DISABLED").exists() and historical_date is None:
         log("DISABLED flag present — runner paused")
         return 0
     if not cjk_font_present():
@@ -1902,7 +1820,7 @@ def tick() -> int:
         return 0
     live = recorder_live_status()
     basis = live_determination_basis(live)
-    if _live_hold_active(live):
+    if _live_hold_active(live, allow_eval_hold_override=historical_date is None):
         report = live_gate.live_hold_report(
             live,
             basis,
@@ -1917,12 +1835,17 @@ def tick() -> int:
         return 0
     checked = []
     deferred: list[str] = []
-    dates = list_dates()
+    dates = [historical_date] if historical_date is not None else list_dates()
     for index, date in enumerate(dates):
         # a marathon tick read `live` once at 09:40 and was still
         # producing at 11:40 — 37 minutes into a stream that began at 11:03.
         # A stale start-of-tick reading must not license hours of work.
-        if live_hold_recheck():
+        rechecked_live_hold = (
+            live_hold_recheck()
+            if historical_date is None
+            else live_hold_recheck(allow_eval_hold_override=False)
+        )
+        if rechecked_live_hold:
             deferred = list(dates[index:])
             log(f"room went LIVE mid-tick — deferring dates {' '.join(deferred)}")
             break
@@ -1952,12 +1875,52 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="end-to-end smoke: recall+produce ONE talk candidate from this segment into the smoke area",
     )
+    parser.add_argument(
+        "--historical-authority",
+        type=Path,
+        help="sealed one-time historical authority; only legal with --once while DISABLED remains present",
+    )
     args = parser.parse_args(argv)
+    global AUTOSLICE_START_DATE, MAX_PARALLEL_PRODUCE
+    # Keep this before BASE creation, credential loading, and provider branches.
+    try:
+        MAX_PARALLEL_PRODUCE = _parse_max_parallel_produce()
+        AUTOSLICE_START_DATE = _parse_start_date()
+    except ValueError as exc:
+        parser.error(str(exc))
     BASE.mkdir(parents=True, exist_ok=True)
     # Inject CPA credentials into OUR process too: the semantic-recall llm_call
     # runs llm_via_cpa.sh from this process (not via child_env()), and without
     # this the recall lane silently degrades to the deterministic fallback.
-    os.environ.update(load_env_file(CPA_ENV))
+    os.environ.update(load_env_file(_cpa_env_path()))
+    os.environ.update(load_gemini_credentials())
+    if args.historical_authority and not args.once:
+        parser.error("--historical-authority requires --once")
+    if args.historical_authority and (args.preclaim or args.smoke_segment):
+        parser.error("--historical-authority cannot combine with preclaim or smoke")
+    if args.historical_authority:
+        try:
+            # The manual path holds the outer tick lock throughout the normal
+            # tick.  STARTED is durable before any process_date/provider work;
+            # an interrupted STARTED receipt is intentionally unreplayable.
+            with historical_exclusive_tick(BASE):
+                started = load_and_start_historical_run(
+                    authority_path=args.historical_authority, runtime_root=BASE,
+                    recording_root=REC_ROOT, adapter_status_path=RECORDER_STATUS_PATH,
+                    adapter_state_path=RECORDER_ADAPTER_STATE_PATH,
+                    room_id=normalize_historical_room_id(ROOM),
+                    recorder_endpoint=HISTORICAL_RECORDER_ENDPOINT, recorder_env=HISTORICAL_RECORDER_ENV,
+                )
+                try:
+                    result = tick(historical_date=str(started["recording_date"]))
+                except BaseException:
+                    finish_historical_run(authority_path=args.historical_authority, runtime_root=BASE, failed=True)
+                    raise
+                finish_historical_run(authority_path=args.historical_authority, runtime_root=BASE, failed=result != 0)
+                return result
+        except HistoricalFastlaneAuthorityError as exc:
+            log(f"historical authority refused: {exc}")
+            return 2
     if args.preclaim:
         for date in args.preclaim:
             write_state(

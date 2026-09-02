@@ -15,13 +15,16 @@ from src.autoslice.community_query_plan import (
     title_complete_prompt_rows,
 )
 from src.autoslice.community_name_crawler import (
+    CommunityNameError,
     OCCURRENCE_POLICY,
+    _judge_existing_relation_kinds,
     crawl,
     empty_state,
     load_config,
     validate_snapshot,
 )
 from src.autoslice.community_relation_semantics import semantic_diagnostics
+from src.autoslice.llm_client import LlmCallError
 from src.autoslice.timely_term_crawler import CachedResponse, CrawlError
 
 
@@ -502,6 +505,128 @@ def test_existing_relation_semantics_are_content_addressed_and_not_rejudged_twic
     )
     assert third["state"]["last_run"]["semantic_review_count"] == 0
     assert third["state"]["mappings"][0]["relation_kind"] == "alias_of"
+
+
+def _semantic_review_fixture(count: int):
+    members = [
+        _member(index, canonical=f"主播{index}", mid=800000 + index)
+        for index in range(1, count + 1)
+    ]
+    mappings = []
+    bundles = []
+    for index, member in enumerate(members, start=1):
+        surface = f"昵称{index}"
+        mappings.append(
+            {
+                "mapping_key": f"{index:064x}",
+                "entity_id": member["entity_id"],
+                "surface": surface,
+                "status": "accepted",
+            }
+        )
+        bundles.append(
+            {
+                "member": member,
+                "rows": [
+                    {
+                        "bvid": f"BV1{index:09d}",
+                        "uploader_mid": index,
+                        "published_at": "2026-08-01T00:00:00+00:00",
+                        "title": f"【{member['canonical']}】{surface}",
+                        "description": "",
+                        "tags": "",
+                        "official_upload_for_target": True,
+                        "target_entity_count": 1,
+                        "comments": [],
+                    }
+                ],
+            }
+        )
+    return {"members": members}, {"mappings": mappings}, bundles
+
+
+def test_relation_review_splits_cards_into_bounded_cpa_requests_in_order():
+    registry, state, bundles = _semantic_review_fixture(5)
+    config = _config()
+    prompts = []
+
+    def review(prompt):
+        prompts.append(prompt)
+        cards = json.loads(prompt.split("UNTRUSTED_DATA=", 1)[1])
+        return json.dumps(
+            {
+                "relation_reviews": [
+                    {"mapping_key": card["mapping_key"], "relation_kind": "alias_of"}
+                    for card in cards
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    reviews, error, batches, cards = _judge_existing_relation_kinds(
+        state=state,
+        registry=registry,
+        bundles=bundles,
+        config=config,
+        llm_call=review,
+        now=NOW,
+    )
+
+    prompt_cards = [json.loads(prompt.split("UNTRUSTED_DATA=", 1)[1]) for prompt in prompts]
+    assert [[card["mapping_key"] for card in batch] for batch in prompt_cards] == [
+        [f"{index:064x}" for index in range(1, 5)],
+        [f"{5:064x}"],
+    ]
+    assert list(reviews) == [f"{index:064x}" for index in range(1, 6)]
+    assert error is None
+    assert batches == 2
+    assert cards == 5
+
+
+def test_relation_review_service_failure_leaves_only_its_cards_unreviewed():
+    registry, state, bundles = _semantic_review_fixture(5)
+    config = _config()
+    calls = 0
+
+    def review(prompt):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise LlmCallError("CPA 524")
+        cards = json.loads(prompt.split("UNTRUSTED_DATA=", 1)[1])
+        return json.dumps(
+            {
+                "relation_reviews": [
+                    {"mapping_key": card["mapping_key"], "relation_kind": "alias_of"}
+                    for card in cards
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    reviews, error, batches, cards = _judge_existing_relation_kinds(
+        state=state,
+        registry=registry,
+        bundles=bundles,
+        config=config,
+        llm_call=review,
+        now=NOW,
+    )
+
+    assert list(reviews) == [f"{index:064x}" for index in range(1, 5)]
+    assert error == "batch-1: LlmCallError: CPA 524"
+    assert batches == 1
+    assert cards == 5
+
+
+def test_prompt_batch_member_limit_rejects_oversized_cpa_request(tmp_path):
+    config = _config()
+    config["prompt_batch_member_limit"] = 5
+    config_path = tmp_path / "community_name_sources.json"
+    config_path.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+
+    with pytest.raises(CommunityNameError, match="prompt_batch_member_limit is invalid"):
+        load_config(config_path)
 
 
 def test_official_uploader_can_anchor_an_unknown_surface_without_name_text():

@@ -53,6 +53,9 @@ from src.autoslice.exact_final_convergence import (
     converge_reconsidered_exact_final_findings,
     resolve_findings_from_exact_final_convergence_memos,
 )
+from src.autoslice.context_adjudication_witness_prewarm import (
+    prewarm_context_adjudication_witnesses,
+)
 from src.autoslice.danmaku_evidence import DanmakuItem
 from src.autoslice.deferred_same_cue_resolution import adjudicate_routed_findings
 from src.autoslice.final_review_auditor import (
@@ -75,7 +78,7 @@ from src.autoslice.review_priority_candidates import (
     review_priority_candidate_counts as _review_priority_candidate_counts,  # noqa: F401
     review_priority_candidates as _review_priority_candidates,
 )
-from src.autoslice.final_source_language_owner import register_final_source_language_cpa_repairs
+from src.autoslice.final_source_language_owner import register_final_foreign_script_cpa_repairs, register_final_source_language_cpa_repairs
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import LlmConfig, build_llm_call, extract_json_object
 from src.autoslice.producer_chat_input import (
@@ -88,6 +91,7 @@ from src.autoslice.producer_chat_input import (
 )
 from src.autoslice.producer_final_review_transport import (
     build_final_review_llm_call as _build_final_review_llm_call,
+    build_pronoun_audit_llm_call as _build_pronoun_audit_llm_call,
 )
 from src.autoslice.pronoun_consistency import (
     CandidatePronounAuditError,
@@ -828,6 +832,15 @@ def _run_final_review(
                     screen_read_probe=screen_read_probe,
                 )
 
+            # 提速接线（维护者）：理由与不变量见
+            # context_adjudication_witness_prewarm 模块 docstring。
+            prewarm_receipt = prewarm_context_adjudication_witnesses(
+                srt_text, adjudicable,
+                entity_verifier=verify_confusable_entity,
+                max_adjudications=MAX_CONTEXT_ADJUDICATIONS,
+                original_srt_text=original_srt_text, clip_context=clip_context,
+            )
+
             (
                 srt_text,
                 adjudication_count,
@@ -848,6 +861,7 @@ def _run_final_review(
                 final_review_audit["status"] = "APPLIED"
             final_review_audit["context_adjudication_count"] = adjudication_count
             final_review_audit["context_adjudication_budget"] = MAX_CONTEXT_ADJUDICATIONS
+            final_review_audit["context_adjudication_witness_prewarm"] = prewarm_receipt
             final_review_audit["priority_raw_finding_count"] = len(priority_rows)
             final_review_audit.update(_review_priority_candidate_counts(priority_raw_findings))
             if partial:
@@ -929,9 +943,9 @@ def _run_exact_final_release_review(
     screen_read_probe: Callable[[int, int], Mapping[str, object]] | None = None,
     priority_raw_findings: Sequence[Mapping[str, Any]] = (),
     acoustic_discovery_audit: Mapping[str, object] | None = None,
+    final_review_llm: Callable[[str], str] | None = None, pronoun_audit_llm: Callable[[str], str] | None = None,
 ) -> dict[str, object]:
     """Review the exact post-authority bytes and issue a fail-closed receipt."""
-
     reviewed_srt_sha256 = "sha256:" + hashlib.sha256(srt_text.encode("utf-8")).hexdigest()
     boundary_semantic_review = correction_audit.get("boundary_semantic_review")
     correction_mutation_audit = audit_correction_mutation_authority(correction_audit)
@@ -972,14 +986,14 @@ def _run_exact_final_release_review(
             srt_text,
             policy_text=review_glossary,
             candidate_context_text=candidate_context_text,
-            llm_call=_build_final_review_llm_call(),
+            llm_call=pronoun_audit_llm or _build_pronoun_audit_llm_call(),
             extract_json=extract_json_object,
         )
         base["candidate_pronoun_consistency_audit"] = pronoun_audit
         priority_findings = [*pronoun_findings, *priority_raw_findings]
         findings = audit_final_subtitles(
             srt_text,
-            llm_call=_build_final_review_llm_call(),
+            llm_call=final_review_llm or _build_final_review_llm_call(),
             extract_json=extract_json_object,
             glossary_text=review_glossary,
             structured_context_text=_final_review_structured_context(
@@ -1038,7 +1052,7 @@ def _run_exact_final_release_review(
         ),
         timeline_offset_ms=timeline_offset_ms,
     )
-    exact_judge_llm_call = _build_final_review_llm_call()
+    exact_judge_llm_call = final_review_llm or _build_final_review_llm_call()
     acoustic_pending, acoustic_resolved = adjudicate_exact_release_findings(
         srt_text,
         authority_pending,
@@ -1316,8 +1330,10 @@ def _adjudicate_final_foreign_script(
     audit: dict[str, Any],
     out_root: Path,
     cid: str,
+    chat_authority_audit: dict[str, Any],
 ) -> tuple[str, dict[str, Any]]:
-    return adjudicate_foreign_script_audit(
+    input_srt = srt_text
+    srt_text, audit = adjudicate_foreign_script_audit(
         media_path=padded,
         srt_text=srt_text,
         audit=audit,
@@ -1325,6 +1341,8 @@ def _adjudicate_final_foreign_script(
         cid=cid,
         llm_call=_build_final_review_llm_call(),
     )
+    register_final_foreign_script_cpa_repairs(chat_authority_audit, input_srt=input_srt, output_srt=srt_text, foreign_script_audit=audit)
+    return srt_text, audit
 
 
 def _adjudicate_final_source_language(
@@ -1345,11 +1363,7 @@ def _adjudicate_final_source_language(
         llm_call=_build_final_review_llm_call(),
     )
     register_final_source_language_cpa_repairs(
-        chat_authority_audit,
-        input_srt=input_srt,
-        output_srt=srt_text,
-        source_language_audit=audit,
-    )
+        chat_authority_audit, input_srt=input_srt, output_srt=srt_text, source_language_audit=audit)
     return srt_text, audit
 
 
@@ -1467,7 +1481,7 @@ def _finalize_text_evidence(
         foreign_script_audit["cluster_retranscription"] = cluster_repair_audit
     if padded is not None:
         srt_text, foreign_script_audit = _adjudicate_final_foreign_script(
-            padded, srt_text, foreign_script_audit, out_root, cid
+            padded, srt_text, foreign_script_audit, out_root, cid, chat_authority_audit
         )
     chat_authority_audit["foreign_script_consistency_audit"] = foreign_script_audit
     srt_text, title_mark_balance_audit = apply_title_mark_balance_guard(srt_text)
@@ -1944,7 +1958,7 @@ def run_text_pipeline(
             correction_audit=final_review_audit,
             source_final_start_ms=timeline_offset_ms,
             source_final_end_ms=source_final_end_ms,
-            candidate_id=cid,
+            candidate_id=cid, recording_date=str(spec.get("date") or ""),
             selection_hook=str(spec.get("selection_hook") or ""),
             selection_scorecard=spec.get("selection_scorecard"),
             structured_context=_final_review_structured_context(

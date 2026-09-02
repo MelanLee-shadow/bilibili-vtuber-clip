@@ -62,10 +62,9 @@ from src.autoslice.final_review_schema_retry import (
     schema_repair_new_finding_diagnostic,
     schema_repair_prompt,
 )
-from src.autoslice.final_review_provider_budget import (
-    ContextAdjudicationBudget,
-)
+from src.autoslice.final_review_provider_budget import ContextAdjudicationBudget
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.llm_client import LlmJsonParseError, call_and_extract_json_with_parse_retry
 from src.autoslice.closed_set_proposal_rebuild import rebuild_candidate_after_neither
 from src.autoslice.exact_source_transcript_contract import valid_exact_source_transcript_handoff
 from src.autoslice.exact_source_transcript_provider import (
@@ -536,9 +535,7 @@ class FinalReviewAuditError(RuntimeError):
     def __init__(self, reason_code: str, detail: str = "") -> None:
         self.reason_code = reason_code
         self.detail = detail
-        super().__init__(
-            reason_code if not detail else f"{reason_code}: {detail}"
-        )
+        super().__init__(reason_code if not detail else f"{reason_code}: {detail}")
 
 
 def _request_final_review_findings(
@@ -548,10 +545,13 @@ def _request_final_review_findings(
     extract_json: Callable[[str], Any],
 ) -> list[object]:
     try:
-        payload = extract_json(llm_call(prompt))
+        payload = call_and_extract_json_with_parse_retry(
+            prompt, llm_call=llm_call, extract_json=extract_json
+        )
     except Exception as exc:
+        detail = exc.reason_code if isinstance(exc, LlmJsonParseError) else type(exc).__name__
         raise FinalReviewAuditError(
-            "FINAL_REVIEW_PROVIDER_OR_JSON_UNAVAILABLE", type(exc).__name__
+            "FINAL_REVIEW_PROVIDER_OR_JSON_UNAVAILABLE", detail
         ) from exc
     if not isinstance(payload, dict):
         raise FinalReviewAuditError("FINAL_REVIEW_RESPONSE_ROOT_INVALID")

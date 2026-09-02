@@ -453,7 +453,7 @@ log_mtime = os.path.getmtime(LOG) if os.path.exists(LOG) else None
 print(json.dumps({
     "ok": True,
     "daemon_count": ps_count("gemini_slice_jingting.py --provider agy --daemon"),
-    "agy_count": ps_count("/root/.local/bin/agy"),
+    "agy_count": ps_count("agy"),
     "latest_date": latest,
     "pending_latest": len(pending),
     "done_latest": len(done),
@@ -585,7 +585,7 @@ def evaluate(probe, state):
     if not probe.get("ok"):
         problems.append({"id": "probe", "sev": "DOWN",
                          "msg": f"无法探测 free/容器: {probe.get('fatal')}",
-                         "fix": "检查 `ssh free` 可达性与 `docker ps` 里 bilive_record 是否在运行。"})
+                         "fix": "检查 `ssh recording-host` 可达性与 `docker ps` 里 bilive_record 是否在运行。"})
         return "DOWN", problems, actions, notes
 
     procs = probe["procs"]
@@ -748,7 +748,7 @@ def evaluate(probe, state):
     if hb.get("fatal"):
         problems.append({"id": "autoslice_probe_failed", "sev": "DEGRADED",
                          "msg": f"autoslice 健康探测失败: {hb['fatal']}",
-                         "fix": "检查 ssh free 与 /opt/bilive/autoslice/reports/。"})
+                         "fix": "检查 ssh recording-host 与 /opt/bilive/autoslice/reports/。"})
     if hb.get("heartbeat"):
         notes.append(f"autoslice 心跳: {hb['heartbeat'][:140]}")
     if not hb.get("fatal"):

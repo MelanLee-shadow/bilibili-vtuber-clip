@@ -1,6 +1,6 @@
 """Import one externally produced slice package into the free delivery chain.
 
-wsl(ROG-EYE)/Mac 用同一份 repo、同一套 produce，产出的包是完整的；卡点只在
+wsl(workstation)/Mac 用同一份 repo、同一套 produce，产出的包是完整的；卡点只在
 **跨主机导入**：上传凭据、``publication_registry`` 和 upload 读的 state 只在
 free。本模块是那条导入链的机械实现（``scripts/import_external_package.py``
 是它的 CLI）：

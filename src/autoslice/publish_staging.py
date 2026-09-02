@@ -4,7 +4,6 @@ Prepares local evidence only; every document keeps upload disabled behind the re
 """
 
 from __future__ import annotations
-
 import json
 import os
 import subprocess
@@ -21,6 +20,7 @@ from .candidate_entity_publish_gate import (
     evaluate_candidate_title_gates,
 )
 from .candidate_public_text_surface_authority import (
+    resolve_candidate_public_cover_text,
     resolve_candidate_public_text_title_state,
 )
 from .content_ip_signal import important_content_ip_signal_from_srt
@@ -85,11 +85,18 @@ from .cover_punch_semantics import (
     talk_cover_thumbnail_gate_violations,
     validate_full_text_cover_contract,
 )
+from .fixed_cover_stage import FixedCoverStageOptions, fixed_art_direction, resolved_cover_mode
 from .llm_client import LlmCall, extract_json_object
 from .manual_title_repair_authority import (
     ManualTitleRepairAuthorityError,
     load_manual_title_repair_authority,
     validate_manual_title_repair_authority,
+)
+from .publish_staging_paths import (
+    materialized_artifact_root,
+    private_publish_path,
+    stage_cover_with_private_root,
+    staged_transcript_sample,
 )
 from .manual_title_keep_authority import PASS_DECISION as MANUAL_TITLE_KEEP_PASS_DECISION
 from .review_evidence import SourceCue
@@ -153,7 +160,6 @@ def _selection_hook_has_inferable_anchor(*, selection_hook: str, title: str) -> 
     invalidate a mechanically cleaned title when the title itself still
     contains a concrete phrase from the authoritative first hook clause.
     """
-
     first_clause = _selection_hook_first_clause(selection_hook)
     for width in range(min(12, len(first_clause)), 1, -1):
         for start in range(0, len(first_clause) - width + 1):
@@ -382,7 +388,6 @@ def _recovery_publication_staging_state(
         authority,
     )
 
-
 def _stage_publish_draft(
     materialized_recut: dict[str, object] | None,
     *,
@@ -399,17 +404,17 @@ def _stage_publish_draft(
     stage_cover: Callable[..., dict[str, object]] | None = None,
     source_fact_llm_call: LlmCall | None = None,
     story_contract_rebuilder: (Callable[[str], dict[str, object]] | None) = None,
+    public_text_staging_resolver: Callable[..., object] | None = None,
+    private_artifact_root: Path | None = None,
+    private_publish_json_path: Path | None = None,
+    enforce_final_host_identity: bool = False,
 ) -> dict[str, object] | None:
-    """Mirror production local_prepare: AI title + cover + publish.json draft.
-
-    Always writes ``upload_enabled: false`` — publishing stays behind the
-    AUTO_UPLOAD manifest/hash gate and is out of scope for the shadow lane.
-    """
+    """Mirror local_prepare while always keeping upload disabled."""
     if not materialized_recut or materialized_recut.get("status") != "MATERIALIZED":
         return materialized_recut
     record = dict(materialized_recut)
     media_path = Path(str(record["media_path"]))
-    publish_json_path = media_path.with_suffix(".publish.json")
+    publish_json_path = private_publish_path(media_path=media_path, private_artifact_root=private_artifact_root, private_publish_json_path=private_publish_json_path, stage_cover=stage_cover)
     staged_title = title
     important_content_ips: list[dict[str, object]] = []
     title_policy_violations: list[str] = []
@@ -428,6 +433,7 @@ def _stage_publish_draft(
         selection_hook=str(selection_hook or ""),
         story_contract=story_contract,
         story_contract_rebuilder=story_contract_rebuilder,
+        public_text_staging_resolver=public_text_staging_resolver,
         title_source=title_source,
         title_authority_status=title_authority_status,
         title_llm_call=title_llm_call,
@@ -441,7 +447,7 @@ def _stage_publish_draft(
         record["story_contract"] = story_contract
     if title_llm_call is not None:
         selection_hook = str(selection_hook or "").strip()
-        transcript_sample = _staged_transcript_sample(record, cues)
+        transcript_sample = staged_transcript_sample(record, cues)
         important_ip_signal = important_content_ip_signal_from_srt(
             subtitle_path=record.get("subtitle_path"),
             fallback_body="\n".join(cue.text for cue in cues),
@@ -473,7 +479,6 @@ def _stage_publish_draft(
         title_policy_violations = automatic.title_policy_violations
         if automatic.title_authority_status is not None:
             title_authority_status = automatic.title_authority_status
-
         # Shared publication choke point: only declared filler cleanup is allowed.
         choke_repaired_title = canonicalize_automatic_title_fillers(staged_title)
         choke_hook_valid = not selection_hook or _selection_hook_has_inferable_anchor(
@@ -495,7 +500,6 @@ def _stage_publish_draft(
             title_authority_status = "RESOLVED_DETERMINISTIC_FILLER_REMOVAL"
             title_authority_error = None
             title_policy_violations = []
-
     # Automatic titles receive deterministic surface canon. A human title body
     # is not silently rewritten; only the channel-owned publish envelope below
     # may be added.
@@ -503,8 +507,7 @@ def _stage_publish_draft(
         staged_title = canonicalize_hard_surfaces(staged_title)
     # 维护者/19 歌切标题铁律 choke point：自动标题只要带歌切前缀就
     # 折叠成「前缀《歌名》」，任何「｜副标题」/hook 尾巴在这里被最终清除。
-    # This automatic-title helper is retained for the retry path; the common
-    # publish canonicalizer below applies to manual and automatic titles alike.
+    # The common publish canonicalizer below applies to manual and automatic titles alike.
     if title_llm_call is not None:
         staged_title = canonicalize_song_catalog_title(staged_title)
     explicit_lane = publish_title_lane(
@@ -660,7 +663,7 @@ def _stage_publish_draft(
     title_authority_status = title_gate.authority_status
     title_story_audit = title_gate.story_audit
     entity_projection_audit = title_gate.entity_projection_audit
-    cover_text = _cover_text(staged_title)
+    cover_text = resolve_candidate_public_cover_text(candidate_id=candidate_id, default_cover_text=_cover_text(staged_title))
     if title_authority_error is not None:
         # A candidate id / job fallback is not publish-title authority.  Fail
         # before art direction or any paid image request; the runner will keep
@@ -751,9 +754,12 @@ def _stage_publish_draft(
                 and carried_route.get("host_identity_required") is True
                 and not validate_final_host_identity_verification(carried_generation)
             )
-            if needs_identity:
+            if needs_identity and carried_generation.get("published_cover_carry_strict") is True:
+                carry_drop_reason = "strict_published_carry_identity_invalid"
+                carried_generation = None
+            if needs_identity and carried_generation is not None:
                 identity_reference = (
-                    media_path.parent / "cover_refs" / f"{candidate_id}.cover-ref.png"
+                        media_path.parent / "cover_refs" / f"{candidate_id}.cover-ref.png"
                 )
                 fresh_base_url = os.environ.get("CPA_BASE_URL", "").strip().rstrip("/")
                 fresh_api_key = os.environ.get("CPA_API_KEY", "").strip()
@@ -827,23 +833,25 @@ def _stage_publish_draft(
             )
             else None
         )
-        cover_result = (stage_cover or _stage_ai_cover)(
-            record,
-            media_path=media_path,
-            candidate_id=candidate_id,
-            title=staged_title,
-            cover_text=cover_text,
-            run_ffmpeg=run_ffmpeg,
-            art_direction_llm_call=art_direction_llm_call,
+        cover_kwargs: dict[str, object] = {
+            "media_path": media_path,
+            "candidate_id": candidate_id,
+            "title": staged_title,
+            "cover_text": cover_text,
+            "run_ffmpeg": run_ffmpeg,
+            "art_direction_llm_call": art_direction_llm_call,
             # Publish-title authority only freezes ``staged_title``.  It does
             # not authorize putting that entire string on a thumbnail.  Every
             # talk title, including 维护者 manual and same-BV recovery titles,
             # therefore asks CPA for a source-bound 1-2 line punch unless an
             # independently explicit full-text-cover contract says otherwise.
-            punch_allowed=full_text_cover_contract is None,
-            full_text_cover_contract=full_text_cover_contract,
-            diversity_slot=cover_diversity_slot,
-        )
+            "punch_allowed": full_text_cover_contract is None,
+            "full_text_cover_contract": full_text_cover_contract,
+            "diversity_slot": cover_diversity_slot,
+        }
+        if enforce_final_host_identity:
+            cover_kwargs.update(enforce_final_host_identity=True, final_host_identity_verifier=verify_final_host_identity)
+        cover_result = stage_cover_with_private_root(stage_cover or _stage_ai_cover, record, private_artifact_root=private_artifact_root, kwargs=cover_kwargs)
     cover_result, cover_entity_projection_audit = enforce_candidate_cover_projection(
         candidate_id=candidate_id,
         cover_result=cover_result,
@@ -865,7 +873,6 @@ def _stage_publish_draft(
         value = cover_result.get(key)
         if isinstance(value, str) and value:
             artifact_hashes[key] = value
-
     publish_draft = {
         "schema_version": "shadow-publish-draft.v1",
         "candidate_id": candidate_id,
@@ -893,10 +900,8 @@ def _stage_publish_draft(
         "artifact_hashes": artifact_hashes,
         **publish_staging_provenance_fields(record),
     }
-    publish_json_path.write_text(
-        json.dumps(publish_draft, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    publish_json = json.dumps(publish_draft, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    publish_json_path.write_text(publish_json, encoding="utf-8")
     record["artifact_hashes"] = artifact_hashes
     record["publish_staging"] = {
         "status": "STAGED" if title_authority_error is None else "BLOCKED_TITLE_AUTHORITY",
@@ -924,7 +929,6 @@ def _stage_publish_draft(
         **publish_staging_provenance_fields(record),
     }
     return record
-
 
 def _prepare_lidousha_cover_reference(
     materialized_recut: Mapping[str, object],
@@ -1494,7 +1498,6 @@ def _stage_cpa_redraw_cover(
         "cover_reference_sha256": "sha256:" + _sha256(reference_path),
     }
 
-
 def _build_lidousha_cover_route(
     *,
     cover_generation: dict[str, object],
@@ -1635,6 +1638,8 @@ def _stage_ai_cover(
     punch_allowed: bool = False,
     full_text_cover_contract: Mapping[str, object] | None = None,
     diversity_slot: int | None = None,
+    private_artifact_root: Path | None = None,
+    fixed_options: FixedCoverStageOptions = FixedCoverStageOptions(),
 ) -> dict[str, object]:
     cover_generation: dict[str, object] = {
         "workflow": LIDOUSHA_COVER_WORKFLOW,
@@ -1660,9 +1665,7 @@ def _stage_ai_cover(
     # AUTOSLICE_COVER_MODE = auto（默认，按名场面强度路由）| screenshot（强制直出）
     # | polish（强制截图+CPA 轻微调）| cpa（强制全图重绘，旧行为）。
     # 凭据门只对强制 cpa 模式前置；其余路线推迟到真正要调 CPA 时再卡。
-    cover_mode = os.environ.get("AUTOSLICE_COVER_MODE", "").strip().lower() or "auto"
-    if cover_mode not in ("auto", "screenshot", "polish", "cpa"):
-        cover_mode = "auto"
+    cover_mode = resolved_cover_mode(fixed_options, os.environ.get("AUTOSLICE_COVER_MODE", "").strip().lower()) or "auto"
     cover_generation["cover_mode"] = cover_mode
     base_url = os.environ.get("CPA_BASE_URL", "").strip().rstrip("/")
     api_key = os.environ.get("CPA_API_KEY", "").strip()
@@ -1678,15 +1681,13 @@ def _stage_ai_cover(
             ["CPA_AI_COVER_REQUIRED", "COVER_REFERENCE_EXTRACTION_DISABLED"],
             "ffmpeg disabled, so no identity/reference frame can be extracted for CPA images.edit",
         )
-
-    artifact_root = _materialized_artifact_root(materialized_recut, media_path)
+    artifact_root = private_artifact_root or materialized_artifact_root(materialized_recut, media_path)
     cover_refs_dir = artifact_root / "cover_refs"
     ai_dir = artifact_root / "covers_ai_original"
     covers_dir = artifact_root / "covers"
     evidence_dir = artifact_root / "evidence"
     for directory in (cover_refs_dir, ai_dir, covers_dir, evidence_dir):
         directory.mkdir(parents=True, exist_ok=True)
-
     (
         reference_path,
         frame_selection,
@@ -1703,7 +1704,6 @@ def _stage_ai_cover(
     if reference_block is not None:
         return reference_block
     assert reference_path is not None
-
     source_composition_verification: Mapping[str, object] | None = None
     if enforce_final_host_identity:
         active_source_composition_verifier = (
@@ -1756,26 +1756,19 @@ def _stage_ai_cover(
             "path": str(source_composition_path),
             "sha256": "sha256:" + _sha256(source_composition_path),
         }
-
-    # Art direction is picked AFTER the fail-closed gates (creds/ffmpeg/ref frame)
-    # so a blocked cover never spends an LLM call. It is fail-OPEN (deterministic
-    # baseline) while the cover IMAGE stays fail-closed.
     emote_library = load_emote_library(ROOT)
-    art_direction = _cover_art_direction(
-        candidate_id=candidate_id,
-        title=title,
-        cover_text=cover_text,
-        art_direction_llm_call=art_direction_llm_call,
-        emote_library=emote_library,
-        allow_punch=punch_allowed,
-        diversity_slot=diversity_slot,
-        story_hook=(
-            str(story_contract.get("selection_hook") or "")
-            if isinstance(story_contract, Mapping)
-            else ""
-        ),
+    art_direction = fixed_art_direction(
+        _cover_art_direction, candidate_id=candidate_id, title=title,
+        cover_text=cover_text, llm_call=art_direction_llm_call, emote_library=emote_library,
+        punch_allowed=punch_allowed, diversity_slot=diversity_slot,
+        story_hook=(str(story_contract.get("selection_hook") or "") if isinstance(story_contract, Mapping) else ""),
+        options=fixed_options,
     )
-
+    if art_direction is None:
+        return _blocked_ai_cover_result(
+            cover_generation, ["COVER_APPROVED_PUNCH_RECEIPT_INVALID"],
+            "fixed cover repair requires its canonical approved-punch receipt",
+        )
     # 路由：语义/人物证据先行，几何只决定已经验真人物的构图处理。
     treatment, route = _build_lidousha_cover_route(
         cover_generation=cover_generation,
@@ -1907,9 +1900,14 @@ def _stage_ai_cover(
             base_url=base_url,
             api_key=api_key,
             full_text_cover_contract=full_text_cover_contract,
+            identity_landmark_title_exclusion=(
+                fixed_options.identity_landmark_title_exclusion
+            ),
         )
         result = _enforce_final_talk_cover_thumbnail_gate(result)
         if "SCREENSHOT_ROUTE_MATERIALIZATION_FAILED" not in (result.get("reason_codes") or []):
+            return result
+        if fixed_options.require_screenshot_direct:
             return result
         screenshot_receipt = cover_generation.get("screenshot_direct")
         demotion_detail = f"demoted from {treatment}: " + str(
@@ -2156,14 +2154,13 @@ def _stage_screenshot_direct_cover(
     base_url: str = "",
     full_text_cover_contract: Mapping[str, object] | None = None,
     api_key: str = "",
+    identity_landmark_title_exclusion: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """截图路线封面：直出或 +CPA 轻微调；物化失败原路线内阻断。
-
     表现力选帧的最佳帧 → 裁切（吃掉弹幕栏/字幕带）→ [polish：CPA 逐像素保真
     修图（清 UI 杂物+画质），失败显式降级直出] → 叠梗字。截图/裁切/叠字
     任一步失败都保留证据并 fail closed，绝不静默切换成全图 AI 重绘。
     """
-
     # 手定标题只锁投稿文字 authority，不决定视觉路线或封面全文。所有 talk
     # 标题有 CPA 短梗时都用 punch 版式；只有独立显式的 full-text-cover
     # contract 才能授权完整 cover_text，否则最终缩略图门会 fail closed。
@@ -2242,6 +2239,7 @@ def _stage_screenshot_direct_cover(
             api_key=api_key,
             verifier=_verify_polish_face_integrity,
             full_text_cover_contract=full_text_cover_contract,
+            identity_landmark_title_exclusion=identity_landmark_title_exclusion,
         )
         (
             poster_evidence,
@@ -2611,34 +2609,4 @@ def _blocked_ai_cover_result(
     }
 
 
-def _materialized_artifact_root(materialized_recut: Mapping[str, object], media_path: Path) -> Path:
-    manifest_value = materialized_recut.get("manifest_path")
-    if isinstance(manifest_value, str) and manifest_value:
-        manifest_path = Path(manifest_value)
-        if manifest_path.parent.name in {"recuts", "media"}:
-            return manifest_path.parent.parent
-        return manifest_path.parent
-    if media_path.parent.name in {"recuts", "media"}:
-        return media_path.parent.parent
-    return media_path.parent
-
-
-def _staged_transcript_sample(record: Mapping[str, object], cues: Sequence[SourceCue]) -> str:
-    """Title/cover text sample: prefer the FINAL subtitle (fresh transcription
-    with glossary corrections) over the context cues, so the title uses the
-    corrected names (Ado, 小室) rather than the coarse-ASR spellings."""
-
-    subtitle_path = record.get("subtitle_path")
-    if isinstance(subtitle_path, str) and Path(subtitle_path).is_file():
-        try:
-            from src.autoslice.jingting_chunker import parse_srt_cues
-
-            parsed = parse_srt_cues(Path(subtitle_path).read_text(encoding="utf-8"))
-            sample = " ".join(" ".join(cue.text.split()) for cue in parsed if cue.text.strip())[
-                :600
-            ]
-            if sample:
-                return sample
-        except OSError:
-            pass
-    return " ".join(cue.text.strip() for cue in cues if cue.text.strip())[:600]
+# End of staging helpers.

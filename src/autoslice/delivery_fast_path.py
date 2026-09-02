@@ -42,8 +42,13 @@ TRUTH_FULL_OWNERSHIP_SCHEMA = "truth_full_ownership.v1"
 TRUTH_FULL_OWNERSHIP_PIN_SCHEMA = "truth-full-ownership-pin.v1"
 OPERATOR_TEXT_FULL_OWNERSHIP_SCHEMA = "operator_text_full_ownership.v1"
 OPERATOR_TEXT_FULL_OWNERSHIP_PIN_SCHEMA = (
-    "operator-reviewed-text-full-ownership-pin.v1"
+    "operator-reviewed-text-full-ownership-pin.v2"
 )
+OPERATOR_TEXT_FULL_OWNERSHIP_PIN_V3_SCHEMA = (
+    "operator-reviewed-text-full-ownership-pin.v3"
+)
+OPERATOR_TRUTH_LANES_SCHEMA = "operator-reviewed-subtitle-truth-lanes.v1"
+OPERATOR_TRUTH_LANES_V2_SCHEMA = "operator-reviewed-subtitle-truth-lanes.v2"
 EXACT_REPLAY_BASELINE_SCHEMA = "subtitle-redelivery-baseline.v2"
 FINAL_REVIEW_AUDIT_SCHEMA = "final-review-audit.v1"
 
@@ -93,10 +98,13 @@ TRUTH_FULL_OWNERSHIP_CONDITIONS = (
 OPERATOR_TEXT_FULL_OWNERSHIP_CONDITIONS = (
     "spec.subtitle_redelivery_baseline is a valid subtitle-redelivery-baseline.v2 "
     "config with exact_interval_replay=true",
-    "the baseline carries an operator-reviewed-text-full-ownership-pin.v1 whose "
+    "the baseline carries an operator-reviewed-text-full-ownership-pin.v2 whose "
     "baseline_sha256 equals the baseline config sha256",
-    "the pin declares one exhaustive reviewed text cue grid and binds the source "
-    "SRT hash without claiming speaker authority",
+    "every cue is covered by a structured exhaustive decision ledger: changed "
+    "cues require typed REVIEWER_OPERATOR exact text, while unlisted cues are "
+    "OPERATOR_UNCHANGED_FREEZE",
+    "an independent hash-bound pipeline diagnostic SRT and a complete per-cue "
+    "truth-vs-pipeline diff are retained; machine proposals are diagnostic only",
     "no reviewed text override is in play",
 )
 
@@ -298,37 +306,138 @@ def resolve_truth_full_ownership(
 def _valid_operator_text_pin(
     pin: object, *, baseline_sha256: str
 ) -> Mapping[str, object] | None:
+    if isinstance(pin, Mapping) and pin.get("schema_version") == OPERATOR_TEXT_FULL_OWNERSHIP_PIN_V3_SCHEMA:
+        expected_v3 = {
+            "schema_version", "baseline_sha256", "pipeline_srt_sha256",
+            "decision_ledger_sha256", "diagnostic_diff_sha256", "operator_authority",
+            "source_cue_count", "release_cue_count", "changed_cue_count",
+            "operator_exact_text_cue_count", "operator_unchanged_freeze_cue_count",
+            "operator_drop_cue_count", "speaker_authority",
+        }
+        if (
+            set(pin) != expected_v3
+            or _clean_sha256(pin.get("baseline_sha256")) != baseline_sha256
+            or not all(_clean_sha256(pin.get(key)) for key in ("pipeline_srt_sha256", "decision_ledger_sha256", "diagnostic_diff_sha256"))
+            or pin.get("speaker_authority") != "NOT_CLAIMED_TEXT_ONLY"
+        ):
+            return None
+        counts = tuple(pin.get(key) for key in ("source_cue_count", "release_cue_count", "changed_cue_count", "operator_exact_text_cue_count", "operator_unchanged_freeze_cue_count", "operator_drop_cue_count"))
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in counts):
+            return None
+        source, release, changed, exact, freeze, dropped = counts
+        if not (source > 0 and release > 0 and dropped >= 0 and source == release + dropped and exact + dropped > 0 and exact + freeze + dropped == source and 0 <= changed <= exact + dropped):
+            return None
+        authority = pin.get("operator_authority")
+        if not isinstance(authority, Mapping) or set(authority) != {"kind", "evidence_ref"} or authority.get("kind") != "REVIEWER_OPERATOR" or not isinstance(authority.get("evidence_ref"), str) or not authority["evidence_ref"].strip():
+            return None
+        return pin
     expected = {
         "schema_version",
-        "authority",
         "baseline_sha256",
-        "source_srt_sha256",
+        "pipeline_srt_sha256",
+        "decision_ledger_sha256",
+        "diagnostic_diff_sha256",
+        "operator_authority",
         "cue_count",
         "changed_cue_count",
+        "operator_exact_text_cue_count",
+        "operator_unchanged_freeze_cue_count",
         "speaker_authority",
     }
     if (
         not isinstance(pin, Mapping)
         or set(pin) != expected
         or pin.get("schema_version") != OPERATOR_TEXT_FULL_OWNERSHIP_PIN_SCHEMA
-        or not str(pin.get("authority") or "").strip()
         or _clean_sha256(pin.get("baseline_sha256")) != baseline_sha256
-        or not _clean_sha256(pin.get("source_srt_sha256"))
+        or not _clean_sha256(pin.get("pipeline_srt_sha256"))
+        or not _clean_sha256(pin.get("decision_ledger_sha256"))
+        or not _clean_sha256(pin.get("diagnostic_diff_sha256"))
         or pin.get("speaker_authority") != "NOT_CLAIMED_TEXT_ONLY"
+    ):
+        return None
+    authority = pin.get("operator_authority")
+    if (
+        not isinstance(authority, Mapping)
+        or set(authority) != {"kind", "evidence_ref"}
+        or authority.get("kind") != "REVIEWER_OPERATOR"
+        or not isinstance(authority.get("evidence_ref"), str)
+        or not authority["evidence_ref"].strip()
     ):
         return None
     cue_count = pin.get("cue_count")
     changed = pin.get("changed_cue_count")
+    exact = pin.get("operator_exact_text_cue_count")
+    freeze = pin.get("operator_unchanged_freeze_cue_count")
     if (
         isinstance(cue_count, bool)
         or not isinstance(cue_count, int)
         or cue_count <= 0
         or isinstance(changed, bool)
         or not isinstance(changed, int)
-        or not 1 <= changed <= cue_count
+        or isinstance(exact, bool)
+        or not isinstance(exact, int)
+        or isinstance(freeze, bool)
+        or not isinstance(freeze, int)
+    ):
+        return None
+    if (
+        not 0 <= changed <= exact
+        or not 1 <= exact <= cue_count
+        or freeze < 0
+        or exact + freeze != cue_count
     ):
         return None
     return pin
+
+
+def _valid_operator_truth_lanes(
+    value: object,
+    *,
+    pin: Mapping[str, object],
+    baseline_sha256: str,
+) -> Mapping[str, object] | None:
+    """Require the compiler's separate diagnostic and release-truth lanes."""
+
+    if (
+        not isinstance(value, Mapping)
+        or set(value)
+        != {
+            "schema_version",
+            "release_truth",
+            "pipeline_diagnostic",
+            "decision_ledger",
+            "diff_receipt",
+        }
+        or value.get("schema_version") != (
+            OPERATOR_TRUTH_LANES_V2_SCHEMA
+            if pin.get("schema_version") == OPERATOR_TEXT_FULL_OWNERSHIP_PIN_V3_SCHEMA
+            else OPERATOR_TRUTH_LANES_SCHEMA
+        )
+    ):
+        return None
+    release = value.get("release_truth")
+    if (
+        not isinstance(release, Mapping)
+        or set(release) != {"srt_sha256"}
+        or _clean_sha256(release.get("srt_sha256")) != baseline_sha256
+    ):
+        return None
+    bindings = (
+        ("pipeline_diagnostic", "pipeline_srt_sha256"),
+        ("decision_ledger", "decision_ledger_sha256"),
+        ("diff_receipt", "diagnostic_diff_sha256"),
+    )
+    for lane_name, pin_name in bindings:
+        lane = value.get(lane_name)
+        if (
+            not isinstance(lane, Mapping)
+            or set(lane) != {"path", "sha256"}
+            or not str(lane.get("path") or "").strip()
+            or _clean_sha256(lane.get("sha256"))
+            != _clean_sha256(pin.get(pin_name))
+        ):
+            return None
+    return value
 
 
 def resolve_operator_text_full_ownership(
@@ -348,19 +457,46 @@ def resolve_operator_text_full_ownership(
     )
     if pin is None:
         return None
+    truth_lanes = _valid_operator_truth_lanes(
+        baseline.get("operator_truth_lanes"),
+        pin=pin,
+        baseline_sha256=baseline_sha256,
+    )
+    if truth_lanes is None:
+        return None
+    source_cue_count = pin.get("source_cue_count", pin.get("cue_count"))
+    release_cue_count = pin.get("release_cue_count", pin.get("cue_count"))
     return {
         "schema_version": OPERATOR_TEXT_FULL_OWNERSHIP_SCHEMA,
         "status": "OPERATOR_TEXT_FULL_OWNERSHIP",
         "coverage": {
-            "cue_count": int(str(pin["cue_count"])),
-            "reviewed_text_cue_count": int(str(pin["cue_count"])),
+            "cue_count": int(str(source_cue_count)),
+            "reviewed_text_cue_count": int(str(release_cue_count)),
             "changed_text_cue_count": int(str(pin["changed_cue_count"])),
+            "operator_exact_text_cue_count": int(
+                str(pin["operator_exact_text_cue_count"])
+            ),
+                "unchanged_freeze_cue_count": int(
+                    str(pin["operator_unchanged_freeze_cue_count"])
+                ),
+                **(
+                    {"dropped_cue_count": int(str(pin["operator_drop_cue_count"]))}
+                    if "operator_drop_cue_count" in pin
+                    else {}
+                ),
             "text_ownership": "EXACT_INTERVAL_REPLAY_OF_OPERATOR_REVIEWED_BASELINE",
             "speaker_ownership": "NOT_CLAIMED_TEXT_ONLY",
             "proof": {
                 "baseline_sha256": baseline_sha256,
-                "source_srt_sha256": _clean_sha256(pin.get("source_srt_sha256")),
-                "authority": str(pin.get("authority") or ""),
+                "pipeline_srt_sha256": _clean_sha256(pin.get("pipeline_srt_sha256")),
+                "decision_ledger_sha256": _clean_sha256(
+                    pin.get("decision_ledger_sha256")
+                ),
+                "diagnostic_diff_sha256": _clean_sha256(
+                    pin.get("diagnostic_diff_sha256")
+                ),
+                "operator_authority": dict(pin["operator_authority"]),
+                "truth_lanes": dict(truth_lanes),
                 "source_recording_basename": str(
                     baseline.get("source_recording_basename") or ""
                 ),

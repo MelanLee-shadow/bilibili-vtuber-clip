@@ -37,7 +37,9 @@ from scripts.audit_review_package import (  # noqa: E402
     audit_package,
 )
 from src.autoslice import authorized_upload_cli_parser  # noqa: E402
+from src.autoslice import authorized_upload_recovery_cli as upload_recovery  # noqa: E402
 from src.autoslice import bilibili_member_api as member_api  # noqa: E402
+from src.autoslice import authorized_upload_published_recovery as published_recovery  # noqa: E402
 from src.autoslice.package_audit_binding import (
     audit_content_binding as _audit_content_binding,
 )
@@ -45,9 +47,11 @@ from src.autoslice import final_human_review as human_review  # noqa: E402
 from src.autoslice import publication_reconciliation  # noqa: E402
 from src.autoslice import publication_registry  # noqa: E402
 from src.autoslice import same_bv_repair as repair_binding  # noqa: E402
-from src.autoslice import same_bv_cover_repair as cover_repair_binding  # noqa: E402
+from src.autoslice import authorized_upload_cover_repair_cli as cover_repair_cli  # noqa: E402
 from src.autoslice import cover_only_audit_scope  # noqa: E402
 from src.autoslice import same_bv_live_verification  # noqa: E402
+from src.autoslice import fastlane_c2_authorized_upload as c2_upload  # noqa: E402
+from src.autoslice import fastlane_c1_technical_receipt as c1_projection  # noqa: E402
 from src.autoslice.subtitle_validation import validate_srt_file  # noqa: E402
 from src.autoslice.publication_title_exception import upload_manifest_title_policy_violations  # noqa: E402
 from src.autoslice.same_bv_repair import (  # noqa: E402
@@ -558,6 +562,12 @@ def _validate_v3_package_attestation(
     attestation = manifest.get("package_attestation")
     if not isinstance(attestation, dict):
         return ["manifest v3 has no package_attestation object"]
+    if "c1_technical_receipt" in attestation:
+        try:
+            c1_projection.validate_authorized_projection_manifest(manifest)
+        except c1_projection.C1TechnicalReceiptError as exc:
+            return [f"C1 authorized projection rejected: {exc}"]
+        return []
     if attestation.get("schema_version") != "authorized-upload-package-attestation.v1":
         problems.append("package_attestation schema_version is invalid")
 
@@ -591,6 +601,7 @@ def _validate_v3_package_attestation(
     if not root_text or not root.is_dir():
         problems.append(f"package root missing: {root}")
         return problems
+    problems.extend(published_recovery.attestation_problems(attestation, root, live_authority_recheck=live_policy_recheck))
     if video.parent.resolve() != root:
         problems.append("reviewed video is not directly inside the audited package root")
     if not _is_within(cover, root):
@@ -703,7 +714,8 @@ def _validate_v3_package_attestation(
                 cover=cover,
                 subtitle=subtitle_path,
                 title=str(manifest.get("title") or ""),
-                story_contract_required=not verified_song,
+                story_contract_required=not verified_song
+                and c2_upload.verified_c2_release_candidate_id(root, record) is None,
             )
         )
         record_tags = (record.get("upload_tags") or {}).get("final_tags")
@@ -726,9 +738,10 @@ def _title_cover_qc_required(manifest: dict) -> bool:
 
     attestation = manifest.get("package_attestation")
     final_review = attestation.get("final_human_review") if isinstance(attestation, dict) else None
+    c1_review = attestation.get("c1_technical_receipt") if isinstance(attestation, dict) else None
     return not (
         isinstance(manifest.get("recovery_publication_authority"), dict)
-        and isinstance(final_review, dict)
+        and (isinstance(final_review, dict) or isinstance(c1_review, dict))
     )
 
 
@@ -803,11 +816,8 @@ def _title_cover_qc_attestation_problems(
         _load_json_object(record_path, "record", record_problems) if record_path.is_file() else {}
     )
     problems.extend(record_problems)
-    story_contract = record.get("story_contract")
-    story_contract = story_contract if isinstance(story_contract, dict) else {}
-    expected_candidate = str(
-        story_contract.get("candidate_id") or record.get("delivery_candidate_id") or ""
-    )
+    package_root = Path(str(attestation.get("package_root") or "")).resolve()
+    expected_candidate = c2_upload.candidate_id_from_record(package_root, record)
     if not expected_candidate:
         problems.append("title+cover joint-QC cannot resolve candidate from record")
     elif receipt.get("candidate_id") != expected_candidate:
@@ -1562,10 +1572,7 @@ def _run_season_step(
 
 
 def _write_json_sidecar(path: Path, payload: dict) -> None:
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    upload_recovery.write_json_sidecar(path, payload)
 
 
 def _create_json_sidecar(path: Path, payload: dict) -> None:
@@ -1751,14 +1758,46 @@ def make_manifest(args: argparse.Namespace) -> int:
     audit_problems: list[str] = []
     audit = _load_json_object(package_audit, "package audit", audit_problems)
     package_root = Path(str(audit.get("root") or "")).resolve()
+    candidate_root = video.resolve().parent
+    candidate_review = candidate_root / "review_manifest.json"
+    candidate_payload = (
+        _load_json_object(candidate_review, "review manifest", [])
+        if candidate_review.is_file()
+        else {}
+    )
+    is_c1_formal_package = (
+        candidate_payload.get("schema_version")
+        == "fastlane-c1-formal-private-review-manifest.v1"
+    )
     if audit.get("passed") is not True:
         audit_problems.append("package audit did not pass")
     if not _zero_blocking_issues(audit):
         audit_problems.append("package audit reports blocking issues")
-    if not package_root.is_dir():
-        audit_problems.append(f"package audit root missing: {package_root}")
-    if video.resolve().parent != package_root:
-        audit_problems.append("video must be directly inside package audit root")
+    # C1's accepted private audit is portable across its isolated worktree;
+    # recognize only the formal schema beside the supplied final video, then
+    # let the C1 validator prove that the sole difference is audit root path.
+    if is_c1_formal_package:
+        package_root = candidate_root
+    else:
+        if not package_root.is_dir():
+            audit_problems.append(f"package audit root missing: {package_root}")
+        if video.resolve().parent != package_root:
+            audit_problems.append("video must be directly inside package audit root")
+    # C1 has an intentionally non-generic formal record/review closure.  Route
+    # it before the ordinary same-stem record convention is inspected.
+    if (package_root / "review_manifest.json").is_file():
+        try:
+            review_candidate = _load_json_object(
+                package_root / "review_manifest.json", "review manifest", audit_problems
+            )
+        except Exception:  # _load_json_object records the portable refusal
+            review_candidate = {}
+        if review_candidate.get("schema_version") == "fastlane-c1-formal-private-review-manifest.v1":
+            if audit_problems:
+                for problem in audit_problems:
+                    print(f"REFUSE: {problem}", file=sys.stderr)
+                return 2
+            return _make_c1_authorized_projection(args, package_root, package_audit, video, cover)
     record_sidecar = sidecar_record_path(video)
     subtitle_sidecar = sidecar_subtitle_path(video)
     review_manifest = package_root / "review_manifest.json"
@@ -1846,9 +1885,7 @@ def make_manifest(args: argparse.Namespace) -> int:
         "tags": tags,
         "tags_source": tags_source,
     }
-    package_problems = repair_binding.attach_package_recovery_publication_authority(
-        manifest, record, review_manifest, video
-    )
+    package_problems = published_recovery.attach_manifest_attestation(manifest, package_root) + repair_binding.attach_package_recovery_publication_authority(manifest, record, review_manifest, video)
     review_payload = _load_json_object(review_manifest, "review manifest", package_problems)
     if review_payload:
         package_problems.extend(
@@ -1883,6 +1920,77 @@ def make_manifest(args: argparse.Namespace) -> int:
         )
     )
     return 0
+
+
+def _make_c1_authorized_projection(
+    args: argparse.Namespace,
+    package_root: Path,
+    package_audit: Path,
+    video: Path,
+    cover: Path,
+) -> int:
+    """Build only C1's sealed same-BV after-image; never synthesize a record."""
+    try:
+        public = c1_projection.public_metadata_projection()
+        authority = c1_projection.load_formal_authority()
+        names = authority["output_names"]
+        if (
+            args.title != c1_projection.TITLE
+            or video.resolve() != (package_root / names["burned_final"]).resolve()
+            or cover.resolve() != (package_root / names["cover"]).resolve()
+            or package_audit.resolve() != (package_root / "package_audit.json").resolve()
+            or args.tags not in (None, "")
+            or args.no_tags
+            or args.season not in (None, "auto", "talk")
+        ):
+            raise c1_projection.C1TechnicalReceiptError("C1_AUTHORIZED_PROJECTION_INPUT_INVALID")
+        season = season_block_for(args.title, "talk")
+        assert season is not None
+        manifest = {
+            "manifest_version": 3,
+            "schema_version": "authorized-upload-manifest.v3",
+            "artifact_id": sha256_file(video)[:12],
+            "video": _sha_entry(video),
+            "cover": _sha_entry(cover),
+            "title": c1_projection.TITLE,
+            "description": DEFAULT_DESCRIPTION,
+            "publish_policy": {"tid": EXPECTED_TID, "copyright": EXPECTED_COPYRIGHT, "source": EXPECTED_SOURCE},
+            "season": season,
+            "package_attestation": {
+                "package_root": str(package_root.resolve()),
+                "review_manifest": _c1_attested_entry(package_root / "review_manifest.json"),
+                "package_audit": _c1_attested_entry(package_audit),
+            },
+            "authorization": {"by": args.authorized_by, "quote": args.quote, "at": now()},
+            "created_at": now(),
+            "tags": public["tags"],
+            "tags_source": "c1-public-metadata-seal.v1",
+            "recovery_publication_authority": c1_projection.projection_authority(),
+        }
+        problems = human_review.attach_final_human_review(
+            manifest, args.final_human_review, season_ids=expected_season_ids()
+        )
+        if problems:
+            raise c1_projection.C1TechnicalReceiptError("; ".join(problems))
+        c1_projection.validate_authorized_projection_manifest(manifest)
+    except (c1_projection.C1TechnicalReceiptError, ValueError) as exc:
+        print(f"REFUSE: {exc}", file=sys.stderr)
+        return 2
+    out = Path(args.out) if args.out else package_root / "c1.authorized-upload-manifest.v3.json"
+    if out.parent.resolve() != package_root.resolve() or out.name != "c1.authorized-upload-manifest.v3.json":
+        print("REFUSE: C1 authorized projection output path is fixed inside its formal package", file=sys.stderr)
+        return 2
+    if out.exists():
+        print(f"REFUSE: output already exists: {out}", file=sys.stderr)
+        return 2
+    out.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps({"manifest": str(out), "artifact_id": manifest["artifact_id"]}, ensure_ascii=False))
+    return 0
+
+
+def _c1_attested_entry(path: Path) -> dict[str, object]:
+    """C1 receipt attestation uses the uploader's unprefixed digest form."""
+    return {"path": str(path.resolve()), "sha256": sha256_file(path), "bytes": path.stat().st_size}
 
 
 def load_and_verify(
@@ -2119,6 +2227,26 @@ def ledger_guard(ledger: Path, video_sha256: str) -> tuple[str | None, dict | No
     return None, None, []
 
 
+def _append_publication_verified(
+    ledger: Path,
+    guard_row: dict,
+    *,
+    bvid: str,
+    result: dict | None,
+    manifest_path: Path,
+) -> None:
+    upload_recovery.append_publication_verified(
+        ledger,
+        guard_row,
+        bvid=bvid,
+        result=result,
+        manifest_path=manifest_path,
+        append_ledger=append_ledger,
+        now=now,
+        public_verify_sidecar_path=public_verify_sidecar_path,
+    )
+
+
 def append_ledger(ledger: Path, entry: dict) -> None:
     """Durably append one JSONL row before releasing the shared upload lock."""
 
@@ -2309,10 +2437,26 @@ def upload(args: argparse.Namespace) -> int:
                 f"bvid={bvid or '?'}"
             )
             return completed.returncode
+        if not bvid:
+            print(
+                "LEDGER LEFT UNRESOLVED: uploader succeeded without a BVID; all further "
+                "uploads stay blocked until Creator Center reconciliation without re-uploading",
+                file=sys.stderr,
+            )
+            return 6
+        # The remote archive now exists.  Persist that fact before any sidecar,
+        # season or public-readback operation can fail (for example ENOSPC).
+        finished_row = {
+            "event": "UPLOAD_ATTEMPT_FINISHED",
+            "at": now(),
+            **common_ledger_fields,
+            "uploader_rc": 0,
+            "rc": 6,
+            "bvid": bvid,
+            "public_verify_status": "POSTED_UNVERIFIED",
+        }
+        append_ledger(ledger, finished_row)
 
-    # The STARTED row deliberately remains unresolved until every public surface
-    # passes.  Concurrent upload attempts therefore fail closed while this one
-    # waits for transcode/season propagation.
     if args.skip_season:
         post_rc, public_result = (
             6,
@@ -2335,34 +2479,16 @@ def upload(args: argparse.Namespace) -> int:
             args,
             quota_evidence=quota_evidence,
         )
-    if completed.returncode == 0 and not bvid:
-        print(
-            "LEDGER LEFT UNRESOLVED: uploader succeeded without a BVID; all further "
-            "uploads stay blocked until Creator Center reconciliation",
-            file=sys.stderr,
-        )
-        return 6
-    with exclusive_upload_lock(lock_path):
-        append_ledger(
-            ledger,
-            {
-                "event": "UPLOAD_ATTEMPT_FINISHED",
-                "at": now(),
-                **common_ledger_fields,
-                "uploader_rc": completed.returncode,
-                "rc": post_rc,
-                "bvid": bvid,
-                "public_verify_status": (
-                    public_result.get("status") if isinstance(public_result, dict) else None
-                ),
-                "public_verify_sha256": (
-                    sha256_file(public_verify_sidecar_path(manifest_path))
-                    if public_verify_sidecar_path(manifest_path).is_file()
-                    else None
-                ),
-            },
-        )
-    print(f"ledger += artifact {manifest['artifact_id']} rc={post_rc} bvid={bvid or '?'}")
+    if post_rc == 0:
+        with exclusive_upload_lock(lock_path):
+            _append_publication_verified(
+                ledger,
+                finished_row,
+                bvid=bvid,
+                result=public_result,
+                manifest_path=manifest_path,
+            )
+    print(f"ledger += artifact {manifest['artifact_id']} rc={post_rc} bvid={bvid}")
     return post_rc
 
 
@@ -2379,73 +2505,27 @@ def verify(args: argparse.Namespace) -> int:
 
 
 def season_add(args: argparse.Namespace) -> int:
-    """Finish/re-verify season membership for an already-posted manifest."""
-    manifest_path = Path(args.manifest)
-    manifest, problems = load_and_verify(manifest_path)
-    if problems:
-        # The archive is already public — hash drift of the LOCAL copy must not
-        # block finishing its season membership, but say it loudly.
-        for p in problems:
-            print(f"WARN (season-add continues): {p}", file=sys.stderr)
-        if manifest is None:
-            return 2
-    bvid = args.bvid
-    ledger = Path(args.ledger)
-    guard_row: dict | None = None
-    if not bvid:
-        status, row, ledger_problems = ledger_guard(ledger, manifest["video"]["sha256"])
-        if ledger_problems:
-            for problem in ledger_problems:
-                print(f"REFUSE: {problem}", file=sys.stderr)
-            return 5
-        if status not in {"uploaded", "posted_unverified"} or not row or not row.get("bvid"):
-            print(
-                "REFUSE: ledger has no successful upload with a bvid for this manifest's video; "
-                "pass --bvid explicitly if the post exists",
-                file=sys.stderr,
-            )
-            return 5
-        bvid = str(row["bvid"])
-        guard_row = row
-    if manifest.get("manifest_version") == 3:
-        rc, result = _run_postpublish_verification(manifest, manifest_path, bvid, args)
-        if rc == 0 and guard_row and guard_row.get("event") == "UPLOAD_ATTEMPT_FINISHED":
-            stable = {
-                key: guard_row.get(key)
-                for key in (
-                    "attempt_id",
-                    "artifact_id",
-                    "video_sha256",
-                    "cover_sha256",
-                    "manifest",
-                    "manifest_sha256",
-                    "uploader",
-                    "package_audit_sha256",
-                    "record_sha256",
-                    "subtitle_sha256",
-                    "review_manifest_sha256",
-                    "title_cover_qc_sha256",
-                    "title",
-                    "authorized_by",
-                    "authorization_quote",
-                    "tags",
-                )
-                if guard_row.get(key) is not None
-            }
-            append_ledger(
-                ledger,
-                {
-                    "event": "UPLOAD_PUBLICATION_VERIFIED",
-                    "at": now(),
-                    **stable,
-                    "rc": 0,
-                    "bvid": bvid,
-                    "public_verify_status": result.get("status") if result else None,
-                    "public_verify_sha256": sha256_file(public_verify_sidecar_path(manifest_path)),
-                },
-            )
-        return rc
-    return _run_season_step(manifest, manifest_path, bvid, args)
+    return upload_recovery.season_add(
+        args,
+        default_upload_lock=DEFAULT_UPLOAD_LOCK,
+        exclusive_upload_lock=exclusive_upload_lock,
+        load_and_verify=load_and_verify,
+        ledger_guard=ledger_guard,
+        read_ledger=read_ledger,
+        append_ledger=append_ledger,
+        build_season_http=_build_season_http,
+        run_postpublish_verification=_run_postpublish_verification,
+        run_season_step=_run_season_step,
+        public_verify_sidecar_path=public_verify_sidecar_path,
+        normalise_tags=_normalise_tags,
+        now=now,
+        view_api=VIEW_API,
+        tags_api=TAGS_API,
+        member_archive_view_api=MEMBER_ARCHIVE_VIEW_API,
+        expected_tid=EXPECTED_TID,
+        expected_copyright=EXPECTED_COPYRIGHT,
+        expected_source=EXPECTED_SOURCE,
+    )
 
 
 def _biliup_readonly_canary(cookie_json: Path, bvid: str) -> None:
@@ -2529,9 +2609,8 @@ def repair_plan(args: argparse.Namespace) -> int:
             manifest=manifest,
             bvid=args.bvid,
             snapshot=snapshot,
-            predecessor_completed_path=(
-                Path(args.predecessor_completed).resolve() if args.predecessor_completed else None
-            ),
+            predecessor_completed_path=(Path(args.predecessor_completed).resolve() if args.predecessor_completed else None),
+            preserve_existing_tags=bool(args.preserve_existing_tags),
         )
         journal = Path(args.journal).resolve()
         predecessor = plan.get("predecessor_completion") or {}
@@ -2643,199 +2722,63 @@ def repair_status(args: argparse.Namespace) -> int:
     )
 
 
-def _load_cover_repair_manifest(
-    plan_path: Path,
-) -> tuple[dict | None, dict | None, list[str]]:
-    try:
-        plan = cover_repair_binding.load_plan(plan_path)
-    except cover_repair_binding.CoverRepairError as exc:
-        return None, None, [str(exc)]
-    manifest_path = Path(str((plan.get("manifest") or {}).get("path") or ""))
-    manifest, problems = load_and_verify(manifest_path, frozen_plan_resume=True)
-    if manifest is None or problems:
-        return plan, manifest, problems
-    problems.extend(_title_cover_qc_attestation_problems(manifest, required=True))
-    try:
-        cover_repair_binding.validate_plan(plan, manifest=manifest, plan_path=plan_path)
-    except cover_repair_binding.CoverRepairError as exc:
-        problems.append(str(exc))
-    return plan, manifest, problems
+def _load_cover_repair_manifest(plan_path: Path) -> tuple[dict | None, dict | None, list[str]]:
+    """Bind the CLI's existing manifest gates to the cover-only flow."""
+
+    return cover_repair_cli.load_manifest(
+        plan_path,
+        load_and_verify=load_and_verify,
+        title_cover_qc_problems=_title_cover_qc_attestation_problems,
+    )
 
 
 def cover_repair_plan(args: argparse.Namespace) -> int:
-    """Freeze one exact cover-only repair without changing remote state."""
+    """Keep the public parser handler while delegating cover-only orchestration."""
 
-    manifest_path = Path(args.manifest).resolve()
-    journal = Path(args.journal).resolve()
-    lock_path = Path(args.lock) if args.lock else DEFAULT_UPLOAD_LOCK
-    with exclusive_upload_lock(lock_path):
-        manifest, problems = load_and_verify(manifest_path)
-        if manifest is not None:
-            problems.extend(repair_binding.repair_publication_target_problems(manifest, args.bvid))
-            problems.extend(_title_cover_qc_attestation_problems(manifest, required=True))
-        if problems or manifest is None:
-            for problem in problems:
-                print(f"REFUSE: {problem}", file=sys.stderr)
-            return 2
-        adapter = _same_bv_cover_adapter(Path(args.cookie_json))
-        section_id = (manifest.get("season") or {}).get("section_id")
-        if not isinstance(section_id, int):
-            print(
-                "REFUSE: cover repair manifest has no exact section_id",
-                file=sys.stderr,
-            )
-            return 2
-        snapshot = adapter.observe(args.bvid, section_id)
-        plan = cover_repair_binding.create_plan(
-            manifest_path=manifest_path,
-            manifest=manifest,
-            bvid=args.bvid,
-            snapshot=snapshot,
-            predecessor_completed_path=(
-                Path(args.predecessor_completed).resolve() if args.predecessor_completed else None
-            ),
-        )
-        if args.dry_run:
-            print(json.dumps(plan, ensure_ascii=False, indent=2))
-            return 0
-        plan_path = Path(args.out).resolve()
-        cover_repair_binding.write_plan(plan_path, plan)
-        cover_repair_binding.initialise_journal(journal, plan_path, plan)
-    print(
-        json.dumps(
-            {
-                "status": "PLANNED",
-                "bvid": args.bvid,
-                "plan": str(plan_path),
-                "journal": str(journal),
-                "remote_mutation": False,
-            },
-            ensure_ascii=False,
-        )
+    return cover_repair_cli.plan(
+        args,
+        default_upload_lock=DEFAULT_UPLOAD_LOCK,
+        exclusive_upload_lock=exclusive_upload_lock,
+        load_and_verify=load_and_verify,
+        title_cover_qc_problems=_title_cover_qc_attestation_problems,
+        same_bv_cover_adapter=_same_bv_cover_adapter,
     )
-    return 0
 
 
 def cover_repair_status(args: argparse.Namespace) -> int:
-    """Validate local cover-only authority without remote access."""
+    """Keep the public parser handler while delegating cover-only status."""
 
-    plan_path = Path(args.plan).resolve()
-    journal = Path(args.journal).resolve()
-    _plan, manifest, problems = _load_cover_repair_manifest(plan_path)
-    if manifest is None or problems:
-        for problem in problems:
-            print(f"REFUSE: {problem}", file=sys.stderr)
-        return 2
-    result = cover_repair_binding.status(plan_path=plan_path, journal=journal, manifest=manifest)
-    print(
-        json.dumps(
-            {
-                "state": result.state,
-                "message": result.message,
-                "details": result.details,
-                "remote_mutation": False,
-            },
-            ensure_ascii=False,
-        )
+    return cover_repair_cli.status(
+        args,
+        load_cover_repair_manifest=_load_cover_repair_manifest,
     )
-    if result.state == "VERIFIED":
-        return 0
-    return 5 if result.state == "BLOCKED_DRIFT" else 6
 
 
 def cover_repair_run(args: argparse.Namespace) -> int:
-    """Resume a cover-only edit under the shared publication lock."""
+    """Keep the public parser handler while delegating cover-only execution."""
 
-    plan_path = Path(args.plan).resolve()
-    journal = Path(args.journal).resolve()
-    lock_path = Path(args.lock) if args.lock else DEFAULT_UPLOAD_LOCK
-    lock = nullcontext() if args.dry_run else exclusive_upload_lock(lock_path)
-    with lock:
-        _plan, manifest, problems = _load_cover_repair_manifest(plan_path)
-        if manifest is None or problems:
-            for problem in problems:
-                print(f"REFUSE: {problem}", file=sys.stderr)
-            return 2
-        if args.dry_run:
-            result = cover_repair_binding.status(
-                plan_path=plan_path, journal=journal, manifest=manifest
-            )
-        else:
-            result = cover_repair_binding.run(
-                plan_path=plan_path,
-                journal=journal,
-                manifest=manifest,
-                adapter=_same_bv_cover_adapter(Path(args.cookie_json)),
-                wait_seconds=args.wait,
-                poll_seconds=args.poll,
-            )
-    print(
-        json.dumps(
-            {
-                "state": result.state,
-                "changed": result.changed,
-                "message": result.message,
-                "details": result.details,
-                "dry_run": bool(args.dry_run),
-            },
-            ensure_ascii=False,
-        )
+    return cover_repair_cli.run(
+        args,
+        default_upload_lock=DEFAULT_UPLOAD_LOCK,
+        exclusive_upload_lock=exclusive_upload_lock,
+        load_cover_repair_manifest=_load_cover_repair_manifest,
+        same_bv_cover_adapter=_same_bv_cover_adapter,
     )
-    if result.state == "VERIFIED":
-        return 0
-    return 5 if result.state == "BLOCKED_DRIFT" else 6
 
 
 def cover_repair_verify_live(args: argparse.Namespace) -> int:
-    """Create a fresh readback receipt for a VERIFIED cover-only edit."""
+    """Keep the public parser handler while delegating live verification."""
 
-    plan_path = Path(args.plan).resolve()
-    journal = Path(args.journal).resolve()
-    out = Path(args.out).resolve()
-    lock_path = Path(args.lock) if args.lock else DEFAULT_UPLOAD_LOCK
-    with exclusive_upload_lock(lock_path):
-        _plan, manifest, problems = _load_cover_repair_manifest(plan_path)
-        if manifest is None or problems:
-            for problem in problems:
-                print(f"REFUSE: {problem}", file=sys.stderr)
-            return 2
-        completed = cover_repair_binding.verify_live(
-            plan_path=plan_path,
-            journal=journal,
-            manifest=manifest,
-            adapter=_same_bv_cover_adapter(Path(args.cookie_json)),
-            out=out,
-        )
-        try:
-            reconciliation = _reconcile_same_bv_cover_publication(
-                completed_path=out,
-                manifest=manifest,
-                manifest_path=Path(str((completed.get("manifest") or {})["path"])),
-                reconciled_at=str(completed["verified_at"]),
-            )
-        except publication_reconciliation.PublicationReconciliationError as exc:
-            print(
-                "LIVE VERIFIED BUT LOCAL RECONCILIATION PENDING: "
-                f"{exc}; re-run cover-repair-verify-live with the same "
-                "completed path",
-                file=sys.stderr,
-            )
-            return 6
-    print(
-        json.dumps(
-            {
-                "status": completed["status"],
-                "bvid": completed["bvid"],
-                "unchanged_cid": completed["unchanged_cid"],
-                "completed_sidecar": str(out),
-                "completed_sidecar_sha256": sha256_file(out),
-                "publication_reconciliation": reconciliation,
-                "remote_mutation": False,
-            },
-            ensure_ascii=False,
-        )
+    return cover_repair_cli.verify_live(
+        args,
+        default_upload_lock=DEFAULT_UPLOAD_LOCK,
+        exclusive_upload_lock=exclusive_upload_lock,
+        load_cover_repair_manifest=_load_cover_repair_manifest,
+        same_bv_cover_adapter=_same_bv_cover_adapter,
+        reconcile_same_bv_cover_publication=_reconcile_same_bv_cover_publication,
+        reconciliation_error=publication_reconciliation.PublicationReconciliationError,
+        sha256_file=sha256_file,
     )
-    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -7,11 +7,12 @@ existing test and manual-repair seam.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import subprocess
-from collections.abc import Collection
+from collections.abc import Callable, Collection, Mapping
 from datetime import datetime
 from pathlib import Path
 
@@ -22,6 +23,21 @@ from src.autoslice.story_contract import canonicalize_relation_summary
 
 _runner = RunnerProxy()
 _SHA256_RX = re.compile(r"sha256:[0-9a-f]{64}")
+
+# Visual song discovery is optional enrichment.  A failed inventory gets one
+# later-tick retry after the segment itself is durable; a second failure is
+# terminal for this lane so a date cannot be held open forever.
+VISUAL_RETRY_MAX_ATTEMPTS = 2
+VISUAL_RETRY_METADATA_KEY = "visual_retry"
+VISUAL_RETRY_DUE = "DUE"
+VISUAL_RETRY_SUCCEEDED = "SUCCEEDED"
+VISUAL_RETRY_EXHAUSTED = "EXHAUSTED"
+_SONG_VISUAL_COLLECTIONS = (
+    "pending_song",
+    "song_backlog",
+    "song_selection_backlog",
+    "songs",
+)
 
 
 def _verified_state_source_sha256(state: dict, segment: Path) -> str | None:
@@ -446,16 +462,441 @@ def visual_song_config_from_env() -> _runner.VisualSongConfig:
     )
 
 
-def discover_segments(date: str, state: dict) -> None:
+def _discovery_state_collections(state: dict) -> tuple:
+    """Return fresh collection references after a persistence callback.
+
+    The normal state writer replaces a tracked state mapping with a deep copy
+    after a successful write.  Local aliases therefore must be rebound before
+    the next segment, or its mutations would be lost from the durable mapping.
+    """
+
+    return (
+        set(state.setdefault("segments_done", [])),
+        state.setdefault("segments_dead", {}),
+        state.setdefault("bcut_attempts", {}),
+        state.setdefault("pending_talk", []),
+        state.setdefault("pending_song", []),
+        state.setdefault("visual_song_inventory", {}),
+        set(state.setdefault("visual_song_seen_entries", [])),
+        state.setdefault("segment_durations_ms", {}),
+    )
+
+
+def _checkpoint_state(persist_state: Callable[[], None] | None) -> None:
+    """Persist one internally consistent discovery transition, if requested.
+
+    The callback deliberately runs outside a catch block: a failed write must
+    stop discovery before the next segment can mutate the in-memory state.
+    """
+
+    if persist_state is not None:
+        persist_state()
+
+
+def _positive_int(value: object, *, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= 0 else default
+
+
+def _visual_retry_state(manifest: Mapping[str, object]) -> tuple[int, bool]:
+    """Return ``(attempts, exhausted)`` for one failed inventory.
+
+    A manifest from before retry metadata existed is conservatively one prior
+    attempt.  Unknown or malformed explicit metadata fails closed at the
+    two-attempt ceiling rather than creating an unbounded provider loop.
+    """
+
+    if str(manifest.get("status") or "").upper() != "FAILED":
+        return 0, False
+    metadata = manifest.get(VISUAL_RETRY_METADATA_KEY)
+    if isinstance(metadata, Mapping):
+        raw_attempts = metadata.get("attempts", metadata.get("attempt_count"))
+        if raw_attempts is None:
+            attempts = 1
+        elif isinstance(raw_attempts, bool) or not isinstance(raw_attempts, int):
+            return VISUAL_RETRY_MAX_ATTEMPTS, True
+        else:
+            attempts = max(1, min(raw_attempts, VISUAL_RETRY_MAX_ATTEMPTS))
+        metadata_status = str(metadata.get("status") or "").upper()
+        exhausted = bool(metadata.get("exhausted") is True) or metadata_status in {
+            VISUAL_RETRY_EXHAUSTED,
+            VISUAL_RETRY_SUCCEEDED,
+        }
+        if metadata.get("due") is False:
+            exhausted = True
+    else:
+        # A few short-lived pre-schema experiments used top-level retry hints;
+        # read them for migration, while the canonical writer uses the nested
+        # object above.
+        raw_attempts = next(
+            (
+                manifest.get(key)
+                for key in ("visual_retry_attempts", "retry_attempts", "retry_count")
+                if key in manifest
+            ),
+            None,
+        )
+        if raw_attempts is None and not any(
+            manifest.get(key) is True
+            for key in ("visual_retry_exhausted", "retry_exhausted")
+        ):
+            return 1, False
+        if raw_attempts is None:
+            attempts = VISUAL_RETRY_MAX_ATTEMPTS
+        elif isinstance(raw_attempts, bool) or not isinstance(raw_attempts, int):
+            return VISUAL_RETRY_MAX_ATTEMPTS, True
+        else:
+            attempts = max(1, min(raw_attempts, VISUAL_RETRY_MAX_ATTEMPTS))
+        exhausted = bool(
+            attempts >= VISUAL_RETRY_MAX_ATTEMPTS
+            or any(
+                manifest.get(key) is True
+                for key in ("visual_retry_exhausted", "retry_exhausted")
+            )
+        )
+    return attempts, exhausted or attempts >= VISUAL_RETRY_MAX_ATTEMPTS
+
+
+def visual_song_retry_due(
+    state: Mapping[str, object], *, segment_stems: Collection[str] | None = None
+) -> bool:
+    """Whether a durable done segment has one visual-only retry remaining."""
+
+    done = {str(stem) for stem in (state.get("segments_done") or [])}
+    allowed = {str(stem) for stem in segment_stems} if segment_stems is not None else None
+    inventory = state.get("visual_song_inventory")
+    if not isinstance(inventory, Mapping):
+        return False
+    for raw_stem, raw_manifest in inventory.items():
+        stem = str(raw_stem)
+        if stem not in done or (allowed is not None and stem not in allowed):
+            continue
+        if not isinstance(raw_manifest, Mapping):
+            continue
+        attempts, exhausted = _visual_retry_state(raw_manifest)
+        if (
+            str(raw_manifest.get("status") or "").upper() == "FAILED"
+            and not exhausted
+            and attempts < VISUAL_RETRY_MAX_ATTEMPTS
+        ):
+            return True
+    return False
+
+
+def _with_visual_retry_metadata(
+    manifest: Mapping[str, object], *, attempts: int, status: str
+) -> dict[str, object]:
+    updated = dict(manifest)
+    bounded_attempts = max(1, min(int(attempts), VISUAL_RETRY_MAX_ATTEMPTS))
+    updated[VISUAL_RETRY_METADATA_KEY] = {
+        "attempts": bounded_attempts,
+        "max_attempts": VISUAL_RETRY_MAX_ATTEMPTS,
+        "status": status,
+        "due": status == VISUAL_RETRY_DUE,
+        "exhausted": status == VISUAL_RETRY_EXHAUSTED,
+    }
+    return updated
+
+
+def _manifest_from_visual_result(result: object) -> dict[str, object]:
+    try:
+        raw = result.to_manifest()
+    except Exception:  # noqa: BLE001 - optional result shape must fail open
+        return {}
+    return dict(raw) if isinstance(raw, Mapping) else {}
+
+
+def _safe_visual_retry_error(result: object, *, fallback: str) -> str:
+    """Keep retry state errors structural; never persist provider text/secrets."""
+
+    error = getattr(result, "error", None)
+    if not isinstance(error, str):
+        return fallback
+    value = error.strip()
+    if not value or len(value) > 512 or re.search(
+        r"(?i)(api[_ -]?key|secret|token|password|credential)", value
+    ):
+        return fallback
+    if value.startswith("GEMINI_VISUAL_SONG_DISCOVERY_FAILED"):
+        return re.sub(r"[^A-Za-z0-9_.:;= -]", "_", value)[:512]
+    return fallback
+
+
+def _visual_candidate_identity(stem: str, candidate: object) -> str:
+    title = str(getattr(candidate, "song_title", "") or "").strip()
+    normalized = _runner.normalize_visual_title(title)
+    list_index = getattr(candidate, "list_index", None)
+    if list_index is None:
+        evidence = getattr(candidate, "evidence", {})
+        if isinstance(evidence, Mapping):
+            list_index = evidence.get("list_index")
+    if isinstance(list_index, int) and not isinstance(list_index, bool) and list_index > 0:
+        return f"list:{list_index}:{normalized}"
+    start_ms = _positive_int(getattr(candidate, "start_ms", 0))
+    return f"media:{stem}:{start_ms}:{normalized}"
+
+
+def _visual_row_identity(row: Mapping[str, object]) -> str | None:
+    evidence = row.get("visual_song_evidence")
+    if not isinstance(evidence, Mapping) and row.get("lane") not in {
+        "visual_song_inventory",
+        "visual_song_list",
+    }:
+        return None
+    evidence = evidence if isinstance(evidence, Mapping) else {}
+    title = str(evidence.get("song_title") or row.get("title_hint") or "").strip()
+    normalized = _runner.normalize_visual_title(title)
+    if not normalized:
+        return None
+    nested_evidence = evidence.get("evidence")
+    list_index = (
+        nested_evidence.get("list_index")
+        if isinstance(nested_evidence, Mapping)
+        else None
+    )
+    if isinstance(list_index, int) and not isinstance(list_index, bool) and list_index > 0:
+        return f"list:{list_index}:{normalized}"
+    segment_value = row.get("segment_path") or row.get("segment")
+    stem = Path(str(segment_value)).stem if segment_value else ""
+    start_ms = _positive_int(evidence.get("start_ms"), default=_positive_int(row.get("anchor_start_ms")))
+    return f"media:{stem}:{start_ms}:{normalized}"
+
+
+def _visual_candidate_cid(segment_tag: str, candidate: object) -> str:
+    title = str(getattr(candidate, "song_title", "") or "")
+    title_hash = hashlib.sha256(title.encode("utf-8")).hexdigest()[:8]
+    start_ms = _positive_int(getattr(candidate, "start_ms", 0))
+    return f"songvis_{segment_tag}_{start_ms // 1000}_{title_hash}"
+
+
+def _song_state_rows(state: Mapping[str, object]) -> list[Mapping[str, object]]:
+    rows: list[Mapping[str, object]] = []
+    for collection in _SONG_VISUAL_COLLECTIONS + ("song_superseded_attempts",):
+        values = state.get(collection)
+        if isinstance(values, list):
+            rows.extend(row for row in values if isinstance(row, Mapping))
+    return rows
+
+
+def _song_visual_target_entries(
+    state: Mapping[str, object], stem: str
+) -> list[tuple[str, int, dict[str, object]]]:
+    """Return active song rows for a stem with their durable collection slots."""
+
+    entries: list[tuple[str, int, dict[str, object]]] = []
+    for collection in _SONG_VISUAL_COLLECTIONS:
+        values = state.get(collection)
+        if not isinstance(values, list):
+            continue
+        for index, row in enumerate(values):
+            if not isinstance(row, Mapping):
+                continue
+            segment_value = row.get("segment_path") or row.get("segment")
+            if not segment_value or Path(str(segment_value)).stem != stem:
+                continue
+            entries.append((collection, index, dict(row)))
+    return entries
+
+
+def _retry_failed_visual_songs(
+    date: str, state: dict, *, persist_state: Callable[[], None] | None
+) -> None:
+    """Replay only failed visual inventory for already-done segments."""
+
+    done = {str(stem) for stem in (state.get("segments_done") or [])}
+    for segment in _runner.list_segments(date):
+        stem = segment.stem
+        if stem not in done:
+            continue
+        inventory = state.get("visual_song_inventory")
+        manifest = inventory.get(stem) if isinstance(inventory, Mapping) else None
+        if not isinstance(manifest, Mapping):
+            continue
+        attempts, exhausted = _visual_retry_state(manifest)
+        if (
+            str(manifest.get("status") or "").upper() != "FAILED"
+            or exhausted
+            or attempts >= VISUAL_RETRY_MAX_ATTEMPTS
+        ):
+            continue
+
+        try:
+            durations = state.get("segment_durations_ms")
+            duration = (
+                durations.get(stem)
+                if isinstance(durations, Mapping)
+                else None
+            )
+            duration_ms = _positive_int(duration)
+            if duration_ms <= 0:
+                duration_ms = _positive_int(_runner.ffprobe_ms(segment))
+            if duration_ms <= 0:
+                raise ValueError("visual retry duration unavailable")
+            result = _runner.discover_visual_songs(
+                segment,
+                _runner.BASE / "cache" / date / "visual-song-inventory",
+                duration_ms=duration_ms,
+                config=_runner.visual_song_config_from_env(),
+            )
+        except Exception as exc:  # noqa: BLE001 - visual lane is fail-open
+            failed = dict(manifest)
+            failed.update(
+                status="FAILED",
+                candidates=[],
+                cache_hit=False,
+                error=f"VISUAL_RETRY_EXCEPTION:{type(exc).__name__}",
+            )
+            failed = _with_visual_retry_metadata(
+                failed,
+                attempts=VISUAL_RETRY_MAX_ATTEMPTS,
+                status=VISUAL_RETRY_EXHAUSTED,
+            )
+            state.setdefault("visual_song_inventory", {})[stem] = failed
+            _checkpoint_state(persist_state)
+            continue
+
+        result_status = str(getattr(result, "status", "FAILED") or "FAILED").upper()
+        if result_status != "READY":
+            failed = _manifest_from_visual_result(result)
+            failed.update(
+                status="FAILED",
+                candidates=[],
+                cache_hit=False,
+                error=_safe_visual_retry_error(
+                    result, fallback="VISUAL_RETRY_FAILED"
+                ),
+            )
+            failed = _with_visual_retry_metadata(
+                failed,
+                attempts=VISUAL_RETRY_MAX_ATTEMPTS,
+                status=VISUAL_RETRY_EXHAUSTED,
+            )
+            state.setdefault("visual_song_inventory", {})[stem] = failed
+            _checkpoint_state(persist_state)
+            continue
+
+        visual_seen = {
+            str(value)
+            for value in (state.get("visual_song_seen_entries") or [])
+            if isinstance(value, str)
+        }
+        existing_rows = _song_state_rows(state)
+        existing_visual_ids = {
+            identity
+            for row in existing_rows
+            if (identity := _visual_row_identity(row)) is not None
+        }
+        existing_cids = {
+            str(row.get("cid") or row.get("candidate_id") or "")
+            for row in existing_rows
+            if row.get("cid") or row.get("candidate_id")
+        }
+        seg_tag = re.sub(r"\D", "", stem)[-6:]
+        fresh_visual = []
+        for candidate in getattr(result, "candidates", ()) or ():
+            identity = _visual_candidate_identity(stem, candidate)
+            if identity in visual_seen:
+                continue
+            visual_seen.add(identity)
+            if identity in existing_visual_ids:
+                continue
+            if _visual_candidate_cid(seg_tag, candidate) in existing_cids:
+                continue
+            fresh_visual.append(candidate)
+
+        target_entries = _song_visual_target_entries(state, stem)
+        target_rows = [row for _, _, row in target_entries]
+        combined = _runner.union_visual_song_candidates(
+            target_rows,
+            fresh_visual,
+            segment_tag=seg_tag,
+        )
+        segment_xml = _runner.find_danmaku_xml(segment)
+        sessions = state.setdefault("segment_sessions", {})
+        if not isinstance(sessions, dict):
+            sessions = {}
+            state["segment_sessions"] = sessions
+        session_id = sessions.get(stem)
+        if not session_id:
+            session_id = recording_session_id(segment, date)
+            sessions[stem] = session_id
+        for song_item in combined:
+            song_item.setdefault("segment_path", str(segment))
+            song_item.setdefault("seg_dur_ms", duration_ms)
+            song_item.setdefault("xml", str(segment_xml) if segment_xml else None)
+            song_item.setdefault("session_id", session_id)
+            song_item.setdefault(
+                "danmaku",
+                _runner.danmaku_count_in(
+                    str(segment_xml) if segment_xml else None,
+                    int(song_item["anchor_start_ms"]),
+                    int(song_item["anchor_end_ms"]),
+                ),
+            )
+
+        existing_target_cids = {
+            str(row.get("cid") or row.get("candidate_id") or "")
+            for row in target_rows
+            if row.get("cid") or row.get("candidate_id")
+        }
+        for song_item in combined:
+            cid = str(song_item.get("cid") or song_item.get("candidate_id") or "")
+            if cid and cid not in existing_target_cids:
+                _runner._remember_song_quarantine_interval(state, song_item)
+
+        # A semantic song can already have moved beyond pending_song by the
+        # time visual enrichment retries.  Union once across all active song
+        # collections, then write each matched row back to its original slot.
+        # Only the truly unmatched suffix is appended, exactly once, to the
+        # pending queue.
+        target_count = len(target_entries)
+        for (collection, index, _), song_item in zip(
+            target_entries, combined[:target_count]
+        ):
+            values = state.get(collection)
+            if isinstance(values, list) and index < len(values):
+                values[index] = song_item
+        unmatched = combined[target_count:]
+        if unmatched:
+            pending = state.get("pending_song")
+            if not isinstance(pending, list):
+                pending = []
+                state["pending_song"] = pending
+            pending.extend(unmatched)
+        state["visual_song_seen_entries"] = sorted(visual_seen)
+        ready_manifest = _manifest_from_visual_result(result)
+        ready_manifest = _with_visual_retry_metadata(
+            ready_manifest,
+            attempts=VISUAL_RETRY_MAX_ATTEMPTS,
+            status=VISUAL_RETRY_SUCCEEDED,
+        )
+        state.setdefault("visual_song_inventory", {})[stem] = ready_manifest
+        _checkpoint_state(persist_state)
+
+
+def discover_segments(
+    date: str,
+    state: dict,
+    *,
+    persist_state: Callable[[], None] | None = None,
+) -> None:
     """Phase A: transcribe + recall new segments into pending queues."""
-    done = set(state.setdefault("segments_done", []))
-    dead = state.setdefault("segments_dead", {})
-    attempts = state.setdefault("bcut_attempts", {})
-    pending_talk = state.setdefault("pending_talk", [])
-    pending_song = state.setdefault("pending_song", [])
-    visual_inventory = state.setdefault("visual_song_inventory", {})
-    visual_seen = set(state.setdefault("visual_song_seen_entries", []))
-    segment_durations_ms = state.setdefault("segment_durations_ms", {})
+    _retry_failed_visual_songs(date, state, persist_state=persist_state)
+    (
+        done,
+        dead,
+        attempts,
+        pending_talk,
+        pending_song,
+        visual_inventory,
+        visual_seen,
+        segment_durations_ms,
+    ) = _discovery_state_collections(state)
 
     for segment in _runner.list_segments(date):
         stem = segment.stem
@@ -468,6 +909,17 @@ def discover_segments(date: str, state: dict) -> None:
         if size < _runner.MIN_SEGMENT_BYTES:
             dead[stem] = f"stub_too_small({size}B)"
             _runner.log(f"segment {segment.name}: dead stub ({size}B), skipping forever")
+            _checkpoint_state(persist_state)
+            (
+                done,
+                dead,
+                attempts,
+                pending_talk,
+                pending_song,
+                visual_inventory,
+                visual_seen,
+                segment_durations_ms,
+            ) = _discovery_state_collections(state)
             continue
         srt = _runner.bcut_transcribe(segment, date)
         if srt is None:
@@ -475,6 +927,17 @@ def discover_segments(date: str, state: dict) -> None:
             if attempts[stem] >= _runner.BCUT_MAX_ATTEMPTS:
                 dead[stem] = f"bcut_failed_x{attempts[stem]}"
                 _runner.log(f"segment {segment.name}: BCUT failed {attempts[stem]}x → dead")
+            _checkpoint_state(persist_state)
+            (
+                done,
+                dead,
+                attempts,
+                pending_talk,
+                pending_song,
+                visual_inventory,
+                visual_seen,
+                segment_durations_ms,
+            ) = _discovery_state_collections(state)
             continue
         xml = _runner.find_danmaku_xml(segment)
         scene_mapping = state.setdefault("segment_scene_contexts", {})
@@ -500,6 +963,17 @@ def discover_segments(date: str, state: dict) -> None:
             _runner.log(
                 f"{segment.name}: structured chat binding BLOCKED ({exc})"
             )
+            _checkpoint_state(persist_state)
+            (
+                done,
+                dead,
+                attempts,
+                pending_talk,
+                pending_song,
+                visual_inventory,
+                visual_seen,
+                segment_durations_ms,
+            ) = _discovery_state_collections(state)
             continue
         failures = state.get("structured_chat_binding_failures")
         if isinstance(failures, dict):
@@ -513,22 +987,27 @@ def discover_segments(date: str, state: dict) -> None:
             duration_ms=seg_dur,
             config=_runner.visual_song_config_from_env(),
         )
-        visual_inventory[stem] = visual_result.to_manifest()
-        fresh_visual = []
-        for visual_candidate in visual_result.candidates:
-            # The numbered overlay is cumulative across recording segments.
-            # Deduplicate a stable numbered row across the date while still
-            # allowing an unnumbered/repeated performance at another interval.
-            list_index = visual_candidate.list_index
-            identity = (
-                f"list:{list_index}:{_runner.normalize_visual_title(visual_candidate.song_title)}"
-                if list_index is not None
-                else f"media:{stem}:{visual_candidate.start_ms}:{_runner.normalize_visual_title(visual_candidate.song_title)}"
+        visual_manifest = _manifest_from_visual_result(visual_result)
+        visual_status = str(getattr(visual_result, "status", "FAILED") or "FAILED").upper()
+        if visual_status == "FAILED":
+            visual_manifest = _with_visual_retry_metadata(
+                visual_manifest,
+                attempts=1,
+                status=VISUAL_RETRY_DUE,
             )
-            if identity in visual_seen:
-                continue
-            visual_seen.add(identity)
-            fresh_visual.append(visual_candidate)
+        visual_inventory[stem] = visual_manifest
+        fresh_visual = []
+        if visual_status == "READY":
+            for visual_candidate in visual_result.candidates:
+                # The numbered overlay is cumulative across recording
+                # segments. Deduplicate a stable numbered row across the date
+                # while still allowing an unnumbered/repeated performance at
+                # another interval.
+                identity = _visual_candidate_identity(stem, visual_candidate)
+                if identity in visual_seen:
+                    continue
+                visual_seen.add(identity)
+                fresh_visual.append(visual_candidate)
         state["visual_song_seen_entries"] = sorted(visual_seen)
         if visual_result.status == "FAILED":
             _runner.log(f"{segment.name}: visual song inventory failed open ({visual_result.error})")
@@ -641,4 +1120,16 @@ def discover_segments(date: str, state: dict) -> None:
             pending_song.append(song_item)
             _runner._remember_song_quarantine_interval(state, song_item)
         done.add(stem)
+        state["segments_done"] = sorted(done)
+        _checkpoint_state(persist_state)
+        (
+            done,
+            dead,
+            attempts,
+            pending_talk,
+            pending_song,
+            visual_inventory,
+            visual_seen,
+            segment_durations_ms,
+        ) = _discovery_state_collections(state)
     state["segments_done"] = sorted(done)

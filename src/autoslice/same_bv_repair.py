@@ -1,18 +1,8 @@
 """Crash-safe, manifest-bound replacement of one existing Bilibili archive.
-
-This module deliberately does *not* have a "create archive" operation.  The
-only media mutation exposed by :class:`BilibiliRepairAdapter` is
-``biliup append -v <existing BV>``.  A durable hash-chained journal is written
-before that one append call.  Once ``APPEND_INTENT`` exists, every resume path
-is observation-only until the appended CID appears; append is never retried.
-
-The second mutation is an idempotent Creator Center edit that keeps exactly the
-new CID.  It may be retried with the same payload after code 21540 or an
-ambiguous transport failure, but only while the live topology is still exactly
-``[old P, planned new P]``.  A third, separately journaled mutation may update
-the existing collection episode title when and only when public metadata and
-the new CID are already exact and the episode title alone still equals the
-pre-repair title.  That title edit is never retried after its durable intent.
+There is no create operation: media mutation is one durably journaled
+``biliup append -v <existing BV>`` that is never retried after intent. The
+idempotent Creator edit then keeps exactly the new CID. A separately journaled
+collection-title sync runs only after CID and public metadata converge.
 """
 
 from __future__ import annotations
@@ -34,6 +24,7 @@ from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
     validate_recovery_publication_authority,
 )
+from src.autoslice import recovery_publication_authority_migration as authority_migration
 from src.autoslice.same_bv_cover_reconciliation import (
     is_cover_alias_reconciliation_transition as _is_cover_alias_reconciliation_transition,
     normalise_cover_url as _normalise_cover_url,
@@ -47,9 +38,11 @@ from src.autoslice.same_bv_section_title_sync import (
     section_title_only_pending as _section_title_only_pending,
     sync_exact_section_episode_title,
 )
+from src.autoslice import same_bv_tag_preservation as tag_preservation
 
 PLAN_SCHEMA = "same-bv-repair-plan.v2"
 JOURNAL_SCHEMA = "same-bv-repair-journal.v1"
+_target_metadata = tag_preservation.manifest_target  # cover-only repair compatibility
 JOURNAL_STATES = {
     "PLANNED",
     "APPEND_INTENT",
@@ -193,22 +186,11 @@ def _row_hash(row_without_hash: Mapping[str, Any]) -> str:
     return hashlib.sha256(_canonical_json(row_without_hash)).hexdigest()
 
 
-def _normalise_tags(value: object) -> list[str]:
-    if isinstance(value, str):
-        rows = [part.strip() for part in value.split(",") if part.strip()]
-    elif isinstance(value, list):
-        rows = [str(part).strip() for part in value if str(part).strip()]
-    else:
-        rows = []
-    # API ordering is not a semantic metadata distinction.  Duplicates are.
-    return sorted(rows)
-
-
 def _metadata_from_archive(archive: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "title": archive.get("title"),
         "desc": archive.get("desc"),
-        "tags": _normalise_tags(archive.get("tag")),
+        "tags": tag_preservation.normalise_tags(archive.get("tag")),
         "tid": archive.get("tid"),
         "copyright": archive.get("copyright"),
         "source": archive.get("source"),
@@ -220,7 +202,7 @@ def _metadata_from_public(public: Mapping[str, Any], public_tags: object) -> dic
     return {
         "title": public.get("title"),
         "desc": public.get("desc"),
-        "tags": _normalise_tags(public_tags),
+        "tags": tag_preservation.normalise_tags(public_tags),
         "tid": public.get("tid"),
         "copyright": public.get("copyright"),
         "cover": _normalise_cover_url(public.get("pic") or public.get("cover")),
@@ -463,20 +445,6 @@ class BilibiliRepairAdapter:
             expected_current_title=expected_current_title,
             target_title=target_title,
         )
-
-
-def _target_metadata(manifest: Mapping[str, Any]) -> dict[str, Any]:
-    policy = manifest.get("publish_policy") or {}
-    return {
-        "title": manifest.get("title"),
-        "desc": manifest.get("description"),
-        "tags": _normalise_tags(manifest.get("tags")),
-        "tid": policy.get("tid"),
-        "copyright": policy.get("copyright"),
-        "source": policy.get("source"),
-        # The exact CDN URL is prepared and journaled immediately before edit.
-        "cover": None,
-    }
 
 
 def package_recovery_publication_authority(
@@ -833,7 +801,7 @@ def _predecessor_completion_attestation(
     *,
     authority: Mapping[str, Any],
     bvid: str,
-    snapshot: Mapping[str, Any],
+    snapshot: Mapping[str, Any], preserve_existing_tags: bool = False,
 ) -> dict[str, Any]:
     """Replay one completed repair before admitting a later same-BV plan.
 
@@ -901,13 +869,20 @@ def _predecessor_completion_attestation(
         except PlanInvalid as exc:
             problems.append(f"predecessor plan invalid: {exc}")
             predecessor_plan = None
+    migration_binding: dict[str, object] = {}
     if predecessor_plan is not None:
         if predecessor_plan.get("plan_id") != plan_entry.get("plan_id"):
             problems.append("predecessor plan_id mismatch")
         if predecessor_plan.get("bvid") != bvid:
             problems.append("predecessor plan BVID mismatch")
-        if predecessor_plan.get("recovery_publication_authority") != authority:
-            problems.append("predecessor publication authority mismatch")
+        migration_binding, migration_error = (
+            authority_migration.predecessor_authority_migration_binding(
+                predecessor_plan, authority, plan_entry, completed, completed_path,
+                bvid, preserve_existing_tags,
+            )
+        )
+        if migration_error:
+            problems.append(f"predecessor publication authority mismatch: {migration_error}")
         if completed.get("manifest") != predecessor_plan.get("manifest"):
             problems.append("predecessor completed manifest binding mismatch")
         if completed.get("replacement") != predecessor_plan.get("replacement"):
@@ -999,6 +974,7 @@ def _predecessor_completion_attestation(
             "row_sha256": verified_entry.get("row_sha256"),
         },
         "new_cid": new_cid,
+        **migration_binding,
     }
 
 
@@ -1009,6 +985,7 @@ def create_plan(
     bvid: str,
     snapshot: Mapping[str, Any],
     predecessor_completed_path: Path | None = None,
+    preserve_existing_tags: bool = False,
 ) -> dict[str, Any]:
     """Freeze a read-only, exact single-P repair plan from live state."""
 
@@ -1039,7 +1016,7 @@ def create_plan(
             predecessor_completed_path,
             authority=authority,
             bvid=bvid,
-            snapshot=snapshot,
+            snapshot=snapshot, preserve_existing_tags=preserve_existing_tags,
         )
         expected_before_cid = predecessor_completion["new_cid"]
     if len(videos) != 1:
@@ -1091,6 +1068,17 @@ def create_plan(
     if problems:
         raise PlanInvalid("; ".join(problems))
 
+    try:
+        preservation = (
+            tag_preservation.receipt(manifest_tags=manifest.get("tags"), before=snapshot)
+            if preserve_existing_tags else None
+        )
+        target_metadata = tag_preservation.target(
+            manifest_tags=manifest.get("tags"), before=snapshot,
+            preservation=preservation, default_target=tag_preservation.manifest_target(manifest),
+        )
+    except tag_preservation.TagPreservationError as exc:
+        raise PlanInvalid(str(exc)) from exc
     manifest_sha = sha256_file(manifest_path)
     video = manifest.get("video") or {}
     cover = manifest.get("cover") or {}
@@ -1126,9 +1114,11 @@ def create_plan(
             "section_id": section_id,
             "season_title": season.get("season_title"),
         },
-        "target_metadata": _target_metadata(manifest),
+        "target_metadata": target_metadata,
         "before": snapshot,
     }
+    if preservation is not None:
+        plan["metadata_preservation"] = preservation
     if predecessor_completion is not None:
         plan["predecessor_completion"] = predecessor_completion
     validate_plan(plan, manifest=manifest)
@@ -1175,7 +1165,7 @@ def validate_plan(
     else:
         try:
             replayed_plan_attestation = _final_human_review_attestation(
-                {"package_attestation": plan_package_attestation}
+                {"package_attestation": plan_package_attestation, **({"recovery_publication_authority": validated_plan_authority} if isinstance(validated_plan_authority, Mapping) else {})}
             )
         except PlanInvalid as exc:
             problems.append(str(exc))
@@ -1238,6 +1228,7 @@ def validate_plan(
                 authority=validated_plan_authority,
                 bvid=str(bvid),
                 snapshot=before,
+                preserve_existing_tags=plan.get("metadata_preservation") is not None,
             )
         except PlanInvalid as exc:
             problems.append(f"repair predecessor completion invalid: {exc}")
@@ -1261,8 +1252,17 @@ def validate_plan(
         else:
             if plan_package_attestation != manifest_human_review:
                 problems.append("repair final human review attestation drifted from manifest")
-        if plan.get("target_metadata") != _target_metadata(manifest):
-            problems.append("repair target metadata drifted from manifest")
+        try:
+            expected_target = tag_preservation.target(
+                manifest_tags=manifest.get("tags"), before=before,
+                preservation=plan.get("metadata_preservation"),
+                default_target=tag_preservation.manifest_target(manifest),
+            )
+        except tag_preservation.TagPreservationError as exc:
+            problems.append(str(exc))
+        else:
+            if plan.get("target_metadata") != expected_target:
+                problems.append("repair target metadata drifted from manifest")
         for kind in ("video", "cover"):
             if (replacement.get(kind) or {}).get("sha256") != (manifest.get(kind) or {}).get(
                 "sha256"

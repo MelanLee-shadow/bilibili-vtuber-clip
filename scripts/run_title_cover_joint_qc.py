@@ -3,17 +3,138 @@
 Run on free from /opt/bilive/autoslice/repo:
   python3 scripts/run_title_cover_joint_qc.py <package_root> <title> <out_path>
 
-收编自 free:/tmp/run_title_cover_joint_qc.py(受骗片会话手作工具):
+收编自 recording-host:/tmp/run_title_cover_joint_qc.py(受骗片会话手作工具):
 身份行按 assets/lidousha/persona.md 修正——墨镜是可选配饰不是身份特征
 (v1 把"墨镜"写成必备,lidousha_primary 系统性假阴性,213135 案 1P2F)。
 The verdict is the exact parsed CPA answer (validator replays this bond);
 any gate the model fails leaves status=FAIL and the upload chain stops.
 """
-import hashlib, json, os, stat, sys, time
+import hashlib
+import json
+import os
+import stat
+import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, ".")
 from src.autoslice.cpa_frame_witness import image_vision_probe
+
+
+def resolve_candidate_id(record: dict, review: dict) -> str:
+    """Preserve ordinary precedence; narrowly admit the exact C2 legacy shape."""
+    story = record.get("story_contract")
+    story_id = story.get("candidate_id") if isinstance(story, dict) else None
+    delivery_id = record.get("delivery_candidate_id")
+    candidates = [value for value in (story_id, delivery_id) if isinstance(value, str) and value]
+    if candidates:
+        if len(set(candidates)) != 1:
+            raise ValueError("candidate authorities conflict")
+        return candidates[0]
+    if record.get("schema_version") != "lidousha-c2-release-record.v1":
+        raise ValueError("candidate id is unavailable")
+    root_id, items = record.get("candidate_id"), review.get("items")
+    if not isinstance(root_id, str) or not root_id or not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict) or items[0].get("candidate_id") != root_id:
+        raise ValueError("C2 legacy record candidate is absent or conflicts with review item")
+    return root_id
+
+
+def preflight_create_only_output(path: Path) -> tuple[int, str]:
+    absolute = path.absolute()
+    if absolute.name != path.name or not absolute.name:
+        raise ValueError("QC output filename is unsafe")
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    parent_fd = os.open(absolute.anchor, flags)
+    try:
+        # Descend under directory FDs rather than re-resolving an attacker-
+        # controlled ancestor path after its safety check.
+        for component in absolute.parent.parts[1:]:
+            if component in {"", ".", ".."}:
+                raise ValueError("QC output parent has an unsafe component")
+            try:
+                child_fd = os.open(component, flags, dir_fd=parent_fd)
+            except FileNotFoundError:
+                raise
+            except OSError as exc:
+                raise ValueError("QC output parent traverses unsafe directory") from exc
+            os.close(parent_fd)
+            parent_fd = child_fd
+        if stat.S_IMODE(os.fstat(parent_fd).st_mode) != 0o700:
+            raise ValueError("QC output parent must be 0700")
+        try:
+            os.stat(absolute.name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return parent_fd, absolute.name
+        raise FileExistsError("QC output already exists")
+    except Exception:
+        os.close(parent_fd)
+        raise
+
+
+def write_receipt_create_only(parent_fd: int, name: str, receipt: dict) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(name, flags, 0o600, dir_fd=parent_fd)
+    created = os.fstat(fd)
+    try:
+        data = (json.dumps(receipt, ensure_ascii=False, indent=1) + "\n").encode()
+        offset = 0
+        while offset < len(data):
+            wrote = os.write(fd, data[offset:])
+            if wrote <= 0:
+                raise OSError("QC receipt short write")
+            offset += wrote
+        os.fsync(fd)
+    except Exception:
+        try:
+            try:
+                current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+            except OSError:
+                # A concurrent unlink, replacement, or lstat failure cannot
+                # make the original write/fsync failure less important.
+                pass
+            else:
+                if (current.st_dev, current.st_ino) == (created.st_dev, created.st_ino):
+                    try:
+                        os.unlink(name, dir_fd=parent_fd)
+                    except OSError:
+                        pass
+        finally:
+            raise
+    finally:
+        os.close(fd)
+    os.fsync(parent_fd)
+
+
+def run_qc(
+    package_root: Path,
+    title: str,
+    out_path: Path,
+    *,
+    image_probe,
+) -> dict:
+    """Preflight the create-only target before the potentially paid probe."""
+    record, _publish, cover_path = resolve_package_inputs(package_root, title)
+    review_path = package_root.absolute() / "review_manifest.json"
+    review = json.loads(review_path.read_text(encoding="utf-8"))
+    parent_fd, output_name = preflight_create_only_output(out_path)
+    try:
+        candidate_id = resolve_candidate_id(record, review)
+        receipt = build_joint_qc_receipt(
+            cover_path=cover_path,
+            title=title,
+            candidate_id=candidate_id,
+            image_probe=image_probe,
+        )
+        write_receipt_create_only(parent_fd, output_name, receipt)
+        return receipt
+    finally:
+        os.close(parent_fd)
 
 
 def load_env(path: str) -> dict:
@@ -146,17 +267,22 @@ def resolve_package_inputs(
     return record, publish, cover_path
 
 
-def main() -> int:
-    package_root = Path(sys.argv[1]).resolve()
-    title = sys.argv[2]
-    out_path = Path(sys.argv[3])
-    env = load_env("/opt/bilive/autoslice/cpa.env")
+def build_joint_qc_receipt(
+    *,
+    cover_path: Path,
+    title: str,
+    candidate_id: str,
+    image_probe,
+    logical_cover_path: str | None = None,
+) -> dict:
+    """Probe staged cover bytes and return a receipt without writing it.
 
-    record, publish, cover_path = resolve_package_inputs(package_root, title)
-    story = record.get("story_contract") or {}
-    candidate_id = str(story.get("candidate_id") or record.get("delivery_candidate_id") or "")
+    ``logical_cover_path`` is deliberately separate from the bytes read by the
+    probe.  A private-stage preflight may bind the intended public pathname
+    only after proving the exact staged image SHA, without exposing its stage
+    path as a final package locator.
+    """
     cover_sha = hashlib.sha256(cover_path.read_bytes()).hexdigest()
-
     question = (
         "你是李豆沙频道的标题+封面联合质检员。下图是最终封面,拟用标题是:\n"
         f"《{title}》\n"
@@ -169,32 +295,29 @@ def main() -> int:
         '"physical_text_line_count": int 封面主文案的物理行数,'
         '"unrelated_or_misleading_elements": [] 与内容无关或误导的元素列表(没有就空数组),'
         '"reason": str 一句话理由,'
-        '"pass": bool 综合是否通过}\n'
-        "如实判断,不要迎合。"
+        '"pass": bool 综合是否通过}\n如实判断,不要迎合。'
     )
-    witness = image_vision_probe(
-        cover_path,
-        question,
-        api_base=env.get("CPA_BASE_URL", ""),
-        api_key=env.get("CPA_API_KEY", ""),
-    )
-    witness["image_path"] = str(cover_path)
+    witness = image_probe(cover_path, question)
+    if isinstance(witness, dict) and logical_cover_path is not None:
+        # The probe observed private staged bytes, but the hash below binds
+        # those exact bytes to the final logical cover.  Public consumers must
+        # never retain the deleted stage locator as their witness image path.
+        witness = dict(witness)
+        witness["image_path"] = logical_cover_path
     verdict = None
-    answer = witness.get("answer")
+    answer = witness.get("answer") if isinstance(witness, dict) else None
     if isinstance(answer, str):
         try:
             cleaned = answer.strip()
             if cleaned.startswith("```"):
                 cleaned = cleaned.strip("`\n")
                 cleaned = cleaned[cleaned.find("{"):]
-            start, end = cleaned.find("{"), cleaned.rfind("}")
-            cleaned = cleaned[start:end + 1]
-            verdict = json.loads(cleaned)
+            verdict = json.loads(cleaned[cleaned.find("{"):cleaned.rfind("}") + 1])
             witness["answer"] = cleaned
         except ValueError:
             verdict = None
     ok = (
-        isinstance(verdict, dict)
+        isinstance(verdict, dict) and isinstance(witness, dict)
         and witness.get("status") == "OBSERVED"
         and verdict.get("lidousha_primary") is True
         and verdict.get("thumbnail_readable") is True
@@ -203,28 +326,38 @@ def main() -> int:
         and verdict.get("title_cover_aligned") is True
         and verdict.get("physical_text_line_count") in (1, 2)
         and verdict.get("unrelated_or_misleading_elements") == []
+        and isinstance(verdict.get("reason"), str)
+        and bool(verdict.get("reason").strip())
         and verdict.get("pass") is True
     )
-    receipt = {
+    return {
         "schema_version": "lidousha-title-cover-joint-qc.v1",
         "candidate_id": candidate_id,
         "title": title,
         "title_sha256": "sha256:" + hashlib.sha256(title.encode("utf-8")).hexdigest(),
-        "cover_path": str(cover_path),
+        "cover_path": logical_cover_path or str(cover_path),
         "cover_sha256": "sha256:" + cover_sha,
-        "preferred_provider": "cpa",
-        "selected_provider": "cpa",
-        "witness": witness,
-        "verdict": verdict,
-        "status": "PASS" if ok else "FAIL",
-        "pass": bool(ok),
+        "preferred_provider": "cpa", "selected_provider": "cpa",
+        "witness": witness, "verdict": verdict,
+        "status": "PASS" if ok else "FAIL", "pass": bool(ok),
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(receipt, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
-    print("status:", receipt["status"], "| verdict:", json.dumps(verdict, ensure_ascii=False)[:200])
+
+
+def main() -> int:
+    package_root = Path(sys.argv[1]).resolve()
+    title = sys.argv[2]
+    out_path = Path(sys.argv[3])
+    env = load_env("/opt/bilive/autoslice/cpa.env")
+
+    def probe(path: Path, prompt: str) -> dict:
+        result = image_vision_probe(path, prompt, api_base=env.get("CPA_BASE_URL", ""), api_key=env.get("CPA_API_KEY", ""))
+        result["image_path"] = str(path)
+        return result
+    receipt = run_qc(package_root, title, out_path, image_probe=probe)
+    print("status:", receipt["status"], "| verdict:", json.dumps(receipt["verdict"], ensure_ascii=False)[:200])
     print("receipt:", out_path)
-    return 0 if ok else 2
+    return 0 if receipt["pass"] else 2
 
 
 if __name__ == "__main__":

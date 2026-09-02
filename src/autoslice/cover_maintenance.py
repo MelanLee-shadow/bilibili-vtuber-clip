@@ -30,14 +30,35 @@ _runner = RunnerProxy()
 def delivered_paths(date: str, rec: dict) -> tuple[Path, Path] | None:
     """(mp4, cover) delivery paths for a pick/song record, or None if the mp4
     was never delivered (failed/gated records have nothing to repair)."""
-    if rec.get("delivered"):  # song lane records the delivered path explicitly
-        mp4 = Path(rec["delivered"])
+    explicit = rec.get("delivered")
+    strict_cid_bound = False
+    if not isinstance(explicit, str):
+        summary = rec.get("summary")
+        explicit = summary.get("delivery") if isinstance(summary, dict) else None
+        strict_cid_bound = isinstance(explicit, str)
+    if isinstance(explicit, str) and explicit:
+        candidate_id = str(rec.get("candidate_id") or "")
+        expected_root = _runner.profile_delivery_root() / date
+        try:
+            root = expected_root.resolve(strict=True)
+            mp4 = Path(explicit).resolve(strict=True)
+            if (
+                not mp4.is_relative_to(root)
+                or (strict_cid_bound and (
+                    not candidate_id or not mp4.name.endswith(f"__{candidate_id}.mp4")
+                ))
+            ):
+                return None
+        except (OSError, ValueError):
+            return None
     else:
+        # Read-only compatibility for title-only packages made before the
+        # CID-injective delivery contract.  New results persist exact paths.
         name = _runner.safe_name(rec.get("hook", ""), rec.get("candidate_id", ""))
         mp4 = _runner.profile_delivery_root() / date / f"{name}.mp4"
     if not mp4.is_file():
         return None
-    return mp4, mp4.with_suffix(".cover.png")
+    return mp4, Path(str(mp4)[:-4] + ".cover.png")
 
 
 def cover_ref_for(date: str, cid: str) -> Path | None:
@@ -202,6 +223,68 @@ def _handle_screenshot_route_repair(record: dict, fingerprint: str) -> bool:
     return True
 
 
+def _live_cover_record(state: dict, candidate_id: str) -> dict:
+    """Reacquire one current record after a tracked-state writeback."""
+
+    matches = [
+        record
+        for lane in ("picks", "songs")
+        for record in state.get(lane, []) or []
+        if isinstance(record, dict)
+        and str(record.get("candidate_id") or "") == candidate_id
+    ]
+    if len(matches) != 1:
+        raise ValueError(
+            f"cover repair candidate is missing or duplicated after writeback: {candidate_id}"
+        )
+    return matches[0]
+
+
+def _cover_repair_todo_ids(
+    date: str,
+    state: dict,
+    records: list[dict],
+    record_ids: list[str],
+) -> list[str]:
+    needed_ids = {
+        str(record.get("candidate_id") or "")
+        for record in records
+        if _runner.cover_repair_needed(date, record)
+    }
+    cleared_stale_preflight_error = False
+    for record in records:
+        if (
+            str(record.get("candidate_id") or "") not in needed_ids
+            and record.get("cover_integrity_status")
+            in {"VALID_BOUND", "VALID_BOUND_RECOVERED"}
+            and record.pop("cover_authority_preflight_error", None) is not None
+        ):
+            cleared_stale_preflight_error = True
+    if cleared_stale_preflight_error:
+        _runner.write_state(date, state)
+    exhausted_ids = [
+        candidate_id
+        for candidate_id in record_ids
+        if candidate_id in needed_ids
+        and not _runner._cover_repair_eligible(_live_cover_record(state, candidate_id))
+    ]
+    for candidate_id in exhausted_ids:
+        record = _live_cover_record(state, candidate_id)
+        record["cover_integrity_status"] = "INVALID_REPAIR_BUDGET_EXHAUSTED"
+        record["cover_repair_exhausted"] = True
+        status = str(record.get("cover_status") or "BLOCKED_AI_COVER_REQUIRED")
+        if "repair_budget_exhausted" not in status:
+            record["cover_status"] = f"{status}(repair_budget_exhausted)"
+    if exhausted_ids:
+        _runner.write_state(date, state)
+    return [
+        candidate_id
+        for candidate_id in record_ids
+        if candidate_id in needed_ids
+        and _runner._cover_repair_eligible(_live_cover_record(state, candidate_id))
+    ]
+
+
 def repair_covers(
     date: str,
     state: dict,
@@ -271,6 +354,7 @@ def repair_covers(
     records = maintenance_records
     if not records:
         return
+    record_ids = [str(record.get("candidate_id") or "") for record in records]
     recovered = False
     for record in records:
         paths = _runner.delivered_paths(date, record)
@@ -282,6 +366,7 @@ def repair_covers(
             recovered = _runner._recover_committed_cover_binding(date, record, *paths) or recovered
     if recovered:
         _runner.write_state(date, state)
+        records = [_live_cover_record(state, candidate_id) for candidate_id in record_ids]
     fingerprint = _runner.pipeline_fingerprint()
     for record in records:
         if (
@@ -290,32 +375,11 @@ def repair_covers(
             or record.get("delivered")
         ) and record.get("title"):
             _runner._refresh_cover_repair_budget(record, fingerprint)
-    needed = [r for r in records if _runner.cover_repair_needed(date, r)]
-    needed_ids = {id(record) for record in needed}
-    cleared_stale_preflight_error = False
-    for record in records:
-        if (
-            id(record) not in needed_ids
-            and record.get("cover_integrity_status")
-            in {"VALID_BOUND", "VALID_BOUND_RECOVERED"}
-            and record.pop("cover_authority_preflight_error", None) is not None
-        ):
-            cleared_stale_preflight_error = True
-    if cleared_stale_preflight_error:
-        _runner.write_state(date, state)
-    exhausted = [r for r in needed if not _runner._cover_repair_eligible(r)]
-    for record in exhausted:
-        record["cover_integrity_status"] = "INVALID_REPAIR_BUDGET_EXHAUSTED"
-        record["cover_repair_exhausted"] = True
-        status = str(record.get("cover_status") or "BLOCKED_AI_COVER_REQUIRED")
-        if "repair_budget_exhausted" not in status:
-            record["cover_status"] = f"{status}(repair_budget_exhausted)"
-    if exhausted:
-        _runner.write_state(date, state)
-    todo = [r for r in needed if _runner._cover_repair_eligible(r)]
-    if not todo:
+    todo_ids = _cover_repair_todo_ids(date, state, records, record_ids)
+    if not todo_ids:
         return
-    for rec in todo:
+    for candidate_id in todo_ids:
+        rec = _live_cover_record(state, candidate_id)
         mp4, cover = _runner.delivered_paths(date, rec)
         generation = rec.get("cover_generation")
         if (
@@ -422,6 +486,15 @@ def repair_covers(
         # request.  A process/host crash after provider spend cannot evade the
         # lifetime cap or replay the same budget slot forever.
         _runner.write_state(date, state)
+        try:
+            rec = _live_cover_record(state, str(cid))
+            live_paths = _runner.delivered_paths(date, rec)
+            if live_paths is None:
+                raise ValueError("cover repair delivery disappeared after writeback")
+            mp4, cover = live_paths
+        except ValueError as exc:
+            _runner.log(f"cover repair {cid}: refused stale post-writeback bind: {exc}")
+            continue
         try:
             with open(log_path, "a", encoding="utf-8") as sink:
                 completed = subprocess.run(
