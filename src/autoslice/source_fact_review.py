@@ -65,9 +65,10 @@ from src.autoslice.qixi_source_fact_terminal_preservation import (
 )
 from src.autoslice.source_fact_review_shape import source_fact_review_passes_shape
 from src.autoslice.surface_canon import (
-    CHANNEL_PROFILE, canonicalize_hard_meme_surfaces,
-    hard_meme_surface_rules,
+    CHANNEL_PROFILE, _hard_meme_canon_prompt_block,
+    canonicalize_hard_meme_surfaces,
 )
+from src.autoslice.story_contract import public_text_relation_prompt
 from src.autoslice.title_policy import publish_title_policy_violations
 SCHEMA_VERSION = "lidousha-source-fact-review.v1"
 RESCORE_CANDIDATE_SCHEMA_VERSION = "source-fact-rescore-candidate.v1"
@@ -439,30 +440,6 @@ def _finalize_receipt(receipt: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _hard_meme_canon_prompt_block() -> str:
-    """Teach the judge the channel's unbypassable meme canon.
-
-    Without this the literal-evidence gate and the meme canon deadlock: the
-    final transcript spells the meme canonically, raw danmaku keeps the banned
-    surface, and a judge that only does literal binding "repairs" derived copy
-    back and forth until the candidate dies (hook rewrite then also trips the
-    scorecard-stale gate).  The canon is final-output law, so the judge must
-    read canonical spellings as carrying the original surface's semantics.
-    """
-
-    rules = hard_meme_surface_rules()
-    if not rules:
-        return ""
-    listing = "；".join(f"「{rule.surface}」一律写作「{rule.canonical}」" for rule in rules)
-    return (
-        "频道钦定梗词规范（hard-meme-canon，最终输出铁律）：" + listing + "。"
-        "规范词面是同一个梗的钦定拼写，不是换词：最终字幕与两份文案里的规范"
-        "词面承载原词的完整语义，判断事实支持时必须按原词语义理解；不得因为"
-        "弹幕/证据原文用了被禁拼写而判定文案不受支持，也永远不得把规范词面"
-        "改回被禁拼写。你输出的一切文案必须使用规范词面。\n"
-    )
-
-
 def _prompt(
     *,
     selection_hook: str,
@@ -474,6 +451,7 @@ def _prompt(
     title_policy_violations: list[str],
     speaker_transcript: str | None,
     entity_context: _ResolvedEntityContext | None,
+    story_contract: Mapping[str, object] | None = None,
 ) -> str:
     return (
         f"你是{CHANNEL_PROFILE.display_name}切片派生文案的 source-fact 最终裁决者。你只有文字输入，"
@@ -485,6 +463,7 @@ def _prompt(
         "允许不逐字的自然概括，但不允许把提议写成既成事实、把猜测写成断言，"
         "也不允许凭空把同音词换成另一个含义。\n"
         + _entity_context_prompt_block(entity_context)
+        + public_text_relation_prompt(story_contract)
         + "如果你修复 selection_hook，还必须核对原 selection_scorecard 的"
         "tier_basis、tier_reason、维度和证据 cue 是否仍描述修复后的同一核心梗。"
         "若仍一致，selection_scorecard_review.status=COMPATIBLE；若核心梗已换，"
@@ -729,6 +708,7 @@ def _single_review(
     speaker_transcript: str | None = None,
     speaker_evidence_sha256: str | None = None,
     entity_context: _ResolvedEntityContext | None = None,
+    story_contract: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     title_policy_violations = publish_title_policy_violations(
         title,
@@ -744,6 +724,7 @@ def _single_review(
         title_policy_violations=title_policy_violations,
         speaker_transcript=speaker_transcript,
         entity_context=entity_context,
+        story_contract=story_contract,
     )
     base: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
@@ -959,6 +940,7 @@ def review_and_repair_source_facts(
     speaker_evidence: Mapping[str, object] | None = None,
     candidate_id: str | None = None,
     final_reviewed_srt_path: Path | None = None,
+    story_contract: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Run a bounded, evidence-bound KEEP/REPAIR convergence review."""
 
@@ -1065,6 +1047,7 @@ def review_and_repair_source_facts(
                 speaker_transcript=speaker_transcript,
                 speaker_evidence_sha256=speaker_evidence_sha256,
                 entity_context=entity_context,
+                story_contract=story_contract,
             )
             if (
                 review.get("status") != "FAILED"

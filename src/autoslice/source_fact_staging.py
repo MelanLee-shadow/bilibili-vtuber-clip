@@ -337,6 +337,7 @@ def resolve_initial_source_fact_review(
         enforce_automatic_title_style=title_llm_enabled,
         candidate_id=candidate_id,
         final_reviewed_srt_path=final_srt,
+        story_contract=(story_contract if isinstance(story_contract, Mapping) else None),
     )
     return InitialSourceFactResolution(
         review=review,

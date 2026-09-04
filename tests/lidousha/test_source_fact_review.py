@@ -184,6 +184,110 @@ def test_source_fact_prompt_forbids_birthday_forwarding_role_drift() -> None:
     )
 
 
+def test_relation_policy_changes_request_hash_but_not_context_binding() -> None:
+    hook = "李豆沙聊起南町的直播趣事。"
+    title = "【李豆沙】聊起南町的直播趣事"
+    transcript = "李豆沙聊起南町的直播趣事"
+    context = "- danmaku @1000ms event=chat: 南町"
+    prompts: list[str] = []
+
+    def cpa(prompt: str) -> str:
+        prompts.append(prompt)
+        return _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+        )
+
+    legacy = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript=transcript,
+        clip_context_prompt=context,
+        llm_call=cpa,
+    )
+    restricted = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript=transcript,
+        clip_context_prompt=context,
+        llm_call=cpa,
+        story_contract={"relation_state": "UNKNOWN", "relation_claim_allowed": False},
+    )
+
+    assert source_fact_review_passes(legacy)
+    assert source_fact_review_passes(restricted)
+    assert "关系缺失或未确认" not in prompts[0]
+    assert "关系缺失或未确认" in prompts[1]
+    assert restricted["passes"][0]["request_sha256"] == (
+        "sha256:" + hashlib.sha256(prompts[1].encode("utf-8")).hexdigest()
+    )
+    assert restricted["passes"][0]["request_sha256"] != legacy["passes"][0]["request_sha256"]
+    assert restricted["passes"][0]["clip_context_prompt_sha256"] == (
+        legacy["passes"][0]["clip_context_prompt_sha256"]
+    )
+
+
+def test_unconfirmed_relation_repair_converges_to_neutral_public_copy() -> None:
+    bad_hook = "李豆沙和南町联动聊天。"
+    bad_title = "【李豆沙】和南町联动聊天"
+    fixed_hook = "李豆沙聊起南町。"
+    fixed_title = "【李豆沙】聊起南町的趣事"
+    contract = build_story_contract(
+        candidate_id="relation-neutral-repair",
+        selection_hook=bad_hook,
+        transcript_text="李豆沙聊起南町。",
+        selection_scorecard=None,
+        session_relation_authority=None,
+    )
+    responses = iter(
+        [
+            _completion(
+                status="REPAIR",
+                final_hook=fixed_hook,
+                final_title=fixed_title,
+                supported_by=["final_transcript"],
+                changed_surfaces=[
+                    {
+                        "artifact": "selection_hook",
+                        "before": "李豆沙和南町联动聊天",
+                        "after": "李豆沙聊起南町",
+                        "reason": "关系未确认，只保留字幕支持的具体聊天事实。",
+                        "evidence": ["final_transcript: 李豆沙聊起南町。"],
+                    },
+                    {
+                        "artifact": "title",
+                        "before": "和南町联动聊天",
+                        "after": "聊起南町",
+                        "reason": "关系未确认，只保留字幕支持的具体聊天事实。",
+                        "evidence": ["final_transcript: 李豆沙聊起南町。"],
+                    },
+                ],
+            ),
+            _completion(
+                status="KEEP",
+                final_hook=fixed_hook,
+                final_title=fixed_title,
+                supported_by=["final_transcript"],
+            ),
+        ]
+    )
+    review = review_and_repair_source_facts(
+        selection_hook=bad_hook,
+        title=bad_title,
+        final_transcript="李豆沙聊起南町。",
+        clip_context_prompt="",
+        llm_call=lambda _prompt: next(responses),
+        story_contract=contract,
+    )
+
+    assert source_fact_review_passes(review)
+    assert review["decision"] == "REPAIRED"
+    assert "联动" not in review["final_selection_hook"]
+    assert "联动" not in review["final_title"]
+
+
 def test_changed_surface_evidence_can_bind_exact_speaker_transcript_rows() -> None:
     row = {
         "artifact": "title",
@@ -1390,10 +1494,13 @@ def test_publish_choke_rebuilds_story_before_cover_after_joint_repair(
         return value
 
     calls = 0
+    title_prompts: list[str] = []
 
-    def cpa(_prompt: str) -> str:
+    def cpa(prompt: str) -> str:
         nonlocal calls
         calls += 1
+        assert "关系缺失或未确认" in prompt
+        assert "source text 保持不变" in prompt
         if calls == 1:
             return _completion(
                 status="REPAIR",
@@ -1445,6 +1552,17 @@ def test_publish_choke_rebuilds_story_before_cover_after_joint_repair(
 
     media = tmp_path / "candidate.recut.mp4"
     media.write_bytes(b"video")
+
+    def title_llm(prompt: str) -> str:
+        title_prompts.append(prompt)
+        return json.dumps(
+            {
+                "title": bad_title,
+                "selection_hook_anchor": "命名成李姐拉拉",
+            },
+            ensure_ascii=False,
+        )
+
     staged = _stage_publish_draft(
         {
             "status": "MATERIALIZED",
@@ -1457,13 +1575,7 @@ def test_publish_choke_rebuilds_story_before_cover_after_joint_repair(
         title=bad_title,
         cues=[SourceCue("cue-1", 0, 1_000, transcript, "zh", "speech", 1.0)],
         run_ffmpeg=False,
-        title_llm_call=lambda _prompt: json.dumps(
-            {
-                "title": bad_title,
-                "selection_hook_anchor": "命名成李姐拉拉",
-            },
-            ensure_ascii=False,
-        ),
+        title_llm_call=title_llm,
         selection_hook=bad_hook,
         source_fact_llm_call=cpa,
         story_contract_rebuilder=contract,
@@ -1482,6 +1594,9 @@ def test_publish_choke_rebuilds_story_before_cover_after_joint_repair(
     assert cover_kwargs["title"] == fixed_title
     assert cover_record["story_contract"]["selection_hook"] == fixed_hook
     assert cover_record["story_contract"]["source_fact_review"]["decision"] == "REPAIRED"
+    assert len(title_prompts) == 1
+    assert "关系缺失或未确认" in title_prompts[0]
+    assert "source text 保持不变" in title_prompts[0]
     assert calls == 2
 
 

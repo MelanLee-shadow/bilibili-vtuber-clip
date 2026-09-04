@@ -447,7 +447,6 @@ def _stage_publish_draft(
         record["story_contract"] = story_contract
     if title_llm_call is not None:
         selection_hook = str(selection_hook or "").strip()
-        transcript_sample = staged_transcript_sample(record, cues)
         important_ip_signal = important_content_ip_signal_from_srt(
             subtitle_path=record.get("subtitle_path"),
             fallback_body="\n".join(cue.text for cue in cues),
@@ -456,7 +455,7 @@ def _stage_publish_draft(
         important_content_ips = important_ip_signal.as_receipt()
         base_prompt = build_automatic_talk_title_prompt(
             selection_hook=selection_hook,
-            transcript_sample=transcript_sample,
+            transcript_sample=staged_transcript_sample(record, cues),
             important_ip_prompt=important_ip_signal.prompt_block,
             clip_context_prompt=(
                 str(story_contract.get("clip_context_prompt") or "").strip()
@@ -465,6 +464,7 @@ def _stage_publish_draft(
             ),
             persona_asset=profile_asset_text("persona"),
             style_asset=profile_asset_text("title_style"),
+            story_contract=story_contract,
         )
         automatic = _resolve_automatic_title(
             base_prompt=base_prompt,

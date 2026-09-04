@@ -87,6 +87,30 @@ def hard_meme_surface_rules():
     return _HARD_MEME_SURFACE_RULES
 
 
+def _hard_meme_canon_prompt_block() -> str:
+    """Teach the judge the channel's unbypassable meme canon.
+
+    Without this the literal-evidence gate and the meme canon deadlock: the
+    final transcript spells the meme canonically, raw danmaku keeps the banned
+    surface, and a judge that only does literal binding "repairs" derived copy
+    back and forth until the candidate dies (hook rewrite then also trips the
+    scorecard-stale gate).  The canon is final-output law, so the judge must
+    read canonical spellings as carrying the original surface's semantics.
+    """
+
+    rules = hard_meme_surface_rules()
+    if not rules:
+        return ""
+    listing = "；".join(f"「{rule.surface}」一律写作「{rule.canonical}」" for rule in rules)
+    return (
+        "频道钦定梗词规范（hard-meme-canon，最终输出铁律）：" + listing + "。"
+        "规范词面是同一个梗的钦定拼写，不是换词：最终字幕与两份文案里的规范"
+        "词面承载原词的完整语义，判断事实支持时必须按原词语义理解；不得因为"
+        "弹幕/证据原文用了被禁拼写而判定文案不受支持，也永远不得把规范词面"
+        "改回被禁拼写。你输出的一切文案必须使用规范词面。\n"
+    )
+
+
 def canonicalize_hard_meme_surfaces(
     text: str,
 ) -> tuple[str, list[dict[str, str | int]]]:

@@ -16,6 +16,7 @@ from src.autoslice.candidate_public_text_surface_authority import (
     load_candidate_public_text_surface_authority,
 )
 from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.story_contract import public_text_relation_prompt
 
 
 TITLE_POLICY_SCHEMA = "vtuber-slice.title-policy.v1"
@@ -300,6 +301,7 @@ def build_automatic_talk_title_prompt(
     clip_context_prompt: str,
     persona_asset: str,
     style_asset: str,
+    story_contract: object = None,
 ) -> str:
     """Build the bounded Talk title prompt from profile-owned policy assets."""
 
@@ -320,6 +322,7 @@ def build_automatic_talk_title_prompt(
         if clip_context_prompt
         else ""
     )
+    relation_contract = public_text_relation_prompt(story_contract)
     return (
         f"为一条{CHANNEL_PROFILE.display_name}(B站虚拟主播)的直播切片起中文标题。\n"
         f"最重要的原则：观众是因为'这是{CHANNEL_PROFILE.display_name}'才点进来的,不是因为内容——标题必须围绕{CHANNEL_PROFILE.display_name}本人"
@@ -327,7 +330,7 @@ def build_automatic_talk_title_prompt(
         f"\n{CHANNEL_PROFILE.display_name}特质:\n{persona_asset}\n"
         f"\n标题风格规范与历史标题范例(严格模仿这个风格):\n{style_asset}\n"
         f"\n本切片转写内容节选(辅助素材): {transcript_sample}\n"
-        f"{important_ip_prompt}{hook_contract}{context_contract}"
+        f"{important_ip_prompt}{hook_contract}{context_contract}{relation_contract}"
         f"硬性要求：含{CHANNEL_PROFILE.talk_title_prefix}前缀后 {_TITLE_MIN_LEN}–{_TITLE_MAX_LEN} 字"
         "（维护者 手定语料的主力带是 25–45 字的三拍叙事，不要为了凑短把梗压没；"
         "只有梗足够硬的短爆点才走 20 字以下）；"
