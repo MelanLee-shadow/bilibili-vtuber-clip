@@ -120,6 +120,14 @@ def parse_producer_args(
         action="store_true",
         help="subtitle-only re-run: keep the EXISTING delivered cover, skip the AI cover (art-direction LLM + gpt-image-2 ~90s/clip). Title still regenerates. Use when re-correcting subtitles on an already-covered clip.",
     )
+    parser.add_argument(
+        "--prepare-only",
+        action="store_true",
+        help=(
+            "build and hash-seal a candidate-private delivery handle without "
+            "writing public delivery targets; the runner commits it later"
+        ),
+    )
     return parser.parse_args(argv)
 
 

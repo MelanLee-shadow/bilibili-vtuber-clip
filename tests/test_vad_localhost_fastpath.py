@@ -64,3 +64,32 @@ def test_env_override_steers_localhost_script_path(monkeypatch, tmp_path):
 
     python_calls = [cmd for cmd in calls if cmd[0] == "python3"]
     assert python_calls and python_calls[0][1] == "/custom/spans.py"
+
+
+def test_localhost_provider_uses_explicit_vad_interpreter(monkeypatch, tmp_path):
+    calls: list[list[str]] = []
+    monkeypatch.setattr(timing_qa.subprocess, "run", _fake_run_factory(calls))
+    monkeypatch.setenv("AUTOSLICE_VAD_PYTHON", "/opt/bilive/autoslice/venv-main/bin/python")
+    provider = timing_qa.build_ssh_silero_vad_provider("localhost")
+
+    provider(tmp_path / "src.mp4", 0, 1_000)
+
+    python_calls = [
+        cmd for cmd in calls if cmd[0] == "/opt/bilive/autoslice/venv-main/bin/python"
+    ]
+    assert python_calls and python_calls[0][1].endswith("silero_vad_spans.py")
+
+
+def test_remote_provider_shell_quotes_explicit_vad_interpreter(monkeypatch, tmp_path):
+    calls: list[list[str]] = []
+    monkeypatch.setattr(timing_qa.subprocess, "run", _fake_run_factory(calls))
+    monkeypatch.setenv("AUTOSLICE_VAD_PYTHON", "/opt/vad env/python")
+    provider = timing_qa.build_ssh_silero_vad_provider(
+        "free", remote_script="/tmp/vad script.py"
+    )
+
+    provider(tmp_path / "src.mp4", 0, 1_000)
+
+    ssh_calls = [cmd for cmd in calls if cmd[0] == "ssh"]
+    assert ssh_calls
+    assert "'/opt/vad env/python' '/tmp/vad script.py'" in ssh_calls[0][2]

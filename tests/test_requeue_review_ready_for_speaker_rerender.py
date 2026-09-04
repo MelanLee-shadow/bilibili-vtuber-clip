@@ -13,7 +13,7 @@ from src.autoslice import delivery_recovery, publication_registry
 
 DATE = "2026-08-11"
 CID = "auto_173005_934_1166"
-OTHER_CID = "auto_220021_561_670"
+OTHER_CID = "synthetic_other_candidate"
 AUTHORITY_QUOTE = (
     "目前先把host改成单一host，全部只有李豆沙一人直播，默认这样。重新做一下这些切片。"
 )

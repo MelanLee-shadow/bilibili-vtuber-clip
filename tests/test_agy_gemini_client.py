@@ -60,7 +60,7 @@ def test_remote_binary_is_env_overridable_with_free_host_default(monkeypatch):
     但必须收在一个可覆盖的名字后面，而不是散在四处字符串字面量里。"""
 
     monkeypatch.delenv(agy_gemini_client.REMOTE_AGY_ENV, raising=False)
-    assert agy_gemini_client.resolve_remote_agy_binary() == "/root/.local/bin/agy"
+    assert agy_gemini_client.resolve_remote_agy_binary() == "agy"
     monkeypatch.setenv(agy_gemini_client.REMOTE_AGY_ENV, "/usr/local/bin/agy")
     assert agy_gemini_client.resolve_remote_agy_binary() == "/usr/local/bin/agy"
 
@@ -499,6 +499,44 @@ def _ssh_transcribe_env(monkeypatch, tmp_path, *, rc_line: str):
 
 
 _SRT = "1\n00:00:00,000 --> 00:00:02,000\n你好\n"
+
+
+@pytest.mark.parametrize("ffmpeg_fails", [False, True])
+def test_ssh_transcription_screen_probe_uses_subprocess_and_degrades_on_ffmpeg_error(
+    monkeypatch, tmp_path, ffmpeg_fails
+):
+    from src.autoslice import full_session_transcription as fst
+
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"clip bytes")
+    source_video = tmp_path / "source.mp4"
+    source_video.write_bytes(b"source bytes")
+    calls = []
+    job_inputs = {}
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        if command[0] == "ffmpeg" and ffmpeg_fails:
+            raise subprocess.CalledProcessError(1, command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(fst.subprocess, "run", fake_run)
+
+    def fake_job(_host, *, output_name, media_path, **_kwargs):
+        job_inputs[output_name] = media_path
+        return "[]" if output_name == "screen_text.json" else _SRT
+
+    monkeypatch.setattr(fst, "_run_fresh_agy_job", fake_job)
+    transcribe = fst._build_ssh_agy_transcribe_runner(
+        "free", source_video=source_video
+    )
+
+    assert transcribe(media).strip() == _SRT.strip()
+    ffmpeg_calls = [call for call in calls if call[0][0] == "ffmpeg"]
+    assert len(ffmpeg_calls) == 1
+    assert ffmpeg_calls[0][1]["check"] is True
+    expected_probe = media if ffmpeg_fails else media.with_suffix(".screen_probe.mp4")
+    assert job_inputs["screen_text.json"] == expected_probe
 
 
 def test_ssh_transcription_switches_to_gemini_only_when_remote_agy_is_absent(

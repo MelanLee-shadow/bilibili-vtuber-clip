@@ -26,6 +26,7 @@ import pytest
 
 import scripts.session_autoslice as runner
 from src.autoslice import operator_processing_scope as operator_scope_module
+from src.autoslice import runner_state_writeback
 from src.autoslice import talk_quota_authority
 from src.autoslice.candidate_selection import prioritize
 from src.autoslice.operator_processing_scope import (
@@ -1854,6 +1855,7 @@ def test_frozen_held_current_scope_rejects_mid_tick_backfill_after_target_reject
 
 def test_process_date_held_current_rejection_never_dispatches_backfill_or_song(
     hermetic_quota,
+    tmp_path: Path,
     monkeypatch,
 ):
     """Full runner canary: frozen scope survives deterministic rejection mid-tick."""
@@ -1896,6 +1898,16 @@ def test_process_date_held_current_rejection_never_dispatches_backfill_or_song(
         "songs": [],
         STATE_KEY: _held_current_rerender_grant(),
     }
+    base = tmp_path / "autoslice"
+    base.mkdir(exist_ok=True)
+    monkeypatch.setattr(runner, "BASE", base)
+
+    def persist_test_state(_date: str, value: dict) -> None:
+        path = runner.state_path(_date)
+        path.parent.mkdir(mode=0o700, exist_ok=True)
+        path.write_bytes(runner_state_writeback.state_bytes(value))
+
+    persist_test_state(RECORDING_DATE, state)
     song_preimage = copy.deepcopy(
         (
             state["pending_song"],
@@ -1914,7 +1926,7 @@ def test_process_date_held_current_rejection_never_dispatches_backfill_or_song(
         ),
     )
     monkeypatch.setattr(runner, "read_state", lambda _date: state)
-    monkeypatch.setattr(runner, "write_state", lambda *_a, **_k: None)
+    monkeypatch.setattr(runner, "write_state", persist_test_state)
     monkeypatch.setattr(runner, "write_reports", lambda *_a, **_k: None)
     monkeypatch.setattr(runner, "runtime_health_error", lambda: None)
     monkeypatch.setattr(runner, "recover_finalized_legacy_hls", lambda *_a, **_k: [])
@@ -1951,7 +1963,8 @@ def test_process_date_held_current_rejection_never_dispatches_backfill_or_song(
     monkeypatch.setattr(runner, "collect_song_name_candidates", lambda *_a, **_k: [])
     dispatched: list[str] = []
 
-    def reject_only_target(_date, items, _produce):
+    def reject_only_target(_date, items, _produce, *, prepare_only: bool):
+        assert prepare_only is True
         ids = [str(item.get("cid") or item.get("candidate_id") or "") for item in items]
         assert ids == [TIER1_IDS[0]]
         dispatched.extend(ids)

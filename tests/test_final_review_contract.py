@@ -95,10 +95,8 @@ def test_decided_keep_current_branches_disclose_and_infra_branches_block():
 def test_witness_conflict_keep_current_is_a_decided_keep():
     """8/8 F3 证据门否决 CPA PROPOSED = 已完成的机器决定，可披露交付。
 
-    谈话切 4/4 全灭的真判据：`5a43ea3`(8/8) 新开的 typed 分支
-    WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT 没登记进白名单，
-    于是一条一个字节都没改的已裁 finding 结构上永远回不到 resolved。
-    形态取自 free 真实回执 out/2026-08-09/auto_190617_473_766。
+    A typed keep-current branch must stay registered in the public
+    disclosure allowlist so an unchanged decided finding can resolve.
     """
 
     from src.autoslice.acoustic_witness_adjudication import (
@@ -358,9 +356,7 @@ def test_release_rejects_unconsumed_remapped_carryover():
     assert unconsumed_correction_carryover_count(audit) == 0
 
 
-# 形态全部取自 free 真实回执（只读取证，）：
-#   OBSERVED  = out/2026-08-07/auto_203735_388_526（耳朵听见 "ta suan qi fu wo"）
-#   UNCERTAIN = out/2026-08-09/auto_214238_835_960（11 音节塞进 0.92s，证词作废）
+# Representative fixtures cover observed and timing-inconsistent witnesses.
 _OBSERVED_BLIND_WITNESS = {
     "schema_version": "subtitle-span-acoustic-witness.v1",
     "witness_protocol": "blind_pinyin",
@@ -395,8 +391,7 @@ _UNCERTAIN_BLIND_WITNESS = {
 def _downgraded_row(verdict, **adjudication_overrides):
     """用引擎自己的产出函数造样本，别手抄 typed 形状。
 
-    分支名/字段名再改，这里 import 就断或形态自动跟着变，不会像 
-    那张白名单快照一样和引擎静默脱节。
+    分支名/字段名再改，这里 import 就断或形态自动跟着变，不会和引擎静默脱节。
     """
 
     from src.autoslice.exact_final_witness_authority import (
@@ -438,7 +433,7 @@ def test_history_convergence_downgrade_discloses_only_with_an_observed_ear():
     ``HISTORY_CONVERGENCE_DOWNGRADED_TO_DISCLOSURE_ONLY`` 把 repair_class 改成
     disclosure_only、mutation 置 NOT_APPLIED、一个字节都没动，却因为
     adjudication.status 被写成 UNCERTAIN 而进不了披露出口 —— 既不能改也不能
-    披露，整条候选永久悬停（auto_214238_835_960 的唯一阻断项）。
+    披露，整条候选会永久悬停。
 
     放行判据只认一件事：声学机器是否真的跑完并交出观测。耳朵给了 OBSERVED
     才算「证据在手做出的保留原文」；耳朵自己 UNCERTAIN 就是机器没能决定，

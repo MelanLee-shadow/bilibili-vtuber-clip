@@ -1,14 +1,8 @@
 """「耳朵说这段物理上不可读」→ 删该 cue、出成品、落停泊态、永不上传。
 
-维护者 逐字：「遇到这种情况证人报 WITNESS_IMPLAUSIBLE_SYLLABLE_RATE：
-11 个音节塞进 0.92s，根本听不出来，应该直接报需要审查，并且在权宜上传时也不能
-上传，可以把这段字幕删掉然后出成品等待审阅，而不是拦住。」
-
-形态全部取自 free 真实回执（只读取证）：
-``out/2026-08-09/auto_214238_835_960`` —— 唯一阻断项 cue 33
-``就好好休息休息``（65670→66590ms，正好 0.92s），
-``verdict.reason_code == WITNESS_IMPLAUSIBLE_SYLLABLE_RATE``、
-``detail == "11 syllables over 0.92s target"``。
+当证人报告 WITNESS_IMPLAUSIBLE_SYLLABLE_RATE（目标窗口内音节率不可信）
+时，应该请求人工审查；可以删掉这段字幕后出成品等待审阅，但不能上传。
+下面的回归覆盖该判据与停泊链路。
 """
 
 from __future__ import annotations
@@ -27,7 +21,7 @@ from src.autoslice.exact_final_witness_authority import (
 )
 
 
-# free 真实窗口与字节（auto_214238_835_960 cue 33）。
+# Representative unreadable-cue window and bytes.
 _CUE_TEXT = "就好好休息休息"
 _CUE_START_MS = 65_670
 _CUE_END_MS = 66_590
@@ -63,8 +57,7 @@ def _deadlocked_finding(
 ) -> dict:
     """用引擎自己的降级函数造样本，别手抄 typed 形状。
 
-    分支名/字段名再改，这里 import 就断或形态自动跟着变，不会像 
-    那张白名单快照一样和引擎静默脱节。
+    分支名/字段名再改，这里 import 就断或形态自动跟着变，不会和引擎静默脱节。
     """
 
     gate = convergence_witness_gate(
@@ -235,7 +228,7 @@ def test_drop_receipt_carries_the_deleted_range_and_the_witness_basis():
     assert drop["witness_detail"] == "11 syllables over 0.92s target"
     assert drop["acoustic_witness"]["status"] == "UNCERTAIN"
     # 死锁出处直接绑引擎常量：引擎再改分支名时这里 import 就断，不会静默失配
-    # 。
+    # （白名单与引擎分支脱节时会产生同类回归）。
     assert drop["deadlock_policy_branch"] == DOWNGRADE_BRANCH
     assert drop["upload_authorized"] is False
     assert drop["review_authority"] == "HUMAN_OPERATOR"

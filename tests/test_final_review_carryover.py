@@ -7,6 +7,7 @@ import json
 
 from src.autoslice.final_review_carryover import (
     carryover_path,
+    final_review_carryover_retry_readiness,
     load_final_review_carryover,
     persist_final_review_carryover,
 )
@@ -52,6 +53,184 @@ def test_persist_keeps_only_acoustically_confirmed_repairs(tmp_path):
     assert row["base_text_sha256"] == "a" * 64
     assert row["suspect"] == "悄悄"
     assert "终审结转" in row["why"]
+
+
+def test_persist_keeps_identical_repairs_at_distinct_exact_windows(tmp_path):
+    path = carryover_path(tmp_path, "auto_duplicate_windows")
+    base = "b" * 64
+    findings = [
+        {
+            "cue_index": cue,
+            "base_text_sha256": base,
+            "kind": "context",
+            "suspect": "他",
+            "proposed_full_cue": "但她真的很轻",
+            "exact_release_adjudication": {
+                "repaired": True,
+                "request": {
+                    "matched_start_ms": start,
+                    "matched_end_ms": end,
+                },
+            },
+        }
+        for cue, start, end in ((43, 106_640, 108_040), (44, 108_240, 109_440))
+    ]
+
+    assert persist_final_review_carryover(path, _audit(findings)) == 2
+    rows = load_final_review_carryover(path)
+    assert {(row["cue"], row["exact_release_adjudication"]["request"]["matched_start_ms"]) for row in rows} == {
+        (43, 106_640),
+        (44, 108_240),
+    }
+
+
+def test_duplicate_repairs_replay_and_overlay_as_distinct_occurrences(tmp_path):
+    from src.autoslice import producer_package_finalization as finalization
+
+    current = "但他真的很轻"
+    proposed = "但她真的很轻"
+    base = hashlib.sha256(current.encode("utf-8")).hexdigest()
+    srt_text = (
+        "1\n00:01:46,640 --> 00:01:48,040\n"
+        f"{current}\n\n"
+        "2\n00:01:48,240 --> 00:01:49,440\n"
+        f"{current}\n"
+    )
+    windows = ((106_640, 108_040), (108_240, 109_440))
+    path = tmp_path / "duplicate.final-review-carryover.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "final-review-carryover.v1",
+                "findings": [
+                    {
+                        "cue": cue,
+                        "base_text_sha256": base,
+                        "suspect": "他",
+                        "proposed_full_cue": proposed,
+                        "exact_release_adjudication": {
+                            "repaired": True,
+                            "request": {
+                                "base_text_sha256": base,
+                                "current_cue": current,
+                                "proposed_cue": proposed,
+                                "matched_start_ms": start,
+                                "matched_end_ms": end,
+                            },
+                        },
+                    }
+                    for cue, (start, end) in enumerate(windows, start=1)
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    replayed = finalization._replayable_exact_final_carryover_findings(
+        srt_text, path
+    )
+    assert [row["cue_index"] for row in replayed] == [1, 2]
+    overlaid = finalization._overlay_exact_carryover_findings(
+        {"schema_version": "final-review-audit.v2", "findings": []},
+        replayed,
+    )
+    assert len(overlaid["findings"]) == 2
+
+
+def test_retry_readiness_reuses_wildcard_remap_and_keeps_occurrences(tmp_path):
+    def exact(cue, base, suspect, proposed, start, end):
+        return {
+            "cue_index": cue,
+            "base_text_sha256": base,
+            "suspect": suspect,
+            "proposed_full_cue": proposed,
+            "exact_release_adjudication": {
+                "repaired": True,
+                "request": {
+                    "matched_start_ms": start,
+                    "matched_end_ms": end,
+                },
+            },
+        }
+
+    duplicate_base = hashlib.sha256("但他真的很轻".encode()).hexdigest()
+    duplicate_rows = [
+        exact(
+            cue,
+            duplicate_base,
+            "他",
+            "但她真的很轻",
+            start,
+            end,
+        )
+        for cue, start, end in (
+            (43, 106_640, 108_040),
+            (44, 108_240, 109_440),
+        )
+    ]
+    authoritative_base = hashlib.sha256("是他自己这样说".encode()).hexdigest()
+    authoritative = exact(
+        28,
+        authoritative_base,
+        "是他自己这样",
+        "他自己在这说",
+        69_360,
+        70_320,
+    )
+    prior = {
+        "cue_index": 47,
+        "base_text_sha256": "f1811c5a5cf3922b8ab5d59a389833697b8f6b3bbb6160d4e49355ddc194a27e",
+        "suspect": "于小李来说",
+        "proposed_full_cue": "对付小李呀",
+    }
+    wildcard_remap = {
+        "cue_index": 32,
+        "base_text_sha256": authoritative_base,
+        "suspect": "是他自己这样",
+        "proposed_full_cue": None,
+        "carryover_replay_remap": {
+            "schema_version": "final-review-carryover-remap.v1",
+            "status": "PASS",
+            "from_cue": 28,
+            "to_cue": 32,
+        },
+    }
+    prior_remap = {
+        **prior,
+        "carryover_replay_remap": {
+            "schema_version": "final-review-carryover-remap.v1",
+            "status": "PASS",
+            "from_cue": 0,
+            "to_cue": 51,
+        },
+    }
+    carryover_rows = [
+        *[{**row, "cue": row["cue_index"]} for row in duplicate_rows],
+        {**authoritative, "cue": authoritative["cue_index"]},
+        {**prior, "cue": prior["cue_index"]},
+    ]
+    path = carryover_path(tmp_path, "auto_wildcard_remap")
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "final-review-carryover.v1",
+                "findings": carryover_rows,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    rows, ready = final_review_carryover_retry_readiness(
+        path,
+        [*duplicate_rows, authoritative],
+        {"correction_pass": {"findings": [prior_remap, wildcard_remap]}},
+        4,
+    )
+
+    assert len(rows) == 4
+    assert ready is True
 
 
 def test_persist_empty_removes_stale_file(tmp_path):

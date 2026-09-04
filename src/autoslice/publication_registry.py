@@ -28,6 +28,8 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 
+from src.autoslice import fastlane_c2_authorized_upload as c2_upload
+from src.autoslice.channel_profile import load_channel_profile as _load_channel_profile
 from src.autoslice.publication_reconciliation import (
     RUNTIME_REGISTRY_SCHEMA,
     validate_runtime_registry_entry,
@@ -36,7 +38,6 @@ from src.autoslice.publication_reconciliation import (
 REGISTRY_SCHEMA = "publication-registry.v1"
 # 出版登记是上传唯一授权门；路径按 profile manifest 派生（默认 profile 字节
 # 等价），换频道即各用各的登记台账。
-from src.autoslice.channel_profile import load_channel_profile as _load_channel_profile
 
 DEFAULT_REGISTRY_PATH = _load_channel_profile(
     Path(__file__).resolve().parent.parent.parent
@@ -295,6 +296,12 @@ def manifest_upload_block_reason(manifest: Mapping) -> str | None:
             and source_candidate.strip()
         ):
             candidate_id = delivery_candidate.strip()
+    # Legacy C2 has neither generic candidate field; let its exact resolver
+    # validate the attested package before consulting the publication registry.
+    if not candidate_id and "delivery_candidate_id" not in record:
+        candidate_id = c2_upload.candidate_id_from_record(
+            Path(str(attestation.get("package_root") or "")), record
+        )
     if not candidate_id:
         return None
     match = re.search(

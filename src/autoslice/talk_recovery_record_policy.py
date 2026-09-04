@@ -86,7 +86,6 @@ def supplemental_recovery_candidate(
                 "chat_authority_finalization",
                 "chat_authority_final_artifact",
                 "final_review_provider_budget",
-                "final_review_findings",
                 "foreign_source_transcription",
             }
             and record.get("rejection_reason")

@@ -60,8 +60,19 @@ from src.autoslice.exact_source_transcript_runtime import (
     serve_manifest as _serve_exact_source_transcript_manifest,
     store_manifest as _store_exact_source_transcript_manifest,
 )
+from src.autoslice import entity_audio_gemini_web as _gemini_web
+from src.autoslice.entity_audio_gemini_web import (
+    _EntityProviderOutcome,
+    _provider_artifact_bindings,
+    _provider_provenance,
+    run_gemini_web_fallback_from_verifier as _run_gemini_web_fallback,
+    run_gemini_web_fallback_if_enabled as _run_gemini_web_if_enabled,
+)
 
-ENTITY_AUDIO_MODEL = "Gemini 3.6 Flash (High)"
+ENTITY_AUDIO_AGY_MODEL_ENV = "ENTITY_AUDIO_AGY_MODEL"
+ENTITY_AUDIO_MODEL = os.environ.get(
+    ENTITY_AUDIO_AGY_MODEL_ENV, "Gemini 3.6 Flash (High)"
+)
 ENTITY_AUDIO_TIMEOUT = "10m"
 
 # AGY remains the preferred high-confidence audio witness.  Direct Gemini API
@@ -76,6 +87,17 @@ ENTITY_AUDIO_API_REQUEST_MAX_BYTES = 20_000_000
 # 免费 3 key 轮换 → 政策门控付费 backup（7/19 裁定，同一 Gemini 模型的配额
 # 顺序，不是不同 provider 的证据等级）。
 ENTITY_AUDIO_DISABLE_AGY_ENV = "ENTITY_AUDIO_DISABLE_AGY"
+
+ENTITY_AUDIO_GEMINI_WEB_ENABLED_ENV = _gemini_web.ENTITY_AUDIO_GEMINI_WEB_ENABLED_ENV
+ENTITY_AUDIO_GEMINI_WEB_MODEL_ENV = _gemini_web.ENTITY_AUDIO_GEMINI_WEB_MODEL_ENV
+ENTITY_AUDIO_GEMINI_WEB_COMMAND_ENV = _gemini_web.ENTITY_AUDIO_GEMINI_WEB_COMMAND_ENV
+ENTITY_AUDIO_GEMINI_WEB_PYTHON_ENV = _gemini_web.ENTITY_AUDIO_GEMINI_WEB_PYTHON_ENV
+ENTITY_AUDIO_GEMINI_WEB_PROFILE_ENV = _gemini_web.ENTITY_AUDIO_GEMINI_WEB_PROFILE_ENV
+ENTITY_AUDIO_GEMINI_WEB_BROWSER_ENV = _gemini_web.ENTITY_AUDIO_GEMINI_WEB_BROWSER_ENV
+ENTITY_AUDIO_GEMINI_WEB_XVFB_ENV = _gemini_web.ENTITY_AUDIO_GEMINI_WEB_XVFB_ENV
+ENTITY_AUDIO_GEMINI_WEB_USER_ENV = _gemini_web.ENTITY_AUDIO_GEMINI_WEB_USER_ENV
+ENTITY_AUDIO_GEMINI_WEB_TIMEOUT_ENV = _gemini_web.ENTITY_AUDIO_GEMINI_WEB_TIMEOUT_ENV
+_terminate_web_process_group = _gemini_web.terminate_web_process_group
 
 # Phase 1 acoustic-witness architecture (维护者 ruling): the audio
 # model is a WITNESS, not a judge. In witness mode it never sees any
@@ -490,21 +512,6 @@ def _run_gemini_api_fallback(
     return outcome
 
 
-@dataclass(frozen=True)
-class _EntityProviderOutcome:
-    observed: Any
-    provider: str
-    model: str
-    prompt_path: Path
-    response_path: Path
-    accepted_key_tier: str | None
-    paid_policy_stamp: Mapping[str, Any] | None
-    provider_failures: list[dict[str, Any]]
-    accepted_key_ordinal: int | None = None
-    configured_key_count: int = 0
-    served_from_cache: bool = False
-
-
 _ACOUSTIC_CACHE_SCHEMA = "witness-acoustic-cache.v4"
 _CACHEABLE_WITNESS_PROVIDERS = frozenset({"agy", "gemini_api"})
 
@@ -760,6 +767,49 @@ def _replay_provider_witness_cache(
     return replace(cached, provider_failures=list(provider_failures))
 
 
+def _entity_observation_prompt(
+    *,
+    request: Mapping[str, Any],
+    candidates: list[Any],
+    recording_date: str,
+    timely_context: str,
+) -> tuple[str, bool, bool]:
+    """Build the provider prompt and return the routing modes it establishes."""
+
+    schema_version = request.get("schema_version")
+    witness_mode = schema_version == WITNESS_REQUEST_SCHEMA
+    exact_transcript_mode = schema_version == EXACT_SOURCE_REQUEST_SCHEMA
+    sentence_mode = schema_version in {
+        "chat-read-aloud-verification-request.v1",
+        "subtitle-span-acoustic-check-request.v1",
+    }
+    acoustic_fit_mode = schema_version == "subtitle-span-acoustic-check-request.v1"
+    if exact_transcript_mode:
+        prompt = exact_source_transcript_prompt(
+            request=request, timeline_binding=request.get("timeline_binding") or {}
+        )
+    elif witness_mode:
+        prompt = _witness_prompt(
+            recording_date=recording_date,
+            delivery_mode="agy", syllable_count_hint=request.get("syllable_count_hint"),
+            target_audio_start_ms=request.get("target_audio_start_ms"),
+            target_audio_end_ms=request.get("target_audio_end_ms"),
+        )
+    else:
+        prompt = _prompt(
+            candidates=[dict(row) for row in candidates if isinstance(row, dict)],
+            recording_date=recording_date,
+            timely_context=timely_context,
+            sentence_mode=sentence_mode,
+            context_before=str(request.get("context_before") or ""),
+            context_after=str(request.get("context_after") or ""),
+            target_audio_start_ms=request.get("target_audio_start_ms"),
+            target_audio_end_ms=request.get("target_audio_end_ms"),
+            acoustic_fit_mode=acoustic_fit_mode,
+        )
+    return prompt, witness_mode, exact_transcript_mode
+
+
 def _observe_entity_audio(
     *,
     request: Mapping[str, Any],
@@ -778,39 +828,12 @@ def _observe_entity_audio(
 ) -> _EntityProviderOutcome:
     """Run preferred AGY, then bounded direct API for blind audio evidence."""
 
-    candidate_rows = [dict(row) for row in candidates if isinstance(row, dict)]
-    witness_mode = request.get("schema_version") == WITNESS_REQUEST_SCHEMA
-    exact_transcript_mode = request.get("schema_version") == EXACT_SOURCE_REQUEST_SCHEMA
-    sentence_mode = request.get("schema_version") in {
-        "chat-read-aloud-verification-request.v1",
-        "subtitle-span-acoustic-check-request.v1",
-    }
-    acoustic_fit_mode = (
-        request.get("schema_version") == "subtitle-span-acoustic-check-request.v1"
+    prompt, witness_mode, exact_transcript_mode = _entity_observation_prompt(
+        request=request,
+        candidates=candidates,
+        recording_date=recording_date,
+        timely_context=timely_context,
     )
-    if exact_transcript_mode:
-        prompt = exact_source_transcript_prompt(
-            request=request, timeline_binding=request.get("timeline_binding") or {}
-        )
-    elif witness_mode:
-        prompt = _witness_prompt(
-            recording_date=recording_date,
-            delivery_mode="agy", syllable_count_hint=request.get("syllable_count_hint"),
-            target_audio_start_ms=request.get("target_audio_start_ms"),
-            target_audio_end_ms=request.get("target_audio_end_ms"),
-        )
-    else:
-        prompt = _prompt(
-            candidates=candidate_rows,
-            recording_date=recording_date,
-            timely_context=timely_context,
-            sentence_mode=sentence_mode,
-            context_before=str(request.get("context_before") or ""),
-            context_after=str(request.get("context_after") or ""),
-            target_audio_start_ms=request.get("target_audio_start_ms"),
-            target_audio_end_ms=request.get("target_audio_end_ms"),
-            acoustic_fit_mode=acoustic_fit_mode,
-        )
     prompt_path = job_dir / "prompt.md"
     prompt_path.write_text(prompt, encoding="utf-8")
     short_prompt = (
@@ -888,13 +911,8 @@ def _observe_entity_audio(
             env=agy_subprocess_env(),
             timeout=parse_timeout_seconds(timeout) + 120,
         ) if agy_output_ready else None
-        if run is None:
-            completed = None
-        else:
-            completed = run.completed
-        if run is None:
-            pass
-        elif completed is None:
+        completed = run.completed if run is not None else None
+        if run is not None and completed is None:
             provider_failures.append(
                 {
                     "provider": "agy",
@@ -902,7 +920,7 @@ def _observe_entity_audio(
                     "error_type": run.launch_error_type,
                 }
             )
-        else:
+        elif completed is not None:
             (job_dir / "agy.stdout").write_text(completed.stdout, encoding="utf-8")
             (job_dir / "agy.stderr").write_text(completed.stderr, encoding="utf-8")
             raw_response = (
@@ -948,6 +966,14 @@ def _observe_entity_audio(
                             "error_type": type(exc).__name__,
                         }
                     )
+
+    web_outcome = _run_gemini_web_if_enabled(
+        observed is None and witness_mode, request, audio_path, job_dir,
+        recording_date, provider_failures,
+        fallback=_run_gemini_web_fallback,
+    )
+    if web_outcome is not None:
+        return web_outcome
 
     if observed is None and (witness_mode or exact_transcript_mode):
         provider = "gemini_api"
@@ -1181,6 +1207,7 @@ def _subtitle_acoustic_witness_verdict(
         "response_sha256": _sha256(outcome.response_path),
         "model": outcome.model,
         "provider": outcome.provider,
+        **_provider_provenance(outcome),
         **({"key_tier": outcome.accepted_key_tier} if outcome.accepted_key_tier else {}),
         "audio_start_ms": start_ms,
         "audio_end_ms": end_ms,
@@ -1824,10 +1851,7 @@ def _verify_local_audio_request(
                 if acoustic_cache_hit
                 else {}
             ),
-            "prompt_sha256": _sha256(outcome.prompt_path),
-            "response_sha256": _sha256(outcome.response_path),
-            "model": outcome.model,
-            "provider": outcome.provider,
+            **_provider_artifact_bindings(outcome, _sha256),
             **(
                 {
                     "witness_prompt_contract": WITNESS_PROMPT_CONTRACT,
@@ -1896,10 +1920,7 @@ def _verify_local_audio_request(
         "source_media_sha256": verifier.source_sha256,
         "audio_clip": str(audio_path),
         "audio_clip_sha256": _sha256(audio_path),
-        "prompt_sha256": _sha256(outcome.prompt_path),
-        "response_sha256": _sha256(outcome.response_path),
-        "model": outcome.model,
-        "provider": outcome.provider,
+        **_provider_artifact_bindings(outcome, _sha256),
         **({"key_tier": outcome.accepted_key_tier} if outcome.accepted_key_tier else {}),
         **(
             {"paid_backup_policy": dict(outcome.paid_policy_stamp)}

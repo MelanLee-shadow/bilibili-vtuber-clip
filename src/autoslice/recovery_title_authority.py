@@ -269,6 +269,7 @@ def _validated_publication_entry(
     value: object,
     *,
     repo_root: Path,
+    captured_source_receipts: Mapping[str, bytes] | None = None,
 ) -> dict[str, object]:
     if not isinstance(value, Mapping) or set(value) != _PUBLICATION_ENTRY_FIELDS:
         raise RecoveryTitleAuthorityError(
@@ -324,13 +325,21 @@ def _validated_publication_entry(
             "RECOVERY_PUBLICATION_TITLE_MODE_INVALID"
         )
 
-    # The committed registry is the runtime authority.  In source worktrees
-    # that retain the historical receipt, replay it too; production deploys
-    # intentionally omit disposable reports and therefore rely on the
-    # hash-bound registry copy under assets/.
+    # Ordinary replay permits omitted disposable report copies. Snapshot replay
+    # supplies every captured receipt explicitly and therefore requires all of
+    # them, including asset copies retained by production deployments.
     source = _source_path(source_path, repo_root=repo_root)
-    if source.exists() or source.is_symlink():
+    if captured_source_receipts is not None:
+        raw = captured_source_receipts.get(source_path)
+        if raw is None:
+            raise RecoveryTitleAuthorityError(
+                "RECOVERY_PUBLICATION_SOURCE_RECEIPT_MISSING"
+            )
+    elif source.exists() or source.is_symlink():
         raw = _regular_file_bytes(source)
+    else:
+        raw = None
+    if raw is not None:
         if "sha256:" + hashlib.sha256(raw).hexdigest() != source_sha:
             raise RecoveryTitleAuthorityError(
                 "RECOVERY_PUBLICATION_SOURCE_RECEIPT_SHA_MISMATCH"
@@ -362,6 +371,7 @@ def _validated_publication_registry(
     raw: bytes,
     *,
     repo_root: Path,
+    captured_source_receipts: Mapping[str, bytes] | None = None,
 ) -> tuple[str, dict[str, dict[str, object]]]:
     try:
         registry = json.loads(raw.decode("utf-8"))
@@ -385,6 +395,7 @@ def _validated_publication_registry(
         entry = _validated_publication_entry(
             raw_entry,
             repo_root=repo_root,
+            captured_source_receipts=captured_source_receipts,
         )
         candidate_id = str(entry["candidate_id"])
         if candidate_id in entries:
@@ -465,6 +476,9 @@ def expected_recovery_publish_title(
 ) -> str:
     """Resolve the only permitted final title from a validated authority."""
 
+    if authority.get("schema_version") == "fastlane-c1-authorized-same-bv-projection.v1":
+        return str(authority["title"])
+
     title = str(authority["observed_public_title"])
     if authority["title_mode"] == "reviewer_manual_override":
         return canonicalize_publish_title(title, lane="talk")
@@ -479,6 +493,22 @@ def validate_recovery_publication_authority(
     repo_root: Path = ROOT,
 ) -> dict[str, object]:
     """Replay one committed registry entry and bind title plus BV identity."""
+
+    # C1 is the one explicitly sealed fastlane formal package.  It is not a
+    # registry-shaped recovery record and must never be coerced into one.
+    if isinstance(value, Mapping) and value.get("schema_version") == "fastlane-c1-authorized-same-bv-projection.v1":
+        from src.autoslice.fastlane_c1_technical_receipt import (
+            C1TechnicalReceiptError,
+            validate_projection_authority,
+        )
+        try:
+            return validate_projection_authority(
+                value,
+                candidate_id=candidate_id,
+                expected_final_title=expected_final_title,
+            )
+        except C1TechnicalReceiptError as exc:
+            raise RecoveryTitleAuthorityError(str(exc)) from exc
 
     if (
         not isinstance(value, Mapping)
@@ -527,6 +557,94 @@ def validate_recovery_publication_authority(
     registry_authority, entries = _validated_publication_registry(
         raw,
         repo_root=repo_root,
+    )
+    entry = entries.get(candidate_id)
+    if entry is None:
+        raise RecoveryTitleAuthorityError(
+            "RECOVERY_PUBLICATION_CANDIDATE_MISSING"
+        )
+    expected_surface = {
+        "schema_version": PUBLICATION_SCHEMA_VERSION,
+        "source_kind": "committed_verified_publication_registry",
+        **entry,
+        "registry_repo_path": authority["registry_repo_path"],
+        "registry_sha256": registry_sha,
+        "registry_schema_version": PUBLICATION_REGISTRY_SCHEMA,
+        "registry_authority": registry_authority,
+        "authority_sha256": claimed_sha,
+    }
+    if authority != expected_surface:
+        raise RecoveryTitleAuthorityError(
+            "RECOVERY_PUBLICATION_AUTHORITY_BINDING_MISMATCH"
+        )
+    final_title = expected_recovery_publish_title(authority)
+    if expected_final_title is not None and final_title != expected_final_title:
+        raise RecoveryTitleAuthorityError(
+            "RECOVERY_PUBLICATION_FINAL_TITLE_MISMATCH"
+        )
+    return authority
+
+
+def validate_recovery_publication_authority_snapshot(
+    value: object,
+    *,
+    candidate_id: str,
+    registry_raw: bytes,
+    captured_source_receipts: Mapping[str, bytes],
+    expected_final_title: str | None = None,
+    repo_root: Path = ROOT,
+) -> dict[str, object]:
+    """Validate one authority entirely from already captured immutable bytes."""
+
+    if not isinstance(value, Mapping) or set(value) != _PUBLICATION_AUTHORITY_FIELDS:
+        raise RecoveryTitleAuthorityError(
+            "RECOVERY_PUBLICATION_AUTHORITY_SCHEMA_INVALID"
+        )
+    authority = dict(value)
+    if (
+        authority.get("schema_version") != PUBLICATION_SCHEMA_VERSION
+        or authority.get("source_kind")
+        != "committed_verified_publication_registry"
+        or authority.get("candidate_id") != candidate_id
+        or _CANDIDATE_RX.fullmatch(candidate_id) is None
+        or authority.get("registry_schema_version")
+        != PUBLICATION_REGISTRY_SCHEMA
+    ):
+        raise RecoveryTitleAuthorityError(
+            "RECOVERY_PUBLICATION_AUTHORITY_SCHEMA_INVALID"
+        )
+    claimed_sha = authority.pop("authority_sha256")
+    if (
+        not isinstance(claimed_sha, str)
+        or _SHA256_RX.fullmatch(claimed_sha) is None
+        or claimed_sha != _canonical_sha256(authority)
+    ):
+        raise RecoveryTitleAuthorityError(
+            "RECOVERY_PUBLICATION_AUTHORITY_HASH_INVALID"
+        )
+    authority["authority_sha256"] = claimed_sha
+    registry_path = _source_path(
+        authority.get("registry_repo_path"),
+        repo_root=repo_root,
+    )
+    resolved_root = repo_root.resolve()
+    if not registry_path.resolve().is_relative_to(resolved_root):
+        raise RecoveryTitleAuthorityError(
+            "RECOVERY_PUBLICATION_REGISTRY_PATH_INVALID"
+        )
+    registry_sha = "sha256:" + hashlib.sha256(registry_raw).hexdigest()
+    if (
+        _SHA256_RX.fullmatch(str(authority.get("registry_sha256") or ""))
+        is None
+        or registry_sha != authority.get("registry_sha256")
+    ):
+        raise RecoveryTitleAuthorityError(
+            "RECOVERY_PUBLICATION_REGISTRY_SHA_MISMATCH"
+        )
+    registry_authority, entries = _validated_publication_registry(
+        registry_raw,
+        repo_root=repo_root,
+        captured_source_receipts=captured_source_receipts,
     )
     entry = entries.get(candidate_id)
     if entry is None:

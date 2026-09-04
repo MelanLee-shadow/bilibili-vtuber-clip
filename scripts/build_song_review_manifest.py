@@ -39,6 +39,8 @@ from src.autoslice.cover_route_evidence import (  # noqa: E402
     validate_rendered_text_pixel_evidence,
 )
 from src.autoslice.channel_profile import load_channel_profile  # noqa: E402
+from src.autoslice import operator_processing_scope as operator_scope  # noqa: E402
+from src.autoslice import semantic_evidence_scorecard_refresh as semantic_refresh  # noqa: E402
 from src.autoslice.song_delivery import (  # noqa: E402
     SongDeliveryError,
     _validated_song_upload_tags,
@@ -68,6 +70,10 @@ REVIEWABLE_BATCH_STATUSES = {
     "review_ready",
     "review_ready_with_failures",
     "review_ready_retry_wait",
+}
+TALK_REFRESH_BLOCKED_BATCH_STATUSES = {
+    "semantic_chat_scorecard_refresh_blocked",
+    "paused_semantic_chat_scorecard_refresh",
 }
 SHA256_RE = re.compile(r"(?:sha256:)?([0-9a-f]{64})\Z")
 COMMIT_RE = re.compile(r"[0-9a-f]{40}\Z")
@@ -153,9 +159,117 @@ def _canonical_file(path: Path, *, label: str) -> Path:
     return resolved
 
 
-def _candidate_row(state: Mapping[str, Any], candidate_id: str) -> dict[str, Any]:
+def _talk_refresh_block_is_isolated_from_song(
+    state: Mapping[str, Any], candidate_id: str, *, recording_date: str | None
+) -> bool:
+    """Accept only a typed Talk-only refresh block for no-upload Song review.
+
+    The normal batch status whitelist deliberately remains closed.  This is
+    solely the recovery case where a historical, operator-scoped Talk refresh
+    is blocked after an independently completed Song delivery.  It does not
+    reclassify the batch, clear the Talk block, or authorize publication.
+    """
+
+    if (
+        recording_date is None
+        or DATE_RE.fullmatch(recording_date) is None
+        or state.get("status") not in TALK_REFRESH_BLOCKED_BATCH_STATUSES
+        or state.get("upload_allowed") is not False
+    ):
+        return False
+    receipt = state.get(semantic_refresh.REFRESH_STATE_KEY)
+    if not isinstance(receipt, Mapping):
+        return False
+    admission = operator_scope.operator_scope_admission(state, date=recording_date)
+    frozen_scope = operator_scope.operator_talk_scope(state, date=recording_date)
+    if (
+        not admission.admitted
+        or not isinstance(admission.disclosure, Mapping)
+        or not admission.grant_id
+        or frozen_scope != admission.candidate_ids
+        or candidate_id in admission.candidate_ids
+    ):
+        return False
+    expected_keys = {
+        "schema_version",
+        "recording_date",
+        "scope_grant_id",
+        "scope_grant_sha256",
+        "status",
+        "refreshed_candidate_ids",
+        "current_candidate_ids",
+        "blocked_candidate_ids",
+        "deferred_candidate_ids",
+        "duplicate_candidate_ids",
+        "missing_never_recalled_candidates_outside_scope",
+        "receipt_sha256",
+    }
+    if set(receipt) != expected_keys:
+        return False
+    receipt_body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    expected_statuses = (
+        {"BLOCKED", "BLOCKED_DUPLICATE_CANDIDATE"}
+        if state.get("status") == "semantic_chat_scorecard_refresh_blocked"
+        else {"RETRY_WAIT"}
+    )
+    if (
+        receipt.get("schema_version") != semantic_refresh.REFRESH_RUN_SCHEMA
+        or receipt.get("recording_date") != recording_date
+        or receipt.get("scope_grant_id") != admission.grant_id
+        or receipt.get("scope_grant_sha256")
+        != semantic_refresh._canonical_sha256(state.get(operator_scope.STATE_KEY))
+        or receipt.get("status") not in expected_statuses
+        or receipt.get("missing_never_recalled_candidates_outside_scope") is not True
+        or receipt.get("receipt_sha256") != semantic_refresh._canonical_sha256(receipt_body)
+    ):
+        return False
+    receipt_ids: list[str] = []
+    for key in (
+        "refreshed_candidate_ids",
+        "current_candidate_ids",
+        "blocked_candidate_ids",
+        "deferred_candidate_ids",
+        "duplicate_candidate_ids",
+    ):
+        values = receipt.get(key)
+        if not isinstance(values, list) or not all(isinstance(value, str) and value for value in values):
+            return False
+        receipt_ids.extend(values)
+    scope_ids = set(admission.candidate_ids)
+    if len(receipt_ids) != len(set(receipt_ids)) or set(receipt_ids) != scope_ids:
+        return False
+    talk_rows = [
+        row
+        for key in ("pending_talk", "talk_backlog")
+        for row in (state.get(key) if isinstance(state.get(key), list) else [])
+        if isinstance(row, Mapping)
+        and str(row.get("candidate_id") or row.get("cid") or "") in scope_ids
+    ]
+    song_ids = {
+        str(row.get("candidate_id") or row.get("cid") or "")
+        for key in operator_scope.SONG_STATE_COLLECTIONS
+        for row in (state.get(key) if isinstance(state.get(key), list) else [])
+        if isinstance(row, Mapping)
+    }
+    return bool(
+        len(talk_rows) == len(scope_ids)
+        and {
+            str(row.get("candidate_id") or row.get("cid") or "")
+            for row in talk_rows
+        }
+        == scope_ids
+        and all(row.get("lane") in {"semantic_recall", "semantic_recall_sharded"} for row in talk_rows)
+        and not (scope_ids & song_ids)
+    )
+
+
+def _candidate_row(
+    state: Mapping[str, Any], candidate_id: str, *, recording_date: str | None = None
+) -> dict[str, Any]:
     batch_status = str(state.get("status") or "")
-    if batch_status not in REVIEWABLE_BATCH_STATUSES:
+    if batch_status not in REVIEWABLE_BATCH_STATUSES and not _talk_refresh_block_is_isolated_from_song(
+        state, candidate_id, recording_date=recording_date
+    ):
         raise SongReviewManifestError(
             f"state batch is not reviewable: status={batch_status!r}"
         )
@@ -711,6 +825,7 @@ def _refresh_upload_tags_closure(
     *,
     title: str,
     state_path: Path,
+    recording_date: str,
     state: dict[str, Any],
     state_row: dict[str, Any],
     delivery_manifest_path: Path,
@@ -785,7 +900,9 @@ def _refresh_upload_tags_closure(
 
     updated_state = copy.deepcopy(state)
     updated_state_row = _candidate_row(
-        updated_state, str(state_row.get("candidate_id") or "")
+        updated_state,
+        str(state_row.get("candidate_id") or ""),
+        recording_date=recording_date,
     )
     state_sidecar_hashes = updated_state_row.get("delivered_sidecar_hashes")
     if not isinstance(state_sidecar_hashes, dict):
@@ -831,6 +948,9 @@ def build(
         delivery_manifest_path, label="verified Song delivery manifest"
     )
     state_path = _canonical_file(state_path, label="autoslice state")
+    recording_date = state_path.stem
+    if DATE_RE.fullmatch(recording_date) is None:
+        raise SongReviewManifestError("autoslice state path has an invalid recording date")
     deployed_commit_file = _canonical_file(
         deployed_commit_file, label="deployed commit"
     )
@@ -839,7 +959,7 @@ def build(
         raise SongReviewManifestError("deployed commit file is invalid")
 
     state = _load_json(state_path, label="autoslice state")
-    state_row = _candidate_row(state, candidate_id)
+    state_row = _candidate_row(state, candidate_id, recording_date=recording_date)
     delivery_manifest = _load_json(
         delivery_manifest_path, label="verified Song delivery manifest"
     )
@@ -898,6 +1018,7 @@ def build(
             _refresh_upload_tags_closure(
                 title=title,
                 state_path=state_path,
+                recording_date=recording_date,
                 state=state,
                 state_row=state_row,
                 delivery_manifest_path=delivery_manifest_path,
@@ -907,7 +1028,7 @@ def build(
                 closure_writer=closure_writer,
             )
         )
-        state_row = _candidate_row(state, candidate_id)
+        state_row = _candidate_row(state, candidate_id, recording_date=recording_date)
         artifacts = _validate_delivery_artifacts(
             manifest_path=delivery_manifest_path,
             manifest=delivery_manifest,

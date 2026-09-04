@@ -261,6 +261,7 @@ def build_ssh_silero_vad_provider(
             / "scripts"
             / "silero_vad_spans.py"
         )
+    vad_python = os.environ.get("AUTOSLICE_VAD_PYTHON") or "python3"
 
     def provider(source_video: Path, start_ms: int, end_ms: int) -> list[SpeechSpan]:
         duration_ms = max(1, end_ms - start_ms)
@@ -300,9 +301,10 @@ def build_ssh_silero_vad_provider(
             if local_host:
                 # localhost 快路径：免 scp/免 self-ssh，直接对本地 wav 跑
                 # spans 脚本。生产宿主金丝雀证明直执行与 ssh localhost 的
-                # 输出逐字节相同（python3 从 PATH 解析，与 ssh 登录壳一致）。
+                # 输出逐字节相同（默认 python3 从 PATH 解析；生产 shadow
+                # runner 可显式绑定到其 main venv）。
                 run = subprocess.run(
-                    ["python3", remote_script, str(wav_path)],
+                    [vad_python, remote_script, str(wav_path)],
                     check=False,
                     capture_output=True,
                     text=True,
@@ -322,7 +324,7 @@ def build_ssh_silero_vad_provider(
                     [
                         "ssh",
                         host,
-                        f"python3 {shlex.quote(remote_script)} {shlex.quote(remote_wav)}; rc=$?; rm -f {shlex.quote(remote_wav)}; exit $rc",
+                        f"{shlex.quote(vad_python)} {shlex.quote(remote_script)} {shlex.quote(remote_wav)}; rc=$?; rm -f {shlex.quote(remote_wav)}; exit $rc",
                     ],
                     check=False,
                     capture_output=True,

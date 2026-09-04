@@ -26,7 +26,12 @@ from .final_human_review_evidence import (
 )
 from .final_human_review_evidence import validate_bound_review_evidence
 from .cover_route_evidence import validate_cover_route_decision
+from .channel_profile import load_channel_profile as _load_channel_profile
 from .story_contract import cover_story_contract_binding_matches
+from .qixi_corrected_package_finalization import (
+    QixiCorrectedPackageError,
+    validate_manifest_bound_applied_receipt,
+)
 
 
 # 终审回执 schema 是包内持久证据词汇（旧包哈希兼容），保留 lidousha- 拼写。
@@ -36,7 +41,6 @@ _CHECK_ANCHORS = _review_evidence.CHECK_ANCHORS
 REVIEW_SCOPE = "same_bv_repair"
 ACCEPTED_STATUS = "ACCEPTED_FOR_SAME_BV"
 ROOT = Path(__file__).resolve().parents[2]
-from src.autoslice.channel_profile import load_channel_profile as _load_channel_profile
 
 _CHANNEL_PROFILE = _load_channel_profile(ROOT)
 # 契约文件是部署本地配置（非包内持久证据）：schema 与路径按 profile 派生，
@@ -99,8 +103,7 @@ _PUBLICATION_TARGET_FIELDS = frozenset(
 _REVIEWER_KINDS = frozenset(
     {"human_owner", "human_delegate", "delegated_root_agent"}
 )
-# delegated_root_agent 的保留身份集：曾经只有 Codex root；2026-08-01 起
-# Claude root 同为受 维护者 委托的根代理（1013 same-BV 修复首次由其执行）。
+# Root-agent reviewer identities are explicit allowlist values, never inferred.
 _RESERVED_REVIEWER_IDENTITIES = {
     "human_owner": ("维护者",),
     "delegated_root_agent": ("Codex root", "Claude root"),
@@ -649,6 +652,39 @@ def replay_final_human_review_attestation(
             "FINAL_HUMAN_REVIEW_PACKAGE_ATTESTATION_INVALID",
             "package_root",
         )
+    # C1's line947-authorized fastlane is deliberately not a generic
+    # perceptual receipt.  This exact schema pair is the only alternate lane.
+    if "c1_technical_receipt" in attestation:
+        expected_keys = {
+            "package_root",
+            "review_manifest",
+            "package_audit",
+            "c1_technical_receipt",
+        }
+        if set(attestation) != expected_keys:
+            raise FinalHumanReviewError(
+                "FINAL_HUMAN_REVIEW_C1_ATTESTATION_SCHEMA_INVALID"
+            )
+        if not isinstance(manifest.get("recovery_publication_authority"), Mapping):
+            raise FinalHumanReviewError(
+                "FINAL_HUMAN_REVIEW_C1_RECOVERY_REQUIRED"
+            )
+        entries: dict[str, dict[str, object]] = {}
+        paths: dict[str, Path] = {}
+        for key in ("review_manifest", "package_audit", "c1_technical_receipt"):
+            entry, path = _absolute_attested_file(attestation.get(key), label=key)
+            if not path.is_relative_to(package_root):
+                raise FinalHumanReviewError("FINAL_HUMAN_REVIEW_ATTESTED_FILE_INVALID", key)
+            entries[key], paths[key] = entry, path
+        review = _json_object(paths["review_manifest"], source="review_manifest")
+        if review.get("schema_version") != "fastlane-c1-formal-private-review-manifest.v1":
+            raise FinalHumanReviewError("FINAL_HUMAN_REVIEW_C1_FORMAL_MANIFEST_REQUIRED")
+        from src.autoslice.fastlane_c1_technical_receipt import C1TechnicalReceiptError, validate_completed
+        try:
+            validate_completed(_json_object(paths["c1_technical_receipt"], source="c1_technical_receipt"), package_root, paths["package_audit"])
+        except C1TechnicalReceiptError as exc:
+            raise FinalHumanReviewError("FINAL_HUMAN_REVIEW_C1_TECHNICAL_RECEIPT_INVALID", str(exc)) from exc
+        return {"package_root": package_root_text, **entries}
     entries: dict[str, dict[str, object]] = {}
     paths: dict[str, Path] = {}
     for key in (
@@ -761,7 +797,30 @@ def attach_final_human_review(
         return ["same-BV recovery manifest has no exact season IDs"]
     season.update(exact_ids)
     resolved = receipt_path.resolve()
-    attestation["final_human_review"] = {
+    try:
+        receipt = _json_object(resolved, source="final-human-review argument")
+    except FinalHumanReviewError:
+        receipt = {}
+    key = (
+        "c1_technical_receipt"
+        if receipt.get("schema_version") == "fastlane-c1-technical-receipt-evidence.v1"
+        else "final_human_review"
+    )
+    if key == "c1_technical_receipt":
+        expected = {"package_root", "review_manifest", "package_audit"}
+        if set(attestation) != expected:
+            return ["C1 technical receipt requires an exact formal package attestation"]
+        review_entry = attestation.get("review_manifest")
+        try:
+            _entry, review_path = _absolute_attested_file(
+                review_entry, label="review_manifest"
+            )
+            review = _json_object(review_path, source="review_manifest")
+        except FinalHumanReviewError:
+            return ["C1 technical receipt requires a readable formal review manifest"]
+        if review.get("schema_version") != "fastlane-c1-formal-private-review-manifest.v1":
+            return ["C1 technical receipt requires the C1 formal review manifest"]
+    attestation[key] = {
         "path": str(resolved),
         "sha256": _sha256(resolved)[7:],
         "bytes": resolved.stat().st_size,
@@ -1090,10 +1149,43 @@ def _cover_story_claim_authority(
     return ((narrative, "COVER_TEXT"),)
 
 
+def _validate_manual_corrected_same_bv_item(
+    *,
+    item: Mapping[str, object],
+    candidate_id: str,
+    package_root: Path,
+    qixi_repo_root: Path | None,
+) -> None:
+    """Replay the typed Qixi receipt embedded in one manifest item.
+
+    This narrow gate leaves untyped and legacy manual items on their existing
+    final-human path.  A typed item must bind its regular receipt file, bytes,
+    and replayed inner object to its candidate.
+    """
+
+    try:
+        validate_manifest_bound_applied_receipt(
+            item,
+            candidate_id=candidate_id,
+            package_root=package_root,
+            repo_root=qixi_repo_root,
+        )
+    except (
+        OSError,
+        ValueError,
+        QixiCorrectedPackageError,
+    ) as exc:
+        raise FinalHumanReviewError(
+            "FINAL_HUMAN_REVIEW_MANUAL_CORRECTED_RECEIPT_INVALID",
+            candidate_id,
+        ) from exc
+
+
 def _manifest_items(
     review_manifest: object,
     *,
     package_root: Path,
+    qixi_repo_root: Path | None = None,
 ) -> tuple[list[str], dict[str, dict[str, object]]]:
     if not isinstance(review_manifest, Mapping):
         raise FinalHumanReviewError(
@@ -1175,6 +1267,12 @@ def _manifest_items(
         record = _json_object(
             _regular_package_file(package_root, record_path),
             source=f"review_manifest.items[{index}].record",
+        )
+        _validate_manual_corrected_same_bv_item(
+            item=raw_item,
+            candidate_id=candidate_id,
+            package_root=package_root,
+            qixi_repo_root=qixi_repo_root,
         )
         story_contract = record.get("story_contract")
         publish_staging = record.get("publish_staging")
@@ -1609,6 +1707,8 @@ def validate_final_human_review(
     package_root: Path,
     review_manifest: object,
     package_attestation: object,
+    *,
+    qixi_repo_root: Path | None = None,
 ) -> dict[str, Any]:
     """Validate and normalize a complete final perceptual-review receipt.
 
@@ -1710,6 +1810,7 @@ def validate_final_human_review(
     manifest_order, manifest_closure = _manifest_items(
         review_manifest,
         package_root=root,
+        qixi_repo_root=qixi_repo_root,
     )
 
     raw_items = receipt.get("items")

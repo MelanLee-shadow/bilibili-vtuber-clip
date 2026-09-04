@@ -122,7 +122,11 @@ def _source_media_sha256(host: str, source: Path) -> tuple[str, str]:
         if not source.is_file():
             raise RuntimeError(_absent_source_media_error(source))
         resolved = source.resolve(strict=True)
-        return str(resolved), segment_binding_sha256(resolved)
+        try:
+            source_sha256 = segment_binding_sha256(resolved)
+        except TimeoutError:
+            source_sha256 = segment_binding_sha256(resolved)
+        return str(resolved), source_sha256
     completed = subprocess.run(
         ["ssh", host, "sha256sum -- " + shlex.quote(str(source))],
         check=False,

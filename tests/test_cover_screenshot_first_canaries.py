@@ -387,13 +387,14 @@ def test_canary_2b_final_game_gate_rejects_an_empty_panel(tmp_path):
 
 # ───────────────── ③ 保真：talk 提问逐字节等价 ─────────────────
 
-# 这两个 sha 是 base 7d08564（本次改动前）的 prompt 原文摘要。任何对 talk 提问的
-# 改写——哪怕只多一个空格——都会在这里红掉；游戏场分叉只准新增分支，不准污染谈话场。
+# `_TALK_SOURCE_QUESTION_SHA` 仍钉住 base 7d08564；host gate sha 则记录
+# 的有意标定：确定性图形海报的边距、边框和红/绿配色点缀不自动算无意义装饰。除这一处
+# 有意标定外，talk 提问仍逐字钉死；游戏场分叉只准新增分支，不准污染谈话场。
 _TALK_SOURCE_QUESTION_SHA = (
     "249721671a5f12bb519b35d33fe6bff98c974a37ac69aee0de1a9ce168f550f5"
 )
 _TALK_HOST_GATE_QUESTION_SHA = (
-    "450d585621dd38d4469591a5b98863c35aaaba0a3ea052362a3cd6e9686ba769"
+    "d235afa1f368c0d1e1948522d3f14fcbd2110289267291039439b443330e39b8"
 )
 
 

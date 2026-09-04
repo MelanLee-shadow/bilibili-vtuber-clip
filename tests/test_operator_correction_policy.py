@@ -10,10 +10,18 @@ def test_one_or_two_unqualified_reports_require_whole_clip_rerun(count):
     assert plan["whole_clip_rerun_required"] is True
 
 
-def test_three_or_more_reports_use_targeted_repairs():
+def test_exactly_three_reports_conservatively_require_whole_clip_review():
     plan = plan_operator_correction(candidate_id="auto_x", issue_count=3)
+    assert plan["mode"] == "WHOLE_CLIP_RERUN_AND_REVIEW"
+    assert plan["whole_clip_rerun_required"] is True
+
+
+def test_more_than_three_reports_use_targeted_exhaustive_repairs():
+    plan = plan_operator_correction(candidate_id="auto_x", issue_count=4)
     assert plan["mode"] == "TARGETED_REPAIR_PLUS_SYSTEMIC_FIX"
+    assert plan["operator_scope"] == "EXHAUSTIVE_CANDIDATE"
     assert plan["targeted_locations_only"] is True
+    assert plan["requires_change_coverage_proof"] is True
     assert plan["systemic_pipeline_fix_required"] is True
 
 

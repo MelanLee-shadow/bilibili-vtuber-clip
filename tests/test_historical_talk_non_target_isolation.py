@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import copy
 import json
+from pathlib import Path
 
 import pytest
 
 import scripts.session_autoslice as runner
-from src.autoslice import candidate_selection, historical_failed_talk_scope
+from src.autoslice import candidate_selection, historical_failed_talk_scope, runner_state_writeback
 from src.autoslice.talk_quota_policy import TalkQuotaPolicy
 
 
@@ -181,7 +182,7 @@ def test_frozen_prioritize_preserves_non_target_collection_order_and_bytes(
 
 def test_process_date_routes_metadata_and_dispatch_only_to_frozen_target(
     frozen_selection_guards: None,
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     target = _candidate(TARGET_806, selected=True, marker="target")
     pending_other = _candidate(NON_TARGET_550, marker="must-remain-pending")
@@ -196,6 +197,16 @@ def test_process_date_routes_metadata_and_dispatch_only_to_frozen_target(
         "talk_backlog": [copy.deepcopy(backlog_other)],
         "operator_processing_scope": _grant([TARGET_806]),
     }
+    base = tmp_path / "autoslice"
+    base.mkdir()
+    monkeypatch.setattr(runner, "BASE", base)
+
+    def persist_test_state(_date: str, value: dict) -> None:
+        path = runner.state_path(_date)
+        path.parent.mkdir(mode=0o700, exist_ok=True)
+        path.write_bytes(runner_state_writeback.state_bytes(value))
+
+    persist_test_state(DATE, state)
     pending_bytes = _canonical(pending_other)
     backlog_bytes = _canonical(backlog_other)
     routed: list[list[str]] = []
@@ -203,7 +214,7 @@ def test_process_date_routes_metadata_and_dispatch_only_to_frozen_target(
     reprioritized: list[tuple[str, ...] | None] = []
 
     monkeypatch.setattr(runner, "read_state", lambda _date: state)
-    monkeypatch.setattr(runner, "write_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(runner, "write_state", persist_test_state)
     monkeypatch.setattr(runner, "write_reports", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(runner, "runtime_health_error", lambda: None)
     monkeypatch.setattr(runner, "recover_finalized_legacy_hls", lambda *_args, **_kwargs: [])
@@ -253,8 +264,9 @@ def test_process_date_routes_metadata_and_dispatch_only_to_frozen_target(
         assert [item["cid"] for item in items] == [TARGET_806]
         return items, []
 
-    def produce(_date: str, items: list[dict], produce_fn) -> list[dict]:
+    def produce(_date: str, items: list[dict], produce_fn, *, prepare_only: bool) -> list[dict]:
         assert produce_fn is runner.produce_talk
+        assert prepare_only is True
         ids = [item["cid"] for item in items]
         assert ids == [TARGET_806]
         dispatched.append(ids)

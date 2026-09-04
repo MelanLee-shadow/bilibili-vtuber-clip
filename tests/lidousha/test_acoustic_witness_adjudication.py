@@ -709,13 +709,6 @@ def test_witness_self_count_mismatch_is_disclosed_not_fatal(tmp_path):
     response = tmp_path / "response.json"
     response.write_text("{}", encoding="utf-8")
 
-    class Outcome:
-        model = "gemini-3.6-flash"
-        prompt_path = prompt
-        response_path = response
-        provider = "gemini_api"
-        accepted_key_tier = None
-
     def observed(count):
         return {
             "schema_version": eav.WITNESS_SCHEMA,
@@ -727,10 +720,21 @@ def test_witness_self_count_mismatch_is_disclosed_not_fatal(tmp_path):
             "confidence": 0.9,
         }
 
+    outcome = eav._EntityProviderOutcome(
+        observed=observed(6),
+        provider="gemini_api",
+        model="gemini-3.6-flash",
+        prompt_path=prompt,
+        response_path=response,
+        accepted_key_tier=None,
+        paid_policy_stamp=None,
+        provider_failures=[],
+    )
+
     kwargs = dict(
         request={"kind": "subtitle_span_acoustic_witness"},
         request_sha="sha256:0" * 1,
-        outcome=Outcome(),
+        outcome=outcome,
         source_sha256="sha256:deadbeef",
         audio_path=audio,
         start_ms=0,

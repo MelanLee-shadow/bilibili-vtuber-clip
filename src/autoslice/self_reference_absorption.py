@@ -39,7 +39,7 @@ _SELF_REFERENCE_SLOT_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
         rf"给了(?P<surface>{_CJK_NAME})一个",
         rf"(?P<surface>{_CJK_NAME})一直是",
         rf"(?P<surface>{_CJK_NAME})是什么",
-        rf"让(?P<surface>[\u3400-\u9fff]{{2,4}}?)(?:线下)?(?:叫|喊)",
+        r"让(?P<surface>[\u3400-\u9fff]{2,4}?)(?:线下)?(?:叫|喊)",
     )
 )
 _CANONICAL_NAMES = tuple(CHANNEL_PROFILE.self_reference_aliases)

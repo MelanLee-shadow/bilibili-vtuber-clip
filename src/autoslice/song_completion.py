@@ -11,7 +11,6 @@ wrapper, which injects `_has_exact_av_streams` so tests that patch
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path

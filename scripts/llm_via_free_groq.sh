@@ -1,7 +1,7 @@
 #!/bin/bash
 # LLM command-transport bridge: {prompt_file} {completion_file}.
 # Builds an OpenAI-compatible chat body locally, pipes it to the `free` host
-# over ssh, curls Groq there (GROQ_API_KEY stays in free:/opt/bilive/.env),
+# over ssh, curls Groq there (GROQ_API_KEY stays in recording-host:/runtime/.env),
 # and writes the completion text back locally. Used by cpa_semantic_qa_llm.py
 # and the song-hint stage via --llm-command.
 set -euo pipefail

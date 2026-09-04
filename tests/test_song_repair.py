@@ -622,6 +622,9 @@ def test_audio_lrc_adapter_exhausts_keys_when_every_ready_evidence_lands_in_gap(
     monkeypatch.setenv("GEMINI_API_KEY", secrets[0])
     monkeypatch.setenv("GEMINI_API_KEY_2", secrets[1])
     monkeypatch.setenv("GEMINI_API_KEY_3", secrets[2])
+    # ``runner.main`` intentionally imports credentials into its own process;
+    # keep a prior credential-loading test from enabling the paid route here.
+    monkeypatch.delenv("GEMINI_KEY_BACKUP", raising=False)
     monkeypatch.setattr(agy_lrc_alignment, "_duration_ms", lambda _path: 100_000)
     monkeypatch.setattr(
         agy_lrc_alignment.subprocess,

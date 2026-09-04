@@ -20,3 +20,26 @@ def build_final_review_llm_call() -> Callable[[str], str]:
             timeout_seconds=600.0,
         )
     )
+
+
+def build_pronoun_audit_llm_call() -> Callable[[str], str]:
+    """Transport for the candidate-level pronoun consistency audit.
+
+    (维护者): this is a closed 4-token set (TA/他/她/它) classified
+    against already-written rules and rerun every exact-final/self-heal
+    round -- it does not need the same reasoning effort as the A-class
+    entity/boundary judges.  Kept as its own builder (same approved model
+    chain, effort dropped medium -> low) so the A-class calls that still
+    share ``build_final_review_llm_call`` are never touched by this change.
+    """
+
+    return build_llm_call(
+        LlmConfig(
+            transport="command",
+            command_template=(
+                "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} "
+                "'gpt-5.6-terra gpt-5.5 gpt-5.4' low 1"
+            ),
+            timeout_seconds=600.0,
+        )
+    )
