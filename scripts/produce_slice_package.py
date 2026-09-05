@@ -411,6 +411,7 @@ def main(argv: list[str] | None = None) -> int:
             accurate_recut_command=_accurate_reencode_recut_command,
             run_command=run,
         ),
+        chat_authority_audit=chat_authority_audit,
     )
     resolved_boundary_semantic = boundary.audit.get(
         "boundary_semantic_review"

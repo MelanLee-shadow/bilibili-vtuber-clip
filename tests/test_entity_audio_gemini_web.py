@@ -1,4 +1,4 @@
-"""Hermetic routing checks for the shadow-only Gemini consumer-web witness."""
+"""Hermetic checks for the unified web -> AGY -> API witness route."""
 
 from __future__ import annotations
 
@@ -65,10 +65,10 @@ class _AdapterProcess:
         return self.returncode
 
 
-def _request() -> dict[str, object]:
+def _request(evidence_id: str = "a" * 64) -> dict[str, object]:
     return build_witness_request(
         {
-            "evidence_id": "a" * 64,
+            "evidence_id": evidence_id,
             "cue_indexes": [1],
             "matched_start_ms": 1_000,
             "matched_end_ms": 2_100,
@@ -100,11 +100,14 @@ def _set_web_env(monkeypatch, tmp_path: Path, *, enabled: str = "1", shadow: str
     browser.chmod(0o755)
     profile = tmp_path / "profile"
     profile.mkdir()
+    python_target = Path(os.path.realpath(os.sys.executable))
+    python_link = tmp_path / "web-python"
+    python_link.symlink_to(python_target)
     for name, value in {
         verifier.ENTITY_AUDIO_GEMINI_WEB_ENABLED_ENV: enabled,
         verifier.ENTITY_AUDIO_GEMINI_WEB_MODEL_ENV: "3.1 Pro",
         verifier.ENTITY_AUDIO_GEMINI_WEB_COMMAND_ENV: str(adapter),
-        verifier.ENTITY_AUDIO_GEMINI_WEB_PYTHON_ENV: os.path.realpath(os.sys.executable),
+        verifier.ENTITY_AUDIO_GEMINI_WEB_PYTHON_ENV: str(python_link),
         verifier.ENTITY_AUDIO_GEMINI_WEB_PROFILE_ENV: str(profile),
         verifier.ENTITY_AUDIO_GEMINI_WEB_BROWSER_ENV: str(browser),
         verifier.ENTITY_AUDIO_GEMINI_WEB_USER_ENV: web_user,
@@ -146,8 +149,15 @@ def _write_api_outcome(kwargs, observed):
     )
 
 
-def test_shadow_web_witness_is_selected_and_receipt_bound(tmp_path, monkeypatch):
-    _set_web_env(monkeypatch, tmp_path)
+@pytest.mark.parametrize(("shadow", "upload"), (("1", "0"), ("0", "0"), ("0", "1")))
+def test_web_witness_is_first_and_receipt_bound(tmp_path, monkeypatch, shadow, upload):
+    _set_web_env(monkeypatch, tmp_path, shadow=shadow, upload=upload)
+    monkeypatch.setenv(verifier.ENTITY_AUDIO_DISABLE_AGY_ENV, "0")
+    monkeypatch.setattr(
+        agy_gemini_client,
+        "run_local_agy",
+        lambda *_args, **_kwargs: pytest.fail("valid web witness must preempt AGY"),
+    )
     monkeypatch.setenv("UNRELATED_SECRET", "must-not-cross-boundary")
     monkeypatch.setattr(verifier, "_crop_black_frame_audio", _fake_crop)
     calls = []
@@ -163,18 +173,17 @@ def test_shadow_web_witness_is_selected_and_receipt_bound(tmp_path, monkeypatch)
     def fake_run(command, **kwargs):
         calls.append(command)
         if command[0] == "ffmpeg":
-            Path(command[-1]).write_bytes(b"web wav")
+            Path(command[-1]).write_bytes(b"web webm")
             return _Completed()
         raise AssertionError(f"unexpected subprocess.run: {command}")
 
     def fake_popen(command, **kwargs):
         calls.append(command)
         assert kwargs["start_new_session"] is True
-        web_user = pwd.getpwuid(os.geteuid()).pw_name
         assert kwargs["env"] == {
             "HOME": kwargs["env"]["HOME"],
-            "USER": web_user,
-            "LOGNAME": web_user,
+            "USER": pwd.getpwuid(os.geteuid()).pw_name,
+            "LOGNAME": pwd.getpwuid(os.geteuid()).pw_name,
             "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "LANG": "C.UTF-8",
             "LC_ALL": "C.UTF-8",
@@ -194,11 +203,39 @@ def test_shadow_web_witness_is_selected_and_receipt_bound(tmp_path, monkeypatch)
     assert any("--direct-cdp" in call for call in calls)
     assert any("--browser-executable" in call for call in calls)
     assert any("--model-label" in call and "3.1 Pro" in call for call in calls)
+    ffmpeg_call = next(call for call in calls if call[0] == "ffmpeg")
+    assert ["-map", "0:v:0", "-map", "0:a:0"] == ffmpeg_call[ffmpeg_call.index("-map") : ffmpeg_call.index("-map") + 4]
+    assert ["-c:v", "libvpx-vp9"] == ffmpeg_call[ffmpeg_call.index("-c:v") : ffmpeg_call.index("-c:v") + 2]
+    assert ["-c:a", "libopus"] == ffmpeg_call[ffmpeg_call.index("-c:a") : ffmpeg_call.index("-c:a") + 2]
+    assert ["-ac", "1", "-ar", "16000"] == ffmpeg_call[ffmpeg_call.index("-ac") : ffmpeg_call.index("-ac") + 4]
+    assert "-vn" not in ffmpeg_call
+    adapter_call = next(call for call in calls if "--direct-cdp" in call)
+    configured_python = os.environ[verifier.ENTITY_AUDIO_GEMINI_WEB_PYTHON_ENV]
+    assert Path(configured_python).is_symlink()
+    assert configured_python in adapter_call
     job = tmp_path / "out" / "entity_verdicts" / _request()["request_sha256"][:20]
+    web_input = (job / "gemini-web" / "input.webm").resolve()
+    assert str(web_input) in adapter_call
+    assert web_input.read_bytes() == b"web webm"
+    assert not (job / "gemini-web" / "input.wav").exists()
     manifest = json.loads((job / "verdict.manifest.json").read_text())
+    receipt = json.loads((job / "gemini-web" / "receipt.json").read_text())
+    assert manifest["audio_clip_sha256"] == hashlib.sha256((job / "input.mp4").read_bytes()).hexdigest()
+    assert manifest["provider_input_sha256"] == hashlib.sha256(web_input.read_bytes()).hexdigest()
+    assert receipt["video_sha256"] == manifest["provider_input_sha256"]
     receipt_sha = hashlib.sha256((job / "gemini-web" / "receipt.json").read_bytes()).hexdigest()
     assert manifest["provider_receipt_sha256"] == receipt_sha
     assert not list((tmp_path / "out").rglob("witness-acoustic-cache.v4"))
+
+
+def test_web_data_path_rejects_symlink(tmp_path):
+    target = tmp_path / "data"
+    target.write_bytes(b"data")
+    link = tmp_path / "data-link"
+    link.symlink_to(target)
+
+    with pytest.raises(ValueError, match="invalid file type"):
+        verifier._gemini_web._web_path(link, "web data")
 
 
 def verifier_adapter_receipt(audio: Path, prompt: Path, response: Path, model: str):
@@ -219,29 +256,40 @@ def verifier_adapter_receipt(audio: Path, prompt: Path, response: Path, model: s
     )
 
 
-def test_web_failure_falls_through_to_existing_api_ladder(tmp_path, monkeypatch):
+@pytest.mark.parametrize("response_text", [
+    "Sorry, something went wrong. Please try your request again.",
+    json.dumps({**_observed(), "status": "UNCERTAIN", "reason": "audio missing"}),
+    json.dumps({**_observed(), "heard_pinyin": "汉字泄漏"}),
+])
+def test_web_failure_falls_through_to_existing_api_ladder(tmp_path, monkeypatch, response_text):
     _set_web_env(monkeypatch, tmp_path)
+    monkeypatch.setenv(verifier.ENTITY_AUDIO_DISABLE_AGY_ENV, "0")
     monkeypatch.setattr(verifier, "_crop_black_frame_audio", _fake_crop)
     api_calls = []
+    route = []
+
+    def fake_agy(*_args, **_kwargs):
+        route.append("agy")
+        return agy_gemini_client.AgyRun(_Completed(1), "AGY_FAILED_RC_1")
+
+    monkeypatch.setattr(agy_gemini_client, "run_local_agy", fake_agy)
 
     def fake_api(**kwargs):
+        route.append("api")
         api_calls.append(kwargs)
         return _write_api_outcome(kwargs, _observed())
 
     def fake_run(command, **_kwargs):
         if command[0] == "ffmpeg":
-            Path(command[-1]).write_bytes(b"web wav")
+            Path(command[-1]).write_bytes(b"web webm")
             return _Completed()
         raise AssertionError(f"unexpected subprocess.run: {command}")
 
-    monkeypatch.setattr(
-        verifier.subprocess,
-        "Popen",
-        lambda command, **_kwargs: _AdapterProcess(
-            command,
-            response_text="Sorry, something went wrong. Please try your request again.",
-        ),
-    )
+    def fake_web(command, **_kwargs):
+        route.append("web")
+        return _AdapterProcess(command, response_text=response_text)
+
+    monkeypatch.setattr(verifier.subprocess, "Popen", fake_web)
 
     monkeypatch.setattr(verifier.subprocess, "run", fake_run)
     monkeypatch.setattr(verifier, "_run_gemini_api_fallback", fake_api)
@@ -250,6 +298,7 @@ def test_web_failure_falls_through_to_existing_api_ladder(tmp_path, monkeypatch)
     assert result["status"] == "OBSERVED"
     assert result["provider"] == "gemini_api"
     assert api_calls
+    assert route == ["web", "agy", "api"]
     job = tmp_path / "out" / "entity_verdicts" / _request()["request_sha256"][:20]
     failures = json.loads((job / "verdict.manifest.json").read_text())["provider_failures"]
     assert any(
@@ -257,6 +306,37 @@ def test_web_failure_falls_through_to_existing_api_ladder(tmp_path, monkeypatch)
         and row["category"] == "GEMINI_WEB_INVALID_RESPONSE"
         for row in failures
     )
+
+
+def test_web_failure_uses_agy_and_skips_web_for_remaining_run(tmp_path, monkeypatch):
+    _set_web_env(monkeypatch, tmp_path, shadow="0")
+    monkeypatch.setenv(verifier.ENTITY_AUDIO_DISABLE_AGY_ENV, "0")
+    monkeypatch.setattr(verifier, "_crop_black_frame_audio", _fake_crop)
+    monkeypatch.setattr(verifier, "_replay_provider_witness_cache", lambda **_kwargs: None)
+    route = []
+
+    def fake_web(command, **_kwargs):
+        route.append("web")
+        return _AdapterProcess(command, returncode=1)
+
+    def fake_agy(*_args, **_kwargs):
+        route.append("agy")
+        completed = _Completed()
+        completed.stdout = json.dumps(_observed())
+        return agy_gemini_client.AgyRun(completed, None)
+
+    monkeypatch.setattr(verifier.subprocess, "Popen", fake_web)
+    monkeypatch.setattr(agy_gemini_client, "run_local_agy", fake_agy)
+    monkeypatch.setattr(verifier.subprocess, "run", lambda command, **_kwargs: (_write_api_clip(command) or _Completed()))
+    monkeypatch.setattr(verifier, "_run_gemini_api_fallback", lambda **_kwargs: pytest.fail("AGY success must preempt API"))
+    call = _build_verifier(tmp_path)
+    assert call(_request())["provider"] == "agy"
+    second = _request("b" * 64)
+    assert call(second)["provider"] == "agy"
+    assert route == ["web", "agy", "agy"]
+    job = tmp_path / "out" / "entity_verdicts" / second["request_sha256"][:20]
+    failures = json.loads((job / "verdict.manifest.json").read_text())["provider_failures"]
+    assert failures[0] == {"provider": "gemini_web_subscription", "category": "GEMINI_WEB_CIRCUIT_OPEN", "attempted": False}
 
 
 def test_web_timeout_terminates_the_adapter_process_group(monkeypatch):
@@ -291,14 +371,8 @@ def test_web_timeout_terminates_the_adapter_process_group(monkeypatch):
     assert process.waits == 2
 
 
-@pytest.mark.parametrize(
-    ("enabled", "shadow", "upload"),
-    (("0", "1", "0"), ("1", "0", "0"), ("1", "1", "1")),
-)
-def test_web_disabled_or_non_shadow_is_not_called(
-    tmp_path, monkeypatch, enabled, shadow, upload
-):
-    _set_web_env(monkeypatch, tmp_path, enabled=enabled, shadow=shadow, upload=upload)
+def test_web_disabled_is_not_called(tmp_path, monkeypatch):
+    _set_web_env(monkeypatch, tmp_path, enabled="0")
     monkeypatch.setattr(verifier, "_crop_black_frame_audio", _fake_crop)
     web_calls = []
     monkeypatch.setattr(

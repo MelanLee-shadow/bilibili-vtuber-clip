@@ -454,6 +454,7 @@ def test_successful_fake_upload_response_binds_artifacts_and_disables_passwords(
 def test_upload_waits_for_progressbar_before_send_enabled_confirmation(tmp_path):
     video, _prompt = _inputs(tmp_path)
     page = _FakePage(body_text="Gemini\nNew chat", attachment_trigger=True, chooser_only_confirmation=True, progressbar_visible=True)
+    page.body_text = f"Attached {video.name}"
     busy_states = []
 
     def clear_progressbar(_seconds):

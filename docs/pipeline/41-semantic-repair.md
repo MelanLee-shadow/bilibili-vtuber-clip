@@ -93,13 +93,17 @@
      若该晚期 CPA 修复覆盖同一精确时间窗的旧 CPA 文本，必须登记 hash-bound
      `final-source-language-cpa-supersession.v1`，让新文本成为唯一终稿 owner；禁止终验同时要求
      两个互斥版本存活。
-     此处生产音频默认先交 AGY；CPA 只接收 CURRENT、候选盲文字转写与整片文字语境。
+     此处生产音频除下述显式 web 首选外默认先交 AGY；CPA 只接收 CURRENT、候选盲文字转写与整片文字语境。
      AGY 失败且已配置的直连 Gemini API key 实测可用时，外语原声 span 可用同一候选盲
-     prompt 与 exact audio hash 取得后备证人文本。仅在显式开启、`AUTOSLICE_SHADOW_ONLY=1`
-     且 `AUTOSLICE_UPLOAD_ENABLED=0` 的 shadow run 中，`WITNESS_REQUEST_SCHEMA` 的候选盲
-     请求才可在 AGY 失败/禁用后先尝试已登录的 Gemini consumer web subscription；web 失败
-     必须记录 typed provider failure 并原样落回现有 Gemini API ladder，exact-transcript 与
-     非 witness lane 不得触发 web。web receipt 保留可见 model label，但 backend identity 为
+     prompt 与 exact audio hash 取得后备证人文本。显式设置 `ENTITY_AUDIO_GEMINI_WEB_ENABLED=1`
+     时，`WITNESS_REQUEST_SCHEMA` 的候选盲拼音请求统一按 **Gemini consumer web → AGY →
+     既有 Gemini API ladder** 调用；调用方与返回 schema 不变，web 只上传黑帧 WebM + 音轨。
+     登录/验证码、超时、配置或传输失败、无效声学报告均记录 typed provider failure 并自动回退；
+     同一 verifier/producer run 首次 web 失败后跳过后续 web 调用，下一轮重新尝试。
+     此 provider 开关与 shadow/upload 标志解耦，但不授予任何落字、费用或发布权限。
+     调用方仍只使用 `build_local_audio_entity_verifier`；网页传输由 `entity_audio_gemini_web.py`
+     封装，不新增 HTTP 服务或另一套客户端协议。
+     exact-transcript 与非 witness lane 不得触发 web。web receipt 保留可见 model label，但 backend identity 为
      `UNVERIFIED`；web 成功不进入跨请求声学缓存，避免复用登录 profile 状态。
      AGY 或 Gemini API 的成功声学证据都按
      音频字节、完整提示词、模型与适配算法身份做内容寻址缓存；只有全部身份和成功结果哈希
@@ -134,7 +138,7 @@
    `carryover_persisted_count`；该单一 additive receipt 不构成审计面矛盾，不能把原本
    `CORRECTION_DISCOVERY_INCOMPLETE` 的 provider transient 错分成 terminal contract。
    其他共享字段不一致或未知附加字段仍按 contract corruption fail closed。
-5. **生产音频 AGY 优先，例外必须候选盲、hash-bound 且无裁决权**：CPA 与普通文字模型绝不
+5. **生产音频默认 AGY，显式启用的候选盲拼音以 web 为首选；例外必须候选盲、hash-bound 且无裁决权**：CPA 与普通文字模型绝不
    接收音频。candidate-aware 实体二选一仍只交 AGY；允许直连 Gemini API 的只有四条显式专线：
    上文外语原声 span、`entity_audio_verifier.py` 的候选盲拼音 witness、exact-final 同一 target-marker
    几何的候选盲全文 transcript，以及
@@ -372,7 +376,7 @@
 | 见证人规则 | `subtitle_fidelity.py`（通用 mutation 的候选/fidelity 门；同音/近音正字法另须 `final_review_auditor.py` 的 typed textual authority receipt） |
 | 终审审片员 | `pronoun_consistency.py`（候选级代词逐项完整性回执，只发现不改字）+ `final_review_auditor.py`（发现器；同音/近音候选、typed mutation receipt、声学仲裁路由与插入契约）+ `deferred_same_cue_resolution.py`（同窗 fresh-base 复审、typed supersession 与 owner chain） |
 | 最终字节放行 | `final_review_contract.py`（验 `final-review-audit.v2` 的精确 SRT hash、完整 discovery、零 finding、correction mutation audit 与 final boundary endpoint binding） |
-| 声学证人/裁决 | `entity_audio_verifier.py`（AGY 为首选高可信候选盲黑帧证人；仅 shadow-only `WITNESS_REQUEST_SCHEMA` 可在 AGY 失败/禁用后尝试 Gemini consumer web，再回到既有 Gemini API ladder；web label/backend `UNVERIFIED`、receipt 绑定 manifest 且不跨请求缓存；AGY/Gemini 只复用 provider+model 隔离的 `OBSERVED` 成功缓存）+ `scripts/gemini_web_subscription.py`（复用已登录 consumer profile，不读写 cookies/storage，直接 CDP+临时 Xvfb 并保证子进程回收）+ `exact_source_transcript_contract.py` / `exact_source_transcript_provider.py` / `exact_source_transcript_provider_policy.py` / `exact_source_transcript_runtime.py` / `exact_source_transcript_authority.py`（exact target-marked 全文第三候选、独立 paid purpose/ledger gate、typed provider/cache receipt 与 mutation-bound 再验）+ `acoustic_pinyin.py` / `acoustic_witness_protocol.py`（公共拼音贴合与 blind/legacy 协议）+ `read_aloud_llm_verifier.py` / `acoustic_witness_adjudication.py`（CPA 仅看文字闭集并最终选边，任何音频 provider 都无落字权）+ `exact_final_witness_authority.py`（历史收敛见证强绑定与 package 再验） |
+| 声学证人/裁决 | `entity_audio_verifier.py`（显式启用的 `WITNESS_REQUEST_SCHEMA` 统一按 consumer web → AGY → 既有 Gemini API ladder 调用；web 失败在本轮熔断；web label/backend `UNVERIFIED`、receipt 绑定 manifest 且不跨请求缓存；AGY/Gemini 只复用 provider+model 隔离的 `OBSERVED` 成功缓存）+ `scripts/gemini_web_subscription.py`（复用已登录 consumer profile，不读写 cookies/storage，直接 CDP+临时 Xvfb 并保证子进程回收）+ `exact_source_transcript_contract.py` / `exact_source_transcript_provider.py` / `exact_source_transcript_provider_policy.py` / `exact_source_transcript_runtime.py` / `exact_source_transcript_authority.py`（exact target-marked 全文第三候选、独立 paid purpose/ledger gate、typed provider/cache receipt 与 mutation-bound 再验）+ `acoustic_pinyin.py` / `acoustic_witness_protocol.py`（公共拼音贴合与 blind/legacy 协议）+ `read_aloud_llm_verifier.py` / `acoustic_witness_adjudication.py`（CPA 仅看文字闭集并最终选边，任何音频 provider 都无落字权）+ `exact_final_witness_authority.py`（历史收敛见证强绑定与 package 再验） |
 | 源真值 ledger | `source_subtitle_truth.py` + `subtitle_truth_ledger.v1.json`（维护者 审定钉子，唯一不受 provider 故障影响的通道；已审定完整口播必须用 `replace_cue`，不能假设 ASR 仍保留待替换误词；整 cue 静音幻听用严格包含语义的 `drop_cue`，跨界即冲突停用；官方回放等替代源只能用 ledger 内显式 alias，且候选 piece 必须同时精确绑定替代源 SHA-256 与审定时间轴偏移，文件名相似不继承真值） |
 | 梗词铁律 | `surface_canon.py`（直女→侄女等 hard canon） |
 

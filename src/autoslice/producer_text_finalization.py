@@ -151,6 +151,34 @@ def _authorized_final_review_drop_cue(row: dict) -> bool:
     )
 
 
+def authorized_final_review_drop_windows(
+    audit: Mapping[str, object] | None,
+) -> tuple[tuple[int, int], ...]:
+    """Return only hash-validated whole-cue DROP windows on the padded axis."""
+
+    if not isinstance(audit, Mapping):
+        return ()
+    rows = audit.get("entity_repairs")
+    if not isinstance(rows, list):
+        return ()
+    windows: list[tuple[int, int]] = []
+    for row in rows:
+        if not isinstance(row, dict) or not _authorized_final_review_drop_cue(row):
+            continue
+        start_ms = row.get("matched_start_ms")
+        end_ms = row.get("matched_end_ms")
+        if (
+            isinstance(start_ms, bool)
+            or not isinstance(start_ms, int)
+            or isinstance(end_ms, bool)
+            or not isinstance(end_ms, int)
+            or not 0 <= start_ms < end_ms
+        ):
+            continue
+        windows.append((start_ms, end_ms))
+    return tuple(windows)
+
+
 def _record_entity_repair_window_survival(
     row: dict,
     *,

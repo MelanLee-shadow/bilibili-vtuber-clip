@@ -1,4 +1,4 @@
-"""Shadow-only Gemini consumer-web witness handoff and fallback."""
+"""Gemini consumer-web provider behind the shared audio-witness interface."""
 
 from __future__ import annotations
 
@@ -12,10 +12,12 @@ import signal
 import stat
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 from src.autoslice.llm_client import LlmJsonParseError, extract_json_object
+from src.autoslice.acoustic_witness_protocol import _witness_report_error
 
 
 ENTITY_AUDIO_GEMINI_WEB_ENABLED_ENV = "ENTITY_AUDIO_GEMINI_WEB_ENABLED"
@@ -77,13 +79,9 @@ def _provider_artifact_bindings(
 
 
 def gemini_web_enabled() -> bool:
-    """Open the web leg only for an explicitly no-upload shadow run."""
+    """Opt in to web-first transport without changing publication authority."""
 
-    return (
-        os.environ.get(ENTITY_AUDIO_GEMINI_WEB_ENABLED_ENV, "").strip() == "1"
-        and os.environ.get("AUTOSLICE_SHADOW_ONLY", "").strip() == "1"
-        and os.environ.get("AUTOSLICE_UPLOAD_ENABLED", "").strip() == "0"
-    )
+    return os.environ.get(ENTITY_AUDIO_GEMINI_WEB_ENABLED_ENV, "").strip() == "1"
 
 
 def _web_path(
@@ -95,6 +93,11 @@ def _web_path(
     max_bytes: int | None = None,
 ) -> Path:
     path = Path(value).expanduser()
+    # Venv Python is normally a symlink. Validate its target, but execute the
+    # configured path so Python still discovers the venv's installed packages.
+    if executable and path.is_symlink():
+        _web_path(path.resolve(strict=True), label, executable=True, max_bytes=max_bytes)
+        return path
     try:
         info = path.lstat()
     except OSError as exc:
@@ -110,7 +113,7 @@ def _web_path(
 
 
 _WEB_HANDOFF_ENTRIES = frozenset(
-    {"input.wav", "prompt.md", "receipt.json", "response.json", "screenshots"}
+    {"input.webm", "prompt.md", "receipt.json", "response.json", "screenshots"}
 )
 
 
@@ -132,7 +135,7 @@ def _prepare_web_handoff(
     if {entry.name for entry in handoff.iterdir()} - _WEB_HANDOFF_ENTRIES:
         raise ValueError("web handoff contains unexpected files")
 
-    input_path = handoff / "input.wav"
+    input_path = handoff / "input.webm"
     prompt_path = handoff / "prompt.md"
     receipt_path = handoff / "receipt.json"
     response_path = handoff / "response.json"
@@ -354,10 +357,9 @@ def run_gemini_web_fallback(
             target_audio_start_ms=request.get("target_audio_start_ms"),
             target_audio_end_ms=request.get("target_audio_end_ms"),
         )
-        # Chromium in the proven OCI3 runtime accepts WAV but cannot decode the
-        # source MP4's H.264/AAC payload.  Keep the source crop hash in the
-        # manifest while binding the web receipt to this exact WAV handoff.
-        web_audio = job_dir / "input.gemini-web.wav"
+        # Preserve the black source crop and audio in browser-compatible WebM.
+        # The manifest still binds the source crop separately from this upload.
+        web_audio = job_dir / "input.gemini-web.webm"
         extract = subprocess.run(
             [
                 "ffmpeg",
@@ -367,13 +369,19 @@ def run_gemini_web_fallback(
                 "-y",
                 "-i",
                 str(audio_path),
-                "-vn",
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a:0",
+                "-c:v",
+                "libvpx-vp9",
+                "-c:a",
+                "libopus",
                 "-ac",
                 "1",
                 "-ar",
                 "16000",
-                "-c:a",
-                "pcm_s16le",
+                "-shortest",
                 str(web_audio),
             ],
             check=False,
@@ -474,6 +482,16 @@ def run_gemini_web_fallback(
             requested_model=model_label,
             sha256=sha256,
         )
+        error = _witness_report_error(request, observed)
+        if error is not None:
+            provider_failures.append({
+                "provider": "gemini_web_subscription",
+                "category": "GEMINI_WEB_INVALID_RESPONSE",
+                "witness_reason": error[0],
+                "receipt_sha256": receipt_sha256,
+                "attempted": True,
+            })
+            return None
         return _EntityProviderOutcome(
             observed=observed,
             provider="gemini_web_subscription",
@@ -538,13 +556,26 @@ def run_gemini_web_fallback_if_enabled(
     recording_date: str,
     provider_failures: list[dict[str, Any]],
     fallback: Callable[..., Any],
+    unavailable: threading.Event | None = None,
 ) -> Any | None:
     if not eligible or not gemini_web_enabled():
         return None
-    return fallback(
+    if unavailable is not None and unavailable.is_set():
+        provider_failures.append({
+            "provider": "gemini_web_subscription",
+            "category": "GEMINI_WEB_CIRCUIT_OPEN",
+            "attempted": False,
+        })
+        return None
+    outcome = fallback(
         request=request,
         audio_path=audio_path,
         job_dir=job_dir,
         recording_date=recording_date,
         provider_failures=provider_failures,
     )
+    # ponytail: skip repeated web failures within this producer; a later run
+    # retries normally without a persistent cooldown service.
+    if outcome is None and unavailable is not None:
+        unavailable.set()
+    return outcome

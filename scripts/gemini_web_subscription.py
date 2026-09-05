@@ -610,6 +610,9 @@ def upload_video(page: Any, video_path: Path, *, timeout_seconds: float = 120.0,
 
     def confirmed() -> bool:
         nonlocal stable_ready_polls
+        if _visible_upload_busy(page):
+            stable_ready_polls = 0
+            return False
         text = _body(page).lower()
         send_ready = any(
             _visible(item)
@@ -619,9 +622,7 @@ def upload_video(page: Any, video_path: Path, *, timeout_seconds: float = 120.0,
             for item in _locators(page, "get_by_role", "button", name=send_name)
         )
         explicit = bool(getattr(page, "upload_confirmed", False) is True or name in text or (stem and stem in text) or re.search(r"(?:upload|attach|attachment).{0,80}(?:ready|complete|ed)", text))
-        if explicit:
-            return True
-        if not send_ready or _visible_upload_busy(page):
+        if not explicit and not send_ready:
             stable_ready_polls = 0
             return False
         stable_ready_polls += 1

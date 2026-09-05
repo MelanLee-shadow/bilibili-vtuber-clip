@@ -31,7 +31,6 @@ from src.autoslice.cover_route_evidence import (
     validate_cover_route_decision,
 )
 from src.autoslice.publication_registry import cover_maintenance_block_reason
-from src.autoslice.story_contract import cover_story_contract_binding_matches
 from src.autoslice.cover_maintenance import (
     _atomic_write_bytes_file,
     _json_file_bytes,
@@ -43,9 +42,8 @@ from src.autoslice.verified_io import (
 )
 from src.autoslice.song_delivery import SongDeliveryError, cover_generation_is_song, song_portable_cover_replay_specs
 
-
 _runner = RunnerProxy()
-
+_active_story_contract = _route_lineage.active_story_contract
 
 def _validate_repaired_cover_generation(
     *, cover: Path, title: str, candidate_id: str
@@ -101,52 +99,6 @@ def _validate_repaired_cover_generation(
     return document, manifest_path
 
 
-def _active_story_contract(
-    documents: list[tuple[Path, dict]],
-) -> dict | None:
-    """Resolve one frozen story contract from the active publication surface."""
-
-    authoritative_contracts: list[dict] = []
-    cover_bindings: list[dict] = []
-    for _path, document in documents:
-        authoritative = document.get("story_contract")
-        if (
-            isinstance(authoritative, dict)
-            and authoritative not in authoritative_contracts
-        ):
-            authoritative_contracts.append(authoritative)
-        publish_view = (
-            document
-            if document.get("schema_version") == "shadow-publish-draft.v1"
-            else document.get("publish_staging")
-        )
-        if isinstance(publish_view, dict):
-            generation = publish_view.get("cover_generation")
-            if isinstance(generation, dict):
-                binding = generation.get("story_contract")
-                if isinstance(binding, dict) and binding not in cover_bindings:
-                    cover_bindings.append(binding)
-    if not authoritative_contracts and not cover_bindings:
-        return None
-    if len(authoritative_contracts) > 1:
-        raise ValueError("active cover documents disagree on story contract")
-    if authoritative_contracts:
-        authority = authoritative_contracts[0]
-        if any(
-            not cover_story_contract_binding_matches(authority, binding)
-            for binding in cover_bindings
-        ):
-            raise ValueError(
-                "active cover StoryContract projection disagrees with authority"
-            )
-        return copy.deepcopy(authority)
-    if len(cover_bindings) != 1:
-        raise ValueError("active cover documents disagree on story contract")
-    # Legacy packages may predate a complete top-level StoryContract.  Preserve
-    # their exact, mutually-agreed cover binding as the best active authority.
-    return copy.deepcopy(cover_bindings[0])
-
-
 def _enrich_repaired_cover_generation(
     *,
     generation: dict,
@@ -163,7 +115,15 @@ def _enrich_repaired_cover_generation(
     attach those active documents and record the actual cpa_redraw execution.
     """
 
-    story_contract = _active_story_contract(documents)
+    if generation.get("method") == "screenshot_polish":
+        return _route_lineage.enrich_screenshot_polish_generation(
+            generation=generation,
+            generation_path=generation_path,
+            title=title,
+            documents=documents,
+            prior_generation=prior_generation,
+        )
+    story_contract = _route_lineage.active_story_contract(documents)
     if story_contract is None:
         if cover_generation_is_song(generation):
             enriched = copy.deepcopy(generation)
@@ -735,11 +695,21 @@ def _roll_forward_prepared_cover_transactions(
         if not valid or binding_payload is None:
             continue
         try:
+            active_documents = _active_cover_documents(
+                date=date,
+                candidate_id=cid,
+                title=title,
+                mp4=mp4,
+                media_sha256=str(journal.get("media_sha256") or ""),
+            )
+            if not active_documents:
+                continue
             generation_cover = Path(str(binding_payload.get("generation_cover_path") or "")).resolve(strict=True)
-            generation, generation_path = _validate_repaired_cover_generation(
+            generation, generation_path = _route_lineage.validate_cover_generation_for_binding(
                 cover=generation_cover,
                 title=title,
                 candidate_id=cid,
+                documents=active_documents,
             )
         except (OSError, ValueError):
             continue
@@ -766,16 +736,6 @@ def _roll_forward_prepared_cover_transactions(
         ):
             continue
         binding_target = generation_cover.with_suffix(".cover-binding.json").absolute()
-        try:
-            active_documents = _active_cover_documents(
-                date=date,
-                candidate_id=cid,
-                title=title,
-                mp4=mp4,
-                media_sha256=str(journal.get("media_sha256") or ""),
-            )
-        except (OSError, ValueError):
-            continue
         expected_targets = {
             binding_target,
             *(path.absolute() for path, _document in active_documents),
@@ -1069,7 +1029,7 @@ def bind_manual_package_cover(*, package_dir: Path, cover: Path) -> dict:
         documents.append((record_path, record_document))
     documents.append((publish_path, publish_document))
 
-    generation, generation_path = _validate_repaired_cover_generation(
+    generation, generation_path = _route_lineage.validate_cover_generation_for_binding(
         cover=cover, title=title, candidate_id=cid
     )
     generation, generation_path = _enrich_repaired_cover_generation(
@@ -1169,7 +1129,7 @@ def _bind_repaired_cover(
     cid = str(rec.get("candidate_id") or "")
     title = str(rec.get("title") or "")
     generated_cover = generated_cover or cover
-    generation, generation_path = _validate_repaired_cover_generation(
+    generation, generation_path = _route_lineage.validate_cover_generation_for_binding(
         cover=generated_cover, title=title, candidate_id=cid
     )
     cover_sha256 = "sha256:" + _runner._sha256_regular_file(generated_cover)
@@ -1442,10 +1402,21 @@ def _cover_binding_valid(date: str, rec: dict, mp4: Path, cover: Path) -> bool:
     ):
         return False
     try:
-        generation, validated_path = _validate_repaired_cover_generation(
+        documents = _active_cover_documents(
+            date=date,
+            candidate_id=str(rec.get("candidate_id") or ""),
+            title=str(rec.get("title") or ""),
+            mp4=mp4,
+            media_sha256=str(binding.get("media_sha256") or ""),
+        )
+    except (OSError, ValueError):
+        return False
+    try:
+        generation, validated_path = _route_lineage.validate_cover_generation_for_binding(
             cover=generation_cover,
             title=str(rec.get("title") or ""),
             candidate_id=str(rec.get("candidate_id") or ""),
+            documents=documents,
         )
     except (OSError, ValueError, SongDeliveryError):
         return False
@@ -1469,16 +1440,6 @@ def _cover_binding_valid(date: str, rec: dict, mp4: Path, cover: Path) -> bool:
         or summary.get("cover_binding_path") != str(binding_path)
         or summary.get("cover_binding_sha256") != binding_sha256
     ):
-        return False
-    try:
-        documents = _active_cover_documents(
-            date=date,
-            candidate_id=str(rec.get("candidate_id") or ""),
-            title=str(rec.get("title") or ""),
-            mp4=mp4,
-            media_sha256=str(binding.get("media_sha256") or ""),
-        )
-    except (OSError, ValueError):
         return False
     for _path, document in documents:
         hashes = document.get("artifact_hashes")
@@ -1860,7 +1821,7 @@ def _recover_committed_cover_binding(date: str, rec: dict, mp4: Path, cover: Pat
             binding = _read_json_object(binding_path, label="recoverable cover binding")
             generation_path = Path(str(binding.get("generation_manifest_path") or "")).resolve(strict=True)
             generation_cover = Path(str(binding.get("generation_cover_path") or "")).resolve(strict=True)
-            generation, validated_path = _validate_repaired_cover_generation(
+            generation, validated_path = _route_lineage.validate_cover_generation_for_binding(
                 cover=generation_cover,
                 title=title,
                 candidate_id=cid,
@@ -2197,7 +2158,7 @@ def _cover_authority_preflight(date: str, rec: dict, mp4: Path) -> None:
                 "COVER_TITLE_AUTHORITY_UNRESOLVED: cover-only repair cannot "
                 f"convert a blocked title into a review-ready package: {path}"
             )
-    story_contract = _active_story_contract(documents)
+    story_contract = _route_lineage.active_story_contract(documents)
     if story_contract is not None and relationship_visual_safety_required(story_contract):
         raise ValueError(
             "COVER_RELATIONSHIP_REFERENCE_UNRESOLVED: generic cover repair "

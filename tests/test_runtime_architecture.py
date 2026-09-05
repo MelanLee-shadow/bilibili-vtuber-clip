@@ -208,7 +208,9 @@ MODULE_DEBT_LEDGER = {
     "src/autoslice/cover_generation.py": 2_346,
     # +166：bind_manual_package_cover——手动产线包封面回写（同一套
     # 校验/binding/原子写；维护者 8/2 /goal 授权；测试 test_manual_cover_bind.py）。
-    "src/autoslice/cover_repair.py": 2_217,
+    # -39: screenshot-polish route validation/story projection moved
+    # into cover_repair_route_lineage; keep the compatibility helper alias.
+    "src/autoslice/cover_repair.py": 2_178,
     # +79：cue59「殉情」顶替真值「偶遇」实案（维护者
     # auto_203735_555_680 speaker-truth-diff 裁决 + 落地授权）——新增
     # _glossary_session_candidate_undecidable / _adjudicate_with_glossary_witness_guard
@@ -619,6 +621,8 @@ def test_final_text_result_cues_and_receipt_reach_the_same_boundary_resolver() -
     resolver_keywords = {keyword.arg: keyword.value for keyword in resolver_calls[0].keywords}
     assert isinstance(resolver_keywords["cues"], ast.Name)
     assert resolver_keywords["cues"].id == "cues"
+    assert isinstance(resolver_keywords["chat_authority_audit"], ast.Name)
+    assert resolver_keywords["chat_authority_audit"].id == "chat_authority_audit"
 
     receipt_source = assignment_to("final_review_audit").value
     assert isinstance(receipt_source, ast.BoolOp)
