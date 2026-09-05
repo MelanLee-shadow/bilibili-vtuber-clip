@@ -69,6 +69,7 @@ from src.autoslice.speaker_manual_review import (
 from src.autoslice import song_name_authority
 from src.autoslice.talk_quota_freeze import carry_frozen_admission
 from src.autoslice.talk_recovery_record_policy import (
+    cover_route_retry_is_eligible,
     supplemental_recovery_candidate,
 )
 
@@ -242,15 +243,7 @@ def _talk_retry_decision(
     ) or infrastructure_retry
     # Screenshot-route maintenance owns an independent fingerprint-bound,
     # one-shot budget after a reviewable talk package already exists.
-    cover_route_retry = bool(
-        record.get("status") == "failed"
-        and record.get("failure_recoverable") is True
-        and record.get("failure_kind") == "cover_route_regeneration"
-        and isinstance(
-            record.get("cover_route_regeneration_fingerprint"), str
-        )
-        and int(record.get("cover_route_regeneration_attempts") or 0) > 0
-    )
+    cover_route_retry = cover_route_retry_is_eligible(record)
     sanctioned_revival_retry = _pending_sanctioned_revival_retry(record)
     carryover_fingerprint = _unconsumed_final_review_carryover(record)
     carryover_retry = carryover_fingerprint is not None

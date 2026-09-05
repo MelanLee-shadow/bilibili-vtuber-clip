@@ -5,6 +5,18 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 
+def cover_route_retry_is_eligible(record: Mapping[str, object]) -> bool:
+    """Match the existing bounded screenshot-route retry branch."""
+
+    return bool(
+        record.get("status") == "failed"
+        and record.get("failure_recoverable") is True
+        and record.get("failure_kind") == "cover_route_regeneration"
+        and isinstance(record.get("cover_route_regeneration_fingerprint"), str)
+        and int(record.get("cover_route_regeneration_attempts") or 0) > 0
+    )
+
+
 def _legacy_exact_backfill_rejection(record: Mapping[str, object]) -> bool:
     status = record.get("rejected_status")
     reason = record.get("rejection_reason")

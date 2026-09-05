@@ -6,7 +6,7 @@ import datetime as dt
 import json
 import os
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 
 
@@ -53,6 +53,26 @@ def start_date_is_terminal(date: str, state_path: Callable[[str], Path]) -> bool
         return False
     if not isinstance(state, dict) or state.get("status") not in START_DATE_TERMINAL_STATUSES:
         return False
+    # A failed pick may still carry the exact one-shot screenshot-route
+    # producer rerun owned by delivery recovery.  Keep that work visible to
+    # oldest-first maintenance instead of treating the date as complete.
+    picks = state.get("picks")
+    if isinstance(picks, list):
+        from src.autoslice.talk_recovery_record_policy import (
+            cover_route_retry_is_eligible,
+        )
+
+        for record in picks:
+            if not isinstance(record, Mapping):
+                continue
+            try:
+                queued_route_retry = cover_route_retry_is_eligible(record)
+            except (OverflowError, TypeError, ValueError):
+                # A malformed marker cannot prove queued work.  The normal
+                # delivery path remains responsible for rejecting it.
+                queued_route_retry = False
+            if queued_route_retry:
+                return False
     # A terminal projection must not hide work that was deliberately left in
     # either lane for a later deploy-safe tick.
     return not state.get("pending_talk") and not state.get("pending_song")
