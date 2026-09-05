@@ -48,6 +48,7 @@ def pipeline_fingerprint(
         hasher.update(path.read_bytes())
         hasher.update(b"\0")
     for key in (
+        "AUTOSLICE_CORRECTION_MODE",
         "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_COMMAND_JSON",
         "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_NAME",
         "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_ALGORITHM_ID",

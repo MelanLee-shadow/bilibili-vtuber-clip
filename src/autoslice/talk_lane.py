@@ -927,6 +927,10 @@ def classify_talk_failure(attempt_output: str) -> dict:
             "source_media_binding",
             True,
         )
+    elif "CPA_CORRECTION_UNAVAILABLE" in tail or "CPA_PRONOUN_UNAVAILABLE" in tail:
+        kind, stage, recoverable = "provider_transient", "asr_cpa_correction", True
+    elif "CPA_CORRECTION_INVALID_OUTPUT" in tail or "CPA_PRONOUN_INVALID_OUTPUT" in tail:
+        kind, stage, recoverable = "provider_contract", "asr_cpa_correction", False
     elif any(
         marker in tail
         for marker in (

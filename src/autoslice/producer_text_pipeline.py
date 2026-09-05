@@ -1,5 +1,4 @@
 """Transcript, structured-chat, entity, and final-review stage for the producer."""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -287,6 +286,7 @@ def _transcribe_draft(
     adapters: TextPipelineAdapters,
 ) -> TranscriptionDraft:
     session_topic_authorities = discover_session_topic_authorities(spec)
+    term_boundary_surfaces = adapters.load_term_boundary_surfaces(spec)
     song_name_candidates = [
         str(title).strip()
         for title in (spec.get("song_name_candidates") or [])
@@ -304,6 +304,8 @@ def _transcribe_draft(
             topic_hint=str(spec.get("selection_hook") or ""),
             song_name_candidates=song_name_candidates,
             session_topic_authorities=session_topic_authorities,
+            term_boundary_surfaces=term_boundary_surfaces,
+            duration_ms=padded_dur,
         )
     else:
         transcriber = adapters.build_agy_transcriber(
@@ -316,14 +318,12 @@ def _transcribe_draft(
     srt_text, session_topic_absorption_audit = absorb_session_topic_entities(
         srt_text, session_topic_authorities
     )
-    # A known proper noun (e.g. 梦限大) straddled across two ASR cues can
-    # never be repaired downstream: every later stage locks cue count and
-    # indices 1:1, so no single cue ever contains the full surface again.
-    # Fix it once, right here, before anything downstream depends on the
-    # cue shape.
-    term_boundary_surfaces = adapters.load_term_boundary_surfaces(spec)
+    # Frontload before CPA; reassert for non-aggregate adapters and audit.
     term_boundary_moves: list[dict] = []
-    if term_boundary_surfaces:
+    pre_cpa_audit_path = padded.with_suffix(".pre-cpa-audit.json")
+    if substrate == "aggregate_asr" and correct in ("bcut_agy_cpa", "cpa", "moss_cpa") and pre_cpa_audit_path.is_file():
+        term_boundary_moves = json.loads(pre_cpa_audit_path.read_text(encoding="utf-8"))["term_boundary_moves"]
+    elif term_boundary_surfaces:
         unified_cues, term_boundary_moves = unify_terms_across_cues(
             parse_srt_cues(srt_text), term_boundary_surfaces
         )

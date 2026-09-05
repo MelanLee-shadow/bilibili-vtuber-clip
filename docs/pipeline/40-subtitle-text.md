@@ -44,6 +44,26 @@ FLAGGED/失效 receipt。最终 materialize 后仍必须重算 exact-final SRT�
 
 ## 硬约束
 
+- aggregate ASR 的 CPA 路线必须完成整片校正；空补全、缺失/重复 cue、非法字段和全空文本
+  不能降级成“已校正的原稿”。服务不可用为 `CPA_CORRECTION_UNAVAILABLE`，坏合同为
+  `CPA_CORRECTION_INVALID_OUTPUT`；前者按既有 provider-transient 有界重试，后者阻断。
+  有代词时专项 CPA 同样须返回合法结果；显式合法零改动仍可通过。
+- 首次 CPA 前复用 `term_boundary.py`、已授权 `canonical_surface_rules` 和
+  `normalize_expected_value_surfaces`。词边界移动不得改变整段字符流、cue 数或时间戳；MOSS
+  的匿名 speaker 切换/缺失边界不得跨越。词形规范不等于独立听音证据，登记词冲突仍交 CPA。
+  原始 `.asr_draft.srt` 不覆盖；`.pre-cpa.srt` 与 `.pre-cpa-audit.json` 保存前置结果及规则来源，
+  非平凡词形差异的原稿也给 CPA。晚期 hard/expected/native canon、source truth、fidelity、
+  entity 与 exact-final 门保持不变；前置不能取得新的语义改字权限。
+- 普通谈话可显式试跑 `--correct moss_cpa`：固定 MOSS Pro 无热词原生草稿 → 前置规范 →
+  必经 CPA，疑难项仍走既有实体/终审局部声学证据和 CPA 裁决。不按未经验证的 ASR 差异阈值
+  选模型。MOSS 超时、无凭据、坏响应、重叠或越界时间轴须回到完整 BCUT→AGY→CPA 路线，
+  不能静默丢段或按编号套进 BCUT 时间轴。`.asr-source.json` 记录实际路线、模型、音频/响应
+  hash 及回退原因；匿名 speaker 不是 HOST/GUEST 身份证据。
+  `AUTOSLICE_CORRECTION_MODE` 只允许 `bcut_agy_cpa/moss_cpa/cpa`；代码默认仍为旧路线，
+  MOSS 默认推广须先完成配对全链和时间轴验收。`agy/none` 仅保留为显式 CLI 诊断，不能由
+  生产环境默认开关取消 CPA。MOSS key 只从私密 `AUTOSLICE_MOSS_API_KEY_FILE` 或进程
+  `AUTOSLICE_MOSS_API_KEY` 读取，禁止进源码、日志和 fingerprint。
+
 - 谈话切片中的歌名候选（包括可能其实是 franchise/企划名的字符串）在
   `song_name_pin.py` 改字前必须先有 `song-name-semantic-verification.v1`：回执绑定 pin 前
   SRT、完整候选集合、标题引语/selection hook/歌名语境邻近 cue、逐候选歌词来源与 hash、
