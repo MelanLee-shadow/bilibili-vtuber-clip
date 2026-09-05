@@ -1694,6 +1694,140 @@ def test_later_repair_requires_and_replays_explicit_completed_predecessor(
     assert read_journal(shared_journal)[-1]["plan_id"] == plan["plan_id"]
 
 
+def test_later_repair_binds_exact_directional_authority_migration(
+    tmp_path,
+    monkeypatch,
+):
+    completed_path, current_snapshot = _completed_predecessor(
+        tmp_path / "predecessor"
+    )
+    next_root = tmp_path / "next"
+    next_root.mkdir()
+    manifest_path, manifest = _manifest(next_root)
+    successor_authority = {
+        **PUBLICATION_AUTHORITY,
+        "authority_sha256": "sha256:" + "b" * 64,
+    }
+    manifest["recovery_publication_authority"] = successor_authority
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    def validate(value, *, candidate_id, expected_final_title=None):
+        assert candidate_id == PUBLICATION_AUTHORITY["candidate_id"]
+        assert expected_final_title in (None, FINAL_TITLE)
+        if value == PUBLICATION_AUTHORITY:
+            return copy.deepcopy(PUBLICATION_AUTHORITY)
+        if value == successor_authority:
+            return copy.deepcopy(successor_authority)
+        raise same_bv.RecoveryTitleAuthorityError("unexpected authority")
+
+    migration_attestation = {
+        "schema_version": (
+            "recovery-publication-authority-migration-attestation.v1"
+        ),
+        "migration_id": "test-directional-migration",
+        "policy": {
+            "repo_path": "assets/test-migrations.json",
+            "sha256": "sha256:" + "1" * 64,
+        },
+        "migration_sha256": "sha256:" + "2" * 64,
+        "from_authority_sha256": "sha256:" + "a" * 64,
+        "to_authority_sha256": "sha256:" + "b" * 64,
+        "predecessor_plan_sha256": "sha256:" + "3" * 64,
+        "predecessor_completed_sha256": "sha256:" + "4" * 64,
+        "preserve_existing_tags": True,
+    }
+    migration_calls = []
+
+    def migration_binding(
+        predecessor_plan,
+        successor,
+        plan_entry,
+        predecessor_completed,
+        completed,
+        bvid,
+        preserve_existing_tags,
+    ):
+        assert predecessor_plan["recovery_publication_authority"] == (
+            PUBLICATION_AUTHORITY
+        )
+        assert successor == successor_authority
+        assert plan_entry["sha256"] == sha256_file(
+            Path(json.loads(completed_path.read_text())["plan"]["path"])
+        )
+        assert predecessor_completed == json.loads(completed_path.read_text())
+        assert completed == completed_path.resolve()
+        assert bvid == BVID
+        assert preserve_existing_tags is True
+        migration_calls.append(plan_entry["sha256"])
+        return {"authority_migration": copy.deepcopy(migration_attestation)}, None
+
+    monkeypatch.setattr(
+        same_bv,
+        "validate_recovery_publication_authority",
+        validate,
+    )
+    monkeypatch.setattr(
+        same_bv.authority_migration,
+        "predecessor_authority_migration_binding",
+        migration_binding,
+    )
+
+    plan = create_plan(
+        manifest_path=manifest_path,
+        manifest=manifest,
+        bvid=BVID,
+        snapshot=current_snapshot,
+        predecessor_completed_path=completed_path,
+        preserve_existing_tags=True,
+    )
+
+    assert plan["predecessor_completion"]["authority_migration"] == (
+        migration_attestation
+    )
+    validate_plan(plan, manifest=manifest)
+    assert len(migration_calls) >= 3
+
+    for field in (
+        "migration_id",
+        "policy_sha256",
+        "from_authority_sha256",
+        "predecessor_plan_sha256",
+        "preserve_existing_tags",
+        "unexpected",
+    ):
+        tampered = copy.deepcopy(plan)
+        migration = tampered["predecessor_completion"]["authority_migration"]
+        if field == "policy_sha256":
+            migration["policy"]["sha256"] = "sha256:" + "0" * 64
+        elif field == "preserve_existing_tags":
+            migration[field] = False
+        else:
+            migration[field] = "transplanted-value"
+        plan_path = next_root / f"tampered-migration-{field}.plan.json"
+        plan_path.write_text(
+            json.dumps(tampered, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        adapter = FakeAdapter(tampered)
+        with pytest.raises(
+            PlanInvalid,
+            match="predecessor completion is not canonical",
+        ):
+            repair_step(
+                plan_path=plan_path,
+                journal=next_root / f"tampered-migration-{field}.journal.jsonl",
+                manifest=manifest,
+                adapter=adapter,
+            )
+        assert adapter.observe_calls == 0
+        assert adapter.append_calls == 0
+        assert adapter.swap_calls == 0
+        assert adapter.section_sync_calls == 0
+
+
 def test_completed_predecessor_survives_later_review_package_refresh(
     tmp_path,
 ):
@@ -1845,6 +1979,123 @@ def test_planning_refuses_preexisting_creator_public_metadata_drift(tmp_path):
             bvid=BVID,
             snapshot=snapshot,
         )
+
+
+def test_explicit_tag_preservation_freezes_equal_live_tags_only(tmp_path):
+    manifest_path, manifest = _manifest(tmp_path)
+    manifest["tags"] = ["李豆沙", "虚拟主播", "虚拟UP主", "直播切片"]
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False) + "\n", encoding="utf-8")
+    snapshot = _before_snapshot()
+    live_tags = sorted(
+        ["七夕", "反差萌", "唱歌", "搞笑", "李豆沙", "直播切片", "苦情歌", "虚拟UP主", "虚拟主播"]
+    )
+    snapshot["creator"]["metadata"]["tags"] = live_tags
+    snapshot["public"]["metadata"]["tags"] = live_tags
+
+    default = create_plan(
+        manifest_path=manifest_path, manifest=manifest, bvid=BVID, snapshot=snapshot
+    )
+    assert default["target_metadata"]["tags"] == sorted(manifest["tags"])
+    assert "metadata_preservation" not in default
+
+    plan = create_plan(
+        manifest_path=manifest_path,
+        manifest=manifest,
+        bvid=BVID,
+        snapshot=snapshot,
+        preserve_existing_tags=True,
+    )
+    assert plan["target_metadata"]["tags"] == live_tags
+    assert plan["metadata_preservation"]["field"] == "tags"
+    assert plan["metadata_preservation"]["manifest_original_tags"] == manifest["tags"]
+    assert set(plan["target_metadata"]) == {
+        "title", "desc", "tags", "tid", "copyright", "source", "cover"
+    }
+    validate_plan(plan, manifest=manifest)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (
+            lambda snapshot: snapshot["public"]["metadata"].update({"tags": ["other"]}),
+            "Creator and public metadata disagree",
+        ),
+        (
+            lambda snapshot: snapshot["creator"]["metadata"].update({"tags": []})
+            or snapshot["public"]["metadata"].update({"tags": []}),
+            "Creator tags are empty or invalid",
+        ),
+        (
+            lambda snapshot: snapshot["creator"]["metadata"].update({"tags": ["dup", "dup"]})
+            or snapshot["public"]["metadata"].update({"tags": ["dup", "dup"]}),
+            "Creator tags are non-canonical or duplicated",
+        ),
+    ],
+)
+def test_tag_preservation_rejects_live_tag_canaries(tmp_path, mutate, message):
+    manifest_path, manifest = _manifest(tmp_path)
+    snapshot = _before_snapshot()
+    mutate(snapshot)
+    with pytest.raises(PlanInvalid, match=message):
+        create_plan(
+            manifest_path=manifest_path,
+            manifest=manifest,
+            bvid=BVID,
+            snapshot=snapshot,
+            preserve_existing_tags=True,
+        )
+
+
+def test_tag_preservation_plan_tampering_or_other_field_override_is_rejected(tmp_path):
+    manifest_path, manifest = _manifest(tmp_path)
+    snapshot = _before_snapshot()
+    tags = sorted(["保留", "直播切片"])
+    snapshot["creator"]["metadata"]["tags"] = tags
+    snapshot["public"]["metadata"]["tags"] = tags
+    plan = create_plan(
+        manifest_path=manifest_path,
+        manifest=manifest,
+        bvid=BVID,
+        snapshot=snapshot,
+        preserve_existing_tags=True,
+    )
+    tampered = copy.deepcopy(plan)
+    tampered["metadata_preservation"]["field"] = "title"
+    with pytest.raises(PlanInvalid, match="preservation receipt is not canonical"):
+        validate_plan(tampered, manifest=manifest)
+
+    tampered = copy.deepcopy(plan)
+    tampered["target_metadata"]["title"] = "CLI override"
+    with pytest.raises(PlanInvalid, match="target metadata drifted"):
+        validate_plan(tampered, manifest=manifest)
+
+
+def test_tag_preservation_resume_blocks_live_tag_drift_before_append(tmp_path):
+    manifest_path, manifest = _manifest(tmp_path)
+    snapshot = _before_snapshot()
+    tags = sorted(["保留", "直播切片"])
+    snapshot["creator"]["metadata"]["tags"] = tags
+    snapshot["public"]["metadata"]["tags"] = tags
+    plan = create_plan(
+        manifest_path=manifest_path,
+        manifest=manifest,
+        bvid=BVID,
+        snapshot=snapshot,
+        preserve_existing_tags=True,
+    )
+    plan_path = tmp_path / "preserved-tags.plan.json"
+    journal = tmp_path / "preserved-tags.journal.jsonl"
+    write_plan(plan_path, plan)
+    adapter = FakeAdapter(plan)
+    adapter.snapshot["creator"]["metadata"]["tags"] = ["drift"]
+    adapter.snapshot["public"]["metadata"]["tags"] = ["drift"]
+
+    result = repair_step(
+        plan_path=plan_path, journal=journal, manifest=manifest, adapter=adapter
+    )
+    assert result.state == "BLOCKED_DRIFT"
+    assert adapter.append_calls == 0
 
 
 def test_planning_freezes_repairable_preexisting_section_title_drift(tmp_path):

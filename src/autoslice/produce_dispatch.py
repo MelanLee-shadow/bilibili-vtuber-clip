@@ -10,7 +10,11 @@ monkeypatch 面（BASE/MAX_PARALLEL_PRODUCE 仍在 runner 全局）。
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import os
+import shutil
+import subprocess
 from collections.abc import Callable, Sequence
 from concurrent.futures import (
     FIRST_COMPLETED,
@@ -22,6 +26,10 @@ from typing import Any, Mapping
 
 from src.autoslice.final_review_provider_budget_retry import (
     carry_validated_active_provider_budget_ledger,
+)
+from src.autoslice.final_review_carryover import (
+    carryover_path,
+    load_replayable_final_review_carryover,
 )
 from src.autoslice.semantic_scorecard_refresh_receipt import copied_refresh_receipt
 from src.autoslice.selected_source_fact_recovery import (
@@ -51,6 +59,7 @@ _FAILED_ITEM_PASSTHROUGH_KEYS = (
     "selected_repair",
     "talk_repair_retry_count",
     "talk_transient_retry_count",
+    "final_review_carryover_consumed_fingerprints",
     "retry_reason",
     "anchor_start_ms",
     "anchor_end_ms",
@@ -156,6 +165,37 @@ def _source_affinity(item: Mapping[str, object]) -> tuple[frozenset[str], bool]:
     return frozenset(keys), bool(declared and (malformed or not keys))
 
 
+def _timeout_final_review_carryover(
+    *, base: Path, date: str, item: Mapping[str, object]
+) -> tuple[str, dict[str, object]] | None:
+    candidate_id = str(item.get("cid") or item.get("candidate_id") or "")
+    if not candidate_id:
+        return None
+    out_root = base / "out" / date
+    candidate_dir = out_root / candidate_id
+    carryover = carryover_path(candidate_dir, candidate_id)
+    try:
+        if not candidate_dir.is_dir():
+            return None
+        rows = load_replayable_final_review_carryover(carryover)
+    except (OSError, TypeError, ValueError):
+        return None
+    if not rows:
+        return None
+    payload = json.dumps(rows, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    fingerprint = "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return fingerprint, {
+        "schema_version": "talk-final-review-timeout-evidence.v1",
+        "candidate_id": candidate_id,
+        "carryover": {
+            "file": carryover.name,
+            "observed_count": len(rows),
+            "rows_sha256": fingerprint,
+            "retry_ready": True,
+        },
+    }
+
+
 def produce_batch_windowed(
     date: str,
     items: Sequence[dict],
@@ -165,6 +205,8 @@ def produce_batch_windowed(
     produce_song_fn: Callable[..., dict],
     base: Path,
     max_parallel: int,
+    min_free_bytes: int = 0,
+    free_bytes_fn: Callable[[Path], int] | None = None,
     log: Callable[[str], None],
     talk_pipeline_fingerprint: Callable[[str], str],
     pipeline_fingerprint: Callable[[], str],
@@ -172,37 +214,74 @@ def produce_batch_windowed(
     song_window_pre_ms: int,
     song_window_post_ms: int,
     live_hold_active_fn: Callable[[], bool] | None = None,
+    prepare_only: bool = False,
+    on_result: Callable[[int, dict, dict], bool | None] | None = None,
 ) -> list[dict]:
     """Produce ``items`` concurrently, preserving input order.
 
     Each slice is an independent subprocess, so threads just wait on those; a
     crash in one becomes a failed result and never kills the batch.  Targeted
     talk repairs may opt into the talk lane's ``reuse_cover`` path through
-    their persisted queue item.
+    their persisted queue item.  When ``on_result`` is supplied, each
+    contiguous completed input-prefix result is delivered to it before the
+    dispatcher schedules another item.  Returning ``False`` yields the rest
+    of the queue while still draining already in-flight work.
     """
 
     def _one(item: dict) -> dict:
         try:
-            produce_kwargs = (
-                {"reuse_cover": True}
-                if produce_fn is produce_talk_fn and item.get("reuse_cover")
-                else {}
-            )
+            produce_kwargs = {"prepare_only": True} if prepare_only else {}
+            if produce_fn is produce_talk_fn and item.get("published_cover_carry_required") is True:
+                carry = item.get("published_cover_carry")
+                from src.autoslice.published_cover_carry import validate_materialized_marker
+                if not validate_materialized_marker(
+                    carry, base=base, date=date, candidate_id=str(item.get("cid") or "")
+                ):
+                    raise ValueError("PUBLISHED_COVER_CARRY_MARKER_INVALID")
+                produce_kwargs["reuse_cover"] = True
+            elif produce_fn is produce_talk_fn and item.get("reuse_cover"):
+                # Historical bare reuse remains supported only when it never
+                # asserted this stricter, typed published-carry policy.
+                produce_kwargs["reuse_cover"] = True
             result = produce_fn(date, item, **produce_kwargs)
             if item.get("session_id"):
                 result.setdefault("session_id", item["session_id"])
             return result
         except Exception as exc:  # noqa: BLE001 — one bad slice must not kill the batch
             log(f"produce crashed for {item.get('cid')}: {exc}")
+            timeout_carryover = (
+                _timeout_final_review_carryover(base=base, date=date, item=item)
+                if produce_fn is produce_talk_fn
+                and isinstance(exc, subprocess.TimeoutExpired)
+                else None
+            )
+            reason_code = (
+                "PRODUCE_TIMEOUT_FINAL_REVIEW_CARRYOVER"
+                if timeout_carryover is not None
+                else "PRODUCE_TIMEOUT"
+                if produce_fn is produce_talk_fn
+                and isinstance(exc, subprocess.TimeoutExpired)
+                else "PRODUCE_UNEXPECTED_EXCEPTION"
+            )
             result = {
                 "candidate_id": item.get("cid"),
                 "rc": -1,
                 "status": "failed",
                 "error": str(exc),
-                "reason_codes": ["PRODUCE_UNEXPECTED_EXCEPTION"],
+                "reason_codes": [reason_code],
                 **(
                     {"failure_recoverable": True}
                     if produce_fn is produce_talk_fn
+                    else {}
+                ),
+                **(
+                    {
+                        "failure_kind": "subtitle_authority",
+                        "failure_stage": "final_review_carryover",
+                        "failure_fingerprint": timeout_carryover[0],
+                        "failure_evidence": timeout_carryover[1],
+                    }
+                    if timeout_carryover is not None
                     else {}
                 ),
                 "pipeline_fingerprint": (
@@ -257,18 +336,30 @@ def produce_batch_windowed(
 
     if not items:
         return []
+    if isinstance(min_free_bytes, bool) or not isinstance(min_free_bytes, int) or min_free_bytes < 0:
+        raise ValueError("min_free_bytes must be a non-negative integer")
     workers = min(max_parallel, len(items))
     log(f"producing {len(items)} slice(s), up to {workers} in parallel")
     deploy_guard = base / "deploy.guard"
+    free_bytes = free_bytes_fn or (lambda path: shutil.disk_usage(path).free)
     results_by_index: dict[int, dict] = {}
+    ready_by_index: dict[int, dict] = {}
+    result_prefix: list[dict] = []
+    next_callback_index = 0
     queue = list(enumerate(items))
     in_flight: dict[Any, tuple[int, frozenset[str], bool]] = {}
     active_source_keys: set[str] = set()
     exclusive_source_active = False
+    callback_gap_hold = False
     deploy_yield = False
     with ThreadPoolExecutor(max_workers=workers) as pool:
         while queue or in_flight:
-            while queue and len(in_flight) < workers and not deploy_yield:
+            while (
+                queue
+                and len(in_flight) < workers
+                and not deploy_yield
+                and not callback_gap_hold
+            ):
                 if deploy_guard.exists():
                     deploy_yield = True
                     log(
@@ -289,6 +380,31 @@ def produce_batch_windowed(
                         f"{len(queue)} deferred to next tick"
                     )
                     break
+                if min_free_bytes:
+                    try:
+                        available_bytes = free_bytes(base)
+                        if (
+                            isinstance(available_bytes, bool)
+                            or not isinstance(available_bytes, int)
+                        ):
+                            raise ValueError("disk free-space probe returned a non-integer")
+                        if available_bytes < min_free_bytes:
+                            deploy_yield = True
+                            log(
+                                "disk free-space floor reached — yielding tick after "
+                                f"{len(in_flight)} in-flight item(s), "
+                                f"{len(queue)} deferred to next tick "
+                                f"(free bytes {available_bytes} < floor {min_free_bytes})"
+                            )
+                            break
+                    except Exception:  # noqa: BLE001 — a failed probe must fail closed
+                        deploy_yield = True
+                        log(
+                            "disk free-space probe failed — yielding tick after "
+                            f"{len(in_flight)} in-flight item(s), "
+                            f"{len(queue)} deferred to next tick (floor admission fail-closed)"
+                        )
+                        break
                 index, item = queue[0]
                 source_keys, source_unknown = _source_affinity(item)
                 if (
@@ -314,7 +430,29 @@ def produce_batch_windowed(
                 active_source_keys.difference_update(source_keys)
                 if source_unknown:
                     exclusive_source_active = False
-                results_by_index[index] = future.result()
+                result = future.result()
+                results_by_index[index] = result
+                if on_result is not None:
+                    ready_by_index[index] = result
+            if on_result is not None:
+                while next_callback_index in ready_by_index:
+                    result = ready_by_index.pop(next_callback_index)
+                    should_continue = on_result(
+                        next_callback_index, items[next_callback_index], result,
+                    )
+                    result_prefix.append(result)
+                    next_callback_index += 1
+                    if should_continue is False:
+                        deploy_yield = True
+                if ready_by_index and next_callback_index not in ready_by_index:
+                    # A later future may finish while the input-prefix head is
+                    # still running.  Do not launch another candidate past
+                    # that durable checkpoint gap; wait for the head first.
+                    callback_gap_hold = True
+                else:
+                    callback_gap_hold = False
+    if on_result is not None:
+        return result_prefix
     return [results_by_index[index] for index in sorted(results_by_index)]
 
 

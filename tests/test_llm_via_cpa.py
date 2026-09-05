@@ -100,7 +100,7 @@ if status == "empty":
         sys.stdout.write("200")
     raise SystemExit(0)
 
-# 2026-08-10 实测的上游分组抽签正文（原样照抄自 free 直打 CPA 的响应体）。
+# Representative upstream group-capability error payload used by this regression.
 # 三个 token 拆出三种字样，验证桥接层三种都认：
 #   400gc   = 线上完整形状（中文 message + 机器码 code + metadata.message_en）
 #   400gczh = 只有中文 message（无机器码）

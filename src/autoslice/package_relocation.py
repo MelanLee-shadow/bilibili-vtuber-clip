@@ -36,7 +36,6 @@ from src.autoslice.package_relocation_contract import (
     pointer_text as _pointer_text,
     reject_unknown_wsl_paths as _reject_unknown_wsl_paths,
     set_value as _set,
-    speaker_record_pointer as _speaker_record_pointer,
     validate_document_root_roles as _validate_document_root_roles,
     validate_path_root_role as _validate_path_root_role,
 )

@@ -2,6 +2,7 @@ import hashlib
 
 import pytest
 
+import src.autoslice.jingting_remote_runner as jingting
 from src.autoslice.jingting_remote_runner import build_ssh_agy_runner
 from src.autoslice.source_context_executor import AgyRunnerError
 
@@ -87,3 +88,24 @@ def test_attested_runner_never_sends_audio_to_non_agy_fallback(
         runner(media, draft, output)
 
     assert not output.exists()
+
+
+def test_local_agy_process_propagates_auto_update_disable(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGY_CLI_DISABLE_AUTO_UPDATE", "1")
+    captured = {}
+
+    def fake_popen(_command, **kwargs):
+        captured["env"] = kwargs["env"]
+        return object()
+
+    monkeypatch.setattr(jingting.subprocess, "Popen", fake_popen)
+    process = jingting._start_local_agy_process(
+        tmp_path,
+        binary="agy",
+        model="gemini-3.8-flash-low",
+        short_prompt="test",
+        print_timeout="60",
+    )
+
+    assert process is not None
+    assert captured["env"]["AGY_CLI_DISABLE_AUTO_UPDATE"] == "1"

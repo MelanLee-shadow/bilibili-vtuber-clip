@@ -31,11 +31,9 @@ DANMAKU_EVIDENCE_SCHEMA_VERSION = "danmaku-evidence.v1"
 #
 # ## 旧值 6 是一条实证成因，不是保守估计
 #
-# 8/7 那场 660000-690000 的爆发（x22）**检测到了**，但按 count 排在第 7，正好被
-# `danmaku_hints()` 里的 `bursts[:6]` 丢掉，选题模型连提示都没看到，于是
-# `auto_223750_578_654` 被切在包袱之前（内部盲评真值文档留存·2026-08-10-
-# tier1-ground-truth.md`）。同一场同一个文件的直方图已经作为回归基线冻结在
-# `tests/test_boundary_payoff_extension.py::REAL_DANMAKU_BUCKETS`。
+# A boundary-case burst ranked just below the former top-six cutoff and hid
+# a later payoff from selection.  Its histogram remains frozen in
+# `tests/test_boundary_payoff_extension.py::REAL_DANMAKU_BUCKETS`.
 #
 # ## 20 的依据：free 上 136 个真实弹幕 XML 全量重放
 #

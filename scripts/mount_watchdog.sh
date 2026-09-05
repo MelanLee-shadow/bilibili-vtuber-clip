@@ -1,5 +1,5 @@
 #!/bin/bash
-# CloudDrive FUSE mount and recorder-consumer bootstrap watchdog (runs ON free).
+# CloudDrive FUSE mount and recorder-consumer bootstrap watchdog (Free/OCI3).
 #
 # Two distinct incidents are covered:
 #   1. A dead CloudDrive FUSE endpoint can remain bound into recorder containers.
@@ -17,6 +17,25 @@
 # quarantine; they are never deleted or hidden below a subsequent FUSE mount.
 set -u
 
+# OCI3's existing root crontab and the boot unit invoke this script directly.
+# Load the optional root-owned authority here so both callers use the same
+# paths; with no file, Free keeps its historical defaults below.
+WATCHDOG_ENV_FILE=/opt/bilive/autoslice/recording-health.env
+if [ -e "$WATCHDOG_ENV_FILE" ] || [ -L "$WATCHDOG_ENV_FILE" ]; then
+    [ -f "$WATCHDOG_ENV_FILE" ] && [ ! -L "$WATCHDOG_ENV_FILE" ] || {
+        echo "refusing unsafe watchdog env file: $WATCHDOG_ENV_FILE" >&2
+        exit 1
+    }
+    WATCHDOG_ENV_OWNER_MODE="$(stat -c '%u:%a' "$WATCHDOG_ENV_FILE" 2>/dev/null || stat -f '%u:%Lp' "$WATCHDOG_ENV_FILE" 2>/dev/null || true)"
+    [ "$WATCHDOG_ENV_OWNER_MODE" = "0:600" ] || {
+        echo "refusing unsafe watchdog env owner/mode: $WATCHDOG_ENV_OWNER_MODE" >&2
+        exit 1
+    }
+    set -a
+    . "$WATCHDOG_ENV_FILE"
+    set +a
+fi
+
 MOUNT="${AUTOSLICE_WATCHDOG_MOUNT:-/path/to/cloud-drive}"
 PROBE_DIR="${AUTOSLICE_WATCHDOG_PROBE_DIR:-$MOUNT/live-streaming}"
 BASE="${AUTOSLICE_WATCHDOG_BASE:-/opt/bilive/autoslice}"
@@ -28,11 +47,14 @@ RECORDER_RETRIES="${AUTOSLICE_WATCHDOG_RECORDER_RETRIES:-4}"
 RETRY_SLEEP_S="${AUTOSLICE_WATCHDOG_RETRY_SLEEP_S:-5}"
 RECORDER_SETTLE_S="${AUTOSLICE_WATCHDOG_RECORDER_SETTLE_S:-8}"
 EXPECTED_SOURCE="${AUTOSLICE_WATCHDOG_EXPECTED_SOURCE:-CloudFS}"
+# The mount probe may be a room below the bind root (OCI3 uses the room path
+# while Docker binds its parent).  Keep Free's historical default intact.
+EXPECTED_RECORDING_BIND_ROOT="${AUTOSLICE_WATCHDOG_EXPECTED_RECORDING_BIND_ROOT:-$PROBE_DIR}"
 COMPOSE_FILE="${AUTOSLICE_WATCHDOG_COMPOSE_FILE:-/opt/bilive/compose.yml}"
 QUARANTINE_ROOT="${AUTOSLICE_WATCHDOG_QUARANTINE_ROOT:-/opt/bilive/mount-fallback-quarantine}"
 
 HEARTBEAT="${AUTOSLICE_WATCHDOG_HEARTBEAT:-$BASE/reports/heartbeat.txt}"
-RUNNER_LOCK="${AUTOSLICE_WATCHDOG_RUNNER_LOCK:-$BASE/runner.lock}"
+TICK_LOCK="${AUTOSLICE_WATCHDOG_TICK_LOCK:-$BASE/tick.lock}"
 DISABLED_FLAG="${AUTOSLICE_WATCHDOG_DISABLED:-$BASE/DISABLED}"
 STALL_ALERT="${AUTOSLICE_WATCHDOG_STALL_ALERT:-$BASE/reports/ALERT_RUNNER_STALLED.txt}"
 STALL_AFTER_S="${AUTOSLICE_WATCHDOG_STALL_AFTER_S:-1800}"
@@ -65,16 +87,16 @@ stall_alert() {
     say "$*"
 }
 
-runner_lock_holders() {
+tick_lock_holders() {
     # /proc/locks identifies the locked file by MAJ:MIN:INODE (the kernel
     # prints "%02x:%02x:%lu"), so derive the same key from the lock file.
-    # runner.lock was held for seven hours by an orphaned process
+    # the tick lock was held for seven hours by an orphaned process
     # and every blocked cron tick exited silently — nobody could name the
     # holder afterwards because nothing ever recorded it.
-    [ -e "$RUNNER_LOCK" ] || return 0
+    [ -e "$TICK_LOCK" ] || return 0
     [ -r "$PROC_LOCKS" ] || return 0
-    dev_hex=$("$STAT_BIN" -c '%D' "$RUNNER_LOCK" 2>/dev/null) || return 0
-    inode=$("$STAT_BIN" -c '%i' "$RUNNER_LOCK" 2>/dev/null) || return 0
+    dev_hex=$("$STAT_BIN" -c '%D' "$TICK_LOCK" 2>/dev/null) || return 0
+    inode=$("$STAT_BIN" -c '%i' "$TICK_LOCK" 2>/dev/null) || return 0
     [ -n "$dev_hex" ] && [ -n "$inode" ] || return 0
     while [ "${#dev_hex}" -lt 4 ]; do dev_hex="0$dev_hex"; done
     maj=${dev_hex%??}
@@ -93,7 +115,7 @@ runner_lock_holders() {
 }
 
 check_runner_not_starved() {
-    # A cron tick rejected by `flock -n` writes NOTHING: no log line, no
+    # A cron tick rejected by `flock -n tick.lock` writes NOTHING: no log line, no
     # heartbeat, no alert.  On that silence hid a seven-hour outage.
     # The heartbeat's own age is the only signal that survives starvation.
     [ -e "$DISABLED_FLAG" ] && return 0   # paused on purpose (deploy/operator)
@@ -102,14 +124,14 @@ check_runner_not_starved() {
     [ -n "$last" ] || return 0
     age=$(( $(date +%s) - last ))
     [ "$age" -gt "$STALL_AFTER_S" ] || return 0
-    holders=$(runner_lock_holders)
+    holders=$(tick_lock_holders)
     # The heartbeat is only written at tick END, and a marathon batch legitimately
     # runs for hours (one healthy tick spanned 09:40→11:42).  A tick
     # holding its own lock is working, not starved — the incident shape is a
     # FOREIGN holder, so only that raises the alarm.  Crying wolf on every long
     # batch would retire this alert within a week.
     if echo "$holders" | grep -Eq "$SELF_HOLDER_RX"; then
-        say "runner.lock held by the runner's own tick for ${age}s — working, not starved"
+        say "tick.lock held by the runner's own tick for ${age}s — working, not starved"
         return 0
     fi
     if [ -z "$holders" ]; then
@@ -117,7 +139,7 @@ check_runner_not_starved() {
     else
         holders=$(echo "$holders" | tr '\n' ';')
     fi
-    stall_alert "runner STALLED: heartbeat ${age}s old (> ${STALL_AFTER_S}s) with no DISABLED flag; runner.lock holder(s): $holders — NEEDS HUMAN"
+    stall_alert "runner STALLED: heartbeat ${age}s old (> ${STALL_AFTER_S}s) with no DISABLED flag; tick.lock holder(s): $holders — NEEDS HUMAN"
 }
 
 mount_value() {
@@ -161,9 +183,23 @@ consumer_mount_ok() {
     esac
 }
 
+consumer_bind_source_ok() {
+    container=$1
+    path=$2
+    template="{{range .Mounts}}{{if eq .Destination \"$path\"}}{{if eq .Type \"bind\"}}{{.Source}}{{end}}{{end}}{{end}}"
+    source=$(
+        "$TIMEOUT_BIN" 10 "$DOCKER_BIN" inspect -f "$template" "$container" 2>/dev/null
+    ) || return 1
+    source=$(printf '%s' "$source" | tr -d '\r\n')
+    [ "$source" = "$EXPECTED_RECORDING_BIND_ROOT" ]
+}
+
 all_consumers_ok() {
-    consumer_mount_ok bililive_adapter /adapter/Videos &&
+    consumer_bind_source_ok bililive_adapter /adapter/Videos &&
+        consumer_mount_ok bililive_adapter /adapter/Videos &&
+        consumer_bind_source_ok bililive_recorder /rec/Videos &&
         consumer_mount_ok bililive_recorder /rec/Videos &&
+        consumer_bind_source_ok bilive_record /app/Videos &&
         consumer_mount_ok bilive_record /app/Videos
 }
 

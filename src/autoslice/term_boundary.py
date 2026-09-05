@@ -94,7 +94,7 @@ def _find_straddling_match(boundary: str, boundary_idx: int, term: str) -> tuple
 
 
 def unify_terms_across_cues(
-    cues: Sequence[Any], terms: Sequence[str]
+    cues: Sequence[Any], terms: Sequence[str], *, blocked_boundaries=()
 ) -> tuple[list[Any], list[dict[str, Any]]]:
     """Move text (never timing, never cue count) so no known term is split.
 
@@ -117,6 +117,8 @@ def unify_terms_across_cues(
 
     moves: list[dict[str, Any]] = []
     for i in range(len(result) - 1):
+        if i in blocked_boundaries:
+            continue  # an anonymous speaker change is not a word continuation
         a = result[i]
         b = result[i + 1]
         a_text = a.text

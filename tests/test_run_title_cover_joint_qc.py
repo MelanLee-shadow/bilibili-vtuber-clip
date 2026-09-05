@@ -1,12 +1,161 @@
 import hashlib
 import json
+import os
 from pathlib import Path
 
-from scripts.run_title_cover_joint_qc import resolve_package_inputs
+import pytest
+
+from scripts.run_title_cover_joint_qc import (
+    preflight_create_only_output,
+    resolve_candidate_id,
+    resolve_package_inputs,
+    run_qc,
+    write_receipt_create_only,
+)
 
 
 def _write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+
+
+def _c2_package(root: Path, *, candidate: str = "auto_203011_328_389") -> tuple[str, Path]:
+    title = "【李豆沙】C2 测试标题"
+    stem = candidate + ".recut.burned-final-speaker"
+    (root / f"{stem}.mp4").write_bytes(b"video")
+    cover = root / f"{stem}.cover.png"
+    cover.write_bytes(b"cover")
+    _write_json(root / f"{stem}.record.json", {
+        "schema_version": "lidousha-c2-release-record.v1", "candidate_id": candidate,
+    })
+    _write_json(root / f"{candidate}.recut.publish.json", {
+        "title": title,
+        "cover_generation": {"final_cover": cover.name, "final_cover_sha256": "sha256:" + hashlib.sha256(b"cover").hexdigest()},
+    })
+    _write_json(root / "review_manifest.json", {"items": [{
+        "candidate_id": candidate, "title": title, "video": f"{stem}.mp4",
+        "record": f"{stem}.record.json", "publish_json": f"{candidate}.recut.publish.json",
+        "cover": f"{stem}.cover.png",
+    }]})
+    return title, cover
+
+
+def test_resolve_candidate_id_accepts_exact_c2_root_binding() -> None:
+    assert resolve_candidate_id(
+        {"schema_version": "lidousha-c2-release-record.v1", "candidate_id": "c2"},
+        {"items": [{"candidate_id": "c2"}]},
+    ) == "c2"
+
+
+@pytest.mark.parametrize("record,review", [
+    ({"candidate_id": "c2"}, {"items": [{"candidate_id": "c2"}]}),
+    ({"schema_version": "lidousha-c2-release-record.v1", "candidate_id": ""}, {"items": [{"candidate_id": "c2"}]}),
+    ({"schema_version": "lidousha-c2-release-record.v1", "candidate_id": "c2"}, {"items": []}),
+    ({"schema_version": "lidousha-c2-release-record.v1", "candidate_id": "c2"}, {"items": [{"candidate_id": "c2"}, {"candidate_id": "c2"}]}),
+    ({"story_contract": {"candidate_id": "ordinary"}, "delivery_candidate_id": "conflict"}, {"items": []}),
+])
+def test_resolve_candidate_id_rejects_non_exact_or_conflicted_shapes(record: dict, review: dict) -> None:
+    with pytest.raises(ValueError):
+        resolve_candidate_id(record, review)
+
+
+def test_preflight_rejects_existing_target_before_probe(tmp_path: Path) -> None:
+    title, _cover = _c2_package(tmp_path)
+    out_parent = tmp_path / "out"
+    out_parent.mkdir(mode=0o700)
+    out = out_parent / "receipt.json"
+    out.write_text("existing", encoding="utf-8")
+    called = False
+    def probe(*_args):
+        nonlocal called
+        called = True
+        raise AssertionError("probe must not run")
+    with pytest.raises(FileExistsError):
+        run_qc(tmp_path, title, out, image_probe=probe)
+    assert not called
+    assert out.read_text(encoding="utf-8") == "existing"
+
+
+def test_preflight_rejects_missing_nonprivate_and_symlink_parents(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        preflight_create_only_output(tmp_path / "missing" / "receipt.json")
+    insecure = tmp_path / "insecure"
+    insecure.mkdir(mode=0o755)
+    os.chmod(insecure, 0o755)
+    with pytest.raises(ValueError, match="0700"):
+        preflight_create_only_output(insecure / "receipt.json")
+    real = tmp_path / "real"
+    real.mkdir(mode=0o700)
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    with pytest.raises(ValueError, match="unsafe"):
+        preflight_create_only_output(link / "receipt.json")
+    leaf = real / "leaf.json"
+    leaf.symlink_to(tmp_path / "elsewhere")
+    with pytest.raises(FileExistsError):
+        preflight_create_only_output(leaf)
+
+
+def test_create_only_writer_handles_partial_and_zero_writes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    os.chmod(tmp_path, 0o700)
+    parent_fd, name = preflight_create_only_output(tmp_path / "partial.json")
+    original_write = os.write
+    def partial(fd: int, data: bytes) -> int:
+        return original_write(fd, data[:max(1, len(data) // 3)])
+    monkeypatch.setattr(os, "write", partial)
+    try:
+        write_receipt_create_only(parent_fd, name, {"a": "x" * 40})
+    finally:
+        os.close(parent_fd)
+    assert json.loads((tmp_path / name).read_text(encoding="utf-8"))["a"] == "x" * 40
+    monkeypatch.setattr(os, "write", lambda _fd, _data: 0)
+    parent_fd, name = preflight_create_only_output(tmp_path / "zero.json")
+    try:
+        with pytest.raises(OSError, match="short write"):
+            write_receipt_create_only(parent_fd, name, {"a": 1})
+    finally:
+        os.close(parent_fd)
+    assert not (tmp_path / name).exists()
+
+
+def test_create_only_writer_preserves_concurrent_replacement_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    os.chmod(tmp_path, 0o700)
+    target = tmp_path / "race.json"
+    parent_fd, name = preflight_create_only_output(target)
+
+    def replace_then_zero(_fd: int, _data: bytes) -> int:
+        os.unlink(name, dir_fd=parent_fd)
+        target.write_bytes(b"replacement-bytes")
+        return 0
+
+    monkeypatch.setattr(os, "write", replace_then_zero)
+    try:
+        with pytest.raises(OSError, match="short write"):
+            write_receipt_create_only(parent_fd, name, {"a": 1})
+    finally:
+        os.close(parent_fd)
+    assert target.read_bytes() == b"replacement-bytes"
+
+
+def test_create_only_writer_preserves_original_error_when_cleanup_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    os.chmod(tmp_path, 0o700)
+    target = tmp_path / "unlink-failure.json"
+    parent_fd, name = preflight_create_only_output(target)
+    monkeypatch.setattr(os, "write", lambda _fd, _data: 0)
+
+    def fail_unlink(*_args, **_kwargs) -> None:
+        raise OSError("cleanup denied")
+
+    monkeypatch.setattr(os, "unlink", fail_unlink)
+    try:
+        with pytest.raises(OSError, match="short write"):
+            write_receipt_create_only(parent_fd, name, {"a": 1})
+    finally:
+        os.close(parent_fd)
+    assert target.exists()
 
 
 def test_joint_qc_resolves_exact_same_stem_cover(tmp_path: Path) -> None:

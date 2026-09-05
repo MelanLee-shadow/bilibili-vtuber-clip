@@ -21,6 +21,8 @@ from __future__ import annotations
 import json
 import re
 
+from src.autoslice.llm_client import LLM_JSON_PARSE_REASON_CODES, LLM_TRANSPORT_REASON_CODES
+
 PROVIDER_DETAIL_LIMIT = 2000
 
 # The bridge (scripts/llm_via_cpa.sh) emits one of these per attempt; the legacy
@@ -253,6 +255,16 @@ def describe_provider_failure(text: str) -> dict[str, object]:
     }
 
 
+def describe_provider_exception(exc: BaseException) -> dict[str, object]:
+    """Return only closed, receipt-safe diagnostics from a provider exception."""
+
+    diagnostics = describe_provider_failure(str(exc))
+    safe_reason = getattr(exc, "safe_reason", None)
+    if isinstance(safe_reason, str) and safe_reason in LLM_TRANSPORT_REASON_CODES:
+        diagnostics["safe_reason"] = safe_reason
+    return diagnostics
+
+
 def auditor_unavailable_discovery(
     detail: str, provider_detail: str = ""
 ) -> dict[str, object]:
@@ -268,6 +280,19 @@ def auditor_unavailable_discovery(
         "status": "AUDITOR_UNAVAILABLE",
         "detail": detail,
     }
+    parse_code = next(
+        (
+            value
+            for value in (detail, provider_detail)
+            if isinstance(value, str) and value in (LLM_JSON_PARSE_REASON_CODES | LLM_TRANSPORT_REASON_CODES)
+        ),
+        None,
+    )
+    if parse_code is not None:
+        # A completion must never cross the review boundary. The typed parser
+        # code alone distinguishes malformed output from a transport outage.
+        discovery["provider_error_code"] = parse_code
+        return discovery
     if provider_detail:
         discovery["provider_detail"] = provider_detail
         discovery.update(describe_provider_failure(provider_detail))
@@ -279,6 +304,7 @@ def auditor_unavailable_discovery(
 DISCOVERY_EVIDENCE_FIELDS: tuple[str, ...] = (
     "status",
     "detail",
+    "provider_error_code",
     "provider_detail",
     "provider_class",
     "provider_status_codes",
@@ -293,6 +319,7 @@ FINGERPRINT_VOLATILE_KEYS = frozenset(
         "provider_detail",
         "provider_class",
         "provider_status_codes",
+        "provider_error_code",
     }
 )
 
@@ -356,11 +383,13 @@ __all__ = [
     "SERVICE",
     "TRANSPORT_EXCEPTION_NAMES",
     "UNKNOWN",
+    "LLM_JSON_PARSE_REASON_CODES",
     "transport_unavailable_reason",
     "auditor_unavailable_discovery",
     "classify_provider_failure",
     "marker_transport_unavailable",
     "describe_provider_failure",
+    "describe_provider_exception",
     "provider_failure_detail",
     "provider_failure_detail_from_cause",
     "provider_failure_label",

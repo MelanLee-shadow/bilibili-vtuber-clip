@@ -23,6 +23,7 @@ ALERT="${UPLOAD_SENTINEL_ALERT:-$BASE/reports/ALERT_UPLOAD_FATAL.txt}"
 SEEN="${UPLOAD_SENTINEL_SEEN:-$BASE/upload-fatal-sentinel.seen}"
 SINCE="${UPLOAD_SENTINEL_SINCE:-30m}"
 CONTAINER="${UPLOAD_SENTINEL_CONTAINER:-clouddrive2}"
+LOG_DIR="${UPLOAD_SENTINEL_LOG_DIR:-/path/to/clouddrive2/config/log}"
 # Refuse a rescue copy that would leave the system disk below this floor: the
 # runner, recorder staging and deploys share it .
 MIN_FREE_KB="${UPLOAD_SENTINEL_MIN_FREE_KB:-8388608}"
@@ -46,9 +47,20 @@ case "$RESCUE_ROOT" in
         ;;
 esac
 
-# Strip ANSI color codes; keep only fatal upload failures with an exact path.
+current_log_date="$(date +%Y-%m-%d)"
+previous_log_date="$(date -d '1 day ago' +%Y-%m-%d 2>/dev/null || true)"
+
+# Docker keeps the recent window; CloudDrive2's files are bounded to exactly
+# today's and yesterday's daily logs.  Missing files/directories are normal.
 failures=$(
-    "$DOCKER_BIN" logs "$CONTAINER" --since "$SINCE" 2>&1 |
+    {
+        "$DOCKER_BIN" logs "$CONTAINER" --since "$SINCE" 2>&1
+        for log_date in "$current_log_date" "$previous_log_date"; do
+            [ -n "$log_date" ] || continue
+            log_file="$LOG_DIR/$log_date.log"
+            [ -f "$log_file" ] && cat "$log_file"
+        done
+    } |
         sed -E $'s/\x1b\\[[0-9;]*m//g' |
         grep -E 'upload error for /' |
         grep -E 'UploadError\(Fatal|PermissionDenied\(' |
@@ -62,6 +74,13 @@ touch "$SEEN"
 
 while IFS= read -r cloud_path; do
     [ -n "$cloud_path" ] || continue
+    case "$cloud_path" in
+        /*) ;;
+        *) continue ;;
+    esac
+    case "$cloud_path" in
+        */../*|*/..|../*|..) continue ;;
+    esac
     if grep -Fxq "$cloud_path" "$SEEN"; then
         continue
     fi

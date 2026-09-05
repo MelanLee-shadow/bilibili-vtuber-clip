@@ -186,9 +186,9 @@ from src.autoslice.producer_media import (
 )
 from src.autoslice.producer_package_finalization import (
     ProducerFinalizationAdapters,
-    ProducerFinalizationOptions,
     finalize_producer_package,
 )
+from src.autoslice.producer_finalization_options import finalization_options_from_args
 from src.autoslice.producer_request import (
     load_producer_request,
     parse_producer_args,
@@ -411,6 +411,7 @@ def main(argv: list[str] | None = None) -> int:
             accurate_recut_command=_accurate_reencode_recut_command,
             run_command=run,
         ),
+        chat_authority_audit=chat_authority_audit,
     )
     resolved_boundary_semantic = boundary.audit.get(
         "boundary_semantic_review"
@@ -448,17 +449,7 @@ def main(argv: list[str] | None = None) -> int:
         output_path=out_root / f"{cid}.filler-audit.json",
     )
     # 5. Final accurate cut + VAD-sanitized subtitles rebased to the cut.
-    finalization_options = ProducerFinalizationOptions(
-        spec=args.spec,
-        substrate=args.substrate,
-        correct=args.correct,
-        speaker_mode=args.speaker_mode,
-        speaker_overrides=args.speaker_overrides,
-        speaker_source_session_anchors=args.speaker_source_session_anchors,
-        speaker_mixed_overlap_evidence=args.speaker_mixed_overlap_evidence,
-        speaker_python=args.speaker_python,
-        reuse_cover=args.reuse_cover,
-    )
+    finalization_options = finalization_options_from_args(args)
     return finalize_producer_package(
         options=finalization_options,
         profile_id=CHANNEL_PROFILE.profile_id,

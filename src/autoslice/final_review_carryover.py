@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections import Counter
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -144,16 +145,37 @@ def _load_carryover_rows(path: Path, *, schema_version: str) -> list[dict[str, A
     return rows
 
 
-def _row_key(row: Mapping[str, Any]) -> tuple[object, object, object]:
+def _row_key(row: Mapping[str, Any]) -> tuple[object, object, object, object]:
+    cue = row.get("cue")
+    if cue is None:
+        cue = row.get("cue_index")
+    adjudication = row.get("exact_release_adjudication")
+    request = (
+        adjudication.get("request")
+        if isinstance(adjudication, Mapping)
+        else None
+    )
+    occurrence = (
+        ("window", request.get("matched_start_ms"), request.get("matched_end_ms"))
+        if (
+            isinstance(request, Mapping)
+            and request.get("matched_start_ms") is not None
+            and request.get("matched_end_ms") is not None
+        )
+        else ("cue", cue)
+    )
     return (
-        row.get("base_text_sha256") or row.get("cue"),
+        row.get("base_text_sha256") or cue,
+        occurrence,
         row.get("suspect"),
         row.get("proposed_full_cue"),
     )
 
 
 def _deduplicated_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    deduplicated: dict[tuple[object, object, object], dict[str, Any]] = {}
+    deduplicated: dict[
+        tuple[object, object, object, object], dict[str, Any]
+    ] = {}
     for row in rows:
         deduplicated[_row_key(row)] = row
     return list(deduplicated.values())
@@ -343,7 +365,10 @@ def _confirmed_exact_final_rows(
             and str(provenance["surface"]).strip()
         ):
             row["source_surface"] = str(provenance["surface"]).strip()
-        row["cue"] = finding.get("cue_index") or finding.get("cue")
+        cue_index = finding.get("cue_index")
+        row["cue"] = (
+            cue_index if cue_index is not None else finding.get("cue")
+        )
         row["why"] = (
             f"[终审结转] {finding.get('why') or ''} "
             "（上轮 exact 终审已声学确证该修复，本轮由 correction pass 正式落盘）"
@@ -390,6 +415,10 @@ def persist_final_review_carryover(path: Path, audit: Mapping[str, Any]) -> int:
     """Persist B's confirmed findings without losing an unconsumed prior round."""
 
     prior_rows = load_final_review_carryover(path)
+    checkpoint_rows = _load_carryover_rows(
+        carryover_checkpoint_path(path),
+        schema_version=CHECKPOINT_SCHEMA_VERSION,
+    )
     rows: list[dict[str, Any]] = []
     correction_pass = audit.get("correction_pass")
     correction_findings = (
@@ -414,14 +443,37 @@ def persist_final_review_carryover(path: Path, audit: Mapping[str, Any]) -> int:
             continue
         base_sha256 = finding.get("base_text_sha256")
         suspect = finding.get("suspect")
-        matched_prior = [
-            row
-            for row in prior_rows
-            if row.get("base_text_sha256") == base_sha256
-            and row.get("suspect") == suspect
+        proposed_full_cue = finding.get("proposed_full_cue")
+        def matches_stable_content(row: Mapping[str, Any]) -> bool:
+            return (
+                row.get("base_text_sha256") == base_sha256
+                and row.get("suspect") == suspect
+                and (
+                    proposed_full_cue is None
+                    or row.get("proposed_full_cue") == proposed_full_cue
+                )
+            )
+
+        matching_sealed = [
+            row for row in prior_rows if matches_stable_content(row)
         ]
-        if matched_prior:
-            rows.extend(dict(row) for row in matched_prior)
+        matching_checkpoint = [
+            row for row in checkpoint_rows if matches_stable_content(row)
+        ]
+        matching_rows = [*matching_sealed, *matching_checkpoint]
+        authoritative_rows = [
+            row
+            for row in matching_rows
+            if (
+                isinstance(row.get("exact_release_adjudication"), Mapping)
+                and row["exact_release_adjudication"].get("repaired") is True
+            )
+        ]
+        if authoritative_rows:
+            rows.extend(dict(row) for row in authoritative_rows)
+            continue
+        if matching_sealed:
+            rows.extend(dict(row) for row in matching_sealed)
             continue
         row = {
             key: finding.get(key)
@@ -473,6 +525,7 @@ def persist_final_review_carryover(path: Path, audit: Mapping[str, Any]) -> int:
         carryover_checkpoint_path(path).unlink(missing_ok=True)
         return 0
     _write_carryover_atomic(path, rows, schema_version=SCHEMA_VERSION)
+    carryover_checkpoint_path(path).unlink(missing_ok=True)
     return len(rows)
 
 
@@ -486,6 +539,106 @@ def load_final_review_carryover(path: Path) -> list[dict[str, Any]]:
     """
 
     return _load_carryover_rows(path, schema_version=SCHEMA_VERSION)
+
+
+def final_review_carryover_retry_readiness(
+    path: Path,
+    raw_findings: object,
+    audit: Mapping[str, Any],
+    nested_carryover_count: object,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Load sealed carryover and verify it covers this failed exact-final round."""
+
+    carryover_rows = load_final_review_carryover(path)
+
+    def stable_content_key(row: Mapping[str, object]) -> tuple[object, ...]:
+        cue = row.get("cue")
+        if cue is None:
+            cue = row.get("cue_index")
+        return (
+            row.get("base_text_sha256") or cue,
+            row.get("suspect"),
+            row.get("proposed_full_cue"),
+        )
+
+    current_rows_by_key = {
+        _row_key(row): row
+        for row in (raw_findings if isinstance(raw_findings, list) else [])
+        if isinstance(row, Mapping)
+        and isinstance(row.get("exact_release_adjudication"), Mapping)
+        and row["exact_release_adjudication"].get("repaired") is True
+    }
+    expected_carryover_rows = set(current_rows_by_key)
+    expected_content_counts = Counter(
+        stable_content_key(row) for row in current_rows_by_key.values()
+    )
+    observed_carryover_rows = {_row_key(row) for row in carryover_rows}
+    observed_content_counts = Counter(
+        stable_content_key(row) for row in carryover_rows
+    )
+
+    def content_matches(
+        row: Mapping[str, object], candidate: Mapping[str, object]
+    ) -> bool:
+        return (
+            row.get("base_text_sha256") == candidate.get("base_text_sha256")
+            and row.get("suspect") == candidate.get("suspect")
+            and (
+                candidate.get("proposed_full_cue") is None
+                or row.get("proposed_full_cue")
+                == candidate.get("proposed_full_cue")
+            )
+        )
+
+    correction_pass = audit.get("correction_pass")
+    correction_findings = (
+        correction_pass.get("findings")
+        if isinstance(correction_pass, Mapping)
+        else None
+    )
+    if isinstance(correction_findings, list):
+        for row in correction_findings:
+            if not isinstance(row, Mapping):
+                continue
+            remap = row.get("carryover_replay_remap")
+            if (
+                isinstance(remap, Mapping)
+                and remap.get("schema_version")
+                == "final-review-carryover-remap.v1"
+                and remap.get("status") == "PASS"
+                and not correction_carryover_consumed(row)
+            ):
+                if any(
+                    content_matches(current, row)
+                    for current in current_rows_by_key.values()
+                ):
+                    continue
+                matching_observed = [
+                    observed
+                    for observed in carryover_rows
+                    if content_matches(observed, row)
+                ]
+                if matching_observed:
+                    matching_content_counts = Counter(
+                        stable_content_key(observed)
+                        for observed in matching_observed
+                    )
+                    for key, count in matching_content_counts.items():
+                        expected_content_counts[key] = max(
+                            expected_content_counts[key], count
+                        )
+                else:
+                    expected_content_counts[stable_content_key(row)] += 1
+    carryover_retry_ready = bool(
+        isinstance(nested_carryover_count, int)
+        and not isinstance(nested_carryover_count, bool)
+        and nested_carryover_count > 0
+        and len(carryover_rows) == nested_carryover_count
+        and len(observed_carryover_rows) == nested_carryover_count
+        and observed_carryover_rows >= expected_carryover_rows
+        and observed_content_counts == expected_content_counts
+    )
+    return carryover_rows, carryover_retry_ready
 
 
 def load_replayable_final_review_carryover(path: Path) -> list[dict[str, Any]]:

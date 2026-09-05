@@ -50,6 +50,7 @@ from src.autoslice.runner_state_writeback import (  # noqa: E402
     RunnerStateWritebackError,
     write_state,
 )
+from src.autoslice.qixi_transaction_core import exclusive_runner_commit  # noqa: E402
 
 
 DEFAULT_BASE = Path("/opt/bilive/autoslice")
@@ -218,7 +219,12 @@ def run_song_import(
 
         # state 预判在搬字节之前：能不能绑要先知道，别先落 265MB 再被拒。
         try:
-            with pi.exclusive_lock(runner_lock, label="runner.lock"):
+            if runner_lock != base / "runner.lock":
+                raise pi.PackageImportError(
+                    "RUNNER_LOCK_PATH_DRIFT",
+                    "state import must use the canonical runtime runner.lock",
+                )
+            with exclusive_runner_commit(base):
                 spi.check_song_state_preconditions(
                     _read_state(state_path),
                     candidate_id=candidate_id,
@@ -278,7 +284,12 @@ def run_song_import(
         bound_at = pi.now_utc()
         stamp = bound_at.replace(":", "").replace("-", "")
         try:
-            with pi.exclusive_lock(runner_lock, label="runner.lock"):
+            if runner_lock != base / "runner.lock":
+                raise pi.PackageImportError(
+                    "RUNNER_LOCK_PATH_DRIFT",
+                    "state import must use the canonical runtime runner.lock",
+                )
+            with exclusive_runner_commit(base) as lease:
                 before_state = _read_state(state_path)
                 after_state, delta = spi.build_bound_song_state(
                     before_state,
@@ -295,8 +306,10 @@ def run_song_import(
                         write_state(
                             state_path,
                             dict(after_state),
+                            runtime_root=base,
                             updated_at=bound_at,
                             log=lambda message: print(message, file=sys.stderr),
+                            lease=lease,
                         )
                 except (OSError, RunnerStateWritebackError) as error:
                     raise pi.PackageImportError(

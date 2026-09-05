@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import argparse
 import hashlib
 import json
@@ -7,11 +6,9 @@ import re
 import sys
 from pathlib import Path
 from typing import Any, Mapping
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-
 from src.autoslice.subtitle_rendering import (  # noqa: E402
     ASS_MAX_CHARS_PER_LINE,
     ASS_MAX_VISUAL_LINES,
@@ -54,6 +51,7 @@ from src.autoslice.selection_scorecard import (  # noqa: E402
     selection_scorecard_is_valid,
 )
 from src.autoslice.subtitle_validation import validate_srt_file  # noqa: E402
+from src.autoslice.published_recovery_package_contract import audit_published_recovery_manifest_binding  # noqa: E402
 from src.autoslice.review_package_ass_audit import (  # noqa: E402
     audit_review_package_ass,
 )
@@ -79,6 +77,9 @@ from src.autoslice.review_package_title_audit import (  # noqa: E402
 from src.autoslice.title_policy import (  # noqa: E402
     CHANNEL_PROFILE,
 )
+from src.autoslice.review_package_policy_fingerprint import (  # noqa: E402
+    build_policy_fingerprint,
+)
 from src.autoslice.story_contract import (  # noqa: E402
     SCHEMA_VERSION as STORY_CONTRACT_SCHEMA,
     audit_story_artifact,
@@ -86,8 +87,18 @@ from src.autoslice.story_contract import (  # noqa: E402
 from src.autoslice.publication_title_exception import (  # noqa: E402
     candidate_title_policy_violations,
 )
-
-
+from src.autoslice.qixi_corrected_package_finalization import (  # noqa: E402
+    QixiCorrectedPackageError,
+    validate_manifest_bound_applied_receipt,
+)
+from src.autoslice.qixi_review_package_owner_bridge import (  # noqa: E402
+    manifest_bound_terminal_projection_authority,
+)
+from src.autoslice.fastlane_c1_formal_adapter import (  # noqa: E402
+    audit_fastlane_formal_package,
+    is_fastlane_formal_manifest,
+)
+from src.autoslice.fastlane_c9_successor import audit_c9_successor  # noqa: E402
 DEFAULT_MAX_VISUAL_LINES = 2
 DEFAULT_MAX_VISUAL_LINE_CHARS = 18
 LONG_STATIC_CUE_SECONDS = 10.0
@@ -122,8 +133,9 @@ _PORTABLE_ARTIFACT_SUFFIXES = (
     ".cover-route-evidence.json",
     ".selection-scorecard.json",
     ".story-contract.json",
+    ".published-recovery-preflight.json",
+    ".published-recovery-package-receipt.json",
 )
-
 
 def _load_json(path: Path) -> dict[str, Any]:
     try:
@@ -140,7 +152,6 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
 
 def _is_dynamic_attestation(path: Path) -> bool:
     name = path.name
@@ -237,67 +248,12 @@ def _audited_inputs(root: Path) -> list[dict[str, Any]]:
 
 
 def _audit_policy_fingerprint() -> str:
-    sources = [
-        Path(__file__),
-        ROOT / "src/autoslice/subtitle_validation.py",
-        ROOT / "src/autoslice/final_review_contract.py",
-        ROOT / "src/autoslice/boundary_semantic_review.py",
-        ROOT / "src/autoslice/boundary_endpoint_binding.py",
-        ROOT / "src/autoslice/redelivery_boundary_projection.py",
-        ROOT / "src/autoslice/redelivery_subtitle_baseline.py",
-        ROOT / "src/autoslice/producer_boundary.py",
-        ROOT / "src/autoslice/producer_boundary_owner_contract.py",
-        ROOT / "src/autoslice/producer_boundary_resolution.py",
-        ROOT / "src/autoslice/producer_boundary_review_stage.py",
-        ROOT / "src/autoslice/producer_source_boundary_review.py",
-        ROOT / "src/autoslice/reviewed_exact_source_interval.py",
-        ROOT / "src/autoslice/producer_package_finalization.py",
-        ROOT / "src/autoslice/source_subtitle_truth.py",
-        ROOT / "src/autoslice/producer_text_finalization.py",
-        ROOT / "src/autoslice/expected_value_canon_supersession.py",
-        ROOT / "src/autoslice/producer_text_pipeline.py",
-        ROOT / "src/autoslice/pronoun_consistency.py",
-        ROOT / "src/autoslice/review_package_boundary_contract.py",
-        ROOT / "src/autoslice/review_package_boundary_validators.py",
-        ROOT / "src/autoslice/review_package_owner_audit.py",
-        ROOT / "src/autoslice/review_package_portable_evidence.py",
-        ROOT / "src/autoslice/candidate_entity_projection.py",
-        ROOT / "src/autoslice/candidate_public_text_surface_authority.py",
-        ROOT / "src/autoslice/reviewed_subtitle_baseline_registry.py",
-        ROOT / "src/autoslice/title_policy.py",
-        ROOT / "src/autoslice/selection_scorecard.py",
-        ROOT / "src/autoslice/addressee_attribution.py",
-        ROOT / "src/autoslice/manual_title_keep_authority.py",
-        ROOT / "src/autoslice/deterministic_text_surface_resolution.py",
-        ROOT / "src/autoslice/publication_title_exception.py",
-        ROOT / "src/autoslice/review_package_title_audit.py",
-        ROOT / "src/autoslice/review_package_source_fact_audit.py",
-        ROOT / "src/autoslice/source_fact_review.py",
-        ROOT / "src/autoslice/cover_only_audit_scope.py",
-        ROOT / "src/autoslice/cover_route_evidence.py",
-        ROOT / "src/autoslice/cover_punch_semantics.py",
-        ROOT / "src/autoslice/cover_text_pixel_evidence.py",
-        ROOT / "src/autoslice/cover_title_rendering.py",
-        ROOT / "src/autoslice/cover_font_paths.py",
-        ROOT / "src/autoslice/cover_generation.py",
-        ROOT / "src/autoslice/cover_screenshot_poster.py",
-        CHANNEL_PROFILE.asset_file("title_policy"),
-        CHANNEL_PROFILE.asset_file("selection_score_calibration"),
-        CHANNEL_PROFILE.asset_file("subtitle_truth_ledger"),
-    ]
-    digest = hashlib.sha256()
-    digest.update(AUDIT_POLICY_EPOCH.encode("utf-8"))
-    for path in sources:
-        try:
-            label = path.relative_to(ROOT).as_posix()
-        except ValueError:
-            label = str(path.resolve())
-        digest.update(label.encode("utf-8"))
-        try:
-            digest.update(path.read_bytes())
-        except OSError as exc:
-            digest.update(f"<unreadable:{type(exc).__name__}>".encode("utf-8"))
-    return "sha256:" + digest.hexdigest()
+    return build_policy_fingerprint(
+        root=ROOT,
+        entrypoint=Path(__file__),
+        channel_profile=CHANNEL_PROFILE,
+        policy_epoch=AUDIT_POLICY_EPOCH,
+    )
 
 
 def _audit_result(root: Path, issues: list[dict[str, Any]]) -> dict[str, Any]:
@@ -944,6 +900,67 @@ def _add_issue(
     issues.append(issue)
 
 
+def _audit_manual_corrected_same_bv_receipt(
+    *,
+    root: Path,
+    item: Mapping[str, Any],
+    issues: list[dict[str, Any]],
+    stem: str,
+    qixi_repo_root: Path | None,
+) -> None:
+    try:
+        if not validate_manifest_bound_applied_receipt(
+            item,
+            candidate_id=str(item.get("candidate_id") or ""),
+            package_root=root,
+            repo_root=qixi_repo_root,
+        ):
+            return
+    except (OSError, UnicodeError, ValueError, QixiCorrectedPackageError) as exc:
+        _add_issue(
+            issues,
+            "MANUAL_CORRECTED_SAME_BV_RECEIPT_INVALID",
+            stem=stem,
+            detail=str(exc),
+        )
+
+
+def _audit_item_recovery_publication_and_qixi_receipt(
+    *,
+    root: Path,
+    item: Mapping[str, Any],
+    issues: list[dict[str, Any]],
+    stem: str,
+    item_candidate_id: str, item_title: str,
+    publish_path: Path | None, record_path: Path | None,
+    record: Mapping[str, Any] | None, publish_staging: Mapping[str, Any] | None,
+    recovery_publication_authorities: Mapping[str, Any], publication_contract_required: bool,
+    qixi_repo_root: Path | None,
+) -> None:
+    for authority_issue in audit_recovery_publication_surfaces(
+        item=item,
+        item_candidate_id=item_candidate_id,
+        item_title=item_title,
+        publish_path=publish_path,
+        record_path=record_path,
+        record=record,
+        publish_staging=publish_staging,
+        expected_authority=recovery_publication_authorities.get(item_candidate_id),
+        required=publication_contract_required,
+    ):
+        _add_issue(
+            issues,
+            authority_issue.code,
+            stem=stem,
+            path=authority_issue.path,
+            detail=authority_issue.detail,
+        )
+    _audit_manual_corrected_same_bv_receipt(
+        root=root, item=item, issues=issues, stem=stem,
+        qixi_repo_root=qixi_repo_root,
+    )
+
+
 def _item_title_policy_codes(
     *,
     title: str,
@@ -1049,6 +1066,7 @@ def _audit_item_story_contract(
     story_contract_required: bool,
     is_song: bool,
     clip_context_path: Path | None = None,
+    qixi_repo_root: Path | None = None,
 ) -> None:
     """Audit all story/context/boundary bindings for one manifest item."""
     if story_contract_required and not record:
@@ -1170,6 +1188,7 @@ def _audit_item_story_contract(
             story_contract=story_contract,
             artifact_title=artifact_title,
             final_transcript=transcript,
+            qixi_repo_root=qixi_repo_root,
         ):
             _add_issue(
                 issues,
@@ -1232,28 +1251,6 @@ def _audit_item_story_contract(
                 path=record_path,
                 detail=f"effective_score={(scorecard or {}).get('effective_score') if isinstance(scorecard, dict) else None}",
             )
-
-
-def _audit_source_truth_owner_attestations(
-    *,
-    issues: list[dict[str, Any]],
-    stem: str,
-    chat_authority_path: Path | None,
-    chat_authority: dict[str, Any],
-    record_path: Path | None,
-    record: dict[str, Any],
-    provenance: dict[str, Any] | None = None,
-) -> None:
-    audit_source_truth_owner_attestations(
-        issue_adder=_add_issue,
-        issues=issues,
-        stem=stem,
-        chat_authority_path=chat_authority_path,
-        chat_authority=chat_authority,
-        record_path=record_path,
-        record=record,
-        provenance=provenance,
-    )
 
 
 def _audit_final_review_attestation(
@@ -1554,6 +1551,8 @@ def _prepare_package_audit(
     ) = recovery_publication_authority_contract(manifest, items)
     for authority_issue in publication_contract_issues:
         _add_issue(issues, authority_issue.code, path=manifest_path, detail=authority_issue.detail)
+    for recovery_issue in audit_published_recovery_manifest_binding(root, recovery_publication_authorities, items):
+        _add_issue(issues, recovery_issue.code, path=recovery_issue.path, detail=recovery_issue.detail)
 
     story_contract_required = _story_contract_is_required(manifest)
     if story_contract_required:
@@ -1610,12 +1609,21 @@ def _prepare_package_audit(
     )
 
 
-def audit_package(root: str | Path) -> dict[str, Any]:
+def _formal_fastlane_audited(root: Path, manifest: Mapping[str, object], issues: list[dict[str, Any]]) -> bool:
+    if not is_fastlane_formal_manifest(manifest):
+        return False
+    for issue in audit_fastlane_formal_package(root, manifest):
+        _add_issue(issues, issue.code, path=issue.path, detail=issue.detail)
+    return True
+
+
+def audit_package(
+    root: str | Path, *, qixi_repo_root: Path | None = None
+) -> dict[str, Any]:
     root = Path(root)
     manifest_path = root / "review_manifest.json"
     manifest = _load_json(manifest_path)
     issues: list[dict[str, Any]] = []
-
     try:
         load_selected_selection_calibration_policy()
     except SelectionCalibrationPolicyError as exc:
@@ -1628,11 +1636,14 @@ def audit_package(root: str | Path) -> dict[str, Any]:
         if not manifest:
             _add_issue(issues, "MANIFEST_MISSING_OR_INVALID", path=manifest_path)
         return _audit_result(root, issues)
-
     if not manifest:
         _add_issue(issues, "MANIFEST_MISSING_OR_INVALID", path=manifest_path)
         return _audit_result(root, issues)
-
+    if (c9_issues := audit_c9_successor(root, manifest)) is not None:
+        issues.extend(c9_issues)
+        return _audit_result(root, issues)
+    if _formal_fastlane_audited(root, manifest, issues):
+        return _audit_result(root, issues)
     (
         items,
         max_visual_lines,
@@ -1647,7 +1658,6 @@ def audit_package(root: str | Path) -> dict[str, Any]:
         manifest_path=manifest_path,
         issues=issues,
     )
-
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -1670,7 +1680,6 @@ def audit_package(root: str | Path) -> dict[str, Any]:
             publish_path = _resolve(root, item.get("publish_json") or item.get("publish"))
             title_txt_path = _resolve(root, item.get("title_txt") or item.get("title_path"))
         evidence = _load_json(evidence_path) if evidence_path else {}
-
         is_song = _looks_song_like(item, evidence)
         if is_song:
             source_srt = str(item.get("source_srt") or "")
@@ -1754,6 +1763,10 @@ def audit_package(root: str | Path) -> dict[str, Any]:
         issues.extend(path_issues)
         record = _load_json(record_path) if record_path else {}
         chat_authority = _load_json(chat_authority_path) if chat_authority_path else {}
+        item_candidate_id = str(item.get("candidate_id") or "")
+        qixi_terminal_projection_authority = manifest_bound_terminal_projection_authority(
+            package_root=root, item=item, qixi_repo_root=qixi_repo_root
+        )
         ass_audit = audit_review_package_ass(
             root=root,
             item=item,
@@ -1813,14 +1826,16 @@ def audit_package(root: str | Path) -> dict[str, Any]:
         if story_contract_required and not is_song:
             provenance_path = _resolve(root, f"{stem}.provenance.json")
             provenance = _load_json(provenance_path) if provenance_path else None
-            _audit_source_truth_owner_attestations(
+            audit_source_truth_owner_attestations(
+                issue_adder=_add_issue,
                 issues=issues,
                 stem=stem,
                 chat_authority_path=chat_authority_path,
                 chat_authority=chat_authority,
-                record_path=record_path,
-                record=record,
+                record_path=record_path, record=record,
+                subtitle_path=subtitle_path,
                 provenance=provenance,
+                qixi_terminal_projection_authority=qixi_terminal_projection_authority,
             )
             _audit_final_review_attestation(
                 issues=issues,
@@ -1836,25 +1851,21 @@ def audit_package(root: str | Path) -> dict[str, Any]:
             if isinstance(story_contract, dict)
             else ""
         )
-        item_candidate_id = str(item.get("candidate_id") or "")
-        for authority_issue in audit_recovery_publication_surfaces(
+        _audit_item_recovery_publication_and_qixi_receipt(
+            root=root,
             item=item,
+            issues=issues,
+            stem=stem,
             item_candidate_id=item_candidate_id,
             item_title=item_title,
             publish_path=publish_path,
             record_path=record_path,
             record=record,
             publish_staging=publish_staging,
-            expected_authority=recovery_publication_authorities.get(item_candidate_id),
-            required=publication_contract_required,
-        ):
-            _add_issue(
-                issues,
-                authority_issue.code,
-                stem=stem,
-                path=authority_issue.path,
-                detail=authority_issue.detail,
-            )
+            recovery_publication_authorities=recovery_publication_authorities,
+            publication_contract_required=publication_contract_required,
+            qixi_repo_root=qixi_repo_root,
+        )
         if item_candidate_id and story_candidate_id and item_candidate_id != story_candidate_id:
             _add_issue(
                 issues,
@@ -1886,6 +1897,7 @@ def audit_package(root: str | Path) -> dict[str, Any]:
             # epoch.
             story_contract_required=(story_contract_required and not is_song),
             is_song=is_song,
+            qixi_repo_root=qixi_repo_root,
         )
         _audit_finished_item_cover(
             root=root,

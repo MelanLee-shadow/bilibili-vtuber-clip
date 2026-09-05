@@ -6,6 +6,7 @@ import pytest
 
 import src.autoslice.reviewed_subtitle_baseline_registry as baseline_registry
 import src.autoslice.source_fact_staging as source_fact_staging
+from src.autoslice.llm_client import LlmCallError
 from src.autoslice.publish_staging import _stage_publish_draft
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.source_fact_review import (
@@ -16,6 +17,10 @@ from src.autoslice.source_fact_review import (
     validate_source_fact_review,
 )
 from src.autoslice.story_contract import build_story_contract
+
+
+class _MalformedSafeReasonError(RuntimeError):
+    safe_reason = "raw-secret-safe-reason"
 
 
 @pytest.fixture(autouse=True)
@@ -179,6 +184,110 @@ def test_source_fact_prompt_forbids_birthday_forwarding_role_drift() -> None:
     )
 
 
+def test_relation_policy_changes_request_hash_but_not_context_binding() -> None:
+    hook = "李豆沙聊起南町的直播趣事。"
+    title = "【李豆沙】聊起南町的直播趣事"
+    transcript = "李豆沙聊起南町的直播趣事"
+    context = "- danmaku @1000ms event=chat: 南町"
+    prompts: list[str] = []
+
+    def cpa(prompt: str) -> str:
+        prompts.append(prompt)
+        return _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+        )
+
+    legacy = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript=transcript,
+        clip_context_prompt=context,
+        llm_call=cpa,
+    )
+    restricted = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript=transcript,
+        clip_context_prompt=context,
+        llm_call=cpa,
+        story_contract={"relation_state": "UNKNOWN", "relation_claim_allowed": False},
+    )
+
+    assert source_fact_review_passes(legacy)
+    assert source_fact_review_passes(restricted)
+    assert "关系缺失或未确认" not in prompts[0]
+    assert "关系缺失或未确认" in prompts[1]
+    assert restricted["passes"][0]["request_sha256"] == (
+        "sha256:" + hashlib.sha256(prompts[1].encode("utf-8")).hexdigest()
+    )
+    assert restricted["passes"][0]["request_sha256"] != legacy["passes"][0]["request_sha256"]
+    assert restricted["passes"][0]["clip_context_prompt_sha256"] == (
+        legacy["passes"][0]["clip_context_prompt_sha256"]
+    )
+
+
+def test_unconfirmed_relation_repair_converges_to_neutral_public_copy() -> None:
+    bad_hook = "李豆沙和南町联动聊天。"
+    bad_title = "【李豆沙】和南町联动聊天"
+    fixed_hook = "李豆沙聊起南町。"
+    fixed_title = "【李豆沙】聊起南町的趣事"
+    contract = build_story_contract(
+        candidate_id="relation-neutral-repair",
+        selection_hook=bad_hook,
+        transcript_text="李豆沙聊起南町。",
+        selection_scorecard=None,
+        session_relation_authority=None,
+    )
+    responses = iter(
+        [
+            _completion(
+                status="REPAIR",
+                final_hook=fixed_hook,
+                final_title=fixed_title,
+                supported_by=["final_transcript"],
+                changed_surfaces=[
+                    {
+                        "artifact": "selection_hook",
+                        "before": "李豆沙和南町联动聊天",
+                        "after": "李豆沙聊起南町",
+                        "reason": "关系未确认，只保留字幕支持的具体聊天事实。",
+                        "evidence": ["final_transcript: 李豆沙聊起南町。"],
+                    },
+                    {
+                        "artifact": "title",
+                        "before": "和南町联动聊天",
+                        "after": "聊起南町",
+                        "reason": "关系未确认，只保留字幕支持的具体聊天事实。",
+                        "evidence": ["final_transcript: 李豆沙聊起南町。"],
+                    },
+                ],
+            ),
+            _completion(
+                status="KEEP",
+                final_hook=fixed_hook,
+                final_title=fixed_title,
+                supported_by=["final_transcript"],
+            ),
+        ]
+    )
+    review = review_and_repair_source_facts(
+        selection_hook=bad_hook,
+        title=bad_title,
+        final_transcript="李豆沙聊起南町。",
+        clip_context_prompt="",
+        llm_call=lambda _prompt: next(responses),
+        story_contract=contract,
+    )
+
+    assert source_fact_review_passes(review)
+    assert review["decision"] == "REPAIRED"
+    assert "联动" not in review["final_selection_hook"]
+    assert "联动" not in review["final_title"]
+
+
 def test_changed_surface_evidence_can_bind_exact_speaker_transcript_rows() -> None:
     row = {
         "artifact": "title",
@@ -249,6 +358,92 @@ def test_uniform_host_final_transcript_citation_tolerates_invented_line_number()
         before_surface=row["before"],
         after_surface=row["after"],
         final_transcript=final_transcript,
+        clip_context_prompt="",
+        speaker_transcript=None,
+    )
+
+
+def test_uniform_host_final_transcript_citation_tolerates_invented_srt_block() -> None:
+    """8/19 生产实证（七夕 auto_113022_354_496）：判官不止编行号，还编了
+
+    整块 SRT（序号 + 时间戳行 + 文字行）来引用 final_transcript。剥掉这层
+    定位外壳后，剩余文字仍必须逐字命中 final_transcript——用生产实测原文
+    做 fixture，防止未来再退化成这种回归。
+    """
+
+    final_transcript = "\n".join(
+        [
+            "然后后天是七夕",
+            "我周三就是七夕那天",
+            "我准备中午唱甜甜甜",
+        ]
+    )
+    row = {
+        "artifact": "selection_hook",
+        "before": "李豆沙公布七夕安排：中午用甜歌把观众甜腻，晚上再用苦情歌唱到大家集体封号，完成一套七夕PUA。",
+        "after": "李豆沙公布七夕安排：中午用甜歌把观众甜腻，晚上再用苦情歌唱到大家集体分号分号，完成一套七夕PUA。",
+        "reason": "“封号”把“分号分号”的同音梗改成了无证据的账号封禁含义，应恢复为规范词面。",
+        "evidence": [
+            "final_transcript: 19 00:00:38,870 --> 00:00:45,000\n"
+            "我周三就是七夕那天\n我准备中午唱甜甜甜",
+            "final_transcript: 12 00:00:22,320 --> 00:00:24,250\n然后后天是七夕",
+        ],
+    }
+
+    assert _valid_changed_surface(
+        row,
+        before_surface=row["before"],
+        after_surface=row["after"],
+        final_transcript=final_transcript,
+        clip_context_prompt="",
+        speaker_transcript=None,
+    )
+
+
+def test_srt_block_shell_without_index_still_binds() -> None:
+    """时间戳行前没有序号也要能剥壳——判官不总是先编个序号。"""
+
+    row = {
+        "artifact": "selection_hook",
+        "before": "占位",
+        "after": "占位改动",
+        "reason": "占位理由",
+        "evidence": [
+            "final_transcript: 00:00:22,320 --> 00:00:24,250\n然后后天是七夕",
+        ],
+    }
+
+    assert _valid_changed_surface(
+        row,
+        before_surface="占位",
+        after_surface="占位改动",
+        final_transcript="然后后天是七夕",
+        clip_context_prompt="",
+        speaker_transcript=None,
+    )
+
+
+def test_srt_block_shell_cannot_rescue_an_unbound_quote() -> None:
+    """负向金丝雀：壳剥干净了，但引用文字在 final_transcript 里根本不存在
+
+    ——必须继续判不绑定，证明剥壳没有放宽真正的证据门槛。
+    """
+
+    row = {
+        "artifact": "selection_hook",
+        "before": "占位",
+        "after": "占位改动",
+        "reason": "占位理由",
+        "evidence": [
+            "final_transcript: 5 00:00:10,000 --> 00:00:12,000\n没说过的话",
+        ],
+    }
+
+    assert not _valid_changed_surface(
+        row,
+        before_surface="占位",
+        after_surface="占位改动",
+        final_transcript="七夕唱甜歌",
         clip_context_prompt="",
         speaker_transcript=None,
     )
@@ -788,7 +983,7 @@ def test_repair_rejects_source_label_bound_only_in_other_corpus() -> None:
     assert review["passes"][0]["reason_code"] == "CPA_TEXT_REVIEW_INVALID"
 
 
-def test_provider_failure_fails_closed_after_bounded_retries() -> None:
+def test_provider_failure_fails_closed_without_same_pass_retry() -> None:
     calls = 0
 
     def cpa(_prompt: str) -> str:
@@ -807,10 +1002,89 @@ def test_provider_failure_fails_closed_after_bounded_retries() -> None:
     assert not source_fact_review_passes(review)
     assert review["status"] == "FAILED"
     assert review["reason_code"] == "CPA_TEXT_REVIEW_CALL_FAILED"
-    # provider 层失败在同一 pass 内有界重掷（1 次原始 + 2 次重试），仍 fail-closed
-    assert calls == 3
-    assert [row["attempt"] for row in review["provider_retries"]] == [1, 2]
+    assert calls == 1
+    assert review["provider_retries"] == []
     assert len(review["passes"]) == 1
+    assert "response_sha256" not in review["passes"][0]
+
+
+@pytest.mark.parametrize(
+    ("error", "provider_class", "status_codes", "safe_reason"),
+    [
+        (
+            LlmCallError(
+                "provider http=429 token=source-fact-secret",
+                safe_reason="LLM_COMMAND_FAILED",
+            ),
+            "quota",
+            [429],
+            "LLM_COMMAND_FAILED",
+        ),
+        (
+            LlmCallError(
+                "provider http=503 token=source-fact-secret",
+                safe_reason="LLM_COMMAND_FAILED",
+            ),
+            "service",
+            [503],
+            "LLM_COMMAND_FAILED",
+        ),
+        (
+            LlmCallError(
+                "provider http=401 token=source-fact-secret",
+                safe_reason="LLM_COMMAND_FAILED",
+            ),
+            "rejected",
+            [401],
+            "LLM_COMMAND_FAILED",
+        ),
+        (
+            LlmCallError(
+                "provider timed out token=source-fact-secret",
+                safe_reason="LLM_COMMAND_TIMEOUT",
+            ),
+            "service",
+            [],
+            "LLM_COMMAND_TIMEOUT",
+        ),
+        (
+            _MalformedSafeReasonError("provider exploded token=source-fact-secret"),
+            "unknown",
+            [],
+            None,
+        ),
+    ],
+)
+def test_provider_failure_keeps_closed_diagnostics_without_secret(
+    error: Exception,
+    provider_class: str,
+    status_codes: list[int],
+    safe_reason: str | None,
+) -> None:
+    def cpa(_prompt: str) -> str:
+        raise error
+
+    review = review_and_repair_source_facts(
+        selection_hook="测试钩子",
+        title="【李豆沙】测试标题",
+        final_transcript="测试字幕",
+        clip_context_prompt="",
+        llm_call=cpa,
+    )
+
+    failed_pass = review["passes"][0]
+    assert failed_pass["status"] == "FAILED"
+    assert failed_pass["reason_code"] == "CPA_TEXT_REVIEW_CALL_FAILED"
+    assert failed_pass["provider_class"] == provider_class
+    assert failed_pass["provider_status_codes"] == status_codes
+    if safe_reason is None:
+        assert "safe_reason" not in failed_pass
+    else:
+        assert failed_pass["safe_reason"] == safe_reason
+    serialized = json.dumps(review, ensure_ascii=False)
+    assert "source-fact-secret" not in serialized
+    assert "token=" not in serialized
+    assert "raw-secret-safe-reason" not in serialized
 
 
 def test_multiple_repairs_converge_before_bounded_keep() -> None:
@@ -1220,10 +1494,13 @@ def test_publish_choke_rebuilds_story_before_cover_after_joint_repair(
         return value
 
     calls = 0
+    title_prompts: list[str] = []
 
-    def cpa(_prompt: str) -> str:
+    def cpa(prompt: str) -> str:
         nonlocal calls
         calls += 1
+        assert "关系缺失或未确认" in prompt
+        assert "source text 保持不变" in prompt
         if calls == 1:
             return _completion(
                 status="REPAIR",
@@ -1275,6 +1552,17 @@ def test_publish_choke_rebuilds_story_before_cover_after_joint_repair(
 
     media = tmp_path / "candidate.recut.mp4"
     media.write_bytes(b"video")
+
+    def title_llm(prompt: str) -> str:
+        title_prompts.append(prompt)
+        return json.dumps(
+            {
+                "title": bad_title,
+                "selection_hook_anchor": "命名成李姐拉拉",
+            },
+            ensure_ascii=False,
+        )
+
     staged = _stage_publish_draft(
         {
             "status": "MATERIALIZED",
@@ -1287,13 +1575,7 @@ def test_publish_choke_rebuilds_story_before_cover_after_joint_repair(
         title=bad_title,
         cues=[SourceCue("cue-1", 0, 1_000, transcript, "zh", "speech", 1.0)],
         run_ffmpeg=False,
-        title_llm_call=lambda _prompt: json.dumps(
-            {
-                "title": bad_title,
-                "selection_hook_anchor": "命名成李姐拉拉",
-            },
-            ensure_ascii=False,
-        ),
+        title_llm_call=title_llm,
         selection_hook=bad_hook,
         source_fact_llm_call=cpa,
         story_contract_rebuilder=contract,
@@ -1312,6 +1594,9 @@ def test_publish_choke_rebuilds_story_before_cover_after_joint_repair(
     assert cover_kwargs["title"] == fixed_title
     assert cover_record["story_contract"]["selection_hook"] == fixed_hook
     assert cover_record["story_contract"]["source_fact_review"]["decision"] == "REPAIRED"
+    assert len(title_prompts) == 1
+    assert "关系缺失或未确认" in title_prompts[0]
+    assert "source text 保持不变" in title_prompts[0]
     assert calls == 2
 
 
@@ -1592,7 +1877,10 @@ def test_transient_invalid_response_retried_within_same_pass() -> None:
     assert calls["n"] == 2
     assert len(review["passes"]) == 1
     assert len(review["provider_retries"]) == 1
-    assert review["provider_retries"][0]["reason_code"] == "CPA_TEXT_REVIEW_CALL_FAILED"
+    assert review["provider_retries"][0]["reason_code"] == "CPA_TEXT_REVIEW_INVALID"
+    assert review["provider_retries"][0]["response_sha256"] == (
+        "sha256:" + hashlib.sha256("这不是JSON".encode("utf-8")).hexdigest()
+    )
     assert validate_source_fact_review(
         review,
         selection_hook=hook,

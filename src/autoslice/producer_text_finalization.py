@@ -19,6 +19,7 @@ from .expected_value_canon_supersession import (
     expected_value_canon_supersession_receipt,
 )
 from .jingting_chunker import parse_srt_cues
+from .operator_text_owner_supersession import supersede_legacy_text_owner
 from .redelivery_subtitle_baseline import MIN_ALIGNMENT_OVERLAP_MS
 from .source_subtitle_truth import (
     MIN_CUE_OVERLAP_MS,
@@ -148,6 +149,34 @@ def _authorized_final_review_drop_cue(row: dict) -> bool:
         and after[0] == ""
         and row.get("structured_exact_text") == ""
     )
+
+
+def authorized_final_review_drop_windows(
+    audit: Mapping[str, object] | None,
+) -> tuple[tuple[int, int], ...]:
+    """Return only hash-validated whole-cue DROP windows on the padded axis."""
+
+    if not isinstance(audit, Mapping):
+        return ()
+    rows = audit.get("entity_repairs")
+    if not isinstance(rows, list):
+        return ()
+    windows: list[tuple[int, int]] = []
+    for row in rows:
+        if not isinstance(row, dict) or not _authorized_final_review_drop_cue(row):
+            continue
+        start_ms = row.get("matched_start_ms")
+        end_ms = row.get("matched_end_ms")
+        if (
+            isinstance(start_ms, bool)
+            or not isinstance(start_ms, int)
+            or isinstance(end_ms, bool)
+            or not isinstance(end_ms, int)
+            or not 0 <= start_ms < end_ms
+        ):
+            continue
+        windows.append((start_ms, end_ms))
+    return tuple(windows)
 
 
 def _record_entity_repair_window_survival(
@@ -1588,9 +1617,8 @@ def verify_chat_authority_final_surfaces(
     audit: dict,
     *,
     final_text_srt: str,
-    final_speaker_srt: str,
-    delivery_start_ms: int,
-    delivery_end_ms: int,
+    final_speaker_srt: str, delivery_start_ms: int, delivery_end_ms: int,
+    operator_text_full_ownership: Mapping[str, object] | None = None,
 ) -> bool:
     """Verify every in-delivery authority decision at its original time span."""
 
@@ -1676,10 +1704,11 @@ def verify_chat_authority_final_surfaces(
     superseded_by_expected_value_canon = 0
     required_rows: list[dict] = []
     for kind, row, expected_text in decision_rows:
-        matched_start = int(row["matched_start_ms"])
-        matched_end = int(row["matched_end_ms"])
-        row["final_verification_kind"] = kind
-        row.pop("expected_value_canon_supersession", None)
+        matched_start, matched_end = int(row["matched_start_ms"]), int(row["matched_end_ms"])
+        row["final_verification_kind"], _ = kind, row.pop("expected_value_canon_supersession", None)
+        if supersede_legacy_text_owner(row, operator_text_full_ownership):
+            superseded_by_redelivery += 1
+            continue
         if (
             kind == "entity_repair"
             and row.get("mode") == "final_review_context_adjudication"

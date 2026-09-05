@@ -194,6 +194,67 @@ def test_sealed_round_outranks_an_interrupted_one_on_the_same_row(tmp_path):
     assert "在途版本" not in rows[0]["why"]
 
 
+def test_persist_promotes_checkpoint_authority_and_retires_checkpoint(tmp_path):
+    path = carryover_path(tmp_path, "auto_promote")
+    base = "a" * 64
+    suspect = "于小李来说"
+    proposed = "对付小李呀"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "findings": [
+                    {
+                        "cue": None,
+                        "base_text_sha256": base,
+                        "suspect": suspect,
+                        "proposed_full_cue": proposed,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    checkpoint_row = _confirmed(47, suspect, proposed, base=base)
+    checkpoint_row["exact_release_adjudication"] = {
+        "repaired": True,
+        "request": {
+            "matched_start_ms": 114_200,
+            "matched_end_ms": 115_320,
+        },
+    }
+    assert checkpoint_final_review_carryover(
+        path, _audit([checkpoint_row])
+    ) == 1
+    pending = {
+        "cue_index": 51,
+        "base_text_sha256": base,
+        "suspect": suspect,
+        "proposed_full_cue": proposed,
+        "carryover_replay_remap": {
+            "schema_version": "final-review-carryover-remap.v1",
+            "status": "PASS",
+        },
+    }
+
+    assert persist_final_review_carryover(
+        path,
+        {
+            **_audit([]),
+            "correction_pass": {"findings": [pending]},
+        },
+    ) == 1
+    rows = load_final_review_carryover(path)
+    assert len(rows) == 1
+    assert rows[0]["exact_release_adjudication"]["request"] == {
+        "matched_start_ms": 114_200,
+        "matched_end_ms": 115_320,
+    }
+    assert not carryover_checkpoint_path(path).exists()
+    assert load_replayable_final_review_carryover(path) == rows
+
+
 # --- (c) 正常路径行为不变 ---------------------------------------------------
 
 

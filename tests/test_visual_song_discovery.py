@@ -214,6 +214,95 @@ def test_discover_visual_songs_failure_isolated_when_no_provider_can_run(tmp_pat
     assert result.error
 
 
+def test_provider_failure_diagnostics_are_bounded_and_secret_free(tmp_path, monkeypatch):
+    media = tmp_path / "stream.mp4"
+    media.write_bytes(b"real-enough-media-bytes" * 100)
+    secret = "super-secret-gemini-value"
+    monkeypatch.setenv("GEMINI_API_KEY", secret)
+    for name in ("GEMINI_API_KEY_2", "GEMINI_API_KEY_3", "GEMINI_KEY_BACKUP"):
+        monkeypatch.delenv(name, raising=False)
+
+    def fail_generate(**_kwargs):
+        raise RuntimeError(f"api_key={secret}")
+
+    monkeypatch.setattr(
+        visual_song_discovery.agy_gemini_client,
+        "generate_content",
+        fail_generate,
+    )
+    calls: list[list[str]] = []
+    result = discover_visual_songs(
+        media,
+        tmp_path / "cache",
+        duration_ms=30_000,
+        config=VisualSongConfig(sample_every_seconds=30, timeout_seconds=60),
+        agy_bin=tmp_path / "missing-agy",
+        command_runner=_sheet_writing_runner(calls, agy_writes=False),
+    )
+
+    assert result.status == "FAILED"
+    assert result.error and secret not in result.error
+    diagnostics = result.provider_diagnostics
+    assert diagnostics and diagnostics["failure_count"] <= 99
+    assert diagnostics["agy"]["failure_categories"] == {
+        "AGY_BINARY_ABSENT": 1
+    }
+    assert diagnostics["gemini"]["configured_key_count"] == 1
+    assert "GEMINI_API_REQUEST_FAILED" in diagnostics["gemini"]["failure_categories"]
+    serialized = json.dumps(diagnostics, ensure_ascii=False)
+    assert secret not in serialized
+    assert len(str(result.error)) <= 512
+
+
+def test_provider_failure_diagnostics_retain_safe_gemini_key_attempt_rows(
+    tmp_path, monkeypatch
+):
+    media = tmp_path / "stream.mp4"
+    media.write_bytes(b"real-enough-media-bytes" * 100)
+    secret = "provider-response-secret"
+    for ordinal in range(1, 4):
+        monkeypatch.setenv("GEMINI_API_KEY" + (f"_{ordinal}" if ordinal > 1 else ""), f"free-{ordinal}-{secret}")
+    monkeypatch.delenv("GEMINI_KEY_BACKUP", raising=False)
+
+    def fail_generate(**_kwargs):
+        raise RuntimeError(f"raw provider response: {secret}")
+
+    monkeypatch.setattr(
+        visual_song_discovery.agy_gemini_client,
+        "generate_content",
+        fail_generate,
+    )
+    result = discover_visual_songs(
+        media,
+        tmp_path / "cache",
+        duration_ms=30_000,
+        config=VisualSongConfig(sample_every_seconds=30, timeout_seconds=60),
+        agy_bin=tmp_path / "missing-agy",
+        command_runner=_sheet_writing_runner([], agy_writes=False),
+    )
+
+    assert result.status == "FAILED"
+    diagnostics = result.provider_diagnostics
+    assert diagnostics is not None
+    failures = diagnostics["gemini"]["failures"]
+    free_failures = [row for row in failures if row.get("key_tier") == "free"]
+    assert [row["key_ordinal"] for row in free_failures] == [1, 2, 3]
+    assert {row["attempt_round"] for row in free_failures} == {1}
+    assert all(row["category"] == "GEMINI_API_REQUEST_FAILED" for row in free_failures)
+    assert all(set(row) <= {
+        "provider",
+        "category",
+        "count",
+        "error_type",
+        "returncode",
+        "key_tier",
+        "key_ordinal",
+        "attempt_round",
+    } for row in failures)
+    serialized = json.dumps(result.to_manifest(), ensure_ascii=False)
+    assert secret not in serialized
+
+
 def test_discover_visual_songs_failure_isolated_for_unexpected_runner_error(tmp_path):
     media = tmp_path / "stream.mp4"
     media.write_bytes(b"video")

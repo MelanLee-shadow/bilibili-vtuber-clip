@@ -26,10 +26,43 @@ timeline 上重放已绑定的 semantic verdict；第 8 阶段直接物化 autho
 任一精确 authority 失败都在本候选内 fail closed，不得把 disposable ASR 文字、closure cue
 近似匹配或另一轮随机好网格提升为人工真值。
 
+### 修改点完整性与增量复核
+
+维护者 对同一候选明确列出超过 3 个修改点时，视为该次报告已穷举需要修复的点；但流水线仍
+必须把每个实际 changed cue 映射到报告点，无法覆盖的变化立即回退整片复核。1–2 个点默认
+需要整片复核，只有 维护者 明确声明“确实只有这些错误”且 changed cue 全覆盖时才允许定向复核。
+恰好 3 个点按保守规则整片复核。这个策略由
+`src/autoslice/operator_correction_policy.py` 强制，不靠模型自行猜测。
+
+字幕-only 的新交付可使用 `incremental-artifact-audit.v2` 只复核 changed cue/window；未变的
+视频、封面、boundary 和 title 只能继承上一份**已通过且 hash-bound**证据，不能继承旧的
+FLAGGED/失效 receipt。最终 materialize 后仍必须重算 exact-final SRT、source separation、
+说话人和 package gates；增量 receipt 不是最终放行。
+
 语义修复引擎（专名/方言/语境不合适度）的设计与规则见
 [41-semantic-repair.md](41-semantic-repair.md)——那是本步的核心子权威。
 
 ## 硬约束
+
+- aggregate ASR 的 CPA 路线必须完成整片校正；空补全、缺失/重复 cue、非法字段和全空文本
+  不能降级成“已校正的原稿”。服务不可用为 `CPA_CORRECTION_UNAVAILABLE`，坏合同为
+  `CPA_CORRECTION_INVALID_OUTPUT`；前者按既有 provider-transient 有界重试，后者阻断。
+  有代词时专项 CPA 同样须返回合法结果；显式合法零改动仍可通过。
+- 首次 CPA 前复用 `term_boundary.py`、已授权 `canonical_surface_rules` 和
+  `normalize_expected_value_surfaces`。词边界移动不得改变整段字符流、cue 数或时间戳；MOSS
+  的匿名 speaker 切换/缺失边界不得跨越。词形规范不等于独立听音证据，登记词冲突仍交 CPA。
+  原始 `.asr_draft.srt` 不覆盖；`.pre-cpa.srt` 与 `.pre-cpa-audit.json` 保存前置结果及规则来源，
+  非平凡词形差异的原稿也给 CPA。晚期 hard/expected/native canon、source truth、fidelity、
+  entity 与 exact-final 门保持不变；前置不能取得新的语义改字权限。
+- 普通谈话可显式试跑 `--correct moss_cpa`：固定 MOSS Pro 无热词原生草稿 → 前置规范 →
+  必经 CPA，疑难项仍走既有实体/终审局部声学证据和 CPA 裁决。不按未经验证的 ASR 差异阈值
+  选模型。MOSS 超时、无凭据、坏响应、重叠或越界时间轴须回到完整 BCUT→AGY→CPA 路线，
+  不能静默丢段或按编号套进 BCUT 时间轴。`.asr-source.json` 记录实际路线、模型、音频/响应
+  hash 及回退原因；匿名 speaker 不是 HOST/GUEST 身份证据。
+  `AUTOSLICE_CORRECTION_MODE` 只允许 `bcut_agy_cpa/moss_cpa/cpa`；代码默认仍为旧路线，
+  MOSS 默认推广须先完成配对全链和时间轴验收。`agy/none` 仅保留为显式 CLI 诊断，不能由
+  生产环境默认开关取消 CPA。MOSS key 只从私密 `AUTOSLICE_MOSS_API_KEY_FILE` 或进程
+  `AUTOSLICE_MOSS_API_KEY` 读取，禁止进源码、日志和 fingerprint。
 
 - 谈话切片中的歌名候选（包括可能其实是 franchise/企划名的字符串）在
   `song_name_pin.py` 改字前必须先有 `song-name-semantic-verification.v1`：回执绑定 pin 前
@@ -175,6 +208,41 @@ timeline 上重放已绑定的 semantic verdict；第 8 阶段直接物化 autho
   漂移、覆盖边界切半 cue、漏 cue、合并/拆分、歧义映射或二次真值失败一律拒发，禁止靠重掷
   模型碰运气。只有已由 `drop_cue` 删除、无法与旧稿一一配对的静音窗会从两边同时排除；不能
   因宽真值窗内“任一 cue 已出现 required_text”就掩盖同窗其他新误听。
+- `scripts/replay_reviewed_subtitle_baseline.py` 可对 failed rerun 的 old-record/current-recut
+  drift 构造 read-only predicate matrix，并只在 candidate-private stage 重建 old-record video、
+  reviewed SRT 与 baseline audit。该 stage 不是 package apply：speaker/ASS/burn、title/cover、
+  final review 和 package audit 仍须从完整 after-image 通过，之后才可经 state-last transaction
+  安装；不得用单独 SRT/MP4 或 private stage 覆盖 live package。
+- `operator-reviewed-text-full-ownership-pin.v3` 的 reviewed SRT 必须显式声明唯一时间域：
+  `DELIVERY_LOCAL` 表示 cue 0 已对应最终主片 source 起点，manifest 的绝对区间必须逐毫秒等于
+  `[piece_start + final_start, piece_start + final_end)`，重放是 identity，禁止再减一次 crop；
+  `PIECE_LOCAL` 表示 cue 0 对应完整 content piece 起点，只允许在 full-window 重放后按最终边界裁
+  **一次**。缺字段、未知值、domain/区间/record/media boundary 不一致或 delivery-local cue 越过最终
+  媒体时长均 fail closed。piece-local baseline 不能把媒体开场强制为 source-local 0；
+  delivery-local head 若与 semantic start 的受控 lead 几何矛盾也必须拒绝。历史 C3 仅因已有独立
+  deploy-sealed exact-final authority，可按其原 manifest bytes 合成 `DELIVERY_LOCAL`；不得扩展成
+  通用兼容默认。
+- reviewed-baseline replay 的 `--plan` 只读取 sealed baseline/old-record/source 绑定，不能报成
+  full preflight；`--readiness-graph` 只读指定 date/CID 的 state discovery，不审计其它日期的
+  package。只有 `--full-dry-run` 才在 candidate-private namespace 完整重建 speaker/ASS/burn、
+  fresh exact-final/source-fact、frozen title/cover carry、record/publish/chat mirrors 和 package
+  audit，并输出逐 predicate 的 `PASS / FAIL / NOT_EVALUATED / NEEDS_PROVIDER` matrix。它不得写
+  formal record/state/journal/delivery/upload，私有 stage 在成功或失败后都必须安全清理。
+- `--apply` 仍先在 runner lease 外并行完成上述 private prepare；每个 candidate 随后按输入顺序
+  在短 `runner.lock` lease 下重新从最新 state bytes 投影**自己的** state-after，并 CAS/检查
+  已封口 artifact preimage、installed checkpoint 与 deployment authority 后 state-last commit。
+  前一 candidate 的 state 成功不得使后一 candidate 复用 stale whole-state image；任一 drift
+  在正式 target/state 写前拒绝。这个 no-upload transaction 不获取 `upload.lock`，也不创建
+  `AUTO_UPLOAD` 或 upload manifest；投稿仍只走 90 的 single-uploader 显式授权闭环。
+- 已发布候选不得伪造 `candidate_rejected` state 来调用上一路径。只有显式
+  `--published-recovery-bvid` 可进入 package-only recovery：PLAN 逐字绑定 committed same-BV
+  publication authority 与当前唯一 `published` state row；full-dry-run 只在私有 stage 验证；
+  apply 还必须给 create-only `--recovery-package-root`，只落 operator-private package，并声明
+  `state_transition=none / same_bv_only=true / upload_allowed=false`。最终 package 内的
+  `<cid>.published-recovery-preflight.json` 必须进入 canonical audit，绑定当时 production state SHA、
+  BVID/AID/CID/title、authority 与 source record；state 在 prepare、落包前后任一点漂移均拒绝。
+  该窄门不写 production state、正式 package、delivery、ledger 或 upload surface，正常 replay 的
+  `candidate_rejected` invariant 继续保持不变。
 - redelivery v2 在 coverage prefix/tail 唯一允许保留的 edge straddler，必须与**每一条**
   retained reviewed cue 都按半开区间零重叠；恰好边界相接的 0ms overlap 可披露为
   `BOUNDARY_STRADDLE_WITHOUT_REVIEWED_CUE_OVERLAP`。任何正重叠，包括 1ms，仍须报

@@ -37,7 +37,8 @@ from scripts.gemini_slice_jingting import (
 from src.autoslice import agy_gemini_client, gemini_backup_policy
 from src.autoslice.acoustic_witness_protocol import (
     BLIND_PINYIN_PROTOCOL,
-    contains_han_text,
+    WITNESS_SCHEMA,
+    _witness_report_error,
 )
 from src.autoslice.llm_client import extract_json_object
 from src.autoslice.exact_source_transcript_contract import (
@@ -60,35 +61,56 @@ from src.autoslice.exact_source_transcript_runtime import (
     serve_manifest as _serve_exact_source_transcript_manifest,
     store_manifest as _store_exact_source_transcript_manifest,
 )
+from src.autoslice import entity_audio_gemini_web as _gemini_web
+from src.autoslice.entity_audio_gemini_web import (
+    _EntityProviderOutcome,
+    _provider_artifact_bindings,
+    _provider_provenance,
+    run_gemini_web_fallback_from_verifier as _run_gemini_web_fallback,
+    run_gemini_web_fallback_if_enabled as _run_gemini_web_if_enabled,
+)
 
-ENTITY_AUDIO_MODEL = "Gemini 3.6 Flash (High)"
+ENTITY_AUDIO_AGY_MODEL_ENV = "ENTITY_AUDIO_AGY_MODEL"
+ENTITY_AUDIO_MODEL = os.environ.get(
+    ENTITY_AUDIO_AGY_MODEL_ENV, "Gemini 3.6 Flash (High)"
+)
 ENTITY_AUDIO_TIMEOUT = "10m"
 
-# AGY remains the preferred high-confidence audio witness.  Direct Gemini API
-# is a bounded availability fallback for candidate-blind witness requests only;
-# it never sees current/proposed text and can never authorize a mutation.
+# Explicitly enabled web comes first for candidate-blind pinyin witnesses;
+# AGY and the existing bounded API ladder remain fallbacks. No provider can
+# authorize a subtitle mutation.
 GEMINI_API_URL = agy_gemini_client.GEMINI_API_URL
 ENTITY_AUDIO_API_MODEL_ENV = "ENTITY_AUDIO_GEMINI_API_MODEL"
 ENTITY_AUDIO_API_MODEL_DEFAULT = "gemini-3.6-flash"
 ENTITY_AUDIO_API_REQUEST_MAX_BYTES = 20_000_000
 # F21（维护者）：显式关掉 AGY 那一环时的开关。默认不设 = AGY 仍是
-# 首选；设为 1 时链直接从免费 3 key 起跑。key 顺序本身不变：AGY 订阅 →
+# 首选（启用 web 时排在 web 后）；设为 1 时仅跳过 AGY。key 顺序仍为
+# AGY 订阅 →
 # 免费 3 key 轮换 → 政策门控付费 backup（7/19 裁定，同一 Gemini 模型的配额
 # 顺序，不是不同 provider 的证据等级）。
 ENTITY_AUDIO_DISABLE_AGY_ENV = "ENTITY_AUDIO_DISABLE_AGY"
+
+ENTITY_AUDIO_GEMINI_WEB_ENABLED_ENV = _gemini_web.ENTITY_AUDIO_GEMINI_WEB_ENABLED_ENV
+ENTITY_AUDIO_GEMINI_WEB_MODEL_ENV = _gemini_web.ENTITY_AUDIO_GEMINI_WEB_MODEL_ENV
+ENTITY_AUDIO_GEMINI_WEB_COMMAND_ENV = _gemini_web.ENTITY_AUDIO_GEMINI_WEB_COMMAND_ENV
+ENTITY_AUDIO_GEMINI_WEB_PYTHON_ENV = _gemini_web.ENTITY_AUDIO_GEMINI_WEB_PYTHON_ENV
+ENTITY_AUDIO_GEMINI_WEB_PROFILE_ENV = _gemini_web.ENTITY_AUDIO_GEMINI_WEB_PROFILE_ENV
+ENTITY_AUDIO_GEMINI_WEB_BROWSER_ENV = _gemini_web.ENTITY_AUDIO_GEMINI_WEB_BROWSER_ENV
+ENTITY_AUDIO_GEMINI_WEB_XVFB_ENV = _gemini_web.ENTITY_AUDIO_GEMINI_WEB_XVFB_ENV
+ENTITY_AUDIO_GEMINI_WEB_USER_ENV = _gemini_web.ENTITY_AUDIO_GEMINI_WEB_USER_ENV
+ENTITY_AUDIO_GEMINI_WEB_TIMEOUT_ENV = _gemini_web.ENTITY_AUDIO_GEMINI_WEB_TIMEOUT_ENV
+_terminate_web_process_group = _gemini_web.terminate_web_process_group
 
 # Phase 1 acoustic-witness architecture (维护者 ruling): the audio
 # model is a WITNESS, not a judge. In witness mode it never sees any
 # candidate text — it dictates suspected pinyin syllables only; hanzi
 # word-choice reasoning belongs to the CPA judge downstream.
 WITNESS_REQUEST_SCHEMA = "subtitle-span-acoustic-witness-request.v1"
-WITNESS_SCHEMA = "subtitle-span-acoustic-witness.v1"
 # The prompt contract is part of the acoustic-cache identity.  A 
 # production incident proved why: the old prompt embedded one valid pinyin
 # example and AGY copied it verbatim for unrelated audio.  Audio bytes alone
 # are not a sufficient cache key when the dictation instructions change.
 WITNESS_PROMPT_CONTRACT = "candidate-free-toneless-pinyin-neutral-length.v3"
-_LEGACY_PROMPT_COPY_PINYIN = "zhe ge shi he tian yi de lian dong o"
 
 
 def _sha256(path: Path) -> str:
@@ -490,21 +512,6 @@ def _run_gemini_api_fallback(
     return outcome
 
 
-@dataclass(frozen=True)
-class _EntityProviderOutcome:
-    observed: Any
-    provider: str
-    model: str
-    prompt_path: Path
-    response_path: Path
-    accepted_key_tier: str | None
-    paid_policy_stamp: Mapping[str, Any] | None
-    provider_failures: list[dict[str, Any]]
-    accepted_key_ordinal: int | None = None
-    configured_key_count: int = 0
-    served_from_cache: bool = False
-
-
 _ACOUSTIC_CACHE_SCHEMA = "witness-acoustic-cache.v4"
 _CACHEABLE_WITNESS_PROVIDERS = frozenset({"agy", "gemini_api"})
 
@@ -760,34 +767,23 @@ def _replay_provider_witness_cache(
     return replace(cached, provider_failures=list(provider_failures))
 
 
-def _observe_entity_audio(
+def _entity_observation_prompt(
     *,
     request: Mapping[str, Any],
     candidates: list[Any],
-    audio_path: Path,
-    job_dir: Path,
     recording_date: str,
     timely_context: str,
-    binary: str,
-    model: str,
-    timeout: str,
-    agy_quota_circuit: _AgyQuotaCircuitBreaker,
-    exact_cache_replay: Callable[
-        [str, str, list[dict[str, Any]]], Mapping[str, Any] | None
-    ] | None = None,
-) -> _EntityProviderOutcome:
-    """Run preferred AGY, then bounded direct API for blind audio evidence."""
+) -> tuple[str, bool, bool]:
+    """Build the provider prompt and return the routing modes it establishes."""
 
-    candidate_rows = [dict(row) for row in candidates if isinstance(row, dict)]
-    witness_mode = request.get("schema_version") == WITNESS_REQUEST_SCHEMA
-    exact_transcript_mode = request.get("schema_version") == EXACT_SOURCE_REQUEST_SCHEMA
-    sentence_mode = request.get("schema_version") in {
+    schema_version = request.get("schema_version")
+    witness_mode = schema_version == WITNESS_REQUEST_SCHEMA
+    exact_transcript_mode = schema_version == EXACT_SOURCE_REQUEST_SCHEMA
+    sentence_mode = schema_version in {
         "chat-read-aloud-verification-request.v1",
         "subtitle-span-acoustic-check-request.v1",
     }
-    acoustic_fit_mode = (
-        request.get("schema_version") == "subtitle-span-acoustic-check-request.v1"
-    )
+    acoustic_fit_mode = schema_version == "subtitle-span-acoustic-check-request.v1"
     if exact_transcript_mode:
         prompt = exact_source_transcript_prompt(
             request=request, timeline_binding=request.get("timeline_binding") or {}
@@ -801,7 +797,7 @@ def _observe_entity_audio(
         )
     else:
         prompt = _prompt(
-            candidates=candidate_rows,
+            candidates=[dict(row) for row in candidates if isinstance(row, dict)],
             recording_date=recording_date,
             timely_context=timely_context,
             sentence_mode=sentence_mode,
@@ -811,6 +807,34 @@ def _observe_entity_audio(
             target_audio_end_ms=request.get("target_audio_end_ms"),
             acoustic_fit_mode=acoustic_fit_mode,
         )
+    return prompt, witness_mode, exact_transcript_mode
+
+
+def _observe_entity_audio(
+    *,
+    request: Mapping[str, Any],
+    candidates: list[Any],
+    audio_path: Path,
+    job_dir: Path,
+    recording_date: str,
+    timely_context: str,
+    binary: str,
+    model: str,
+    timeout: str,
+    agy_quota_circuit: _AgyQuotaCircuitBreaker,
+    web_unavailable: threading.Event | None = None,
+    exact_cache_replay: Callable[
+        [str, str, list[dict[str, Any]]], Mapping[str, Any] | None
+    ] | None = None,
+) -> _EntityProviderOutcome:
+    """Use one result contract: enabled web, AGY, then the existing API ladder."""
+
+    prompt, witness_mode, exact_transcript_mode = _entity_observation_prompt(
+        request=request,
+        candidates=candidates,
+        recording_date=recording_date,
+        timely_context=timely_context,
+    )
     prompt_path = job_dir / "prompt.md"
     prompt_path.write_text(prompt, encoding="utf-8")
     short_prompt = (
@@ -826,6 +850,13 @@ def _observe_entity_audio(
     paid_policy_stamp: Mapping[str, Any] | None = None
     provider_failures: list[dict[str, Any]] = []
     response_path = job_dir / "verdict.raw.json"
+    web_outcome = _run_gemini_web_if_enabled(
+        witness_mode, request, audio_path, job_dir,
+        recording_date, provider_failures,
+        fallback=_run_gemini_web_fallback, unavailable=web_unavailable,
+    )
+    if web_outcome is not None:
+        return web_outcome
     cached_outcome = (
         _replay_provider_witness_cache(
             audio_path=audio_path,
@@ -888,13 +919,8 @@ def _observe_entity_audio(
             env=agy_subprocess_env(),
             timeout=parse_timeout_seconds(timeout) + 120,
         ) if agy_output_ready else None
-        if run is None:
-            completed = None
-        else:
-            completed = run.completed
-        if run is None:
-            pass
-        elif completed is None:
+        completed = run.completed if run is not None else None
+        if run is not None and completed is None:
             provider_failures.append(
                 {
                     "provider": "agy",
@@ -902,7 +928,7 @@ def _observe_entity_audio(
                     "error_type": run.launch_error_type,
                 }
             )
-        else:
+        elif completed is not None:
             (job_dir / "agy.stdout").write_text(completed.stdout, encoding="utf-8")
             (job_dir / "agy.stderr").write_text(completed.stderr, encoding="utf-8")
             raw_response = (
@@ -1061,9 +1087,6 @@ def _observe_entity_audio(
     )
 
 
-_PINYIN_SYLLABLE_RX = re.compile(r"^(?:[a-zü]+|\?)$")
-
-
 def _subtitle_acoustic_witness_verdict(
     *,
     request: Mapping[str, Any],
@@ -1076,93 +1099,13 @@ def _subtitle_acoustic_witness_verdict(
     end_ms: int,
     timeline_binding: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Validate a pure-dictation witness report; any hanzi or candidate
-    leakage invalidates it (the witness must never do word choice)."""
+    """Validate blind dictation without granting the witness word-choice rights."""
 
-    heard = str(observed.get("heard_pinyin") or "").strip().lower()
-    tokens = heard.split()
-    confidence = observed.get("confidence")
-    uncertain_positions = observed.get("uncertain_positions")
-    syllable_count = observed.get("syllable_count")
-    # 静音证词：删除提案的时窗里确实无语音时，
-    # 空听写 + target_audible=False 是完整有效的观察，不是报告缺陷——
-    # 强制非空会把「确认无声」翻译成 WITNESS_REPORT_INVALID→UNCERTAIN，
-    # 删除类发现永久卡死。有声报告仍必须逐音节过拼音正则。
-    silence_observation = (
-        not tokens and observed.get("target_audible") is False
-    )
-    # Reject the exact demonstration phrase that contaminated the old prompt.
-    # This guard also makes copied v1 artifacts fail closed even if an operator
-    # accidentally moves one outside the versioned cache contract.
-    if heard == _LEGACY_PROMPT_COPY_PINYIN:
-        return _uncertain(
-            request,
-            "WITNESS_PROMPT_COPY_DETECTED",
-            "legacy demonstration phrase was copied instead of dictated",
-        )
-    report_valid = (
-        observed.get("schema_version") == WITNESS_SCHEMA
-        and observed.get("status") == "OBSERVED"
-        and isinstance(observed.get("target_audible"), bool)
-        and (bool(tokens) or silence_observation)
-        and all(_PINYIN_SYLLABLE_RX.fullmatch(token) for token in tokens)
-        and not contains_han_text(json.dumps(dict(observed), ensure_ascii=False))
-        and not any(
-            key in observed
-            for key in (
-                "candidate_id",
-                "canonical_entity",
-                "proposed_cue",
-                "rewritten_text",
-                "current_fit",
-                "proposed_fit",
-            )
-        )
-        and not isinstance(confidence, bool)
-        and isinstance(confidence, (int, float))
-        and 0.0 <= float(confidence) <= 1.0
-        and isinstance(uncertain_positions, list)
-        and all(
-            not isinstance(v, bool) and isinstance(v, int) and 0 <= v < len(tokens)
-            for v in uncertain_positions
-        )
-        and not isinstance(syllable_count, bool)
-        and isinstance(syllable_count, int)
-        and (syllable_count > 0 or silence_observation)
-    )
-    # The witness's substance is heard_pinyin itself; syllable_count is a
-    # redundant self-count that models routinely get off by one (
-    # four clean supporting witnesses on 1209_1410 were all invalidated by
-    # this arithmetic). The recount below is authoritative; a mismatch is
-    # disclosed, never fatal.
-    self_count_mismatch = report_valid and syllable_count != len(tokens)
-    # Physical plausibility backstop: Mandarin peaks near ~9 syllables/s.
-    # A rate far above that means the dictation overflowed the target span
-    # (1.12s target, 14 syllables) — poisoned evidence, retriable.
-    try:
-        target_span_s = max(
-            0.001,
-            (int(request["matched_end_ms"]) - int(request["matched_start_ms"]))
-            / 1000.0,
-        )
-    except (KeyError, TypeError, ValueError):
-        target_span_s = None
-    if (
-        report_valid
-        and target_span_s is not None
-        and (len(tokens) - 2) / target_span_s > 9.0
-    ):
-        return _uncertain(
-            request,
-            "WITNESS_IMPLAUSIBLE_SYLLABLE_RATE",
-            f"{len(tokens)} syllables over {target_span_s:.2f}s target",
-        )
-    if not report_valid:
-        return _uncertain(
-            request,
-            "WITNESS_REPORT_INVALID",
-            str(observed.get("reason") or ""),
-        )
+    error = _witness_report_error(request, observed)
+    if error is not None:
+        return _uncertain(request, *error)
+    tokens = str(observed.get("heard_pinyin") or "").strip().lower().split()
+    uncertain_positions = observed["uncertain_positions"]
     return {
         "schema_version": WITNESS_SCHEMA,
         "witness_protocol": BLIND_PINYIN_PROTOCOL,
@@ -1172,8 +1115,8 @@ def _subtitle_acoustic_witness_verdict(
         "heard_pinyin": " ".join(tokens),
         "uncertain_positions": [int(v) for v in uncertain_positions],
         "syllable_count": len(tokens),
-        "self_count_mismatch": self_count_mismatch,
-        "confidence": float(confidence),
+        "self_count_mismatch": observed["syllable_count"] != len(tokens),
+        "confidence": float(observed["confidence"]),
         "reason": str(observed.get("reason") or "")[:300],
         "source_media_sha256": source_sha256,
         "audio_clip_sha256": _sha256(audio_path),
@@ -1181,6 +1124,7 @@ def _subtitle_acoustic_witness_verdict(
         "response_sha256": _sha256(outcome.response_path),
         "model": outcome.model,
         "provider": outcome.provider,
+        **_provider_provenance(outcome),
         **({"key_tier": outcome.accepted_key_tier} if outcome.accepted_key_tier else {}),
         "audio_start_ms": start_ms,
         "audio_end_ms": end_ms,
@@ -1281,6 +1225,7 @@ class _LocalAudioVerifier:
     agy_quota_circuit: _AgyQuotaCircuitBreaker = field(
         default_factory=_AgyQuotaCircuitBreaker
     )
+    web_unavailable: threading.Event = field(default_factory=threading.Event, repr=False)
 
     def __call__(self, request: Mapping[str, Any]) -> Mapping[str, Any]:
         return _verify_local_audio_request(verifier=self, request=request)
@@ -1731,6 +1676,7 @@ def _verify_local_audio_request(
         model=verifier.model,
         timeout=verifier.timeout,
         agy_quota_circuit=verifier.agy_quota_circuit,
+        web_unavailable=verifier.web_unavailable,
         exact_cache_replay=replay_exact_cache if exact_transcript_mode else None,
     )
     acoustic_cache_hit = outcome.served_from_cache
@@ -1824,10 +1770,7 @@ def _verify_local_audio_request(
                 if acoustic_cache_hit
                 else {}
             ),
-            "prompt_sha256": _sha256(outcome.prompt_path),
-            "response_sha256": _sha256(outcome.response_path),
-            "model": outcome.model,
-            "provider": outcome.provider,
+            **_provider_artifact_bindings(outcome, _sha256),
             **(
                 {
                     "witness_prompt_contract": WITNESS_PROMPT_CONTRACT,
@@ -1896,10 +1839,7 @@ def _verify_local_audio_request(
         "source_media_sha256": verifier.source_sha256,
         "audio_clip": str(audio_path),
         "audio_clip_sha256": _sha256(audio_path),
-        "prompt_sha256": _sha256(outcome.prompt_path),
-        "response_sha256": _sha256(outcome.response_path),
-        "model": outcome.model,
-        "provider": outcome.provider,
+        **_provider_artifact_bindings(outcome, _sha256),
         **({"key_tier": outcome.accepted_key_tier} if outcome.accepted_key_tier else {}),
         **(
             {"paid_backup_policy": dict(outcome.paid_policy_stamp)}

@@ -9,19 +9,39 @@ from typing import Any, Mapping
 from src.autoslice.jingting_chunker import parse_srt_cues
 
 
-def register_final_source_language_cpa_repairs(
+def _register_final_cpa_repairs(
     chat_authority_audit: dict[str, Any],
     *,
     input_srt: str,
     output_srt: str,
-    source_language_audit: Mapping[str, Any],
+    cpa_audit: Mapping[str, Any],
+    surface: str,
 ) -> None:
-    """Register late CPA language repairs and retire same-window predecessors."""
+    """Register a late CPA repair as the owner of its final cue surface."""
 
-    receipts = source_language_audit.get("cpa_adjudication_rows")
+    if surface not in {"source_language", "foreign_script"}:
+        raise ValueError("FINAL_CPA_SURFACE_INVALID")
+    surface_slug = surface.replace("_", "-")
+    surface_label = surface.upper()
+    error_prefix = f"FINAL_{surface_label}"
+    registration_key = f"final_{surface}_cpa_surface_registrations"
+    registration_schema = f"final-{surface_slug}-cpa-surface-registration.v1"
+    supersession_schema = f"final-{surface_slug}-cpa-supersession.v1"
+    exact_read_supersession_schema = (
+        f"final-{surface_slug}-cpa-exact-read-supersession.v1"
+    )
+    supersession_status = f"SUPERSEDED_BY_FINAL_{surface_label}_CPA"
+    owner_mode = f"final_{surface}_cpa_adjudication"
+    receipt_key = f"final_{surface}_receipt_sha256"
+    mutation_basis = (
+        "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION"
+        if surface == "source_language"
+        else "CPA_FOREIGN_SCRIPT_RETRANSCRIPTION"
+    )
+    receipts = cpa_audit.get("cpa_adjudication_rows")
     if not isinstance(receipts, list):
         return
-    declared_applied = source_language_audit.get("applied_count")
+    declared_applied = cpa_audit.get("applied_count")
     if (
         isinstance(declared_applied, bool)
         or not isinstance(declared_applied, int)
@@ -29,17 +49,20 @@ def register_final_source_language_cpa_repairs(
     ):
         return
     output_sha256 = hashlib.sha256(output_srt.encode("utf-8")).hexdigest()
-    if source_language_audit.get("output_srt_sha256") != output_sha256:
-        raise ValueError("FINAL_SOURCE_LANGUAGE_OUTPUT_HASH_MISMATCH")
+    if cpa_audit.get("output_srt_sha256") != output_sha256:
+        raise ValueError(f"{error_prefix}_OUTPUT_HASH_MISMATCH")
     input_cues = {int(cue.index): cue for cue in parse_srt_cues(input_srt)}
     rows = chat_authority_audit.setdefault("entity_repairs", [])
     if not isinstance(rows, list):
-        raise ValueError("FINAL_SOURCE_LANGUAGE_ENTITY_REPAIR_LEDGER_INVALID")
+        raise ValueError(f"{error_prefix}_ENTITY_REPAIR_LEDGER_INVALID")
+    applied_rows = chat_authority_audit.get("applied", [])
+    if not isinstance(applied_rows, list):
+        raise ValueError(f"{error_prefix}_APPLIED_LEDGER_INVALID")
     registrations = chat_authority_audit.setdefault(
-        "final_source_language_cpa_surface_registrations", []
+        registration_key, []
     )
     if not isinstance(registrations, list):
-        raise ValueError("FINAL_SOURCE_LANGUAGE_REGISTRATION_LEDGER_INVALID")
+        raise ValueError(f"{error_prefix}_REGISTRATION_LEDGER_INVALID")
 
     applied = 0
     for receipt in receipts:
@@ -68,7 +91,7 @@ def register_final_source_language_cpa_repairs(
             or cue_index not in input_cues
             or input_cues[cue_index].text != current
         ):
-            raise ValueError("FINAL_SOURCE_LANGUAGE_CPA_RECEIPT_INVALID")
+            raise ValueError(f"{error_prefix}_CPA_RECEIPT_INVALID")
         cue = input_cues[cue_index]
         receipt_sha256 = "sha256:" + hashlib.sha256(
             json.dumps(
@@ -95,8 +118,8 @@ def register_final_source_language_cpa_repairs(
                 and expected == current
             ):
                 row["reconciliation"] = {
-                    "schema_version": "final-source-language-cpa-supersession.v1",
-                    "status": "SUPERSEDED_BY_FINAL_SOURCE_LANGUAGE_CPA",
+                    "schema_version": supersession_schema,
+                    "status": supersession_status,
                     "receipt_sha256": receipt_sha256,
                     "before_sha256": "sha256:"
                     + hashlib.sha256(current.encode("utf-8")).hexdigest(),
@@ -105,13 +128,39 @@ def register_final_source_language_cpa_repairs(
                     "timing_immutable": True,
                 }
                 superseded_indexes.append(index)
+        superseded_applied_indexes: list[int] = []
+        for index, row in enumerate(applied_rows):
+            if not isinstance(row, dict) or row.get("reconciliation"):
+                continue
+            expected = str(row.get("exact_text") or "")
+            if (
+                row.get("matched_start_ms") == cue.start_ms
+                and row.get("matched_end_ms") == cue.end_ms
+                and expected
+                and expected in current
+                and expected not in proposed
+            ):
+                # A chat exact-read may own only a substring of a cue. Retire
+                # it only when this immutable cue geometry and the CPA
+                # before->after receipt prove that the text disappeared.
+                row["reconciliation"] = {
+                    "schema_version": exact_read_supersession_schema,
+                    "status": supersession_status,
+                    "receipt_sha256": receipt_sha256,
+                    "before_sha256": "sha256:"
+                    + hashlib.sha256(current.encode("utf-8")).hexdigest(),
+                    "after_sha256": "sha256:"
+                    + hashlib.sha256(proposed.encode("utf-8")).hexdigest(),
+                    "timing_immutable": True,
+                }
+                superseded_applied_indexes.append(index)
         owner = {
-            "mode": "final_source_language_cpa_adjudication",
+            "mode": owner_mode,
             "decision_authority": "CPA_JUDGE",
             "mutation_authority": {
                 "schema_version": "subtitle-correction-mutation-authority.v1",
                 "status": "PASS",
-                "basis": "CPA_ACOUSTIC_PRONUNCIATION_DISAMBIGUATION",
+                "basis": mutation_basis,
             },
             "cue_indexes": [cue_index],
             "matched_start_ms": cue.start_ms,
@@ -123,19 +172,57 @@ def register_final_source_language_cpa_repairs(
             "timing_immutable": True,
             "boundary_required": False,
             "boundary_owner_rejection": "POST_BOUNDARY_FREEZE_FINAL_SURFACE_OWNER",
-            "final_source_language_receipt_sha256": receipt_sha256,
+            receipt_key: receipt_sha256,
             "superseded_entity_repair_indexes": superseded_indexes,
+            "superseded_applied_indexes": superseded_applied_indexes,
         }
         rows.append(owner)
         registrations.append(
             {
-                "schema_version": "final-source-language-cpa-surface-registration.v1",
+                "schema_version": registration_schema,
                 "status": "REGISTERED",
                 "receipt_sha256": receipt_sha256,
                 "owner_entity_repair_index": len(rows) - 1,
                 "superseded_entity_repair_indexes": superseded_indexes,
+                "superseded_applied_indexes": superseded_applied_indexes,
             }
         )
         applied += 1
     if applied != declared_applied:
-        raise ValueError("FINAL_SOURCE_LANGUAGE_APPLIED_COUNT_MISMATCH")
+        raise ValueError(f"{error_prefix}_APPLIED_COUNT_MISMATCH")
+
+
+def register_final_source_language_cpa_repairs(
+    chat_authority_audit: dict[str, Any],
+    *,
+    input_srt: str,
+    output_srt: str,
+    source_language_audit: Mapping[str, Any],
+) -> None:
+    """Register late CPA language repairs and retire same-window predecessors."""
+
+    _register_final_cpa_repairs(
+        chat_authority_audit,
+        input_srt=input_srt,
+        output_srt=output_srt,
+        cpa_audit=source_language_audit,
+        surface="source_language",
+    )
+
+
+def register_final_foreign_script_cpa_repairs(
+    chat_authority_audit: dict[str, Any],
+    *,
+    input_srt: str,
+    output_srt: str,
+    foreign_script_audit: Mapping[str, Any],
+) -> None:
+    """Register late CPA foreign-script repairs and retire predecessors."""
+
+    _register_final_cpa_repairs(
+        chat_authority_audit,
+        input_srt=input_srt,
+        output_srt=output_srt,
+        cpa_audit=foreign_script_audit,
+        surface="foreign_script",
+    )

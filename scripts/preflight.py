@@ -192,7 +192,63 @@ def check_vad() -> None:
     _record("ok", "VAD", f"脚本+模型+onnxruntime 就绪（{model.name}）")
 
 
-def check_self_ssh() -> None:
+def _check_system_python_vad() -> None:
+    deps = subprocess.run(
+        ["python3", "-c", "import numpy, onnxruntime"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    if deps.returncode == 0:
+        _record("ok", "system-python-vad", "PATH python3 有 numpy/onnxruntime（VAD 本地直跑用）")
+    else:
+        _record(
+            "warn",
+            "system-python-vad",
+            "VAD 用 PATH 里的 python3（不是 .venv），它缺 numpy/onnxruntime——"
+            "时轴 QA 会失败；pip install --user numpy onnxruntime",
+        )
+
+
+def _check_local_agy() -> None:
+    """Validate the executable used by the native loopback AGY adapter."""
+
+    # The native adapter keeps the historical remote-binary override because
+    # OCI3's production install lives at agy.  AGY_BIN remains
+    # a useful local preflight override for developer shells.
+    configured = (
+        os.environ.get("AGY_REMOTE_BIN", "").strip()
+        or os.environ.get("AGY_BIN", "").strip()
+    )
+    if configured:
+        binary = Path(configured).expanduser()
+    else:
+        from src.autoslice.agy_gemini_client import resolve_local_agy_executable
+
+        binary = Path(resolve_local_agy_executable())
+    if binary.is_file() and os.access(binary, os.X_OK):
+        _record("ok", "local-agy", str(binary))
+    else:
+        _record("warn", "local-agy", f"未找到可执行 AGY：{binary}")
+
+
+def check_self_ssh(host: str | None = None) -> None:
+    """Check the selected AGY transport without self-SSH for loopback.
+
+    ``localhost``/``127.0.0.1``/``::1`` are native transports.  They invoke
+    the local AGY preflight directly; the historical self-SSH diagnostic is
+    retained only when the caller explicitly selects a non-local host.
+    """
+
+    transport_host = host or os.environ.get("AUTOSLICE_AGY_HOST", "localhost")
+    from src.autoslice.jingting_remote_runner import is_local_host
+
+    _check_system_python_vad()
+    if is_local_host(transport_host):
+        _check_local_agy()
+        return
+
     probe = subprocess.run(
         [
             "ssh",
@@ -210,22 +266,6 @@ def check_self_ssh() -> None:
         check=False,
         timeout=15,
     )
-    deps = subprocess.run(
-        ["python3", "-c", "import numpy, onnxruntime"],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=30,
-    )
-    if deps.returncode == 0:
-        _record("ok", "system-python-vad", "PATH python3 有 numpy/onnxruntime（VAD 本地直跑用）")
-    else:
-        _record(
-            "warn",
-            "system-python-vad",
-            "VAD 用 PATH 里的 python3（不是 .venv），它缺 numpy/onnxruntime——"
-            "时轴 QA 会失败；pip install --user numpy onnxruntime",
-        )
     if probe.returncode == 0:
         _record("ok", "self-ssh", "ssh localhost 免密可用（AGY 听音复核阶段用）")
     else:
@@ -296,6 +336,11 @@ def main() -> int:
         action="store_true",
         help="真调一次 CPA 验证凭据（会产生一次极小的真实调用）",
     )
+    parser.add_argument(
+        "--agy-host",
+        default=os.environ.get("AUTOSLICE_AGY_HOST", "localhost"),
+        help="AGY transport host; loopback runs native AGY without self-SSH",
+    )
     args = parser.parse_args()
 
     check_python()
@@ -303,7 +348,7 @@ def main() -> int:
     check_profile()
     check_env()
     check_vad()
-    check_self_ssh()
+    check_self_ssh(args.agy_host)
     check_upload_tools()
     if args.live:
         check_cpa_live()

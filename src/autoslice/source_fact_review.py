@@ -33,6 +33,10 @@ from src.autoslice.candidate_public_text_surface_authority import (
     build_public_text_source_fact_context,
     load_candidate_public_text_surface_authority,
 )
+from src.autoslice.candidate_source_fact_refresh import (
+    validate_candidate_public_text_source_fact_refresh_from_source_fact,
+)
+from src.autoslice.fastlane_c3_source_fact_supersession import DECISION as C3_TERMINAL_SOURCE_FACT_SUPERSESSION_DECISION, validate_c3_source_fact_review_from_validation
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.deterministic_text_surface_resolution import (
     CANDIDATE_ID as DETERMINISTIC_TEXT_NARROWING_CANDIDATE_ID,
@@ -44,7 +48,8 @@ from src.autoslice.deterministic_text_surface_resolution import (
     consume_deterministic_text_surface_authority,
     load_deterministic_text_surface_authority,
 )
-from src.autoslice.llm_client import LlmCall, extract_json_object
+from src.autoslice.llm_client import LlmCall, LlmJsonParseError, extract_json_object
+from src.autoslice.provider_failure import describe_provider_exception
 from src.autoslice.manual_title_keep_authority import (
     ACTION as MANUAL_TITLE_KEEP_ACTION,
     FINDING_CLASS as MANUAL_TITLE_KEEP_FINDING_CLASS,
@@ -54,14 +59,17 @@ from src.autoslice.manual_title_keep_authority import (
     read_regular_no_symlink,
     validate_manual_title_keep_authority,
 )
-from src.autoslice.surface_canon import (
-    CHANNEL_PROFILE,
-    canonicalize_hard_meme_surfaces,
-    hard_meme_surface_rules,
+from src.autoslice.qixi_source_fact_terminal_preservation import (
+    DECISION as QIXI_TERMINAL_TEXT_PRESERVATION_DECISION,
+    validate_terminal_preservation_source_fact_review,
 )
+from src.autoslice.source_fact_review_shape import source_fact_review_passes_shape
+from src.autoslice.surface_canon import (
+    CHANNEL_PROFILE, _hard_meme_canon_prompt_block,
+    canonicalize_hard_meme_surfaces,
+)
+from src.autoslice.story_contract import public_text_relation_prompt
 from src.autoslice.title_policy import publish_title_policy_violations
-
-
 SCHEMA_VERSION = "lidousha-source-fact-review.v1"
 RESCORE_CANDIDATE_SCHEMA_VERSION = "source-fact-rescore-candidate.v1"
 ENTITY_CONTEXT_SCHEMA_VERSION = "source-fact-entity-context.v1"
@@ -73,8 +81,8 @@ MAX_REVIEW_PASSES = 5
 # 比对，保持对既有回执/测试 fixture 的完全向后兼容。
 _DEGREE_UPGRADE_WORDS = ("最", "所有", "永远", "绝对", "彻底", "唯一", "一定", "必然")
 # 同一 review pass 内的 provider 级重试帽：这道门是 LLM 采样，同一份输入一次
-# 形状无效/调用失败就把整次产线判死是把骰子当结论。重试只针对 provider 层
-# 失败（形状无效/调用异常），语义结果（KEEP/REPAIR）永不重掷；UNAVAILABLE
+# 形状无效就把整次产线判死是把骰子当结论。重试只针对 provider 层
+# 形状失败，语义结果（KEEP/REPAIR）永不重掷；UNAVAILABLE
 # （没配 llm_call）不重试。每次重试都进回执披露。
 MAX_PROVIDER_RETRIES_PER_PASS = 2
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -83,8 +91,6 @@ _CANDIDATE_RECUT_SUFFIX_RX = re.compile(r"r\d+$")
 _SHA256_VALUE_RX = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _SPEAKER_EVIDENCE_UNSET = object()
 DETERMINISTIC_TEXT_NARROWING_PASS_DECISION = "DETERMINISTIC_TEXT_NARROWING"
-
-
 @dataclass(frozen=True, slots=True)
 class _ResolvedEntityContext:
     """Runtime projection plus its relocation-safe receipt representation."""
@@ -434,30 +440,6 @@ def _finalize_receipt(receipt: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _hard_meme_canon_prompt_block() -> str:
-    """Teach the judge the channel's unbypassable meme canon.
-
-    Without this the literal-evidence gate and the meme canon deadlock: the
-    final transcript spells the meme canonically, raw danmaku keeps the banned
-    surface, and a judge that only does literal binding "repairs" derived copy
-    back and forth until the candidate dies (hook rewrite then also trips the
-    scorecard-stale gate).  The canon is final-output law, so the judge must
-    read canonical spellings as carrying the original surface's semantics.
-    """
-
-    rules = hard_meme_surface_rules()
-    if not rules:
-        return ""
-    listing = "；".join(f"「{rule.surface}」一律写作「{rule.canonical}」" for rule in rules)
-    return (
-        "频道钦定梗词规范（hard-meme-canon，最终输出铁律）：" + listing + "。"
-        "规范词面是同一个梗的钦定拼写，不是换词：最终字幕与两份文案里的规范"
-        "词面承载原词的完整语义，判断事实支持时必须按原词语义理解；不得因为"
-        "弹幕/证据原文用了被禁拼写而判定文案不受支持，也永远不得把规范词面"
-        "改回被禁拼写。你输出的一切文案必须使用规范词面。\n"
-    )
-
-
 def _prompt(
     *,
     selection_hook: str,
@@ -469,6 +451,7 @@ def _prompt(
     title_policy_violations: list[str],
     speaker_transcript: str | None,
     entity_context: _ResolvedEntityContext | None,
+    story_contract: Mapping[str, object] | None = None,
 ) -> str:
     return (
         f"你是{CHANNEL_PROFILE.display_name}切片派生文案的 source-fact 最终裁决者。你只有文字输入，"
@@ -480,6 +463,7 @@ def _prompt(
         "允许不逐字的自然概括，但不允许把提议写成既成事实、把猜测写成断言，"
         "也不允许凭空把同音词换成另一个含义。\n"
         + _entity_context_prompt_block(entity_context)
+        + public_text_relation_prompt(story_contract)
         + "如果你修复 selection_hook，还必须核对原 selection_scorecard 的"
         "tier_basis、tier_reason、维度和证据 cue 是否仍描述修复后的同一核心梗。"
         "若仍一致，selection_scorecard_review.status=COMPATIBLE；若核心梗已换，"
@@ -580,19 +564,24 @@ def _evidence_row_is_bound(
         quoted_text = source_label.group(1)
         if _compact(quoted_text) and _compact(quoted_text) in _compact(final_transcript):
             return True
-        # ``final_transcript`` (unlike ``speaker_transcript``) carries no line
-        # numbers — see ``build_addressee_evidence``/``build_addressee_transcripts``,
-        # which join bare cue text.  When there is no numbered speaker
-        # transcript to anchor citations to (uniform_host's authorized
-        # absence, ``ABSENCE_POLICY_ID``), the judge sometimes invents a
-        # leading "N " / "N.M " index out of habit before quoting a real
-        # line.  Tolerate stripping exactly one such invented prefix — the
-        # remaining quoted text must still be an exact, literal substring of
-        # ``final_transcript``; this does not relax what counts as evidence,
-        # only the citation-label formatting around it.
-        unnumbered = re.sub(r"\A\s*\d+(?:\.\d+)?\s+", "", quoted_text, count=1)
-        if unnumbered != quoted_text and _compact(unnumbered):
-            return bool(_compact(unnumbered) in _compact(final_transcript))
+        # ``final_transcript`` joins bare cue text — no line numbers (unlike
+        # ``speaker_transcript``; see ``build_addressee_evidence``).  With no
+        # numbered transcript to anchor to (uniform_host authorized absence,
+        # ``ABSENCE_POLICY_ID``) the judge invents locators: a leading "N "
+        # index, or a whole fabricated SRT block (8/19 production, 七夕
+        # auto_113022_354_496).  Strip at most one invented index and one
+        # invented timestamp line; the remainder must still be an exact
+        # literal substring — this relaxes the citation shell, never what
+        # counts as evidence.
+        stripped = re.sub(r"\A\s*\d+(?:\.\d+)?\s+", "", quoted_text, count=1)
+        stripped = re.sub(
+            r"\A\s*\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}\s*\n?",
+            "",
+            stripped,
+            count=1,
+        )
+        if stripped != quoted_text and _compact(stripped):
+            return bool(_compact(stripped) in _compact(final_transcript))
         return False
     speaker_label = re.fullmatch(
         rf"\s*{re.escape(SPEAKER_TRANSCRIPT_LABEL)}\s*:\s*(.+?)\s*",
@@ -719,6 +708,7 @@ def _single_review(
     speaker_transcript: str | None = None,
     speaker_evidence_sha256: str | None = None,
     entity_context: _ResolvedEntityContext | None = None,
+    story_contract: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     title_policy_violations = publish_title_policy_violations(
         title,
@@ -734,6 +724,7 @@ def _single_review(
         title_policy_violations=title_policy_violations,
         speaker_transcript=speaker_transcript,
         entity_context=entity_context,
+        story_contract=story_contract,
     )
     base: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
@@ -762,13 +753,13 @@ def _single_review(
         }
     try:
         raw = llm_call(prompt)
+    except Exception as exc:
+        diagnostics = describe_provider_exception(exc)
+        return {**base, "status": "FAILED", "reason_code": "CPA_TEXT_REVIEW_CALL_FAILED", **diagnostics}
+    try:
         payload = extract_json_object(raw)
-    except Exception:
-        return {
-            **base,
-            "status": "FAILED",
-            "reason_code": "CPA_TEXT_REVIEW_CALL_FAILED",
-        }
+    except LlmJsonParseError:
+        return {**base, "status": "FAILED", "reason_code": "CPA_TEXT_REVIEW_INVALID", "response_sha256": _sha256_text(raw)}
     status = payload.get("status")
     final_hook = payload.get("final_selection_hook")
     final_title = payload.get("final_title")
@@ -949,6 +940,7 @@ def review_and_repair_source_facts(
     speaker_evidence: Mapping[str, object] | None = None,
     candidate_id: str | None = None,
     final_reviewed_srt_path: Path | None = None,
+    story_contract: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Run a bounded, evidence-bound KEEP/REPAIR convergence review."""
 
@@ -1055,6 +1047,7 @@ def review_and_repair_source_facts(
                 speaker_transcript=speaker_transcript,
                 speaker_evidence_sha256=speaker_evidence_sha256,
                 entity_context=entity_context,
+                story_contract=story_contract,
             )
             if (
                 review.get("status") != "FAILED"
@@ -1062,7 +1055,6 @@ def review_and_repair_source_facts(
                 not in {
                     "CPA_TEXT_REVIEW_INVALID",
                     "CPA_ENTITY_SURFACE_RESPONSE_INVALID",
-                    "CPA_TEXT_REVIEW_CALL_FAILED",
                     # 自相矛盾的归属判项（WRONG_ADDRESSEE 却判 KEEP、或该判不判）
                     # 与形状无效同类：同一份输入重掷一次形状，不是重掷语义结论。
                     ADDRESSEE_UNRESOLVED_REASON,
@@ -1142,11 +1134,10 @@ def review_and_repair_source_facts(
                 or review["selection_scorecard_review"].get("status") != "COMPATIBLE"
             )
         ):
-            # 狍哥案修复（内部设计文档留存·2026-08-07-
-            # source-fact-rescore-design.md §3.1）：修正成果不再只活在
-            # passes[-1]——rescore_candidate 块把它挂到回执顶层，供下游有界
-            # 重评分车道消费。final_selection_hook/title 仍回置原文，
-            # "未授权不落盘"不变式不变；只有这个新块携带修正稿。
+            # Keep the repaired hook in a top-level rescore_candidate block so
+            # downstream bounded rescoring does not depend on passes[-1].
+            # final_selection_hook/title still retain the originals; only this
+            # block carries proposed text, preserving no-unapproved-write.
             return _finalize_receipt(
                 {
                     "schema_version": SCHEMA_VERSION,
@@ -1216,36 +1207,12 @@ def review_and_repair_source_facts(
 
 
 def source_fact_review_passes(review: object) -> bool:
-    decision = review.get("decision") if isinstance(review, Mapping) else None
-    decision_shape_valid = (
-        decision in {"KEEP", "REPAIRED"}
-        or (
-            decision == MANUAL_TITLE_KEEP_PASS_DECISION
-            and isinstance(review.get("blocked_source_fact_review"), Mapping)
-            and isinstance(review.get("manual_title_keep_authority_consumption"), Mapping)
-            and review["manual_title_keep_authority_consumption"].get("status") == "CONSUMED"
-            and isinstance(review.get("recorded_dissent"), Mapping)
-            and review["recorded_dissent"].get("status") == "RECORDED_NON_BLOCKING"
-        )
-        or (
-            decision == DETERMINISTIC_TEXT_NARROWING_PASS_DECISION
-            and isinstance(review.get("blocked_source_fact_review"), Mapping)
-            and review["blocked_source_fact_review"].get("status") == "FAILED"
-            and isinstance(review.get("deterministic_text_surface_resolution"), Mapping)
-            and review["deterministic_text_surface_resolution"].get("status") == "VALID"
-            and review["deterministic_text_surface_resolution"].get("provider_call_required")
-            is False
-        )
-    )
-    return bool(
-        isinstance(review, Mapping)
-        and review.get("schema_version") == SCHEMA_VERSION
-        and review.get("status") == "PASS"
-        and decision_shape_valid
-        and isinstance(review.get("final_selection_hook"), str)
-        and bool(str(review.get("final_selection_hook")).strip())
-        and isinstance(review.get("final_title"), str)
-        and bool(str(review.get("final_title")).strip())
+    return source_fact_review_passes_shape(
+        review,
+        schema_version=SCHEMA_VERSION,
+        manual_title_keep_decision=MANUAL_TITLE_KEEP_PASS_DECISION,
+        deterministic_text_narrowing_decision=DETERMINISTIC_TEXT_NARROWING_PASS_DECISION,
+        terminal_text_preservation_decision=QIXI_TERMINAL_TEXT_PRESERVATION_DECISION, c3_terminal_source_fact_supersession_decision=C3_TERMINAL_SOURCE_FACT_SUPERSESSION_DECISION,
     )
 
 
@@ -1415,8 +1382,6 @@ def authorize_manual_title_keep(
             "recorded_dissent": dissent,
         }
     )
-
-
 def authorize_deterministic_text_narrowing(
     consumption: Mapping[str, object],
 ) -> dict[str, object]:
@@ -1805,9 +1770,10 @@ def validate_source_fact_review(
     candidate_id: str | None = None,
     final_reviewed_srt_path: Path | None = None,
     speaker_evidence: object = _SPEAKER_EVIDENCE_UNSET,
+    qixi_repo_root: Path | None = None,
+    story_contract: Mapping[str, object] | None = None,
 ) -> bool:
     """Recheck the persisted receipt without trusting selected top-level fields."""
-
     if not source_fact_review_passes(review) or not isinstance(review, Mapping):
         return False
     receipt = dict(review)
@@ -1816,6 +1782,27 @@ def validate_source_fact_review(
         return False
     if _finalize_receipt(receipt).get("receipt_sha256") != declared_receipt_sha256:
         return False
+    if review.get("decision") == QIXI_TERMINAL_TEXT_PRESERVATION_DECISION:
+        if candidate_id is None or final_reviewed_srt_path is None:
+            return False
+        return validate_terminal_preservation_source_fact_review(
+            review,
+            repo_root=qixi_repo_root or _REPO_ROOT,
+            final_reviewed_srt_path=final_reviewed_srt_path,
+            final_transcript=final_transcript,
+            title=title,
+            selection_hook=selection_hook,
+            clip_context_prompt=clip_context_prompt,
+            selection_scorecard=selection_scorecard,
+            candidate_id=candidate_id,
+            speaker_evidence=speaker_evidence,
+        )
+    if review.get("decision") == "CANDIDATE_PUBLIC_TEXT_SOURCE_FACT_REFRESH":
+        return validate_candidate_public_text_source_fact_refresh_from_source_fact(
+            review, repo_root=qixi_repo_root or _REPO_ROOT, validation=locals()
+        )
+    if review.get("decision") == C3_TERMINAL_SOURCE_FACT_SUPERSESSION_DECISION:
+        return validate_c3_source_fact_review_from_validation(review, validation=locals())
     if review.get("decision") == MANUAL_TITLE_KEEP_PASS_DECISION:
         return _validate_manual_title_keep_receipt(
             review,

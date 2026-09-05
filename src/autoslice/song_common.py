@@ -63,7 +63,7 @@ AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION = "agy-audio-lrc-observation.v5"
 AGY_AUDIO_LRC_RUN_SCHEMA_VERSION = "agy-audio-lrc-run.v3"
 AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY = "canonical-lrc-by-exact-index.v1"
 AGY_AUDIO_LRC_PROVIDER = "agy"
-AGY_AUDIO_LRC_MODEL = "Gemini 3.6 Flash (High)"
+AGY_AUDIO_LRC_MODEL = os.environ.get("SONG_LRC_AGY_MODEL", "Gemini 3.6 Flash (High)")
 GEMINI_API_AUDIO_LRC_PROVIDER = "gemini_api"
 # 失败转移用的 Gemini API 型号。env 覆盖位与另两个 Gemini 调用点同款惯例
 # （ENTITY_AUDIO_GEMINI_API_MODEL / JINGTING_GEMINI_MODEL）；该串会写进 run

@@ -13,7 +13,20 @@ from .review_package_portable_evidence import (
     contained_package_artifact,
     rebuild_package_speaker_evidence,
 )
+from .operator_exact_title_source_fact_authority import (
+    PASS_DECISION as OPERATOR_EXACT_TITLE_PASS_DECISION,
+    validate_operator_exact_title_source_fact_receipt,
+)
+from .qixi_operator_exact_title_source_fact import (
+    DECISION as QIXI_OPERATOR_EXACT_TITLE_DECISION,
+    validate_receipt as validate_qixi_operator_exact_title_receipt,
+)
 from .source_fact_review import validate_source_fact_review
+from .fastlane_c3_terminal_source_fact_preservation import (
+    CANDIDATE_ID as C3_SOURCE_FACT_CANDIDATE_ID,
+    DECISION as C3_SOURCE_FACT_DECISION,
+    validate_review as validate_c3_source_fact_review,
+)
 
 
 @dataclass(frozen=True)
@@ -33,6 +46,67 @@ def _load_json(path: Path | None) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _source_fact_receipt_valid(
+    receipt: object,
+    *,
+    record: dict[str, Any],
+    story_contract: dict[str, Any],
+    artifact_title: str,
+    final_transcript: str,
+    subtitle_path: Path | None,
+    rebuilt_speaker_evidence: object,
+    qixi_repo_root: Path | None,
+) -> bool:
+    common = {
+        "selection_hook": str(story_contract.get("selection_hook") or ""),
+        "title": artifact_title,
+        "final_transcript": final_transcript,
+        "candidate_id": str(story_contract.get("candidate_id") or ""),
+        "final_reviewed_srt_path": subtitle_path,
+    }
+    if isinstance(receipt, dict) and receipt.get("decision") == OPERATOR_EXACT_TITLE_PASS_DECISION:
+        return validate_operator_exact_title_source_fact_receipt(
+            receipt,
+            record=record,
+            speaker_evidence=rebuilt_speaker_evidence,
+            repo_root=qixi_repo_root or Path(__file__).resolve().parents[2],
+            **common,
+        )
+    if isinstance(receipt, dict) and receipt.get("decision") == QIXI_OPERATOR_EXACT_TITLE_DECISION:
+        return validate_qixi_operator_exact_title_receipt(
+            receipt,
+            record=record,
+            speaker_evidence=rebuilt_speaker_evidence,
+            repo_root=qixi_repo_root or Path(__file__).resolve().parents[2],
+            **common,
+        )
+    if (
+        isinstance(receipt, dict)
+        and receipt.get("decision") == C3_SOURCE_FACT_DECISION
+        and common["candidate_id"] == C3_SOURCE_FACT_CANDIDATE_ID
+        and subtitle_path is not None
+    ):
+        return validate_c3_source_fact_review(
+            receipt,
+            repo_root=qixi_repo_root or Path(__file__).resolve().parents[2],
+            title=artifact_title,
+            selection_hook=common["selection_hook"],
+            selection_scorecard=story_contract.get("selection_scorecard"),
+            clip_context_prompt=str(story_contract.get("clip_context_prompt") or ""),
+            final_reviewed_srt_path=subtitle_path,
+            speaker_evidence=rebuilt_speaker_evidence,
+        )
+    return validate_source_fact_review(
+        receipt,
+        clip_context_prompt=str(story_contract.get("clip_context_prompt") or ""),
+        selection_scorecard=story_contract.get("selection_scorecard"),
+        speaker_evidence=rebuilt_speaker_evidence,
+        qixi_repo_root=qixi_repo_root,
+        story_contract=story_contract,
+        **common,
+    )
+
+
 def audit_story_source_fact_receipt(
     *,
     root: Path,
@@ -45,6 +119,7 @@ def audit_story_source_fact_receipt(
     story_contract: dict[str, Any],
     artifact_title: str,
     final_transcript: str,
+    qixi_repo_root: Path | None = None,
 ) -> tuple[SourceFactAuditIssue, ...]:
     issues: list[SourceFactAuditIssue] = []
     publish_staging = (
@@ -136,16 +211,15 @@ def audit_story_source_fact_receipt(
                 "fresh speaker evidence could not validate the source-fact receipt",
             )
         )
-    elif not scope_reused and not validate_source_fact_review(
+    elif not scope_reused and not _source_fact_receipt_valid(
         source_fact_receipts[0],
-        selection_hook=str(story_contract.get("selection_hook") or ""),
-        title=artifact_title,
+        record=record,
+        story_contract=story_contract,
+        artifact_title=artifact_title,
         final_transcript=final_transcript,
-        clip_context_prompt=str(story_contract.get("clip_context_prompt") or ""),
-        selection_scorecard=story_contract.get("selection_scorecard"),
-        candidate_id=str(story_contract.get("candidate_id") or ""),
-        final_reviewed_srt_path=subtitle_path,
-        speaker_evidence=rebuilt_speaker_evidence,
+        subtitle_path=subtitle_path,
+        rebuilt_speaker_evidence=rebuilt_speaker_evidence,
+        qixi_repo_root=qixi_repo_root,
     ):
         issues.append(
             SourceFactAuditIssue("SOURCE_FACT_REVIEW_INVALID", publish_path or record_path)

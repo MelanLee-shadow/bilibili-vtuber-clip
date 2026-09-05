@@ -52,6 +52,15 @@ from src.autoslice.reviewed_exact_source_interval import (
     ReviewedExactSourceIntervalError,
     resolve_exact_boundary,
 )
+from src.autoslice.producer_text_finalization import (
+    authorized_final_review_drop_windows,
+)
+from src.autoslice.redelivery_time_domain import (
+    DELIVERY_LOCAL,
+    PIECE_LOCAL,
+    RedeliveryTimeDomainError,
+    operator_v3_time_domain,
+)
 
 
 def _replayed_search_scope(
@@ -569,13 +578,32 @@ def _redelivery_baseline_head_rel_ms(spec: Mapping[str, object]) -> int | None:
         return None
     if config.get("schema_version") != "subtitle-redelivery-baseline.v2":
         return None
+    try:
+        time_domain = operator_v3_time_domain(config)
+    except RedeliveryTimeDomainError as exc:
+        raise SystemExit(str(exc)) from exc
+    if time_domain == PIECE_LOCAL:
+        # A piece-local baseline is cropped after replay; it must not move the
+        # media head to source-local zero.
+        return None
     start = config.get("absolute_source_start_ms")
     pieces = spec.get("pieces") or []
     if isinstance(start, bool) or not isinstance(start, int):
         return None
     try:
         content_index = single_content_piece_index(pieces)
-        return int(start) - int(pieces[content_index]["start_ms"])
+        piece_start = int(pieces[content_index]["start_ms"])
+        head = int(start) - piece_start
+        if time_domain == DELIVERY_LOCAL:
+            semantic_start = int(spec.get("semantic_start_ms", piece_start))
+            expected_head = max(0, semantic_start - piece_start - LEAD_AIR_MS)
+            if abs(head - expected_head) > 1_000:
+                raise SystemExit(
+                    "REDELIVERY_BASELINE_DELIVERY_HEAD_SEMANTIC_MISMATCH"
+                )
+        return head
+    except SystemExit:
+        raise
     except (KeyError, TypeError, ValueError):
         return None
 
@@ -860,6 +888,39 @@ def _suppress_reviewed_baseline_opening_flag(
     return [flag for flag in red_flags if flag != "opens_mid_sentence"]
 
 
+def _boundary_delivery_and_source_cues(
+    cues: Sequence[object],
+    *,
+    snapped_end_ms: int,
+    manual_end_mode: str,
+    reviewed_projection_endpoint_ms: int | None,
+    final_start_ms: int,
+    final_end_ms: int,
+) -> tuple[list[object], list[SourceCue]]:
+    """Build the delivery view and its timing-QA source projection together."""
+
+    delivery_cues = _boundary_delivery_cues(
+        list(cues),
+        snapped_end_ms=snapped_end_ms,
+        manual_end_mode=manual_end_mode,
+        reviewed_projection_endpoint_ms=reviewed_projection_endpoint_ms,
+    )
+    source_cues = [
+        SourceCue(
+            f"fresh_{i:04d}",
+            max(c.start_ms, final_start_ms),
+            min(c.end_ms, final_end_ms),
+            c.text.strip(),
+            "zh",
+            "speech",
+            1.0,
+        )
+        for i, c in enumerate(delivery_cues, start=1)
+        if c.start_ms < final_end_ms and c.end_ms > final_start_ms
+    ]
+    return delivery_cues, source_cues
+
+
 def _repair_boundary(
     *,
     cid: str,
@@ -885,6 +946,7 @@ def _repair_boundary(
     required_owner_end_ms: int | None,
     boundary_repair_extend_cap_ms: int,
     reviewed_baseline_head_ms: int | None = None,
+    protected_blank_windows: Sequence[tuple[int, int]] = (),
 ) -> BoundaryResolution:
     audit_path = out_root / f"{cid}.boundary_audit.json"
     boundary_repairs: list[dict] = []
@@ -1002,27 +1064,20 @@ def _repair_boundary(
             )
         if audit["verdict"] != "ok_sentence_boundary_cut":
             raise SystemExit(f"BOUNDARY_AUDIT_FAILED: {json.dumps(audit, ensure_ascii=False)}")
-        delivery_cues = _boundary_delivery_cues(
+        delivery_cues, source_cues = _boundary_delivery_and_source_cues(
             cues,
             snapped_end_ms=snapped,
             manual_end_mode=manual_end_mode,
             reviewed_projection_endpoint_ms=reviewed_projection_endpoint_ms,
+            final_start_ms=final_start,
+            final_end_ms=final_end,
         )
-        source_cues = [
-            SourceCue(
-                f"fresh_{i:04d}",
-                max(c.start_ms, final_start),
-                min(c.end_ms, final_end),
-                c.text.strip(),
-                "zh",
-                "speech",
-                1.0,
-            )
-            for i, c in enumerate(delivery_cues, start=1)
-            if c.start_ms < final_end and c.end_ms > final_start
-        ]
         sanitized, timing_qa = sanitize_cue_timing(
-            source_cues, spans, window_start_ms=final_start, window_end_ms=final_end
+            source_cues,
+            spans,
+            window_start_ms=final_start,
+            window_end_ms=final_end,
+            protected_blank_windows=protected_blank_windows,
         )
         red_flags = boundary_red_flags(
             audit=audit,
@@ -1176,6 +1231,7 @@ def resolve_producer_boundary(
     boundary_repair_extend_cap_ms: int,
     adapters: BoundaryResolutionAdapters,
     required_tail_end_ms: int | None = None,
+    chat_authority_audit: Mapping[str, object] | None = None,
 ) -> BoundaryResolution:
     try:
         exact = resolve_exact_boundary(
@@ -1214,6 +1270,9 @@ def resolve_producer_boundary(
         adapters=adapters,
         boundary_repair_extend_cap_ms=boundary_repair_extend_cap_ms,
     )
+    protected_blank_windows = authorized_final_review_drop_windows(
+        chat_authority_audit
+    )
     return _repair_boundary(
         cid=cid,
         out_root=out_root,
@@ -1238,4 +1297,5 @@ def resolve_producer_boundary(
         required_owner_end_ms=initial.required_owner_end_ms,
         reviewed_baseline_head_ms=initial.reviewed_baseline_head_ms,
         boundary_repair_extend_cap_ms=boundary_repair_extend_cap_ms,
+        protected_blank_windows=protected_blank_windows,
     )

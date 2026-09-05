@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
+import stat
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,6 +29,7 @@ from src.autoslice.reviewed_exact_source_interval import (
     compile_authority_from_spec as compile_exact_interval_authority,
 )
 from src.autoslice.shadow_review import _sha256
+from src.autoslice.jingting_remote_runner import is_local_host
 
 
 def _bind_piece_source_media_sha256(
@@ -113,6 +117,112 @@ def _load_hash_bound_cached_piece(
     return document
 
 
+def _new_local_recut_temp(output: Path) -> tuple[Path, tuple[int, int]]:
+    """Reserve a private same-directory temp for one native local recut."""
+
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{output.name}.produce-",
+        suffix=".mp4",
+        dir=str(output.parent),
+    )
+    os.fchmod(fd, 0o600)
+    metadata = os.fstat(fd)
+    os.close(fd)
+    return Path(temporary_name), (metadata.st_dev, metadata.st_ino)
+
+
+def _cleanup_local_recut_temp(
+    temporary: Path,
+    identity: tuple[int, int],
+    *,
+    expected_sha256: str | None = None,
+) -> None:
+    """Delete only an unchanged temp owned by this recut invocation."""
+
+    try:
+        metadata = temporary.lstat()
+    except OSError:
+        return
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISREG(metadata.st_mode)
+        or (metadata.st_dev, metadata.st_ino) != identity
+    ):
+        return
+    if expected_sha256 is not None:
+        try:
+            if _sha256(temporary) != expected_sha256:
+                return
+        except OSError:
+            return
+    try:
+        temporary.unlink()
+    except OSError:
+        return
+
+
+def _run_local_piece_recut(
+    *,
+    host: str,
+    source_path: Path,
+    expected_source_path: str,
+    source_sha256: str,
+    output: Path,
+    start_ms: int,
+    duration_ms: int,
+) -> str:
+    """Re-encode one piece locally, publishing only after source/hash checks."""
+
+    temporary, identity = _new_local_recut_temp(output)
+    temporary_sha256: str | None = None
+    try:
+        command = _accurate_reencode_recut_command(
+            source_video=source_path,
+            output_media=temporary,
+            start_ms=start_ms,
+            duration_ms=duration_ms,
+        )
+        completed = run(command, timeout=3600)
+        if hasattr(completed, "returncode") and completed.returncode != 0:
+            raise RuntimeError(
+                f"{command[0]} failed rc={completed.returncode}: "
+                f"{getattr(completed, 'stderr', '')[-400:]}"
+            )
+        try:
+            metadata = temporary.lstat()
+        except OSError as exc:
+            raise RuntimeError("SOURCE_MEDIA_RECUT_OUTPUT_MISSING") from exc
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_size <= 0
+            or (metadata.st_dev, metadata.st_ino) != identity
+        ):
+            raise RuntimeError("SOURCE_MEDIA_RECUT_OUTPUT_INVALID")
+        temporary_sha256 = _sha256(temporary)
+        post_source_path, post_sha256 = _source_media_sha256(host, source_path)
+        if (post_source_path, post_sha256) != (expected_source_path, source_sha256):
+            raise RuntimeError("SOURCE_MEDIA_DRIFT_DURING_PIECE_RECUT")
+        os.replace(temporary, output)
+        try:
+            _local_output_metadata = output.lstat()
+        except OSError as exc:
+            raise RuntimeError("SOURCE_MEDIA_RECUT_OUTPUT_MISSING") from exc
+        if (
+            stat.S_ISLNK(_local_output_metadata.st_mode)
+            or not stat.S_ISREG(_local_output_metadata.st_mode)
+            or _sha256(output) != temporary_sha256
+        ):
+            raise RuntimeError("SOURCE_MEDIA_RECUT_OUTPUT_HASH_MISMATCH")
+        return temporary_sha256
+    finally:
+        _cleanup_local_recut_temp(
+            temporary,
+            identity,
+            expected_sha256=temporary_sha256,
+        )
+
+
 def prepare_source_media(
     *,
     spec: dict,
@@ -191,24 +301,48 @@ def prepare_source_media(
             expected_without_output_hash=expected_piece,
             output=local,
         ):
-            local.unlink(missing_ok=True)
-            piece_provenance_path.unlink(missing_ok=True)
-            remote_tmp = f"/tmp/produce_{cid}_{index}.mp4"
-            cmd = _accurate_reencode_recut_command(
-                source_video=Path(piece["remote_media"]),
-                output_media=Path(remote_tmp),
-                start_ms=piece["start_ms"],
-                duration_ms=piece["end_ms"] - piece["start_ms"],
-            )
-            run(["ssh", host, " ".join(shlex.quote(str(part)) for part in cmd)], timeout=3600)
-            run(["scp", "-q", f"{host}:{remote_tmp}", str(local)], timeout=1800)
-            run(["ssh", host, f"rm -f {shlex.quote(remote_tmp)}"], timeout=60)
-            if _source_media_sha256(host, Path(piece["remote_media"])) != (
-                source_path,
-                source_sha256,
-            ):
+            if is_local_host(host):
+                _run_local_piece_recut(
+                    host=host,
+                    source_path=Path(piece["remote_media"]),
+                    expected_source_path=source_path,
+                    source_sha256=source_sha256,
+                    output=local,
+                    start_ms=piece["start_ms"],
+                    duration_ms=piece["end_ms"] - piece["start_ms"],
+                )
+            else:
                 local.unlink(missing_ok=True)
-                raise RuntimeError("SOURCE_MEDIA_DRIFT_DURING_PIECE_RECUT")
+                piece_provenance_path.unlink(missing_ok=True)
+                remote_tmp = f"/tmp/produce_{cid}_{index}.mp4"
+                cmd = _accurate_reencode_recut_command(
+                    source_video=Path(piece["remote_media"]),
+                    output_media=Path(remote_tmp),
+                    start_ms=piece["start_ms"],
+                    duration_ms=piece["end_ms"] - piece["start_ms"],
+                )
+                run(
+                    [
+                        "ssh",
+                        host,
+                        " ".join(shlex.quote(str(part)) for part in cmd),
+                    ],
+                    timeout=3600,
+                )
+                run(
+                    ["scp", "-q", f"{host}:{remote_tmp}", str(local)],
+                    timeout=1800,
+                )
+                run(
+                    ["ssh", host, f"rm -f {shlex.quote(remote_tmp)}"],
+                    timeout=60,
+                )
+                if _source_media_sha256(host, Path(piece["remote_media"])) != (
+                    source_path,
+                    source_sha256,
+                ):
+                    local.unlink(missing_ok=True)
+                    raise RuntimeError("SOURCE_MEDIA_DRIFT_DURING_PIECE_RECUT")
             _write_json_atomic(
                 piece_provenance_path,
                 {**expected_piece, "output_sha256": _sha256(local)},

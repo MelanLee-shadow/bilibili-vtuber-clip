@@ -58,9 +58,7 @@ JINGTING_INFRA_TRANSIENT_CODES = frozenset(
     }
 )
 
-# free 上真实落盘的旁路 manifest（逐字，取自
-# out/2026-08-07/songvis_203735_830_3d9fc4bd/song_selector_full/attempt-a0qgh3jd/
-# .../source-context.jingting.manifest.json）。
+# Representative manifest shape for the public bypass-provenance regression.
 SONG_BYPASS_MANIFEST = {
     "schema_version": "jingting-source-context-result.v1",
     "job_id": "seededsong_120000_850000",

@@ -4,6 +4,63 @@
 `scripts/authorized_upload.py`；`.agent/skills/bilive-autoslice-publish/SKILL.md`
 只提供操作顺序，不得另立规则。
 
+## 快车道授权与串行发布边界
+
+对 Claude line 947 穷举批次，候选点名错误修复完成即使用本页既有 package、manifest、
+audit、授权和公开验收门进入上传；不新增 维护者 二次看片/复审。Qixi-first，随后按批次原
+顺序。candidate-private prepare/package/QC 可并行；transcription/AGY 之后仅 bounded per-cue
+short calls 彼此并行，待字幕、媒体和标题输入冻结后 burn 与 cover 可并行；commit lease、formal state+journal、same-BV apply、upload mutation 与 queue
+advancement 必须串行。mutation 完成后 public/Creator/section 三个 read-only probes 可并行，
+但 joint acceptance 是屏障，三面收敛前不得释放下一候选。workflow 病因修复可并行推进，但
+不能改写 artifact release critical path 或重新引入 维护者 review node。`review_ready` 不是
+publication 状态。
+
+## Readiness graph 不授权发布
+
+固定 no-arg 的 scripts/publication_readiness_graph.py 只能读 canonical registry/runtime
+state、authorized-upload manifest 与 ledger，输出观察分类和依赖；它不调用 provider、B 站或
+Creator，也不写 state/ledger/package。READY_TO_PREPARE 与 review_ready 都不是上传许可。
+只有 READY_FOR_SERIAL_UPLOAD 所列的已封存授权 manifest 经 load_and_verify、package audit、
+title-cover QC 和 ledger 无歧义重放后，才可被排入串行候选；仍须使用 manifest 中 维护者 的
+逐字授权，绝不把 graph 当 authority。单批、单部署与完整 suite 是实际 preparation/deploy
+的准入规则，不是该观察分类自动授予的后续动作。
+
+## 增量 receipt 与发布隔离
+
+`incremental-artifact-audit.v2` 只说明当前版本相对上一版本哪些组件、cue、时间窗或封面 ROI
+真的变化，以及哪些复核已完成。它不能把未变组件的历史 evidence 从 `FLAGGED` 或 hash
+漂移状态中“洗成”有效，也不能把 `review_ready` 变成上传授权。`authorized_upload.py` 仍在
+副作用前现场重跑 package audit、标题/封面 QC、manifest hash 和 ledger；任一 current
+record/media/authority 不一致都拒绝。
+
+增量入口还必须封存产物角色；角色与 ancestor record hash 闭包必须写入最终 record 并绑定到
+snapshot/manifest，CLI 参数只是显式声明，不是独立信任来源。`RELEASE_CANDIDATE` 才能进入发布门；
+`DIAGNOSTIC_TRAINING`
+只用于把流水线输出与人工真值逐项比较，强制 `RELEASE_EXCLUDED`，不能被较新的文件时间自动升级；
+`HISTORICAL_EVIDENCE` 只能保留为不可变 parent，不能成为 current 发布产物。时间优先级只适用于
+同一角色、同一 lineage。诊断样本默认保留，待无引用扫描、独立封存和清理授权完成后才可删除。
+
+因此，旧修复即使内容上符合 维护者 要求，也必须先被重新绑定为同一 canonical package 的
+`RELEASE_CANDIDATE`，通过本页所有现有门禁；较晚的流水线诊断输出不得取代它，也不得被误传。
+
+## Reviewed-baseline replay 与上传隔离
+
+`scripts/replay_reviewed_subtitle_baseline.py` 的 PLAN、full-dry-run、apply 与 readiness
+graph 都是 no-upload package-recovery lane，不是本页的投稿入口。PLAN 只读 authority；普通 full
+dry-run 在 private stage 完整验证 after-image，普通 apply 仍只接受 `candidate_rejected` 并在短
+runner lease 内以最新 state CAS 顺序 state-last commit。候选已是 `published` 时，必须显式给
+`--published-recovery-bvid`；此时 full-dry-run 只验证 package-only after-image，apply 还必须给新的
+私有 `--recovery-package-root`，只落 `state_transition=none` 的 audited same-BV 包，绝不触碰
+production state/package/delivery。包内 preflight + typed package receipt 把当时 state SHA、完整
+published tuple、C4 predecessor（若适用）、deployment/publication authority 与最终媒体纳入 canonical
+inputs；外层 receipt 必须为 `VERIFIED_PRIVATE_PACKAGE`。在冻结授权 manifest 前还须重跑 PLAN，
+确认 current state/BVID 未漂移。两种模式都不得创建 `AUTO_UPLOAD`、authorized-upload manifest、
+upload ledger row 或获取 `upload.lock`。完成 package transaction 后仍须重新通过本页的 canonical
+audit、CPA title-cover QC、human/recovery evidence 和 explicit 维护者 manifest；`make-manifest` 会把
+outer receipt path/hash 冻结进 package attestation，`verify`、`repair-plan` 与 live resume 会重放它；
+只有 `authorized_upload.py` 在单一
+`upload.lock` 下可产生上传副作用，且 transport/状态歧义不得重试上传。
+
 ## 发布准入
 
 - 每条都需要 维护者 明确授权；manifest 保存授权原话，工具不能替用户创造授权。
@@ -185,6 +242,11 @@ dry plan；本地存在代码/测试不等于 production 已可用，也不等�
 1. 先证明 `exact-talk-contract-closure.v1.status=COMPLETE`，且最终 state、重建 manifest 与
    selection contract 的 candidate 集合完全相等；五项整包未闭合时，不得先为已完成子集建立
    repair plan；
+1a. 若候选已经 `published` 且须按 reviewed baseline 重建 bytes，只能先走 40/80 的显式
+    package-only full-dry/apply；在第 4 步冻结授权 manifest **之前**必须再次运行同一
+    `--published-recovery-bvid ... --plan`，确认 package 内完整 state tuple/predecessor authority 仍
+    对应当前 state；`make-manifest` 必须消费 VERIFIED outer receipt 而非 pending/裸 package。
+    不得用历史 `candidate_rejected` 前像、手工 state 或 package copy 代替；
 2. 冻结最终包，重建 pending-human review manifest，运行 current canonical package audit；
 3. 先用 final-human-review builder 的 `--prepare-evidence-template` 冻结 v2 bindings；被如实
    命名的 reviewer 按 committed exact review contract 完整复核最终烧录字节、填写实际
@@ -205,8 +267,16 @@ dry plan；本地存在代码/测试不等于 production 已可用，也不等�
    `biliup show` 登录 canary，再读真实 Creator/public/section 单 P 事实。确认后才运行
   `repair-plan` create-only 落 plan/journal；Creator/public 已一致、但 exact section
   episode title 仍是唯一历史旧值时，planner 必须把该值冻结进 `before`，
-  不得因待修复的 section 标题自锁；之后仍只能在 Creator/public 已收敛
-  到新 CID 和目标 metadata 后，通过已有 one-shot `SECTION_TITLE_SYNC` 状态修复。
+   不得因待修复的 section 标题自锁；之后仍只能在 Creator/public 已收敛
+   到新 CID 和目标 metadata 后，通过已有 one-shot `SECTION_TITLE_SYNC` 状态修复。
+
+   若本次授权范围明确为“只修点名内容”、而当前已发稿的 tags 必须原样保留，可显式传
+   `--preserve-existing-tags`。这不是任意 metadata override：manifest、current audit 和最终人审
+   仍完整重验；planner 必须 fresh read Creator/public，并且两面 tags 都非空、无重复、规范化后
+   完全相等。只有 `tags` 可从该 live 集合冻结为 target，plan 必须保存 typed hash-bound
+   preservation receipt 和 manifest 原 tags；title/desc/tid/copyright/source/cover 仍只取 manifest。
+   未传 flag 的默认行为不变。runner/status/resume/verify-live 都重放 receipt；tags 或任何其他
+   metadata/identity 漂移一律 fail-closed。
 7. 先 `repair-status`，再 `repair-run --dry-run`；最后只用 `repair-run` 执行或幂等 resume；
 8. 每次 resume 前后均可用 `repair-status` 重验**本地** plan/journal/receipt 闭包；它不访问
    线上，也不能证明当前公开态。`repair-run` 进入 `VERIFIED` 后还必须运行

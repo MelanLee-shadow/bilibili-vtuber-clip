@@ -529,10 +529,9 @@ def test_global_uncertainty_applies_after_max():
 
 
 # --------------------------------------------------------------------------
-# free 上四条真实候选（只读取自 /opt/bilive/autoslice/state/2026-08-07.json）
+# Representative candidate scorecards for public metric regressions.
 # --------------------------------------------------------------------------
 
-# 维护者 盲审真值 + free 上的真实维度分/惩罚，逐条照抄，未做任何拟合。
 REAL_TIER1 = {
     "auto_210739_1695_1804": (
         dict(

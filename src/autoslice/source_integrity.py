@@ -149,8 +149,24 @@ _CONNECTION_STUB_SCHEMA = "recording-connection-stub.v1"
 _CONNECTION_STUB_STATUS = "IGNORED_CONNECTION_STUB"
 _CONNECTION_STUB_REASON = "RECORDER_CONNECTION_STUB_NO_DECODABLE_VIDEO"
 _CONNECTION_STUB_MAX_XML_EVENT_COUNT = 1
+_CONNECTION_STUB_MAX_SUCCESSOR_GAP_SECONDS = 3
 _CONNECTION_STUB_REBIND_SCHEMA = "recording-source-fuse-identity-rebind.v1"
 _CONNECTION_STUB_REBIND_POLICY = "FUSE_REMOUNT_DEVICE_INODE_REBIND"
+_CONNECTION_STUB_REUSED_PORTABLE_REBIND_POLICY = (
+    "FUSE_REMOUNT_REUSED_PORTABLE_IDENTITY_REBIND"
+)
+_CONNECTION_STUB_REUSED_PORTABLE_TIMESTAMP_REBIND_SCHEMA = (
+    "recording-source-fuse-reused-portable-timestamp-rebind.v1"
+)
+_CONNECTION_STUB_REUSED_PORTABLE_TIMESTAMP_REBIND_POLICY = (
+    "FUSE_REMOUNT_REUSED_PORTABLE_IDENTITY_SUCCESSOR_MTIME_CTIME_REATTESTATION"
+)
+_CONNECTION_STUB_FIRST_TIMESTAMP_REBIND_SCHEMA = (
+    "recording-source-fuse-first-identity-timestamp-rebind.v1"
+)
+_CONNECTION_STUB_FIRST_TIMESTAMP_REBIND_POLICY = (
+    "FUSE_FIRST_IDENTITY_SUCCESSOR_MTIME_CTIME_REATTESTATION"
+)
 _CONNECTION_STUB_TIMESTAMP_REBIND_SCHEMA = "recording-source-fuse-timestamp-rebind.v1"
 _CONNECTION_STUB_TIMESTAMP_REBIND_POLICY = "FUSE_SUCCESSOR_MTIME_CTIME_REATTESTATION"
 _FILE_FINGERPRINT_KEYS = (
@@ -164,6 +180,14 @@ _FILE_FINGERPRINT_KEYS = (
 _DISPOSITION_FILE_ROLES = ("source", "xml", "successor_source", "successor_mp4")
 _TIMESTAMP_REBIND_ROLES = ("successor_source", "successor_mp4")
 _TIMESTAMP_REBIND_FIELDS = ("mtime_ns", "ctime_ns")
+_MIXED_REBIND_SCHEMA = "recording-source-fuse-identity-timestamp-rebind.v1"
+_MIXED_REBIND_POLICY = "FUSE_REMOUNT_IDENTITY_AND_SUCCESSOR_MTIME_CTIME_REATTESTATION"
+_MIXED_REBIND_CHANGED_FIELDS = {
+    "source": ["device", "inode"],
+    "xml": ["device", "inode"],
+    "successor_source": ["mtime_ns", "ctime_ns", "device", "inode"],
+    "successor_mp4": ["mtime_ns", "ctime_ns", "device", "inode"],
+}
 _HISTORICAL_SHA_BASIS = "HISTORICAL_SHA256_MATCH"
 _LEGACY_SUCCESSOR_SOURCE_BASIS = "LEGACY_NO_PRIOR_SHA256_WEBHOOK_FINALIZED_LEDGER_STABLE_STAT"
 
@@ -262,6 +286,64 @@ def _portable_mount_identity(identity: object) -> dict[str, object] | None:
         "filesystem_type": identity.get("filesystem_type"),
         "mount_source": identity.get("mount_source"),
     }
+
+
+def _same_portable_mount_replaced(current: object, previous: object) -> bool:
+    """Accept a local mount-id transition only as a rehashed receipt witness."""
+
+    current_id = current.get("mount_id") if isinstance(current, dict) else None
+    previous_id = previous.get("mount_id") if isinstance(previous, dict) else None
+    return bool(
+        _portable_mount_identity(current) == _portable_mount_identity(previous)
+        and isinstance(current_id, int)
+        and not isinstance(current_id, bool)
+        and current_id > 0
+        and isinstance(previous_id, int)
+        and not isinstance(previous_id, bool)
+        and previous_id > 0
+        and current_id != previous_id
+    )
+
+
+def _all_roles_reindexed_within_replaced_mount(changes: dict[str, list[str]]) -> bool:
+    return bool(
+        set(changes) == set(_DISPOSITION_FILE_ROLES)
+        and all(
+            "inode" in fields and set(fields).issubset({"device", "inode"})
+            for fields in changes.values()
+        )
+    )
+
+
+def _reused_portable_timestamp_rebind_changes(changes: dict[str, list[str]]) -> bool:
+    return bool(
+        set(changes) == set(_DISPOSITION_FILE_ROLES)
+        and all(
+            "inode" in changes[role]
+            and set(changes[role]).issubset({"device", "inode"})
+            for role in ("source", "xml")
+        )
+        and all(
+            {"inode", "mtime_ns", "ctime_ns"}.issubset(changes[role])
+            and set(changes[role]).issubset(
+                {"device", "inode", "mtime_ns", "ctime_ns"}
+            )
+            for role in _TIMESTAMP_REBIND_ROLES
+        )
+    )
+
+
+def _timestamp_rebind_changes(changes: dict[str, list[str]]) -> bool:
+    return bool(
+        changes == {"successor_mp4": list(_TIMESTAMP_REBIND_FIELDS)}
+        or (
+            set(changes) == set(_TIMESTAMP_REBIND_ROLES)
+            and all(
+                fields and all(field in _TIMESTAMP_REBIND_FIELDS for field in fields)
+                for fields in changes.values()
+            )
+        )
+    )
 
 
 def _disposition_binding_projection(binding: dict[str, object]) -> dict[str, object]:
@@ -385,14 +467,44 @@ def _connection_stub_identity_matches(
             receipt.get("schema_version") == _CONNECTION_STUB_REBIND_SCHEMA
             and receipt.get("policy") == _CONNECTION_STUB_REBIND_POLICY
         )
+        is_reused_portable_rebind = (
+            receipt.get("schema_version") == _CONNECTION_STUB_REBIND_SCHEMA
+            and receipt.get("policy") == _CONNECTION_STUB_REUSED_PORTABLE_REBIND_POLICY
+        )
+        is_reused_portable_timestamp_rebind = (
+            receipt.get("schema_version")
+            == _CONNECTION_STUB_REUSED_PORTABLE_TIMESTAMP_REBIND_SCHEMA
+            and receipt.get("policy")
+            == _CONNECTION_STUB_REUSED_PORTABLE_TIMESTAMP_REBIND_POLICY
+        )
+        is_first_timestamp_rebind = (
+            receipt.get("schema_version") == _CONNECTION_STUB_FIRST_TIMESTAMP_REBIND_SCHEMA
+            and receipt.get("policy") == _CONNECTION_STUB_FIRST_TIMESTAMP_REBIND_POLICY
+        )
         is_timestamp_rebind = (
             receipt.get("schema_version") == _CONNECTION_STUB_TIMESTAMP_REBIND_SCHEMA
             and receipt.get("policy") == _CONNECTION_STUB_TIMESTAMP_REBIND_POLICY
         )
-        expected_fields = base_receipt_fields | (
-            {"changed_fields"} if is_timestamp_rebind else set()
+        is_mixed_rebind = (
+            receipt.get("schema_version") == _MIXED_REBIND_SCHEMA
+            and receipt.get("policy") == _MIXED_REBIND_POLICY
         )
-        if (not is_identity_rebind and not is_timestamp_rebind) or set(receipt) != expected_fields:
+        expected_fields = base_receipt_fields | (
+            {"changed_fields"}
+            if is_timestamp_rebind
+            or is_reused_portable_timestamp_rebind
+            or is_first_timestamp_rebind
+            or is_mixed_rebind
+            else set()
+        )
+        if (
+            not is_identity_rebind
+            and not is_reused_portable_rebind
+            and not is_reused_portable_timestamp_rebind
+            and not is_first_timestamp_rebind
+            and not is_timestamp_rebind
+            and not is_mixed_rebind
+        ) or set(receipt) != expected_fields:
             return False, "source disposition identity rebind receipt is malformed"
         integrity = receipt.get("canonical_integrity")
         unsigned = {key: value for key, value in receipt.items() if key != "canonical_integrity"}
@@ -446,24 +558,62 @@ def _connection_stub_identity_matches(
                 )
             ):
                 return False, "source disposition identity rebind binding drifted"
-        else:
-            assert is_timestamp_rebind
+        elif is_reused_portable_rebind:
+            if (
+                receipt.get("legacy_promotion") != _identity_rebind_legacy_contract()
+                or previous_receipt_sha256 is None
+                or previous_mount is None
+                or not _all_roles_reindexed_within_replaced_mount(changes)
+                or not _same_portable_mount_replaced(receipt.get("current_mount"), previous_mount)
+            ):
+                return False, "source disposition reused-portable rebind binding drifted"
+        elif is_reused_portable_timestamp_rebind:
             if (
                 receipt.get("legacy_promotion") != _timestamp_rebind_legacy_contract(row, previous)
                 or receipt.get("changed_fields") != changes
-                or set(changes) != set(_TIMESTAMP_REBIND_ROLES)
-                or any(
-                    field not in _TIMESTAMP_REBIND_FIELDS
-                    for fields in changes.values()
-                    for field in fields
-                )
-                or (
-                    previous_mount is not None
-                    and _portable_mount_identity(receipt.get("current_mount"))
-                    != _portable_mount_identity(previous_mount)
-                )
+                or previous_receipt_sha256 is None
+                or previous_mount is None
+                or not _reused_portable_timestamp_rebind_changes(changes)
+                or not _same_portable_mount_replaced(receipt.get("current_mount"), previous_mount)
             ):
-                return False, "source disposition timestamp rebind binding drifted"
+                return False, "source disposition reused-portable timestamp rebind binding drifted"
+        elif is_first_timestamp_rebind:
+            if (
+                receipt.get("legacy_promotion") != _timestamp_rebind_legacy_contract(row, previous)
+                or receipt.get("changed_fields") != changes
+                or previous_receipt_sha256 is not None
+                or previous_mount is not None
+                or not _reused_portable_timestamp_rebind_changes(changes)
+            ):
+                return False, "source disposition first timestamp rebind binding drifted"
+        else:
+            if is_timestamp_rebind:
+                if (
+                    receipt.get("legacy_promotion")
+                    != _timestamp_rebind_legacy_contract(row, previous)
+                    or receipt.get("changed_fields") != changes
+                    or not _timestamp_rebind_changes(changes)
+                    or (
+                        previous_mount is not None
+                        and _portable_mount_identity(receipt.get("current_mount"))
+                        != _portable_mount_identity(previous_mount)
+                    )
+                ):
+                    return False, "source disposition timestamp rebind binding drifted"
+            else:
+                assert is_mixed_rebind
+                if (
+                    receipt.get("legacy_promotion")
+                    != _timestamp_rebind_legacy_contract(row, previous)
+                    or receipt.get("changed_fields") != changes
+                    or changes != _MIXED_REBIND_CHANGED_FIELDS
+                    or (
+                        previous_mount is not None
+                        and _portable_mount_identity(receipt.get("current_mount"))
+                        == _portable_mount_identity(previous_mount)
+                    )
+                ):
+                    return False, "source disposition mixed FUSE rebind binding drifted"
         previous = current
         previous_receipt_sha256 = str(integrity["canonical_json_sha256"])
         previous_mount = receipt["current_mount"]
@@ -723,7 +873,7 @@ def _verify_connection_stub_disposition(
         return False, "same-session successor path is invalid"
     gap = (successor_opened - closed).total_seconds()
     if (
-        not 0 <= gap <= 2
+        not 0 <= gap <= _CONNECTION_STUB_MAX_SUCCESSOR_GAP_SECONDS
         or successor_webhook.get("status") != "CLOSED"
         or str(successor_webhook.get("session_id") or "") != session_id
         or not successor_webhook.get("opening_event_id")
@@ -787,6 +937,55 @@ def _verify_connection_stub_disposition(
     return True, "typed connection-stub disposition revalidated"
 
 
+def _verify_truncated_source_disposition(
+    source_flv: Path,
+    *,
+    date_dir: Path,
+    adapter_state_path: Path | None,
+) -> tuple[bool, str, str | None] | None:
+    """Validate a typed truncated-source row for the inventory boundary."""
+
+    if adapter_state_path is None:
+        return None
+    try:
+        state = json.loads(adapter_state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return False, f"adapter state is unreadable: {type(exc).__name__}", None
+    if not isinstance(state, dict):
+        return False, "adapter state is malformed", None
+    if state.get("schema_version") != "bililive-recorder-adapter-state.v1":
+        return False, "adapter state schema mismatch", None
+    relative = f"{date_dir.name}/{source_flv.name}"
+    dispositions = state.get("source_dispositions")
+    if not isinstance(dispositions, dict):
+        return False, "adapter source dispositions ledger is malformed", None
+    row = dispositions.get(relative)
+    if not isinstance(row, dict):
+        return None
+    if row.get("schema_version") != "recording-truncated-source-disposition.v1":
+        return None
+    action = row.get("action") if isinstance(row.get("action"), str) else None
+    webhook_files = state.get("webhook_files")
+    finalized = state.get("finalized")
+    if not isinstance(webhook_files, dict) or not isinstance(finalized, dict):
+        return False, "adapter webhook/finalized ledgers are malformed", action
+    try:
+        from ops.recording.bililive_recorder_adapter import (
+            validate_truncated_source_disposition,
+        )
+
+        validate_truncated_source_disposition(
+            source_flv,
+            row,
+            record_root=date_dir.parent,
+            webhook_files=webhook_files,
+            finalized=finalized,
+        )
+    except (OSError, ValueError, RuntimeError) as exc:
+        return False, str(exc)[:500], action
+    return True, "typed truncated-source disposition revalidated", action
+
+
 def audit_finalized_recording_inventory(
     date_dir: Path,
     *,
@@ -844,6 +1043,28 @@ def audit_finalized_recording_inventory(
     for stem, siblings in sorted(stems.items()):
         mp4 = siblings.get(".mp4")
         if mp4 is not None:
+            truncated_check = None
+            raw_flv = siblings.get(".flv")
+            if raw_flv is not None:
+                truncated_check = _verify_truncated_source_disposition(
+                    raw_flv,
+                    date_dir=date_dir,
+                    adapter_state_path=adapter_state_path,
+                )
+            if truncated_check is not None:
+                disposition_ok, disposition_detail, disposition_action = truncated_check
+                if not disposition_ok or disposition_action != "RECOVERED_TRUNCATED_RECORDING":
+                    issues.append(
+                        {
+                            "code": "TRUNCATED_SOURCE_DISPOSITION_DRIFT",
+                            "severity": "BLOCK",
+                            "message": disposition_detail,
+                            "segment_stem": stem,
+                            "path": str(raw_flv),
+                            "source_disposition_action": disposition_action,
+                        }
+                    )
+                    continue
             consumer_segments.append(str(mp4))
             continue
 
@@ -880,6 +1101,37 @@ def audit_finalized_recording_inventory(
             )
         elif raw_media is not None:
             if raw_media.suffix.lower() == ".flv":
+                truncated_check = _verify_truncated_source_disposition(
+                    raw_media,
+                    date_dir=date_dir,
+                    adapter_state_path=adapter_state_path,
+                )
+                if truncated_check is not None:
+                    disposition_ok, disposition_detail, disposition_action = truncated_check
+                    if disposition_ok and disposition_action == "IGNORED_TRUNCATED_RECONNECT_FRAGMENT":
+                        issues.append(
+                            {
+                                "code": "IGNORED_TRUNCATED_RECONNECT_FRAGMENT",
+                                "severity": "WARN",
+                                "message": disposition_detail,
+                                "segment_stem": stem,
+                                "path": str(raw_media),
+                                "source_disposition_schema": "recording-truncated-source-disposition.v1",
+                                "source_disposition_action": disposition_action,
+                            }
+                        )
+                        continue
+                    issues.append(
+                        {
+                            "code": "TRUNCATED_SOURCE_DISPOSITION_DRIFT",
+                            "severity": "BLOCK",
+                            "message": disposition_detail,
+                            "segment_stem": stem,
+                            "path": str(raw_media),
+                            "source_disposition_action": disposition_action,
+                        }
+                    )
+                    continue
                 disposition_ok, disposition_detail = _verify_connection_stub_disposition(
                     raw_media,
                     date_dir=date_dir,

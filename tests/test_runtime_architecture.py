@@ -46,11 +46,6 @@ FUNCTION_DEBT_LEDGER = {
     # 只接入登记误听面分类、弱 provenance 与声学路由；分类器在新小模块。
     # 净 -1：F16/F17 trusted priority provenance 接线压成薄调用。
     ("src/autoslice/final_review_auditor.py", "audit_final_subtitles"): 420,
-    # -3：exact reviewed terminal projection 接线同时把 tail-pad
-    # coverage receipt 抽到模块级 helper，锁定本次边界修复的净拆解收益。
-    # 合并 ft-a8600994：以下两项按合并后**实测**行数记账,数字来自本次
-    # merge(主线 F16/F17 接线与 ft 边界修复各自的净收益叠加),非凭空抬降。
-    ("src/autoslice/producer_package_finalization.py", "_materialize_final_recut"): 314,
     # +3：owned_intervals 执法接线（维护者 配额上传波
     # 修复——zsm8 案：baseline 已应用的 cue 被 exact-final CPA 自愈无声改写；
     # redelivery_subtitle_baseline.py 写 owned_intervals 从未被读取）。
@@ -118,7 +113,7 @@ FUNCTION_DEBT_LEDGER = {
     # 净 -7：截图优先修复顺带还债——source-composition 见证的调用+
     # 异常包装整体抽到 src/autoslice/cover_scene_binding.py
     # （run_source_composition_witness），场景分叉的新增行零留在本函数。
-    ("src/autoslice/publish_staging.py", "_stage_ai_cover"): 398,
+    ("src/autoslice/publish_staging.py", "_stage_ai_cover"): 393,
     # +27：reuse 封面绑定（1013 jyl-r9 案——reuse 不绑 cover sha，
     # recovery manifest 必然 REFUSE；维护者 常设修复授权链）。已连续吃增长，
     # 下次动这个函数必须先拆，不许再抬。
@@ -135,18 +130,6 @@ FUNCTION_DEBT_LEDGER = {
     # 净 -6：同上——终检见证的 verifier-missing 分支与调用抽到
     # cover_scene_binding.run_final_host_identity_witness。
     ("src/autoslice/publish_staging.py", "_stage_screenshot_direct_cover"): 314,
-    # +13：歌lane provider门修复（维护者「老毛病竟然还
-    # 重新犯，你必须修复」）——JINGTING_PROVIDER_NOT_AGY 及同族此前未被识别
-    # 为 transient，同一 attempt 里跟着的 SONG_*_MISSING/INVALID 级联码就会
-    # 被 project_terminal_song_disposition 判定终态弃选（
-    # song_230754_1118 复发）。新增分支在 SONG_INFRA_TRANSIENT_REASON_CODES
-    # 里找本次 attempt 剩余的 infra 码。测试
-    # test_full_song_provider_outage_stays_infra_wait_not_terminal_rejection。
-    # 净 -12：歌名命名权威切换（维护者 逐字「如果意识到了可能是歌
-    # 再从 BCUT 切换过来」）顺带还债——全源趟取证键白名单抽成模块常量
-    # FULL_SOURCE_RETRY_FORENSIC_KEYS（音频命名权威也进这张表，否则真名会像
-    # 修复前的标题一样被这层白名单埋掉）。本函数只减不增，账本按实际收紧。
-    ("src/autoslice/song_lane.py", "produce_song"): 312,
 }
 
 # 冻结基线：12 项。同上，全部是欠账。
@@ -156,7 +139,20 @@ MODULE_DEBT_LEDGER = {
     # 审计器加入包审计 policy fingerprint，防实现漂移而指纹不变。
     # +6：简介第一行固定项目署名常量（维护者 8/3 指令：默认带
     # 项目名+网址；OSS 同步为署名+env 频道行）。
-    "scripts/authorized_upload.py": 2_877,
+    # cover-only CLI orchestration extracted into its own bounded
+    # module; retain the exact lower bound so this entrypoint cannot regrow.
+    # C2 sealed-release authority replay moved into its own bounded
+    # module; retain the lower bound rather than compressing the upload gate.
+    "scripts/authorized_upload.py": 2_820,
+    # 新记（维护者 逐字「立刻开工」授权的切片提速）：上下文裁决
+    # 证人预热接线。重活全在新模块 src/autoslice/context_adjudication_witness_prewarm.py
+    # （只读复演准入算术、有界并发、失败静默、串行循环零改动），这里只有 import +
+    # 调用 + 回执落盘共 11 行；但本文件本就贴着 2000 入场线，接线即越线。
+    # ⚠️ 欠账：本文件需要真正的拆解（既有 _run_final_review 等大函数已在函数账本里），
+    # 不是靠删注释凑行数。下次再动它必须先拆。测试
+    # tests/test_context_adjudication_witness_prewarm.py。
+    "src/autoslice/producer_text_pipeline.py": 2_007,
+
     # +15：--smoke-segment 有界 backfill（帽 3）——维护者 8/2 /goal
     # 「全都按你的想法进行修复，当然都要配测试」授权；测试 test_smoke_backfill.py。
     # 再 +3：child_env 加 PYTHONUNBUFFERED（二轮实测：候选日志因子
@@ -191,7 +187,12 @@ MODULE_DEBT_LEDGER = {
     # 日志、把原来的两项 or 拆成三项）。出处校验、收敛即自动出圈、expires_at 兜底、
     # 候选级限定全在新模块 src/autoslice/operator_processing_scope.py。
     # 测试 tests/test_operator_processing_scope.py。
-    "scripts/session_autoslice.py": 2_030,
+    # 维护者 原话「通用提速修复设为最高优先级：先完成并部署能够安全落地的
+    # P0/P1」；Qixi public APPLY 的 provider-lock 拆分、prepared after-image、短
+    # lease commit/replay 与 receipt sanitization 已在 d77a9b5、5ea498a、8959170
+    # 落地，仍需同一 public-surface module 保留既有 CLI contract。该历史债务显式
+    # 入账，后续另行拆解，不用压行规避。
+    "src/autoslice/qixi_post_correction_public_surface.py": 2_279,
     # +122：封面文案链修复（分行权威等级 + 锁定模式 + 缩略图合同背带
     # + max_lines 按合同封顶）。新增逻辑已抽成 _talk_locked_split /
     # _assert_talk_thumbnail_contract 两个模块级函数，_overlay_cover_title
@@ -202,10 +203,14 @@ MODULE_DEBT_LEDGER = {
     # +7：合并 ft-a8600994 快车道分支（维护者 逐字「这就是要合并的快车道代码，现在就去合并 merge」）——ft 新增的
     # punch_fragment_whitespace_is_source_safe 守卫接线 + 合并说明注释。
     # 数字为合并后实测,非估算。
-    "src/autoslice/cover_generation.py": 2_345,
+    # +8：reviewed-punch 实现迁至 cover_punch_semantics 后保留
+    # _punch_wrap 的旧签名入口；它只转发至同一 fail-closed 实现。
+    "src/autoslice/cover_generation.py": 2_346,
     # +166：bind_manual_package_cover——手动产线包封面回写（同一套
     # 校验/binding/原子写；维护者 8/2 /goal 授权；测试 test_manual_cover_bind.py）。
-    "src/autoslice/cover_repair.py": 2_217,
+    # -39: screenshot-polish route validation/story projection moved
+    # into cover_repair_route_lineage; keep the compatibility helper alias.
+    "src/autoslice/cover_repair.py": 2_178,
     # +79：cue59「殉情」顶替真值「偶遇」实案（维护者
     # auto_203735_555_680 speaker-truth-diff 裁决 + 落地授权）——新增
     # _glossary_session_candidate_undecidable / _adjudicate_with_glossary_witness_guard
@@ -261,7 +266,13 @@ MODULE_DEBT_LEDGER = {
     # _run_exact_final_review_gate 那条同案说明）。新增逻辑的重量全在新模块
     # src/autoslice/chat_authority_ownership.py（未计入本模块行数），本模块
     # 只涨了 5 行 import/rationale + 5 行调用点。
-    "src/autoslice/producer_package_finalization.py": 2_783,
+    # 净 -24：exact v2 full-window replay、审计投影与临时文件
+    # 清理抽到 redelivery_full_window_replay.py；锁定实测净拆解收益。
+    # 净 -111：C12 的私有 finalizer 协调、投影后文本权威和
+    # deferred exact-replay receipt 分别收束到窄模块，避免 producer 回涨。
+    # net -12: source binding and provenance writes extracted into
+    # producer_final_recut_source_binding.py and producer_recut_provenance.py.
+    "src/autoslice/producer_package_finalization.py": 2_620,
     # +40：同上（SC 发送者 deferral）。
     # +7：会话内重述修复接线（维护者 当日指令，
     # 内部设计文档留存 §4）——会话内
@@ -302,7 +313,7 @@ MODULE_DEBT_LEDGER = {
     # cover_route_policy.py，本模块只留 import 别名与调用点。
     # +19：合并 ft-a8600994 快车道分支（维护者 逐字「这就是要合并的快车道代码，现在就去合并 merge」）带入的
     # relocation/冻结包接线（同 _stage_publish_draft 那一项）。合并后实测。
-    "src/autoslice/publish_staging.py": 2_644,
+    "src/autoslice/publish_staging.py": 2_612,
     "src/autoslice/same_bv_repair.py": 2_422,
 }
 SCRIPT_EXCLUSIONS = {
@@ -610,6 +621,8 @@ def test_final_text_result_cues_and_receipt_reach_the_same_boundary_resolver() -
     resolver_keywords = {keyword.arg: keyword.value for keyword in resolver_calls[0].keywords}
     assert isinstance(resolver_keywords["cues"], ast.Name)
     assert resolver_keywords["cues"].id == "cues"
+    assert isinstance(resolver_keywords["chat_authority_audit"], ast.Name)
+    assert resolver_keywords["chat_authority_audit"].id == "chat_authority_audit"
 
     receipt_source = assignment_to("final_review_audit").value
     assert isinstance(receipt_source, ast.BoolOp)

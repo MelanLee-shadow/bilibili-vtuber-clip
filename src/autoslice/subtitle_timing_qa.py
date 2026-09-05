@@ -69,6 +69,7 @@ def sanitize_cue_timing(
     window_start_ms: int,
     window_end_ms: int,
     policy: TimingQaPolicy | None = None,
+    protected_blank_windows: Sequence[tuple[int, int]] = (),
 ) -> tuple[list[SourceCue], dict[str, object]]:
     """Sanitize cue timing inside [window_start_ms, window_end_ms).
 
@@ -79,6 +80,19 @@ def sanitize_cue_timing(
     policy = policy or TimingQaPolicy()
     ordered = sorted(cues, key=lambda cue: (cue.source_start_ms, cue.source_end_ms, cue.cue_id))
     spans = sorted((span for span in speech_spans if span.end_ms > span.start_ms), key=lambda span: span.start_ms)
+    protected_blanks = tuple(
+        sorted(
+            (start_ms, end_ms)
+            for start_ms, end_ms in protected_blank_windows
+            if (
+                isinstance(start_ms, int)
+                and not isinstance(start_ms, bool)
+                and isinstance(end_ms, int)
+                and not isinstance(end_ms, bool)
+                and start_ms < end_ms
+            )
+        )
+    )
 
     actions: list[dict[str, object]] = []
     result: list[SourceCue] = []
@@ -164,6 +178,18 @@ def sanitize_cue_timing(
             if "flash_extended" not in reasons:
                 reasons.append("flash_extended")
 
+        # 维护者/root typed-DROP repair authorization: a validated
+        # whole-cue blank is a hard subtitle boundary for generated extension
+        # only.  Never shorten an original cue that already overlaps it.
+        for blank_start_ms, _blank_end_ms in protected_blanks:
+            if (
+                end_ms <= blank_start_ms
+                and new_start < blank_start_ms < new_end
+            ):
+                new_end = blank_start_ms
+                reasons.append("protected_blank_window")
+                break
+
         if reasons:
             actions.append(_action(cue, "retime", start_ms, end_ms, new_start, new_end, reasons, vad_ratio, density_cps))
         result.append(replace(cue, source_start_ms=new_start, source_end_ms=new_end))
@@ -191,6 +217,7 @@ def sanitize_cue_timing(
             "hard_max_ms": policy.hard_max_ms,
             "min_density_cps": policy.min_density_cps,
         },
+        "protected_blank_window_count": len(protected_blanks),
         "speech_span_count": len(spans),
         "speech_total_ms": sum(span.end_ms - span.start_ms for span in spans),
         "vad_evidence_contract": "positive_only_never_shrink_normal_asr_cues",
@@ -261,6 +288,7 @@ def build_ssh_silero_vad_provider(
             / "scripts"
             / "silero_vad_spans.py"
         )
+    vad_python = os.environ.get("AUTOSLICE_VAD_PYTHON") or "python3"
 
     def provider(source_video: Path, start_ms: int, end_ms: int) -> list[SpeechSpan]:
         duration_ms = max(1, end_ms - start_ms)
@@ -300,9 +328,10 @@ def build_ssh_silero_vad_provider(
             if local_host:
                 # localhost 快路径：免 scp/免 self-ssh，直接对本地 wav 跑
                 # spans 脚本。生产宿主金丝雀证明直执行与 ssh localhost 的
-                # 输出逐字节相同（python3 从 PATH 解析，与 ssh 登录壳一致）。
+                # 输出逐字节相同（默认 python3 从 PATH 解析；生产 shadow
+                # runner 可显式绑定到其 main venv）。
                 run = subprocess.run(
-                    ["python3", remote_script, str(wav_path)],
+                    [vad_python, remote_script, str(wav_path)],
                     check=False,
                     capture_output=True,
                     text=True,
@@ -322,7 +351,7 @@ def build_ssh_silero_vad_provider(
                     [
                         "ssh",
                         host,
-                        f"python3 {shlex.quote(remote_script)} {shlex.quote(remote_wav)}; rc=$?; rm -f {shlex.quote(remote_wav)}; exit $rc",
+                        f"{shlex.quote(vad_python)} {shlex.quote(remote_script)} {shlex.quote(remote_wav)}; rc=$?; rm -f {shlex.quote(remote_wav)}; exit $rc",
                     ],
                     check=False,
                     capture_output=True,

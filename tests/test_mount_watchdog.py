@@ -28,6 +28,7 @@ def _run_watchdog(
     tmp_path: Path,
     *,
     mount_real: bool = False,
+    bind_source: Path | None = None,
     permanently_non_fuse: str = "",
     fallback_file: bool = False,
     probe_only: bool = False,
@@ -52,7 +53,7 @@ def _run_watchdog(
     if disabled:
         (base / "DISABLED").touch()
     if lock_holder_cmd:
-        lock = base / "runner.lock"
+        lock = base / "tick.lock"
         lock.touch()
         holder = proc_root / "424242"
         holder.mkdir()
@@ -85,6 +86,7 @@ print(
     mount = tmp_path / "mount"
     probe_dir = mount / "live-streaming"
     probe_dir.mkdir(parents=True)
+    expected_bind_source = bind_source or probe_dir
     mount_state = tmp_path / "mount-real"
     if mount_real:
         mount_state.touch()
@@ -176,8 +178,17 @@ if [ "$1" = "compose" ]; then
   esac
 fi
 if [ "$1" = "inspect" ]; then
-  for arg in "$@"; do container="$arg"; done
+  format=""
+  if [ "$2" = "-f" ]; then
+    format="$3"
+    container="$4"
+  else
+    for arg in "$@"; do container="$arg"; done
+  fi
   if [ -f "$WATCHDOG_TEST_CONTAINER_STATE/$container.started" ]; then
+    case "$format" in
+      *Mounts*) echo "$WATCHDOG_TEST_BIND_SOURCE"; exit 0 ;;
+    esac
     echo true
     exit 0
   fi
@@ -204,6 +215,7 @@ exit 1
         "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
         "AUTOSLICE_WATCHDOG_MOUNT": str(mount),
         "AUTOSLICE_WATCHDOG_PROBE_DIR": str(probe_dir),
+        "AUTOSLICE_WATCHDOG_EXPECTED_RECORDING_BIND_ROOT": str(probe_dir),
         "AUTOSLICE_WATCHDOG_BASE": str(base),
         "AUTOSLICE_WATCHDOG_STAT_BIN": str(fake_bin / "fake-stat"),
         "AUTOSLICE_WATCHDOG_PROC_LOCKS": str(proc_locks),
@@ -225,6 +237,7 @@ exit 1
         "WATCHDOG_TEST_MOUNT": str(mount),
         "WATCHDOG_TEST_MOUNT_STATE": str(mount_state),
         "WATCHDOG_TEST_PROBE_DIR": str(probe_dir),
+        "WATCHDOG_TEST_BIND_SOURCE": str(expected_bind_source),
         "WATCHDOG_TEST_CONTAINER_STATE": str(container_state),
         "WATCHDOG_TEST_PERMANENTLY_NON_FUSE": permanently_non_fuse,
     }
@@ -283,6 +296,18 @@ def test_watchdog_bootstraps_stopped_consumers_on_healthy_mount(tmp_path):
     assert "bootstrapping" in completed.stdout
     assert "restart clouddrive2" not in calls
     assert "up -d --force-recreate" in calls
+
+
+def test_watchdog_fails_closed_on_wrong_container_bind_source(tmp_path):
+    completed, calls, _ = _run_watchdog(
+        tmp_path,
+        mount_real=True,
+        bind_source=tmp_path / "wrong-recording-root",
+    )
+
+    assert completed.returncode == 1
+    assert "one or more consumers do not see a FUSE recording path" in completed.stdout
+    assert calls.count("inspect -f") >= 3
 
 
 @pytest.mark.parametrize(

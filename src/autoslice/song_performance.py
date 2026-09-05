@@ -737,7 +737,6 @@ def _finalize_audio_lrc_selection(
     payload = observation.payload
     alignment = observation.alignment
     performed_lines = observation.performed_lines
-    performed_observations = observation.performed_observations
     arrangement_completeness = observation.arrangement_completeness
     offset_ms = observation.offset_ms
     agy_offset_ms = offset_ms

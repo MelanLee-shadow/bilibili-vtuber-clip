@@ -387,13 +387,14 @@ def test_canary_2b_final_game_gate_rejects_an_empty_panel(tmp_path):
 
 # ───────────────── ③ 保真：talk 提问逐字节等价 ─────────────────
 
-# 这两个 sha 是 base 7d08564（本次改动前）的 prompt 原文摘要。任何对 talk 提问的
-# 改写——哪怕只多一个空格——都会在这里红掉；游戏场分叉只准新增分支，不准污染谈话场。
+# These pins capture the talk-prompt baseline after the
+# source-visible headwear authority update: the source image decides the actual
+# visible headwear, while the game-scene branch remains isolated from talk.
 _TALK_SOURCE_QUESTION_SHA = (
-    "249721671a5f12bb519b35d33fe6bff98c974a37ac69aee0de1a9ce168f550f5"
+    "ea279ac905e0549bfe21a9374528e4e1dd8644cf511fff53f13edea2e5d8eedb"
 )
 _TALK_HOST_GATE_QUESTION_SHA = (
-    "450d585621dd38d4469591a5b98863c35aaaba0a3ea052362a3cd6e9686ba769"
+    "2de4da0140e52efc4b6ee64f1e1b553a5ff190cc6d4eb81903a282e4012dedcc"
 )
 
 
@@ -408,6 +409,7 @@ def test_canary_3_talk_prompts_are_byte_identical_to_base():
         hashlib.sha256(HOST_QUESTION.encode("utf-8")).hexdigest()
         == _TALK_HOST_GATE_QUESTION_SHA
     )
+    assert "源图实际可见" in _QUESTION_PREFIX and "头戴物" in _QUESTION_PREFIX
 
 
 def test_canary_3b_talk_receipt_and_call_shape_are_unchanged(tmp_path):

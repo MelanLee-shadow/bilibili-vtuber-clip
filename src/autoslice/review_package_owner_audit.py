@@ -19,8 +19,16 @@ from src.autoslice.boundary_semantic_review import (
 from src.autoslice.channel_profile import (
     load_channel_profile as _load_channel_profile,
 )
+from src.autoslice.review_package_owner_audit_c12_supersession import (
+    C12_SOURCE_TRUTH_SUPERSESSION_SCHEMA,
+    c12_source_truth_supersession_valid,
+    c12_zero_current_source_owner_receipt_valid,
+)
 from src.autoslice.producer_boundary_owner_contract import (
     validate_frozen_boundary_owner_contract,
+)
+from src.autoslice.qixi_terminal_reconciliation import (
+    validate_terminal_baseline_replay_reconciliation,
 )
 from src.autoslice.redelivery_boundary_projection import (
     AUTHORITY_CONFIG_KEY,
@@ -306,9 +314,21 @@ def _source_truth_audit_valid(
     truth_audit: object,
     *,
     provenance: object = None,
+    chat_authority: Mapping[str, object] | None = None,
+    record: Mapping[str, object] | None = None,
+    record_path: Path | None = None,
+    subtitle_path: Path | None = None,
 ) -> bool:
     if not isinstance(truth_audit, Mapping):
         return False
+    if truth_audit.get("schema_version") == C12_SOURCE_TRUTH_SUPERSESSION_SCHEMA:
+        return c12_source_truth_supersession_valid(
+            truth_audit,
+            chat_authority=chat_authority,
+            record=record,
+            record_path=record_path,
+            subtitle_path=subtitle_path,
+        )
     applied = truth_audit.get("applied")
     satisfied = truth_audit.get("satisfied")
     failures = truth_audit.get("failures")
@@ -538,7 +558,23 @@ def _source_truth_owner_set_valid(
     story_start: int,
     story_end: int,
     owner_scope: Mapping[str, object] | None,
+    superseded_truth_ids: frozenset[str] | None = None,
 ) -> bool:
+    frozen_ids = {
+        owner_id
+        for owner_kind, owner_id in frozen_owner_keys
+        if owner_kind == "source_subtitle_truth"
+    }
+    if superseded_truth_ids is not None:
+        # C12's sealed v3 full-text operator pin retires only the historical
+        # source-truth *text* owner set.  Its old frozen boundary owners remain
+        # in the immutable geometry contract, but are zero current delivery
+        # owners and must each be named by the sealed pre-redelivery audit.
+        return bool(
+            scope_valid
+            and not truth_rows
+            and frozen_ids.issubset(superseded_truth_ids)
+        )
     valid = scope_valid
     expected_ids: set[str] = set()
     seen_ids: set[str] = set()
@@ -585,21 +621,19 @@ def _source_truth_owner_set_valid(
             and _normalized_windows(owner.get("local_windows")) == windows
         ):
             valid = False
-    frozen_ids = {
-        owner_id
-        for owner_kind, owner_id in frozen_owner_keys
-        if owner_kind == "source_subtitle_truth"
-    }
     return valid and frozen_ids == expected_ids
 
 
 def _story_owner_set_valid(
     *,
     chat_authority: Mapping[str, object],
+    chat_authority_path: Path | None = None,
     frozen_owner_by_key: Mapping[tuple[str, str], object],
     frozen_owner_keys: list[tuple[str, str]],
     story_start: int,
     story_end: int,
+    qixi_terminal_projection_authority: Mapping[str, object] | None = None,
+    qixi_delivery_start_ms: int | None = None,
 ) -> bool:
     expected: dict[tuple[str, str], list[dict[str, int]]] = {}
     valid = True
@@ -629,8 +663,39 @@ def _story_owner_set_valid(
                             row=row,
                             row_index=ordinal - 1,
                             chat_authority=chat_authority,
+                            chat_authority_path=chat_authority_path,
                         )
                     )
+                elif (
+                    owner_kind == "exact_read"
+                    and qixi_terminal_projection_authority is not None
+                    and isinstance(qixi_delivery_start_ms, int)
+                    and not isinstance(qixi_delivery_start_ms, bool)
+                    and validate_terminal_baseline_replay_reconciliation(
+                        row,
+                        baseline_audit=chat_authority.get(
+                            "redelivery_subtitle_baseline_audit"
+                        ),
+                        terminal_projection_authority=qixi_terminal_projection_authority,
+                        delivery_start_ms=qixi_delivery_start_ms,
+                    )
+                ):
+                    # The typed terminal replay retires the text surface but
+                    # expressly preserves its already-frozen boundary owner.
+                    # Continue through the ordinary owner identity/window
+                    # checks below instead of silently dropping this row.
+                    pass
+                elif (
+                    owner_kind == "exact_read"
+                    and isinstance(reconciliation, Mapping)
+                    and reconciliation.get("schema_version")
+                    == "qixi-terminal-baseline-replay-reconciliation.v1"
+                ):
+                    # A Qixi-shaped receipt cannot inherit the permissive
+                    # historical reconciliation path.  Without the
+                    # manifest-bound terminal authority and an exact replay,
+                    # it must fail rather than erase a frozen owner.
+                    return False
                 else:
                     continue
             if owner_kind == "entity_repair" and row.get("mode") == "exact_final_cpa_self_heal":
@@ -638,6 +703,7 @@ def _story_owner_set_valid(
                     row=row,
                     row_index=ordinal - 1,
                     chat_authority=chat_authority,
+                    chat_authority_path=chat_authority_path,
                 )
                 continue
             if owner_kind == "exact_read" and row.get("owner_eligible") is not True:
@@ -697,6 +763,7 @@ def _exact_final_superseded_boundary_owner_valid(
     row: Mapping[str, object],
     row_index: int,
     chat_authority: Mapping[str, object],
+    chat_authority_path: Path | None = None,
 ) -> bool:
     """Keep one frozen boundary owner after an exact same-window CPA edit."""
 
@@ -773,8 +840,64 @@ def _exact_final_superseded_boundary_owner_valid(
             row=successor,
             row_index=successor_index,
             chat_authority=chat_authority,
+            chat_authority_path=chat_authority_path,
         )
     )
+
+
+def _final_surface_registration_and_history_valid(
+    *,
+    row: Mapping[str, object],
+    row_index: int,
+    chat_authority: Mapping[str, object],
+    pending_allowed: bool,
+) -> bool:
+    repair_sha256 = row.get("exact_final_repair_sha256")
+    registrations = chat_authority.get("exact_final_cpa_surface_registrations")
+    self_heal = chat_authority.get("exact_final_cpa_self_heal")
+    if not isinstance(registrations, list) or not isinstance(self_heal, Mapping):
+        return False
+    if not (
+        self_heal.get("schema_version") == "exact-final-cpa-self-heal-audit.v1"
+        and self_heal.get("status") == ("REVIEW_PENDING" if pending_allowed else "PASS")
+    ):
+        return False
+    matching_registrations = [
+        registration
+        for registration in registrations
+        if isinstance(registration, Mapping)
+        and registration.get("schema_version") == "exact-final-cpa-surface-registration.v1"
+        and registration.get("status") == "REGISTERED"
+        and registration.get("owner_entity_repair_index") == row_index
+        and registration.get("exact_final_repair_sha256") == repair_sha256
+    ]
+    if len(matching_registrations) != 1:
+        return False
+    passes = self_heal.get("passes")
+    if not isinstance(passes, list):
+        return False
+    matching_receipts = []
+    for pass_row in passes:
+        repairs = pass_row.get("repairs") if isinstance(pass_row, Mapping) else None
+        if not isinstance(repairs, list):
+            return False
+        for repair in repairs:
+            if not isinstance(repair, Mapping):
+                return False
+            digest = (
+                "sha256:"
+                + hashlib.sha256(
+                    json.dumps(
+                        repair,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
+            )
+            if digest == repair_sha256:
+                matching_receipts.append(repair)
+    return len(matching_receipts) == 1
 
 
 def _post_boundary_freeze_surface_owner_valid(
@@ -782,6 +905,7 @@ def _post_boundary_freeze_surface_owner_valid(
     row: Mapping[str, object],
     row_index: int,
     chat_authority: Mapping[str, object],
+    chat_authority_path: Path | None = None,
 ) -> bool:
     """Verify an exact-final surface owner without reopening boundary owners.
 
@@ -814,52 +938,18 @@ def _post_boundary_freeze_surface_owner_valid(
     ):
         return False
 
-    registrations = chat_authority.get("exact_final_cpa_surface_registrations")
-    if not isinstance(registrations, list):
-        return False
-    matching_registrations = [
-        registration
-        for registration in registrations
-        if isinstance(registration, Mapping)
-        and registration.get("schema_version") == "exact-final-cpa-surface-registration.v1"
-        and registration.get("status") == "REGISTERED"
-        and registration.get("owner_entity_repair_index") == row_index
-        and registration.get("exact_final_repair_sha256") == repair_sha256
-    ]
-    if len(matching_registrations) != 1:
-        return False
-
     self_heal = chat_authority.get("exact_final_cpa_self_heal")
-    passes = self_heal.get("passes") if isinstance(self_heal, Mapping) else None
-    if not (
+    if (
         isinstance(self_heal, Mapping)
-        and self_heal.get("schema_version") == "exact-final-cpa-self-heal-audit.v1"
-        and self_heal.get("status") == "PASS"
-        and isinstance(passes, list)
+        and self_heal.get("status") == "REVIEW_PENDING"
     ):
         return False
-    matching_receipts = []
-    for pass_row in passes:
-        repairs = pass_row.get("repairs") if isinstance(pass_row, Mapping) else None
-        if not isinstance(repairs, list):
-            return False
-        for repair in repairs:
-            if not isinstance(repair, Mapping):
-                return False
-            digest = (
-                "sha256:"
-                + hashlib.sha256(
-                    json.dumps(
-                        repair,
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                ).hexdigest()
-            )
-            if digest == repair_sha256:
-                matching_receipts.append(repair)
-    return len(matching_receipts) == 1
+    return _final_surface_registration_and_history_valid(
+        row=row,
+        row_index=row_index,
+        chat_authority=chat_authority,
+        pending_allowed=False,
+    )
 
 
 def _retry_verification_valid(
@@ -896,7 +986,10 @@ def _frozen_owner_contract_valid(
     frozen: object,
     truth_rows: list[dict[str, Any]],
     chat_authority: Mapping[str, object],
+    chat_authority_path: Path | None = None,
     record: Mapping[str, object],
+    superseded_truth_ids: frozenset[str] | None = None,
+    qixi_terminal_projection_authority: Mapping[str, object] | None = None,
 ) -> tuple[bool, list[object] | None]:
     owners = frozen.get("owners") if isinstance(frozen, Mapping) else None
     owner_keys = [
@@ -948,6 +1041,13 @@ def _frozen_owner_contract_valid(
         story_start=story_start,
         story_end=story_end,
         owner_scope=owner_scope,
+        superseded_truth_ids=superseded_truth_ids,
+    )
+    boundary_audit = record.get("boundary_audit")
+    delivery_start = (
+        boundary_audit.get("final_start_ms")
+        if isinstance(boundary_audit, Mapping)
+        else None
     )
     return (
         bool(
@@ -957,10 +1057,13 @@ def _frozen_owner_contract_valid(
             and source_valid
             and _story_owner_set_valid(
                 chat_authority=chat_authority,
+                chat_authority_path=chat_authority_path,
                 frozen_owner_by_key=owner_by_key,
                 frozen_owner_keys=owner_keys,
                 story_start=story_start,
                 story_end=story_end,
+                qixi_terminal_projection_authority=qixi_terminal_projection_authority,
+                qixi_delivery_start_ms=delivery_start,
             )
             and isinstance(frozen, Mapping)
             and _retry_verification_valid(
@@ -1253,13 +1356,23 @@ def audit_source_truth_owner_attestations(
     chat_authority: dict[str, Any],
     record_path: Path | None,
     record: dict[str, Any],
+    subtitle_path: Path | None = None,
     provenance: dict[str, Any] | None = None,
+    qixi_terminal_projection_authority: Mapping[str, object] | None = None,
 ) -> None:
     """Audit final text ownership separately from boundary ownership."""
 
     truth_audit_raw = chat_authority.get("source_subtitle_truth_audit")
     truth_audit = truth_audit_raw if isinstance(truth_audit_raw, dict) else {}
-    if not _source_truth_audit_valid(truth_audit_raw, provenance=provenance):
+    truth_audit_valid = _source_truth_audit_valid(
+        truth_audit_raw,
+        provenance=provenance,
+        chat_authority=chat_authority,
+        record=record,
+        record_path=record_path,
+        subtitle_path=subtitle_path,
+    )
+    if not truth_audit_valid:
         issue_adder(
             issues,
             "SOURCE_TRUTH_AUDIT_MISSING_OR_INVALID",
@@ -1278,11 +1391,28 @@ def audit_source_truth_owner_attestations(
         for row in truth_audit.get(key) or []
         if isinstance(row, dict) and row.get("required") is False
     ]
-    if not _final_truth_owner_receipt_valid(
+    c12_superseded_truth_ids: frozenset[str] | None = None
+    c12_supersession = bool(
+        truth_audit_valid
+        and truth_audit.get("schema_version") == C12_SOURCE_TRUTH_SUPERSESSION_SCHEMA
+    )
+    if c12_supersession:
+        identifiers = truth_audit.get("superseded_truth_ids")
+        if isinstance(identifiers, list) and all(
+            isinstance(identifier, str) for identifier in identifiers
+        ):
+            c12_superseded_truth_ids = frozenset(identifiers)
+    truth_owner_valid = _final_truth_owner_receipt_valid(
         truth_owner=chat_authority.get("final_source_truth_owner_verification"),
         truth_rows=truth_rows,
         optional_truth_row_count=len(optional_rows),
-    ):
+    ) and (
+        not c12_supersession
+        or c12_zero_current_source_owner_receipt_valid(
+            chat_authority.get("final_source_truth_owner_verification")
+        )
+    )
+    if not truth_owner_valid:
         issue_adder(
             issues,
             "SOURCE_TRUTH_FINAL_OWNER_ATTESTATION_MISSING",
@@ -1342,7 +1472,10 @@ def audit_source_truth_owner_attestations(
         frozen=frozen,
         truth_rows=truth_rows,
         chat_authority=chat_authority,
+        chat_authority_path=chat_authority_path,
         record=record,
+        superseded_truth_ids=c12_superseded_truth_ids,
+        qixi_terminal_projection_authority=qixi_terminal_projection_authority,
     )
     if not frozen_valid:
         issue_adder(

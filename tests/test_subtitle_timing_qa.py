@@ -95,6 +95,87 @@ def test_flash_cue_extended_to_min_readable_but_not_into_next_cue():
     assert solo[0].source_end_ms == 11_000
 
 
+def test_typed_drop_window_clips_generated_extension_at_blank_start():
+    cues = [
+        _cue("staff", 266_680, 267_340, "staff"),
+        _cue("next", 269_300, 269_700, "哎"),
+    ]
+
+    result, report = sanitize_cue_timing(
+        cues,
+        [],
+        window_start_ms=9_770,
+        window_end_ms=320_860,
+        protected_blank_windows=((267_660, 268_900),),
+    )
+
+    assert [(cue.cue_id, cue.source_end_ms) for cue in result] == [
+        ("staff", 267_660),
+        ("next", 270_300),
+    ]
+    assert report["protected_blank_window_count"] == 1
+    action = next(item for item in report["actions"] if item["cue_id"] == "staff")
+    assert "protected_blank_window" in action["reasons"]
+    assert action["after"]["end_ms"] == 267_660
+
+
+def test_without_typed_drop_window_existing_retimer_behavior_is_unchanged():
+    cues = [
+        _cue("staff", 266_680, 267_340, "staff"),
+        _cue("next", 269_300, 269_700, "哎"),
+    ]
+
+    result, report = sanitize_cue_timing(
+        cues,
+        [],
+        window_start_ms=9_770,
+        window_end_ms=320_860,
+    )
+
+    assert [(cue.cue_id, cue.source_end_ms) for cue in result] == [
+        ("staff", 267_680),
+        ("next", 270_300),
+    ]
+    assert report["protected_blank_window_count"] == 0
+    action = next(item for item in report["actions"] if item["cue_id"] == "staff")
+    assert "protected_blank_window" not in action["reasons"]
+
+
+def test_protected_blank_does_not_shorten_original_overlap():
+    cue = _cue("original", 267_500, 268_600, "原始字幕")
+
+    result, report = sanitize_cue_timing(
+        [cue],
+        [],
+        window_start_ms=9_770,
+        window_end_ms=320_860,
+        protected_blank_windows=((267_660, 268_900),),
+    )
+
+    assert result[0].source_start_ms == cue.source_start_ms
+    assert result[0].source_end_ms == cue.source_end_ms
+    assert report["actions"] == []
+
+
+def test_malformed_protected_blank_windows_fail_closed():
+    cue = _cue("staff", 266_680, 267_340, "staff")
+
+    result, report = sanitize_cue_timing(
+        [cue],
+        [],
+        window_start_ms=9_770,
+        window_end_ms=320_860,
+        protected_blank_windows=(
+            (267_660, "bad"),
+            (True, 268_900),
+            (268_900, 267_660),
+        ),
+    )
+
+    assert result[0].source_end_ms == 267_680
+    assert report["protected_blank_window_count"] == 0
+
+
 def test_unreadable_leading_boundary_fragment_is_dropped_before_flash_extension():
     window = dict(window_start_ms=10_000, window_end_ms=20_000)
     cues = [

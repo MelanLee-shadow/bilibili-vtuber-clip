@@ -7,9 +7,13 @@ from copy import deepcopy
 import pytest
 
 from src.autoslice.producer_text_finalization import (
+    authorized_final_review_drop_windows,
     verify_chat_authority_final_surfaces,
 )
-from src.autoslice.acoustic_witness_adjudication import build_witness_request
+from src.autoslice.acoustic_witness_adjudication import (
+    INAUDIBLE_DECISION_CONTRACT,
+    build_witness_request,
+)
 from src.autoslice.speaker_common import HOST_SPEAKER
 from src.autoslice.surface_canon import canonicalize_expected_value_surfaces
 
@@ -48,6 +52,87 @@ def _truth_row(
             "required_text": "",
         },
     }
+
+
+def _typed_drop_row(*, start_ms: int = 267_660, end_ms: int = 268_900) -> dict:
+    digest = "a" * 64
+    witness = {
+        "schema_version": "subtitle-span-acoustic-witness.v1",
+        "status": "OBSERVED",
+        "target_audible": False,
+        "request_sha256": digest,
+    }
+    judge = {
+        "status": "JUDGED",
+        "choice": "DROP",
+        "decision_contract": INAUDIBLE_DECISION_CONTRACT,
+        "choice_set": ["CURRENT", "PROPOSED", "DROP"],
+        "check_request_sha256": digest,
+        "prompt_sha256": digest,
+        "completion_sha256": digest,
+    }
+    drop_authority = {
+        "schema_version": "subtitle-cpa-inaudible-drop-authority.v1",
+        "status": "PASS",
+        "decision_authority": "CPA_JUDGE",
+        "choice": "DROP",
+        "decision_contract": INAUDIBLE_DECISION_CONTRACT,
+        "target_audible": False,
+        "timing_immutable": True,
+        "original_request_sha256": digest,
+        "effective_drop_request_sha256": digest,
+        "original_witness_request_sha256": digest,
+        "judge_prompt_sha256": digest,
+        "judge_completion_sha256": digest,
+    }
+    return {
+        "mode": "final_review_context_adjudication",
+        "action": "DROP_CUE",
+        "repair_class": "acoustic_drop_cue",
+        "policy_branch": "CPA_JUDGE_APPLY_INAUDIBLE_DROP_CUE",
+        "decision_authority": "CPA_JUDGE",
+        "timing_immutable": True,
+        "after": [""],
+        "before": ["咳咳咳"],
+        "structured_exact_text": "",
+        "request_sha256": digest,
+        "acoustic_witness": witness,
+        "judge": judge,
+        "drop_authority": drop_authority,
+        "mutation_authority": {
+            "schema_version": "subtitle-correction-mutation-authority.v1",
+            "status": "PASS",
+            "basis": "CPA_EXPLICIT_INAUDIBLE_DROP",
+        },
+        "matched_start_ms": start_ms,
+        "matched_end_ms": end_ms,
+    }
+
+
+def test_authorized_drop_window_extractor_rejects_untyped_drop():
+    typed = _typed_drop_row()
+    untyped = deepcopy(typed)
+    untyped["drop_authority"]["status"] = "FAIL"
+
+    assert authorized_final_review_drop_windows(
+        {"entity_repairs": [typed, untyped]}
+    ) == ((267_660, 268_900),)
+    assert authorized_final_review_drop_windows({"entity_repairs": [untyped]}) == ()
+
+
+def test_typed_drop_rejects_original_subtitle_overlap():
+    row = _typed_drop_row(start_ms=27_500, end_ms=28_600)
+    final = _srt((27_500, 28_600, "原始字幕"))
+
+    assert not verify_chat_authority_final_surfaces(
+        {"entity_repairs": [row]},
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=0,
+        delivery_end_ms=300_000,
+    )
+    assert row["final_drop_cue_empty_text_window"] is False
+    assert row["final_drop_cue_empty_speaker_window"] is False
 
 
 def _audit(*rows: dict, baseline: dict | None = None) -> dict:

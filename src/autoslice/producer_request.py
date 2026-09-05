@@ -52,6 +52,9 @@ def parse_producer_args(
     default_speaker_mode: str,
 ) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=description)
+    configured_correction = os.environ.get("AUTOSLICE_CORRECTION_MODE", "bcut_agy_cpa")
+    if configured_correction not in ("bcut_agy_cpa", "moss_cpa", "cpa"):
+        parser.error("AUTOSLICE_CORRECTION_MODE must retain CPA: bcut_agy_cpa, moss_cpa or cpa")
     parser.add_argument("--spec", type=Path, required=True)
     # 媒体宿主由用户自己决定；默认本机（媒体在别的机器时显式传 --ssh-host）。
     parser.add_argument("--ssh-host", default="localhost")
@@ -106,9 +109,9 @@ def parse_producer_args(
     )
     parser.add_argument(
         "--correct",
-        choices=("bcut_agy_cpa", "cpa", "agy", "none"),
-        default="bcut_agy_cpa",
-        help="correction: bcut_agy_cpa = BCUT draft + AGY refine (hears audio) + CPA reconcile (default, best quality); cpa = CPA text-only (fast, blind to audio); agy = AGY refine only; none = raw BCUT.",
+        choices=("bcut_agy_cpa", "moss_cpa", "cpa", "agy", "none"),
+        default=configured_correction,
+        help="correction: moss_cpa = MOSS Pro + mandatory CPA (candidate); bcut_agy_cpa = BCUT + AGY + mandatory CPA (default); cpa = BCUT + mandatory CPA; agy/none = diagnostic only.",
     )
     parser.add_argument(
         "--screen-text",
@@ -119,6 +122,14 @@ def parse_producer_args(
         "--reuse-cover",
         action="store_true",
         help="subtitle-only re-run: keep the EXISTING delivered cover, skip the AI cover (art-direction LLM + gpt-image-2 ~90s/clip). Title still regenerates. Use when re-correcting subtitles on an already-covered clip.",
+    )
+    parser.add_argument(
+        "--prepare-only",
+        action="store_true",
+        help=(
+            "build and hash-seal a candidate-private delivery handle without "
+            "writing public delivery targets; the runner commits it later"
+        ),
     )
     return parser.parse_args(argv)
 

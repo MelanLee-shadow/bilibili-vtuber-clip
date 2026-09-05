@@ -31,6 +31,7 @@ import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from typing import Any, Iterable
@@ -46,8 +47,55 @@ STATE_SCHEMA_VERSION = "bililive-recorder-adapter-state.v1"
 SOURCE_DISPOSITION_SCHEMA_VERSION = "recording-connection-stub.v1"
 SOURCE_DISPOSITION_STATUS = "IGNORED_CONNECTION_STUB"
 SOURCE_DISPOSITION_REASON = "RECORDER_CONNECTION_STUB_NO_DECODABLE_VIDEO"
+# Explicit operator dispositions for a closed/truncated tail incident.  These
+# are intentionally separate from the 0x0 connection-stub schema above.
+TRUNCATED_SOURCE_DISPOSITION_SCHEMA_VERSION = "recording-truncated-source-disposition.v1"
+TRUNCATED_SOURCE_DISPOSITION_ACTIONS = frozenset(
+    {"RECOVERED_TRUNCATED_RECORDING", "IGNORED_TRUNCATED_RECONNECT_FRAGMENT"}
+)
+TRUNCATED_SOURCE_DISPOSITION_RECOVERED = "RECOVERED_TRUNCATED_RECORDING"
+TRUNCATED_SOURCE_DISPOSITION_IGNORED = "IGNORED_TRUNCATED_RECONNECT_FRAGMENT"
+TRUNCATED_SOURCE_DISPOSITION_ERROR_CATEGORIES = frozenset(
+    {
+        "FILE_CLOSED_SIZE_MISMATCH",
+        "FILE_CLOSED_MISSING",
+        "FILE_CLOSED_SOURCE_MISSING",
+        "OPEN_WITHOUT_CLOSE",
+        "XML_TAIL_FINALIZATION",
+    }
+)
+TRUNCATED_SOURCE_DISPOSITION_MAX_FRAGMENT_BYTES = 5_000_000
+TRUNCATED_SOURCE_DISPOSITION_MAX_FRAGMENT_DURATION_SECONDS = 12.0
+TRUNCATED_SOURCE_MANIFEST_SCHEMA_VERSION = "recording-truncated-source-manifest.v1"
+# A recovered row may only rebind output metadata through the explicit
+# manifest-apply path.  This is deliberately separate from the generic FUSE
+# identity-rebind ledger used by connection-stub rows.
+TRUNCATED_SOURCE_METADATA_REBIND_SCHEMA_VERSION = (
+    "recording-truncated-source-metadata-rebind.v1"
+)
+TRUNCATED_SOURCE_METADATA_REBIND_POLICY = "OUTPUT_MP4_MTIME_CTIME_REATTESTATION"
+# Current operator-attested FFmpeg warning projection.  Future warning text
+# requires a new manifest value; the normalization rule below remains narrow.
+TRUNCATED_SOURCE_CURRENT_NORMALIZED_WARNING_SHA256 = (
+    "c4f214c2cc89de92ef9de91c559a17bd423e628d66b4a661a57f4df1cfd33a80"
+)
 SOURCE_DISPOSITION_REBIND_SCHEMA_VERSION = "recording-source-fuse-identity-rebind.v1"
 SOURCE_DISPOSITION_REBIND_POLICY = "FUSE_REMOUNT_DEVICE_INODE_REBIND"
+SOURCE_DISPOSITION_REUSED_PORTABLE_REBIND_POLICY = (
+    "FUSE_REMOUNT_REUSED_PORTABLE_IDENTITY_REBIND"
+)
+SOURCE_DISPOSITION_REUSED_PORTABLE_TIMESTAMP_REBIND_SCHEMA_VERSION = (
+    "recording-source-fuse-reused-portable-timestamp-rebind.v1"
+)
+SOURCE_DISPOSITION_REUSED_PORTABLE_TIMESTAMP_REBIND_POLICY = (
+    "FUSE_REMOUNT_REUSED_PORTABLE_IDENTITY_SUCCESSOR_MTIME_CTIME_REATTESTATION"
+)
+SOURCE_DISPOSITION_FIRST_TIMESTAMP_REBIND_SCHEMA_VERSION = (
+    "recording-source-fuse-first-identity-timestamp-rebind.v1"
+)
+SOURCE_DISPOSITION_FIRST_TIMESTAMP_REBIND_POLICY = (
+    "FUSE_FIRST_IDENTITY_SUCCESSOR_MTIME_CTIME_REATTESTATION"
+)
 SOURCE_DISPOSITION_TIMESTAMP_REBIND_SCHEMA_VERSION = (
     "recording-source-fuse-timestamp-rebind.v1"
 )
@@ -56,6 +104,7 @@ SOURCE_DISPOSITION_REBIND_TASK_SCHEMA_VERSION = "recording-source-fuse-identity-
 SOURCE_DISPOSITION_REBIND_HASH_RESULT_SCHEMA_VERSION = (
     "recording-source-fuse-identity-rebind-hash-result.v1"
 )
+CONNECTION_STUB_BOOTSTRAP_RECEIPT_SCHEMA_VERSION = "recording-connection-stub-bootstrap.v1"
 # A real 531 MiB CloudFS successor took more than 100 seconds to become fully
 # readable during the remount repair.  The read runs in an isolated
 # child, so keep the heartbeat responsive while giving a healthy cold-cache
@@ -65,7 +114,7 @@ SOURCE_DISPOSITION_REBIND_MAX_ATTEMPTS = 2
 BACKEND = "BililiveRecorder"
 QUALITY_PRIORITY = ("avc10000", "avc400", "avc250")
 CONNECTION_STUB_MAX_SIZE_BYTES = 5 * 1024 * 1024
-CONNECTION_STUB_MAX_DURATION_SECONDS, CONNECTION_STUB_MAX_SUCCESSOR_GAP_SECONDS = 10.0, 2.0
+CONNECTION_STUB_MAX_DURATION_SECONDS, CONNECTION_STUB_MAX_SUCCESSOR_GAP_SECONDS = 10.0, 3.0
 CONNECTION_STUB_MAX_XML_EVENT_COUNT = 1
 FILENAME_RX_TEMPLATE = r"^{room}_(?P<stamp>20\d{{6}}-\d{{2}}-\d{{2}}-\d{{2}})\.flv$"
 GRAPHQL_ROOM_QUERY = """
@@ -124,6 +173,24 @@ class SourceDispositionIdentityRebindRequired(AdapterError):
         super().__init__("source disposition FUSE identity rebind is required")
         self.validation = validation
         self.paths = paths
+
+
+class TruncatedSourceMetadataRebindRequired(AdapterError):
+    """A recovered row needs the explicit operator metadata-rebind apply."""
+
+    def __init__(
+        self,
+        *,
+        previous_fingerprint: dict[str, Any],
+        current_fingerprint: dict[str, Any],
+        previous_receipt_sha256: str | None,
+        output_sha256: str,
+    ) -> None:
+        super().__init__("truncated source output MP4 metadata rebind is required")
+        self.previous_fingerprint = previous_fingerprint
+        self.current_fingerprint = current_fingerprint
+        self.previous_receipt_sha256 = previous_receipt_sha256
+        self.output_sha256 = output_sha256
 
 
 _IDENTITY_REBIND_CHILDREN: dict[int, subprocess.Popen[bytes]] = {}
@@ -188,6 +255,14 @@ _FILE_STABLE_FINGERPRINT_KEYS = ("size_bytes", "mtime_ns", "ctime_ns", "mode")
 _DISPOSITION_FILE_ROLES = ("source", "xml", "successor_source", "successor_mp4")
 _TIMESTAMP_REBIND_ROLES = ("successor_source", "successor_mp4")
 _TIMESTAMP_REBIND_FIELDS = ("mtime_ns", "ctime_ns")
+_MIXED_REBIND_SCHEMA_VERSION = "recording-source-fuse-identity-timestamp-rebind.v1"
+_MIXED_REBIND_POLICY = "FUSE_REMOUNT_IDENTITY_AND_SUCCESSOR_MTIME_CTIME_REATTESTATION"
+_MIXED_REBIND_CHANGED_FIELDS = {
+    "source": ["device", "inode"],
+    "xml": ["device", "inode"],
+    "successor_source": ["mtime_ns", "ctime_ns", "device", "inode"],
+    "successor_mp4": ["mtime_ns", "ctime_ns", "device", "inode"],
+}
 _HISTORICAL_SHA_BASIS = "HISTORICAL_SHA256_MATCH"
 _LEGACY_SUCCESSOR_SOURCE_BASIS = "LEGACY_NO_PRIOR_SHA256_WEBHOOK_FINALIZED_LEDGER_STABLE_STAT"
 
@@ -308,6 +383,81 @@ def _portable_mount_identity(identity: Any) -> dict[str, Any] | None:
         "filesystem_type": identity.get("filesystem_type"),
         "mount_source": identity.get("mount_source"),
     }
+
+
+def _same_portable_mount_replaced(current: Any, previous: Any) -> bool:
+    """Recognize a namespace-local FUSE remount without promoting mount_id.
+
+    ``mount_id`` cannot identify a mount across namespaces, so it never joins
+    the portable identity.  A changed local id is only an additional witness
+    that a *new* receipt may be earned after the existing stable-field and
+    full-byte checks; it is never enough to accept a changed source by itself.
+    """
+
+    current_id = current.get("mount_id") if isinstance(current, dict) else None
+    previous_id = previous.get("mount_id") if isinstance(previous, dict) else None
+    return bool(
+        _portable_mount_identity(current) == _portable_mount_identity(previous)
+        and isinstance(current_id, int)
+        and not isinstance(current_id, bool)
+        and current_id > 0
+        and isinstance(previous_id, int)
+        and not isinstance(previous_id, bool)
+        and previous_id > 0
+        and current_id != previous_id
+    )
+
+
+def _all_roles_reindexed_within_replaced_mount(changes: dict[str, list[str]]) -> bool:
+    """Require the whole persisted evidence set to move together.
+
+    A lone inode change could be a renamed or substituted file.  The
+    same-portable path is reserved for CloudFS rebuilding the complete
+    directory view after a witnessed namespace-local remount.
+    """
+
+    return bool(
+        set(changes) == set(_DISPOSITION_FILE_ROLES)
+        and all(
+            "inode" in fields and set(fields).issubset({"device", "inode"})
+            for fields in changes.values()
+        )
+    )
+
+
+def _reused_portable_timestamp_rebind_changes(changes: dict[str, list[str]]) -> bool:
+    """Recognize exactly a whole-view reindex plus successor time reattestation."""
+
+    return bool(
+        set(changes) == set(_DISPOSITION_FILE_ROLES)
+        and all(
+            "inode" in changes[role]
+            and set(changes[role]).issubset({"device", "inode"})
+            for role in ("source", "xml")
+        )
+        and all(
+            {"inode", "mtime_ns", "ctime_ns"}.issubset(changes[role])
+            and set(changes[role]).issubset(
+                {"device", "inode", "mtime_ns", "ctime_ns"}
+            )
+            for role in _TIMESTAMP_REBIND_ROLES
+        )
+    )
+
+
+def _timestamp_rebind_changes(changes: dict[str, list[str]]) -> bool:
+    """Recognize the existing dual-role or hash-bound MP4-only timestamp shape."""
+
+    return bool(
+        changes == {"successor_mp4": list(_TIMESTAMP_REBIND_FIELDS)}
+        or (
+            set(changes) == set(_TIMESTAMP_REBIND_ROLES)
+            and all(
+                fields and all(field in _TIMESTAMP_REBIND_FIELDS for field in fields)
+                for fields in changes.values()
+            )
+        )
+    )
 
 
 def _shared_fuse_mount_identity(paths: Iterable[Path]) -> dict[str, Any] | None:
@@ -442,14 +592,44 @@ def _validate_disposition_rebind_chain(
             receipt.get("schema_version") == SOURCE_DISPOSITION_REBIND_SCHEMA_VERSION
             and receipt.get("policy") == SOURCE_DISPOSITION_REBIND_POLICY
         )
+        is_reused_portable_rebind = (
+            receipt.get("schema_version") == SOURCE_DISPOSITION_REBIND_SCHEMA_VERSION
+            and receipt.get("policy") == SOURCE_DISPOSITION_REUSED_PORTABLE_REBIND_POLICY
+        )
+        is_reused_portable_timestamp_rebind = (
+            receipt.get("schema_version")
+            == SOURCE_DISPOSITION_REUSED_PORTABLE_TIMESTAMP_REBIND_SCHEMA_VERSION
+            and receipt.get("policy")
+            == SOURCE_DISPOSITION_REUSED_PORTABLE_TIMESTAMP_REBIND_POLICY
+        )
+        is_first_timestamp_rebind = (
+            receipt.get("schema_version") == SOURCE_DISPOSITION_FIRST_TIMESTAMP_REBIND_SCHEMA_VERSION
+            and receipt.get("policy") == SOURCE_DISPOSITION_FIRST_TIMESTAMP_REBIND_POLICY
+        )
         is_timestamp_rebind = (
             receipt.get("schema_version") == SOURCE_DISPOSITION_TIMESTAMP_REBIND_SCHEMA_VERSION
             and receipt.get("policy") == SOURCE_DISPOSITION_TIMESTAMP_REBIND_POLICY
         )
-        expected_fields = base_receipt_fields | (
-            {"changed_fields"} if is_timestamp_rebind else set()
+        is_mixed_rebind = (
+            receipt.get("schema_version") == _MIXED_REBIND_SCHEMA_VERSION
+            and receipt.get("policy") == _MIXED_REBIND_POLICY
         )
-        if (not is_identity_rebind and not is_timestamp_rebind) or set(receipt) != expected_fields:
+        expected_fields = base_receipt_fields | (
+            {"changed_fields"}
+            if is_timestamp_rebind
+            or is_reused_portable_timestamp_rebind
+            or is_first_timestamp_rebind
+            or is_mixed_rebind
+            else set()
+        )
+        if (
+            not is_identity_rebind
+            and not is_reused_portable_rebind
+            and not is_reused_portable_timestamp_rebind
+            and not is_first_timestamp_rebind
+            and not is_timestamp_rebind
+            and not is_mixed_rebind
+        ) or set(receipt) != expected_fields:
             raise AdapterError("source disposition identity rebind receipt is malformed")
         integrity = receipt.get("canonical_integrity")
         unsigned = {key: value for key, value in receipt.items() if key != "canonical_integrity"}
@@ -503,24 +683,64 @@ def _validate_disposition_rebind_chain(
                 )
             ):
                 raise AdapterError("source disposition identity rebind binding drifted")
-        else:
-            assert is_timestamp_rebind
+        elif is_reused_portable_rebind:
+            if (
+                receipt.get("legacy_promotion") != _identity_rebind_legacy_contract()
+                or previous_receipt_sha256 is None
+                or previous_mount is None
+                or not _all_roles_reindexed_within_replaced_mount(changes)
+                or not _same_portable_mount_replaced(receipt.get("current_mount"), previous_mount)
+            ):
+                raise AdapterError("source disposition reused-portable rebind binding drifted")
+        elif is_reused_portable_timestamp_rebind:
             if (
                 receipt.get("legacy_promotion") != _timestamp_rebind_legacy_contract(row, previous)
                 or receipt.get("changed_fields") != changes
-                or set(changes) != set(_TIMESTAMP_REBIND_ROLES)
-                or any(
-                    field not in _TIMESTAMP_REBIND_FIELDS
-                    for fields in changes.values()
-                    for field in fields
-                )
-                or (
-                    previous_mount is not None
-                    and _portable_mount_identity(receipt.get("current_mount"))
-                    != _portable_mount_identity(previous_mount)
-                )
+                or previous_receipt_sha256 is None
+                or previous_mount is None
+                or not _reused_portable_timestamp_rebind_changes(changes)
+                or not _same_portable_mount_replaced(receipt.get("current_mount"), previous_mount)
             ):
-                raise AdapterError("source disposition timestamp rebind binding drifted")
+                raise AdapterError(
+                    "source disposition reused-portable timestamp rebind binding drifted"
+                )
+        elif is_first_timestamp_rebind:
+            if (
+                receipt.get("legacy_promotion") != _timestamp_rebind_legacy_contract(row, previous)
+                or receipt.get("changed_fields") != changes
+                or previous_receipt_sha256 is not None
+                or previous_mount is not None
+                or not _reused_portable_timestamp_rebind_changes(changes)
+            ):
+                raise AdapterError("source disposition first timestamp rebind binding drifted")
+        else:
+            if is_timestamp_rebind:
+                if (
+                    receipt.get("legacy_promotion")
+                    != _timestamp_rebind_legacy_contract(row, previous)
+                    or receipt.get("changed_fields") != changes
+                    or not _timestamp_rebind_changes(changes)
+                    or (
+                        previous_mount is not None
+                        and _portable_mount_identity(receipt.get("current_mount"))
+                        != _portable_mount_identity(previous_mount)
+                    )
+                ):
+                    raise AdapterError("source disposition timestamp rebind binding drifted")
+            else:
+                assert is_mixed_rebind
+                if (
+                    receipt.get("legacy_promotion")
+                    != _timestamp_rebind_legacy_contract(row, previous)
+                    or receipt.get("changed_fields") != changes
+                    or changes != _MIXED_REBIND_CHANGED_FIELDS
+                    or (
+                        previous_mount is not None
+                        and _portable_mount_identity(receipt.get("current_mount"))
+                        == _portable_mount_identity(previous_mount)
+                    )
+                ):
+                    raise AdapterError("source disposition mixed FUSE rebind binding drifted")
         previous = current
         previous_receipt_sha256 = _receipt_sha256(receipt)
         previous_mount = receipt["current_mount"]
@@ -563,10 +783,72 @@ def _prepare_disposition_identity_validation(
             return {"current": current, "pending_rebind": False}
         raise AdapterError("source disposition FUSE mount changed without file identity drift")
     changes = _changed_fingerprint_fields(effective, current)
-    timestamp_rebind = set(changes) == set(_TIMESTAMP_REBIND_ROLES) and all(
-        fields and all(field in _TIMESTAMP_REBIND_FIELDS for field in fields)
-        for fields in changes.values()
+    mixed_rebind = changes == _MIXED_REBIND_CHANGED_FIELDS
+    if mixed_rebind:
+        current_mount = current_mount or _shared_fuse_mount_identity(paths.values())
+        if current_mount is None:
+            raise AdapterError(
+                "source disposition mixed drifted outside one shared FUSE mount"
+            )
+        if has_receipts and _portable_mount_identity(current_mount) == _portable_mount_identity(
+            previous_mount
+        ):
+            raise AdapterError("source disposition mixed drifted within one FUSE mount epoch")
+        if not isinstance(identity_rebinds, list):
+            raise AdapterError("source disposition FUSE rebind lacks a durable receipt ledger")
+        return {
+            "current": current,
+            "effective": effective,
+            "previous_receipt_sha256": previous_receipt_sha256,
+            "previous_mount": previous_mount,
+            "current_mount": current_mount,
+            "changed_fields": changes,
+            "rebind_schema_version": _MIXED_REBIND_SCHEMA_VERSION,
+            "rebind_policy": _MIXED_REBIND_POLICY,
+            "pending_rebind": True,
+        }
+    first_timestamp_rebind = bool(
+        not has_receipts and _reused_portable_timestamp_rebind_changes(changes)
     )
+    if first_timestamp_rebind:
+        current_mount = _shared_fuse_mount_identity(paths.values())
+        if current_mount is None:
+            raise AdapterError(
+                "source disposition first timestamp drifted outside one shared FUSE mount"
+            )
+        if not isinstance(identity_rebinds, list):
+            raise AdapterError("source disposition FUSE rebind lacks a durable receipt ledger")
+        return {
+            "current": current,
+            "effective": effective,
+            "previous_receipt_sha256": None,
+            "previous_mount": None,
+            "current_mount": current_mount,
+            "changed_fields": changes,
+            "rebind_schema_version": SOURCE_DISPOSITION_FIRST_TIMESTAMP_REBIND_SCHEMA_VERSION,
+            "rebind_policy": SOURCE_DISPOSITION_FIRST_TIMESTAMP_REBIND_POLICY,
+            "pending_rebind": True,
+        }
+    reused_portable_timestamp_rebind = bool(
+        has_receipts
+        and _same_portable_mount_replaced(current_mount, previous_mount)
+        and _reused_portable_timestamp_rebind_changes(changes)
+    )
+    if reused_portable_timestamp_rebind:
+        if not isinstance(identity_rebinds, list):  # pragma: no cover - has_receipts proves it
+            raise AdapterError("source disposition FUSE rebind lacks a durable receipt ledger")
+        return {
+            "current": current,
+            "effective": effective,
+            "previous_receipt_sha256": previous_receipt_sha256,
+            "previous_mount": previous_mount,
+            "current_mount": current_mount,
+            "changed_fields": changes,
+            "rebind_schema_version": SOURCE_DISPOSITION_REUSED_PORTABLE_TIMESTAMP_REBIND_SCHEMA_VERSION,
+            "rebind_policy": SOURCE_DISPOSITION_REUSED_PORTABLE_TIMESTAMP_REBIND_POLICY,
+            "pending_rebind": True,
+        }
+    timestamp_rebind = _timestamp_rebind_changes(changes)
     if timestamp_rebind:
         current_mount = current_mount or _shared_fuse_mount_identity(paths.values())
         if current_mount is None:
@@ -599,9 +881,14 @@ def _prepare_disposition_identity_validation(
     current_mount = current_mount or _shared_fuse_mount_identity(paths.values())
     if current_mount is None:
         raise AdapterError("source disposition device/inode drifted outside one shared FUSE mount")
+    same_portable_mount_replaced = bool(
+        has_receipts
+        and _same_portable_mount_replaced(current_mount, previous_mount)
+        and _all_roles_reindexed_within_replaced_mount(changes)
+    )
     if has_receipts and _portable_mount_identity(current_mount) == _portable_mount_identity(
         previous_mount
-    ):
+    ) and not same_portable_mount_replaced:
         raise AdapterError("source disposition identity drifted within one FUSE mount epoch")
     if not isinstance(identity_rebinds, list):
         raise AdapterError("source disposition FUSE rebind lacks a durable receipt ledger")
@@ -613,7 +900,11 @@ def _prepare_disposition_identity_validation(
         "current_mount": current_mount,
         "changed_fields": changes,
         "rebind_schema_version": SOURCE_DISPOSITION_REBIND_SCHEMA_VERSION,
-        "rebind_policy": SOURCE_DISPOSITION_REBIND_POLICY,
+        "rebind_policy": (
+            SOURCE_DISPOSITION_REUSED_PORTABLE_REBIND_POLICY
+            if same_portable_mount_replaced
+            else SOURCE_DISPOSITION_REBIND_POLICY
+        ),
         "pending_rebind": True,
     }
 
@@ -676,11 +967,12 @@ def _finish_disposition_identity_rebind(
         "changed_fields"
     ):
         raise AdapterError("source disposition changed-field projection drifted during rebind")
-    timestamp_rebind = (
-        validation.get("rebind_schema_version")
-        == SOURCE_DISPOSITION_TIMESTAMP_REBIND_SCHEMA_VERSION
-        and validation.get("rebind_policy") == SOURCE_DISPOSITION_TIMESTAMP_REBIND_POLICY
-    )
+    metadata_rebind = validation.get("rebind_policy") in {
+        SOURCE_DISPOSITION_TIMESTAMP_REBIND_POLICY,
+        SOURCE_DISPOSITION_REUSED_PORTABLE_TIMESTAMP_REBIND_POLICY,
+        SOURCE_DISPOSITION_FIRST_TIMESTAMP_REBIND_POLICY,
+        _MIXED_REBIND_POLICY,
+    }
     receipt: dict[str, Any] = {
         "schema_version": validation["rebind_schema_version"],
         "policy": validation["rebind_policy"],
@@ -692,11 +984,11 @@ def _finish_disposition_identity_rebind(
         "current_bindings": current_bindings,
         "legacy_promotion": (
             _timestamp_rebind_legacy_contract(row, validation["effective"])
-            if timestamp_rebind
+            if metadata_rebind
             else _identity_rebind_legacy_contract()
         ),
     }
-    if timestamp_rebind:
+    if metadata_rebind:
         receipt["changed_fields"] = validation["changed_fields"]
     receipt["canonical_integrity"] = {
         "algorithm": "sha256",
@@ -1182,6 +1474,1794 @@ def _canonical_json_sha256(payload: dict[str, Any]) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
+
+
+_TRUNCATED_ROW_COMMON_FIELDS = {
+    "schema_version",
+    "action",
+    "source_relative_path",
+    "source",
+    "xml",
+    "webhook",
+    "errors",
+    "recovery",
+    "source_action",
+    "canonical_integrity",
+}
+_TRUNCATED_RECOVERED_FIELDS = _TRUNCATED_ROW_COMMON_FIELDS | {
+    "outputs",
+    "finalized_ledger",
+    "metadata_rebinds",
+}
+_TRUNCATED_RECOVERED_LEGACY_FIELDS = _TRUNCATED_RECOVERED_FIELDS - {"metadata_rebinds"}
+_TRUNCATED_IGNORED_FIELDS = _TRUNCATED_ROW_COMMON_FIELDS
+_TRUNCATED_XML_RECOVERY_FIELDS = {
+    "repaired_sha256",
+    "tail_bytes_discarded",
+    "recovered_event_count",
+    "official_record_info",
+}
+_TRUNCATED_MEDIA_FIELDS = {
+    "duration_seconds",
+    "size_bytes",
+    "video_codec",
+    "audio_codec",
+    "width",
+    "height",
+}
+_TRUNCATED_RECOVERY_FIELDS = {
+    "source_media",
+    "stream_copy",
+    "packet_loss",
+    "full_decode",
+    "warning",
+}
+_TRUNCATED_FRAGMENT_RECOVERY_FIELDS = {"source_media"}
+_TRUNCATED_OUTPUT_FIELDS = {"path", "sha256", *_FILE_FINGERPRINT_KEYS}
+_TRUNCATED_MP4_OUTPUT_FIELDS = _TRUNCATED_OUTPUT_FIELDS | {"media"}
+_TRUNCATED_LEDGER_FIELDS = {
+    "source_size",
+    "source_mtime_ns",
+    "target",
+    "target_sha256",
+    "finalized_at",
+}
+_TRUNCATED_MANIFEST_FIELDS = {
+    "schema_version",
+    "room_id",
+    "rows",
+    "canonical_integrity",
+}
+_TRUNCATED_MANIFEST_ROW_COMMON_FIELDS = {
+    "source_relative_path",
+    "action",
+    "source",
+    "xml",
+    "webhook",
+    "errors",
+    "xml_repair",
+}
+_TRUNCATED_MANIFEST_RECOVERED_FIELDS = _TRUNCATED_MANIFEST_ROW_COMMON_FIELDS | {
+    "packet_loss_maximum",
+    "warning",
+    "expected",
+}
+_TRUNCATED_MANIFEST_IGNORED_FIELDS = _TRUNCATED_MANIFEST_ROW_COMMON_FIELDS
+_TRUNCATED_MANIFEST_FILE_FIELDS = {"path", "sha256", *_FILE_FINGERPRINT_KEYS}
+_TRUNCATED_MANIFEST_XML_REPAIR_FIELDS = {
+    "keep_bytes",
+    "tail_bytes_discarded",
+    "repaired_sha256",
+    "recovered_event_count",
+    "record_info",
+}
+_TRUNCATED_RECOVERY_EXPECTED_FIELDS = {
+    "source_media",
+    "source_packets",
+    "output_media",
+    "output_packets",
+    "output_sha256",
+    "stream_copy_stderr_normalized_sha256",
+    "full_decode_stderr_sha256",
+}
+_TRUNCATED_METADATA_REBIND_FIELDS = (
+    "path",
+    *_FILE_FINGERPRINT_KEYS,
+)
+_TRUNCATED_METADATA_REBIND_CHANGED_FIELDS = ["mtime_ns", "ctime_ns"]
+_TRUNCATED_METADATA_REBIND_RECEIPT_FIELDS = {
+    "schema_version",
+    "policy",
+    "manifest_sha256",
+    "previous_receipt_canonical_sha256",
+    "previous_fingerprint",
+    "current_fingerprint",
+    "changed_fields",
+    "output_sha256",
+    "canonical_integrity",
+}
+
+
+def _truncated_error(message: str) -> AdapterError:
+    return AdapterError(f"truncated source disposition: {message}")
+
+
+def _truncated_hex(value: Any, *, field: str) -> str:
+    text = str(value or "")
+    if re.fullmatch(r"[0-9a-f]{64}", text) is None:
+        raise _truncated_error(f"{field} is not a lowercase SHA-256")
+    return text
+
+
+def _truncated_normalized_stderr_sha256(stderr: str) -> str:
+    """Bind ffmpeg diagnostics while ignoring only its transient pointer."""
+
+    normalized = re.sub(r"0x[0-9A-Fa-f]+", "0xHEX", stderr or "")
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _truncated_relative(relative: Any, *, room_id: int | str | None = None) -> str:
+    text = str(relative or "")
+    path = PurePosixPath(text)
+    if (
+        not text
+        or "\\" in text
+        or path.is_absolute()
+        or ".." in path.parts
+        or len(path.parts) != 2
+        or re.fullmatch(r"20\d{2}-\d{2}-\d{2}", path.parts[0]) is None
+    ):
+        raise _truncated_error("source_relative_path is not a safe two-part path")
+    if room_id is not None:
+        filename_rx = FILENAME_RX_TEMPLATE.format(room=re.escape(str(room_id)))
+        if re.fullmatch(filename_rx, path.parts[1]) is None:
+            raise _truncated_error("source_relative_path does not match the room filename")
+    return text
+
+
+def _truncated_fingerprint(value: Any, *, field: str) -> dict[str, int]:
+    if not isinstance(value, dict) or set(value) != set(_FILE_FINGERPRINT_KEYS):
+        raise _truncated_error(f"{field} fingerprint fields are invalid")
+    result: dict[str, int] = {}
+    for key in _FILE_FINGERPRINT_KEYS:
+        item = value.get(key)
+        if not isinstance(item, int) or isinstance(item, bool) or item < 0:
+            raise _truncated_error(f"{field}.{key} is invalid")
+        result[key] = item
+    return result
+
+
+def _truncated_file_binding(value: Any, *, field: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {"path", "sha256", *_FILE_FINGERPRINT_KEYS}:
+        raise _truncated_error(f"{field} fields are invalid")
+    if not isinstance(value.get("path"), str) or not value["path"]:
+        raise _truncated_error(f"{field}.path is invalid")
+    _truncated_hex(value.get("sha256"), field=f"{field}.sha256")
+    _truncated_fingerprint(
+        {key: value.get(key) for key in _FILE_FINGERPRINT_KEYS},
+        field=field,
+    )
+    return value
+
+
+def _truncated_namespace_path_binding(
+    value: Any,
+    *,
+    expected_relative: str,
+    field: str,
+) -> str:
+    """Allow only a different mount prefix for a canonical relative path."""
+
+    if not isinstance(value, str) or not value or "\\" in value:
+        raise _truncated_error(f"{field} path binding drifted")
+    path = PurePosixPath(value)
+    expected = PurePosixPath(expected_relative)
+    if (
+        not path.is_absolute()
+        or ".." in path.parts
+        or len(path.parts) < len(expected.parts)
+        or tuple(path.parts[-len(expected.parts) :]) != expected.parts
+    ):
+        raise _truncated_error(f"{field} path binding drifted")
+    return value
+
+
+def _truncated_media(value: Any, *, field: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != _TRUNCATED_MEDIA_FIELDS:
+        raise _truncated_error(f"{field} media evidence fields are invalid")
+    try:
+        duration = float(value["duration_seconds"])
+        size = int(value["size_bytes"])
+        width = int(value["width"])
+        height = int(value["height"])
+    except (TypeError, ValueError) as exc:
+        raise _truncated_error(f"{field} media evidence values are invalid") from exc
+    if (
+        duration <= 0
+        or not math.isfinite(duration)
+        or size <= 0
+        or width <= 0
+        or height <= 0
+        or not isinstance(value["video_codec"], str)
+        or not value["video_codec"]
+        or not isinstance(value["audio_codec"], str)
+        or not value["audio_codec"]
+    ):
+        raise _truncated_error(f"{field} media evidence is not positive dual-stream media")
+    return value
+
+
+def _truncated_xml_recovery(value: Any, *, room_id: int | str) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != _TRUNCATED_XML_RECOVERY_FIELDS:
+        raise _truncated_error("XML recovery evidence fields are invalid")
+    _truncated_hex(value.get("repaired_sha256"), field="xml.recovery.repaired_sha256")
+    tail_bytes = value.get("tail_bytes_discarded")
+    event_count = value.get("recovered_event_count")
+    if (
+        not isinstance(tail_bytes, int)
+        or isinstance(tail_bytes, bool)
+        or tail_bytes < 0
+        or not isinstance(event_count, int)
+        or isinstance(event_count, bool)
+        or event_count < 0
+        or not isinstance(value.get("official_record_info"), dict)
+        or value["official_record_info"].get("roomid") != str(room_id)
+    ):
+        raise _truncated_error("XML recovery evidence values are invalid")
+    return value
+
+
+def _truncated_webhook(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {
+        "status",
+        "session_id",
+        "opening_event_id",
+        "closing_event_id",
+        "file_open_time",
+        "file_close_time",
+        "file_size",
+        "duration",
+    }:
+        raise _truncated_error("webhook projection fields are invalid")
+    if value.get("status") not in {"OPEN", "CLOSED"}:
+        raise _truncated_error("webhook status is invalid")
+    if not isinstance(value.get("session_id"), str) or not value["session_id"]:
+        raise _truncated_error("webhook session_id is invalid")
+    if not isinstance(value.get("opening_event_id"), str) or not value["opening_event_id"]:
+        raise _truncated_error("webhook opening_event_id is invalid")
+    if not isinstance(value.get("file_open_time"), str) or not value["file_open_time"]:
+        raise _truncated_error("webhook file_open_time is invalid")
+    _validate_webhook_timestamp(value["file_open_time"], field="file_open_time")
+    if value.get("status") == "CLOSED" and (
+        not isinstance(value.get("closing_event_id"), str)
+        or not value["closing_event_id"]
+        or not isinstance(value.get("file_size"), int)
+        or isinstance(value.get("file_size"), bool)
+        or value["file_size"] <= 0
+        or not isinstance(value.get("duration"), (int, float))
+        or isinstance(value.get("duration"), bool)
+        or float(value["duration"]) <= 0
+        or not isinstance(value.get("file_close_time"), str)
+        or not value["file_close_time"]
+    ):
+        raise _truncated_error("closed webhook projection is invalid")
+    if value.get("status") == "CLOSED":
+        _validate_webhook_timestamp(value["file_close_time"], field="file_close_time")
+    if value.get("status") == "OPEN" and any(
+        value.get(key) is not None
+        for key in ("closing_event_id", "file_close_time", "file_size", "duration")
+    ):
+        raise _truncated_error("open webhook projection contains close evidence")
+    return value
+
+
+def _truncated_error_binding(value: Any) -> list[dict[str, str]]:
+    """Validate the ordered ordinary-finalization error projection.
+
+    A disposition is allowed to suppress only the exact errors which the
+    ordinary finalization pass would currently report for this source.  Keep
+    this as a list (rather than a single category) because an OPEN source
+    legitimately projects both the missing-close error from candidate
+    discovery and the duplicate OPEN error from the webhook ledger pass.
+    """
+
+    if not isinstance(value, list) or not value:
+        raise _truncated_error("errors must be a non-empty ordered list")
+    result: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {"category", "message"}:
+            raise _truncated_error("error binding fields are invalid")
+        category = item.get("category")
+        message = item.get("message")
+        if category not in TRUNCATED_SOURCE_DISPOSITION_ERROR_CATEGORIES:
+            raise _truncated_error("error binding category is invalid")
+        if not isinstance(message, str) or not message:
+            raise _truncated_error("error binding message is invalid")
+        identity = (category, message)
+        if identity in seen:
+            raise _truncated_error("error binding contains a duplicate item")
+        seen.add(identity)
+        result.append({"category": category, "message": message})
+    return result
+
+
+def _truncated_ordinary_errors(
+    source_flv: Path,
+    evidence: Any,
+) -> list[dict[str, str]]:
+    """Recompute the ordinary errors which the adapter would emit now.
+
+    This deliberately mirrors the bounded checks in ``run_once``.  It does
+    not probe media, and therefore cannot turn a provider/ffmpeg failure into
+    a trusted disposition.  The source/XML/error projection remains exact;
+    any unrepresented runtime failure stays on the ordinary fail-closed path.
+    """
+
+    errors: list[dict[str, str]] = []
+    status = evidence.get("status") if isinstance(evidence, dict) else None
+    if status != "CLOSED":
+        errors.append(
+            {
+                "category": "FILE_CLOSED_MISSING",
+                "message": "source lacks BililiveRecorder FileClosed evidence",
+            }
+        )
+    else:
+        try:
+            source_size = source_flv.stat().st_size
+        except OSError:
+            errors.append(
+                {
+                    "category": "FILE_CLOSED_SOURCE_MISSING",
+                    "message": "FileClosed event points to a missing source file",
+                }
+            )
+        else:
+            expected_size = evidence.get("file_size")
+            if source_size != expected_size:
+                errors.append(
+                    {
+                        "category": "FILE_CLOSED_SIZE_MISMATCH",
+                        "message": (
+                            "source size does not match BililiveRecorder FileClosed "
+                            f"({source_size} != {expected_size})"
+                        ),
+                    }
+                )
+            else:
+                try:
+                    xml_to_jsonl(source_flv.with_suffix(".xml"))
+                except AdapterError as exc:
+                    errors.append(
+                        {
+                            "category": "XML_TAIL_FINALIZATION",
+                            "message": str(exc)[:1200],
+                        }
+                    )
+
+    if status == "OPEN":
+        errors.append(
+            {
+                "category": "OPEN_WITHOUT_CLOSE",
+                "message": "FileOpening has no matching FileClosed event",
+            }
+        )
+    return errors
+
+
+def _truncated_packet_counts(value: Any, *, field: str) -> dict[str, int]:
+    if not isinstance(value, dict) or set(value) != {"video", "audio"}:
+        raise _truncated_error(f"{field} packet counts are invalid")
+    result: dict[str, int] = {}
+    for key in ("video", "audio"):
+        item = value.get(key)
+        if not isinstance(item, int) or isinstance(item, bool) or item < 0:
+            raise _truncated_error(f"{field}.{key} packet count is invalid")
+        result[key] = item
+    return result
+
+
+def _validate_truncated_recovery_evidence(
+    value: Any,
+    *,
+    action: str,
+) -> dict[str, Any]:
+    expected = _TRUNCATED_RECOVERY_FIELDS if action == TRUNCATED_SOURCE_DISPOSITION_RECOVERED else _TRUNCATED_FRAGMENT_RECOVERY_FIELDS
+    if not isinstance(value, dict) or set(value) != expected:
+        raise _truncated_error("recovery evidence fields are invalid")
+    _truncated_media(value.get("source_media"), field="recovery.source_media")
+    if action == TRUNCATED_SOURCE_DISPOSITION_IGNORED:
+        return value
+    stream_copy = value.get("stream_copy")
+    if not isinstance(stream_copy, dict) or set(stream_copy) != {
+        "fflags",
+        "stderr_normalized_sha256",
+    } or stream_copy.get("fflags") != "+genpts+discardcorrupt":
+        raise _truncated_error("stream-copy discardcorrupt evidence is invalid")
+    _truncated_hex(
+        stream_copy.get("stderr_normalized_sha256"),
+        field="recovery.stream_copy.stderr_normalized_sha256",
+    )
+    packet_loss = value.get("packet_loss")
+    if not isinstance(packet_loss, dict) or set(packet_loss) != {
+        "source",
+        "output",
+        "dropped",
+        "maximum",
+    }:
+        raise _truncated_error("packet-loss evidence fields are invalid")
+    source_counts = _truncated_packet_counts(packet_loss.get("source"), field="packet_loss.source")
+    output_counts = _truncated_packet_counts(packet_loss.get("output"), field="packet_loss.output")
+    dropped = _truncated_packet_counts(packet_loss.get("dropped"), field="packet_loss.dropped")
+    maximum = _truncated_packet_counts(packet_loss.get("maximum"), field="packet_loss.maximum")
+    if any(
+        output_counts[key] > source_counts[key]
+        or source_counts[key] - output_counts[key] != dropped[key]
+        or dropped[key] > maximum[key]
+        for key in ("video", "audio")
+    ):
+        raise _truncated_error("packet-loss evidence exceeds the explicit maximum")
+    full_decode = value.get("full_decode")
+    if not isinstance(full_decode, dict) or set(full_decode) != {
+        "ok",
+        "map",
+        "xerror",
+        "command",
+        "stderr_sha256",
+    }:
+        raise _truncated_error("full-decode evidence fields are invalid")
+    if (
+        full_decode.get("ok") is not True
+        or full_decode.get("map") != "0"
+        or full_decode.get("xerror") is not True
+        or not isinstance(full_decode.get("command"), list)
+        or any(not isinstance(item, str) for item in full_decode["command"])
+        or "-xerror" not in full_decode["command"]
+        or "-c" in full_decode["command"]
+    ):
+        raise _truncated_error("full-decode evidence is not a true decode scan")
+    _truncated_hex(full_decode.get("stderr_sha256"), field="recovery.full_decode.stderr_sha256")
+    warning = value.get("warning")
+    if not isinstance(warning, dict) or set(warning) != {"sha256", "allowed"}:
+        raise _truncated_error("stderr warning evidence fields are invalid")
+    _truncated_hex(warning.get("sha256"), field="recovery.warning.sha256")
+    if not isinstance(warning.get("allowed"), bool):
+        raise _truncated_error("recovery.warning.allowed is invalid")
+    if warning["sha256"] != hashlib.sha256(b"").hexdigest() and warning["allowed"] is not True:
+        raise _truncated_error("non-empty stderr warning lacks explicit allow")
+    return value
+
+
+def _truncated_output_binding(
+    value: Any,
+    *,
+    field: str,
+    path: Path,
+    media: bool,
+    expected_relative: str | None = None,
+) -> dict[str, Any]:
+    expected = _TRUNCATED_MP4_OUTPUT_FIELDS if media else _TRUNCATED_OUTPUT_FIELDS
+    if not isinstance(value, dict) or set(value) != expected:
+        raise _truncated_error(f"{field} output binding fields are invalid")
+    _truncated_file_binding(
+        {key: item for key, item in value.items() if key != "media"},
+        field=field,
+    )
+    if expected_relative is None:
+        if value.get("path") != str(path):
+            raise _truncated_error(f"{field}.path does not match the source stem")
+    else:
+        _truncated_namespace_path_binding(
+            value.get("path"),
+            expected_relative=expected_relative,
+            field=f"{field}.path",
+        )
+    if media:
+        _truncated_media(value.get("media"), field=f"{field}.media")
+    return value
+
+
+def _truncated_metadata_fingerprint(value: Any, *, field: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != set(_TRUNCATED_METADATA_REBIND_FIELDS):
+        raise _truncated_error(f"{field} fields are invalid")
+    if not isinstance(value.get("path"), str) or not value["path"]:
+        raise _truncated_error(f"{field}.path is invalid")
+    _truncated_fingerprint(
+        {key: value.get(key) for key in _FILE_FINGERPRINT_KEYS},
+        field=field,
+    )
+    return value
+
+
+def _truncated_metadata_fingerprint_from_binding(binding: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "path": binding.get("path"),
+        **{key: binding.get(key) for key in _FILE_FINGERPRINT_KEYS},
+    }
+
+
+def _validate_truncated_metadata_rebind_chain(
+    mp4: dict[str, Any],
+    metadata_rebinds: Any,
+) -> tuple[dict[str, Any], str | None]:
+    """Replay the row-local MP4 timestamp-rebind chain to its effective stat."""
+
+    if metadata_rebinds is None:
+        receipts: list[Any] = []
+    elif isinstance(metadata_rebinds, list):
+        receipts = metadata_rebinds
+    else:
+        raise _truncated_error("metadata rebind ledger is malformed")
+    previous = _truncated_metadata_fingerprint_from_binding(mp4)
+    previous_receipt_sha256: str | None = None
+    manifest_sha256: str | None = None
+    for receipt in receipts:
+        if not isinstance(receipt, dict) or set(receipt) != _TRUNCATED_METADATA_REBIND_RECEIPT_FIELDS:
+            raise _truncated_error("metadata rebind receipt is malformed")
+        if receipt.get("schema_version") != TRUNCATED_SOURCE_METADATA_REBIND_SCHEMA_VERSION:
+            raise _truncated_error("metadata rebind receipt schema version is invalid")
+        if receipt.get("policy") != TRUNCATED_SOURCE_METADATA_REBIND_POLICY:
+            raise _truncated_error("metadata rebind receipt policy is invalid")
+        receipt_manifest_sha256 = _truncated_hex(
+            receipt.get("manifest_sha256"),
+            field="metadata_rebind.manifest_sha256",
+        )
+        if manifest_sha256 is None:
+            manifest_sha256 = receipt_manifest_sha256
+        elif receipt_manifest_sha256 != manifest_sha256:
+            raise _truncated_error("metadata rebind manifest hash chain drifted")
+        receipt_previous_sha256 = receipt.get("previous_receipt_canonical_sha256")
+        if receipt_previous_sha256 is not None:
+            _truncated_hex(
+                receipt_previous_sha256,
+                field="metadata_rebind.previous_receipt_canonical_sha256",
+            )
+        if receipt_previous_sha256 != previous_receipt_sha256:
+            raise _truncated_error("metadata rebind receipt chain drifted")
+        integrity = receipt.get("canonical_integrity")
+        unsigned = {key: value for key, value in receipt.items() if key != "canonical_integrity"}
+        if integrity != {
+            "algorithm": "sha256",
+            "canonical_json_sha256": _canonical_json_sha256(unsigned),
+        }:
+            raise _truncated_error("metadata rebind receipt integrity mismatch")
+        if receipt.get("output_sha256") != mp4.get("sha256"):
+            raise _truncated_error("metadata rebind output SHA-256 drifted")
+        prior = _truncated_metadata_fingerprint(
+            receipt.get("previous_fingerprint"),
+            field="metadata_rebind.previous_fingerprint",
+        )
+        current = _truncated_metadata_fingerprint(
+            receipt.get("current_fingerprint"),
+            field="metadata_rebind.current_fingerprint",
+        )
+        if prior != previous or current["path"] != prior["path"]:
+            raise _truncated_error("metadata rebind fingerprint chain drifted")
+        if receipt.get("changed_fields") != _TRUNCATED_METADATA_REBIND_CHANGED_FIELDS:
+            raise _truncated_error("metadata rebind changed-fields projection drifted")
+        if any(
+            prior[key] != current[key]
+            for key in _FILE_FINGERPRINT_KEYS
+            if key not in _TRUNCATED_METADATA_REBIND_CHANGED_FIELDS
+        ) or any(
+            prior[key] == current[key] for key in _TRUNCATED_METADATA_REBIND_CHANGED_FIELDS
+        ):
+            raise _truncated_error("metadata rebind fingerprint projection drifted")
+        previous = current
+        previous_receipt_sha256 = str(receipt["canonical_integrity"]["canonical_json_sha256"])
+    return previous, previous_receipt_sha256
+
+
+def _append_truncated_metadata_rebind(
+    row: dict[str, Any],
+    *,
+    manifest_sha256: str,
+    required: TruncatedSourceMetadataRebindRequired,
+) -> None:
+    metadata_rebinds = row.get("metadata_rebinds")
+    if metadata_rebinds is None:
+        metadata_rebinds = []
+    if not isinstance(metadata_rebinds, list):
+        raise _truncated_error("metadata rebind ledger is malformed")
+    outputs = row.get("outputs")
+    mp4 = outputs.get("mp4") if isinstance(outputs, dict) else None
+    if not isinstance(mp4, dict):
+        raise _truncated_error("metadata rebind output binding is missing")
+    output_sha256 = _truncated_hex(mp4.get("sha256"), field="outputs.mp4.sha256")
+    if output_sha256 != required.output_sha256:
+        raise _truncated_error("metadata rebind output SHA-256 drifted")
+    receipt: dict[str, Any] = {
+        "schema_version": TRUNCATED_SOURCE_METADATA_REBIND_SCHEMA_VERSION,
+        "policy": TRUNCATED_SOURCE_METADATA_REBIND_POLICY,
+        "manifest_sha256": _truncated_hex(manifest_sha256, field="metadata rebind manifest SHA-256"),
+        "previous_receipt_canonical_sha256": required.previous_receipt_sha256,
+        "previous_fingerprint": required.previous_fingerprint,
+        "current_fingerprint": required.current_fingerprint,
+        "changed_fields": list(_TRUNCATED_METADATA_REBIND_CHANGED_FIELDS),
+        "output_sha256": output_sha256,
+    }
+    receipt["canonical_integrity"] = {
+        "algorithm": "sha256",
+        "canonical_json_sha256": _canonical_json_sha256(receipt),
+    }
+    metadata_rebinds.append(receipt)
+    row["metadata_rebinds"] = metadata_rebinds
+    row["canonical_integrity"] = {
+        "algorithm": "sha256",
+        "canonical_json_sha256": _canonical_json_sha256(
+            {key: value for key, value in row.items() if key != "canonical_integrity"}
+        ),
+    }
+
+
+def _truncated_finalized_ledger(
+    value: Any,
+    *,
+    source: Path,
+    target: Path,
+    expected_target_relative: str | None = None,
+) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != _TRUNCATED_LEDGER_FIELDS:
+        raise _truncated_error("finalized ledger fields are invalid")
+    _truncated_hex(value.get("target_sha256"), field="finalized_ledger.target_sha256")
+    if (
+        not isinstance(value.get("source_size"), int)
+        or isinstance(value.get("source_size"), bool)
+        or value["source_size"] < 1
+        or not isinstance(value.get("source_mtime_ns"), int)
+        or isinstance(value.get("source_mtime_ns"), bool)
+        or value["source_mtime_ns"] < 0
+        or not isinstance(value.get("finalized_at"), str)
+        or not value["finalized_at"]
+    ):
+        raise _truncated_error("finalized ledger values are invalid")
+    if expected_target_relative is not None:
+        _truncated_namespace_path_binding(
+            value.get("target"),
+            expected_relative=expected_target_relative,
+            field="finalized_ledger.target",
+        )
+    elif value.get("target") != str(target):
+        raise _truncated_error("finalized ledger target does not match the source stem")
+    return value
+
+
+def build_truncated_source_disposition(
+    source_flv: Path,
+    *,
+    record_root: Path,
+    action: str,
+    webhook: dict[str, Any],
+    xml_recovery: dict[str, Any],
+    recovery: dict[str, Any],
+    errors: list[dict[str, str]] | None = None,
+    outputs: dict[str, Any] | None = None,
+    finalized_ledger: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build an operator-supplied row; this function is never auto-discovered."""
+
+    if action not in TRUNCATED_SOURCE_DISPOSITION_ACTIONS:
+        raise _truncated_error("action is invalid")
+    relative = _truncated_relative(source_flv.relative_to(record_root).as_posix())
+    source_attestation = _attest_regular_file(source_flv)
+    xml_path = source_flv.with_suffix(".xml")
+    xml_attestation = _attest_regular_file(xml_path)
+    _truncated_webhook(webhook)
+    if errors is None:
+        errors = _truncated_ordinary_errors(source_flv, webhook)
+    bound_errors = _truncated_error_binding(errors)
+    if bound_errors != _truncated_ordinary_errors(source_flv, webhook):
+        raise _truncated_error("ordinary finalization error projection is not current")
+    _truncated_xml_recovery(xml_recovery, room_id=source_flv.name.split("_", 1)[0])
+    if action == TRUNCATED_SOURCE_DISPOSITION_RECOVERED:
+        # Keep the small builder API usable for Phase-A rows, but persist only
+        # the strict Phase-B evidence shape.
+        recovery = dict(recovery)
+        stream_copy = dict(recovery.get("stream_copy") or {})
+        if set(stream_copy) == {"fflags"}:
+            warning = recovery.get("warning")
+            if isinstance(warning, dict) and isinstance(warning.get("sha256"), str):
+                stream_copy["stderr_normalized_sha256"] = warning["sha256"]
+        recovery["stream_copy"] = stream_copy
+        full_decode = dict(recovery.get("full_decode") or {})
+        if set(full_decode) == {"ok", "map", "xerror", "command"}:
+            full_decode["stderr_sha256"] = hashlib.sha256(b"").hexdigest()
+        recovery["full_decode"] = full_decode
+    _validate_truncated_recovery_evidence(recovery, action=action)
+    row: dict[str, Any] = {
+        "schema_version": TRUNCATED_SOURCE_DISPOSITION_SCHEMA_VERSION,
+        "action": action,
+        "source_relative_path": relative,
+        "source": {"path": str(source_flv), **source_attestation},
+        "xml": {"path": str(xml_path), **xml_attestation, "recovery": xml_recovery},
+        "webhook": webhook,
+        "errors": bound_errors,
+        "recovery": recovery,
+        "source_action": {
+            "finalized": action == TRUNCATED_SOURCE_DISPOSITION_RECOVERED,
+            "delete_source": "never",
+            "move_source": "never",
+        },
+    }
+    target = source_flv.with_suffix(".mp4")
+    if action == TRUNCATED_SOURCE_DISPOSITION_RECOVERED:
+        if outputs is None or finalized_ledger is None:
+            raise _truncated_error("recovered disposition requires outputs and finalized ledger")
+        row["outputs"] = outputs
+        row["finalized_ledger"] = finalized_ledger
+        row["metadata_rebinds"] = []
+        _truncated_output_binding(outputs.get("mp4"), field="outputs.mp4", path=target, media=True)
+        _truncated_output_binding(
+            outputs.get("jsonl"), field="outputs.jsonl", path=source_flv.with_suffix(".jsonl"), media=False
+        )
+        _truncated_output_binding(
+            outputs.get("meta"), field="outputs.meta", path=source_flv.with_suffix(".meta.json"), media=False
+        )
+        _truncated_finalized_ledger(finalized_ledger, source=source_flv, target=target)
+        _validate_truncated_metadata_rebind_chain(outputs["mp4"], row["metadata_rebinds"])
+    elif outputs is not None or finalized_ledger is not None:
+        raise _truncated_error("ignored fragment cannot bind outputs or finalized ledger")
+    row["canonical_integrity"] = {
+        "algorithm": "sha256",
+        "canonical_json_sha256": _canonical_json_sha256(
+            {key: value for key, value in row.items() if key != "canonical_integrity"}
+        ),
+    }
+    return row
+
+
+def validate_truncated_source_disposition(
+    source_flv: Path,
+    row: Any,
+    *,
+    record_root: Path,
+    webhook_files: dict[str, Any],
+    finalized: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate an explicit typed row without rereading a large source FLV.
+
+    ponytail: namespace prefixes are compared lexically; canonical relative
+    paths plus all fingerprint, hash, ledger, and media gates remain strict.
+    """
+
+    if not isinstance(row, dict):
+        raise _truncated_error("row is malformed")
+    action = row.get("action")
+    if row.get("schema_version") != TRUNCATED_SOURCE_DISPOSITION_SCHEMA_VERSION:
+        raise _truncated_error("schema version is invalid")
+    expected_field_sets = (
+        (_TRUNCATED_RECOVERED_FIELDS, _TRUNCATED_RECOVERED_LEGACY_FIELDS)
+        if action == TRUNCATED_SOURCE_DISPOSITION_RECOVERED
+        else (_TRUNCATED_IGNORED_FIELDS,)
+        if action == TRUNCATED_SOURCE_DISPOSITION_IGNORED
+        else ()
+    )
+    if not expected_field_sets or set(row) not in expected_field_sets:
+        raise _truncated_error("row field set or action is invalid")
+    integrity = row.get("canonical_integrity")
+    unsigned = {key: value for key, value in row.items() if key != "canonical_integrity"}
+    if integrity != {
+        "algorithm": "sha256",
+        "canonical_json_sha256": _canonical_json_sha256(unsigned),
+    }:
+        raise _truncated_error("canonical integrity mismatch")
+    relative = _truncated_relative(row.get("source_relative_path"), room_id=source_flv.name.split("_", 1)[0])
+    try:
+        actual_relative = source_flv.relative_to(record_root).as_posix()
+    except ValueError as exc:
+        raise _truncated_error("source escaped recording root") from exc
+    if actual_relative != relative:
+        raise _truncated_error("source relative path mismatch")
+    source = row.get("source")
+    xml = row.get("xml")
+    if not isinstance(source, dict) or not isinstance(xml, dict):
+        raise _truncated_error("source/XML evidence is malformed")
+    _truncated_file_binding(source, field="source")
+    if set(xml) != {"path", "sha256", *_FILE_FINGERPRINT_KEYS, "recovery"}:
+        raise _truncated_error("xml fields are invalid")
+    _truncated_file_binding(
+        {key: item for key, item in xml.items() if key != "recovery"},
+        field="xml",
+    )
+    xml_recovery = xml.get("recovery")
+    _truncated_xml_recovery(xml_recovery, room_id=source_flv.name.split("_", 1)[0])
+    xml_path = source_flv.with_suffix(".xml")
+    _truncated_namespace_path_binding(
+        source.get("path"),
+        expected_relative=relative,
+        field="source",
+    )
+    _truncated_namespace_path_binding(
+        xml.get("path"),
+        expected_relative=str(PurePosixPath(relative).with_suffix(".xml")),
+        field="xml",
+    )
+    if _regular_file_fingerprint(source_flv) != {
+        key: source.get(key) for key in _FILE_FINGERPRINT_KEYS
+    }:
+        raise _truncated_error("source fingerprint drifted")
+    if _regular_file_fingerprint(xml_path) != {
+        key: xml.get(key) for key in _FILE_FINGERPRINT_KEYS
+    } or sha256_file(xml_path) != xml.get("sha256"):
+        raise _truncated_error("XML fingerprint or SHA-256 drifted")
+    _truncated_webhook(row.get("webhook"))
+    evidence = webhook_files.get(relative)
+    if not isinstance(evidence, dict) or row["webhook"] != _webhook_file_binding(evidence):
+        raise _truncated_error("webhook projection drifted")
+    errors = _truncated_error_binding(row.get("errors"))
+    if errors != _truncated_ordinary_errors(source_flv, evidence):
+        raise _truncated_error("ordinary finalization error projection drifted")
+    source_action = row.get("source_action")
+    expected_action = {
+        "finalized": action == TRUNCATED_SOURCE_DISPOSITION_RECOVERED,
+        "delete_source": "never",
+        "move_source": "never",
+    }
+    if source_action != expected_action:
+        raise _truncated_error("source action is invalid")
+    recovery = _validate_truncated_recovery_evidence(row.get("recovery"), action=action)
+    source_size = source["size_bytes"]
+    if action == TRUNCATED_SOURCE_DISPOSITION_IGNORED:
+        if (
+            source_size >= TRUNCATED_SOURCE_DISPOSITION_MAX_FRAGMENT_BYTES
+            or recovery["source_media"]["size_bytes"] != source_size
+            or float(recovery["source_media"]["duration_seconds"])
+            >= TRUNCATED_SOURCE_DISPOSITION_MAX_FRAGMENT_DURATION_SECONDS
+            or recovery["source_media"]["duration_seconds"] <= 0
+            or xml_recovery["recovered_event_count"] != 0
+            or relative in finalized
+            or any(
+                os.path.lexists(source_flv.with_suffix(suffix))
+                for suffix in (".mp4", ".jsonl", ".meta.json")
+            )
+        ):
+            raise _truncated_error("ignored fragment hard gate failed")
+        return row
+
+    outputs = row.get("outputs")
+    if not isinstance(outputs, dict) or set(outputs) != {"mp4", "jsonl", "meta"}:
+        raise _truncated_error("recovered output bindings are malformed")
+    target = source_flv.with_suffix(".mp4")
+    jsonl = source_flv.with_suffix(".jsonl")
+    meta = source_flv.with_suffix(".meta.json")
+    mp4 = _truncated_output_binding(
+        outputs["mp4"],
+        field="outputs.mp4",
+        path=target,
+        media=True,
+        expected_relative=str(PurePosixPath(relative).with_suffix(".mp4")),
+    )
+    if "metadata_rebinds" in row and not isinstance(row["metadata_rebinds"], list):
+        raise _truncated_error("metadata rebind ledger is malformed")
+    effective_mp4, previous_receipt_sha256 = _validate_truncated_metadata_rebind_chain(
+        mp4,
+        row.get("metadata_rebinds") if "metadata_rebinds" in row else None,
+    )
+    jsonl_binding = _truncated_output_binding(
+        outputs["jsonl"],
+        field="outputs.jsonl",
+        path=jsonl,
+        media=False,
+        expected_relative=str(PurePosixPath(relative).with_suffix(".jsonl")),
+    )
+    meta_binding = _truncated_output_binding(
+        outputs["meta"],
+        field="outputs.meta",
+        path=meta,
+        media=False,
+        expected_relative=str(PurePosixPath(relative).with_suffix(".meta.json")),
+    )
+    for binding, path, check_hash in (
+        (mp4, target, True),
+        (jsonl_binding, jsonl, True),
+        (meta_binding, meta, True),
+    ):
+        current_fingerprint = _regular_file_fingerprint(path)
+        expected_fingerprint = (
+            {key: effective_mp4[key] for key in _FILE_FINGERPRINT_KEYS}
+            if path == target
+            else {key: binding.get(key) for key in _FILE_FINGERPRINT_KEYS}
+        )
+        if current_fingerprint != expected_fingerprint:
+            if path == target:
+                changed_fields = [
+                    key
+                    for key in _FILE_FINGERPRINT_KEYS
+                    if expected_fingerprint[key] != current_fingerprint[key]
+                ]
+                current_sha256 = sha256_file(path)
+                if changed_fields == _TRUNCATED_METADATA_REBIND_CHANGED_FIELDS:
+                    if current_sha256 != binding.get("sha256"):
+                        raise _truncated_error("outputs.mp4 SHA-256 drifted")
+                    raise TruncatedSourceMetadataRebindRequired(
+                        previous_fingerprint={
+                            "path": mp4["path"],
+                            **expected_fingerprint,
+                        },
+                        current_fingerprint={
+                            "path": mp4["path"],
+                            **current_fingerprint,
+                        },
+                        previous_receipt_sha256=previous_receipt_sha256,
+                        output_sha256=str(binding["sha256"]),
+                    )
+            raise _truncated_error(f"{path.name} fingerprint drifted")
+        if check_hash and sha256_file(path) != binding.get("sha256"):
+            raise _truncated_error(f"{path.name} SHA-256 drifted")
+    if mp4["media"]["size_bytes"] != mp4["size_bytes"]:
+        raise _truncated_error("outputs.mp4 media size evidence drifted")
+    ledger = _truncated_finalized_ledger(
+        row.get("finalized_ledger"),
+        source=source_flv,
+        target=target,
+        expected_target_relative=str(PurePosixPath(relative).with_suffix(".mp4")),
+    )
+    current_ledger = finalized.get(relative)
+    if (
+        current_ledger != ledger
+        or ledger["source_size"] != source_size
+        or ledger["source_mtime_ns"] != source["mtime_ns"]
+        or ledger["target_sha256"] != mp4["sha256"]
+    ):
+        raise _truncated_error("finalized ledger binding drifted")
+    if xml_recovery["recovered_event_count"] < 0 or not errors:
+        raise _truncated_error("recovered XML/error evidence is invalid")
+    return row
+
+
+def _truncated_json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON field: {key}")
+        result[key] = value
+    return result
+
+
+def _truncated_load_json(path: Path, *, label: str) -> dict[str, Any]:
+    if path.is_symlink():
+        raise _truncated_error(f"{label} must not be a symlink")
+    try:
+        payload = json.loads(path.read_bytes(), object_pairs_hook=_truncated_json_pairs)
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        raise _truncated_error(f"{label} is unreadable: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise _truncated_error(f"{label} must be a JSON object")
+    return payload
+
+
+def _truncated_manifest_xml_repair(value: Any, *, room_id: int) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != _TRUNCATED_MANIFEST_XML_REPAIR_FIELDS:
+        raise _truncated_error("manifest XML repair fields are invalid")
+    for key in ("keep_bytes", "tail_bytes_discarded", "recovered_event_count"):
+        item = value.get(key)
+        if not isinstance(item, int) or isinstance(item, bool) or item < 0:
+            raise _truncated_error(f"manifest XML repair {key} is invalid")
+    _truncated_hex(value.get("repaired_sha256"), field="manifest.xml_repair.repaired_sha256")
+    record_info = value.get("record_info")
+    if (
+        not isinstance(record_info, dict)
+        or record_info.get("roomid") != str(room_id)
+        or any(not isinstance(key, str) or not isinstance(item, str) for key, item in record_info.items())
+    ):
+        raise _truncated_error("manifest XML repair record_info is invalid")
+    return value
+
+
+def _truncated_manifest_expected(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != _TRUNCATED_RECOVERY_EXPECTED_FIELDS:
+        raise _truncated_error("manifest recovered expected-outcome fields are invalid")
+    source_media = _truncated_media(value.get("source_media"), field="manifest.expected.source_media")
+    _truncated_media(value.get("output_media"), field="manifest.expected.output_media")
+    source_packets = _truncated_packet_counts(
+        value.get("source_packets"), field="manifest.expected.source_packets"
+    )
+    output_packets = _truncated_packet_counts(
+        value.get("output_packets"), field="manifest.expected.output_packets"
+    )
+    if not all(source_packets.values()) or not all(output_packets.values()):
+        raise _truncated_error("manifest expected packet counts must contain video and audio")
+    if any(output_packets[key] > source_packets[key] for key in ("video", "audio")):
+        raise _truncated_error("manifest expected output packet count exceeds source")
+    for key in (
+        "output_sha256",
+        "stream_copy_stderr_normalized_sha256",
+        "full_decode_stderr_sha256",
+    ):
+        _truncated_hex(value.get(key), field=f"manifest.expected.{key}")
+    if value["output_media"]["size_bytes"] <= 0 or source_media["size_bytes"] <= 0:
+        raise _truncated_error("manifest expected media size is invalid")
+    return value
+
+
+def _validate_truncated_source_manifest(
+    manifest: Any,
+    *,
+    expected_sha256: str,
+    room_id: int,
+    record_root: Path,
+) -> list[dict[str, Any]]:
+    _truncated_hex(expected_sha256, field="expected manifest SHA-256")
+    if not isinstance(manifest, dict) or set(manifest) != _TRUNCATED_MANIFEST_FIELDS:
+        raise _truncated_error("manifest fields are invalid")
+    if manifest.get("schema_version") != TRUNCATED_SOURCE_MANIFEST_SCHEMA_VERSION:
+        raise _truncated_error("manifest schema version is invalid")
+    if manifest.get("room_id") != room_id:
+        raise _truncated_error("manifest room_id does not match --room")
+    integrity = manifest.get("canonical_integrity")
+    unsigned = {key: value for key, value in manifest.items() if key != "canonical_integrity"}
+    if integrity != {
+        "algorithm": "sha256",
+        "canonical_json_sha256": _canonical_json_sha256(unsigned),
+    }:
+        raise _truncated_error("manifest canonical integrity mismatch")
+    if integrity["canonical_json_sha256"] != expected_sha256:
+        raise _truncated_error("manifest SHA-256 does not match out-of-band expectation")
+    rows = manifest.get("rows")
+    if not isinstance(rows, list) or not rows:
+        raise _truncated_error("manifest rows must be a non-empty list")
+    validated: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    recovered_count = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            raise _truncated_error("manifest row is malformed")
+        action = row.get("action")
+        expected_fields = (
+            _TRUNCATED_MANIFEST_RECOVERED_FIELDS
+            if action == TRUNCATED_SOURCE_DISPOSITION_RECOVERED
+            else _TRUNCATED_MANIFEST_IGNORED_FIELDS
+            if action == TRUNCATED_SOURCE_DISPOSITION_IGNORED
+            else set()
+        )
+        if not expected_fields or set(row) != expected_fields:
+            raise _truncated_error("manifest row fields or action are invalid")
+        relative = _truncated_relative(row.get("source_relative_path"), room_id=room_id)
+        if relative in seen:
+            raise _truncated_error("manifest source paths must be unique")
+        seen.add(relative)
+        source = record_root / PurePosixPath(relative)
+        xml_path = source.with_suffix(".xml")
+        source_binding = _truncated_file_binding(row.get("source"), field="manifest.source")
+        xml_binding = _truncated_file_binding(row.get("xml"), field="manifest.xml")
+        if source_binding["path"] != str(source) or xml_binding["path"] != str(xml_path):
+            raise _truncated_error("manifest source/XML paths do not match source_relative_path")
+        _truncated_webhook(row.get("webhook"))
+        _truncated_error_binding(row.get("errors"))
+        _truncated_manifest_xml_repair(row.get("xml_repair"), room_id=room_id)
+        if action == TRUNCATED_SOURCE_DISPOSITION_RECOVERED:
+            recovered_count += 1
+            if recovered_count > 1:
+                raise _truncated_error("manifest may contain at most one recovered row")
+            _truncated_packet_counts(
+                row.get("packet_loss_maximum"), field="manifest.packet_loss_maximum"
+            )
+            warning = row.get("warning")
+            if not isinstance(warning, dict) or set(warning) != {"normalized_sha256", "allowed"}:
+                raise _truncated_error("manifest warning fields are invalid")
+            _truncated_hex(
+                warning.get("normalized_sha256"), field="manifest.warning.normalized_sha256"
+            )
+            if not isinstance(warning.get("allowed"), bool):
+                raise _truncated_error("manifest.warning.allowed is invalid")
+            maximum = row["packet_loss_maximum"]
+            if any(
+                maximum[key] < 0 for key in ("video", "audio")
+            ):
+                raise _truncated_error("manifest packet-loss maximum is invalid")
+            expected = _truncated_manifest_expected(row.get("expected"))
+            if warning["normalized_sha256"] != expected["stream_copy_stderr_normalized_sha256"]:
+                raise _truncated_error("manifest warning digest does not match expected stream-copy digest")
+        validated.append(row)
+    return validated
+
+
+def _truncated_repair_xml(
+    xml_path: Path,
+    recipe: dict[str, Any],
+    *,
+    room_id: int,
+) -> tuple[bytes, dict[str, str], int, bytes]:
+    """Apply an explicit prefix-plus-close recipe only in a private temp file."""
+
+    _truncated_manifest_xml_repair(recipe, room_id=room_id)
+    try:
+        original = xml_path.read_bytes()
+    except OSError as exc:
+        raise _truncated_error(f"cannot read XML for repair: {exc}") from exc
+    keep_bytes = recipe["keep_bytes"]
+    if keep_bytes > len(original) or len(original) - keep_bytes != recipe["tail_bytes_discarded"]:
+        raise _truncated_error("XML repair keep/discard byte counts do not match the original")
+    repaired = original if recipe["tail_bytes_discarded"] == 0 else original[:keep_bytes] + b"</i>"
+    if hashlib.sha256(repaired).hexdigest() != recipe["repaired_sha256"]:
+        raise _truncated_error("XML repaired SHA-256 does not match the manifest")
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=f".{xml_path.stem}.truncated-repair-",
+            suffix=".xml",
+            delete=False,
+        ) as handle:
+            temp_path = Path(handle.name)
+            os.chmod(temp_path, 0o600)
+            handle.write(repaired)
+            handle.flush()
+            os.fsync(handle.fileno())
+        jsonl_bytes, record_info, event_count = xml_to_jsonl(temp_path)
+    except (OSError, AdapterError) as exc:
+        raise _truncated_error(f"repaired XML is invalid: {exc}") from exc
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
+    if record_info != recipe["record_info"] or event_count != recipe["recovered_event_count"]:
+        raise _truncated_error("repaired XML record_info/event count drifted")
+    return jsonl_bytes, record_info, event_count, repaired
+
+
+def _truncated_media_packet_counts(path: Path, *, ffprobe_bin: str) -> dict[str, int]:
+    completed = _run(
+        [
+            ffprobe_bin,
+            "-v",
+            "error",
+            "-count_packets",
+            "-show_entries",
+            "stream=codec_type,nb_read_packets",
+            "-of",
+            "json",
+            str(path),
+        ],
+        timeout_seconds=6 * 60 * 60,
+    )
+    try:
+        streams = (json.loads(completed.stdout) or {}).get("streams") or []
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise _truncated_error(f"packet-count probe result is invalid for {path.name}") from exc
+    if not isinstance(streams, list):
+        raise _truncated_error(f"packet-count probe result is invalid for {path.name}")
+    counts = {"video": 0, "audio": 0}
+    for stream in streams:
+        if not isinstance(stream, dict) or stream.get("codec_type") not in counts:
+            continue
+        try:
+            counts[stream["codec_type"]] += int(stream.get("nb_read_packets") or 0)
+        except (TypeError, ValueError) as exc:
+            raise _truncated_error(f"packet-count probe result is invalid for {path.name}") from exc
+    if not all(counts.values()):
+        raise _truncated_error(f"packet-count probe found no dual-stream packets for {path.name}")
+    return counts
+
+
+def _truncated_stage_path(source: Path, *, record_root: Path, manifest_sha256: str) -> Path:
+    relative = source.relative_to(record_root).as_posix()
+    token = hashlib.sha256(relative.encode("utf-8")).hexdigest()[:16]
+    return source.parent / ".brec-adapter-staging" / f".truncated-{manifest_sha256[:16]}-{token}.mp4"
+
+
+def _truncated_state_lock_path(state_path: Path) -> Path:
+    return state_path.parent / f".{state_path.name}.serve.lock"
+
+
+def _truncated_acquire_state_lock(state_path: Path) -> int:
+    """Acquire the one lock shared by the serve daemon and offline apply."""
+
+    path = _truncated_state_lock_path(state_path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0), 0o600)
+        os.fchmod(fd, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (OSError, ValueError) as exc:
+        try:
+            os.close(fd)
+        except (UnboundLocalError, OSError):
+            pass
+        raise _truncated_error("adapter state owner lock is unavailable") from exc
+    return fd
+
+
+def _truncated_release_state_lock(fd: int) -> None:
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def _truncated_offline_state(
+    args: argparse.Namespace,
+    *,
+    manifest_room_id: int,
+) -> dict[str, Any]:
+    if not getattr(args, "offline_confirmed", False):
+        raise _truncated_error("--offline-confirmed is required")
+    status = _truncated_load_json(args.status_path, label="adapter status")
+    if status.get("room_id") != str(manifest_room_id):
+        raise _truncated_error("status room_id does not match manifest")
+    generated = status.get("generated_at_epoch")
+    if (
+        status.get("service_reachable") is not True
+        or status.get("streaming") is not False
+        or status.get("recording") is not False
+        or status.get("finalizing") is not False
+        or status.get("running_status") != "idle"
+        or not isinstance(generated, (int, float))
+        or isinstance(generated, bool)
+        or generated > time.time() + 5
+        or time.time() - generated > args.offline_status_max_age
+    ):
+        raise _truncated_error("adapter status is not a fresh idle observation")
+    state = _truncated_load_json(args.state_path, label="adapter state")
+    if (
+        state.get("schema_version") != STATE_SCHEMA_VERSION
+        or not isinstance(state.get("webhook_files"), dict)
+        or not isinstance(state.get("finalized"), dict)
+        or not isinstance(state.get("source_dispositions"), dict)
+    ):
+        raise _truncated_error("adapter state is malformed")
+    return state
+
+
+def _truncated_manifest_context(
+    row: dict[str, Any],
+    *,
+    record_root: Path,
+    state: dict[str, Any],
+    room_id: int,
+) -> dict[str, Any]:
+    relative = row["source_relative_path"]
+    source = record_root / PurePosixPath(relative)
+    xml_path = source.with_suffix(".xml")
+    source_attestation = {"path": str(source), **_attest_regular_file(source)}
+    xml_attestation = {"path": str(xml_path), **_attest_regular_file(xml_path)}
+    if source_attestation != row["source"] or xml_attestation != row["xml"]:
+        raise _truncated_error(f"manifest source/XML evidence drifted: {relative}")
+    webhook_files = state["webhook_files"]
+    evidence = webhook_files.get(relative)
+    if not isinstance(evidence, dict) or row["webhook"] != _webhook_file_binding(evidence):
+        raise _truncated_error(f"manifest webhook evidence drifted: {relative}")
+    if row["errors"] != _truncated_ordinary_errors(source, evidence):
+        raise _truncated_error(f"manifest ordinary error evidence drifted: {relative}")
+    jsonl_bytes, record_info, event_count, repaired_bytes = _truncated_repair_xml(
+        xml_path,
+        row["xml_repair"],
+        room_id=room_id,
+    )
+    if {"path": str(source), **_attest_regular_file(source)} != source_attestation:
+        raise _truncated_error(f"source changed during manifest validation: {relative}")
+    if {"path": str(xml_path), **_attest_regular_file(xml_path)} != xml_attestation:
+        raise _truncated_error(f"XML changed during manifest validation: {relative}")
+    existing = state["source_dispositions"].get(relative)
+    if existing is not None and (
+        not isinstance(existing, dict)
+        or existing.get("schema_version") != TRUNCATED_SOURCE_DISPOSITION_SCHEMA_VERSION
+        or existing.get("action") != row["action"]
+    ):
+        raise _truncated_error(f"existing source disposition conflicts: {relative}")
+    if row["action"] == TRUNCATED_SOURCE_DISPOSITION_IGNORED and relative in state["finalized"]:
+        raise _truncated_error(f"ignored source already has a finalized ledger row: {relative}")
+    return {
+        "manifest": row,
+        "relative": relative,
+        "source": source,
+        "xml": xml_path,
+        "source_attestation": source_attestation,
+        "xml_attestation": xml_attestation,
+        "jsonl_bytes": jsonl_bytes,
+        "record_info": record_info,
+        "event_count": event_count,
+        "repaired_bytes": repaired_bytes,
+        "existing": existing,
+    }
+
+
+def _truncated_stream_copy(
+    source: Path,
+    stage: Path,
+    *,
+    ffmpeg_bin: str,
+) -> tuple[list[str], subprocess.CompletedProcess[str]]:
+    stage.parent.mkdir(mode=0o700, exist_ok=True)
+    if stage.exists() or stage.is_symlink():
+        raise _truncated_error(f"staged MP4 already exists before remux: {stage.name}")
+    command = [
+        ffmpeg_bin,
+        "-nostdin",
+        "-hide_banner",
+        "-n",
+        "-loglevel",
+        "warning",
+        "-fflags",
+        "+genpts+discardcorrupt",
+        "-i",
+        str(source),
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a:0",
+        "-c",
+        "copy",
+        "-avoid_negative_ts",
+        "make_zero",
+        "-movflags",
+        "+faststart",
+        "-f",
+        "mp4",
+        str(stage),
+    ]
+    return command, _run(command, timeout_seconds=6 * 60 * 60)
+
+
+def _truncated_full_decode(path: Path, *, ffmpeg_bin: str) -> tuple[list[str], subprocess.CompletedProcess[str]]:
+    command = [
+        ffmpeg_bin,
+        "-nostdin",
+        "-v",
+        "error",
+        "-xerror",
+        "-i",
+        str(path),
+        "-map",
+        "0",
+        "-f",
+        "null",
+        "-",
+    ]
+    return command, _run(command, timeout_seconds=6 * 60 * 60)
+
+
+def _truncated_recovery_from_stage(
+    context: dict[str, Any],
+    *,
+    expected: dict[str, Any],
+    packet_loss_maximum: dict[str, int],
+    warning: dict[str, Any],
+    stage: Path,
+    ffmpeg_bin: str,
+    ffprobe_bin: str,
+    remux: bool = True,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Build recovery evidence, remuxing only when the deterministic stage is absent."""
+
+    source = context["source"]
+    source_media = probe_media(source, ffprobe_bin=ffprobe_bin)
+    if source_media != expected["source_media"]:
+        raise _truncated_error(f"source media expectation drifted: {context['relative']}")
+    source_packets = _truncated_media_packet_counts(source, ffprobe_bin=ffprobe_bin)
+    if source_packets != expected["source_packets"]:
+        raise _truncated_error(f"source packet expectation drifted: {context['relative']}")
+    stream_command: list[str] | None = None
+    raw_warning_sha256 = hashlib.sha256(b"").hexdigest()
+    if remux:
+        stream_command, stream_result = _truncated_stream_copy(source, stage, ffmpeg_bin=ffmpeg_bin)
+        raw_stderr = stream_result.stderr or ""
+        raw_warning_sha256 = hashlib.sha256(raw_stderr.encode("utf-8")).hexdigest()
+        normalized_sha256 = _truncated_normalized_stderr_sha256(raw_stderr)
+        if normalized_sha256 != expected["stream_copy_stderr_normalized_sha256"]:
+            raise _truncated_error(f"stream-copy stderr expectation drifted: {context['relative']}")
+        if normalized_sha256 != warning["normalized_sha256"]:
+            raise _truncated_error(f"stream-copy warning digest drifted: {context['relative']}")
+        if raw_stderr and warning["allowed"] is not True:
+            raise _truncated_error(f"stream-copy warning is not explicitly allowed: {context['relative']}")
+    elif not stage.is_file() or stage.is_symlink():
+        raise _truncated_error(f"recovery stage is missing: {context['relative']}")
+
+    output_media = probe_media(stage, ffprobe_bin=ffprobe_bin)
+    if output_media != expected["output_media"]:
+        raise _truncated_error(f"output media expectation drifted: {context['relative']}")
+    output_packets = _truncated_media_packet_counts(stage, ffprobe_bin=ffprobe_bin)
+    if output_packets != expected["output_packets"]:
+        raise _truncated_error(f"output packet expectation drifted: {context['relative']}")
+    dropped = {key: source_packets[key] - output_packets[key] for key in ("video", "audio")}
+    if any(dropped[key] < 0 or dropped[key] > packet_loss_maximum[key] for key in dropped):
+        raise _truncated_error(f"packet loss exceeds manifest maximum: {context['relative']}")
+    staged = _attest_regular_file(stage)
+    if staged["sha256"] != expected["output_sha256"]:
+        raise _truncated_error(f"output SHA-256 expectation drifted: {context['relative']}")
+    decode_command, decode_result = _truncated_full_decode(stage, ffmpeg_bin=ffmpeg_bin)
+    decode_stderr_sha256 = hashlib.sha256((decode_result.stderr or "").encode("utf-8")).hexdigest()
+    if decode_stderr_sha256 != expected["full_decode_stderr_sha256"]:
+        raise _truncated_error(f"full-decode stderr expectation drifted: {context['relative']}")
+    recovery = {
+        "source_media": source_media,
+        "stream_copy": {
+            "fflags": "+genpts+discardcorrupt",
+            "stderr_normalized_sha256": expected["stream_copy_stderr_normalized_sha256"],
+        },
+        "packet_loss": {
+            "source": source_packets,
+            "output": output_packets,
+            "dropped": dropped,
+            "maximum": packet_loss_maximum,
+        },
+        "full_decode": {
+            "ok": True,
+            "map": "0",
+            "xerror": True,
+            "command": decode_command,
+            "stderr_sha256": decode_stderr_sha256,
+        },
+        "warning": {
+            "sha256": raw_warning_sha256,
+            "allowed": warning["allowed"],
+        },
+    }
+    outputs = {
+        "mp4": {
+            "path": str(context["source"].with_suffix(".mp4")),
+            "sha256": staged["sha256"],
+            **{key: staged[key] for key in _FILE_FINGERPRINT_KEYS},
+            "media": output_media,
+        },
+        "jsonl": {"path": str(context["source"].with_suffix(".jsonl"))},
+        "meta": {"path": str(context["source"].with_suffix(".meta.json"))},
+    }
+    return recovery, outputs, {
+        "stream_command": stream_command or [],
+        "decode_command": decode_command,
+    }
+
+
+def _truncated_row_xml_recovery(recipe: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "repaired_sha256": recipe["repaired_sha256"],
+        "tail_bytes_discarded": recipe["tail_bytes_discarded"],
+        "recovered_event_count": recipe["recovered_event_count"],
+        "official_record_info": recipe["record_info"],
+    }
+
+
+def _truncated_apply_recovery_matches_manifest(
+    recovery: dict[str, Any],
+    manifest_row: dict[str, Any],
+    outputs: dict[str, Any] | None = None,
+) -> None:
+    expected = manifest_row["expected"]
+    if (
+        recovery["source_media"] != expected["source_media"]
+        or recovery["packet_loss"]["source"] != expected["source_packets"]
+        or recovery["packet_loss"]["output"] != expected["output_packets"]
+        or recovery["packet_loss"]["maximum"] != manifest_row["packet_loss_maximum"]
+        or recovery["stream_copy"]["stderr_normalized_sha256"]
+        != expected["stream_copy_stderr_normalized_sha256"]
+        or recovery["stream_copy"]["stderr_normalized_sha256"]
+        != manifest_row["warning"]["normalized_sha256"]
+        or recovery["warning"]["allowed"] != manifest_row["warning"]["allowed"]
+        or recovery["full_decode"]["stderr_sha256"] != expected["full_decode_stderr_sha256"]
+    ):
+        raise _truncated_error("recovery evidence does not match manifest expected outcomes")
+    if outputs is not None:
+        mp4 = outputs.get("mp4") if isinstance(outputs, dict) else None
+        if (
+            not isinstance(mp4, dict)
+            or mp4.get("sha256") != expected["output_sha256"]
+            or mp4.get("media") != expected["output_media"]
+        ):
+            raise _truncated_error("recovery output does not match manifest expected outcomes")
+    if any(
+        recovery["packet_loss"]["dropped"][key]
+        != expected["source_packets"][key] - expected["output_packets"][key]
+        for key in ("video", "audio")
+    ):
+        raise _truncated_error("recovery packet-drop evidence does not match manifest")
+
+
+def _truncated_output_sidecars(
+    context: dict[str, Any],
+) -> tuple[bytes, bytes]:
+    meta_bytes = _json_bytes(
+        _meta_payload(
+            context["source"],
+            context["xml"],
+            context["record_info"],
+            event_count=context["event_count"],
+        )
+    )
+    return context["jsonl_bytes"], meta_bytes
+
+
+def _truncated_manifest_file(path: Path, *, state_path: Path) -> dict[str, Any]:
+    """Load the operator manifest only from the state directory's 0600 child."""
+
+    try:
+        state_info = state_path.lstat()
+        manifest_info = path.lstat()
+    except OSError as exc:
+        raise _truncated_error(f"manifest/state file is unreadable: {exc}") from exc
+    if not stat.S_ISREG(state_info.st_mode) or stat.S_ISLNK(state_info.st_mode):
+        raise _truncated_error("adapter state must be a regular non-symlink file")
+    if path.parent != state_path.parent or path == state_path:
+        raise _truncated_error("manifest must be a direct child of adapter state_path.parent")
+    if stat.S_ISLNK(manifest_info.st_mode) or not stat.S_ISREG(manifest_info.st_mode):
+        raise _truncated_error("manifest must be a regular non-symlink file")
+    if stat.S_IMODE(manifest_info.st_mode) != 0o600:
+        raise _truncated_error("manifest mode must be 0600")
+    if manifest_info.st_nlink != 1:
+        raise _truncated_error("manifest must have exactly one hard link")
+    if (manifest_info.st_uid, manifest_info.st_gid) != (state_info.st_uid, state_info.st_gid):
+        raise _truncated_error("manifest owner must match adapter state owner")
+    return _truncated_load_json(path, label="truncated-source manifest")
+
+
+def _truncated_validate_output(
+    path: Path,
+    *,
+    expected: dict[str, Any],
+    ffmpeg_bin: str,
+    ffprobe_bin: str,
+    label: str,
+) -> dict[str, Any]:
+    """Validate an existing stage/target completely before it is reused."""
+
+    if path.is_symlink() or not path.is_file():
+        raise _truncated_error(f"{label} is missing or not a regular file")
+    before = _attest_regular_file(path)
+    if before["sha256"] != expected["output_sha256"]:
+        raise _truncated_error(f"{label} SHA-256 expectation drifted")
+    media = probe_media(path, ffprobe_bin=ffprobe_bin)
+    if media != expected["output_media"]:
+        raise _truncated_error(f"{label} media expectation drifted")
+    packets = _truncated_media_packet_counts(path, ffprobe_bin=ffprobe_bin)
+    if packets != expected["output_packets"]:
+        raise _truncated_error(f"{label} packet expectation drifted")
+    command, result = _truncated_full_decode(path, ffmpeg_bin=ffmpeg_bin)
+    stderr_sha256 = hashlib.sha256((result.stderr or "").encode("utf-8")).hexdigest()
+    if stderr_sha256 != expected["full_decode_stderr_sha256"]:
+        raise _truncated_error(f"{label} full-decode stderr expectation drifted")
+    after = _attest_regular_file(path)
+    if after != before:
+        raise _truncated_error(f"{label} changed during validation")
+    return {
+        "attestation": after,
+        "media": media,
+        "packets": packets,
+        "decode": {
+            "ok": True,
+            "map": "0",
+            "xerror": True,
+            "command": command,
+            "stderr_sha256": stderr_sha256,
+        },
+    }
+
+
+def _apply_truncated_source_manifest_locked(args: argparse.Namespace) -> dict[str, Any]:
+    manifest_path = Path(args.apply_truncated_source_manifest)
+    manifest_sha256 = args.expected_truncated_manifest_sha256
+    if not isinstance(manifest_sha256, str):
+        raise _truncated_error("expected manifest SHA-256 is required")
+    raw_manifest = _truncated_manifest_file(manifest_path, state_path=args.state_path)
+    manifest_rows = _validate_truncated_source_manifest(
+        raw_manifest,
+        expected_sha256=manifest_sha256,
+        room_id=args.room,
+        record_root=args.record_root,
+    )
+    state = _truncated_offline_state(args, manifest_room_id=args.room)
+    contexts = [
+        _truncated_manifest_context(
+            row,
+            record_root=args.record_root,
+            state=state,
+            room_id=args.room,
+        )
+        for row in manifest_rows
+    ]
+
+    ignored_rows: dict[str, dict[str, Any]] = {}
+    recovered_rows: dict[str, dict[str, Any]] = {}
+    for context in contexts:
+        manifest_row = context["manifest"]
+        relative = context["relative"]
+        source = context["source"]
+        if manifest_row["action"] == TRUNCATED_SOURCE_DISPOSITION_IGNORED:
+            media = probe_media(source, ffprobe_bin=args.ffprobe)
+            if (
+                media["size_bytes"] != context["source_attestation"]["size_bytes"]
+                or media["size_bytes"] >= TRUNCATED_SOURCE_DISPOSITION_MAX_FRAGMENT_BYTES
+                or media["duration_seconds"] >= TRUNCATED_SOURCE_DISPOSITION_MAX_FRAGMENT_DURATION_SECONDS
+                or context["event_count"] != 0
+                or relative in state["finalized"]
+                or any(os.path.lexists(source.with_suffix(suffix)) for suffix in (".mp4", ".jsonl", ".meta.json"))
+            ):
+                raise _truncated_error(f"ignored fragment hard gate failed: {relative}")
+            row = build_truncated_source_disposition(
+                source,
+                record_root=args.record_root,
+                action=manifest_row["action"],
+                webhook=manifest_row["webhook"],
+                errors=manifest_row["errors"],
+                xml_recovery=_truncated_row_xml_recovery(manifest_row["xml_repair"]),
+                recovery={"source_media": media},
+            )
+            if context["existing"] is not None and context["existing"] != row:
+                raise _truncated_error(f"existing ignored disposition conflicts: {relative}")
+            ignored_rows[relative] = row
+            continue
+
+        expected = manifest_row["expected"]
+        target = source.with_suffix(".mp4")
+        stage = _truncated_stage_path(source, record_root=args.record_root, manifest_sha256=manifest_sha256)
+        if stage.is_symlink() or (stage.exists() and not stage.is_file()):
+            raise _truncated_error(f"recovery stage is not a regular file: {relative}")
+        if target.is_symlink():
+            raise _truncated_error(f"recovered target must not be a symlink: {relative}")
+        if stage.exists() and target.exists():
+            raise _truncated_error(f"recovery stage and target both exist: {relative}")
+
+        existing = context["existing"]
+        if existing is not None:
+            if not target.exists():
+                raise _truncated_error(f"existing recovered disposition target is missing: {relative}")
+            recovery, _outputs, _commands = _truncated_recovery_from_stage(
+                context,
+                expected=expected,
+                packet_loss_maximum=manifest_row["packet_loss_maximum"],
+                warning=manifest_row["warning"],
+                stage=target,
+                ffmpeg_bin=args.ffmpeg,
+                ffprobe_bin=args.ffprobe,
+                remux=False,
+            )
+            _truncated_apply_recovery_matches_manifest(
+                recovery, manifest_row, existing.get("outputs")
+            )
+            candidate = existing
+            try:
+                validate_truncated_source_disposition(
+                    source,
+                    candidate,
+                    record_root=args.record_root,
+                    webhook_files=state["webhook_files"],
+                    finalized=state["finalized"],
+                )
+            except TruncatedSourceMetadataRebindRequired as required:
+                current_fingerprint = _regular_file_fingerprint(target)
+                expected_current = {
+                    key: required.current_fingerprint[key] for key in _FILE_FINGERPRINT_KEYS
+                }
+                if current_fingerprint != expected_current:
+                    raise _truncated_error(
+                        f"existing recovered output changed during metadata rebind: {relative}"
+                    )
+                candidate = json.loads(json.dumps(existing))
+                _append_truncated_metadata_rebind(
+                    candidate,
+                    manifest_sha256=manifest_sha256,
+                    required=required,
+                )
+                validate_truncated_source_disposition(
+                    source,
+                    candidate,
+                    record_root=args.record_root,
+                    webhook_files=state["webhook_files"],
+                    finalized=state["finalized"],
+                )
+            recovered_rows[relative] = candidate
+            continue
+
+        output_path = target if target.exists() else stage
+        remux = output_path == stage and not stage.exists()
+        if not remux and output_path == target and not target.exists():
+            raise _truncated_error(f"recovery output is missing: {relative}")
+        recovery, _outputs, _commands = _truncated_recovery_from_stage(
+            context,
+            expected=expected,
+            packet_loss_maximum=manifest_row["packet_loss_maximum"],
+            warning=manifest_row["warning"],
+            stage=output_path,
+            ffmpeg_bin=args.ffmpeg,
+            ffprobe_bin=args.ffprobe,
+            remux=remux,
+        )
+        _truncated_apply_recovery_matches_manifest(recovery, manifest_row)
+        jsonl_bytes, meta_bytes = _truncated_output_sidecars(context)
+        for suffix, payload in ((".jsonl", jsonl_bytes), (".meta.json", meta_bytes)):
+            sidecar = source.with_suffix(suffix)
+            if sidecar.is_symlink():
+                raise _truncated_error(f"recovered sidecar must not be a symlink: {sidecar.name}")
+            _write_if_absent_or_equal(sidecar, payload)
+        if not target.exists():
+            _publish_path_noreplace(stage, target)
+        output_check = _truncated_validate_output(
+            target,
+            expected=expected,
+            ffmpeg_bin=args.ffmpeg,
+            ffprobe_bin=args.ffprobe,
+            label=f"published output {relative}",
+        )
+        output_bindings = {
+            "mp4": {
+                "path": str(target),
+                **output_check["attestation"],
+                "media": output_check["media"],
+            },
+            "jsonl": {
+                "path": str(source.with_suffix(".jsonl")),
+                **_attest_regular_file(source.with_suffix(".jsonl")),
+            },
+            "meta": {
+                "path": str(source.with_suffix(".meta.json")),
+                **_attest_regular_file(source.with_suffix(".meta.json")),
+            },
+        }
+        prior_ledger = state["finalized"].get(relative)
+        source_stat = context["source_attestation"]
+        ledger = prior_ledger or {
+            "source_size": source_stat["size_bytes"],
+            "source_mtime_ns": source_stat["mtime_ns"],
+            "target": str(target),
+            "target_sha256": expected["output_sha256"],
+            "finalized_at": datetime.now(timezone.utc).isoformat(),
+        }
+        row = build_truncated_source_disposition(
+            source,
+            record_root=args.record_root,
+            action=manifest_row["action"],
+            webhook=manifest_row["webhook"],
+            errors=manifest_row["errors"],
+            xml_recovery=_truncated_row_xml_recovery(manifest_row["xml_repair"]),
+            recovery=recovery,
+            outputs=output_bindings,
+            finalized_ledger=ledger,
+        )
+        recovered_rows[relative] = row
+
+    prospective = json.loads(json.dumps(state))
+    all_rows = {**ignored_rows, **recovered_rows}
+    prospective_finalized = dict(prospective["finalized"])
+    for relative, row in all_rows.items():
+        if relative in recovered_rows:
+            prospective_finalized[relative] = row["finalized_ledger"]
+        validate_truncated_source_disposition(
+            args.record_root / PurePosixPath(relative),
+            row,
+            record_root=args.record_root,
+            webhook_files=prospective["webhook_files"],
+            finalized=prospective_finalized,
+        )
+        prospective["source_dispositions"][relative] = row
+    prospective["finalized"] = prospective_finalized
+    for context in contexts:
+        if {"path": str(context["source"]), **_attest_regular_file(context["source"])} != context["source_attestation"]:
+            raise _truncated_error(f"source changed before state commit: {context['relative']}")
+        if {"path": str(context["xml"]), **_attest_regular_file(context["xml"])} != context["xml_attestation"]:
+            raise _truncated_error(f"XML changed before state commit: {context['relative']}")
+    if prospective != state:
+        atomic_write_json(args.state_path, prospective, mode=0o600)
+
+    result_rows = []
+    for relative, row in sorted(all_rows.items()):
+        result: dict[str, Any] = {
+            "source_relative_path": relative,
+            "action": row["action"],
+            "source": row["source"],
+            "xml": row["xml"],
+        }
+        if row["action"] == TRUNCATED_SOURCE_DISPOSITION_RECOVERED:
+            result["outputs"] = row["outputs"]
+        result_rows.append(result)
+    return {
+        "schema_version": "recording-truncated-source-apply-result.v1",
+        "manifest_sha256": manifest_sha256,
+        "recovered": len(recovered_rows),
+        "ignored": len(ignored_rows),
+        "rows": result_rows,
+    }
+
+
+def apply_truncated_source_manifest(args: argparse.Namespace) -> dict[str, Any]:
+    """Apply one operator-supplied manifest under the adapter owner lock."""
+
+    lock_fd = _truncated_acquire_state_lock(args.state_path)
+    try:
+        return _apply_truncated_source_manifest_locked(args)
+    finally:
+        _truncated_release_state_lock(lock_fd)
 
 
 def _parse_webhook_datetime(value: Any, *, field: str) -> datetime:
@@ -2218,6 +4298,153 @@ def build_connection_stub_disposition(
     return row
 
 
+def prepare_connection_stub_bootstrap(
+    *,
+    record_root: Path,
+    state_path: Path,
+    receipt_root: Path,
+    receipt_id: str,
+    source_relatives: list[str],
+    candidate_adapter_sha256: str,
+    installed_adapter_path: Path,
+    status_path: Path,
+    ffprobe_bin: str = "ffprobe",
+) -> dict[str, Any]:
+    """Create-or-revalidate a narrow, candidate-bound bootstrap receipt.
+
+    This deliberately never writes adapter state or status. The old daemon
+    cannot validate a three-second row, so only the freshly installed adapter
+    may persist one after the deploy transaction switches bytes.
+    """
+
+    if re.fullmatch(r"[0-9a-f]{40}", receipt_id) is None:
+        raise AdapterError("connection-stub bootstrap receipt id is invalid")
+    if re.fullmatch(r"[0-9a-f]{64}", candidate_adapter_sha256) is None:
+        raise AdapterError("connection-stub bootstrap candidate SHA is invalid")
+    if not source_relatives or len(source_relatives) != len(set(source_relatives)):
+        raise AdapterError("connection-stub bootstrap sources must be non-empty and unique")
+    try:
+        state_raw = state_path.read_bytes()
+        state = json.loads(state_raw)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise AdapterError("connection-stub bootstrap state is unreadable") from exc
+    if not isinstance(state, dict) or state.get("schema_version") != STATE_SCHEMA_VERSION:
+        raise AdapterError("connection-stub bootstrap state schema mismatch")
+    try:
+        status = json.loads(status_path.read_bytes())
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise AdapterError("connection-stub bootstrap status is unreadable") from exc
+    if not isinstance(status, dict):
+        raise AdapterError("connection-stub bootstrap status is malformed")
+    webhook_files = state.get("webhook_files")
+    finalized = state.get("finalized")
+    dispositions = state.get("source_dispositions")
+    if not all(isinstance(value, dict) for value in (webhook_files, finalized, dispositions)):
+        raise AdapterError("connection-stub bootstrap ledgers are malformed")
+    rows: dict[str, dict[str, Any]] = {}
+    for relative in sorted(source_relatives):
+        path = PurePosixPath(relative)
+        if path.is_absolute() or ".." in path.parts or len(path.parts) != 2:
+            raise AdapterError("connection-stub bootstrap source path is unsafe")
+        if relative in dispositions:
+            raise AdapterError("connection-stub bootstrap source already has a disposition")
+        row = build_connection_stub_disposition(
+            record_root / path,
+            record_root=record_root,
+            webhook_files=webhook_files,
+            finalized=finalized,
+            ffprobe_bin=ffprobe_bin,
+        )
+        if row is None:
+            raise AdapterError(f"connection-stub bootstrap source is not eligible: {relative}")
+        rows[relative] = row
+    expected_sources = {str(record_root / PurePosixPath(relative)) for relative in source_relatives}
+    status_errors = status.get("finalize_errors")
+    if not (
+        status.get("service_reachable") is True
+        and status.get("streaming") is False
+        and status.get("recording") is False
+        and status.get("finalizing") is False
+        and status.get("error") == f"{len(source_relatives)} closed recording(s) failed finalization"
+        and isinstance(status_errors, list)
+        and len(status_errors) == len(source_relatives)
+        and {entry.get("source") for entry in status_errors if isinstance(entry, dict)} == expected_sources
+    ):
+        raise AdapterError("connection-stub bootstrap status does not exactly bind eligible sources")
+    # The legacy daemon refreshes only this observation timestamp while it is
+    # otherwise idle.  It must not turn a receipt into an impossible-to-use
+    # raw-byte snapshot, but every other state key remains transaction-bound.
+    state_material = {
+        key: value for key, value in state.items() if key != "last_room_status_epoch"
+    }
+    cookie_health = state_material.get("cookie_health")
+    if not isinstance(cookie_health, dict):
+        raise AdapterError("connection-stub bootstrap cookie health is malformed")
+    state_material["cookie_health"] = {
+        key: value
+        for key, value in cookie_health.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
+    # A fresh status changes its timestamp and ffmpeg happens to put unstable
+    # process addresses in the two retained finalization diagnostics.  Preserve
+    # every other byte-level JSON value, normalising only those proven
+    # heartbeat/process-local fields; this is deliberately not a generic
+    # finalization-error waiver.
+    status_preimage = json.loads(json.dumps(status))
+    status_preimage.pop("generated_at", None)
+    status_preimage.pop("generated_at_epoch", None)
+    cookie_status = status_preimage.get("bilibili_cookie")
+    if not isinstance(cookie_status, dict):
+        raise AdapterError("connection-stub bootstrap cookie status is malformed")
+    status_preimage["bilibili_cookie"] = {
+        key: value
+        for key, value in cookie_status.items()
+        if key not in {"checked_at", "checked_at_epoch"}
+    }
+    errors = status_preimage.get("finalize_errors")
+    if isinstance(errors, list):
+        for entry in errors:
+            if isinstance(entry, dict) and isinstance(entry.get("error"), str):
+                entry["error"] = re.sub(r"0x[0-9a-fA-F]+", "0x<address>", entry["error"])
+    receipt = {
+        "schema_version": CONNECTION_STUB_BOOTSTRAP_RECEIPT_SCHEMA_VERSION,
+        "receipt_id": receipt_id,
+        "candidate_adapter_sha256": candidate_adapter_sha256,
+        "installed_adapter_sha256": sha256_file(installed_adapter_path),
+        "adapter_state_sha256": hashlib.sha256(state_raw).hexdigest(),
+        "adapter_state_material_sha256": _canonical_json_sha256(state_material),
+        "adapter_status_preimage_sha256": _canonical_json_sha256(status_preimage),
+        "source_relative_paths": sorted(source_relatives),
+        "rows": rows,
+    }
+    receipt["canonical_integrity"] = {
+        "algorithm": "sha256",
+        "canonical_json_sha256": _canonical_json_sha256(receipt),
+    }
+    _ensure_identity_rebind_spool(receipt_root)
+    destination = receipt_root / f"{receipt_id}.json"
+    encoded = (json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    try:
+        descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    except FileExistsError:
+        existing = _local_json(destination)
+        if existing != receipt:
+            raise AdapterError("connection-stub bootstrap receipt already exists with different evidence")
+        return receipt
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except Exception:
+        try:
+            destination.unlink()
+        except OSError:
+            pass
+        raise
+    return receipt
+
+
 def validate_connection_stub_disposition(
     source_flv: Path,
     row: Any,
@@ -2235,7 +4462,8 @@ def validate_connection_stub_disposition(
     Recurring heartbeat validation compares canonical state, live webhook and
     finalized-ledger projections, and exact regular-file fingerprints. A
     CloudFS may either rebind ``device``/``inode`` across a remount or change
-    only both successor files' ``mtime_ns``/``ctime_ns`` metadata. Each narrow
+    successor files' ``mtime_ns``/``ctime_ns`` metadata (including a hash-bound
+    successor MP4 alone). Each narrow
     case requires a shared live FUSE mount, full-byte historical-SHA
     re-attestation, and its own durable chained receipt. All local-filesystem,
     content, path, size, mode, or other mixed drift stays fatal.
@@ -2551,16 +4779,35 @@ def revalidate_source_dispositions(
             identity_rebinds = existing_rebinds
         else:
             raise AdapterError("source disposition identity rebind ledger row is malformed")
-        try:
-            validate_connection_stub_disposition(
-                source,
-                row,
-                record_root=record_root,
-                webhook_files=webhook_files,
-                finalized=finalized,
-                ffprobe_bin=ffprobe_bin,
-                identity_rebinds=identity_rebinds,
+        if not isinstance(row, dict):
+            raise AdapterError(f"source disposition drift: {relative}: row is malformed")
+        is_truncated = (
+            isinstance(row, dict)
+            and row.get("schema_version") == TRUNCATED_SOURCE_DISPOSITION_SCHEMA_VERSION
+        )
+        if is_truncated and (identity_rebinds or str(relative) in identity_rebind_tasks):
+            raise AdapterError(
+                f"source disposition drift: {relative}: truncated disposition cannot use FUSE rebind state"
             )
+        try:
+            if is_truncated:
+                validate_truncated_source_disposition(
+                    source,
+                    row,
+                    record_root=record_root,
+                    webhook_files=webhook_files,
+                    finalized=finalized,
+                )
+            else:
+                validate_connection_stub_disposition(
+                    source,
+                    row,
+                    record_root=record_root,
+                    webhook_files=webhook_files,
+                    finalized=finalized,
+                    ffprobe_bin=ffprobe_bin,
+                    identity_rebinds=identity_rebinds,
+                )
         except SourceDispositionIdentityRebindRequired as required:
             if identity_rebind_spool is None:
                 raise AdapterError("source disposition identity rebind spool is unavailable")
@@ -2799,7 +5046,7 @@ def build_status(
     if newest and current_size <= 0 and recording:
         current_size = int(newest["size_bytes"])
     network_mbps = float(io_stats.get("networkMbps") or 0.0)
-    service_reachable = room is not None and error is None
+    service_reachable = room is not None
     effective_error = error
     if effective_error is None and finalize_errors:
         effective_error = f"{len(finalize_errors)} closed recording(s) failed finalization"
@@ -3012,6 +5259,19 @@ def run_once(args: argparse.Namespace) -> int:
     eligible: list[Path] = []
     for source in candidates:
         relative = str(source.relative_to(args.record_root))
+        existing_disposition = source_dispositions.get(relative)
+        # A valid explicit disposition is the only suppression authority. It
+        # must run before the ordinary CLOSED/size gates so an explicitly
+        # bound reconnect fragment can suppress its exact OPEN error.
+        if existing_disposition is not None:
+            if relative not in validated_dispositions:
+                finalize_errors.append(
+                    {
+                        "source": str(source),
+                        "error": "source disposition was not revalidated",
+                    }
+                )
+            continue
         evidence = closed_files.get(relative) if isinstance(closed_files, dict) else None
         if not isinstance(evidence, dict) or evidence.get("status") != "CLOSED":
             finalize_errors.append(
@@ -3037,16 +5297,6 @@ def run_once(args: argparse.Namespace) -> int:
                 }
             )
             continue
-        existing_disposition = source_dispositions.get(relative)
-        if existing_disposition is not None:
-            if relative not in validated_dispositions:
-                finalize_errors.append(
-                    {
-                        "source": str(source),
-                        "error": "source disposition was not revalidated",
-                    }
-                )
-            continue
         if relative not in finalized_ledger and not source.with_suffix(".mp4").exists():
             disposition = build_connection_stub_disposition(
                 source,
@@ -3070,6 +5320,8 @@ def run_once(args: argparse.Namespace) -> int:
                 continue
             source = args.record_root / relative
             if evidence.get("status") == "OPEN":
+                if relative in validated_dispositions:
+                    continue
                 finalize_errors.append(
                     {
                         "source": str(source),
@@ -3202,6 +5454,7 @@ def _make_webhook_handler(
 
 
 def serve_adapter(args: argparse.Namespace) -> int:
+    lock_fd = _truncated_acquire_state_lock(args.state_path)
     stop_event = threading.Event()
 
     def worker() -> None:
@@ -3227,21 +5480,24 @@ def serve_adapter(args: argparse.Namespace) -> int:
             elapsed = time.monotonic() - started
             stop_event.wait(max(1.0, args.poll_interval - elapsed))
 
-    handler = _make_webhook_handler(
-        room_id=args.room,
-        journal_path=args.webhook_journal,
-    )
-    server = ThreadingHTTPServer((args.webhook_bind, args.webhook_port), handler)
-    thread = threading.Thread(target=worker, name="adapter-reconcile", daemon=True)
-    thread.start()
     try:
-        server.serve_forever(poll_interval=0.5)
-    except KeyboardInterrupt:
-        pass
+        handler = _make_webhook_handler(
+            room_id=args.room,
+            journal_path=args.webhook_journal,
+        )
+        server = ThreadingHTTPServer((args.webhook_bind, args.webhook_port), handler)
+        thread = threading.Thread(target=worker, name="adapter-reconcile", daemon=True)
+        thread.start()
+        try:
+            server.serve_forever(poll_interval=0.5)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            stop_event.set()
+            server.server_close()
+            thread.join(timeout=5)
     finally:
-        stop_event.set()
-        server.server_close()
-        thread.join(timeout=5)
+        _truncated_release_state_lock(lock_fd)
     return 0
 
 
@@ -3253,6 +5509,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--serve",
         action="store_true",
         help="serve Webhook v2 and periodically reconcile/finalize",
+    )
+    mode.add_argument(
+        "--prepare-connection-stub-bootstrap",
+        action="store_true",
+        help="create-only candidate receipt; never writes adapter state or status",
+    )
+    mode.add_argument(
+        "--apply-truncated-source-manifest",
+        type=Path,
+        metavar="PATH",
+        help="apply one explicit truncated-source recovery manifest offline",
     )
     parser.add_argument("--room", type=int, default=22966160)
     parser.add_argument(
@@ -3312,6 +5579,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--webhook-bind", default="127.0.0.1")
     parser.add_argument("--webhook-port", type=int, default=18080)
     parser.add_argument("--poll-interval", type=float, default=60.0)
+    parser.add_argument(
+        "--expected-truncated-manifest-sha256",
+        dest="expected_truncated_manifest_sha256",
+    )
+    parser.add_argument("--offline-confirmed", action="store_true")
+    parser.add_argument("--offline-status-max-age", type=float, default=300.0)
+    parser.add_argument("--bootstrap-receipt-root", type=Path)
+    parser.add_argument("--bootstrap-receipt-id")
+    parser.add_argument("--bootstrap-source-relative", action="append", default=[])
+    parser.add_argument("--bootstrap-candidate-adapter-sha256")
+    parser.add_argument("--bootstrap-installed-adapter-path", type=Path)
+    parser.add_argument("--bootstrap-status-path", type=Path)
     args = parser.parse_args(argv)
     if args.max_finalize < 1:
         parser.error("--max-finalize must be positive")
@@ -3323,6 +5602,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--webhook-port is out of range")
     if args.poll_interval < 5:
         parser.error("--poll-interval must be at least 5 seconds")
+    if args.offline_status_max_age <= 0:
+        parser.error("--offline-status-max-age must be positive")
+    if args.prepare_connection_stub_bootstrap and not all(
+        (
+            args.bootstrap_receipt_root,
+            args.bootstrap_receipt_id,
+            args.bootstrap_source_relative,
+            args.bootstrap_candidate_adapter_sha256,
+            args.bootstrap_installed_adapter_path,
+            args.bootstrap_status_path,
+        )
+    ):
+        parser.error("bootstrap receipt arguments are required")
+    if args.apply_truncated_source_manifest:
+        if not args.expected_truncated_manifest_sha256:
+            parser.error("--expected-truncated-manifest-sha256 is required")
+        if not args.offline_confirmed:
+            parser.error("--offline-confirmed is required for manifest apply")
     return args
 
 
@@ -3334,6 +5631,28 @@ def main(argv: list[str] | None = None) -> int:
             Path(effective_argv[2]),
         )
     args = parse_args(effective_argv)
+    if args.prepare_connection_stub_bootstrap:
+        receipt = prepare_connection_stub_bootstrap(
+            record_root=args.record_root,
+            state_path=args.state_path,
+            receipt_root=args.bootstrap_receipt_root,
+            receipt_id=args.bootstrap_receipt_id,
+            source_relatives=args.bootstrap_source_relative,
+            candidate_adapter_sha256=args.bootstrap_candidate_adapter_sha256,
+            installed_adapter_path=args.bootstrap_installed_adapter_path,
+            status_path=args.bootstrap_status_path,
+            ffprobe_bin=args.ffprobe,
+        )
+        print(json.dumps(receipt, ensure_ascii=False, sort_keys=True))
+        return 0
+    if args.apply_truncated_source_manifest:
+        try:
+            result = apply_truncated_source_manifest(args)
+        except AdapterError as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, sort_keys=True))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return 0
     return serve_adapter(args) if args.serve else run_once(args)
 
 

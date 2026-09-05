@@ -8,6 +8,8 @@ import pytest
 
 from src.autoslice import producer_text_pipeline as pipeline
 from src.autoslice import producer_source_boundary_review as source_boundary_review
+from src.autoslice import qixi_terminal_evidence_refresh as qixi_refresh
+from src.autoslice import reviewed_baseline_replay as replay
 from src.autoslice.boundary_semantic_review import (
     build_boundary_search_scope,
     cue_grid_sha256,
@@ -24,6 +26,7 @@ from src.autoslice.final_review_contract import (
     validate_final_review_release,
 )
 from src.autoslice.final_source_language_owner import (
+    register_final_foreign_script_cpa_repairs,
     register_final_source_language_cpa_repairs,
 )
 from src.autoslice.producer_boundary_owner_contract import (
@@ -120,6 +123,13 @@ def test_late_source_language_cpa_retires_same_window_cpa_surface():
     input_srt = _srt("前文", current)
     output_srt = _srt("前文", proposed)
     chat_audit = {
+        "applied": [
+            {
+                "matched_start_ms": 10_000,
+                "matched_end_ms": 14_000,
+                "exact_text": "就是",
+            }
+        ],
         "entity_repairs": [
             {
                 "mode": "final_review_context_adjudication",
@@ -176,6 +186,7 @@ def test_late_source_language_cpa_retires_same_window_cpa_surface():
     owner = chat_audit["entity_repairs"][1]
     assert owner["structured_exact_text"] == proposed
     assert owner["superseded_entity_repair_indexes"] == [0]
+    assert owner["superseded_applied_indexes"] == [0]
     assert verify_chat_authority_final_surfaces(
         chat_audit,
         final_text_srt=output_srt,
@@ -183,6 +194,128 @@ def test_late_source_language_cpa_retires_same_window_cpa_surface():
         delivery_start_ms=0,
         delivery_end_ms=15_000,
     )
+
+
+def _foreign_script_cpa_audit(output_srt, *, current, proposed):
+    return {
+        "status": "CPA_ADJUDICATED_MIXED_PHRASE_AUDIO",
+        "applied_count": 1,
+        "output_srt_sha256": hashlib.sha256(output_srt.encode()).hexdigest(),
+        "cpa_adjudication_rows": [
+            {
+                "cue_index": 1,
+                "resolved": True,
+                "choice": "PROPOSED",
+                "decision_authority": "CPA_JUDGE",
+                "current": current,
+                "proposed": proposed,
+                "adjudication": {
+                    "schema_version": "acoustic-witness-adjudication.v1",
+                    "decision_authority": "CPA_JUDGE",
+                    "witness_authority": "EVIDENCE_ONLY",
+                    "judge": {
+                        "schema_version": "acoustic-witness-adjudication.v1",
+                        "status": "JUDGED",
+                        "choice": "PROPOSED",
+                        "prompt_sha256": "a" * 64,
+                        "completion_sha256": "b" * 64,
+                    },
+                },
+            }
+        ],
+    }
+
+
+def test_late_foreign_script_cpa_retires_exact_read_and_verifies_final_surface():
+    from src.autoslice.producer_text_finalization import (
+        verify_chat_authority_final_surfaces,
+    )
+
+    current = "还有 fruit list"
+    proposed = "哈哈还有弗罗斯特"
+    input_srt = _srt(current, "后文")
+    output_srt = _srt(proposed, "后文")
+    chat_audit = {
+        "applied": [
+            {
+                "matched_start_ms": 5_000,
+                "matched_end_ms": 9_000,
+                "exact_text": "fruit list",
+            }
+        ]
+    }
+    foreign_audit = _foreign_script_cpa_audit(
+        output_srt, current=current, proposed=proposed
+    )
+
+    register_final_foreign_script_cpa_repairs(
+        chat_audit,
+        input_srt=input_srt,
+        output_srt=output_srt,
+        foreign_script_audit=foreign_audit,
+    )
+
+    applied = chat_audit["applied"][0]
+    assert applied["reconciliation"] == {
+        "schema_version": "final-foreign-script-cpa-exact-read-supersession.v1",
+        "status": "SUPERSEDED_BY_FINAL_FOREIGN_SCRIPT_CPA",
+        "receipt_sha256": chat_audit["entity_repairs"][0][
+            "final_foreign_script_receipt_sha256"
+        ],
+        "before_sha256": "sha256:" + hashlib.sha256(current.encode()).hexdigest(),
+        "after_sha256": "sha256:" + hashlib.sha256(proposed.encode()).hexdigest(),
+        "timing_immutable": True,
+    }
+    owner = chat_audit["entity_repairs"][0]
+    assert owner["mode"] == "final_foreign_script_cpa_adjudication"
+    assert owner["structured_exact_text"] == proposed
+    assert owner["superseded_applied_indexes"] == [0]
+    assert chat_audit["final_foreign_script_cpa_surface_registrations"][0][
+        "superseded_applied_indexes"
+    ] == [0]
+    assert verify_chat_authority_final_surfaces(
+        chat_audit,
+        final_text_srt=output_srt,
+        final_speaker_srt=output_srt,
+        delivery_start_ms=0,
+        delivery_end_ms=15_000,
+    )
+
+
+@pytest.mark.parametrize(
+    ("matched_start_ms", "matched_end_ms", "proposed"),
+    (
+        (10_000, 14_000, "哈哈还有弗罗斯特"),
+        (5_000, 9_000, "哈哈还有 fruit list 弗罗斯特"),
+    ),
+)
+def test_late_foreign_script_cpa_keeps_non_matching_exact_read_predecessor(
+    matched_start_ms, matched_end_ms, proposed
+):
+    current = "还有 fruit list"
+    input_srt = _srt(current, "后文")
+    output_srt = _srt(proposed, "后文")
+    chat_audit = {
+        "applied": [
+            {
+                "matched_start_ms": matched_start_ms,
+                "matched_end_ms": matched_end_ms,
+                "exact_text": "fruit list",
+            }
+        ]
+    }
+    foreign_audit = _foreign_script_cpa_audit(
+        output_srt, current=current, proposed=proposed
+    )
+
+    register_final_foreign_script_cpa_repairs(
+        chat_audit,
+        input_srt=input_srt,
+        output_srt=output_srt,
+        foreign_script_audit=foreign_audit,
+    )
+
+    assert "reconciliation" not in chat_audit["applied"][0]
 
 
 def _adapters() -> pipeline.TextPipelineAdapters:
@@ -425,6 +558,46 @@ def test_source_only_boundary_authority_cannot_reach_final_delivery_gate():
         keyword for keyword in final_call.keywords if keyword.arg == "frozen_boundary_receipt"
     )
     assert ast.unparse(final_keyword.value) == "frozen_boundary_receipt"
+    date_keyword = next(keyword for keyword in final_call.keywords if keyword.arg == "recording_date")
+    assert ast.unparse(date_keyword.value) == "str(spec.get('date') or '')"
+
+
+def test_replay_delivery_review_carries_source_only_boundary_witness():
+    """A source-only receipt seeds fresh delivery review without becoming final authority."""
+
+    replay_tree = ast.parse(inspect.getsource(replay.replay_exact_final_reviewer))
+    audit_call = next(
+        node
+        for node in ast.walk(replay_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "exact_delivery_correction_audit"
+    )
+    source_keyword = next(
+        keyword for keyword in audit_call.keywords if keyword.arg == "frozen_source_review"
+    )
+    assert ast.unparse(source_keyword.value) == "frozen_source_review"
+    date_keyword = next(keyword for keyword in audit_call.keywords if keyword.arg == "recording_date")
+    assert ast.unparse(date_keyword.value) == "plan.date"
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "load_boundary_review_authorities"
+        for node in ast.walk(replay_tree)
+    )
+
+
+def test_exact_delivery_review_callers_propagate_their_recording_date():
+    qixi_tree = ast.parse(inspect.getsource(qixi_refresh.refresh_terminal_evidence))
+    qixi_call = next(
+        node
+        for node in ast.walk(qixi_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "exact_delivery_correction_audit"
+    )
+    date_keyword = next(keyword for keyword in qixi_call.keywords if keyword.arg == "recording_date")
+    assert ast.unparse(date_keyword.value) == "RECORDING_DATE"
 
 
 def test_final_boundary_review_indexes_exact_post_authority_grid():
@@ -763,6 +936,70 @@ def test_exact_delivery_does_not_project_source_pass_after_closure_text_drift():
     review = rebound["boundary_semantic_review"]
     assert review["status"] == "BLOCK"
     assert "correlated_source_projection" not in review
+
+
+def test_pronoun_audit_uses_its_own_builder_not_the_final_review_one(
+    monkeypatch,
+):
+    """the candidate-level pronoun audit (closed 4-token set,
+    rerun every exact-final/self-heal round) must not share the A-class
+    entity/boundary judge builder.  It has its own low-effort transport;
+    audit_final_subtitles still goes through _build_final_review_llm_call
+    unchanged."""
+
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+
+    final_review_calls: list[str] = []
+    pronoun_calls: list[str] = []
+
+    def final_review_llm(prompt: str) -> str:
+        final_review_calls.append(prompt)
+        return json.dumps({"findings": []})
+
+    def pronoun_llm(prompt: str) -> str:
+        pronoun_calls.append(prompt)
+        return json.dumps(
+            {
+                "decisions": [
+                    {
+                        "occurrence_id": "cue-1-occurrence-1",
+                        "action": "KEEP_CURRENT",
+                        "current_token": "他",
+                        "replacement_token": "他",
+                        "reason": "全文已知男性",
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr(
+        pipeline, "_build_final_review_llm_call", lambda: final_review_llm
+    )
+    monkeypatch.setattr(
+        pipeline, "_build_pronoun_audit_llm_call", lambda: pronoun_llm
+    )
+
+    srt = _srt("他今天很开心", "第二句", "第三句")
+
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=srt,
+        correction_audit=_correction_pass(),
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="完整回指",
+        clip_context={},
+    )
+
+    assert pronoun_calls, "pronoun-audit builder must be invoked for an occurrence-bearing candidate"
+    pronoun_audit = receipt["candidate_pronoun_consistency_audit"]
+    assert pronoun_audit["status"] == "PASS"
+    assert pronoun_audit["decision_count"] == 1
+    assert receipt["status"] == "CLEAN"
+    assert receipt["release_gate"] == "PASS"
+    validate_final_review_release(
+        receipt,
+        expected_srt_sha256=receipt["reviewed_srt_sha256"],
+    )
 
 
 def test_exact_final_release_review_binds_explicit_clean_response(
@@ -1153,6 +1390,60 @@ def _witness_verdict(request, heard, *, audible=True):
         "confidence": 0.9,
         "reason": "test witness",
     }
+
+
+def _memoizing_witness_observer(build_verdict):
+    """Wrap a request->verdict builder with a geometry-keyed cache.
+
+    Production ``entity_verifier`` has *two* on-disk cache layers
+    (``entity_audio_verifier.py``): an exact ``request_sha256`` manifest
+    replay, and a broader *acoustic* cache keyed only by
+    ``(audio_clip_sha256, prompt_identity_sha256, provider, model)`` --
+    i.e. by the rendered black-frame audio + witness prompt, not by the
+    request's ``evidence_id``/``request_sha256``. That second layer exists
+    precisely because ``evidence_id`` embeds a whole-document ``srt_text``
+    hash (final_review_auditor.py ~1492), so *any* earlier mutation in the
+    same review pass drifts every later finding's ``request_sha256`` even
+    when its own cue audio is unchanged -- "文本漂移不改变问题本身"
+    (``_witness_acoustic_cache_path`` docstring). The acoustic cache still
+    re-verifies/re-binds the response to each request's own hash; it only
+    ever saves the provider round-trip.
+
+    The context-adjudication witness prewarm
+    (``context_adjudication_witness_prewarm.py``) relies on that acoustic
+    layer for everything after the very first admitted finding in a batch.
+    A bare list-appending test double has neither cache layer and would
+    double-count every prewarmed request as a second "AGY call". This
+    helper approximates the acoustic layer with a synthetic geometry key
+    (audio-window timing + syllable hint stand in for
+    ``audio_clip_sha256``/``prompt_identity_sha256`` -- there is no real
+    audio in these tests); ``build_verdict`` still runs on every call (no
+    verification is skipped), but ``requests`` records only the first call
+    per geometry, i.e. what a real disk-cache-backed verifier would
+    actually spend on AGY.
+    """
+
+    requests = []
+    seen_geometries = set()
+
+    def _geometry_key(request):
+        return (
+            request.get("matched_start_ms"),
+            request.get("matched_end_ms"),
+            request.get("context_start_ms"),
+            request.get("context_end_ms"),
+            request.get("source_media_timeline_offset_ms"),
+            request.get("syllable_count_hint"),
+        )
+
+    def observe(request):
+        key = _geometry_key(request)
+        if key not in seen_geometries:
+            seen_geometries.add(key)
+            requests.append(request)
+        return build_verdict(request)
+
+    return observe, requests
 
 
 def _judge_json(choice):
@@ -2196,12 +2487,11 @@ def test_final_review_adjudicates_all_bounded_findings_and_skips_protected_cue(m
         "_build_final_review_llm_call",
         lambda: _split_llm(json.dumps({"findings": findings}, ensure_ascii=False), "PROPOSED"),
     )
-    requests = []
-
-    def choose_proposed(request):
-        requests.append(request)
-        index = str(request["cue_indexes"][0])
-        return _witness_verdict(request, f"hao ci {index} liu zai zhe li")
+    choose_proposed, requests = _memoizing_witness_observer(
+        lambda request: _witness_verdict(
+            request, f"hao ci {request['cue_indexes'][0]} liu zai zhe li"
+        )
+    )
 
     output, audit = pipeline._run_final_review(
         srt_text=_srt(*source_texts),
@@ -2389,11 +2679,9 @@ def test_final_review_reenters_deferred_same_cue_after_first_mutation(monkeypatc
         "_build_final_review_llm_call",
         lambda: _split_llm(json.dumps({"findings": findings}, ensure_ascii=False), "PROPOSED"),
     )
-    requests = []
-
-    def observe(request):
-        requests.append(request)
-        return _witness_verdict(request, "hao jia he hao yi")
+    observe, requests = _memoizing_witness_observer(
+        lambda request: _witness_verdict(request, "hao jia he hao yi")
+    )
 
     chat_audit = {"applied": []}
     output, audit = pipeline._run_final_review(
@@ -2404,7 +2692,16 @@ def test_final_review_reenters_deferred_same_cue_after_first_mutation(monkeypatc
         adapters=_adapters(),
     )
 
-    assert len(requests) == 2
+    # Both findings target the same cue window and both candidate pairs have
+    # equal Han syllable counts ("坏甲和坏乙"/"好甲和坏乙" and "好甲和坏乙"/
+    # "坏甲和好乙" are each 5 syllables), so ``neutral_syllable_count_hint``
+    # is the same 5 for both -- same window + same hint means production's
+    # acoustic cache (keyed on audio + prompt, not on the drifted
+    # ``request_sha256``/``evidence_id``) genuinely absorbs the second,
+    # rebased request as a single underlying AGY spend. See
+    # ``_memoizing_witness_observer`` and ``_witness_acoustic_cache_path``'s
+    # docstring in entity_audio_verifier.py.
+    assert len(requests) == 1
     assert "好甲和好乙" in output
     second = audit["findings"][1]
     assert second["routed"] == "same_cue_readjudicated_fix"
@@ -2472,11 +2769,9 @@ def test_overlapping_same_cue_finding_gets_typed_supersession(monkeypatch):
             "PROPOSED",
         ),
     )
-    requests = []
-
-    def observe(request):
-        requests.append(request)
-        return _witness_verdict(request, "hao ci liu zai zhe li")
+    observe, requests = _memoizing_witness_observer(
+        lambda request: _witness_verdict(request, "hao ci liu zai zhe li")
+    )
 
     output, audit = pipeline._run_final_review(
         srt_text=_srt("坏词留在这里"),
@@ -2874,11 +3169,9 @@ def test_final_review_marks_findings_beyond_audio_budget(monkeypatch):
         "_build_final_review_llm_call",
         lambda: _split_llm(json.dumps({"findings": findings}, ensure_ascii=False), "PROPOSED"),
     )
-    requests = []
-
-    def observe(request):
-        requests.append(request)
-        return _witness_verdict(request, "hao jia he huai yi")
+    observe, requests = _memoizing_witness_observer(
+        lambda request: _witness_verdict(request, "hao jia he huai yi")
+    )
 
     _, audit = pipeline._run_final_review(
         srt_text=_srt(*source_texts),
@@ -2929,11 +3222,9 @@ def test_audio_budget_rejects_whole_same_cue_group_before_any_mutation(monkeypat
         "_build_final_review_llm_call",
         lambda: _split_llm(json.dumps({"findings": findings}, ensure_ascii=False), "CURRENT"),
     )
-    requests = []
-
-    def observe(request):
-        requests.append(request)
-        return _witness_verdict(request, "huai ci liu zai zhe li")
+    observe, requests = _memoizing_witness_observer(
+        lambda request: _witness_verdict(request, "huai ci liu zai zhe li")
+    )
 
     output, audit = pipeline._run_final_review(
         srt_text=_srt(*source_texts),
