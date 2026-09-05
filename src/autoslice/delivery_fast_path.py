@@ -36,6 +36,9 @@ from src.autoslice.microcue_acoustic_discovery import (
 )
 from src.autoslice.restatement_recall import merge_restatement_priority_findings
 from src.autoslice.subtitle_fidelity import valid_redelivery_baseline_config
+from src.autoslice.reviewed_subtitle_baseline_registry import (
+    _valid_speaker_authority,
+)
 
 
 TRUTH_FULL_OWNERSHIP_SCHEMA = "truth_full_ownership.v1"
@@ -304,7 +307,7 @@ def resolve_truth_full_ownership(
 
 
 def _valid_operator_text_pin(
-    pin: object, *, baseline_sha256: str
+    pin: object, *, baseline_sha256: str, candidate_id: str = ""
 ) -> Mapping[str, object] | None:
     if isinstance(pin, Mapping) and pin.get("schema_version") == OPERATOR_TEXT_FULL_OWNERSHIP_PIN_V3_SCHEMA:
         expected_v3 = {
@@ -318,7 +321,10 @@ def _valid_operator_text_pin(
             set(pin) != expected_v3
             or _clean_sha256(pin.get("baseline_sha256")) != baseline_sha256
             or not all(_clean_sha256(pin.get(key)) for key in ("pipeline_srt_sha256", "decision_ledger_sha256", "diagnostic_diff_sha256"))
-            or pin.get("speaker_authority") != "NOT_CLAIMED_TEXT_ONLY"
+            or not _valid_speaker_authority(
+                candidate_id=candidate_id,
+                value=pin.get("speaker_authority"),
+            )
         ):
             return None
         counts = tuple(pin.get(key) for key in ("source_cue_count", "release_cue_count", "changed_cue_count", "operator_exact_text_cue_count", "operator_unchanged_freeze_cue_count", "operator_drop_cue_count"))
@@ -454,6 +460,7 @@ def resolve_operator_text_full_ownership(
     pin = _valid_operator_text_pin(
         baseline.get("operator_text_full_ownership"),
         baseline_sha256=baseline_sha256,
+        candidate_id=str(spec.get("candidate_id") or ""),
     )
     if pin is None:
         return None

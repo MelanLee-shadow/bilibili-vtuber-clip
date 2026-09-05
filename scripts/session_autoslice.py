@@ -1,76 +1,14 @@
 #!/usr/bin/env python3
-"""Unattended post-stream auto-slice runner (runs ON the recording host).
-Design goal: when a stream ends, the recording host starts the FULL
-canonical pipeline by itself — no human kick-off:
+"""Unattended post-stream auto-slice runner.
 
-    stream end (fresh recorder-neutral status from BililiveRecorder adapter)
-      → per new segment: BCUT aggregate ASR transcript (ms timeline)
-      → semantic recall candidate selection (CPA, viewer-perspective, with the
-        curated slice-selection metric; deterministic fallback lanes if the
-        LLM is down — zero-output is loud, never silent)
-      → per-live-session top-N talk candidates + up to 1 new-to-channel song
-      → produce_slice_package per candidate (BCUT+AGY+CPA text, final pronouns,
-        sentence boundaries, CAM+++context speaker finalization, colour ASS
-        burn, REAL CPA cover, profile-style title) / song LRC lane with the strict
-        completeness gate
-      → delivery under <repo>/<output_directory>/<date>/ + AUTOSLICE_SUMMARY.md with the
-        selection reason (hook) and confidence per clip for human review
-      → status report file (no chat/email; Mac pulls via launchd)
-Upload stays OFF by design: this runner has no upload path at all and
-produce_slice_package writes publish drafts with upload_enabled=false.
-HARD LESSONS BAKED IN:
-- **CPA health gate**: recordings can wait, garbage cannot be unshipped.  If
-  the CPA chat lane is down (gpt-5.6/5.5/5.4 provider outages happen), the
-  batch is DEFERRED (status=paused_cpa_down) and resumes on a later tick —
-  clips are never produced with cid titles / cid-text covers.
-- **Title is part of the product**: a pick whose title generation failed is
-  NOT delivered; it stays pending and is retried on resume (bounded).
-- **Dead segments**: recorder restart stubs (a few KB of mp4) and segments whose
-  BCUT transcription fails twice are marked dead and never retried again (the
-  first run retried a 2.9KB stub every 10 minutes forever).
-- **Subtitle fonts**: the sapphire72 ASS names "Microsoft YaHei"; Linux needs
-  a CJK fallback font installed (`apt install fonts-noto-cjk`) or every glyph
-  burns as a tofu box.  Checked at startup, loud in the report if missing.
-- **Songs**: semantic recall's per-segment candidate cap squeezes songs out,
-  so a deterministic performance-detector supplement also feeds the song
-  queue; final pick = top MAX_SONGS_PER_SESSION per live session by danmaku count.
-- **Covers self-heal**: the CPA image lane fails independently of the chat
-  lane (gateway 400 "multiples of 16" blanked a whole batch's
-  covers while titles/subtitles were fine).  A delivered clip without a cover
-  gets a bounded cover-only repair pass (regenerate_channel_cover) on later
-  ticks — never a re-produce, never silent (summary shows repair state).
+This runner discovers finalized recordings, selects talk and song candidates,
+and drives the canonical pipeline into review-ready delivery artifacts and
+status reports. Upload and publication stay off at this boundary: drafts keep
+``upload_enabled=false`` and no upload path is enabled here.
 
-RUNNER v4 :
-- **Source health first**: a dead/hung CloudDrive FUSE mount used to read as
-  "no new recordings" and the heartbeat stayed green while the RECORDER's
-  write path was broken.  Every tick now probes the mount (subprocess ls with
-  timeout, hang-proof); failure → ALERT file + SOURCE_UNAVAILABLE heartbeat +
-  do nothing.  A cron watchdog (mount_watchdog.sh) self-heals the mount.
-- **Honest status words**: song gate BLOCK is `blocked`, never `ok`; a batch
-  with zero deliveries is `no_delivery`, never `done`.  Delivered talk is
-  `review_ready` — clean by construction: deterministic boundary red flags are
-  SELF-REPAIRED inside produce_slice_package (维护者: unattended means
-  fix-or-refuse, no deliver-and-ask-a-human quarantine), and an unrepairable
-  boundary is `boundary_unrepairable` (no delivery; retried only after a
-  relevant pipeline change, with a lifetime cap).
-- **Budget = deliveries**: gate-blocked songs no longer consume the per-session
-  song budget; the danmaku-sorted backlog backfills (bounded SONG_ATTEMPT_CAP).
-- **Global selection + sealing**: talk picks are ranked globally by recall
-  confidence (soft per-segment diversity cap) and selection only happens after
-  the segment inventory is STABLE across ticks — late segments compete instead
-  of arriving to spent quota.
-- **Atomic state**: tmp+rename writes with .bak; corrupt state quarantines the
-  file and BLOCKS the date (state_corrupt_blocked) instead of silently
-  reprocessing from scratch.
-
-Deployment (free):
-    repo   /opt/bilive/autoslice/repo        (rsync of scripts/ src/ assets/)
-    env    /opt/bilive/autoslice/cpa.env     (CPA_BASE_URL / CPA_API_KEY, 600)
-    state  /opt/bilive/autoslice/state/<date>.json
-    cron   */10 min: flock -n lock python3 scripts/session_autoslice.py --once
-    kill   touch /opt/bilive/autoslice/DISABLED to pause everything
-    deps   fonts-noto-cjk (subtitle rendering), ffmpeg, PIL, self-ssh key,
-           /opt/bilive/autoslice/venv-diar + pinned CAM++ model/voiceprints
+Pipeline rules and step authority live in ``docs/pipeline/README.md`` and its
+linked step documents; runtime deployment and pause controls belong to the
+formal host entrypoints rather than this module's documentation.
 """
 
 from __future__ import annotations

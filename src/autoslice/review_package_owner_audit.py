@@ -627,6 +627,7 @@ def _source_truth_owner_set_valid(
 def _story_owner_set_valid(
     *,
     chat_authority: Mapping[str, object],
+    chat_authority_path: Path | None = None,
     frozen_owner_by_key: Mapping[tuple[str, str], object],
     frozen_owner_keys: list[tuple[str, str]],
     story_start: int,
@@ -662,6 +663,7 @@ def _story_owner_set_valid(
                             row=row,
                             row_index=ordinal - 1,
                             chat_authority=chat_authority,
+                            chat_authority_path=chat_authority_path,
                         )
                     )
                 elif (
@@ -701,6 +703,7 @@ def _story_owner_set_valid(
                     row=row,
                     row_index=ordinal - 1,
                     chat_authority=chat_authority,
+                    chat_authority_path=chat_authority_path,
                 )
                 continue
             if owner_kind == "exact_read" and row.get("owner_eligible") is not True:
@@ -760,6 +763,7 @@ def _exact_final_superseded_boundary_owner_valid(
     row: Mapping[str, object],
     row_index: int,
     chat_authority: Mapping[str, object],
+    chat_authority_path: Path | None = None,
 ) -> bool:
     """Keep one frozen boundary owner after an exact same-window CPA edit."""
 
@@ -836,8 +840,64 @@ def _exact_final_superseded_boundary_owner_valid(
             row=successor,
             row_index=successor_index,
             chat_authority=chat_authority,
+            chat_authority_path=chat_authority_path,
         )
     )
+
+
+def _final_surface_registration_and_history_valid(
+    *,
+    row: Mapping[str, object],
+    row_index: int,
+    chat_authority: Mapping[str, object],
+    pending_allowed: bool,
+) -> bool:
+    repair_sha256 = row.get("exact_final_repair_sha256")
+    registrations = chat_authority.get("exact_final_cpa_surface_registrations")
+    self_heal = chat_authority.get("exact_final_cpa_self_heal")
+    if not isinstance(registrations, list) or not isinstance(self_heal, Mapping):
+        return False
+    if not (
+        self_heal.get("schema_version") == "exact-final-cpa-self-heal-audit.v1"
+        and self_heal.get("status") == ("REVIEW_PENDING" if pending_allowed else "PASS")
+    ):
+        return False
+    matching_registrations = [
+        registration
+        for registration in registrations
+        if isinstance(registration, Mapping)
+        and registration.get("schema_version") == "exact-final-cpa-surface-registration.v1"
+        and registration.get("status") == "REGISTERED"
+        and registration.get("owner_entity_repair_index") == row_index
+        and registration.get("exact_final_repair_sha256") == repair_sha256
+    ]
+    if len(matching_registrations) != 1:
+        return False
+    passes = self_heal.get("passes")
+    if not isinstance(passes, list):
+        return False
+    matching_receipts = []
+    for pass_row in passes:
+        repairs = pass_row.get("repairs") if isinstance(pass_row, Mapping) else None
+        if not isinstance(repairs, list):
+            return False
+        for repair in repairs:
+            if not isinstance(repair, Mapping):
+                return False
+            digest = (
+                "sha256:"
+                + hashlib.sha256(
+                    json.dumps(
+                        repair,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
+            )
+            if digest == repair_sha256:
+                matching_receipts.append(repair)
+    return len(matching_receipts) == 1
 
 
 def _post_boundary_freeze_surface_owner_valid(
@@ -845,6 +905,7 @@ def _post_boundary_freeze_surface_owner_valid(
     row: Mapping[str, object],
     row_index: int,
     chat_authority: Mapping[str, object],
+    chat_authority_path: Path | None = None,
 ) -> bool:
     """Verify an exact-final surface owner without reopening boundary owners.
 
@@ -877,52 +938,18 @@ def _post_boundary_freeze_surface_owner_valid(
     ):
         return False
 
-    registrations = chat_authority.get("exact_final_cpa_surface_registrations")
-    if not isinstance(registrations, list):
-        return False
-    matching_registrations = [
-        registration
-        for registration in registrations
-        if isinstance(registration, Mapping)
-        and registration.get("schema_version") == "exact-final-cpa-surface-registration.v1"
-        and registration.get("status") == "REGISTERED"
-        and registration.get("owner_entity_repair_index") == row_index
-        and registration.get("exact_final_repair_sha256") == repair_sha256
-    ]
-    if len(matching_registrations) != 1:
-        return False
-
     self_heal = chat_authority.get("exact_final_cpa_self_heal")
-    passes = self_heal.get("passes") if isinstance(self_heal, Mapping) else None
-    if not (
+    if (
         isinstance(self_heal, Mapping)
-        and self_heal.get("schema_version") == "exact-final-cpa-self-heal-audit.v1"
-        and self_heal.get("status") == "PASS"
-        and isinstance(passes, list)
+        and self_heal.get("status") == "REVIEW_PENDING"
     ):
         return False
-    matching_receipts = []
-    for pass_row in passes:
-        repairs = pass_row.get("repairs") if isinstance(pass_row, Mapping) else None
-        if not isinstance(repairs, list):
-            return False
-        for repair in repairs:
-            if not isinstance(repair, Mapping):
-                return False
-            digest = (
-                "sha256:"
-                + hashlib.sha256(
-                    json.dumps(
-                        repair,
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                ).hexdigest()
-            )
-            if digest == repair_sha256:
-                matching_receipts.append(repair)
-    return len(matching_receipts) == 1
+    return _final_surface_registration_and_history_valid(
+        row=row,
+        row_index=row_index,
+        chat_authority=chat_authority,
+        pending_allowed=False,
+    )
 
 
 def _retry_verification_valid(
@@ -959,6 +986,7 @@ def _frozen_owner_contract_valid(
     frozen: object,
     truth_rows: list[dict[str, Any]],
     chat_authority: Mapping[str, object],
+    chat_authority_path: Path | None = None,
     record: Mapping[str, object],
     superseded_truth_ids: frozenset[str] | None = None,
     qixi_terminal_projection_authority: Mapping[str, object] | None = None,
@@ -1029,6 +1057,7 @@ def _frozen_owner_contract_valid(
             and source_valid
             and _story_owner_set_valid(
                 chat_authority=chat_authority,
+                chat_authority_path=chat_authority_path,
                 frozen_owner_by_key=owner_by_key,
                 frozen_owner_keys=owner_keys,
                 story_start=story_start,
@@ -1443,6 +1472,7 @@ def audit_source_truth_owner_attestations(
         frozen=frozen,
         truth_rows=truth_rows,
         chat_authority=chat_authority,
+        chat_authority_path=chat_authority_path,
         record=record,
         superseded_truth_ids=c12_superseded_truth_ids,
         qixi_terminal_projection_authority=qixi_terminal_projection_authority,
