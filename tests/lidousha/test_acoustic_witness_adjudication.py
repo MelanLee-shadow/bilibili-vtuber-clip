@@ -177,8 +177,8 @@ def test_unknown_witness_protocol_fails_closed_before_judge():
     assert called is False
 
 
-def test_blind_protocol_canary_rejects_sycophantic_proposal_mismatch():
-    """A sighted echo would confirm PROPOSED; blind audio matches CURRENT."""
+def test_blind_protocol_canary_discloses_mismatch_without_overriding_cpa():
+    """Blind audio remains evidence; an explicit CPA choice owns ordinary text."""
 
     audio_pinyin = "hai mei you ge za ne"
 
@@ -209,12 +209,15 @@ def test_blind_protocol_canary_rejects_sycophantic_proposal_mismatch():
         ),
     )
 
-    assert repaired is False
-    assert branch == "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
+    assert repaired is True
+    assert branch == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
     assert audit["witness_protocol"] == "blind_pinyin"
     assert audit["candidate_pinyin_similarity"]["current"] > audit[
         "candidate_pinyin_similarity"
     ]["proposed"]
+    assert audit["witness_conflict_diagnostic"]["effect"] == "DISCLOSURE_ONLY"
+    assert audit["witness_conflict_diagnostic"]["additional_support_found"] is False
+    assert "witness_conflict_gate" not in audit
     assert "代码计算的双候选拼音贴合" in prompts[0]
 
 
@@ -345,22 +348,24 @@ def test_judge_can_reject_a_malformed_closed_set_without_mutating_text():
     assert audit["judge"]["choice"] == "NEITHER"
 
 
-def test_judged_proposed_needs_support_when_pinyin_witness_disagrees():
-    # 维护者：CPA 仍终裁，但无第三方结构化证据不得背离耳朵。
+def test_judged_proposed_discloses_pinyin_disagreement_without_second_veto():
+    # Current step 40/41: acoustic/pinyin evidence is diagnostic after explicit CPA choice.
     repaired, branch, audit = adjudicate_with_witness(
         check_request=CHECK_REQUEST,
         witness=_witness("hai mei you ge za ne"),
         llm_call=lambda prompt: json.dumps({"choice": "PROPOSED"}),
     )
-    assert repaired is False
-    assert branch == "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
+    assert repaired is True
+    assert branch == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
     assert audit["witness_diagnostic_conflict"] is True
-    assert audit["witness_conflict_gate"]["status"] == "BLOCK"
+    assert audit["witness_conflict_diagnostic"]["effect"] == "DISCLOSURE_ONLY"
+    assert audit["witness_conflict_diagnostic"]["additional_support_found"] is False
+    assert "witness_conflict_gate" not in audit
     compat = audit["pinyin_compatibility"]
     assert compat["current"] > compat["proposed"]
 
 
-def test_equal_low_pinyin_scores_need_structured_support_to_apply():
+def test_equal_low_pinyin_scores_are_disclosed_but_cpa_choice_applies():
     request = {
         **CHECK_REQUEST,
         "current_cue": "请问什么打不过这 NPC",
@@ -376,12 +381,14 @@ def test_equal_low_pinyin_scores_need_structured_support_to_apply():
         llm_call=lambda _prompt: json.dumps({"choice": "PROPOSED"}),
     )
 
-    assert repaired is False
-    assert branch == "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
+    assert repaired is True
+    assert branch == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
     assert audit["pinyin_compatibility"]["current"] == audit[
         "pinyin_compatibility"
     ]["proposed"]
     assert audit["witness_diagnostic_conflict"] is True
+    assert audit["witness_conflict_diagnostic"]["effect"] == "DISCLOSURE_ONLY"
+    assert audit["witness_conflict_diagnostic"]["additional_support_found"] is False
 
 
 def test_judge_verdict_cache_round_trip(tmp_path, monkeypatch):
@@ -433,21 +440,23 @@ def test_judge_verdict_cache_round_trip(tmp_path, monkeypatch):
     assert calls["n"] == 5
 
 
-def test_self_inconsistent_witness_still_needs_third_party_support():
-    """刘若莎案：听写自称 14 音节却写出对不上
-    的拼音串（self_count_mismatch）。8/8 裁定补足边界：证人并非最终票，
-    但 CPA 背离它仍需第三方结构化证据，不能只凭语义重投一次。"""
+def test_self_inconsistent_witness_is_disclosed_but_not_a_second_text_veto():
+    """A self-inconsistent witness stays visible; CPA still owns ordinary text.
+
+    Acoustic deletion remains separately protected below.
+    """
 
     witness = {**_witness("hai mei you ge za ne"), "self_count_mismatch": True}
-    repaired, branch, _ = adjudicate_with_witness(
+    repaired, branch, audit = adjudicate_with_witness(
         check_request=CHECK_REQUEST,
         witness=witness,
         llm_call=lambda prompt: json.dumps({"choice": "PROPOSED"}),
     )
-    assert repaired is False
-    assert branch == "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
+    assert repaired is True
+    assert branch == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
+    assert audit["witness_conflict_diagnostic"]["effect"] == "DISCLOSURE_ONLY"
 
-    # 删除类亦不得靠无结构化证据的语义裁决背离耳朵。
+    # Deletion remains a separate protected contract; this is not ordinary text authority.
     request = {
         **CHECK_REQUEST,
         "current_cue": "我草，乱说的啊",
