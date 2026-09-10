@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from src.autoslice.candidate_selection import _exact_talk_contract_ids
+from src.autoslice.publication_reconciliation import publication_row_is_verified
 from src.autoslice.published_cover_carry import queue_marker_is_valid, queue_plan_projection
 from src.autoslice.final_review_carryover_retry import (
     unconsumed_final_review_carryover as _unconsumed_final_review_carryover,
@@ -67,6 +68,7 @@ from src.autoslice.speaker_manual_review import (
     restore_fossilized_speaker_holds,
 )
 from src.autoslice import song_name_authority
+from src.autoslice.song_lane import _resume_song_full_source_proof
 from src.autoslice.talk_quota_freeze import carry_frozen_admission
 from src.autoslice.talk_recovery_record_policy import (
     cover_route_retry_is_eligible,
@@ -1413,9 +1415,8 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
                 else "transient_source_context_failure"
             ),
             "session_id": session_id,
-            "resume_full_source": bool(
-                "AGY_SOURCE_CONTEXT_RUNNER_FAILED" in reasons
-                and isinstance(record.get("full_source_retry"), dict)
+            "resume_full_source": _resume_song_full_source_proof(
+                record, infra_retry_due=infra_retry_due, pipeline_changed=changed,
             ),
         }
         requeued.append(item)
@@ -1485,12 +1486,11 @@ def recover_bound_song_deliveries(date: str, state: dict) -> int:
     """
 
     recovered = 0
-    delivered_by_session: dict[str, int] = {}
-    for song in state.get("songs", []):
-        if not isinstance(song, dict) or not song.get("delivered"):
-            continue
-        session_id = str(song.get("session_id") or "legacy-date-session")
-        delivered_by_session[session_id] = delivered_by_session.get(session_id, 0) + 1
+    delivered_count = sum(
+        1 for song in state.get("songs", [])
+        if isinstance(song, dict)
+        and (bool(song.get("delivered")) or publication_row_is_verified(song))
+    )
     for record in state.get("songs", []):
         if (
             not isinstance(record, dict)
@@ -1501,8 +1501,7 @@ def recover_bound_song_deliveries(date: str, state: dict) -> int:
             not in {str(code) for code in record.get("reason_codes", [])}
         ):
             continue
-        session_id = str(record.get("session_id") or "legacy-date-session")
-        if delivered_by_session.get(session_id, 0) >= _runner.MAX_SONGS_PER_SESSION:
+        if delivered_count >= _runner.MAX_SONGS_PER_DATE:
             continue
         cid = str(record.get("candidate_id") or "")
         summary_value = record.get("selector_summary_path")
@@ -1593,7 +1592,7 @@ def recover_bound_song_deliveries(date: str, state: dict) -> int:
             "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
         )
         recovered += 1
-        delivered_by_session[session_id] = delivered_by_session.get(session_id, 0) + 1
+        delivered_count += 1
         _runner.log(f"song delivery recovery {cid}: committed verified package without selector rerun")
     return recovered
 

@@ -409,19 +409,30 @@ def _same_portable_mount_replaced(current: Any, previous: Any) -> bool:
 
 
 def _all_roles_reindexed_within_replaced_mount(changes: dict[str, list[str]]) -> bool:
-    """Require the whole persisted evidence set to move together.
+    """Require a CloudFS evidence view to move together.
 
     A lone inode change could be a renamed or substituted file.  The
     same-portable path is reserved for CloudFS rebuilding the complete
-    directory view after a witnessed namespace-local remount.
+    directory view after a witnessed namespace-local remount.  CloudFS can
+    retain the inode for an already-finalized MP4 while rebuilding the source
+    and XML entries; this exact partial shape remains eligible for the same
+    hash-bound rebind flow, but no other subset is accepted.
     """
 
     return bool(
-        set(changes) == set(_DISPOSITION_FILE_ROLES)
-        and all(
-            "inode" in fields and set(fields).issubset({"device", "inode"})
-            for fields in changes.values()
+        (
+            set(changes) == set(_DISPOSITION_FILE_ROLES)
+            and all(
+                "inode" in fields and set(fields).issubset({"device", "inode"})
+                for fields in changes.values()
+            )
         )
+        or changes
+        == {
+            "source": ["inode"],
+            "xml": ["inode"],
+            "successor_source": ["inode"],
+        }
     )
 
 

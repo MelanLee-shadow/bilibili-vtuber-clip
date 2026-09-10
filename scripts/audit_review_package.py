@@ -58,6 +58,8 @@ from src.autoslice.review_package_ass_audit import (  # noqa: E402
 from src.autoslice.review_package_boundary_contract import (  # noqa: E402
     audit_boundary_contract,
 )
+from src.autoslice.fastlane_original_patch import append_original_release_issues
+
 from src.autoslice.review_package_owner_audit import (  # noqa: E402
     audit_source_truth_owner_attestations,
 )
@@ -1617,6 +1619,15 @@ def _formal_fastlane_audited(root: Path, manifest: Mapping[str, object], issues:
     return True
 
 
+def _audit_record_title_match(*, record, item_title, issues, stem, manifest_path):
+    publish_staging = record.get("publish_staging")
+    record_title = str(publish_staging.get("title") or "") if isinstance(publish_staging, dict) else ""
+    if item_title and record_title and item_title != record_title:
+        _add_issue(issues, "MANIFEST_ITEM_TITLE_DRIFT", stem=stem, path=manifest_path,
+                   detail=f"manifest={item_title!r}; record={record_title!r}")
+    return publish_staging if isinstance(publish_staging, dict) else {}
+
+
 def audit_package(
     root: str | Path, *, qixi_repo_root: Path | None = None
 ) -> dict[str, Any]:
@@ -1638,6 +1649,10 @@ def audit_package(
         return _audit_result(root, issues)
     if not manifest:
         _add_issue(issues, "MANIFEST_MISSING_OR_INVALID", path=manifest_path)
+        return _audit_result(root, issues)
+    from src.autoslice.original_patch_package import audit_if_original
+    if (original_issues := audit_if_original(root, manifest)) is not None:
+        issues.extend(original_issues)
         return _audit_result(root, issues)
     if (c9_issues := audit_c9_successor(root, manifest)) is not None:
         issues.extend(c9_issues)
@@ -1811,18 +1826,11 @@ def audit_package(
                 stem=stem,
                 path=publish_path or title_txt_path or manifest_path,
             )
-        publish_staging = (
-            record.get("publish_staging") if isinstance(record.get("publish_staging"), dict) else {}
-        )
-        record_title = str(publish_staging.get("title") or "")
-        if item_title and record_title and item_title != record_title:
-            _add_issue(
-                issues,
-                "MANIFEST_ITEM_TITLE_DRIFT",
-                stem=stem,
-                path=manifest_path,
-                detail=f"manifest={item_title!r}; record={record_title!r}",
-            )
+        publish_staging = _audit_record_title_match(record=record, item_title=item_title, issues=issues,
+                                  stem=stem, manifest_path=manifest_path)
+        append_original_release_issues(item=item, is_song=is_song, subtitle_path=subtitle_path,
+                                       repo_root=ROOT, directory=CHANNEL_PROFILE.asset_directory("reviewed_subtitle_baselines"),
+                                       stem=stem, issues=issues, issue_adder=_add_issue)
         if story_contract_required and not is_song:
             provenance_path = _resolve(root, f"{stem}.provenance.json")
             provenance = _load_json(provenance_path) if provenance_path else None

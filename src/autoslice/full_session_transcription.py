@@ -29,7 +29,10 @@ from src.autoslice.subtitle_fidelity import (
     apply_subtitle_fidelity_guard,
     persist_fidelity_audit,
 )
-from src.autoslice.subtitle_draft_preparation import _asr_ts, _prepare_cpa_draft, _required_cpa_cues
+from src.autoslice.subtitle_draft_preparation import (
+    BOUNDARY_SEMANTICS_GUIDANCE, _asr_ts, _prepare_cpa_draft, _required_cpa_cues,
+    record_asr_boundary_origin, _rebase_mmss, _render_complete_cpa_review,
+)
 ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(ROOT)
 LOCAL_AGY_JOB_ROOT = "/opt/bilive/jingting_jobs"
@@ -61,20 +64,6 @@ def _topic_graph_expected_sha256() -> str:
     )
 
 
-def _rebase_mmss(mmss: str, offset_ms: int) -> str:
-    """Shift a probe-relative MM:SS to clip-relative; times before clip start
-    come out negative ('-00:05') so the pairing rule still applies to titles
-    the streamer starts reading right as the clip opens."""
-
-    parts = mmss.strip().split(":")
-    try:
-        seconds = int(parts[-2]) * 60 + int(float(parts[-1])) if len(parts) >= 2 else int(float(parts[0]))
-    except (ValueError, IndexError):
-        return mmss
-    rebased = seconds - offset_ms // 1000
-    sign = "-" if rebased < 0 else ""
-    rebased = abs(rebased)
-    return f"{sign}{rebased // 60:02d}:{rebased % 60:02d}"
 
 def _gemini_fresh_transcription(media_path: Path, api_prompt: str) -> str:
     """Local Gemini audio leg for the SSH transcription lane.
@@ -561,6 +550,7 @@ def _cpa_correct_draft_cues(
     screen_text_lines=None,
     topic_entity_context: str = "",
     song_name_candidates=(),
+    resume=None,
 ):
     """Text-only proper-noun/meme correction via CPA (维护者).
 
@@ -613,17 +603,10 @@ def _cpa_correct_draft_cues(
         '\n只输出一个 JSON 对象,条数必须和草稿完全一致(要删的幻听条 text 给空串),只改必要的字:'
         '{"cues": [{"n": 1, "text": "修正后文本或空串"}, ...]}'
     )
-    corrected = _required_cpa_cues(prompt, cpa_llm_call, len(cues))
-    blocks = []
-    out_index = 0
-    for index, cue in enumerate(cues, start=1):
-        raw = corrected.get(index)
-        if raw is not None and raw.strip() == "":
-            continue  # CPA flagged a hallucination cue → drop
-        text = (raw or "").strip() or cue.text
-        out_index += 1
-        blocks.append(f"{out_index}\n{_asr_ts(cue.start_ms)} --> {_asr_ts(cue.end_ms)}\n{text}")
-    return "\n\n".join(blocks) + "\n" if blocks else draft_srt
+    prompt = BOUNDARY_SEMANTICS_GUIDANCE + prompt
+    corrected = _required_cpa_cues(prompt, cpa_llm_call, len(cues),
+                                   resume=resume, source_srt=draft_srt)
+    return _render_complete_cpa_review(cues, corrected, draft_srt)
 
 
 def _cpa_reconcile_draft_cues(
@@ -691,6 +674,7 @@ def _cpa_reconcile_draft_cues(
         '\n只输出一个 JSON 对象,cues 数量和上面完全一致(要删的条 text 给空串):'
         '{"cues": [{"n": 1, "text": "最终文本或空串"}, ...]}'
     )
+    prompt = BOUNDARY_SEMANTICS_GUIDANCE + prompt
     final = _required_cpa_cues(prompt, cpa_llm_call, len(bcut_cues))
     blocks = []
     out_index = 0
@@ -703,7 +687,7 @@ def _cpa_reconcile_draft_cues(
     return "\n\n".join(blocks) + "\n" if blocks else bcut_srt
 
 
-def _cpa_pronoun_ta_pass(srt: str, *, cpa_llm_call, required: bool = False):
+def _cpa_pronoun_ta_pass(srt: str, *, cpa_llm_call, required: bool = False, context_text: str = ""):
     """Resolve singular pronouns after every other text correction.
 
     This is deliberately the last text pass and works in both directions:
@@ -750,6 +734,8 @@ def _cpa_pronoun_ta_pass(srt: str, *, cpa_llm_call, required: bool = False):
         '\n只输出 JSON（to 只能是 TA/他/她/它）:'
         '{"rewrites":[{"n":1,"occurrence":1,"from":"TA","to":"她"}]}'
     )
+    if context_text:
+        prompt += "\n\n" + context_text + "\n"
     # CPA intermittently returns an empty completion; retry before giving up.
     rewrites = None
     failure_code = "CPA_PRONOUN_INVALID_OUTPUT"
@@ -920,7 +906,7 @@ def _build_aggregate_asr_transcriber(
     danmaku_items=None,
     window_start_ms: int = 0,
     source_video: Path | None = None,
-    correct: str = "bcut_agy_cpa",
+    correct: str = "cpa",
     screen_text: bool = False,
     recording_date: str = "",
     topic_hint: str = "",
@@ -931,7 +917,7 @@ def _build_aggregate_asr_transcriber(
 ):
     """Build aggregate ASR; CPA is mandatory on correction routes."""
 
-    from scripts.free_asr_client import extract_audio_mp3, to_srt, transcribe
+    from scripts.free_asr_client import extract_audio_mp3, transcribe
     from scripts.gemini_slice_jingting import looks_like_srt
     from src.autoslice.danmaku_evidence import danmaku_in_window, format_danmaku_lines
     from src.autoslice.llm_client import LlmConfig, build_llm_call
@@ -950,13 +936,18 @@ def _build_aggregate_asr_transcriber(
     if danmaku_items:
         in_window = danmaku_in_window(danmaku_items, window_start_ms, window_start_ms + 600_000, max_items=60)
         danmaku_lines = format_danmaku_lines(in_window, base_ms=window_start_ms)
+    # Six paired GPT-6 tests support low for the ordinary text-only first pass.
+    # Legacy dual-source reconciliation was not part of that effort comparison.
+    cpa_effort = "low" if correct == "cpa" else "medium"
     cpa_llm_call = build_llm_call(
-        # 600s: an 11-min clip's reconcile prompt (~250 cues × two sources) can
-        # legitimately take gpt-5.5(medium) past 180s (long-clip run).
-        # gpt-5.6-sol medium (维护者): deep reconcile/adjudication is
-        # the highest-complexity lane; medium (not high) keeps long reconciles
-        # inside the bridge's per-call 180s curl window, fallback 5.5 → 5.4.
-        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' medium", timeout_seconds=600.0)
+        LlmConfig(
+            transport="command",
+            command_template=(
+                "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} "
+                f"'gpt-6-astra' {cpa_effort}"
+            ),
+            timeout_seconds=600.0,
+        )
     )
     # (维护者): _cpa_pronoun_ta_pass is its own dedicated config, not
     # a reuse of cpa_llm_call above.  It is a closed 4-token
@@ -969,7 +960,7 @@ def _build_aggregate_asr_transcriber(
     # shrinking it here would not track this pass's actually-smaller prompt
     # and risks starving a legitimate retry cascade.
     pronoun_llm_call = build_llm_call(
-        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' low", timeout_seconds=600.0)
+        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-astra' low", timeout_seconds=600.0)
     )
     topic_context_state = {"value": ""}
     session_topic_context = ""
@@ -999,7 +990,7 @@ def _build_aggregate_asr_transcriber(
             topic_entity_context_provider=lambda: topic_context_state["value"],
             song_name_candidates=song_name_candidates,
         )
-        if correct in ("agy", "bcut_agy_cpa", "moss_cpa")
+        if correct in ("agy", "bcut_agy_cpa")
         else None
     )
 
@@ -1050,6 +1041,10 @@ def _build_aggregate_asr_transcriber(
     def transcriber(media_path: Path, speech_spans_ms=None) -> str:
         media_path = Path(media_path)
         sound = extract_audio_mp3(Path(media_path))
+        # Only the ordinary route checkpoints successful observation stages.
+        # Diagnostics remain fresh; every retry still reruns fidelity and review.
+        from src.autoslice.transcription_stage_cache import TranscriptionStageCache
+        resume = TranscriptionStageCache(media_path, sound) if correct == "cpa" else None
         route = correct
         source = {"requested_route": correct, "provider": "aggregate_asr"}
         draft_srt = ""
@@ -1060,10 +1055,14 @@ def _build_aggregate_asr_transcriber(
                 source["requested_route"] = correct
             except MossTranscriptionError as exc:
                 draft_srt = ""
-                route = "bcut_agy_cpa"
+                route = "cpa"
                 source = {"requested_route": correct, "provider": "aggregate_asr", "fallback_reason": exc.reason_code}
         if not draft_srt:
-            draft_srt = to_srt(transcribe(sound, provider="auto", log=lambda *_: None))
+            def observe_asr():
+                return transcribe(sound, provider="auto", log=lambda *_: None)
+            asr_result = resume.bcut(observe_asr) if resume is not None else observe_asr()
+            draft_srt, raw_origin = record_asr_boundary_origin(asr_result, media_path)
+            source.update(raw_origin)
         source["effective_route"] = route
         media_path.with_suffix(".asr-source.json").write_text(
             json.dumps(source, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -1138,6 +1137,7 @@ def _build_aggregate_asr_transcriber(
                 screen_text_lines=screen_text_lines,
                 topic_entity_context=topic_context_state["value"],
                 song_name_candidates=song_name_candidates,
+                resume=resume,
             )
         # 忠实性守卫（维护者 一九零/小李案）：无证人不得改写——
         # 违规跨度所在 cue 回退 BCUT 原文，只回退不阻塞，audit 落盘。
@@ -1178,12 +1178,12 @@ def _build_aggregate_asr_transcriber(
             persist_fidelity_audit(
                 media_path.with_suffix(".fidelity-audit.json"), fidelity_audit
             )
-        # Dedicated whole-clip final pronoun pass (TA/他/她/它 in either
-        # direction); a discourse task the general correction cannot reliably
-        # do inline. Later hash-bound human text decisions are final authority.
-        return _cpa_pronoun_ta_pass(
-            corrected, cpa_llm_call=pronoun_llm_call,
-            required=route in ("bcut_agy_cpa", "cpa", "moss_cpa"),
+        from src.autoslice.pronoun_stage_trace import trace_pronoun_pass
+        from src.autoslice.pronoun_context import render_pronoun_context
+        return trace_pronoun_pass(
+            corrected, media_path=media_path, llm_call=pronoun_llm_call,
+            run=_cpa_pronoun_ta_pass, required=route in ("bcut_agy_cpa", "cpa", "moss_cpa"),
+            context_text=render_pronoun_context(topic_hint, topic_context_state["value"], danmaku_lines),
         )
 
     return transcriber

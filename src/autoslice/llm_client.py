@@ -16,6 +16,7 @@ record the failure and fall back fail-closed, never crash the review.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -238,12 +239,39 @@ def runtime_cpa_command_environment(
     return child
 
 
+def _cpa_cache_identity(config: LlmConfig) -> dict[str, object] | None:
+    """Describe model/effort without credentials; unknown commands cannot cache."""
+    if config.transport == "direct":
+        if not isinstance(config.model, str) or not config.model.strip():
+            return None
+        return {"transport": "direct", "models": [config.model],
+                "effort": config.reasoning_effort or "medium", "api_mode": config.api_mode,
+                "max_tokens": config.max_tokens, "temperature": config.temperature,
+                "api_base_sha256": hashlib.sha256((config.api_base or "").encode()).hexdigest()}
+    parts = shlex.split(config.command_template or "")
+    indexes = [i for i, part in enumerate(parts) if Path(part).name == "llm_via_cpa.sh"]
+    if len(indexes) != 1:
+        return None
+    rest = parts[indexes[0] + 1:]
+    env = config.command_child_env if config.command_child_env is not None else os.environ
+    models = rest[2] if len(rest) > 2 else env.get("CPA_CHAT_MODELS") or env.get("CPA_CHAT_MODEL") or "gpt-6-astra"
+    effort = rest[3] if len(rest) > 3 else env.get("CPA_REASONING_EFFORT") or "medium"
+    if not models.strip() or not effort.strip():
+        return None
+    return {"transport": "cpa_command", "models": models.split(), "effort": effort}
+
+
 def build_llm_call(config: LlmConfig) -> LlmCall:
     if config.transport == "direct":
-        return lambda prompt: _provider_dispatch(lambda: _call_direct(prompt, config), config.runtime_root)
-    if config.transport == "command":
-        return lambda prompt: _provider_dispatch(lambda: _call_command(prompt, config), config.runtime_root)
-    raise ValueError(f"unknown llm transport: {config.transport!r}")
+        def call(prompt):
+            return _provider_dispatch(lambda: _call_direct(prompt, config), config.runtime_root)
+    elif config.transport == "command":
+        def call(prompt):
+            return _provider_dispatch(lambda: _call_command(prompt, config), config.runtime_root)
+    else:
+        raise ValueError(f"unknown llm transport: {config.transport!r}")
+    call.cpa_cache_identity = _cpa_cache_identity(config)
+    return call
 
 
 def _provider_dispatch(call: Callable[[], str], configured_root: str | None = None) -> str:

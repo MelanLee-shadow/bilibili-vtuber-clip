@@ -7,12 +7,22 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
 证据，全部带 `do_not_execute=true`；repair CLI 会 fail-closed 拒绝。当前修复计划必须从
 当前 state/artifact hashes 新建，不能复制历史候选、标题或路径。
 
-- 默认 `auto` 路由：单人名场面只有同时具备强表情/动作证据、可信主播主体几何且全局运动不发散时才保留真实直播帧；双人联动的安全门先读 **StoryContract 的 typed 参与者关系**，关系语义/标题词只解释叙事，不能关闭人物门。hash-bound 源帧同时清楚出现双方，并能提供与故事有关的真实人物、物件、文字或情绪证据时，即使运动分数不高，也可优先保留真实互动；源帧没有直接拍到的动作或反转只能由封面文字/版式表达，不能倒推成像素事实。**游戏场分叉（维护者 2026-08-09 02:20 逐字裁定）**：「事实上，如果是截图封面的话，当然不要求李豆沙在画面里占主要部分，毕竟是游戏截图，只要截图足够有趣就行，主体肯定会会是游戏。」——本场 `session-game-context.v1` 已 RESOLVED **且**本条选帧探到固定面捕小窗 `camera_window_bbox_frac` 时判为游戏场（两条缺一即按谈话场，fail-closed，不新建探测器）。游戏场的见证与终检都改问「小窗可见可辨 + 画面本身有事件」，`subject_confident=false` 与累计动作热区超过半屏**不再**构成重绘理由，路线走 camera-window 分支的截图 polish，物化保留**整幅**游戏画面（裁成她的小窗会丢掉 维护者 要的游戏主体）。谈话场维持原判据不变：运动高分但主体几何不可信、或局部运动块误判为主体，仍不能冒充主播名场面，必须走 CPA `gpt-image-2 images.edit` 大脸重绘。正常生产与 cover-only regenerator 都必须在 generation 明示 `image_gen_model=cpa`；缺失该 provenance 即使图片和人物门通过也不能进入同 BV 最终人审。真实帧不得把整张同场截图直接当背景，必须装入当前 `cover_diversity_slot` 对应的图形海报底板（不同配色、纹理、卡片角度）后再叠梗字；中等且主体可信的帧可先轻修再进入同一底板。任何所选路线失败都 fail-closed，不得用低质随手截帧冒充成品。
+## 当前路由优先级
+
+杂谈截图可以用同片说话人的真实神态与具体提问、回应或引语共同表达故事。台词是否有来源由字幕和故事事实检查负责；图像终检不能仅因静帧未演出台词中的人物、物件或动作，就推断台词虚构或图文无关。只有人物名、空泛口号、主体缺失、具体图文矛盾仍须拦截，身份正确或笑容本身不是通过理由。强制 screenshot/polish 路线可采用现有 hash-bound source-composition 回执中的主体及完整脸部证据，不得被旧运动几何标记覆盖；缺证、hash 漂移或脸部不安全仍拒绝。
+
+标题—封面联合检查使用同一判断范围：普通室内或虚拟直播背景没有被标题提及，不单独构成
+图文无关；仍须指出具体矛盾、虚构的场景断言或抢占主体的元素。已返回的失败回执保留原文，
+不能由程序清空其 `unrelated_or_misleading_elements` 或重标 PASS；规则接线修复后才另取新回执。
+
+- 默认 `auto` **截图优先，AI 次选**（维护者 2026-09-06 00:46 UTC 再次明确）：先从真实讲话帧找清楚、好看且与故事有关的表情、人物、物件或画面。可信身份见证确认脸完整、可忠实裁切，且帧达到可用分数（或经人工选帧）时，先走 `screenshot_direct`；平静、温柔、笑容也是有效状态，不要求一帧演出全部 StoryContract 动作和反转。确有杂物或画质问题时才选 `screenshot_polish`；没有可用真实帧时再考虑 `cpa_redraw`。运动几何只是候选线索，不能把游戏运动块当成主播，也不能覆盖有效的 CPA 身份框。游戏场景遵守真实游戏画面与主播小窗的专项规则，不强制裁成大脸。双人关系先读 StoryContract 的 typed 参与者门：源帧须清楚包含全部必需参与者，不能用 AI 补人。
+- 截图版式同样按故事与真实素材尺寸选择。普通默认 `source-led` 保留完整源帧，用当前字体实际测量紧凑标题带，并在合成前比较布局可保留的源图大小；横向素材放进侧栏明显缩小时，回退 footer。poster、overlay 与最终 art_direction 必须消费同一个布局/文字区。中央 4:3 源画面保持完整、不被文字覆盖，背景只延展源色调，不强制卡片或图形皮肤。明确指定的历史样式与关系型整帧 compositor 可忠实重放。卡片、配色轮换不等于构图多样性。截图直出必须记 `image_generation_used=false`、`image_gen_model=none`，不得伪造生图回执；实际轻修/重绘才记录真实 CPA `images.edit` provenance。路线失败保留证据并修复，不能用未经审阅的随手截帧冒充成品。
+- **游戏场分叉（维护者 2026-08-09 02:20 逐字裁定）**：「事实上，如果是截图封面的话，当然不要求李豆沙在画面里占主要部分，毕竟是游戏截图，只要截图足够有趣就行，主体肯定会会是游戏。」——本场 `session-game-context.v1` 已 RESOLVED **且**本条选帧探到固定面捕小窗 `camera_window_bbox_frac` 时判为游戏场（两条缺一即按谈话场，fail-closed，不新建探测器）。游戏场的见证与终检都改问「小窗可见可辨 + 画面本身有事件」，`subject_confident=false` 与累计动作热区超过半屏**不再**构成重绘理由，路线走 camera-window 分支的截图 polish，物化保留**整幅**游戏画面（裁成她的小窗会丢掉 维护者 要的游戏主体）。
 - 形象铁律：以当场直播形象为原型，只改动作/表情/Q版；禁加饰品服装；多人场景主体锁定李豆沙；表情永不吐舌头。
-- 同场批内创新硬门：selection 为 talk 入选项持久化 `cover_diversity_slot`；前 5 张不得碰撞背景家族。0–5 依次为蓝色漫画爆炸、暖色手账拼贴、紫色霓虹舞台、薄荷贴纸涂鸦、黑白漫画分镜、珊瑚棋盘杂志。返修必须继承该槽位，不能退回独立随机抽色。
-- 版式：talk 轮换 left-split/right-split/banner；歌切恒 song-clean 且标题字要大（banner 级）；art direction 由 `_cover_art_direction` 决定（`cover_generation.py`）。短梗字会为可读性强制 banner，但背景家族仍必须批内不同。
-- 所有 talk 封面（含自动标题、维护者 手定标题与 same-BV 冻结投稿标题）按
-  生态调研采用 2–12 字的原话/质问/反差梗字，配真实表情帧和更大的脸；
+- 同场创新按故事表达判断：`cover_diversity_slot` 仅提供缺省布局/强调色建议，模型的有效选择可覆盖；六背景家族仅保留显式历史样式重放，不再默认轮换，不能把背景不撞色当成多样性已完成。截图的有效 layout/title_style 不依赖 AI visual_brief；`art_direction.visual_brief` 在需要生成图像时选择镜头尺度、叙事次序、主次关系和质感，并由实际生图 prompt 消费；需要原型对照时，明确同一人的时间分格与真正多人联动的区别。真实人物、服装、故事事实与无伪字约束继续有效。
+- 版式：talk 可按故事选 left-split/right-split/banner/footer；短梗字先用受信字体计算实际字号，能满足 120px 时保留所选区，装不下才在生图前换宽区，叠字时不偷换构图。歌切保留 song-clean。`title_style=clean` 使用 committed 字体链中的 SmileySans 优先、不额外旋转的奶油字与已知细描边；默认 outline 仍可用。两者都由同一 render spec/glyph mask/逐像素重放验证。双行副句保持八成字号，避免反差的后半句在缩略图里消失。
+- 所有 talk 封面（含自动标题、维护者 手定标题与 same-BV 冻结投稿标题）
+  采用 2–12 字的原话/质问/反差梗字，配能说明事件的图像；历史高播放样本不构成大脸、配色或CTR最优的因果证据；
   投稿标题 authority 只冻结投稿字段，不授权把完整长标题塞进封面。只有另立且绑定
   exact `cover_text` 的 `lidousha-full-text-cover-contract.v1`
   （`authority=REVIEWER_EXPLICIT`、`scope=FULL_TEXT_COVER`）才可要求封面全文；歌切恒为
@@ -22,20 +32,13 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   ROI 都必须回退整张封面复核；不得因 raw 文件看似只改了几字节就跳过像素检查。该范围 receipt
   由 `src/autoslice/incremental_artifact_audit.py` 生成，仍不能替代当前封面 route、最终像素和
   title-cover joint-QC gates。
-- **竖屏源一律走 `cpa_redraw`，这是正常路由不是降级（维护者 2026-08-10 逐字裁定）**：
-  「并不是所有的都需要截图，特别是竖屏直播，通常不适合截图，只能重绘。」判据是**已抽出
-  的参考帧几何**（不是选帧回执——override / hash-bound 重放手工拼的回执里没有几何，而重放
-  正是事故现场）：`h/w >= 1.2`（`VERTICAL_SOURCE_MIN_ASPECT_RATIO`）即判竖版。阈值是几何推
-  导不是标定：成品固定 16:9（h/w=0.5625），从 h/w=r 的源里裁满宽 16:9 只用得到 `0.5625/r`
-  的画面高度，r=1.2 时已只剩 46.9%，"忠实裁切"的前提不成立；横版侧 16:9=0.5625、4:3=0.75、
-  1:1=1.0 全部远低于阈值，所以「横版源但人物在画面上部」不会被误伤（那由整脸门管）。
-  实测事故 `auto_230125_960_1072`（BV1Bau16nEyq，源帧 1920×3414，r=1.7781）就是 16:9 窗口
-  对准形心后从眼睛处切断。该判据排在**关系分支、hash-bound 见证分支与 `mode=screenshot`
-  强制之前**——那三条会无条件 return `screenshot_direct`。回执必须据实记成正常路由：
-  `selected_rationale` 写「redraw is the normal route here (维护者 2026-08-10)」并带实测
-  `h/w` 与阈值，逐帧拒绝理由前置 `vertical_source_redraw=true … 非降级`，
-  `decision_inputs` 同时披露 `source_frame_size` / `source_frame_aspect_ratio` /
-  `vertical_source_min_aspect_ratio`。几何读不出时 fail-open，仍由分数路由决定。
+- **竖屏通常不适合直接裁成横幅，应先评估真实画面是否可用**。2026-08-10 原话为
+  “并不是所有的都需要截图，特别是竖屏直播，通常不适合截图，只能重绘。”旧文档把“通常”
+  扩张成了“竖屏一律重绘”。结合较新的截图优先要求，不能只由 `h/w >= 1.2` 就断言没有
+  好截图。只有源帧身份、脸完整、可忠实裁成可用主体的真实见证成立时，才允许竖屏继续
+  截图路线；无有效见证或几何不适用仍重绘。不得为坚持截图把脸/头裁掉，其他多人/game
+  专项门及最终人物/像素验收保持适用。`VERTICAL_SOURCE_MIN_ASPECT_RATIO` 的旧无条件路由若仍
+  存在，属于待对齐的实现差异，不能借旧注释覆盖新要求。
 - 真实帧候选的全屏 motion z-score 只用于发现动作，不能让切场、白雾、加载页等瞬时
   运动离群值压过故事讲话帧。排序必须对 motion 贡献设上限，并继续综合语音能量、清晰度
   与字幕情绪；最终选帧还须由 CPA vision 首选见证对实际像素确认主播脸完整/可用、画面不是
@@ -47,12 +50,12 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   `faithful_crop_can_make_dominant`、`source_carries_story_reaction` 与
   `cpa_redraw_recommended`；CPA 不可用/输出不合约时只允许按统一 `visual_witness` 路由披露
   后备 AGY，reference hash、bbox、provider routing、回执或两端见证任一不可用/非法都须在任何
-  生图前 fail closed。**只要脸不完整、或无法忠实裁成大主体**，初始 v2
-  `selected_treatment` 就必须是 `cpa_redraw`；最终 v3
-  不可再因 witness 不可用静默跨线为截图。**「源图没有承担 StoryContract 的反应」不在
+  生图前 fail closed。脸不完整或不能裁成大主体时，先检查换帧/全幅不裁版式是否能得到
+  合格截图；截图补救仍不成立才进入 `cpa_redraw`。最终 v3 不能因 witness 不可用就静默
+  跨线为截图。**「源图没有承担 StoryContract 的反应」不在
   否决集合里**（2026-07-31 `9f51987` 路由端已拿掉、2026-08-10 执行端补齐）：故事由
-  `narrative_presentation → COVER_TEXT` 承担（见下文），反应缺失的正确出路是降级 polish
-  或换帧重选，不是整张重画——把它当截图准入前置，8/7–8/8 实测 20/20 次降级全部出自这一条。
+  `narrative_presentation → COVER_TEXT` 承担（见下文），反应缺失不单独触发 polish 或重绘；可用帧先 direct，
+  不适用时再换帧——把它当截图准入前置，8/7–8/8 实测 20/20 次降级全部出自这一条。
   反之，CPA 判定可忠实裁切时，单人 screenshot route 必须以该 identity bbox 从 exact
   reference 重裁；crop evidence 同时绑定 reference SHA、bbox、source-composition
   witness/receipt SHA 与 crop output SHA。**裁切不授权（脸被切/bbox 非法）时先落
@@ -66,6 +69,10 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   `COVER_SCREENSHOT_ROUTE_REPAIR_REQUIRED`，返修改走 `scripts/repair_screenshot_cover.py`；
   像素已丢时重绘是唯一出路，但必须落 `cover-repair-route-displacement.v1` typed 披露。
   `actual_treatment` 永远如实记实际产出的路线，绝不把重绘字节记成截图。
+- 上述入口对原生 `screenshot_direct` 只开放**文字层重排**：原背景字节及
+  `screenshot_graphic_poster` 变换证据完全不变，文字、源帧、路由与其余冻结权威仍逐项核对；
+  新最终像素须重新通过脸部、主播身份、字形与联合检查。`model/image_gen_model=none`、
+  生图 planned/attempted/used 全为 false；不能把 direct 改标为 polish 来通过修复器。
 - 路由证据的逐项拒绝理由必须带**这一帧**的真实判据（见证 verdict 的 reason 原文、场景类型、
   分数、情绪命中、主体几何置信），查表模板只能作后缀；只有模板串的 `rejected_reason` 视为
   「默认/自动选择」充数，不满足下文的逐项记录要求。
@@ -96,7 +103,7 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   `\n` / CPA punch 段 / full-text contract / 已验证 `word_atoms` 点集。**宽度平衡器
   只能在合法点集内选择，绝不发明切点**；talk 无 contract 时 layout 的 `max_lines`
   排版预算按缩略图合同封顶；`word_atoms` 缺席时短文案锁单行，撞字号下限即阻断并转
-  梗字评审重跑（CPA 给语义切分 + punch 路径强制 banner，切点与字号一次全解）。
+  梗字评审重跑（CPA 给语义切分 + punch 路径先选择可读文字区，再按同一区生图）。
   此前「多行换大字」的排版预算（左右分栏 8 行）与本合同从未对账，加上「无梗字即把
   整段 `cover_text` 交平衡器」的自动回退，两者联乘产出过 3–8 行的成品，且全部落在
   `cover_text_mode=full` 路径，punch 路径零违例。
@@ -141,7 +148,7 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
 
 ## 路由证据与审计
 
-- screenshot 与 AI 都是一等路线；人工标题不等于禁用截图，也不等于封面必须全文。
+- screenshot 优先，AI 作为所需补充；人工标题不等于禁用截图，也不等于封面必须全文。
   缺少合格短梗字时截图 route 必须阻断或显式重试，不能用长全文封面或静默跨线回退 AI。
   `auto` 必须落盘 `route + reason_codes + considered evidence`，从最终包可以回答
   “为何选截图/为何选 AI”。
@@ -249,3 +256,30 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   provider 调用之前排除；不得因 schema 升级自动重修公开稿或消耗生图额度。公开稿若确需改封面，
   只能走 90 步的显式授权 same-BV repair lane。registry 不可读时 generic maintenance 同样
   fail-closed 停止，不能在出版身份未知时付费重画。
+
+## 生图实测记录与迁移边界（2026-09-09）
+
+现有`_call_cpa_image_edit`仍负责调用位与provider slot，传输实现由`cpa_image_edit.py`承接。
+不改变截图优先、模型参数/缺省链、HTTP失败回退范围、独立身份检查、字形及最终像素门。
+传输抽取后仍属于原有代码证明范围：Talk自动遍历，Song显式列表及package policy fingerprint
+都须纳入`cpa_image_edit.py`，不能只指纹外层wrapper而漏掉实际执行的传输实现。
+response回执可加`image-edit-service-observation.v1`：请求model/size与服务端reported_model、
+quality/size/output_format分开，request ID仅接受有界安全标识；服务自报模型仍
+`upstream_identity_verified=false`，不能伪装底层或snapshot已独立证实。未提供的usage/质量/尺寸
+保持null，不从请求填回；token用量分NOT_REPORTED、INVALID、PARTIAL、INCONSISTENT与有效数值
+报告，不重算/修补服务端账，cost_usd始终未知，除非以后另有实际账单证据。
+
+逐次请求和失败耗时用本机单调时钟测量；request_elapsed不含provider slot等待，attempt_elapsed
+包含该次下载/规范化，不是整条端到端时延。接口返回图先保存create-only、按内容hash命名的
+raw-image.bin（0600）并记录原尺寸/格式；再走原1920×1080确定性规范化。raw字节与normalized
+输出分别hash，不把裁切损失都归给模型。已有同hash文件必须仍为单链接regular0600且字节相等，
+冲突拒绝覆盖。坏图保留取证但仍走原正常解码拒绝，不作为通过。该额外文件属于证据，不自动
+删作垃圾，不反向改写历史生产回执。
+
+这些记录用于比较新模型，不自动扩大repair白名单或切换服务默认。Image2.5的两个alias/snapshot
+可用现有显式单模型输入做隔离测试，但本次只有离线合成HTTP回包，没有实际CPA可用性、图片质量、
+耗时或成本结论。已有401观察不由这项代码绕过；正式迁移仍需获准的真实edit和独立像素审查。
+官方API返回字段和模型定义参考2026-09-09读取的：
+- https://developers.openai.com/api/reference/resources/images/methods/edit/
+- https://developers.openai.com/api/docs/models/gpt-image-2.5-flare
+- https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst

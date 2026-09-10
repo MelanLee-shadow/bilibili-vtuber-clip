@@ -60,7 +60,7 @@ def build_cpa_qa_command(
         raise RuntimeError(f"CPA_BASE_URL missing from environment and {env_path}")
     return (
         "python3 scripts/cpa_semantic_qa_llm.py --request {request_json} --response {response_json} "
-        f"--transport direct --model gpt-5.6-luna --fallback-model gpt-5.5 --api-mode responses "
+        f"--transport direct --model gpt-6-astra --api-mode responses "
         f"--reasoning-effort medium --max-tokens 16000 --retries 3 --api-base {base} --api-key-env CPA_API_KEY"
     )
 
@@ -80,7 +80,7 @@ def probe_cpa_health(
     key = env.get("CPA_API_KEY") or environment.get("CPA_API_KEY", "")
     if not base or not key:
         return False
-    for model in ("gpt-5.6-sol", "gpt-5.5", "gpt-5.4"):
+    for model in ("gpt-6-astra",):
         body = json.dumps(
             {
                 "model": model,

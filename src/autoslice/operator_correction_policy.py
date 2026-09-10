@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 
@@ -17,11 +18,10 @@ def plan_operator_correction(
 ) -> dict[str, Any]:
     """Choose whole-clip review versus a bounded, complete delta repair.
 
-    More than three reported points are treated as an exhaustive candidate
+    Three or more reported points are treated as an exhaustive candidate
     report, but still require a machine-checkable mapping from every changed
-    cue/window to a reported point.  Exactly three remains conservative and
-    requires a whole-clip review because the operator rule only guarantees
-    completeness for ``>3`` (or an explicit short ``only these errors`` claim).
+    cue/window to a reported point (维护者's "3 or more" instruction).
+    An explicit complete report takes precedence over count heuristics too.
     """
 
     if not candidate_id:
@@ -35,19 +35,27 @@ def plan_operator_correction(
     if not isinstance(explicitly_exhaustive, bool):
         raise ValueError("explicitly_exhaustive must be a boolean")
 
-    explicit_scope = explicitly_exhaustive or bool(only_these_errors)
-    exhaustive_candidate = issue_count > 3
+    if explicitly_exhaustive and only_these_errors is False:
+        raise ValueError("conflicting explicit operator review scope")
+
+    # None means no scope statement. False is an explicit request to find
+    # additional errors and must outrank the count-based historical heuristic.
+    non_exhaustive = only_these_errors is False
+    explicit_scope = explicitly_exhaustive or only_these_errors is True
+    exhaustive_candidate = issue_count >= 3
     short_explicit_scope = issue_count <= 2 and explicit_scope
-    whole_clip = issue_count == 3 or (issue_count <= 2 and not short_explicit_scope)
+    whole_clip = non_exhaustive or (issue_count <= 2 and not explicit_scope)
     targeted = not whole_clip
     return {
         "schema_version": SCHEMA_VERSION,
         "candidate_id": candidate_id,
         "reported_issue_count": issue_count,
         "explicitly_exhaustive": explicitly_exhaustive,
-        "only_these_errors": bool(only_these_errors),
+        "only_these_errors": only_these_errors,
         "operator_scope": (
-            "EXHAUSTIVE_CANDIDATE"
+            "EXPLICITLY_NON_EXHAUSTIVE"
+            if non_exhaustive
+            else "EXHAUSTIVE_CANDIDATE"
             if exhaustive_candidate
             else "EXPLICITLY_LIMITED"
             if short_explicit_scope
@@ -63,3 +71,31 @@ def plan_operator_correction(
         "requires_change_coverage_proof": targeted,
         "systemic_pipeline_fix_required": True,
     }
+
+
+def require_explicit_exhaustive_review_plan(
+    value: object, *, candidate_id: str,
+) -> dict[str, Any]:
+    """Recheck the scope plan before compiling full-text operator ownership.
+
+    A numeric targeted-repair policy, a publication approval, and the number
+    of changed cues do not establish a whole-transcript human review.
+    """
+    message = "explicit exhaustive operator review plan is required"
+    if not isinstance(value, Mapping) or value.get("candidate_id") != candidate_id:
+        raise ValueError(message)
+    try:
+        expected = plan_operator_correction(
+            candidate_id=candidate_id,
+            issue_count=value.get("reported_issue_count"),
+            explicitly_exhaustive=value.get("explicitly_exhaustive"),
+            only_these_errors=value.get("only_these_errors"),
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError(message) from exc
+    if dict(value) != expected or not (
+        expected["explicitly_exhaustive"] is True
+        or expected["only_these_errors"] is True
+    ):
+        raise ValueError(message)
+    return expected

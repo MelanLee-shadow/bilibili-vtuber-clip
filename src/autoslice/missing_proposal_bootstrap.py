@@ -624,3 +624,77 @@ def prepare_missing_proposal_candidate(
         "cpa_missing_proposal_convergence": convergence_audit,
         "decision_authority": "CPA_JUDGE_FAILED",
     }
+
+
+def context_only_keep_existing_adjudication(
+    *,
+    convergence: Mapping[str, Any],
+    finding: Mapping[str, Any],
+    proposal_bootstrap_audit: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Build the non-mutating receipt for CPA context-only convergence."""
+
+    current_request = {
+        "schema_version": "subtitle-context-convergence-request.v1",
+        "kind": "missing_proposal_context_only_convergence",
+        "cue_index": convergence.get("cue_index"),
+        "current_cue_sha256": str(
+            convergence.get("current_cue_sha256") or ""
+        ).removeprefix("sha256:"),
+        "final_srt_sha256": str(
+            convergence.get("final_srt_sha256") or ""
+        ).removeprefix("sha256:"),
+        "context_sha256": str(
+            convergence.get("context_sha256") or ""
+        ).removeprefix("sha256:"),
+        "closed_set_structured_evidence": convergence.get("closed_set_structured_evidence"),
+        "decision": "KEEP_EXISTING",
+        "timing_immutable": True,
+    }
+    current_request["request_sha256"] = hashlib.sha256(
+        json.dumps(
+            current_request,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return {
+        "schema_version": "subtitle-span-adjudication.v1",
+        "status": "OBSERVED",
+        "repaired": False,
+        "policy_branch": "JUDGE_KEEPS_CURRENT",
+        "timing_immutable": True,
+        "request": current_request,
+        "verdict": {
+            "schema_version": "subtitle-span-acoustic-witness.v1",
+            "status": "NOT_REQUIRED",
+            "target_audible": None,
+            "reason_code": "CPA_CONTEXT_ONLY_FINAL_CONVERGENCE",
+        },
+        "witness_judge": {
+            "witness_status": "NOT_REQUIRED",
+            "judge": {
+                "schema_version": "subtitle-cpa-context-judge.v1",
+                "status": "JUDGED",
+                "choice": "CURRENT",
+                "reason": convergence.get("reason"),
+                "prompt_sha256": convergence.get("prompt_sha256"),
+                "completion_sha256": convergence.get(
+                    "completion_sha256"
+                ),
+            },
+        },
+        "proposal_bootstrap": proposal_bootstrap_audit,
+        "cpa_missing_proposal_convergence": dict(convergence),
+        "rebuilt_finding": dict(finding),
+        "decision_authority": "CPA_JUDGE",
+        "witness_authority": "EVIDENCE_ONLY",
+        "mutation_authority": {
+            "schema_version": (
+                "subtitle-correction-mutation-authority.v1"
+            ),
+            "status": "NOT_APPLIED",
+            "basis": "CPA_CONTEXT_ONLY_KEEP_EXISTING",
+        },
+    }

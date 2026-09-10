@@ -1,95 +1,97 @@
-# 凭据清单 — 模板与校验
+# 服务与凭据：配置、费用和验证边界
 
-每个凭据：干什么用、放哪、长什么样、怎么验证。**所有 cookie/key 都绝不入库**
-（`.gitignore` 已拦 `.env*`；cookie 文件按约定放在仓库外的部署目录）。
+配置检查、CLI `--help` 和隔离单元测试不需要服务凭据。
+真实制作、录制、救援和发布各有不同依赖，不必为了生成审阅包先准备上传账号。
+所有 cookie、key、授权文档和声纹都应保存在仓库外，不能提交或打印到诊断报告。
 
-> **`.env` 不会被自动加载**：它只是模板/记录处。跑任何脚本前先
-> `set -a; source .env; set +a`（或把变量写进服务/cron 环境）。无人值守
-> runner 的参考部署另读 `$AUTOSLICE_BASE/cpa.env`（deploy 脚本会生成）。
-
-## 1. CPA（LLM 统一入口）— 必需
-
-- 用途：选题、语义校对裁决、标题、封面的全部 LLM 调用。
-- 放哪：`.env` 的 `CPA_BASE_URL` / `CPA_API_KEY`（模板见 `.env.example`）。
-- 校验（脚本签名是 `{prompt文件} {completion文件}`，不是内联字符串）：
+`.env` 只是模板，不会自动加载：
 
 ```bash
-printf '回复OK两个字' > /tmp/cpa_probe.txt
-bash scripts/llm_via_cpa.sh /tmp/cpa_probe.txt /tmp/cpa_reply.txt && cat /tmp/cpa_reply.txt
+set -a
+source .env
+set +a
 ```
 
-## 2. 听音腿：AGY 订阅 或 Gemini API key（二选一）— 必需
+参考 runner 另外读取 `$AUTOSLICE_BASE/cpa.env` 的 CPA 配置以及
+`/opt/bilive/.env` 的 Gemini 配置。使用其他布局时，核对实际入口加载了什么，
+不要把“文件已写好”当成“进程已生效”。
 
-**AGY（Google Antigravity 的 CLI）与 Gemini API key 是同一个模型
-（gemini-3.6 系）的两种接入**——订阅面 vs API 面。配一个就能跑；两个都配
-则管线自动按 **订阅→API** 的次序做配额兜底。
+## CPA：真实文字与视觉流程
 
-- **接入 A（AGY 订阅）**：[Google Antigravity](https://antigravity.google/)
-  官方下载并登录；`.env` 的 `AGY_BIN` 指向其 CLI（默认 `~/.local/bin/agy`）。
-  校验：`"$AGY_BIN" --version` 有输出即可被管线调用。
-- **接入 B（API key）**：`.env` 的 `GEMINI_API_KEY`（可留空
-  `GEMINI_KEY_BACKUP` 付费兜底位），**直连官方 API、不经 CPA**。
-  注意 runner 的读取路径：参考部署从 `/opt/bilive/.env` 读 GEMINI 系列 key、
-  从 `$AUTOSLICE_BASE/cpa.env` 读 CPA 对——**都不读仓库根 `.env`**；非 /opt
-  布局把 GEMINI key export 进 runner 的进程环境即可（子进程会继承）。
-- 校验：`preflight.py` 的"听音腿"行；或跑一次 `--smoke-segment` 冒烟观察
-  转写阶段不报 key 错。
+`CPA_BASE_URL` 和 `CPA_API_KEY` 指向自己的网关。包装器默认模型为 `gpt-6-astra`；
+部分调用点显式指定模型和 effort，不全部服从包装器环境覆盖。
+文字校对和图像裁判需要相应能力，单次文字请求成功不证明图像请求也可用。
 
-## 3. 录播姬的 B 站登录 — 录制层需要
+下面是**会调用真实服务、可能计费**的文字探测，不是离线自检。
+脚本接收提示词文件和回答文件，不接收内联提示词：
 
-- 用途：录播姬（BililiveRecorder）拉流。在录播姬自己的 WebUI 里登录管理，
-  不是本仓的文件。见 `ops/recording/README.md`。
+```bash
+probe_dir="$(mktemp -d)"
+printf '回复OK两个字' > "$probe_dir/prompt.txt"
+bash scripts/llm_via_cpa.sh "$probe_dir/prompt.txt" "$probe_dir/reply.txt"
+cat "$probe_dir/reply.txt"
+```
 
-## 4. 创作中心 cookie（`cookie.json`）— 仅发布/稿件维护 lane
+保留必要的请求状态与模型标识，日志中不要包含 API key。服务不支持某个模型时应修正
+兼容配置并重新验证，不能把错误响应当成有效模型回答。
 
-- 用途：`bili_archive_tool.py` / `bili_cover_edit.py` / `bili_update_tags.py` /
-  同 BV 修复的创作中心 API 调用。
-- 放哪：部署约定 `/opt/bilive/app/cookie.json`，或每次用 `--cookie-json` 显式传。
-- 模板（两种真实形态都认，见 `src/autoslice/bilibili_member_api.py` 开头说明）：
+## 局部音频证据与歌切
+
+普通谈话以 BCUT → CPA 整片文字为主线，具体疑点需要时才补局部音频。
+AGY CLI 和 Gemini API 是不同接入方式；不能只因名称接近就假定模型、功能或配额相同。
+
+| 入口 | 配置 | 验证边界 |
+|---|---|---|
+| AGY CLI | `AGY_BIN`；实体听音默认 `ENTITY_AUDIO_AGY_MODEL="Gemini 3.6 Flash (High)"` | 登录、客户端可执行与音频能力分别验证；`--version` 只证明客户端能报告版本 |
+| Gemini API | `GEMINI_API_KEY`，可选 `GEMINI_KEY_BACKUP` | 实体 API 模型由 `ENTITY_AUDIO_GEMINI_API_MODEL` 指定，默认 `gemini-3.6-flash` |
+| 歌词对轴 | 对应脚本的 provider、模型及歌词输入 | 以入口 `--help` 和歌切步骤为准，不沿用普通谈话的配置推断 |
+
+后备是否可用还受调用路径与配额门约束，设置 key 不保证每条路径自动切换。
+示例 `.env.example` 显式设置 `GEMINI_PAID_BACKUP_DAILY_CAP=0`，但这不免除主服务费用。
+缺少局部听音能力时相应门可以拒绝，不能为了出片跳过证据要求。
+`preflight.py` 提供部署体检；真实声音是否正确仍须通过有界的音频实例检验。
+
+## 录制登录
+
+BililiveRecorder 的 B 站登录在录播姬自己的部署中管理，见
+[录制说明](../ops/recording/README.md)。不要把录制登录态、创作中心 cookie 和
+上传工具 cookie 当成同一种文件。请求的画质也不保证等于实际录到的画质。
+
+## 创作中心 cookie：只在稿件维护 / 发布时需要
+
+`bili_archive_tool.py` 等工具消费创作中心登录态。参考路径为
+`/opt/bilive/app/cookie.json`，也可使用入口提供的 `--cookie-json`。
+`bilibili_member_api.py` 解析的结构之一如下；省略号不是可用凭据：
 
 ```json
-{"data": {"cookie_info": {"cookies": [
-  {"name": "SESSDATA", "value": "…"},
-  {"name": "bili_jct", "value": "…"}
+{"data":{"cookie_info":{"cookies":[
+  {"name":"SESSDATA","value":"…"},
+  {"name":"bili_jct","value":"…"}
 ]}}}
 ```
 
-- 校验（只读，不产生任何写操作）：
-  `python3 scripts/bili_archive_tool.py view --bvid <你账号任一稿件BV> --cookie-json <路径>`
-
-## 5. biliup cookies（`biliup_cookies.json`）— 仅上传 lane
-
-- 用途：`do_upload.sh` 里的 biliup 投稿。
-- 生成：`biliup login`（biliup 官方登录流程，生成 `cookies.json`）。
-- 放哪：部署约定 `/opt/bilive/app/tmp_manual_upload/biliup_cookies.json`，或
-  `authorized_upload.py --biliup-cookie-json` 显式传。
-- 校验：`biliup -u <路径> renew` 能刷新即有效。
-
-## 6. BBDown cookies — 仅官方回放救援 lane（可选）
-
-- 用途：`official-replay-rescue` skill 里 BBDown 下载官方回放。
-- 安装：BBDown 是独立工具——`dotnet tool install --global BBDown`，或从
-  [BBDown releases](https://github.com/nilaoda/BBDown/releases) 下载单文件二进制。
-- 模板：**单行 Cookie 串**文件，至少含 `SESSDATA=…`；部署约定放
-  `$AUTOSLICE_BASE/vod_ingest_cookies.txt`。浏览器插件导出的 Netscape
-  `cookies.txt`（多行制表符格式）**不能直接用**，转成一行：
+有真实授权后，可通过只读查询验证自己的稿件信息：
 
 ```bash
-python3 - cookies.txt <<'PY' > vod_ingest_cookies.txt
-import sys
-rows = [line.split("\t") for line in open(sys.argv[1])
-        if line.strip() and not line.startswith("#")]
-print("; ".join(f"{r[5]}={r[6].strip()}" for r in rows if len(r) >= 7))
-PY
+python3 scripts/bili_archive_tool.py view \
+  --bvid <your-bvid> --cookie-json <absolute-cookie-path>
 ```
 
-- 校验（注意 `-info` 是选项不是子命令，`BBDown info` 会报错）：
-  `BBDown <任一公开BV> -info -c "$(cat vod_ingest_cookies.txt)"`
-  能列出清晰度即通。
-- 安全提示：`-c "$(cat …)"` 会把 SESSDATA 放进进程 argv（本机 `ps` 可见）。
-  单用户机器可接受；共享机器建议用 `BBDown login` 的官方登录态代替。
+发布还需要自己的 `AUTOSLICE_SEASON_IDS`、出版登记及独立授权。
+公共示例的合集 ID 不可使用；完整门见 [发布步骤](pipeline/90-publish.md)。
 
-## 7.（并入第 2 条）
+## biliup：只在上传时需要
 
-AGY 不是独立凭据：它与 Gemini API key 是**同一个模型的两种接入**，见
-上面第 2 条「听音腿」。
+使用 biliup 自己的登录流程生成 cookie，保存在仓库外。
+参考位置为 `/opt/bilive/app/tmp_manual_upload/biliup_cookies.json`；
+授权入口可用 `--biliup-cookie-json` 显式传入。
+登录、续期会涉及网络和登录态变化，不属于本项目的离线测试。
+**不要裸调 `do_upload.sh`，实际发布通过 `authorized_upload.py`。**
+
+## 官方回放救援：可选依赖
+
+BBDown 是单独安装和配置的工具，使用时先读
+[official-replay-rescue skill](../.agent/skills/official-replay-rescue/SKILL.md)。
+不同工具的 JSON、Netscape cookie 文件和单行 Cookie 字符串不能直接互换。
+避免把完整 cookie 放进命令行参数，以免被进程列表记录。
+真实下载还需相应源权限、磁盘空间和救援计划，不能用登录成功替代这些前提。

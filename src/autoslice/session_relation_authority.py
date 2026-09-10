@@ -97,4 +97,3 @@ def resolve_session_relation(
         "bound_source_sha256": normalized_sha or None,
         "ledger_sha256": _sha256(ledger_path),
     }
-

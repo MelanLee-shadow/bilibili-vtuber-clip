@@ -47,6 +47,9 @@ FULL_SOURCE_RETRY_FORENSIC_KEYS = (
     "song_complete",
     "song_completion_evidence",
     "song_name_authority",
+    "selector_summary_path",
+    "selector_summary_sha256",
+    "selector_record_candidate_id",
     "transient_failure_code",
     "next_retry_at_epoch",
     "next_retry_at",
@@ -135,7 +138,7 @@ def song_delivery_ok(
     reason_codes,
     completion_evidence: bool | dict | None,
 ) -> bool:
-    """维护者's FINAL song rule : at most MAX_SONGS_PER_SESSION per live session,
+    """Deliver at most MAX_SONGS_PER_DATE across the recording date ,
     danmaku-desc; a song is delivered when the window IS a song and the
     performance is AFFIRMATIVELY PROVEN complete.  Absence of ``SONG_PARTIAL``
     is not evidence: the ``芽吹くとき`` run had no LRC proof
@@ -283,6 +286,40 @@ def _early_song_infra_failure(
         }
     )
     return result
+
+
+def _resume_song_full_source_proof(
+    record: dict, *, infra_retry_due: bool, pipeline_changed: bool,
+) -> bool:
+    """Select an existing retry stage; never authorize Song or a delivery.
+
+    A new pipeline must reconsider its initial stage. For unchanged code, the
+    persisted full attempt can establish that only its infrastructure failed.
+    Direct full resumes retain this fact across subsequent ticks as well.
+    """
+    if not infra_retry_due or pipeline_changed:
+        return False
+    full = record.get("full_source_retry")
+    if isinstance(full, dict):
+        # Keep compatibility with the original, less detailed timeout records.
+        if "AGY_SOURCE_CONTEXT_RUNNER_FAILED" in (record.get("reason_codes") or []):
+            return True
+        if record.get("full_source_authoritative_block") is not True:
+            return False
+        proof = full
+    elif (record.get("retried_full_source") is True
+          and record.get("resumed_full_source_after_transient") is True):
+        proof = record
+    else:
+        return False
+    code = record.get("transient_failure_code")
+    return bool(
+        code in _runner.SONG_INFRA_TRANSIENT_REASON_CODES
+        and proof.get("transient_failure_code") == code
+        and proof.get("status") in {"blocked", "failed"}
+        and proof.get("window_classified_song") is True
+        and proof.get("song_complete") is False
+    )
 
 
 def scheduled_song_retry_epoch(state: dict) -> int | None:

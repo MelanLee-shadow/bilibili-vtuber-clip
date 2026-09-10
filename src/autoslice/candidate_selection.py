@@ -225,7 +225,10 @@ def session_sealed(date: str, state: dict) -> bool:
 
 
 def song_delivery_budget(state: dict, session_id: str | None = None) -> int:
-    """Remaining song DELIVERY slots, including verified commit reservations.
+    """Remaining daily song slots, including verified commit reservations.
+
+    State belongs to one recording date. The legacy session_id argument does
+    not partition its delivery quota; attempt caps still apply per session.
 
     An ordinary gate-BLOCKED attempt must not eat a slot (audit:
     two BLOCKs consumed both slots and the date still read ``done``).  Once a
@@ -240,14 +243,13 @@ def song_delivery_budget(state: dict, session_id: str | None = None) -> int:
         1
         for song in state.get("songs", [])
         if isinstance(song, dict)
-        and (session_id is None or _item_session_id(song) == session_id)
         and (
             bool(song.get("delivered"))
             or publication_row_is_verified(song)
             or song.get("verified_delivery_pending_commit") is True
         )
     )
-    return max(0, _runner.MAX_SONGS_PER_SESSION - consumed)
+    return max(0, _runner.MAX_SONGS_PER_DATE - consumed)
 
 
 def _talk_quota_policy(item: dict) -> TalkQuotaPolicy:
@@ -405,7 +407,7 @@ def _disclose_quota_policies(state: dict, rows: list[dict]) -> None:
     """Publish which quota policy governed each scope, and where it came from.
 
     Without this the only record of "why did this candidate get in" was the
-    live constants at read time, which is exactly what made the 
+    live constants at read time, which is exactly what made the
     retroactive widening invisible for two days.
     """
 
@@ -914,7 +916,7 @@ def refill_songs(state: dict) -> None:
             item for item in selected_repairs if _item_session_id(item) == session_id
         ]
         # A repair past SONG_INFRA_RETRY_CAP loses its *first claim* on the
-        # session's delivery budget (MAX_SONGS_PER_SESSION = 1).  On 
+        # available delivery budget.
         # one such candidate held that single slot across 26 superseded
         # attempts while eight never-attempted candidates starved in the
         # backlog.  It is demoted, not dropped: it still takes any slot no
@@ -956,10 +958,18 @@ def refill_songs(state: dict) -> None:
         stale_slots = max(0, ordinary_slots - len(session_pool[:allowed]))
         selected.extend(stale_repairs[:stale_slots])
         deferred.extend(stale_repairs[stale_slots:])
-    # Infrastructure retries bypass discovery attempt caps, but never run more
-    # than the remaining delivery slots concurrently; otherwise several old
-    # attempts could all recover at once and over-deliver one live session.
-    state["pending_song"] = selected
+    # Session attempt caps filter eligibility above; all sessions then share
+    # one daily delivery budget, including retries. Preserve repair priority
+    # and rank eligible ordinary songs by danmaku across the whole date.
+    selected.sort(key=lambda item: (
+        (2 if _song_repair_retries_exhausted(item) else 0)
+        if item.get("selected_repair") else 1,
+        -(item.get("danmaku") or 0),
+        -(item["anchor_end_ms"] - item["anchor_start_ms"]),
+    ))
+    daily_slots = _runner.song_delivery_budget(state)
+    deferred.extend(selected[daily_slots:])
+    state["pending_song"] = selected[:daily_slots]
     state["song_backlog"] = deferred + legacy
 
 

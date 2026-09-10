@@ -20,11 +20,14 @@ _CJK_SINGLE_RE = re.compile(r"^([\u3400-\u9fff])[，。！？、,.!?…]*$")
 # Single-hanzi cues are usually ASR shatter (a content word cut in half), but
 # a narrow closed class legitimately stands alone as a complete utterance.
 # This includes interjections ("\u54ce\u2014\u2014", "\u554a?") plus "\u6709" as a self-contained
-# affirmative answer.  Do not broaden this to generic predicates such as
+# affirmative answer and the non-lexical exhalation "\u5657".  A complete
+# sound cue must not be merged across silence merely to add another character.
+# This is a structural classification, not acoustic or semantic approval.
+# Do not broaden this to generic predicates such as
 # "\u884c"/"\u597d": those are still merged into a contiguous neighbour or rejected.
 _CJK_SINGLE_STANDALONE_UTTERANCES = frozenset(
     "\u554a\u54ce\u5509\u54e6\u5662\u5594\u55ef\u8bf6\u6b38\u54a6\u5440\u54c7\u563f\u54c8\u5475\u54fc\u5582\u54b3\u55ec\u56af\u54df\u55f7\u545c\u5443\u5466\u561e\u561b\u54af"
-) | {"\u6709"}
+) | {"\u6709", "\u5657"}
 
 
 def _parse_time_ms(value: str) -> int:

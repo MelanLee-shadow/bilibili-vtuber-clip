@@ -450,6 +450,75 @@ def _witness_rows(
     return results
 
 
+def _transcript_witness(result: dict[str, Any], *, transcript: str) -> dict[str, Any]:
+    """Preserve the single ASR observation without manufacturing phonetic evidence."""
+    from src.autoslice.acoustic_witness_protocol import CANDIDATE_BLIND_TRANSCRIPT_PROTOCOL
+
+    return {
+        "schema_version": "subtitle-span-acoustic-witness.v1",
+        "witness_protocol": CANDIDATE_BLIND_TRANSCRIPT_PROTOCOL,
+        "status": "OBSERVED",
+        "request_sha256": hashlib.sha256(json.dumps(
+            result, ensure_ascii=False, sort_keys=True,
+        ).encode("utf-8")).hexdigest(),
+        "candidate_exposure": "none",
+        "target_audible": True,
+        "exact_transcript": transcript,
+        "audible_language": result.get("audible_language"),
+        "provider": result.get("provider"),
+        "audio_sha256": result.get("audio_sha256"),
+        "start_ms": result.get("start_ms"),
+        "end_ms": result.get("end_ms"),
+        "observation_provenance": {
+            key: value for key, value in result.items()
+            if key.startswith("witness_") or key in {"provider_request_id", "response_sha256"}
+        },
+    }
+
+
+def _target_source_candidates(
+    result: dict[str, Any], rows: list[dict[str, Any]], *, source_srt: str = "",
+) -> list[dict[str, Any]]:
+    """Recover target alternatives; a longer source cue remains context, never a slice by characters."""
+    row = next((r for r in rows if r.get("cue_index") == result.get("cue_index")), {})
+    candidates = []
+    draft = row.get("draft")
+    if isinstance(draft, str) and draft.strip():
+        candidates.append({"text": " ".join(draft.split()), "source": {
+            "kind": "source_asr_draft", "start_ms": result.get("start_ms"),
+            "end_ms": result.get("end_ms"),
+        }})
+    if source_srt:
+        overlap = [cue for cue in parse_srt_cues(source_srt)
+                   if cue.start_ms < result["end_ms"] and cue.end_ms > result["start_ms"]]
+        if overlap and all(result["start_ms"] <= cue.start_ms < cue.end_ms <= result["end_ms"]
+                           for cue in overlap):
+            candidates.append({"text": " ".join(cue.text for cue in overlap), "source": {
+                "kind": "source_asr_draft", "srt_sha256": hashlib.sha256(source_srt.encode()).hexdigest(),
+                "cues": [{"index": cue.index, "start_ms": cue.start_ms, "end_ms": cue.end_ms}
+                         for cue in overlap],
+            }})
+    for candidate in row.get("source_candidates") or []:
+        if isinstance(candidate, dict) and isinstance(candidate.get("text"), str):
+            candidates.append(candidate)
+    return candidates
+
+
+
+def _target_source_context(result: dict[str, Any], rows: list[dict[str, Any]], source_srt: str) -> dict:
+    row = next((r for r in rows if r.get("cue_index") == result.get("cue_index")), {})
+    context = {"additional_source_context": row.get("source_context") or []}
+    if source_srt:
+        context["source_asr_context"] = {
+            "scope": "context_only",
+            "srt_sha256": hashlib.sha256(source_srt.encode()).hexdigest(),
+            "cues": [{"start_ms": cue.start_ms, "end_ms": cue.end_ms, "text": cue.text}
+                     for cue in parse_srt_cues(source_srt)
+                     if cue.start_ms < result["end_ms"] and cue.end_ms > result["start_ms"]],
+        }
+    return context
+
+
 def _persist_witness(out_root: Path, cid: str, kind: str, rows: list[dict[str, Any]]) -> None:
     path = out_root / f"{cid}.foreign-witness.json"
     document: dict[str, Any] = {"schema_version": FOREIGN_WITNESS_SCHEMA}
@@ -508,6 +577,7 @@ def adjudicate_language_preservation_audit(
     cid: str,
     llm_call: Callable[[str], str] | None,
     observe: Callable[..., str] | None = None,
+    source_srt: str = "",
 ) -> tuple[str, dict[str, Any]]:
     """Let AGY witness introduced foreign speech and CPA own the final choice.
 
@@ -551,7 +621,6 @@ def adjudicate_language_preservation_audit(
     all_resolved = len(results) == len(rows)
     cpa_hearing_count = 0
 
-    from src.autoslice.acoustic_pinyin import text_pinyin_tokens as _pinyin_tokens
     from src.autoslice.acoustic_witness_adjudication import adjudicate_with_witness
 
     for result in results:
@@ -579,11 +648,9 @@ def adjudicate_language_preservation_audit(
             continue
         transcript = " ".join(str(result.get("exact_transcript") or "").split())
         language = str(result.get("audible_language") or "")
-        heard_tokens = _pinyin_tokens(transcript) if transcript else None
         if (
             not transcript
             or language == "none"
-            or not heard_tokens
             or llm_call is None
         ):
             receipt["reason_code"] = (
@@ -601,30 +668,16 @@ def adjudicate_language_preservation_audit(
             following.text
             for following in cues[int(cue_index) : int(cue_index) + 3]
         )
-        witness = {
-            "schema_version": "subtitle-span-acoustic-witness.v1",
-            "witness_protocol": "blind_pinyin",
-            "status": "OBSERVED",
-            "request_sha256": hashlib.sha256(
-                json.dumps(
-                    {
-                        "audio_sha256": result.get("audio_sha256"),
-                        "cue_index": cue_index,
-                        "transcript": transcript,
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                ).encode("utf-8")
-            ).hexdigest(),
-            "target_audible": True,
-            "heard_pinyin": " ".join(heard_tokens),
-            "syllable_count": len(heard_tokens),
-            "uncertain_positions": [],
-            "confidence": 0.85,
-        }
+        witness = _transcript_witness(result, transcript=transcript)
+        source_candidates = _target_source_candidates(result, rows, source_srt=source_srt)
         check_request = {
             "current_cue": cue.text,
             "proposed_cue": transcript,
+            "proposed_candidates": source_candidates,
+            "closed_set_structured_evidence": {
+                "source_candidates": source_candidates,
+                "source_context": _target_source_context(result, rows, source_srt),
+            },
             "suspect": "",
             "replacement": "",
             "repair_class": "foreign_source_language_preservation",
@@ -633,15 +686,11 @@ def adjudicate_language_preservation_audit(
                 "audio_sha256": result.get("audio_sha256"),
                 "audible_language": language,
             },
-            "orthography_authority": {
-                "status": "PASS",
-                "provenance_kind": "bounded_audio_transcript",
-            },
             "reason": (
                 "the source-language detector found newly introduced foreign "
-                "script, but it has no word-choice authority; CPA must choose "
-                "between the contextual current cue and candidate-blind AGY "
-                "transcription"
+                "script, but it has no word-choice authority; CPA must compare "
+                "the current cue and all supplied target-scoped source candidates. "
+                "The local transcript has no priority over other observations."
             ),
             "context_before": before,
             "context_after": after,
@@ -654,7 +703,7 @@ def adjudicate_language_preservation_audit(
         )
         judge = adjudication.get("judge") or {}
         choice = judge.get("choice")
-        proposed_text = transcript
+        proposed_text = str(judge.get("selected_candidate_text") or transcript)
         if policy_branch == "JUDGE_REJECTS_CLOSED_SET":
             rebuilt, rebuild_audit = rebuild_foreign_closed_set(
                 current=cue.text,
@@ -686,6 +735,7 @@ def adjudicate_language_preservation_audit(
                 )
                 judge = adjudication.get("judge") or {}
                 choice = judge.get("choice")
+                proposed_text = str(judge.get("selected_candidate_text") or rebuilt)
                 receipt["rejected_proposed"] = transcript
         receipt.update(
             {
@@ -694,6 +744,7 @@ def adjudicate_language_preservation_audit(
                 "decision_authority": "CPA_JUDGE",
                 "current": cue.text,
                 "proposed": proposed_text,
+                "selected_candidate_sources": judge.get("selected_candidate_sources"),
                 "adjudication": adjudication,
             }
         )
@@ -893,6 +944,7 @@ def adjudicate_foreign_script_audit(
     cid: str,
     llm_call: Callable[[str], str] | None,
     observe: Callable[..., str] | None = None,
+    source_srt: str = "",
 ) -> tuple[str, dict[str, Any]]:
     """Let the audio lane propose and CPA finally judge mixed-script cues.
 
@@ -935,7 +987,6 @@ def adjudicate_foreign_script_audit(
     all_resolved = len(results) == len(rows)
     cpa_hearing_count = 0
 
-    from src.autoslice.acoustic_pinyin import text_pinyin_tokens as _pinyin_tokens
     from src.autoslice.acoustic_witness_adjudication import adjudicate_with_witness
 
     for result in results:
@@ -963,11 +1014,9 @@ def adjudicate_foreign_script_audit(
             continue
         transcript = " ".join(str(result.get("exact_transcript") or "").split())
         language = str(result.get("audible_language") or "")
-        heard_tokens = _pinyin_tokens(transcript) if transcript else None
         if (
             not transcript
             or language == "none"
-            or not heard_tokens
             or llm_call is None
         ):
             receipt["reason_code"] = (
@@ -985,30 +1034,16 @@ def adjudicate_foreign_script_audit(
             following.text
             for following in cues[int(cue_index) : int(cue_index) + 3]
         )
-        witness = {
-            "schema_version": "subtitle-span-acoustic-witness.v1",
-            "witness_protocol": "blind_pinyin",
-            "status": "OBSERVED",
-            "request_sha256": hashlib.sha256(
-                json.dumps(
-                    {
-                        "audio_sha256": result.get("audio_sha256"),
-                        "cue_index": cue_index,
-                        "transcript": transcript,
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                ).encode("utf-8")
-            ).hexdigest(),
-            "target_audible": True,
-            "heard_pinyin": " ".join(heard_tokens),
-            "syllable_count": len(heard_tokens),
-            "uncertain_positions": [],
-            "confidence": 0.85,
-        }
+        witness = _transcript_witness(result, transcript=transcript)
+        source_candidates = _target_source_candidates(result, rows, source_srt=source_srt)
         check_request = {
             "current_cue": cue.text,
             "proposed_cue": transcript,
+            "proposed_candidates": source_candidates,
+            "closed_set_structured_evidence": {
+                "source_candidates": source_candidates,
+                "source_context": _target_source_context(result, rows, source_srt),
+            },
             "suspect": "",
             "replacement": "",
             "repair_class": "foreign_script_retranscription",
@@ -1017,14 +1052,11 @@ def adjudicate_foreign_script_audit(
                 "audio_sha256": result.get("audio_sha256"),
                 "audible_language": language,
             },
-            "orthography_authority": {
-                "status": "PASS",
-                "provenance_kind": "bounded_audio_transcript",
-            },
             "reason": (
                 "mixed CJK/Latin cue failed strict full-cue verbatim similarity; "
-                "CPA must choose between the current cue and candidate-blind "
-                "bounded audio transcription"
+                "CPA must compare the current cue and all supplied target-scoped "
+                "source candidates. The local transcript has no priority over "
+                "other observations."
             ),
             "context_before": before,
             "context_after": after,
@@ -1037,7 +1069,7 @@ def adjudicate_foreign_script_audit(
         )
         judge = adjudication.get("judge") or {}
         choice = judge.get("choice")
-        proposed_text = transcript
+        proposed_text = str(judge.get("selected_candidate_text") or transcript)
         if policy_branch == "JUDGE_REJECTS_CLOSED_SET":
             rebuilt, rebuild_audit = rebuild_foreign_closed_set(
                 current=cue.text,
@@ -1069,6 +1101,7 @@ def adjudicate_foreign_script_audit(
                 )
                 judge = adjudication.get("judge") or {}
                 choice = judge.get("choice")
+                proposed_text = str(judge.get("selected_candidate_text") or rebuilt)
                 receipt["rejected_proposed"] = transcript
         receipt.update(
             {
@@ -1077,6 +1110,7 @@ def adjudicate_foreign_script_audit(
                 "decision_authority": "CPA_JUDGE",
                 "current": cue.text,
                 "proposed": proposed_text,
+                "selected_candidate_sources": judge.get("selected_candidate_sources"),
                 "adjudication": adjudication,
             }
         )

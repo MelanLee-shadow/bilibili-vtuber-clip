@@ -997,7 +997,7 @@ def audit_finalized_recording_inventory(
     The unattended runner consumes only root-level ``<room>_*.mp4`` files. A
     finalized HLS playlist, raw fMP4, or closed BililiveRecorder FLV without
     that sibling therefore represents real source bytes which selection cannot
-    see.  The 
+    see.  The
     incident had exactly this shape: segment two ended cleanly as m3u8/m4s but
     never became MP4, so the first 30 minutes were falsely reported as the
     whole session.

@@ -1,16 +1,26 @@
-# 运行时/报告输出。例外：授权上传的证据快照（manifest/回执/台账）是出版记录，必须入库。
+# 运行时状态、报告、缓存和诊断属于每个部署自己的私有数据，不入公开源码仓。
 reports/**
-!reports/**/
-!reports/**/*.uploaded.json
-!reports/**/*.uploaded.*.json
-!reports/**/*.public_verify.json
-!reports/**/*.public_verify.*.json
-!reports/**/*.upload_manifest*.json
-!reports/**/upload_ledger.jsonl
-!reports/**/*.cover_edit*.json
-!reports/**/*.season_add*.json
-!reports/**/tag_plan*.json
-!reports/**/tag_update_results*.json
+.autoslice/
+out/
+state/
+logs/
+.venv/
+cpa.env
+
+# 字幕/ASR 阶段的内容寻址缓存和逐次诊断可能包含原字幕、用户名、模型回答或私有语境。
+**/*.pronoun-trace/
+**/.transcription-stage-cache/
+**/*.transcription-reuse.json
+**/*.asr-*.raw.json
+**/*.asr-source.json
+**/*.asr_draft.srt
+**/*.cpa-reviewed.srt
+**/*.pre-cpa.srt
+**/*.pre-cpa-audit.json
+**/*.fidelity-audit.json
+**/*.screen_text.json
+
+# 临时清理计划；已审核、确需公开的产品模板必须位于 assets/_template 等受管源码路径。
 cleanup_manifests/*.tmp
 
 # profile 输出目录（本地交付/媒体拉取，不入库；目录名 = 各 profile 的 output_directory）

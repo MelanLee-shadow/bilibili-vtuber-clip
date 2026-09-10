@@ -52,7 +52,7 @@ def parse_producer_args(
     default_speaker_mode: str,
 ) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=description)
-    configured_correction = os.environ.get("AUTOSLICE_CORRECTION_MODE", "bcut_agy_cpa")
+    configured_correction = os.environ.get("AUTOSLICE_CORRECTION_MODE", "cpa")
     if configured_correction not in ("bcut_agy_cpa", "moss_cpa", "cpa"):
         parser.error("AUTOSLICE_CORRECTION_MODE must retain CPA: bcut_agy_cpa, moss_cpa or cpa")
     parser.add_argument("--spec", type=Path, required=True)
@@ -111,7 +111,7 @@ def parse_producer_args(
         "--correct",
         choices=("bcut_agy_cpa", "moss_cpa", "cpa", "agy", "none"),
         default=configured_correction,
-        help="correction: moss_cpa = MOSS Pro + mandatory CPA (candidate); bcut_agy_cpa = BCUT + AGY + mandatory CPA (default); cpa = BCUT + mandatory CPA; agy/none = diagnostic only.",
+        help="correction: cpa = BCUT + mandatory CPA (default; local audio checks remain); moss_cpa = MOSS Pro + mandatory CPA (candidate); bcut_agy_cpa = legacy BCUT + whole-clip AGY + mandatory CPA; agy/none = diagnostic only.",
     )
     parser.add_argument(
         "--screen-text",

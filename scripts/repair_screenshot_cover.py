@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""Recompose one screenshot-route cover from its existing hash-bound polish
-artifact, through the SAME production compose/overlay/verify functions.
+"""Repair screenshot titles without changing the original production route.
+
+Direct screenshots keep their exact background and transform; only the title
+layer is re-rendered. Polish covers reuse the evidenced image through the same
+production compose/overlay/verify functions, never another image-generation call.
 
 Use case  the fixed fit-crop card decapitated
 a camera-window polish output. This driver re-runs the deterministic poster
@@ -38,6 +41,7 @@ from src.autoslice.cover_generation import (  # noqa: E402
 )
 from src.autoslice.cover_screenshot_poster import (  # noqa: E402
     _compose_screenshot_poster_background,
+    _source_frame_layout,
 )
 from src.autoslice.cover_polish_gate import (  # noqa: E402
     _polish_face_binding_failure,
@@ -179,9 +183,10 @@ def main() -> int:
         or record.get("cover_generation")
         or {}
     )
-    if generation.get("method") != "screenshot_polish":
+    method = generation.get("method")
+    if method not in ("screenshot_polish", "screenshot_direct"):
         print(f"REFUSE: record method is {generation.get('method')!r}, "
-              "this driver only repairs screenshot_polish covers", file=sys.stderr)
+              "this driver only repairs existing screenshot covers", file=sys.stderr)
         return 2
     try:
         candidate_id, title = _resolve_candidate_and_title(
@@ -207,13 +212,13 @@ def main() -> int:
         )
         return 2
     route = generation.get("route_decision")
-    if not isinstance(route, dict) or route.get("selected_treatment") != "screenshot_polish":
+    if not isinstance(route, dict) or route.get("selected_treatment") != method:
         print(
-            "REFUSE: route is not authorized for screenshot_polish repair",
+            "REFUSE: route is not authorized for its existing screenshot treatment",
             file=sys.stderr,
         )
         return 2
-    if route.get("actual_treatment") not in (None, "screenshot_polish"):
+    if route.get("actual_treatment") not in (None, method):
         print(
             "REFUSE: existing route already produced a different treatment",
             file=sys.stderr,
@@ -241,24 +246,39 @@ def main() -> int:
         )
         return 2
 
-    poster_evidence = _compose_screenshot_poster_background(
-        polished,
-        poster_path,
-        art_direction=art_direction,
-        source_ai_modified=True,
-        face_safe_contain=True,
-    )
-    # renderer 的分行权威门在这里是 typed 退出码，不是 traceback。
-    # CLI 没有状态机可转，正确表面就是 rc≠0 + 可读原因（Fable 裁定 3.3）。
+    # The same material-size decision must survive route-preserving repair.
+    source_title_zone = layout_resolution = None
     try:
+        if identity_exclusion is None and method == "screenshot_polish":
+            art_direction, source_title_zone, layout_resolution = _source_frame_layout(
+                polished, art_direction,
+            )
+        if method == "screenshot_direct":
+            # Direct repair is title-only. Preserve the exact old background
+            # and source transform; never invoke the polish model or compositor.
+            poster_path = Path(str(generation.get("ai_background") or ""))
+            poster_evidence = copy.deepcopy(generation.get("screenshot_graphic_poster"))
+            if (
+                not _matches_sha256(poster_path, str(generation.get("ai_background_sha256") or ""))
+                or not isinstance(poster_evidence, dict)
+                or poster_evidence.get("source_frame_transform", {}).get("ai_modified") is not False
+            ):
+                raise ValueError("direct title repair requires the unchanged source poster")
+        else:
+            poster_evidence = _compose_screenshot_poster_background(
+                polished, poster_path, art_direction=art_direction,
+                source_ai_modified=True, face_safe_contain=True,
+                **({"source_title_zone": source_title_zone} if source_title_zone else {}),
+            )
         overlay = _overlay_cover_title(
-            poster_path,
-            out_path,
-            cover_text=cover_text,
-            art_direction=art_direction,
+            poster_path, out_path, cover_text=cover_text, art_direction=art_direction,
             full_text_cover_contract=generation.get("full_text_cover_contract"),
             identity_landmark_title_exclusion=identity_exclusion,
+            **({"source_title_zone": source_title_zone} if source_title_zone else {}),
         )
+        if layout_resolution:
+            poster_evidence["layout_resolution"] = layout_resolution
+            overlay["art_direction"] = dataclasses.asdict(art_direction)
     except ValueError as exc:
         print(f"REFUSE: {exc}", file=sys.stderr)
         return 2
@@ -322,7 +342,7 @@ def main() -> int:
         if host_receipt.get("final_cover_sha256") != new_sha:
             print("REFUSE: host identity receipt is not bound to new cover", file=sys.stderr)
             return 2
-    elif ok and route.get("host_identity_required") is True:
+    elif ok and (method == "screenshot_direct" or route.get("host_identity_required") is True):
         host_receipt = verify_final_host_identity(
             final_cover_path=out_path,
             final_cover_sha256=new_sha,
@@ -336,10 +356,10 @@ def main() -> int:
     if ok:
         record_cover_route_execution(
             repaired_generation,
-            actual_treatment="screenshot_polish",
+            actual_treatment=method,
             execution_status="READY",
-            image_generation_attempted=True,
-            image_generation_used=True,
+            image_generation_attempted=(method == "screenshot_polish"),
+            image_generation_used=(method == "screenshot_polish"),
             detail="deterministic screenshot title-layout repair completed",
         )
         if not validate_cover_route_decision(

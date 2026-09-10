@@ -38,7 +38,7 @@ cp -r assets/_template "assets/<your-profile-id>"
   **封面外貌事实三处必须同步改**：`profile.json` 的 `identity.cover_identity`
   九键、`persona.md`、`cover_identity_prompt.txt`——只改其一，封面身份
   终检会按不一致的那份把成品拦下（先抽帧、后写、三处一起写）。
-- **层 2 · 你给种子，crawler 代填**：`timely_term_seeds/sources` → 
+- **层 2 · 你给种子，crawler 代填**：`timely_term_seeds/sources` →
   `timely_terms`、`psplive_roster_sources` → `psplive_roster`、
   `topic_entity_graph`（参考部署默认装 cron；不走 deploy 就手动跑或自配）。
 - **层 3 · 运行时/人工裁定自己长出来**：`subtitle_truth_ledger`、

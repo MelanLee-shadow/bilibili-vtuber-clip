@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 from src.autoslice.cover_host_identity_gate import (
@@ -222,6 +223,67 @@ def test_1411_small_lower_corner_lidousha_and_dead_space_fails_closed(
             "final_host_identity_verification": receipt,
         }
     )
+
+
+@pytest.mark.parametrize(
+    "rejected_field",
+    [None, "primary_subject_carries_story_reaction", "thumbnail_has_clear_click_hook"],
+)
+def test_calm_story_witness_uses_joint_question_without_overriding_verdict(
+    tmp_path, monkeypatch, rejected_field
+):
+    """Calm is eligible evidence, never a consumer-side exemption from a veto."""
+    from src.autoslice import cpa_frame_witness
+
+    reference = tmp_path / "source.png"
+    final = tmp_path / "final.png"
+    Image.new("RGB", (1920, 1080), (20, 30, 40)).save(reference)
+    Image.new("RGB", (1920, 1080), (80, 90, 100)).save(final)
+    verdict = {
+        "source_lidousha_located": True,
+        "primary_subject_is_lidousha": True,
+        "primary_subject_matches_other_source_participant": False,
+        "primary_subject_is_visually_dominant": True,
+        "primary_subject_face_is_large_and_clear": True,
+        "primary_subject_carries_story_reaction": True,
+        "excessive_dead_space": False,
+        "meaningless_dominant_decoration": False,
+        "thumbnail_has_clear_click_hook": True,
+        "primary_subject_identity": "主播",
+        "identity_conflicts": [],
+        "composition_conflicts": [],
+        "reason": "平静微笑与现场互动相关，画面和标题共同呈现具体事件",
+    }
+    if rejected_field:
+        verdict[rejected_field] = False
+        # Keep conflicts empty: the negative boolean alone must still block.
+        verdict["reason"] = "虽然人物平静清楚，但图文缺乏具体故事关联"
+
+    def probe(image_path, question, **kwargs):
+        assert "平静、温柔或笑容也可以是相关状态" in question
+        assert "不要求一帧演出全部台词、动作、反转和结尾" in question
+        assert "按右图画面与已渲染文字共同判断" in question
+        assert "字幕/故事事实检查负责台词是否有来源" in question
+        assert "只有人物名/空泛口号、主体缺失" in question
+        assert "具体可见内容与文字矛盾，仍须判 false" in question
+        return _fake_witness(verdict)(image_path, question, **kwargs)
+
+    monkeypatch.setattr(cpa_frame_witness, "image_vision_probe", probe)
+    receipt = verify_final_host_identity(
+        final_cover_path=final,
+        final_cover_sha256=_sha(final),
+        reference_path=reference,
+    )
+    assert receipt["verdict"] == verdict
+    assert receipt["status"] == ("FAIL" if rejected_field else "PASS")
+    if rejected_field:
+        assert receipt["reason_code"] == "FINAL_COVER_SUBJECT_PROMINENCE_FAILED"
+    assert validate_final_host_identity_verification(
+        {
+            "final_cover_sha256": _sha(final),
+            "final_host_identity_verification": receipt,
+        }
+    ) is (rejected_field is None)
 
 
 def test_agy_identity_receipt_requires_disclosed_cpa_failure():
@@ -525,8 +587,8 @@ def test_1411_prominence_failure_retries_with_stronger_prompt_then_stays_pending
         "COVER_FINAL_HOST_IDENTITY_UNVERIFIED"
     ]
     assert len(prompts) == verification_calls == 2
-    assert "MANDATORY SUBJECT PROMINENCE" in prompts[0]
-    assert "Never shrink her into a corner" in prompts[0]
+    assert "SUBJECT READABILITY" in prompts[0]
+    assert "must be easy to identify and carry the story reaction" in prompts[0]
     assert "Never place her as a small lower-corner figure" in prompts[1]
     assert "meaningless solid-color/red bars" in prompts[1]
     generation = result["cover_generation"]

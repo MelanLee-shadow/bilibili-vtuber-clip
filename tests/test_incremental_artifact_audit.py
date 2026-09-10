@@ -496,15 +496,17 @@ def test_one_or_two_points_default_to_whole_clip_but_explicit_only_is_scoped(tmp
         (2, False, "WHOLE_CLIP_RERUN_AND_REVIEW"),
         (1, True, "TARGETED_REPAIR_PLUS_SYSTEMIC_FIX"),
         (2, True, "TARGETED_REPAIR_PLUS_SYSTEMIC_FIX"),
+        (3, None, "TARGETED_REPAIR_PLUS_SYSTEMIC_FIX"),
+        (4, None, "TARGETED_REPAIR_PLUS_SYSTEMIC_FIX"),
         (3, False, "WHOLE_CLIP_RERUN_AND_REVIEW"),
-        (4, False, "TARGETED_REPAIR_PLUS_SYSTEMIC_FIX"),
+        (4, False, "WHOLE_CLIP_RERUN_AND_REVIEW"),
         (5, True, "TARGETED_REPAIR_PLUS_SYSTEMIC_FIX"),
     ],
 )
 def test_operator_scope_boundary_matrix(
     tmp_path: Path,
     issue_count: int,
-    only_these_errors: bool,
+    only_these_errors: bool | None,
     expected_mode: str,
 ) -> None:
     parent, current = _base_pair(tmp_path, subtitle=_srt("改后的第二句"))
@@ -518,7 +520,7 @@ def test_operator_scope_boundary_matrix(
         only_these_errors=only_these_errors,
         operator_change_points=(
             [{"component": "subtitle", "start_ms": 1_000, "end_ms": 2_000}]
-            if issue_count <= 2 and only_these_errors or issue_count > 3
+            if only_these_errors or issue_count >= 3
             else None
         ),
     )
@@ -530,7 +532,7 @@ def test_operator_scope_boundary_matrix(
         assert plan["operator_review"]["coverage"]["status"] == "WHOLE_CLIP_REQUIRED"
 
 
-def test_exactly_three_points_are_conservative_whole_clip(tmp_path: Path) -> None:
+def test_exactly_three_points_still_require_change_coverage(tmp_path: Path) -> None:
     parent, current = _base_pair(tmp_path, subtitle=_srt("改后的第二句"))
     plan = build_incremental_audit(
         parent=parent,
@@ -539,10 +541,11 @@ def test_exactly_three_points_are_conservative_whole_clip(tmp_path: Path) -> Non
         candidate_id=CID,
         recording_date=DATE,
         issue_count=3,
-        operator_change_points=[{"component": "subtitle", "start_ms": 1_000, "end_ms": 2_000}],
     )
-    assert plan["operator_review"]["plan"]["mode"] == "WHOLE_CLIP_RERUN_AND_REVIEW"
-    assert plan["operator_review"]["coverage"]["status"] == "WHOLE_CLIP_REQUIRED"
+    assert plan["operator_review"]["plan"]["mode"] == "TARGETED_REPAIR_PLUS_SYSTEMIC_FIX"
+    assert plan["operator_review"]["coverage"]["status"] == "MISSING"
+    with pytest.raises(IncrementalArtifactAuditError, match="OPERATOR_CHANGE_POINTS_MISSING"):
+        seal_incremental_review(plan, review_results={}, sealed_by="Codex root")
 
 
 def test_exhaustive_shortcut_requires_every_changed_window_to_be_reported(tmp_path: Path) -> None:

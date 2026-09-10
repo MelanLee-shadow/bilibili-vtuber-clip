@@ -13,6 +13,20 @@ from src.autoslice.source_context_executor import AgyExecutionResult
 from src.autoslice.source_context_executor import AgyChunkAttestation
 
 
+def _bcut_response_for_draft(draft):
+    """Model the current normalized ASR response; retain the real SRT converter."""
+    from src.autoslice.jingting_chunker import parse_srt_cues
+
+    return {
+        "provider": "bcut",
+        "utterances": [
+            {"start_time": cue.start_ms, "end_time": cue.end_ms,
+             "transcript": cue.text, "words": []}
+            for cue in parse_srt_cues(draft)
+        ],
+    }
+
+
 def test_unbound_direct_agy_refinement_is_not_a_fidelity_witness():
     refined = "1\n00:00:00,000 --> 00:00:01,000\n主播\n"
     result = AgyExecutionResult(
@@ -246,9 +260,8 @@ def test_api_fallback_rewrite_is_rejected_by_aggregate_transcriber(
     monkeypatch.setattr(
         free_asr_client,
         "transcribe",
-        lambda *_args, **_kwargs: object(),
+        lambda *_args, **_kwargs: _bcut_response_for_draft(draft),
     )
-    monkeypatch.setattr(free_asr_client, "to_srt", lambda _result: draft)
 
     transcriber = transcription._build_aggregate_asr_transcriber(
         host="free",
@@ -314,9 +327,8 @@ def test_failed_rerun_replaces_stale_agy_artifacts_with_v2_none_manifest(
     monkeypatch.setattr(
         free_asr_client,
         "transcribe",
-        lambda *_args, **_kwargs: object(),
+        lambda *_args, **_kwargs: _bcut_response_for_draft(draft),
     )
-    monkeypatch.setattr(free_asr_client, "to_srt", lambda _result: draft)
 
     transcriber = transcription._build_aggregate_asr_transcriber(
         host="free",
@@ -375,10 +387,10 @@ def test_pronoun_pass_gets_its_own_low_effort_config_not_the_reconcile_one(
     assert len(command_configs) == 2
 
     reconcile_cfg, pronoun_cfg = command_configs
-    assert "gpt-5.6-sol gpt-5.5 gpt-5.4" in reconcile_cfg.command_template
+    assert "gpt-6-astra" in reconcile_cfg.command_template
     assert reconcile_cfg.command_template.strip().endswith("medium")
 
-    assert "gpt-5.6-sol gpt-5.5 gpt-5.4" in pronoun_cfg.command_template
+    assert "gpt-6-astra" in pronoun_cfg.command_template
     assert pronoun_cfg.command_template.strip().endswith("low")
     # Model chain must be byte-identical between the two configs; only the
     # trailing effort token differs.

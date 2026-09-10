@@ -339,7 +339,7 @@ def test_replace_prompt_swaps_subject_to_the_sticker():
     # Mutually exclusive with the character redraw: no live-frame outfit copy.
     assert "PRESERVE THE EXACT OUTFIT" not in prompt
     # Same layout economy as the character: subject placement + reserved title zone.
-    assert "reserved for a title" in prompt or "reserved for a big title" in prompt
+    assert "TITLE RESERVATION:" in prompt and "deterministic title" in prompt
     # The local overlay still owns all text.
     assert "ABSOLUTELY NO text" in prompt
 

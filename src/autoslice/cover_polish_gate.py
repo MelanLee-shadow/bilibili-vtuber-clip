@@ -8,6 +8,7 @@ CPA-primary face-integrity verdict and its hash binding all live together here.
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Callable, Mapping
 
@@ -15,7 +16,7 @@ from .cover_generation import (
     _cover_screenshot_polish_prompt,
     _overlay_cover_title,
 )
-from .cover_screenshot_poster import _compose_screenshot_poster_background
+from .cover_screenshot_poster import _compose_screenshot_poster_background, _source_frame_layout
 
 
 POLISH_FACE_SCHEMA_VERSION = "lidousha-cover-polish-face-verification.v2"
@@ -192,6 +193,11 @@ def _compose_screenshot_cover_with_face_gate(
     """
 
     poster_source = overlay_source
+    source_title_zone = layout_resolution = None
+    if identity_landmark_title_exclusion is None:
+        art_direction, source_title_zone, layout_resolution = _source_frame_layout(
+            poster_source, art_direction,
+        )
     face_safe_contain = bool(
         isinstance(crop_evidence, Mapping)
         and crop_evidence.get("camera_window_crop")
@@ -218,6 +224,7 @@ def _compose_screenshot_cover_with_face_gate(
             face_safe_contain=(
                 face_safe_contain and not preserve_full_frame
             ),
+            **({"source_title_zone": source_title_zone} if source_title_zone else {}),
         )
         # talk 无梗字时整句上封面的唯一合法通道是 hash 绑定的
         # full-text contract；截图/polish 路径不穿透它，等于把该通道静默杀死。
@@ -228,7 +235,11 @@ def _compose_screenshot_cover_with_face_gate(
             art_direction=art_direction,
             full_text_cover_contract=full_text_cover_contract,
             identity_landmark_title_exclusion=identity_landmark_title_exclusion,
+            **({"source_title_zone": source_title_zone} if source_title_zone else {}),
         )
+        if layout_resolution:
+            poster_evidence["layout_resolution"] = layout_resolution
+            overlay["art_direction"] = asdict(art_direction)
         if method != "screenshot_polish":
             break
         face_verification = (verifier or _verify_polish_face_integrity)(

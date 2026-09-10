@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from src.autoslice.channel_profile import load_channel_profile
-from src.autoslice.subtitle_rendering import _layout_cue_for_display
+from src.autoslice.subtitle_rendering import _layout_cue_sequence_for_display
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -357,19 +357,17 @@ def _expected_events(
     host_style: str = "LDS",
 ) -> list[_AssEvent]:
     events: list[_AssEvent] = []
-    for cue in cues:
-        style = host_style if cue.speaker == HOST_SPEAKER else "GUEST"
-        for start_ms, end_ms, display_text in _layout_cue_for_display(
-            cue.start_ms, cue.end_ms, cue.text
-        ):
-            events.append(
-                _AssEvent(
-                    start_ms=((start_ms + 5) // 10) * 10,
-                    end_ms=((end_ms + 5) // 10) * 10,
-                    style=style,
-                    text=_speaker_ass_escape(display_text),
-                )
-            )
+    rows = [(cue.start_ms, cue.end_ms, cue.text) for cue in cues]
+    keys = [cue.speaker for cue in cues]
+    for source_index, start_ms, end_ms, display_text in _layout_cue_sequence_for_display(
+        rows, continuity_keys=keys
+    ):
+        style = host_style if cues[source_index].speaker == HOST_SPEAKER else "GUEST"
+        events.append(_AssEvent(
+            start_ms=((start_ms + 5) // 10) * 10,
+            end_ms=((end_ms + 5) // 10) * 10,
+            style=style, text=_speaker_ass_escape(display_text),
+        ))
     return events
 
 
@@ -420,12 +418,19 @@ def _pair_issues(
     issues = [*srt_issues]
     if srt_issues or not ass_is_valid:
         return issues
-    expected = _expected_events(
-        cues,
-        # The daily burn lane renders every cue with its single Default
-        # style; LDS/GUEST styles only exist in the speaker-finalized lane.
-        host_style="Default" if uniform_host_speaker is not None else "LDS",
-    )
+    try:
+        expected = _expected_events(
+            cues,
+            # The daily burn lane renders every cue with its single Default
+            # style; LDS/GUEST styles only exist in the speaker-finalized lane.
+            host_style="Default" if uniform_host_speaker is not None else "LDS",
+        )
+    except ValueError as exc:
+        issues.append(ReviewPackageAssIssue(
+            "SUBTITLE_ASS_SPEAKER_SRT_TEXT_MISMATCH", ass_path,
+            "source cannot be displayed without splitting a protected term: " + str(exc),
+        ))
+        return issues
     if len(events) != len(expected):
         issues.append(
             ReviewPackageAssIssue(

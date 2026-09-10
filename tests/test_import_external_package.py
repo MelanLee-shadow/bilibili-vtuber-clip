@@ -417,6 +417,10 @@ class StubGateRunner:
         script = Path(argv[1]).name
         if script == "build_daily_review_manifest.py":
             title = argv[argv.index("--candidate") + 1] and TITLE
+            # Mirror the real daily assembler's same-stem record alias.
+            (self.fixture.destination_package / f"{STEM}.record.json").write_bytes(
+                (self.fixture.destination_package / f"{CANDIDATE}.record.json").read_bytes()
+            )
             _write_json(
                 self.fixture.destination_package / "review_manifest.json",
                 {
@@ -429,6 +433,8 @@ class StubGateRunner:
                             "title": title,
                             "cover": f"{STEM}.cover.png",
                             "video": f"{STEM}.mp4",
+                            "record": f"{STEM}.record.json",
+                            "publish_json": f"{CANDIDATE}.recut.publish.json",
                         }
                     ],
                 },
@@ -449,6 +455,13 @@ class StubGateRunner:
             package_root, title, out_path = argv[2], argv[3], Path(argv[4])
             bound_title = self.qc_title if self.qc_title is not None else title
             cover = self.qc_cover or f"{package_root}/{STEM}.cover.png"
+            verdict = {
+                "lidousha_primary": True, "thumbnail_readable": True,
+                "single_clear_hook": True, "text_overcrowded": False,
+                "title_cover_aligned": True, "physical_text_line_count": 2,
+                "unrelated_or_misleading_elements": [],
+                "reason": "Synthetic importer test fixture", "pass": True,
+            }
             _write_json(
                 out_path,
                 {
@@ -461,7 +474,15 @@ class StubGateRunner:
                     "cover_sha256": "sha256:" + _sha256(b"final-cover-bytes"),
                     "status": "PASS",
                     "pass": True,
-                    "verdict": {"pass": True},
+                    "selected_provider": "cpa", "preferred_provider": "cpa",
+                    "witness": {
+                        "schema_version": "cpa-frame-witness.v1", "provider": "cpa",
+                        "status": "OBSERVED", "model": "gpt-6-astra",
+                        "image_path": cover,
+                        "image_sha256": "sha256:" + _sha256(b"final-cover-bytes"),
+                        "answer": json.dumps(verdict),
+                    },
+                    "verdict": verdict,
                 },
             )
             return cli.GateResult(0, "status: PASS", "")

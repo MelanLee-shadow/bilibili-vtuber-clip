@@ -104,7 +104,6 @@ def resolve_talk_quota_policy(
 
     scene = _validated_scene(item)
     recording_date = _recording_date(item, scene)
-    session_id = str(item.get("session_id") or _LEGACY_SESSION_ID)
     if recording_date is not None and session_game_context_is_resolved(
         recording_date, Path(state_root)
     ):
@@ -116,9 +115,17 @@ def resolve_talk_quota_policy(
     grant = resolve_quota_grant(
         recording_date, kind, default_cap=default_cap, path=authority_path
     )
+    # 维护者: the default five slots belong to the recording date.
+    # A scene labelled event creates no extra budget without its dated grant.
+    # RESOLVED game context already classifies the entire date together.
+    accounting_kind = kind
+    if kind == "event" and (
+        grant.source == "asset:default_policy" or grant.source.startswith("default:")
+    ):
+        accounting_kind = "talk"
     return TalkQuotaPolicy(
         kind,
-        f"{kind}:{session_id}",
+        f"{accounting_kind}:{recording_date or _LEGACY_SESSION_ID}",
         grant.cap,
         grant.extra_slot_min_score,
         recording_date,

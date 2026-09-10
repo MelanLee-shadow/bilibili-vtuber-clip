@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 import re
-import tempfile
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +22,7 @@ from src.autoslice.acoustic_witness_adjudication import (
     valid_inaudible_witness_override,
 )
 from src.autoslice.final_review_carryover import (
+    _snapshot_file_bytes, _write_bytes_atomic, _restore_file_bytes,
     _row_key as _final_review_carryover_row_key,
     adjudicated_proposed_full_cue,
     carryover_path,
@@ -59,6 +59,11 @@ from src.autoslice.cover_text_pixel_evidence import (
 from src.autoslice.cue_split_hygiene import merge_release_grade_cues
 from src.autoslice.delivery_fast_path import resolve_operator_text_full_ownership
 from src.autoslice.final_review_auditor import persist_review_audit
+from src.autoslice.exact_final_cpa_history import build_run_audit, retained_runs
+from src.autoslice.final_subtitle_audio_gate import (
+    require_final_subtitle_audio_check,
+    copy_subtitle_audio_artifacts,
+)
 from src.autoslice.final_review_contract import (
     EXACT_FINAL_CPA_SELF_HEAL_MAX_REPAIR_PASSES,
     FinalReviewContractError,
@@ -149,39 +154,6 @@ from src.autoslice.clip_context import validate_clip_context
 ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(ROOT)
 
-def _snapshot_file_bytes(
-    paths: list[Path],
-) -> dict[Path, bytes | None]:
-    return {
-        path: path.read_bytes() if path.exists() else None
-        for path in dict.fromkeys(paths)
-    }
-
-def _write_bytes_atomic(path: Path, payload: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        dir=path.parent,
-        prefix=f".{path.name}.exact-final-",
-        suffix=".tmp",
-    )
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-def _restore_file_bytes(
-    snapshots: Mapping[Path, bytes | None],
-) -> None:
-    for path, payload in snapshots.items():
-        if payload is None:
-            path.unlink(missing_ok=True)
-        else:
-            _write_bytes_atomic(path, payload)
 
 def _json_bytes(document: Mapping[str, object]) -> bytes:
     return (
@@ -222,6 +194,7 @@ class ProducerFinalizationAdapters:
     generate_upload_tags: Callable[..., dict]
     delivery_root: Callable[[], Path]
     run_exact_final_review: Callable[..., dict] | None = None
+    capture_subtitle_audio_check: Callable[..., dict] | None = None
 
 @dataclass(frozen=True)
 class FinalRecutArtifacts:
@@ -1343,6 +1316,7 @@ def _run_exact_final_review_gate(
     if reviewer is None:
         raise SystemExit("FINAL_REVIEW_EXACT_FINALIZER_MISSING")
     self_heal_passes: list[dict[str, object]] = []
+    prior_self_heal_runs = retained_runs(chat_authority_audit.get("exact_final_cpa_self_heal"))
     unreadable_drop_passes: list[dict[str, object]] = []
     carryover_file = carryover_path(out_root, cid)
     replayable_carryover_base_sha256: set[str] = set()
@@ -1497,11 +1471,9 @@ def _run_exact_final_review_gate(
                     *self_heal_passes,
                     pass_receipt,
                 ]
-                pending_self_heal_audit = {
-                    "schema_version": "exact-final-cpa-self-heal-audit.v1",
-                    "status": "REVIEW_PENDING",
-                    "passes": next_self_heal_passes,
-                }
+                pending_self_heal_audit = build_run_audit(
+                    next_self_heal_passes, prior_self_heal_runs,
+                )
                 try:
                     existing_memos = staged_chat_authority.get(
                         "exact_final_cpa_convergence_memos"
@@ -1651,12 +1623,9 @@ def _run_exact_final_review_gate(
             carryover_file, audit
         )
         if self_heal_passes:
-            self_heal_audit = {
-                "schema_version": "exact-final-cpa-self-heal-audit.v1",
-                "status": "PASS",
-                "passes": self_heal_passes,
-                "final_srt_sha256": expected_srt_sha256,
-            }
+            self_heal_audit = build_run_audit(
+                self_heal_passes, prior_self_heal_runs, final_srt_sha256=expected_srt_sha256,
+            )
             chat_authority_audit["exact_final_cpa_self_heal"] = (
                 self_heal_audit
             )
@@ -1935,6 +1904,7 @@ def _build_and_burn_record(
     branding_intro: dict[str, object] | None,
     adapters: ProducerFinalizationAdapters,
     talk_filler_audit_path: Path | None = None,
+    candidate_id: str | None = None,
 ) -> dict:
     media_path = recut.media_path
     subtitle_path = recut.subtitle_path
@@ -2045,7 +2015,10 @@ def _build_and_burn_record(
         encoding="utf-8",
     )
     record["artifact_hashes"]["chat_authority_audit_sha256"] = "sha256:" + _sha256(chat_authority_path)
-    return record
+    return require_final_subtitle_audio_check(
+        record, subtitle_path, recut.recut_dir, candidate_id or media_path.stem,
+        capture=adapters.capture_subtitle_audio_check,
+    )
 
 def _stage_record(
     *,
@@ -2086,17 +2059,17 @@ def _stage_record(
     title_llm = None
     if not given_title:
         title_llm = build_llm_call(
-            LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' high", timeout_seconds=600.0)
+            LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-astra' high", timeout_seconds=600.0)
         )
     art_direction_llm = None if options.reuse_cover else build_llm_call(
-        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-luna gpt-5.5 gpt-5.4' medium", timeout_seconds=600.0)
+        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-astra' medium", timeout_seconds=600.0)
     )
     source_fact_llm = build_llm_call(
         LlmConfig(
             transport="command",
             command_template=(
                 "bash scripts/llm_via_cpa.sh {prompt_file} "
-                "{completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' high"
+                "{completion_file} 'gpt-6-astra' high"
             ),
             timeout_seconds=600.0,
         )
@@ -2442,6 +2415,10 @@ def _deliver_staged_record(
     )
     adapters.run_command(["cp", str(burned), str(delivery / f"{name}.mp4")])
     adapters.run_command(["cp", str(subtitle_path), str(delivery / f"{name}.srt")])
+    copy_subtitle_audio_artifacts(
+        record, candidate_id=cid, delivery=delivery, name=name,
+        run_command=adapters.run_command,
+    )
     for source, suffix in (
         (uniform_host_ass, ".final-sapphire72.ass"),
         (speaker_review_srt, ".speaker.srt"),
@@ -2592,6 +2569,7 @@ def finalize_producer_package(
         branding_intro=branding_intro,
         adapters=adapters,
         talk_filler_audit_path=talk_filler_audit_path,
+        candidate_id=cid,
     )
     staged = _stage_record(
         options=options,

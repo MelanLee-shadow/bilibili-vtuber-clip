@@ -46,7 +46,7 @@ def decide_cover_treatment(
     """每条切片选封面路线（维护者：哪些适合全图 CPA 重做、哪些适合截图）。
 
     判据=表现力选帧最高分（"这条片有没有值得原样示人的真名场面"）：
-    - 竖屏源 → cpa_redraw（维护者：竖屏直播通常不适合截图，只能重绘）
+    - 竖屏缺少可忠实裁切的主体见证 → cpa_redraw；已验证可用截图优先
     - 歌切 / 选帧失败 → cpa_redraw（唱歌净美学 / 无帧可用）
     - 强名场面（≥4.5，或 ≥3.2 且命中情绪字幕段）→ screenshot_direct：真表情就是
       封面，重绘反而丢梗
@@ -61,16 +61,14 @@ def decide_cover_treatment(
         return "cpa_redraw", "mode=cpa (forced)"
     if is_song:
         return "cpa_redraw", "song keeps the clean CPA aesthetic"
-    # 竖屏源（维护者 逐字裁定：「并不是所有的都需要截图，特别是竖屏直播，
-    # 通常不适合截图，只能重绘。」）。16:9 成品窗口在竖版源上要么对准形心从眼睛处
-    # 切断（auto_230125_960_1072，源 1920×3414），要么两侧大片模糊填充。判据必须排
-    # 在关系分支/hash-bound 见证分支**之前**：那两条会无条件 return
-    # screenshot_direct，放在后面等于对恢复重放整条失效——而恢复重放正是事故现场。
+    # Portrait geometry remains a risk cue. The latest screenshot-first policy
+    # permits it only with verified complete-face / faithful-crop evidence;
+    # a forced mode or participant hash alone cannot supply that evidence.
     vertical_reason = vertical_source_redraw_reason(
         source_frame_size,
         min_ratio=vertical_min_aspect_ratio,
     )
-    if vertical_reason is not None:
+    if vertical_reason is not None and not source_composition_supports_subject(source_composition_verification):
         return "cpa_redraw", vertical_reason
     if relationship_visual_required:
         if cover_mode == "polish":
@@ -107,7 +105,7 @@ def decide_cover_treatment(
     if frame_selection is None:
         return "cpa_redraw", "frame selection unavailable"
     candidates = frame_selection.get("candidates") or []
-    best = float(candidates[0]["score"]) if candidates else 0.0
+    best = float(candidates[0].get("score") or 0.0) if candidates else 0.0
     emotional = bool(candidates and candidates[0].get("emotion"))
     # A narrow local motion box is not sufficient proof of a usable cover
     # subject when the rest of the scene is moving across most of the canvas.
@@ -170,6 +168,13 @@ def decide_cover_treatment(
         return "screenshot_direct", "mode=screenshot (forced)"
     if cover_mode == "polish":
         return "screenshot_polish", "mode=polish (forced)"
+    if (source_composition_supports_subject(source_composition_verification)
+            and (best >= _COVER_TREATMENT_SCORE_LO
+                 or frame_selection.get("status") == "OPERATOR_OVERRIDE")):
+        return (
+            "screenshot_direct",
+            "usable real frame with verified face and faithful crop; preserve source pixels first",
+        )
     if subject_confident and (best >= _COVER_TREATMENT_SCORE_HI or (emotional and best >= 3.2)):
         return "screenshot_direct", f"strong real moment (score={best:.2f})"
     if subject_confident and best >= _COVER_TREATMENT_SCORE_LO:

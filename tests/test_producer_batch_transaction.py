@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import multiprocessing
+import os
 from pathlib import Path
 import time
 
@@ -136,6 +137,304 @@ def test_batch_commits_target_then_exact_state_under_one_lease(tmp_path: Path):
     journal = json.loads(Path(receipt["journal_path"]).read_text(encoding="utf-8"))
     assert journal["status"] == "COMMITTED"
     assert journal["installed_artifacts"] == journal["artifact_inventory"]
+
+
+@pytest.mark.parametrize("use_batch", [False, True])
+@pytest.mark.parametrize("collision_index", [0, 1])
+def test_install_refuses_unowned_collision_at_system_call(tmp_path: Path, monkeypatch, use_batch, collision_index):
+    root, state_path, before, target, after, entry = _fixture(tmp_path)
+    subtitle = root / "out" / "cid-1" / "clip.srt"
+    subtitle.write_bytes(b"prepared-subtitle")
+    handle = prepare_delivery(
+        runtime_root=root, lane="talk", candidate_id="cid-1",
+        artifacts=[DeliveryArtifact(role, source, destination, "sha256:" + hashlib.sha256(source.read_bytes()).hexdigest())
+                   for role, source, destination in (
+                       ("video", root / "out" / "cid-1" / "clip.mp4", target),
+                       ("subtitle", subtitle, target.with_suffix(".srt")),
+                   )],
+    )
+    rows = _read_document(handle)["artifacts"]
+    collision = rows[collision_index]
+    staged, destination = Path(collision["staged_path"]), Path(collision["target_path"])
+    foreign_inode = None
+
+    def interpose(original):
+        def install(source, target_path, *args, **kwargs):
+            nonlocal foreign_inode
+            if Path(source) == staged and Path(target_path) == destination and foreign_inode is None:
+                destination.write_bytes(staged.read_bytes())
+                foreign_inode = destination.stat().st_ino
+            return original(source, target_path, *args, **kwargs)
+        return install
+
+    # Interpose at the actual install syscall, after every Python precheck.
+    monkeypatch.setattr(delivery_transaction.os, "replace", interpose(delivery_transaction.os.replace))
+    monkeypatch.setattr(delivery_transaction.os, "link", interpose(delivery_transaction.os.link))
+
+    def commit(lease):
+        if use_batch:
+            return commit_prepared_prefix(
+                runtime_root=root, date="2026-08-22", state_path=state_path,
+                state_before=before, after_state=after,
+                entries=[PreparedBatchEntry("talk", "cid-1", handle)], lease=lease,
+            )
+        return delivery_transaction.commit_prepared_delivery(handle=handle, lease=lease)
+
+    with exclusive_runner_commit(root) as lease:
+        with pytest.raises(ProducerDeliveryTransactionError):
+            commit(lease)
+    assert foreign_inode is not None and destination.stat().st_ino == foreign_inode
+    assert destination.read_bytes() == staged.read_bytes()
+    assert state_path.read_bytes() == before
+    if collision_index:
+        assert target.stat().st_ino == rows[0]["staged_inode"]
+    journal_root = root / (".producer-batch-journal" if use_batch else ".delivery-journal")
+    assert all(json.loads(path.read_text())["status"] != "COMMITTED" for path in journal_root.glob("*.json"))
+    with exclusive_runner_commit(root) as lease:
+        with pytest.raises((ProducerDeliveryTransactionError, ProducerBatchTransactionError)):
+            commit(lease)
+    assert destination.stat().st_ino == foreign_inode and state_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("use_batch", [False, True])
+@pytest.mark.parametrize("crash_point", ["before_unlink", "target_fsync"])
+def test_install_recovers_after_link_before_private_unlink(tmp_path: Path, monkeypatch, use_batch, crash_point):
+    root, state_path, before, target, after, entry = _fixture(tmp_path)
+    staged = Path(_read_document(entry.handle)["artifacts"][0]["staged_path"])
+    original_unlink = Path.unlink
+    original_fsync = delivery_transaction._fsync_directory
+
+    def crash_before_unlink(path, *args, **kwargs):
+        if path == staged:
+            raise OSError("simulated post-link crash")
+        return original_unlink(path, *args, **kwargs)
+
+    def crash_at_target_fsync(path):
+        if path == target.parent:
+            raise OSError("simulated post-link crash")
+        return original_fsync(path)
+
+    def commit(lease):
+        if use_batch:
+            return commit_prepared_prefix(
+                runtime_root=root, date="2026-08-22", state_path=state_path,
+                state_before=before, after_state=after, entries=[entry], lease=lease,
+            )
+        return delivery_transaction.commit_prepared_delivery(handle=entry.handle, lease=lease)
+
+    if crash_point == "before_unlink":
+        monkeypatch.setattr(Path, "unlink", crash_before_unlink)
+    else:
+        monkeypatch.setattr(delivery_transaction, "_fsync_directory", crash_at_target_fsync)
+    with exclusive_runner_commit(root) as lease:
+        with pytest.raises(OSError, match="post-link crash"):
+            commit(lease)
+    assert target.stat().st_ino == staged.stat().st_ino
+    assert state_path.read_bytes() == before
+    resynced = []
+
+    def remember_fsync(path):
+        original_fsync(path)
+        resynced.append(path)
+
+    def require_durable_target(path, *args, **kwargs):
+        if path == staged:
+            assert target.parent in resynced
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(delivery_transaction, "_fsync_directory", remember_fsync)
+    monkeypatch.setattr(Path, "unlink", require_durable_target)
+    with exclusive_runner_commit(root) as lease:
+        if use_batch:
+            assert resume_pending_batch(runtime_root=root, date="2026-08-22", lease=lease) is not None
+        else:
+            commit(lease)
+    assert not staged.exists() and target.read_bytes() == b"prepared-video"
+    assert json.loads(state_path.read_bytes()) == (after if use_batch else json.loads(before))
+
+
+@pytest.mark.parametrize("use_batch", [False, True])
+def test_real_link_then_recovery_target_fsync_failure_preserves_owned_inode(
+    tmp_path: Path, monkeypatch, use_batch,
+):
+    root, state_path, before, target, after, entry = _fixture(tmp_path)
+    staged = Path(_read_document(entry.handle)["artifacts"][0]["staged_path"])
+    original_link = delivery_transaction.os.link
+    link_calls: list[tuple[Path, Path, int]] = []
+
+    def link_then_raise(source, target_path, *args, **kwargs):
+        result = original_link(source, target_path, *args, **kwargs)
+        if Path(source) == staged and Path(target_path) == target:
+            link_calls.append((Path(source), Path(target_path), os.lstat(target_path).st_ino))
+            raise OSError("simulated post-link wrapper crash")
+        return result
+
+    def commit(lease):
+        if use_batch:
+            return commit_prepared_prefix(
+                runtime_root=root, date="2026-08-22", state_path=state_path,
+                state_before=before, after_state=after, entries=[entry], lease=lease,
+            )
+        return delivery_transaction.commit_prepared_delivery(handle=entry.handle, lease=lease)
+
+    monkeypatch.setattr(delivery_transaction.os, "link", link_then_raise)
+    with exclusive_runner_commit(root) as lease:
+        with pytest.raises(OSError, match="post-link wrapper crash"):
+            commit(lease)
+    assert link_calls == [(staged, target, staged.stat().st_ino)]
+    assert target.stat().st_ino == staged.stat().st_ino
+    assert state_path.read_bytes() == before
+
+    journal_root = root / (".producer-batch-journal" if use_batch else ".delivery-journal")
+    journal_path = next(journal_root.glob("*.json"))
+    assert json.loads(journal_path.read_text(encoding="utf-8"))["status"] != "COMMITTED"
+
+    original_fsync = delivery_transaction._fsync_directory
+
+    def fail_target_parent_fsync(path, *args, **kwargs):
+        if path == target.parent:
+            raise OSError("simulated target parent fsync failure")
+        return original_fsync(path, *args, **kwargs)
+
+    monkeypatch.setattr(delivery_transaction.os, "link", original_link)
+    monkeypatch.setattr(delivery_transaction, "_fsync_directory", fail_target_parent_fsync)
+    with exclusive_runner_commit(root) as lease:
+        with pytest.raises(OSError, match="target parent fsync failure"):
+            if use_batch:
+                resume_pending_batch(runtime_root=root, date="2026-08-22", lease=lease)
+            else:
+                commit(lease)
+    assert staged.exists() and target.exists()
+    assert staged.stat().st_ino == target.stat().st_ino
+    assert state_path.read_bytes() == before
+    assert json.loads(journal_path.read_text(encoding="utf-8"))["status"] != "COMMITTED"
+
+    trace: list[tuple[str, Path]] = []
+    original_unlink = Path.unlink
+
+    def trace_fsync(path, *args, **kwargs):
+        result = original_fsync(path, *args, **kwargs)
+        if path == target.parent:
+            trace.append(("target_parent_fsync", path))
+        if path == staged.parent:
+            trace.append(("staged_parent_fsync", path))
+        return result
+
+    def trace_unlink(path, *args, **kwargs):
+        if path == staged:
+            trace.append(("private_unlink", path))
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(delivery_transaction, "_fsync_directory", trace_fsync)
+    monkeypatch.setattr(Path, "unlink", trace_unlink)
+    with exclusive_runner_commit(root) as lease:
+        if use_batch:
+            assert resume_pending_batch(runtime_root=root, date="2026-08-22", lease=lease) is not None
+        else:
+            commit(lease)
+    assert not staged.exists() and target.read_bytes() == b"prepared-video"
+    assert trace.index(("target_parent_fsync", target.parent)) < trace.index(("private_unlink", staged))
+    assert ("staged_parent_fsync", staged.parent) in trace
+    assert json.loads(journal_path.read_text(encoding="utf-8"))["status"] == "COMMITTED"
+    assert state_path.read_bytes() == (state_bytes(after) if use_batch else before)
+
+
+@pytest.mark.parametrize("use_batch", [False, True])
+def test_recovery_rejects_staged_parent_fsync_failure_after_unlink(
+    tmp_path: Path, monkeypatch, use_batch,
+):
+    root, state_path, before, target, after, entry = _fixture(tmp_path)
+    staged = Path(_read_document(entry.handle)["artifacts"][0]["staged_path"])
+    original_fsync = delivery_transaction._fsync_directory
+    original_unlink = Path.unlink
+    unlinked: list[Path] = []
+
+    def unlink_then_record(path, *args, **kwargs):
+        result = original_unlink(path, *args, **kwargs)
+        if path == staged:
+            unlinked.append(path)
+        return result
+
+    def fail_staged_parent_fsync(path, *args, **kwargs):
+        if path == staged.parent and not staged.exists():
+            raise OSError("simulated staged parent fsync failure")
+        return original_fsync(path, *args, **kwargs)
+
+    def commit(lease):
+        if use_batch:
+            return commit_prepared_prefix(
+                runtime_root=root, date="2026-08-22", state_path=state_path,
+                state_before=before, after_state=after, entries=[entry], lease=lease,
+            )
+        return delivery_transaction.commit_prepared_delivery(handle=entry.handle, lease=lease)
+
+    monkeypatch.setattr(Path, "unlink", unlink_then_record)
+    monkeypatch.setattr(delivery_transaction, "_fsync_directory", fail_staged_parent_fsync)
+    with exclusive_runner_commit(root) as lease:
+        with pytest.raises(OSError, match="staged parent fsync failure"):
+            commit(lease)
+    assert unlinked == [staged]
+    assert not staged.exists() and target.exists()
+    staged_inode = os.lstat(target).st_ino
+    assert state_path.read_bytes() == before
+
+    journal_root = root / (".producer-batch-journal" if use_batch else ".delivery-journal")
+    journal_path = next(journal_root.glob("*.json"))
+    assert json.loads(journal_path.read_text(encoding="utf-8"))["status"] != "COMMITTED"
+
+    replay_error: Exception | None = None
+    try:
+        with exclusive_runner_commit(root) as lease:
+            if use_batch:
+                resume_pending_batch(runtime_root=root, date="2026-08-22", lease=lease)
+            else:
+                commit(lease)
+    except Exception as exc:  # Preserve the exact red result until final recovery.
+        replay_error = exc
+    fault_status = json.loads(journal_path.read_text(encoding="utf-8"))["status"]
+    fault_state = state_path.read_bytes()
+
+    events: list[str] = []
+
+    def trace_successful_fsync(path, *args, **kwargs):
+        result = original_fsync(path, *args, **kwargs)
+        if path == staged.parent:
+            events.append("staged_parent_fsync")
+        if path == journal_path.parent and journal_path.exists():
+            if json.loads(journal_path.read_text(encoding="utf-8"))["status"] == "COMMITTED":
+                events.append("journal_committed")
+        return result
+
+    original_atomic_write_bytes = runner_state_writeback._atomic_write_bytes
+
+    def trace_state_after_write(path, payload, *, runtime_root):
+        result = original_atomic_write_bytes(path, payload, runtime_root=runtime_root)
+        if Path(path) == state_path:
+            events.append("state_after_write")
+        return result
+
+    monkeypatch.setattr(delivery_transaction, "_fsync_directory", trace_successful_fsync)
+    monkeypatch.setattr(batch_transaction, "_fsync_directory", trace_successful_fsync)
+    monkeypatch.setattr(runner_state_writeback, "_atomic_write_bytes", trace_state_after_write)
+    with exclusive_runner_commit(root) as lease:
+        if use_batch:
+            resume_pending_batch(runtime_root=root, date="2026-08-22", lease=lease)
+        else:
+            commit(lease)
+    assert replay_error is not None and fault_status != "COMMITTED", (
+        "staged-parent fsync fault was bypassed during replay: "
+        f"error={replay_error!r} status={fault_status!r} "
+        f"events={events!r} fault_state_matches_before={fault_state == before}"
+    )
+    assert fault_state == before
+    assert "staged_parent_fsync" in events
+    assert events.index("staged_parent_fsync") < events.index("journal_committed")
+    if use_batch:
+        assert events.index("staged_parent_fsync") < events.index("state_after_write")
+    assert os.lstat(target).st_ino == staged_inode
+    assert not staged.exists() and target.read_bytes() == b"prepared-video"
+    assert json.loads(journal_path.read_text(encoding="utf-8"))["status"] == "COMMITTED"
+    assert state_path.read_bytes() == (state_bytes(after) if use_batch else before)
 
 
 def test_five_private_prepares_share_provider_cap_then_commit_same_hook_prefix(

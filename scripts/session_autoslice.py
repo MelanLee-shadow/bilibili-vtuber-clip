@@ -268,8 +268,8 @@ TALK_ATTEMPT_CAP = 20  # reject unsafe content candidates and backfill, bounded
 # 冒烟同款 backfill（帽更小）：talk[0] 一票否决曾让整次冒烟颗粒无收，而它偏偏
 # 是文档推荐的"第一支切片"入口——单候选级 fail-closed 时换下一个候选再试。
 SMOKE_TALK_ATTEMPT_CAP = 3
-MAX_SONGS_PER_SESSION = 1  # 维护者: 每场直播至多一个歌切；已发布歌曲不再出
-MAX_SONGS_PER_DATE = MAX_SONGS_PER_SESSION  # compatibility alias for callers/tests
+MAX_SONGS_PER_DATE = 1  # 维护者: 每天一条歌切；同日多场共享额度
+MAX_SONGS_PER_SESSION = MAX_SONGS_PER_DATE  # legacy import alias; budget is per date
 MIN_TALK_EFFECTIVE_DURATION_MS = 45_000
 TALK_PER_SEGMENT_CAP = 2  # diversity guard on the GLOBAL confidence ranking; slack refills
 SONG_ATTEMPT_CAP = 6  # per-pipeline-generation song attempts for one live session
@@ -356,7 +356,7 @@ AUTOSLICE_START_DATE = _parse_start_date()
 # slices are independent; produce them concurrently (each is network-bound on
 # AGY/CPA/gpt-image-2, so a few in flight cut wall-clock ~3x; bounded by free
 # CPU + CPA concurrency)
-# Top-5 is a ceiling, not a promise to ship five weak events.  The 
+# Top-5 is a ceiling, not a promise to ship five weak events.  The
 # 0.78-confidence 《夏雪冬花》 candidate was admitted only because the session
 # still had an empty seat; that is the same quota-pressure failure mode that
 # used to split one coherent event into two clips.  Low-confidence recalls are
@@ -408,10 +408,10 @@ PIPELINE_FINGERPRINT_EXCLUSIONS = {
 # Luna carries cover art direction: a structured pick with a known good shape,
 # high volume, deterministic fallback + judge guardrails — the doc-exact luna
 # lane.  Every chain falls back gpt-5.5 → gpt-5.4.
-CPA_CMD_DEEP = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' medium"
-CPA_CMD_TITLE = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-sol gpt-5.5 gpt-5.4' high"
-CPA_CMD_STANDARD = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-terra gpt-5.5 gpt-5.4' medium"
-CPA_CMD_STRUCTURED = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-luna gpt-5.5 gpt-5.4' medium"
+CPA_CMD_DEEP = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-astra' medium"
+CPA_CMD_TITLE = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-astra' high"
+CPA_CMD_STANDARD = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-astra' medium"
+CPA_CMD_STRUCTURED = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-astra' medium"
 # The selector's --cpa-command is the semantic-QA JUDGE lane (request/response
 # JSON contract), NOT a prompt/completion LLM template — canonical validated
 # command per the retired live-e2e runbook.  The selector
@@ -439,7 +439,7 @@ def song_pipeline_fingerprint() -> str:
     """Hash only surfaces that can change Song proof or Song delivery."""
 
     policy = {
-        "max_songs_per_session": MAX_SONGS_PER_SESSION,
+        "max_songs_per_date": MAX_SONGS_PER_DATE,
         "song_attempt_cap": SONG_ATTEMPT_CAP,
         "song_lifetime_attempt_cap": SONG_LIFETIME_ATTEMPT_CAP,
         "song_infra_retry_cap": SONG_INFRA_RETRY_CAP,
@@ -1143,6 +1143,52 @@ def _read_state_untracked(date: str) -> dict:
         try:  # crash window between the two os.replace()s in write_state
             return _apply_runtime_publication_projection(date, json.loads(bak.read_text(encoding="utf-8")))
         except (OSError, ValueError):
+            # A present but unusable backup is damaged state, not a genuinely
+            # new date.  Keep the date blocked until the real state is
+            # restored instead of allowing the caller to start from {}.
+            if bak.exists() or bak.is_symlink():
+                return {
+                    "status": "state_corrupt_blocked",
+                    "state_error": (
+                        "daily state primary is missing and .bak is unusable"
+                    ),
+                }
+            # A publication registry/recovery projection is evidence of an
+            # already-published candidate, but it cannot reconstruct the
+            # missing candidate set.  Keep the block in memory until the real
+            # daily state is restored; never write a fabricated canonical
+            # state from the sidecar alone.
+            try:
+                blocked = publication_reconciliation.missing_state_publication_reconciliation_block(
+                    date=date,
+                    autoslice_base=BASE,
+                )
+            except (
+                OSError,
+                publication_reconciliation.PublicationReconciliationError,
+            ) as exc:
+                evidence_paths = []
+                for evidence_path in (
+                    publication_reconciliation.publication_recovery_sidecar_path(
+                        BASE, date
+                    ),
+                    publication_reconciliation.runtime_registry_path(BASE),
+                ):
+                    if evidence_path.exists() or evidence_path.is_symlink():
+                        evidence_paths.append(str(evidence_path.resolve()))
+                return {
+                    "status": "publication_reconciliation_blocked",
+                    "publication_reconciliation_error": str(exc),
+                    "original_state_status": "MISSING",
+                    "original_candidate_set": "UNKNOWN",
+                    "day_completion": "UNKNOWN",
+                    "candidate_projection_status": "PUBLISHED_TARGET_ONLY",
+                    "day_state_status": "UNKNOWN",
+                    "state_paths": [],
+                    "publication_recovery_paths": evidence_paths,
+                }
+            if blocked is not None:
+                return blocked
             return {}
     except OSError as exc:
         return {"status": "state_corrupt_blocked", "state_error": f"unreadable: {exc}"}
@@ -1191,7 +1237,7 @@ def write_alert(name: str, message: str) -> None:
 def source_health_error() -> str | None:
     """Probe the recordings mount via a subprocess `ls` so a HUNG FUSE mount
     (which blocks Python's stat() forever) times out instead of wedging the
-    tick.  Returns None when healthy, else a short error string.  
+    tick.  Returns None when healthy, else a short error string.
     the CloudDrive endpoint died and every layer above swallowed the OSError
     into 'no dates' — the control plane kept reporting green for hours."""
     try:

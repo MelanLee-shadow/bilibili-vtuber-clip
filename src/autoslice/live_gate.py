@@ -1,6 +1,6 @@
 """Live-broadcast gate: is the room live, and what is that claim based on?
 
-Extracted from the runner (god-file decomposition) after the 
+Extracted from the runner (god-file decomposition) after the
 seven-hour freeze.  That incident's forensics had to be rebuilt from the
 recorder's webhook journal because the runner logged exactly one bare line —
 ``room is LIVE — waiting for stream end`` — with no evidence attached, and the
@@ -18,7 +18,7 @@ Two lessons are encoded here:
   ``live_signal_divergence``.
 
 Deliberately NOT a liveness signal: recording files appearing on the cloud
-mount.  On a genuine 11:03Z→14:38Z session first materialised .mp4
+mount. a genuine 11:03Z→14:38Z session first materialised .mp4
 bytes at 18:59Z — upload lag makes file growth useless as a veto, and only
 weakly useful (day-directory presence) as corroboration.
 """

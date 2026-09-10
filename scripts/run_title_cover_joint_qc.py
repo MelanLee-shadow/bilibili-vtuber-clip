@@ -1,4 +1,4 @@
-"""Generate the lidousha-title-cover-joint-qc.v1 receipt via a real CPA call.
+"""Create joint QC via CPA, or explicitly revalidate an existing unchanged PASS.
 
 Run on free from /opt/bilive/autoslice/repo:
   python3 scripts/run_title_cover_joint_qc.py <package_root> <title> <out_path>
@@ -9,6 +9,7 @@ Run on free from /opt/bilive/autoslice/repo:
 The verdict is the exact parsed CPA answer (validator replays this bond);
 any gate the model fails leaves status=FAIL and the upload chain stops.
 """
+import argparse
 import hashlib
 import json
 import os
@@ -111,14 +112,58 @@ def write_receipt_create_only(parent_fd: int, name: str, receipt: dict) -> None:
     os.fsync(parent_fd)
 
 
+def reuse_valid_qc(package_root: Path, title: str, receipt_path: Path) -> dict:
+    """Read-only replay of an existing PASS through the uploader's real gate.
+
+    Never relabel a historical model, overwrite a failed verdict, or invoke a
+    provider. Every current QC input is rebound and checked again after replay.
+    """
+    from scripts.authorized_upload import (
+        _sha_entry, _attach_title_cover_qc, _title_cover_qc_attestation_problems,
+    )
+    from src.autoslice.original_patch_package import json_file, sha_file
+
+    root = package_root.absolute()
+    receipt_path = receipt_path.absolute()
+    review_path = root / "review_manifest.json"
+    # The regular-file helpers reject links, nonfiles, excessive JSON and drift.
+    review = json_file(review_path)
+    record, _publish, cover = resolve_package_inputs(root, title)
+    candidate_id = resolve_candidate_id(record, review)
+    item = review["items"][0]
+    record_path = root / item["record"]
+    publish_path = root / item["publish_json"]
+    paths = (review_path, record_path, publish_path, cover, receipt_path)
+    before = {path: sha_file(path) for path in paths}
+    receipt = json_file(receipt_path)
+    check = {
+        "title": title,
+        "cover": _sha_entry(cover),
+        "package_attestation": {"package_root": str(root), "record": _sha_entry(record_path)},
+    }
+    errors = _attach_title_cover_qc(check, str(receipt_path))
+    errors += _title_cover_qc_attestation_problems(check, required=True)
+    if receipt.get("candidate_id") != candidate_id:
+        errors.append("existing QC candidate differs from current package")
+    if errors:
+        raise ValueError("existing QC is not reusable: " + "; ".join(errors))
+    resolve_package_inputs(root, title)
+    if any(sha_file(path) != digest for path, digest in before.items()):
+        raise ValueError("QC input changed during reuse validation")
+    return receipt
+
+
 def run_qc(
     package_root: Path,
     title: str,
     out_path: Path,
     *,
     image_probe,
+    reuse_existing: bool = False,
 ) -> dict:
-    """Preflight the create-only target before the potentially paid probe."""
+    """Create a new receipt, or explicitly revalidate an unchanged existing PASS."""
+    if reuse_existing and os.path.lexists(out_path):
+        return reuse_valid_qc(package_root, title, out_path)
     record, _publish, cover_path = resolve_package_inputs(package_root, title)
     review_path = package_root.absolute() / "review_manifest.json"
     review = json.loads(review_path.read_text(encoding="utf-8"))
@@ -286,6 +331,10 @@ def build_joint_qc_receipt(
     question = (
         "你是李豆沙频道的标题+封面联合质检员。下图是最终封面,拟用标题是:\n"
         f"《{title}》\n"
+        "杂谈的具体事件可以由主播神态与封面文字共同表达，不要求普通室内或虚拟直播背景逐字演示标题。"
+        "不能仅凭背景没有被标题提及就认定图文无关，也不能仅因静帧没有演出台词中的动作就判定台词虚构。"
+        "具体图文矛盾、虚构人物或事件、抢占主体的无关元素仍须列出，并说明可见依据；"
+        "只有空泛口号、主体缺失、文案与标题不同题时仍须拒绝，身份正确本身不等于通过。\n"
         "请只输出一个 JSON 对象(不要 markdown 代码块,不要多余文字),字段与含义:\n"
         '{"lidousha_primary": bool 封面主体是否是李豆沙(白发+头顶小熊猫耳的虚拟熊猫少女;熊猫耳长在头上不是头套/帽子;头顶墨镜或发饰是可选配饰,可有可无),'
         '"thumbnail_readable": bool 缩略图尺寸下封面大字是否清晰可读,'
@@ -345,18 +394,27 @@ def build_joint_qc_receipt(
 
 
 def main() -> int:
-    package_root = Path(sys.argv[1]).resolve()
-    title = sys.argv[2]
-    out_path = Path(sys.argv[3])
-    env = load_env("/opt/bilive/autoslice/cpa.env")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("package_root", type=Path)
+    parser.add_argument("title")
+    parser.add_argument("out_path", type=Path)
+    parser.add_argument("--reuse-valid", action="store_true",
+                        help="revalidate an existing PASS without a new model call or write")
+    args = parser.parse_args()
+    reused = args.reuse_valid and os.path.lexists(args.out_path)
 
     def probe(path: Path, prompt: str) -> dict:
+        # Reusing a frozen result must not require credentials or provider health.
+        env = load_env("/opt/bilive/autoslice/cpa.env")
         result = image_vision_probe(path, prompt, api_base=env.get("CPA_BASE_URL", ""), api_key=env.get("CPA_API_KEY", ""))
         result["image_path"] = str(path)
         return result
-    receipt = run_qc(package_root, title, out_path, image_probe=probe)
-    print("status:", receipt["status"], "| verdict:", json.dumps(receipt["verdict"], ensure_ascii=False)[:200])
-    print("receipt:", out_path)
+
+    receipt = run_qc(args.package_root, args.title, args.out_path, image_probe=probe,
+                     reuse_existing=args.reuse_valid)
+    print("status:", receipt["status"], "| reused_existing:", reused,
+          "| verdict:", json.dumps(receipt["verdict"], ensure_ascii=False)[:200])
+    print("receipt:", args.out_path)
     return 0 if receipt["pass"] else 2
 
 

@@ -227,7 +227,8 @@ def render_title_layer(
                 TITLE_INNER_STROKE,
             ),
         ]
-        if outlines != expected_outlines:
+        clean_outlines = [(max(1, int(round(size * 0.012))), TITLE_OUTER_STROKE)]
+        if outlines not in (expected_outlines, clean_outlines):
             raise CoverTitleRenderError(
                 "COVER_TITLE_RENDER_OUTLINE_POLICY_INVALID"
             )
@@ -332,3 +333,23 @@ def render_title_layer(
     if verify_output_size and expected_size != list(layer.size):
         raise CoverTitleRenderError("COVER_TITLE_RENDER_OUTPUT_SIZE_MISMATCH")
     return layer
+
+
+def title_layer_position(layer_size, *, bbox, zone) -> tuple[int, int]:
+    """Centre the rotated title, clamping its actual pixels to the safe zone."""
+    x0, y0, x1, y1 = zone
+    paste_x = int(x0 + (x1 - x0 - layer_size[0]) / 2)
+    paste_y = int(y0 + (y1 - y0 - layer_size[1]) / 2)
+    if bbox:
+        min_x, max_x = x0 - bbox[0], x1 - bbox[2]
+        if min_x > max_x:
+            raise ValueError(
+                "COVER_TITLE_EXCEEDS_FEED_SAFE_ZONE: "
+                f"title pixels are {bbox[2] - bbox[0]}px wide; safe zone is {x1 - x0}px"
+            )
+        paste_x = max(min_x, min(paste_x, max_x))
+        min_y, max_y = y0 - bbox[1], y1 - bbox[3]
+        if min_y > max_y:
+            raise ValueError("COVER_TITLE_EXCEEDS_FEED_SAFE_ZONE: title pixels exceed safe height")
+        paste_y = max(min_y, min(paste_y, max_y))
+    return paste_x, paste_y

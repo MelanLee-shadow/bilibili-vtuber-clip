@@ -35,6 +35,7 @@ from src.autoslice.microcue_acoustic_discovery import (
     discover_microcue_findings,
 )
 from src.autoslice.restatement_recall import merge_restatement_priority_findings
+from src.autoslice.operator_correction_policy import require_explicit_exhaustive_review_plan
 from src.autoslice.subtitle_fidelity import valid_redelivery_baseline_config
 from src.autoslice.reviewed_subtitle_baseline_registry import (
     _valid_speaker_authority,
@@ -454,6 +455,14 @@ def resolve_operator_text_full_ownership(
     baseline = _exact_replay_baseline(spec)
     if baseline is None or spec.get("subtitle_text_overrides") is not None:
         return None
+    if "operator_correction_plan" in baseline:
+        try:
+            require_explicit_exhaustive_review_plan(
+                baseline["operator_correction_plan"],
+                candidate_id=str(spec.get("candidate_id") or ""),
+            )
+        except ValueError:
+            return None
     baseline_sha256 = _clean_sha256(baseline.get("sha256"))
     if not baseline_sha256:
         return None

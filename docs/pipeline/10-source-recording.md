@@ -1,14 +1,15 @@
 # 10 录制与源健康
 
-本文件是源步骤的**分步权威**。运行时权威分为：
+本文件是源步骤的**分步权威**。录制、生产和发布可以位于不同主机；以当前
+运行入口、源文件绑定和部署版本为准，开发目录或同名副本不构成生产证据。
 
-- 录制服务：部署主机 compose 中的 `bililive_recorder`（参考 `ops/recording/`）；
-- 录播姬配置：部署主机 `bililive-recorder/config.json`；
-- adapter 状态/账本：部署主机 `recording/`；
-- 自动切片部署：`$AUTOSLICE_BASE/repo`（现查 `DEPLOYED_COMMIT`）；
-- 原始录播：你的录播根目录（按 `<room_id>/` 分房间目录）。
+- 部署与工作目录：`$AUTOSLICE_BASE/{repo,state,out,reports}`；确认当前版本。
+- 源目录：入口的 `AUTOSLICE_REC_ROOT`、`AUTOSLICE_CANONICAL_REC_ROOT` 与
+  候选实际绑定的 source pieces；不是任意同名文件。
+- 录制服务与源账本：参考 `ops/recording/`，按自己的部署核对 compose、
+  录播姬配置和 `recording/status.json`。
 
-## free 主机录制栈
+## 录制栈与源约定
 
 - free 上的该录制栈仅使用官方 BililiveRecorder/录播姬
   `ghcr.io/bililiverecorder/bililiverecorder:2.18.0`，部署锁定镜像 digest。
@@ -114,7 +115,13 @@
   `FUSE_REMOUNT_REUSED_PORTABLE_IDENTITY_REBIND` 再走同一 idle、子进程全字节
   attest、前后 fingerprint/mount 稳定和链式回执流程。`mount_id` 只是同一
   namespace 的新挂载见证，不是跨 namespace 的 portable truth；相同 portable
-  投影且相同 `mount_id` 的 inode 漂移仍 BLOCK，不能重签。后继 FLV 的旧 row
+  投影且相同 `mount_id` 的 inode 漂移仍 BLOCK，不能重签。若 source、XML 与后继
+  FLV 三个角色仅发生 `inode` 变化，而后继 MP4 的全部 fingerprint 字段均保持不变，
+  该精确的 partial reindex 形状也可沿用上述
+  `FUSE_REMOUNT_REUSED_PORTABLE_IDENTITY_REBIND` 流程；它仍要求 portable 投影相同、
+  当前 namespace `mount_id` 已变化、source/XML/后继 MP4 全字节 hash attest、前后
+  fingerprint 与 mount 稳定，以及 webhook/finalized ledger 绑定。任何其他角色子集或
+  同一 mount epoch 的 partial inode 漂移仍 BLOCK。后继 FLV 的旧 row
   若同一次已见证 remount 还使**两个且仅两个**后继角色的 `mtime_ns`/`ctime_ns`
   同时变化，必须用独立
   `FUSE_REMOUNT_REUSED_PORTABLE_IDENTITY_SUCCESSOR_MTIME_CTIME_REATTESTATION`
@@ -286,6 +293,9 @@
   0 交付≠done。
 - 杀开关：`touch /opt/bilive/autoslice/DISABLED`。
 - 正式部署把 `ops/` 与 `scripts/src/assets/...` 一起纳入 committed tree manifest。
+  权威封印也须包含已提交资产中的JSON/SRT与被消费者引用的Markdown/纯文本证据；
+  不能只把文件复制到部署树却漏登记prompt/completion，导致Git中可重放的同一原稿在部署模式失效。
+  通过原生manifest builder生成，仍逐文件拒绝链接并重算字节hash，不手工补旧seal。
   外部 `/opt/bilive/recording/bililive_recorder_adapter.py` 必须由
   `scripts/deploy_autoslice.sh` 在 preimage/rollback 事务中从已切换的 commit
   原子安装并做 SHA-256 readback；不得手工 `cp`。只有 recorder fresh-idle、

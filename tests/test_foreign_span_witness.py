@@ -49,6 +49,52 @@ def _blocked_language_audit():
     }
 
 
+@pytest.mark.parametrize("lane", ["kana", "mixed"])
+def test_transcript_candidate_does_not_witness_its_own_pinyin(
+    tmp_path, monkeypatch, lane
+):
+    current = "谢谢美国老师"
+    proposed = "食べ物屋さんが"
+    row = {
+        "cue_index": 1, "start_ms": 0, "end_ms": 4000,
+        "witnessed": False, "audible_language": "ja",
+        "exact_transcript": proposed, "audio_sha256": "a" * 64,
+        "provider": "agy",
+    }
+    monkeypatch.setattr(fsw, "_witness_rows", lambda **kwargs: [row])
+    audit = (
+        {"status": "BLOCKED_UNPROVEN_FOREIGN_SPEAKER",
+         "unproven_foreign_introductions": [row]}
+        if lane == "kana" else
+        {"status": "BLOCKED_MIXED_CJK_LATIN_PHRASE",
+         "mixed_cjk_latin_cues": [row]}
+    )
+
+    def judge(prompt):
+        assert "candidate_blind_transcript" in prompt
+        assert proposed in prompt and current in prompt
+        assert "独立拼音证词" in prompt
+        assert "由盲听 heard_pinyin 得出" not in prompt
+        assert "证人置信: 0.85" not in prompt
+        return json.dumps({"choice": "CURRENT", "ranking": [
+            {"choice": "CURRENT", "p": 0.9},
+            {"choice": "PROPOSED", "p": 0.1},
+        ], "reason": "The transcript is only one fallible observation."})
+
+    apply = (fsw.adjudicate_language_preservation_audit if lane == "kana"
+             else fsw.adjudicate_foreign_script_audit)
+    original = _srt(current)
+    output, resolved = apply(
+        media_path=tmp_path / "source.mp4", srt_text=original,
+        audit=audit, out_root=tmp_path, cid="foreign_candidate",
+        llm_call=judge,
+    )
+    assert output == original
+    receipt = resolved["cpa_adjudication_rows"][0]
+    assert receipt["resolved"] is True
+    assert receipt["choice"] == "CURRENT"
+
+
 @pytest.fixture
 def witness_env(tmp_path, monkeypatch):
     media = tmp_path / "padded.mp4"
@@ -62,6 +108,76 @@ def witness_env(tmp_path, monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY_2", raising=False)
     monkeypatch.delenv("GEMINI_API_KEY_3", raising=False)
     return media
+
+
+@pytest.mark.parametrize("lane", ["kana", "mixed"])
+@pytest.mark.parametrize("candidate_id,selected", [
+    ("SOURCE_1", "谢谢美国老师"), ("SOURCE_2", "谢谢北国老师"),
+])
+def test_cpa_can_select_original_source_against_both_japanese_candidates(
+    tmp_path, monkeypatch, lane, candidate_id, selected,
+):
+    current, heard = "しゃべるの遅か", "食べ物屋さんが"
+    row = {
+        "cue_index": 1, "start_ms": 0, "end_ms": 4000,
+        "draft": "谢谢美国老师", "attempted": current,
+        "source_candidates": [{"text": "谢谢北国老师", "source": {
+            "kind": "mai_native_words", "audio_sha256": "b" * 64,
+            "start_ms": 0, "end_ms": 4000,
+        }}],
+    }
+    observed = {"cue_index": 1, "start_ms": 0, "end_ms": 4000,
+                "audible_language": "ja", "exact_transcript": heard,
+                "witnessed": False, "provider": "agy", "audio_sha256": "a" * 64}
+    monkeypatch.setattr(fsw, "_witness_rows", lambda **kwargs: [observed])
+    audit = ({"status": "BLOCKED_UNPROVEN_FOREIGN_SPEAKER",
+              "unproven_foreign_introductions": [row]} if lane == "kana" else
+             {"status": "BLOCKED_MIXED_CJK_LATIN_PHRASE", "mixed_cjk_latin_cues": [row]})
+
+    def judge(prompt):
+        for text in (current, heard, "谢谢美国老师", "谢谢北国老师"):
+            assert text in prompt
+        assert "source_asr_draft" in prompt and "mai_native_words" in prompt
+        return json.dumps({"choice": "PROPOSED", "candidate_id": candidate_id,
+                           "selected_candidate_text": "模型不能另造所选文字",
+                           "reason": "The original source fits the thank-you context."})
+
+    apply = (fsw.adjudicate_language_preservation_audit if lane == "kana"
+             else fsw.adjudicate_foreign_script_audit)
+    original = _srt(current)
+    output, resolved = apply(media_path=tmp_path / "input.mp4", srt_text=original,
+        audit=audit, out_root=tmp_path, cid="source_choice", llm_call=judge)
+    assert output == _srt(selected)
+    receipt = resolved["cpa_adjudication_rows"][0]
+    assert receipt["adjudication"]["judge"]["candidate_id"] == candidate_id
+    assert receipt["proposed"] == selected
+    assert receipt["selected_candidate_sources"][0]["kind"] != "bounded_candidate_blind_audio_transcript"
+    from src.autoslice.final_source_language_owner import (
+        register_final_foreign_script_cpa_repairs, register_final_source_language_cpa_repairs,
+    )
+    owners = {}
+    register = (register_final_source_language_cpa_repairs if lane == "kana"
+                else register_final_foreign_script_cpa_repairs)
+    key = "source_language_audit" if lane == "kana" else "foreign_script_audit"
+    register(owners, input_srt=original, output_srt=output, **{key: resolved})
+    assert owners["entity_repairs"][0]["structured_exact_text"] == selected
+
+
+def test_partial_source_cue_cannot_become_a_whole_target_replacement():
+    result = {"cue_index": 1, "start_ms": 0, "end_ms": 1000}
+    assert fsw._target_source_candidates(result, [], source_srt=_srt("目标加后文")) == []
+
+
+@pytest.mark.parametrize("candidate_id", [None, "INVENTED"])
+def test_ambiguous_or_unknown_candidate_id_cannot_apply(candidate_id):
+    from src.autoslice.acoustic_witness_adjudication import adjudicate_with_witness
+    check = {"current_cue": "しゃべるの遅か", "proposed_cue": "食べ物屋さんが",
+             "proposed_candidates": [{"text": "谢谢美国老师", "source": "BCUT"}]}
+    witness = fsw._transcript_witness({"audible_language": "ja"}, transcript=check["proposed_cue"])
+    applied, _, audit = adjudicate_with_witness(check_request=check, witness=witness,
+        llm_call=lambda _: json.dumps({"choice": "PROPOSED", "candidate_id": candidate_id}))
+    assert not applied
+    assert audit["judge"]["reason_code"] == "JUDGE_CANDIDATE_ID_OUT_OF_SET"
 
 
 def test_kana_introduction_witnessed_by_matching_audio(tmp_path, witness_env):
@@ -337,6 +453,7 @@ def test_kana_mismatch_requires_cpa_for_retranscription(tmp_path, witness_env):
                     {"choice": "CURRENT", "p": 0.05},
                 ],
                 "choice": "PROPOSED",
+                "candidate_id": "PROPOSAL",
                 "reason": "The bounded transcript matches the pronoun discussion.",
             }
         )
@@ -387,6 +504,9 @@ def test_kana_neither_rebuilds_third_candidate_then_cpa_judges_it(
     def cpa(prompt):
         calls.append(prompt)
         if "# 字幕外语坏闭集重建" in prompt:
+            assert '"witness_protocol": "candidate_blind_transcript"' in prompt
+            assert '"exact_transcript": "哦，我刚才就想说，像RTC这种"' in prompt
+            assert '"heard_pinyin"' not in prompt
             assert "普通日语词句必须写成" in prompt
             assert "假名/惯用日文，不得写罗马音或中文谐音" in prompt
             return json.dumps(
@@ -401,6 +521,7 @@ def test_kana_neither_rebuilds_third_candidate_then_cpa_judges_it(
         return json.dumps(
             {
                 "choice": "NEITHER" if len(judge_calls) == 1 else "PROPOSED",
+                "candidate_id": "PROPOSAL",
                 "reason": "需要第三候选" if len(judge_calls) == 1 else "组合匹配",
             },
             ensure_ascii=False,

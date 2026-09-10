@@ -723,6 +723,37 @@ def preflight_prepared_delivery(
     return PreparedDeliveryPreflight(handle, document, tuple(checked))
 
 
+def _install_prepared_artifact(
+    entry: dict, staged: Path, target: Path, expected: str, *, runtime_root: Path,
+) -> None:
+    if not target.exists():
+        _materialize_target_parent(runtime_root, target.parent)
+        try:
+            # link is atomic no-replace. Persist the new name before removing
+            # the private name; a crash between them retains the owned inode.
+            os.link(staged, target, follow_symlinks=False)
+        except FileExistsError as exc:
+            raise ProducerDeliveryTransactionError("delivery target ownership drifts") from exc
+    observed = os.lstat(target)
+    if (
+        not stat.S_ISREG(observed.st_mode)
+        or (observed.st_dev, observed.st_ino)
+        != (entry["staged_device"], entry["staged_inode"])
+    ):
+        raise ProducerDeliveryTransactionError("delivery target ownership drifts")
+    if _sha256_file(target) != expected:
+        raise ProducerDeliveryTransactionError("installed target hash drifts")
+    # Replay may see a link whose previous directory fsync failed.
+    _fsync_directory(target.parent)
+    if staged.exists() or staged.is_symlink():
+        private = os.lstat(staged)
+        if (private.st_dev, private.st_ino) != (observed.st_dev, observed.st_ino):
+            raise ProducerDeliveryTransactionError("staged preimage drifts")
+        staged.unlink()
+    # Replay must also finish a private unlink interrupted before directory fsync.
+    _fsync_directory(staged.parent)
+
+
 def materialize_preflight_under_batch(
     preflight: PreparedDeliveryPreflight,
     *, lease: RunnerCommitLease,
@@ -733,22 +764,7 @@ def materialize_preflight_under_batch(
     require_runner_commit_lease(lease, runtime_root=preflight.handle.runtime_root)
     installed: list[dict[str, str]] = []
     for entry, staged, target, expected in preflight.checked:
-        if not target.exists():
-            _materialize_target_parent(preflight.handle.runtime_root, target.parent)
-            if target.exists() or target.is_symlink():
-                raise ProducerDeliveryTransactionError("delivery target ownership drifts")
-            os.replace(staged, target)
-            _fsync_directory(target.parent)
-        else:
-            observed = os.lstat(target)
-            if (
-                not stat.S_ISREG(observed.st_mode)
-                or (observed.st_dev, observed.st_ino)
-                != (entry["staged_device"], entry["staged_inode"])
-            ):
-                raise ProducerDeliveryTransactionError("delivery target ownership drifts")
-        if _sha256_file(target) != expected:
-            raise ProducerDeliveryTransactionError("installed target hash drifts")
+        _install_prepared_artifact(entry, staged, target, expected, runtime_root=preflight.handle.runtime_root)
         installed.append({
             "role": str(entry["role"]), "path": str(target),
             "sha256": f"sha256:{expected}",
@@ -865,12 +881,7 @@ def commit_prepared_delivery(*, handle: PreparedDelivery, lease: RunnerCommitLea
         _fsync_directory(journal_root)
     installed: list[dict[str, str]] = []
     for entry, staged, target, expected in checked:
-        if not target.exists():
-            _materialize_target_parent(handle.runtime_root, target.parent)
-            os.replace(staged, target)
-            _fsync_directory(target.parent)
-        if _sha256_file(target) != expected:
-            raise ProducerDeliveryTransactionError("installed target hash drifts")
+        _install_prepared_artifact(entry, staged, target, expected, runtime_root=handle.runtime_root)
         installed.append({"role": str(entry["role"]), "path": str(target), "sha256": f"sha256:{expected}"})
         journal = _journal_payload(
             handle=handle, artifacts=artifacts, status="INSTALLING",

@@ -6,6 +6,7 @@ import hashlib
 from collections.abc import Mapping
 
 from .acoustic_witness_adjudication import valid_inaudible_drop_repair
+from .c7b_failed_row_adoption import c7b_emergency_cpa_repair_allowed
 from .chat_authority import (
     _fragment_spoken_in,
     _strip_interjections_once,
@@ -1364,6 +1365,24 @@ def _verify_redelivery_baseline_owners(
             )
             if full_projection is not None:
                 text_ok = speaker_ok = True
+        incident_projection = None
+        if (
+            not (text_ok and speaker_ok)
+            and text_payload == speaker_payload
+            and c7b_emergency_cpa_repair_allowed(
+                baseline, start_ms=start_ms, end_ms=end_ms,
+            )
+        ):
+            prior_owner = {
+                "matched_start_ms": start_ms + delivery_start_ms,
+                "matched_end_ms": end_ms + delivery_start_ms,
+            }
+            if _exact_final_cpa_retires_decision_row(
+                prior_owner, expected_text=expected_raw, audit=audit,
+                final_text_srt=final_text_srt, delivery_start_ms=delivery_start_ms,
+            ):
+                incident_projection = prior_owner["reconciliation"]
+                text_ok = speaker_ok = True
         required_count += 1
         row.update(
             {
@@ -1401,6 +1420,10 @@ def _verify_redelivery_baseline_owners(
             )
         if full_projection is not None:
             row["final_owner_source_truth_projection"] = full_projection
+        if incident_projection is not None:
+            row["final_owner_scope"] = "SUPERSEDED_BY_OPERATOR_REQUESTED_CPA_REPAIR"
+            row["final_owner_cpa_repair"] = incident_projection
+            row["final_owner_expected"] = text_payload
         mapping_results.append(
             {
                 "row": row,

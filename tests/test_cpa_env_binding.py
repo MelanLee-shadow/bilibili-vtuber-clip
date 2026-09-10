@@ -108,7 +108,7 @@ def test_cpa_health_probe_reads_explicit_override(monkeypatch: pytest.MonkeyPatc
     assert runner.cpa_healthy() is True
     assert len(calls) == 1
     assert calls[0][0] == "https://override.example.test/v1/responses"
-    assert calls[0][1]["model"] == "gpt-5.6-sol"
+    assert calls[0][1]["model"] == "gpt-6-astra"
 
 
 @pytest.mark.parametrize(

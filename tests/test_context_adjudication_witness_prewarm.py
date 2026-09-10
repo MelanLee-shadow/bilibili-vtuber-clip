@@ -5,9 +5,8 @@ Covers both levels:
   (budget replication, concurrency cap, per-item failure isolation, stale
   ``base_text_sha256`` skip, never-raises contract);
 * integration tests through ``producer_text_pipeline._run_final_review``,
-  proving the mechanism (unique underlying-provider spends collapse to the
-  prewarm's ``fired_count``; the serial loop adds none for the admitted,
-  non-rebased batch) and pipeline output equivalence with/without prewarm.
+  proving that the normal text-first producer never eagerly prewarms and
+  spends no audio calls for findings CPA can resolve from text.
 """
 
 from __future__ import annotations
@@ -274,11 +273,8 @@ def test_prewarm_selection_error_is_swallowed():
 # ---------------------------------------------------------------------------
 
 
-def test_pipeline_prewarm_collapses_serial_witness_spend(monkeypatch):
-    """End-to-end mechanism proof: with prewarm wired in, the number of
-    distinct underlying-provider spends for the admitted context-adjudication
-    batch equals the prewarm's own ``fired_count`` -- the serial loop's own
-    per-finding fetches for that batch add zero new provider spends."""
+def test_pipeline_defers_all_audio_until_cpa_has_judged_text(monkeypatch):
+    """The normal producer must not prewarm before CPA asks for local audio."""
 
     source_texts = [f"坏词{index}留在这里" for index in range(1, 9)]
     findings = [
@@ -313,76 +309,40 @@ def test_pipeline_prewarm_collapses_serial_witness_spend(monkeypatch):
     )
 
     prewarm_receipt = audit["context_adjudication_witness_prewarm"]
-    assert prewarm_receipt["status"] == "PASS"
-    assert prewarm_receipt["fired_count"] == 8
-    # All 8 underlying provider spends came from the prewarm; the serial
-    # loop's own 8 calls into ``observe`` all replayed from the (simulated)
-    # acoustic cache.
-    assert len(requests) == prewarm_receipt["fired_count"] == 8
+    assert prewarm_receipt["status"] == "SKIPPED"
+    assert prewarm_receipt["fired_count"] == 0
+    # This older judge fixture omits needs_audio, so each unresolved text
+    # judgment still receives exactly one demanded witness.
+    assert len(requests) == 8
 
-
-def test_pipeline_output_identical_with_and_without_prewarm(monkeypatch):
-    """Disabling only the prewarm call must not change what the (untouched)
-    serial loop ultimately decides and writes."""
-
+def test_pipeline_text_resolved_findings_never_call_prewarm_or_audio(monkeypatch):
     source_texts = [f"坏词{index}留在这里" for index in range(1, 6)]
-    findings = [
-        {
-            "cue": index,
-            "kind": "context",
-            "proposed_full_cue": f"好词{index}留在这里",
-            "repair_class": "phonetic",
-            "why": "上下文明确",
-        }
-        for index in range(1, 6)
-    ]
-    monkeypatch.setattr(
-        pipeline,
-        "_build_final_review_llm_call",
-        lambda: _split_llm(
-            json.dumps({"findings": findings}, ensure_ascii=False), "PROPOSED"
-        ),
+    findings = [{"cue": index, "kind": "context",
+                 "proposed_full_cue": f"好词{index}留在这里",
+                 "repair_class": "phonetic", "why": "上下文明确"}
+                for index in range(1, 6)]
+    fallback = _split_llm(json.dumps({"findings": findings}, ensure_ascii=False), "PROPOSED")
+
+    def cpa(prompt):
+        if "TEXT_FIRST" in prompt:
+            return json.dumps({"choice": "PROPOSED", "needs_audio": False,
+                               "ranking": [{"choice": "PROPOSED", "p": .9},
+                                           {"choice": "CURRENT", "p": .09},
+                                           {"choice": "NEITHER", "p": .01}]})
+        return fallback(prompt)
+
+    monkeypatch.setattr(pipeline, "_build_final_review_llm_call", lambda: cpa)
+    calls = []
+    def audio(request):
+        calls.append(request)
+        return _witness_verdict(request, "hao ci")
+
+    output, audit = pipeline._run_final_review(
+        srt_text=_srt(*source_texts), chat_authority_audit={"applied": []},
+        handled_entity_cues=set(), verify_confusable_entity=audio,
+        adapters=_adapters(),
     )
-
-    def run(*, disable_prewarm):
-        observe, requests = _memoizing_witness_observer(
-            lambda request: _witness_verdict(
-                request, f"hao ci {request['cue_indexes'][0]} liu zai zhe li"
-            )
-        )
-        with pytest.MonkeyPatch.context() as mp:
-            if disable_prewarm:
-                mp.setattr(
-                    pipeline,
-                    "prewarm_context_adjudication_witnesses",
-                    lambda *args, **kwargs: {
-                        "schema_version": "context-adjudication-witness-prewarm.v1",
-                        "status": "SKIPPED",
-                        "mutation_authorized": False,
-                        "reason_code": "TEST_DISABLED",
-                    },
-                )
-            output, audit = pipeline._run_final_review(
-                srt_text=_srt(*source_texts),
-                chat_authority_audit={"applied": []},
-                handled_entity_cues=set(),
-                verify_confusable_entity=observe,
-                adapters=_adapters(),
-            )
-        return output, audit, requests
-
-    output_prewarmed, audit_prewarmed, requests_prewarmed = run(disable_prewarm=False)
-    output_baseline, audit_baseline, requests_baseline = run(disable_prewarm=True)
-
-    assert output_prewarmed == output_baseline
-    for key in (
-        "findings",
-        "applied_count",
-        "context_adjudication_count",
-        "status",
-    ):
-        assert audit_prewarmed[key] == audit_baseline[key]
-    # Baseline (no prewarm) still only spends once per unique window, thanks
-    # to the same acoustic-cache-shaped memoization -- both runs must reach
-    # exactly the same total.
-    assert len(requests_baseline) == len(requests_prewarmed) == 5
+    assert calls == []
+    assert audit["applied_count"] == 5
+    assert all(f"好词{index}留在这里" in output for index in range(1, 6))
+    assert audit["context_adjudication_witness_prewarm"]["fired_count"] == 0

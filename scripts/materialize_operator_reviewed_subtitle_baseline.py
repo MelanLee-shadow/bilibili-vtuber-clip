@@ -24,6 +24,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.apply_speaker_turn_overrides import atomic_write_text
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.operator_correction_policy import require_explicit_exhaustive_review_plan
 from src.autoslice.qixi_cue21_diagnostic_evidence import (
     QixiCue21DiagnosticEvidenceError,
     validate_qixi_cue21_diagnostic_evidence,
@@ -468,8 +469,18 @@ def compile_operator_baseline(
     decision_ledger: object,
     decision_ledger_root: Path | None = None,
     time_domain: str | None = None,
+    correction_plan: object = None,
 ) -> dict[str, Any]:
     """Validate and return the baseline, manifest, and provenance receipt."""
+
+    # Validate before reading inputs or producing files. A decision ledger's
+    # EXHAUSTIVE label cannot self-authorize freezing every unreported cue.
+    try:
+        review_plan = require_explicit_exhaustive_review_plan(
+            correction_plan, candidate_id=candidate_id,
+        )
+    except ValueError as exc:
+        raise OperatorBaselineCompileError(str(exc)) from exc
 
     if not _CANDIDATE_RX.fullmatch(str(candidate_id or "")):
         raise OperatorBaselineCompileError("candidate_id is invalid")
@@ -636,6 +647,8 @@ def compile_operator_baseline(
         "diagnostic_diff": diagnostic_diff,
         "speaker_authority": "NOT_CLAIMED_TEXT_ONLY",
     }
+    manifest["operator_correction_plan"] = review_plan
+    receipt["operator_correction_plan"] = review_plan
     return {
         "baseline_srt": baseline_text,
         "pipeline_diagnostic_srt": source_srt.read_bytes().decode("utf-8"),
@@ -658,6 +671,8 @@ def main() -> int:
     parser.add_argument("--absolute-source-end-ms", required=True, type=int)
     parser.add_argument("--time-domain", choices=sorted(SUPPORTED_TIME_DOMAINS))
     parser.add_argument("--decision-ledger", required=True, type=Path)
+    parser.add_argument("--operator-correction-plan", required=True, type=Path,
+                        help="source-reviewed explicit exhaustive scope, not an issue-count inference")
     parser.add_argument("--baseline-srt-out", required=True, type=Path)
     parser.add_argument("--baseline-manifest-out", required=True, type=Path)
     parser.add_argument("--receipt-out", required=True, type=Path)
@@ -682,6 +697,7 @@ def main() -> int:
         decision_ledger=decision_ledger,
         decision_ledger_root=args.decision_ledger.parent,
         time_domain=args.time_domain,
+        correction_plan=json.loads(args.operator_correction_plan.read_text(encoding="utf-8")),
     )
     manifest = dict(result["baseline_manifest"])
     manifest["path"] = args.baseline_srt_out.name

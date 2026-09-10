@@ -22,6 +22,7 @@ from src.autoslice.redelivery_boundary_projection import (
     PROJECTION_MODE_CONFIG_KEY,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.operator_correction_policy import require_explicit_exhaustive_review_plan
 from src.autoslice.qixi_cue21_diagnostic_evidence import (
     QixiCue21DiagnosticEvidenceError,
     validate_qixi_cue21_diagnostic_evidence,
@@ -722,6 +723,15 @@ def load_candidate_reviewed_subtitle_baseline(
             "candidate subtitle baseline sha256 does not match"
         )
     _required_text(document.get("authority"), label="baseline authority")
+    # Newly compiled ownership carries its scope decision. Legacy sealed
+    # assets remain readable; a present but invalid plan may never be ignored.
+    if "operator_correction_plan" in document:
+        try:
+            require_explicit_exhaustive_review_plan(
+                document["operator_correction_plan"], candidate_id=candidate_id,
+            )
+        except ValueError as exc:
+            raise ReviewedSubtitleBaselineRegistryError(str(exc)) from exc
     operator_truth_lanes, _operator_truth_lane_paths = _validate_operator_truth_lanes(
         document,
         root=root,

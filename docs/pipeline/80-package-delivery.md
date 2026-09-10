@@ -2,6 +2,30 @@
 
 本文件是打包步骤的**分步权威**。入口：`src/autoslice/producer_package_finalization.py`。
 
+## 成片交付原则
+
+快车道、人工定点修复与普通生产都必须交付完整成片：谈话片头仅加一次、字幕实际烧入
+所上传的视频、开头到结尾所需内容齐全。主会话核对的是包内最终 MP4 的真实画面/音轨，
+不是文件名里的 `burned`、旁边一份 SRT 或 record 自报的 `PREPENDED`。
+字幕样式按 [40](40-subtitle-text.md) 的当前默认执行。
+
+谈话成片烧录完成后，必须从**这份最终 MP4 的实际音轨**取得独立 BCUT 时间见证，并运行
+`final_subtitle_audio_gate.py` / `check_subtitle_audio_correspondence.py`。检查自行重算媒体、
+交付 SRT、见证 SRT 和 provenance 哈希，按 record 中实际片头长度只加一次偏移；至少三条
+足够长且唯一的语句覆盖首、中、尾。整体错位、局部漂移、输入漂移或锚点不足都阻断交付。
+最终声文捕获的FFmpeg音频提取必须同时使用`-nostdin`和子进程`stdin=DEVNULL`，
+防止调用者JSON/管道/PTY输入被解释为退出等交互指令。此隔离不替代实际音轨、
+哈希、锚点和时长的后续检查，也不保证其他损坏输入能够完成。
+默认抽音器在首次交给BCUT前还须解码计帧：产物为非空普通文件、唯一MP3音频流、
+单声道16kHz、正帧数及有限正时长，探测错误或非法结构按现有抽音失败拒绝。
+静音本身合法，不能用能量阈值删掉；该检查不证明抽音已覆盖完整源时长或字幕正确。
+已验证暖缓存仍按原哈希/声文合同复用，不重新抽音、探测或调用BCUT。
+包内保留同 stem 的 `.subtitle-audio-witness.srt`、`.subtitle-audio-provenance.json`、
+`.subtitle-audio-bcut.raw.json` 与 `.subtitle-audio-correspondence.json`，record 同时绑定检查结果。
+该检查是粗偏移门，不证明所有短句或每条字幕的消失时刻，不授权按 BCUT 改字，也不替代
+CPA 文字裁决和最终烧录视频的全片声文复核。原音轨相关性、文件哈希一致、旧字幕审片
+PASS 均不能代替声文对应检查。
+
 
 ## 快车道与提速边界
 
@@ -10,8 +34,20 @@ private prepare/package/QC 并行；同一候选的 transcription/AGY 之后，�
 short calls 彼此并行；待字幕、媒体和标题输入冻结后，burn 与 cover 可并行。commit lease、formal state+journal、same-BV apply、
 upload mutation 与 queue advancement 必须串行；同一候选 mutation 完成后，public/Creator/
 section 三个 read-only probes 可以并行，但 joint acceptance 是屏障，三面收敛前不得释放
-下一候选。全局 workflow 病因修复可并行，但不成为重新人工审片的节点；Qixi-first，随后按
-批次原顺序，`review_ready` 仍不等于 publication。
+下一候选。全局 workflow 病因修复可并行，但不能扩大原有授权范围。
+发布采用[就绪优先与串行发布边界](90-publish.md)：
+未修好的前序候选不阻断后续通过全部发布门的候选；就绪集合内时效优先，其余按原批次
+顺序选取。修复和串行发布可并行，`review_ready` 仍不等于 publication。
+
+## 已有联合质检的零调用接续（2026-09-09）
+
+`run_title_cover_joint_qc.py <package> <title> <receipt> --reuse-valid`只在目标receipt
+已存在时走只读验证：当前manifest/record/publish/封面和原receipt逐字节绑定，复用
+上传器的`_title_cover_qc_attestation_problems(required=True)`重验原CPA回答与PASS，
+前后hash保持一致才返回原receipt；不加载密钥、不调用模型、不改时间或历史模型身份。
+默认不带flag的创建路径仍create-only。FAIL、漂移、非完整回答或路径不安全均拒绝复用，
+不得换输出名反复抽相同内容来洗成PASS。`import_external_package`在既定receipt路径已存在时
+自动调用同一验证函数，不再把已有正确结果当成必须新建的任务。其他发布门保持不变。
 
 ## 增量审计与最新记录重绑定
 
@@ -54,15 +90,14 @@ CLI 的角色参数只是声明，不能替代 record/manifest 的绑定：
 receipt 也会封存角色合同；旧诊断样本先保留为训练/测试证据，只有完成无引用扫描、封存与独立
 清理授权后才能删除。
 
-维护者 的修改点完整性规则由 `operator_correction_policy.py` 强制：默认 1–2 个点整片复核；
-明确声明“只有这些错误”的 1–2 个点才可在实际 diff 全覆盖后定向复核；超过 3 个点标记为
-`EXHAUSTIVE_CANDIDATE`，但仍必须逐一覆盖所有 changed cue/window/ROI；CLI 的
-`--change-point` 对应 `COMPONENT:START_MS:END_MS`、`cover:X:Y:WIDTH:HEIGHT` 或
-`COMPONENT:full`；恰好 3 个点按保守规则整片复核。该 receipt 只证明增量复核范围和覆盖情况，
-**不替代**最终 SRT、boundary、
-package audit、title-cover QC、authorized manifest 或 upload gate。增量入口缺 receipt、
-receipt 过期或校验失败时只能阻断该增量路径，或明确转入现有全量/权威审核路径；不得按
-“没有 receipt 就没有变化”处理。
+修改点范围以 [40](40-subtitle-text.md) 为准，由 `operator_correction_policy.py` 解析；
+明确穷尽或非穷尽声明都优先于问题数量；机器修改数不是人审覆盖率。错误签发的完整冻结
+基线不得作为压掉终审疑点的依据，按 [40](40-subtitle-text.md) 保留历史并撤出当前发现。
+CLI 的 `--change-point` 对应
+`COMPONENT:START_MS:END_MS`、`cover:X:Y:WIDTH:HEIGHT` 或 `COMPONENT:full`，必须逐一覆盖
+所有 changed cue/window/ROI。范围 receipt 不替代最终 SRT、boundary、package audit、
+title-cover QC、authorized manifest 或 upload gate。增量入口缺 receipt、过期或校验失败时
+阻断该增量路径，或明确转入适用审核路径；不得按“没有 receipt 就没有变化”处理。
 
 ## Qixi public-surface 的固定模式与 readiness
 
@@ -131,10 +166,12 @@ prepare 工作。一个被阻候选不得阻断其它候选。
   `required_truth_row_count=0`、`required_window_count=0`，但其
   `context_only_truth_row_count`、ID、逐窗关系和最终 interval 必须完整、可重算，不能靠空计数
   逃过审计。
-- current/story-contract 的 talk/recovery item 必须把 `speaker_srt`、`ass_path` 两份真实字节
-  连同 `speaker_srt_sha256`、`ass_sha256` 放进 package。两条路径都只能指向 package-relative
-  regular file；绝对路径、越界、缺文件以及路径任一层 symlink 都拒绝。song lane 不进入这条
-  talk speaker gate。
+- current/story-contract 的 talk/recovery item 必须把 `speaker_srt`、`ass_path` 对应的真实字节
+  与各自 SHA 放进 package。`uniform_host` 下，前者复用无标签的最终 clean SRT，后者是实际
+  Sapphire72 ASS；不另造 speaker manifest 或双人标签 SRT。该分支须满足
+  `review_package_ass_audit.uniform_host_fallback_declared` 的 record/chat 绑定，不能仅凭
+  模式字符串豁免。显式分离模式才使用独立 speaker SRT/ASS。所有路径仍为 package-relative
+  regular file，禁止越界、缺文件或 symlink；song lane 不进入 talk speaker gate。
 - 已在一个 host 完整冻结、随后复制到另一 host 的 talk 包，只能用
   `scripts/relocate_slice_package.py` 投影运行时 locator。调用方必须显式给出且物理核对
   source/destination package、candidate evidence root 与 deployed repo root；更具体的 package
@@ -161,15 +198,14 @@ prepare 工作。一个被阻候选不得阻断其它候选。
 - `review_package_ass_audit.py` 不能只看 ASS 存在或 hash：speaker SRT 还须匹配
   chat-authority 的 `final_speaker_srt_sha256`，ASS 须同时匹配 record
   `artifact_hashes.ass_sha256` 与 chat-authority `speaker_ass_sha256`。auditor 再从包内
-  speaker SRT 按生产同一 `_layout_cue_for_display`、speaker ASS escaping 与厘秒 rounding
-  重建全部 `Dialogue` events；event 数、start/end、完整文本和 LDS/GUEST style 必须逐项精确
+  speaker SRT 按生产同一 `_layout_cue_sequence_for_display`、speaker ASS escaping 与厘秒 rounding
+  重建全部 `Dialogue` events；event 数、start/end、完整文本与实际模式的 style 必须逐项精确
   相等，缺失/非法 Dialogue 或任一投影漂移都阻断。
-- 维护者 报告成片字幕问题时，先运行
-  `scripts/plan_operator_subtitle_correction.py` 固化修复范围：未明确“问题已列完”的 1–2
-  个问题视为抽样，必须整片重跑并复审；超过 3 个问题进入
-  `TARGETED_REPAIR_PLUS_SYSTEMIC_FIX` 的 exhaustive-candidate 分支，但必须逐 cue/window
-  覆盖实际 diff；恰好 3 个问题按保守规则整片重跑并复审。明确声明问题穷尽时，即使只有
-  1–2 个也可走定点修复。计划只决定复查范围，不放宽最终 package、same-BV、人审或上传门。
+  `uniform_host` 重放 `Default` 主播样式及 clean SRT；显式分离才重放 LDS/GUEST，不能把
+  后者的双人呈现合同强加给单色交付。
+- 维护者 报告成片字幕问题时，`scripts/plan_operator_subtitle_correction.py` 按
+  [40](40-subtitle-text.md) 固化范围；显式 `--explicitly-exhaustive` / `--only-these-errors`
+  对任意数量的已列问题生效。计划只决定复核范围，不放宽最终 package、same-BV 或上传门。
 - 定点修复是**发布真值轨**，不是对 autoslice 的覆盖式“纠正历史”。同一候选必须同时保存：
   (a) 独立、对人工真值盲的完整流水线 SRT，(b) 用于上传的人工真值 SRT，及 (c) hash-bound
   的逐 cue diff receipt；它们用于定位流水线失误，诊断轨不得回写发布真值，也不得把真值反哺
@@ -198,8 +234,11 @@ prepare 工作。一个被阻候选不得阻断其它候选。
   `PROPOSED` 候选证据。package auditor 必须拒绝缺该字段或由
   非 operator authority 自升 active 的新行，防止旧机器 ledger 覆盖已经正确的 CPA 结果。
 - 最终 SRT 先过 `lidousha-srt-release-policy.v1`：每个 block 必须被严格解析，连续编号、
-  合法且正向的时间、至少 300ms、单调无 overlap、非空/非孤立标点/非单个汉字、媒体边界
-  合法。producer、package auditor 与 uploader 各自重跑，不能复用一次自报结果。
+  合法且正向的时间、至少 300ms、单调无 overlap、非空/非孤立标点/非孤立实词单字、媒体边界
+  合法。独立语气词/拟声词仅按 `subtitle_validation.py` 的有限集合（包括“噗”）判断；已有
+  相邻呼名回声与“有”的完整回答例外保留，不能推广为任意单字放行，也不能为凑字数跨静音
+  并句或添加字幕。该结构分类不签发声学/语义 PASS；最终文字、时间轴与音频证据仍须通过
+  各自的既有门。producer、package auditor 与 uploader 各自重跑，不能复用一次自报结果。
 - 审计闸是 `scripts/audit_review_package.py`，当前输出必须为
   `lidousha-review-package-audit.v2`，policy epoch 必须精确等于
   `2026-07-31.final-artifact-gates.v5`。**schema 仍是 v2，epoch 才是 v5**；不要把仍合法的
@@ -207,6 +246,15 @@ prepare 工作。一个被阻候选不得阻断其它候选。
   `lidousha-branding-intro.v2` 机械改成 v5。audit 绑定 auditor/策略代码与关键资产的
   `policy_fingerprint`、auditor source hash 以及完整 portable `audited_inputs` 闭包；
   任一文件或政策漂移都使旧 audit 失效。单独一个 `passed: true` JSON 不是证据。
+- 2026-09-09（UTC）维护者 对上一版整句合并提出纠正：必须保留两条原有字幕节奏，
+  不能以“24字以内放得下”为由把后句提前合并。相邻同说话人/同层/同位置、无重叠、
+  间隙≤120ms时，只把断词的1–2个原字符及紧随标点移动到相邻条。源SRT原字节不动，
+  显示条数和各自起止时段不动；调整前后拼接文字精确一致，不能空条、增删词或整句搬移。
+  原“好久不见小 / 李，总觉得……”显示为“好久不见小李， / 总觉得……”。不能用此显示
+  调整冒充新的声学字级时间。跨停顿/重叠/不同说话人不猜；普通词的语义边界由CPA检查，
+  机械层仅实施有界保字操作并验证宽度/时间。已发布稿仍按90原BV修复。
+  Sapphire72保守24字显示宽度、28字审计上限及WrapStyle=2不变。生产/独立审计
+  使用同一源cue→显示event投影；不在既有公开成品上静默重烧。
 - 视觉排版另由 `review_manifest.json.subtitle_visual_contract` 约束：历史/人工默认 18 字；
   autoslice Sapphire72 显式绑定 2 行/28 字上限。严格 SRT 结构门和视觉行宽门不可互相替代。
 - 2026-07-22 起的新包按日期自动进入 StoryContract 严格审计（仍应显式声明 `story_contract_required=true`）、并必须声明 `run_mode` 与 `upload_allowed=false`；producer 的可选布尔值不能关闭新政策。审计器会用 record 中同一 StoryContract 重验最终 SRT、标题、封面文本及实际渲染行、南町专名/关系主张、字幕 hash 与 selection scorecard；封面内嵌的 contract 摘要也必须与 record 一致。任何旧字幕/旧标题/旧封面/旧 policy 字节混入都会把包判为不合规，而不是继续显示为当前成品。
@@ -297,6 +345,11 @@ prepare 工作。一个被阻候选不得阻断其它候选。
   `maximum_tail_pad_ms` 必须精确等于生产常量 400；仍须证明实际 final end 到达 coverage
   lower bound、bridge 差值不超过 400ms 且未带入下一 cue。裁掉 owner 后把它标成成片外不构成
   通过。
+- 已受审原稿范围内的 C9 来源分离保持按[40](40-subtitle-text.md#已审来源分离稿未点名改字是诊断不得成为新增发布条件2026-09-09)
+  的`original-preserved-final-review.v1`独立验证；仅固定原稿与source-action重放覆盖的未改词面
+  可以不把无关phonetic猜测变成新增交付条件。原机器FLAGGED/BLOCK/NEITHER与全部发现原样
+  内嵌保留，不能把它重标CLEAN、伪造零发现或声学通过。实际validator重载原稿/授权并复用
+  以下全部discovery、mutation和source/final-boundary检查；其他候选及普通生产仍严格按v2。
 - correction pass 的 `final-review-audit.v1` 不是 package 放行证据。package 必须携带
   `final-review-audit.v2`，其 `reviewed_srt_sha256` 必须由包内最终 SRT 的原始字节重算，CRLF/LF
   等字节差异不得被 `read_text()` 规范化掩盖；discovery 完整、finding 合同合法且为空、
@@ -344,6 +397,8 @@ prepare 工作。一个被阻候选不得阻断其它候选。
   record 中的远端 `final_cover` 路径，只允许回退到 manifest 明示的交付 `cover`，且该文件必须与
   record 的 `final_cover_sha256` 完全一致；不能按相似文件名或任意现存图片替代。
 - 汇总表时长必须优先使用 producer 最终 record 打印进 summary 的 `duration_ms`（边界自修复后的内容时长），其次才是 candidate 的 `effective_duration_ms`；原始选片锚点 `end_ms-start_ms` 只作旧状态兜底，不能把已延长的 5:00 成片仍显示成 4:32。
+- 已获准重试的未完成 Talk 若原交付目标已有文件，private prepare 必须按本轮 artifact role/hash 派生 `retry-<digest>__` 前缀，保留原 basename 的 candidate 后缀及全部旧文件；summary 的路径从 sealed prepared video target 投影。来源身份/内容、部署绑定及原目标占用状态不变时，重复 private prepare 使用同一 handle；提交后的恢复使用原 journal，不以重新 prepare 代替。新目标仍由既有 create-only、state-last batch transaction 提交，目标碰撞、symlink、来源或部署漂移继续拒绝；此命名恢复不授权重跑 CURRENT 成品，不替代 RECOVERY_REVIEW 或发布门。
+- prepared artifact 安装使用原子 no-replace hard link，验证 journal 绑定的 inode/hash 并持久化目标目录后，才删除私有 staged 名称；在 link/unlink 之间崩溃可按原 journal 恢复。batch 与 artifact-only 路径共用此安装层，预检之后突然出现的非 owned 同字节目标也必须拒绝，不能用普通 replace 覆盖或仅凭 hash 认领；成功 state 仍最后写入。
 - 汇总中的封面路线必须从校验通过的 `lidousha-cover-route-decision.v2` 投影实际执行路线、是否调用/采用 AI、选中理由和两个未选路线的拒绝理由。内部兼容状态 `AI_COVER_READY` 仅表示封面 artifact 已就绪，绝不能被报告解释成 AI 生图；缺少有效 v2 证据时必须显示 UNKNOWN/缺证。
 - `reporting.py` 是从既有 state/record 生成只读审片报告的投影层，不属于会改变选片、字幕、边界、标题、封面或媒体 bytes 的 proof closure；内容与歌切流水线指纹都必须排除它。报告变化直接重写报告，不得唤醒成片重制或无关失败重试。
 - 报告中的 lifecycle 与“按当前政策可审/可发”必须分开。已有 public reconciliation 的行
@@ -557,3 +612,25 @@ prepare 工作。一个被阻候选不得阻断其它候选。
   `important_content_ips` 白名单中的高显著 IP/节目名）只由确定性 owner 从标题/最终 SRT 命中，
   trigger 标点/别名只作表面，输出 canonical 正主名。LLM 仍只提通用内容词，不能发明或重复
   专名；最终 6 个 dynamic 位按人工补充 → 确定性专名/IP → LLM 内容词的既有优先级竞争。
+
+## 固定受审原稿的技术delta包
+
+已发布稿原样素材上的原稿定点纠正由90的独立原稿lane接收：canonical auditor调用
+`original_patch_package.validate_package`，根据committed目标及文件闭包重验原稿重放、实际原/新媒体、
+完整音轨PCM、片头、ASS和声文见证。原始recut未发生时，以保存的旧record和native render intent
+所指同一主片字节证明continuity，不制造一次从未执行的新recut/provenance。它不继承错误机器稿的
+全文pin或CLEAN，不要求新的模型全文听写作为前置，也不把技术delta标记成新一次人工观看。
+未通过这个完整闭包仍为private/unaccepted，不可交给same-BV变更。
+
+原稿技术delta的完整PCM校验须以非交互FFmpeg执行，显式`-nostdin`并断开子进程stdin；
+调用者的JSON/PTY输入不得变成q等播放器命令而提前结束解码。退出码0或格式正确的SHA不能单独
+证明已完整解码；仍必须重算原/新完整音轨并匹配封存值，测试覆盖继承标准输入的调用路径。
+
+### 来源分离后的文字退役与原边界归属（2026-09-09 UTC）
+
+C9既有`fastlane-c9-source-action-replay.v1`会退役机器改字，但不能因此丢掉切片前已冻结的
+两个媒体覆盖owner。消费者先核repo-sealed原始native chat的实际SHA、全部entity rows及
+frozen contract逐字段相同，并重放旧source-action的hash/范围，再保留原required owner进入
+已有geometry检查。非required和晚于boundary的改字仍不取得owner，绝不能复活退役的文字。
+任何行/window/id/声明变化、extra/missing/reorder或source-action漂移仍拒绝。该规则不改原稿、
+不删required owner、不豁免source/final review、raw媒体、package/发布验证，也不是历史人审复写。

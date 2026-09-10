@@ -16,6 +16,7 @@ from src.autoslice.final_review_auditor import (
     audit_final_subtitles,
     build_context_adjudication_request,
 )
+from src.autoslice.fidelity_review_candidates import fidelity_kept_contexts
 from src.autoslice.review_priority_candidates import (
     review_priority_candidate_counts,
     review_priority_candidates,
@@ -150,6 +151,66 @@ def _assert_evidence_digest(evidence: dict[str, object]) -> None:
         ).encode("utf-8")
     ).hexdigest()
     assert observed == expected
+
+
+@pytest.mark.parametrize("choice", ["CURRENT", "PROPOSED"])
+def test_multi_edit_fidelity_context_reaches_fresh_judge_without_extra_candidate(tmp_path, choice):
+    current = "谢绝不糊涂老板的少年线"
+    proposed = "谢谢不糊涂老板的少年线"
+    srt = _srt("谢谢你", current)
+    padded = tmp_path / "multi.mp4"
+    padded.with_suffix(".asr_draft.srt").write_text(srt, encoding="utf-8")
+    padded.with_suffix(".fidelity-audit.json").write_text(json.dumps({
+        "schema_version": "subtitle-fidelity-audit.v2",
+        "reverted": [{
+            "cue_index": 2, "draft": current, "kept": current,
+            "attempted": "谢谢不糊涂老板的十元SC",
+            "violations": [
+                {"op": "replace", "draft_span": "绝", "final_span": "谢", "reason": "REPLACE_UNWITNESSED"},
+                {"op": "replace", "draft_span": "少年线", "final_span": "十元SC", "reason": "REPLACE_UNWITNESSED"},
+            ],
+        }],
+    }, ensure_ascii=False), encoding="utf-8")
+    # A multi-edit proposal remains ineligible; only its kept evidence travels.
+    assert review_priority_candidates(padded, srt) == []
+    contexts = fidelity_kept_contexts(padded, srt)
+    assert len(contexts) == 1
+    findings = audit_final_subtitles(
+        srt, llm_call=lambda _: json.dumps({"findings": [{
+            "cue": 2, "kind": "context", "suspect": "谢绝", "replacement": "谢谢",
+            "proposed_full_cue": proposed, "repair_class": "phonetic",
+            "why": "邻句正在致谢", "evidence_cue_ids": [1],
+        }]}, ensure_ascii=False),
+        extract_json=json.loads, draft_fidelity_contexts=contexts,
+    )
+    assert len(findings) == 1
+    request = build_context_adjudication_request(srt, findings[0])
+    evidence = request["closed_set_structured_evidence"]
+    assert evidence["draft_fidelity"]["draft_fidelity_kept"] is True
+    assert evidence["draft_fidelity"]["favored_candidate"] == "CURRENT"
+    assert evidence["structured_chat_binding"]["bound_event_count"] == 0
+    _assert_evidence_digest(evidence)
+    calls = []
+
+    def judge(prompt):
+        calls.append(prompt)
+        assert '"draft_fidelity_kept": true' in prompt
+        assert '"bound_event_count": 0' in prompt
+        return json.dumps({"choice": choice, "needs_audio": False})
+
+    output, receipt = adjudicate_context_finding(
+        srt, findings[0], judge_llm_call=judge,
+        entity_verifier=lambda _: pytest.fail("text-first did not request audio"),
+    )
+    assert len(calls) == 1
+    # Correct evidence does not create an unconditional CURRENT override.
+    assert receipt["repaired"] is (choice == "PROPOSED")
+    assert (proposed in output) is (choice == "PROPOSED")
+
+    assert fidelity_kept_contexts(padded, srt.replace(current, proposed)) == []
+    assert fidelity_kept_contexts(padded, srt.replace("00:00:10,000", "00:00:10,100")) == []
+    padded.with_suffix(".asr_draft.srt").unlink()
+    assert fidelity_kept_contexts(padded, srt) == []
 
 
 def test_f16_canary_fresh_hallucination_loses_to_draft_and_chat(tmp_path):

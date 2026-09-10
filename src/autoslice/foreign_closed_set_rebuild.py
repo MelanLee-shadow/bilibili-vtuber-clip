@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from src.autoslice.llm_client import extract_json_object
+from src.autoslice.acoustic_witness_protocol import CANDIDATE_BLIND_TRANSCRIPT_PROTOCOL
 
 
 SCHEMA = "foreign-closed-set-proposal-rebuild.v1"
@@ -85,7 +86,7 @@ def rebuild_foreign_closed_set(
         before=before or "（无）",
         after=after or "（无）",
         witness=json.dumps(
-            {
+            dict(witness) if witness.get("witness_protocol") == CANDIDATE_BLIND_TRANSCRIPT_PROTOCOL else {
                 "heard_pinyin": witness.get("heard_pinyin"),
                 "syllable_count": witness.get("syllable_count"),
                 "confidence": witness.get("confidence"),

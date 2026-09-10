@@ -141,3 +141,31 @@ def retry_invalid_finding_schema_once(
             )
 
     return wrapped
+
+
+def normalize_finding_cue(
+    row: object, *, cue_count: int
+) -> tuple[int | None, str | None, dict[str, Any] | None]:
+    """Normalize the cue field while retaining the exact rejection diagnostic."""
+
+    if not isinstance(row, dict):
+        return None, None, {"reason": "ROW_NOT_OBJECT"}
+    normalization = None
+    raw_cue = row.get("cue")
+    if raw_cue is None and row.get("cue_index") is not None:
+        raw_cue = row.get("cue_index")
+        normalization = "cue_index_to_cue"
+    try:
+        cue_index = int(raw_cue)
+    except (TypeError, ValueError):
+        return None, normalization, {
+            "reason": "CUE_MISSING_OR_INVALID",
+            "keys": sorted(str(key) for key in row)[:24],
+        }
+    if not 1 <= cue_index <= cue_count:
+        return None, normalization, {
+            "reason": "CUE_OUT_OF_RANGE",
+            "cue": cue_index,
+            "cue_count": cue_count,
+        }
+    return cue_index, normalization, None

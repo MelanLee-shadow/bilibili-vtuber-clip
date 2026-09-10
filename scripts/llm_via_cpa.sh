@@ -7,13 +7,9 @@
 # Optional argv 3/4 (维护者): pin a per-stage model chain + reasoning
 # effort at the call site (callers shlex-split the template, so a quoted chain
 # stays one argument).  Precedence: explicit arg > CPA_CHAT_MODELS env > default.
-# Stage assignment lives at the call sites: gpt-5.6-sol for deep/open-ended work
-# (semantic recall, correction adjudication, titles, boundary review),
-# gpt-5.6-terra for structured picks (cover art direction).  gpt-5.6-luna is
-# enabled on CPA and owns high-volume structured judgment
-# (closed-set entity picks, read-aloud arbitration) at effort=max — A/B'd
-# consistent with sol on those shapes (P1/P4), while boundary-style deep
-# semantics stays sol (A/B P2: sol matched the live-approved anchor).
+# Current model policy (维护者,): use GPT-6 Astra, not GPT-5.6.
+# Explicit stage effort remains separate and must be tested before lowering it.
+# Older dated incident comments below are historical evidence, not current routing.
 #
 # IMPORTANT : gpt-5.x are native Responses-API reasoning models.
 # Requesting gpt-5.5 on /chat/completions MISROUTES on the CPA proxy (503
@@ -27,13 +23,21 @@ umask 077
 
 PROMPT_FILE="$1"
 COMPLETION_FILE="$2"
-# Model failover (维护者-approved order,): gpt-5.6-sol first, then
-# gpt-5.5 (the 维护者-required fallback), then gpt-5.4 (auth_unavailable 503
-# happens routinely while codex-pro is rate-limited).  mini/compact are NOT
-# acceptable fallbacks (维护者).
-MODELS="${3:-${CPA_CHAT_MODELS:-${CPA_CHAT_MODEL:-gpt-5.6-sol gpt-5.5 gpt-5.4}}}"
+# No implicit downgrade to GPT-5.6/5.5/5.4. Astra failures follow the existing
+# bounded transient retry path; unavailable Astra does not authorize an old model.
+MODELS="${3:-${CPA_CHAT_MODELS:-${CPA_CHAT_MODEL:-gpt-6-astra}}}"
 EFFORT="${4:-${CPA_REASONING_EFFORT:-medium}}"
 ATTEMPTS_PER_MODEL="${5:-3}"
+
+# Reject stale pinned GPT-5 routes before credentials, files or network are used.
+for requested_model in $MODELS; do
+  case "$requested_model" in
+    gpt-5|gpt-5.*|gpt-5-*) echo "CPA model policy requires GPT-6 Astra; stale GPT-5 route rejected" >&2; exit 2 ;;
+  esac
+done
+if [[ "$MODELS" == *gpt-6-astra* ]]; then
+  case "$EFFORT" in low|medium|high|xhigh|max) ;; *) echo "GPT-6 Astra effort must be low/medium/high/xhigh/max" >&2; exit 2 ;; esac
+fi
 
 # 事故：上游 ChatGPT OAuth 三把凭据同时 usage_limit_reached，流量落到
 # 次级 leg，同一分钟里 200/400/408/503 混着来（实测 sol 成功率掉到 ~80%）。终审

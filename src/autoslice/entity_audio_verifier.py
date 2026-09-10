@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -106,7 +107,7 @@ _terminate_web_process_group = _gemini_web.terminate_web_process_group
 # candidate text — it dictates suspected pinyin syllables only; hanzi
 # word-choice reasoning belongs to the CPA judge downstream.
 WITNESS_REQUEST_SCHEMA = "subtitle-span-acoustic-witness-request.v1"
-# The prompt contract is part of the acoustic-cache identity.  A 
+# The prompt contract is part of the acoustic-cache identity.  A
 # production incident proved why: the old prompt embedded one valid pinyin
 # example and AGY copied it verbatim for unrelated audio.  Audio bytes alone
 # are not a sufficient cache key when the dictation instructions change.
@@ -1381,6 +1382,61 @@ def _prepare_audio_span(
     )
 
 
+def _validate_cropped_audio_media(
+    audio_path: Path, *, expected_duration_ms: int,
+) -> tuple[bool, str]:
+    """Decode-probe the generated short attachment, without judging its speech.
+
+    A successful FFmpeg exit can leave an empty MP4.  Positive, decodable
+    audio/video frames and the requested duration are prerequisites to asking
+    a witness, not evidence that any proposed subtitle is correct.  Silence
+    remains valid: inaudible-target decisions depend on preserving it.
+    """
+    try:
+        info = audio_path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_size <= 0:
+            return False, "audio witness attachment is not a nonempty regular file"
+        probe = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-count_frames", "-show_entries",
+                "stream=codec_type,width,height,duration,sample_rate,channels,nb_read_frames",
+                "-of", "json", str(audio_path),
+            ],
+            check=False, capture_output=True, text=True,
+            stdin=subprocess.DEVNULL, timeout=30,
+        )
+        if probe.returncode != 0 or probe.stderr.strip():
+            return False, "audio witness attachment decode probe failed"
+        payload = json.loads(probe.stdout)
+        streams = payload.get("streams") if isinstance(payload, dict) else None
+        if not isinstance(streams, list) or len(streams) != 2:
+            return False, "audio witness attachment requires audio and black video streams"
+        audio = [row for row in streams if isinstance(row, dict) and row.get("codec_type") == "audio"]
+        video = [row for row in streams if isinstance(row, dict) and row.get("codec_type") == "video"]
+        if len(audio) != 1 or len(video) != 1:
+            return False, "audio witness attachment stream roles are invalid"
+        sample_rate = int(audio[0]["sample_rate"])
+        if sample_rate <= 0 or int(audio[0]["channels"]) <= 0:
+            return False, "audio witness attachment has no valid audio format"
+        if int(video[0]["width"]) <= 0 or int(video[0]["height"]) <= 0:
+            return False, "audio witness attachment has no valid video dimensions"
+        # The generated black video is 10 fps; permit at most its frame
+        # quantum or two AAC frames for encoder padding, not arbitrary tails.
+        tolerance_ms = max(100.0, 2 * 1024 * 1000 / sample_rate)
+        for row in (audio[0], video[0]):
+            duration_ms = float(row["duration"]) * 1000
+            if (
+                int(row["nb_read_frames"]) <= 0
+                or not math.isfinite(duration_ms)
+                or duration_ms <= 0
+                or abs(duration_ms - expected_duration_ms) > tolerance_ms
+            ):
+                return False, "audio witness attachment is empty or duration-mismatched"
+    except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired):
+        return False, "audio witness attachment validation was unavailable or malformed"
+    return True, ""
+
+
 def _crop_black_frame_audio(
     *,
     source_media: Path,
@@ -1389,9 +1445,12 @@ def _crop_black_frame_audio(
     end_ms: int,
 ) -> tuple[bool, str]:
     duration_s = (end_ms - start_ms) / 1000.0
+    if not 0 < duration_s <= 30 or audio_path.is_symlink():
+        return False, "audio witness crop interval or output path is invalid"
     completed = subprocess.run(
         [
             "ffmpeg",
+            "-nostdin",
             "-hide_banner",
             "-loglevel",
             "error",
@@ -1429,10 +1488,13 @@ def _crop_black_frame_audio(
         capture_output=True,
         text=True,
         timeout=180,
+        stdin=subprocess.DEVNULL,
     )
     if completed.returncode != 0 or not audio_path.is_file():
         return False, completed.stderr
-    return True, ""
+    return _validate_cropped_audio_media(
+        audio_path, expected_duration_ms=end_ms - start_ms,
+    )
 
 
 def _serve_local_verdict_manifest(

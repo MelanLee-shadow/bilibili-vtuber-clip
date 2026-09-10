@@ -98,7 +98,7 @@ def main() -> int:
     )
     parser.add_argument("--issue-count", type=int)
     parser.add_argument("--explicitly-exhaustive", action="store_true")
-    parser.add_argument("--only-these-errors", action="store_true")
+    parser.add_argument("--only-these-errors", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--out", type=Path, required=True, help="create-only plan output")
     parser.add_argument("--review-results", type=Path, help="JSON object of scoped PASS results")
     parser.add_argument("--sealed-by", help="operator or service sealing the receipt")

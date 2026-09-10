@@ -24,6 +24,7 @@ import json
 from typing import Mapping, Sequence
 
 from .jingting_chunker import parse_srt_cues
+from .c7b_failed_row_adoption import c7b_emergency_cpa_repair_allowed
 
 
 def _redelivery_baseline_owned_intervals(
@@ -105,6 +106,10 @@ def suppress_baseline_owned_self_heal_findings(
             interval = _matching_owned_interval(
                 cue.start_ms, cue.end_ms, owned_intervals
             )
+            if c7b_emergency_cpa_repair_allowed(
+                redelivery_baseline_audit, start_ms=cue.start_ms, end_ms=cue.end_ms,
+            ):
+                interval = None
         if interval is None:
             kept.append(finding)
             continue

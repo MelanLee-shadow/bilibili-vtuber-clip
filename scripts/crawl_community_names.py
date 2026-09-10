@@ -37,7 +37,7 @@ from src.autoslice.timely_term_crawler import (  # noqa: E402
 PROFILE = load_channel_profile(ROOT)
 DEFAULT_LLM_COMMAND = (
     "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} "
-    "'gpt-5.6-luna gpt-5.5 gpt-5.4' medium 1"
+    "'gpt-6-astra' medium 1"
 )
 
 

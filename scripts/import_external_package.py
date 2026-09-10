@@ -1018,6 +1018,21 @@ def _step_title_cover_qc(
     out_path = (
         destination_package_root / f"{candidate_id}.title-cover-joint-qc.json"
     )
+    if os.path.lexists(out_path):
+        from scripts.run_title_cover_joint_qc import reuse_valid_qc
+
+        try:
+            qc = reuse_valid_qc(destination_package_root, title, out_path)
+            if qc.get("cover_path") != str(same_stem_cover.resolve()):
+                raise ValueError("existing QC does not bind the current delivery cover")
+        except (ValueError, OSError) as error:
+            raise _refuse("TITLE_COVER_QC", "JOINT_QC_FAILED", str(error),
+                          hint="preserve the existing receipt; fix the bound input, not reroll QC") from error
+        receipt.add("TITLE_COVER_QC", "PASS", path=str(out_path),
+                    sha256=pi.sha256_file(out_path), title_sha256=qc["title_sha256"],
+                    cover_path=qc["cover_path"], cover_sha256=qc["cover_sha256"],
+                    reused_existing=True, provider_calls=0)
+        return
     # 标题**必须**程序化地从 review_manifest 取：手抄会把全角引号打成 ASCII，
     # QC 回执的 title_sha256 就与 manifest 不符（rerun1 实拒）。
     result = gate_runner.run(

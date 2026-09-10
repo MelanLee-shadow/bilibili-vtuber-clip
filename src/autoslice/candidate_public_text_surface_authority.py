@@ -1179,4 +1179,14 @@ def build_public_text_source_fact_context(
         "upload_authorized": False,
         "registry_hold_released": False,
     }
+    if authority.is_root_reviewed_resolution:
+        # The C6 authority contains an explicit operator correction of an
+        # event premise, not an identity-equivalent spelling substitution.
+        # Preserve that already validated, candidate-bound source in the
+        # review input and receipt; it grants no subtitle or speaker powers.
+        body["operator_public_fact_authority"] = {
+            "scope": "USER_STATED_FACTS_FOR_GENERATED_PUBLIC_TEXT_ONLY",
+            "user_authorization": dict(authority.user_authorization),
+            "decision_authorization": dict(authority.decision_authorization or {}),
+        }
     return {**body, "context_sha256": _sha256_json(body)}

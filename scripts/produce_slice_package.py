@@ -233,7 +233,8 @@ from src.autoslice.talk_filler import write_final_filler_audit
 def _load_term_boundary_surfaces(spec: dict) -> list[str]:
     """Known-proper-noun surfaces for cross-cue boundary unification.
 
-    Reuses only already-gated loader outputs — the timely-terms snapshot and
+    Starts with shared permanent glossary/referent surfaces, then reuses the
+    already-gated timely-terms snapshot and
     topic_entity_graph paths session_autoslice.py substitutes per
     AUTOSLICE_BLIND_TIMELY_TERMS / AUTOSLICE_BLIND_TOPIC_ENTITY_GRAPH before
     invoking this script — the same env vars ``approved_timely_terms`` and
@@ -241,7 +242,11 @@ def _load_term_boundary_surfaces(spec: dict) -> list[str]:
     is read directly here.
     """
 
-    surfaces: list[str] = []
+    # Permanent host names/aliases must not vanish when the timely or topic
+    # snapshot is empty. Spelling protection is not acoustic authority.
+    from src.autoslice.term_authority import protected_terms
+
+    surfaces: list[str] = sorted(protected_terms())
     for record in approved_timely_terms():
         surfaces.append(str(record.get("canonical") or ""))
         surfaces.extend(str(value) for value in record.get("readings") or [])

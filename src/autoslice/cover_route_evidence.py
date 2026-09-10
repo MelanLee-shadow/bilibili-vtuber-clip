@@ -14,6 +14,8 @@ from typing import Mapping
 from src.autoslice.cover_source_composition import (
     TALK_SCENE,
     source_composition_scene_kind,
+    source_composition_supports_subject,
+    validate_source_composition_verification,
 )
 from src.autoslice.cover_title_rendering import (
     FEED_SAFE_X0,
@@ -567,8 +569,8 @@ def _per_frame_rejection_evidence(
     if decision_inputs.get("vertical_source_redraw") is True:
         ratio = decision_inputs.get("source_frame_aspect_ratio")
         parts.append(
-            "vertical_source_redraw=true (维护者 2026-08-10 裁定：竖屏源不适合截图，"
-            f"按裁定走重绘，非降级); source_frame_aspect_ratio={ratio}"
+            "vertical_source_redraw=true (竖屏缺少可忠实构图的主体见证); "
+            f"source_frame_aspect_ratio={ratio}"
         )
     score = decision_inputs.get("frame_score")
     if score is not None:
@@ -907,11 +909,21 @@ def validate_cover_route_decision(
     ):
         if key in route and not isinstance(route.get(key), bool):
             return False
+    source_composition = cover_generation.get("source_composition_verification")
+    source_subject_verified = (
+        validate_source_composition_verification(
+            source_composition,
+            reference_sha256=str(cover_generation.get("reference_sha256") or ""),
+        )
+        and source_composition_supports_subject(source_composition)
+        and source_composition["verdict"].get("source_face_complete") is True
+    )
     if (
         route.get("cover_mode") in {"screenshot", "polish"}
         and selected in {"screenshot_direct", "screenshot_polish"}
         and route.get("subject_confident") is not True
         and route.get("verified_stream_frame") is not True
+        and not source_subject_verified
     ):
         return False
     expected_planned = selected in {"screenshot_polish", "cpa_redraw"}

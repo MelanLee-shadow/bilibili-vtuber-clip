@@ -16,6 +16,7 @@ from src.autoslice.acoustic_witness_adjudication import (
 from src.autoslice.boundary_semantic_review import (
     boundary_search_scope_is_valid,
 )
+from src.autoslice.exact_final_cpa_history import repair_history
 from src.autoslice.channel_profile import (
     load_channel_profile as _load_channel_profile,
 )
@@ -667,6 +668,22 @@ def _story_owner_set_valid(
                         )
                     )
                 elif (
+                    owner_kind == "entity_repair"
+                    and isinstance(reconciliation, Mapping)
+                    and reconciliation.get("schema_version") == "fastlane-c9-source-action-replay.v1"
+                ):
+                    from src.autoslice.fastlane_c9_private_replay import c9_reconciled_boundary_owner_valid
+
+                    if not c9_reconciled_boundary_owner_valid(
+                        root=Path(__file__).resolve().parents[2], row=row,
+                        row_index=ordinal-1, chat_authority=chat_authority,
+                    ):
+                        return False
+                    if row.get("boundary_required") is not True:
+                        continue  # Late text-only corrections never gain media ownership.
+                    # Continue through the same required-id/window checks. The
+                    # original media owner survives; its superseded text does not.
+                elif (
                     owner_kind == "exact_read"
                     and qixi_terminal_projection_authority is not None
                     and isinstance(qixi_delivery_start_ms, int)
@@ -873,30 +890,17 @@ def _final_surface_registration_and_history_valid(
     ]
     if len(matching_registrations) != 1:
         return False
-    passes = self_heal.get("passes")
-    if not isinstance(passes, list):
+    try:
+        repairs = repair_history(self_heal)
+    except (TypeError, ValueError):
         return False
     matching_receipts = []
-    for pass_row in passes:
-        repairs = pass_row.get("repairs") if isinstance(pass_row, Mapping) else None
-        if not isinstance(repairs, list):
-            return False
-        for repair in repairs:
-            if not isinstance(repair, Mapping):
-                return False
-            digest = (
-                "sha256:"
-                + hashlib.sha256(
-                    json.dumps(
-                        repair,
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                ).hexdigest()
-            )
-            if digest == repair_sha256:
-                matching_receipts.append(repair)
+    for repair in repairs:
+        digest = "sha256:" + hashlib.sha256(json.dumps(
+            repair, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")).hexdigest()
+        if digest == repair_sha256:
+            matching_receipts.append(repair)
     return len(matching_receipts) == 1
 
 

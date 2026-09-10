@@ -17,7 +17,7 @@ import stat
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 MOSS_ENDPOINT = "https://api.mosi.cn/v1/audio/transcriptions"
 MOSS_MODEL = "moss-transcribe-diarize-pro"
@@ -29,13 +29,14 @@ AudioInput = bytes | Path
 class MossTranscriptionError(RuntimeError):
     """A bounded, sanitized failure from the MOSS draft lane."""
 
-    def __init__(self, reason_code: str, message: str):
+    def __init__(self, reason_code: str, message: str, metadata=None):
         super().__init__(message)
         self.reason_code = reason_code
+        self.metadata = metadata
 
 
-def _error(reason_code: str, message: str) -> MossTranscriptionError:
-    return MossTranscriptionError(reason_code, message)
+def _error(reason_code: str, message: str, metadata=None) -> MossTranscriptionError:
+    return MossTranscriptionError(reason_code, message, metadata=metadata)
 
 
 def _read_api_key(environ: Mapping[str, str]) -> str:
@@ -132,11 +133,20 @@ def _anonymous_speaker(value: Any, mapping: dict[str, str]) -> str | None:
     return mapping[token]
 
 
-def _parse_segments(payload: Any, duration_ms: int | None) -> tuple[list[dict[str, Any]], list[str]]:
+def _parse_segments(
+    payload: Any,
+    duration_ms: int | None,
+    *,
+    evidence: bool = False,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Validate MOSS rows, optionally retaining provider ordering/overlap."""
+
     if not isinstance(payload, dict) or not isinstance(payload.get("segments"), list):
         raise _error("MOSS_RESPONSE_INVALID", "MOSS response has no segment list")
     raw_segments = payload["segments"]
     if not raw_segments:
+        if evidence:
+            return [], []
         raise _error("MOSS_EMPTY_RESULT", "MOSS response contains no segments")
 
     parsed: list[dict[str, Any]] = []
@@ -152,7 +162,7 @@ def _parse_segments(payload: Any, duration_ms: int | None) -> tuple[list[dict[st
         end_ms = _segment_time(raw, "end", "end_ms")
         if end_ms <= start_ms:
             raise _error("MOSS_SEGMENT_INVALID", f"MOSS segment {index} has invalid range")
-        if parsed:
+        if parsed and not evidence:
             previous = parsed[-1]
             if start_ms < previous["start_ms"]:
                 raise _error("MOSS_SEGMENTS_OUT_OF_ORDER", "MOSS segments are out of order")
@@ -169,6 +179,20 @@ def _parse_segments(payload: Any, duration_ms: int | None) -> tuple[list[dict[st
             speaker_labels.append(speaker)
         parsed.append({"start_ms": start_ms, "end_ms": end_ms, "text": text, "speaker": speaker})
     return parsed, speaker_labels
+
+
+def _timeline_flags(segments: list[Mapping[str, Any]]) -> tuple[bool, bool]:
+    has_out_of_order = any(
+        current["start_ms"] < previous["start_ms"]
+        for previous, current in zip(segments, segments[1:])
+    )
+    has_overlap = any(
+        current["start_ms"] < previous["end_ms"]
+        and current["end_ms"] > previous["start_ms"]
+        for index, current in enumerate(segments)
+        for previous in segments[:index]
+    )
+    return has_overlap, has_out_of_order
 
 
 def _timestamp(value_ms: int) -> str:
@@ -252,19 +276,35 @@ def _request_once(audio_input: AudioInput, audio: bytes, api_key: str) -> tuple[
         if not isinstance(status, int) or isinstance(status, bool):
             raise _error("MOSS_TRANSPORT_ERROR", "MOSS response status is invalid")
         if 300 <= status < 400:
-            raise _error("MOSS_REDIRECT", "MOSS endpoint returned a redirect")
+            raise _error(
+                "MOSS_REDIRECT", "MOSS endpoint returned a redirect",
+                metadata={"http_status": status},
+            )
         if status < 200 or status >= 300:
-            raise _error("MOSS_HTTP_ERROR", "MOSS endpoint returned an HTTP error")
+            raise _error(
+                "MOSS_HTTP_ERROR", "MOSS endpoint returned an HTTP error",
+                metadata={"http_status": status},
+            )
         response_body = response.read()
         if not isinstance(response_body, bytes):
             raise _error("MOSS_RESPONSE_INVALID", "MOSS response body is invalid")
+        if api_key.encode("utf-8") in response_body:
+            raise _error("MOSS_CREDENTIAL_ECHO", "MOSS response echoed the API key")
         return status, response_body
     except MossTranscriptionError:
         raise
     except urllib.error.HTTPError as exc:
-        if 300 <= exc.code < 400:
-            raise _error("MOSS_REDIRECT", "MOSS endpoint returned a redirect") from None
-        raise _error("MOSS_HTTP_ERROR", "MOSS endpoint returned an HTTP error") from None
+        status = exc.code if type(exc.code) is int else None
+        metadata = {"http_status": status} if status is not None else None
+        if status is not None and 300 <= status < 400:
+            raise _error(
+                "MOSS_REDIRECT", "MOSS endpoint returned a redirect",
+                metadata=metadata,
+            ) from None
+        raise _error(
+            "MOSS_HTTP_ERROR", "MOSS endpoint returned an HTTP error",
+            metadata=metadata,
+        ) from None
     except TimeoutError:
         raise _error("MOSS_TIMEOUT", "MOSS request timed out") from None
     except (OSError, urllib.error.URLError):
@@ -275,6 +315,35 @@ def _request_once(audio_input: AudioInput, audio: bytes, api_key: str) -> tuple[
         close = getattr(response, "close", None)
         if callable(close):
             close()
+
+
+def _fetch_payload(
+    audio_input: AudioInput,
+    *,
+    before_request: Callable[[], None] | None = None,
+) -> tuple[dict[str, Any], Any]:
+    audio = _read_audio(audio_input)
+    input_audio_sha256 = hashlib.sha256(audio).hexdigest()
+    api_key = _read_api_key(os.environ)
+    if before_request is not None:
+        before_request()
+    started = time.monotonic()
+    http_status, response_body = _request_once(audio_input, audio, api_key)
+    response_sha256 = hashlib.sha256(response_body).hexdigest()
+    metadata: dict[str, Any] = {
+        "provider": "moss",
+        "model": MOSS_MODEL,
+        "input_audio_sha256": input_audio_sha256,
+        "response_sha256": response_sha256,
+        "elapsed_seconds": max(0.0, time.monotonic() - started),
+        "http_status": http_status,
+    }
+    try:
+        payload = json.loads(response_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise _error("MOSS_RESPONSE_NOT_JSON", "MOSS response is not JSON", metadata=metadata) from None
+    metadata["raw_response"] = payload
+    return metadata, payload
 
 
 def transcribe_moss(
@@ -288,28 +357,78 @@ def transcribe_moss(
         isinstance(duration_ms, bool) or not isinstance(duration_ms, int) or duration_ms < 0
     ):
         raise _error("MOSS_DURATION_INVALID", "duration_ms must be a non-negative integer")
-    audio = _read_audio(audio_path)
-    input_audio_sha256 = hashlib.sha256(audio).hexdigest()
-    api_key = _read_api_key(os.environ)
-    started = time.monotonic()
-    _, response_body = _request_once(audio_path, audio, api_key)
-    response_sha256 = hashlib.sha256(response_body).hexdigest()
+    metadata, payload = _fetch_payload(audio_path)
     try:
-        payload = json.loads(response_body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        raise _error("MOSS_RESPONSE_NOT_JSON", "MOSS response is not JSON") from None
-    segments, speaker_labels = _parse_segments(payload, duration_ms)
-    metadata: dict[str, Any] = {
-        "provider": "moss",
-        "model": MOSS_MODEL,
-        "input_audio_sha256": input_audio_sha256,
-        "response_sha256": response_sha256,
-        "elapsed_seconds": max(0.0, time.monotonic() - started),
-        "segment_count": len(segments),
-        "speaker_labels": speaker_labels,
-        "raw_response": payload,
-    }
+        segments, speaker_labels = _parse_segments(payload, duration_ms)
+    except MossTranscriptionError as exc:
+        exc.metadata = metadata
+        raise
+    metadata.update(
+        segment_count=len(segments),
+        speaker_labels=speaker_labels,
+        segments=segments,
+        native_segments=segments,
+    )
     return _render_srt(segments), metadata
 
 
-__all__ = ["MOSS_ENDPOINT", "MOSS_MODEL", "MOSS_TIMEOUT_SECONDS", "MossTranscriptionError", "transcribe_moss"]
+def transcribe_moss_evidence(
+    audio_path: AudioInput,
+    *,
+    duration_ms: int | None = None,
+    before_request: Callable[[], None] | None = None,
+) -> dict[str, Any]:
+    """Return validated native MOSS evidence without enforcing SRT order."""
+
+    if duration_ms is not None and (
+        isinstance(duration_ms, bool) or not isinstance(duration_ms, int) or duration_ms < 0
+    ):
+        raise _error("MOSS_DURATION_INVALID", "duration_ms must be a non-negative integer")
+    if before_request is None:
+        metadata, payload = _fetch_payload(audio_path)
+    else:
+        metadata, payload = _fetch_payload(audio_path, before_request=before_request)
+    try:
+        native_segments, speaker_labels = _parse_segments(payload, duration_ms, evidence=True)
+    except MossTranscriptionError as exc:
+        exc.metadata = metadata
+        raise
+    has_overlap, has_out_of_order = _timeline_flags(native_segments)
+    diagnostics: list[dict[str, str]] = []
+    if has_overlap:
+        diagnostics.append({"reason_code": "MOSS_NATIVE_OVERLAP"})
+    if has_out_of_order:
+        diagnostics.append({"reason_code": "MOSS_NATIVE_OUT_OF_ORDER"})
+    top_text = payload.get("text") if isinstance(payload, dict) else None
+    if native_segments:
+        status = "OK"
+    elif isinstance(top_text, str) and not top_text.strip():
+        status = "NO_SPEECH"
+    else:
+        status = "TEXT_UNLOCATED"
+        diagnostics.append({"reason_code": "MOSS_TEXT_UNLOCATED"})
+    one_track_srt_eligible = not has_overlap and not has_out_of_order and status == "OK"
+    metadata.update(
+        status=status,
+        segment_count=len(native_segments),
+        speaker_labels=speaker_labels,
+        native_segments=native_segments,
+        diagnostics=diagnostics,
+        native_timeline={
+            "has_overlap": has_overlap,
+            "has_out_of_order": has_out_of_order,
+            "one_track_srt_eligible": one_track_srt_eligible,
+        },
+        one_track_srt_eligible=one_track_srt_eligible,
+    )
+    return metadata
+
+
+__all__ = [
+    "MOSS_ENDPOINT",
+    "MOSS_MODEL",
+    "MOSS_TIMEOUT_SECONDS",
+    "MossTranscriptionError",
+    "transcribe_moss",
+    "transcribe_moss_evidence",
+]

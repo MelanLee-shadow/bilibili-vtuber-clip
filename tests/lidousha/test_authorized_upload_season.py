@@ -5,6 +5,8 @@ import json
 
 import pytest
 
+from tests.subtitle_audio_test_support import SYNTHETIC_SRT, bind_synthetic_audio_evidence
+
 import scripts.authorized_upload as au
 
 TALK_TITLE = "【李豆沙】这是一个足够长度的谈话切片标题"
@@ -199,7 +201,7 @@ def _mk(tmp_path, title=TALK_TITLE, season_args=()):
     video.write_bytes(b"fake-video-bytes")
     cover.write_bytes(b"fake-cover-bytes")
     subtitle = tmp_path / "clip.srt"
-    subtitle.write_text("1\n00:00:00,000 --> 00:00:01,000\n测试\n", encoding="utf-8")
+    subtitle.write_text(SYNTHETIC_SRT, encoding="utf-8")
     record = tmp_path / "clip.record.json"
     record.write_text(json.dumps({
         "artifact_hashes": {
@@ -227,6 +229,11 @@ def _mk(tmp_path, title=TALK_TITLE, season_args=()):
         },
         "upload_tags": {"engine": "test", "status": "OK", "final_tags": TEST_TAGS},
     }, ensure_ascii=False), encoding="utf-8")
+    # Supply synthetic inputs to the real audio gate; do not mock it to PASS.
+    audio_bound = bind_synthetic_audio_evidence(
+        json.loads(record.read_text(encoding="utf-8")), video=video, subtitle=subtitle,
+    )
+    record.write_text(json.dumps(audio_bound, ensure_ascii=False), encoding="utf-8")
     (tmp_path / "review_manifest.json").write_text(json.dumps({
         "items": [{
             "stem": "clip",
@@ -316,7 +323,12 @@ def test_build_season_http_really_constructs_requests(
     assert csrf == "csrf-value"
 
     assert http(au.VIEW_API.format(bvid="BV1X"))["code"] == 0
-    assert "Cookie" not in seen[0].headers  # 公开 API 不带 cookie
+    assert "sess-value" in seen[0].get_header("Cookie")
+    assert seen[0].get_header("Referer") == "https://www.bilibili.com/"
+    redirected = _urlreq.HTTPRedirectHandler().redirect_request(
+        seen[0], None, 302, "Found", {}, "https://example.org/"
+    )
+    assert redirected.get_header("Cookie") is None
 
     assert http(au.EPISODES_ADD_API.format(csrf=csrf), data={"sectionId": 1, "episodes": []}, is_json=True)["code"] == 0
     member_request = seen[1]
@@ -325,6 +337,14 @@ def test_build_season_http_really_constructs_requests(
 
     assert http("https://member.bilibili.com/form", data={"a": "b"})["code"] == 0
     assert seen[2].data == b"a=b"  # form 编码分支同样必须真的能构造请求
+
+    for url in (
+        "https://member.bilibili.com.example.org/",
+        "https://example.org/?member.bilibili.com",
+        "http://api.bilibili.com/",
+    ):
+        assert http(url)["code"] == 0
+        assert seen[-1].get_header("Cookie") is None
 
 
 def test_build_season_http_rejects_ambiguous_cookie_without_secret(tmp_path):
@@ -673,3 +693,46 @@ def test_legacy_manifest_remains_verify_readable_but_cannot_new_upload(tmp_path)
         "upload", "--manifest", str(manifest), "--ledger", str(tmp_path / "ledger.jsonl"),
         "--uploader", str(_uploader(tmp_path)),
     ]) == 2
+
+
+@pytest.mark.parametrize("defect, reason", [
+    ("missing_record", "final subtitle/audio correspondence evidence is missing"),
+    ("wrong_intro", "FINAL_SUBTITLE_AUDIO_ENVELOPE_INTRO_OFFSET_DRIFT"),
+    ("raw_changed", "FINAL_SUBTITLE_AUDIO_RAW_RESULT_HASH_DRIFT"),
+    ("witness_missing", "FINAL_SUBTITLE_AUDIO_PACKAGE_EVIDENCE_MISSING"),
+])
+def test_season_manifest_still_rejects_broken_audio_evidence(
+    tmp_path, monkeypatch, capsys, defect, reason,
+):
+    """Fixing the fixture must not make the real release guard optional."""
+    import sys
+    from pathlib import Path
+
+    calls = []
+    original_capture = bind_synthetic_audio_evidence
+
+    def broken_capture(record, **kwargs):
+        result = original_capture(record, **kwargs)
+        calls.append("synthetic_capture")
+        evidence = result["subtitle_audio_correspondence"]
+        if defect == "missing_record":
+            result.pop("subtitle_audio_correspondence")
+        elif defect == "wrong_intro":
+            result["burned_preview"]["branding_intro"]["intro_offset_ms"] += 2_000
+        elif defect == "raw_changed":
+            raw = Path(evidence["raw_result_path"])
+            raw.write_bytes(raw.read_bytes() + b"\n")
+        else:
+            Path(evidence["witness_srt_path"]).unlink()
+        return result
+
+    def forbidden_remote(*_args, **_kwargs):
+        pytest.fail("invalid synthetic evidence must never reach a remote adapter")
+
+    monkeypatch.setattr(sys.modules[__name__], "bind_synthetic_audio_evidence", broken_capture)
+    monkeypatch.setattr(au, "_build_season_http", forbidden_remote)
+    rc, manifest = _mk(tmp_path)
+    assert calls == ["synthetic_capture"]
+    assert rc == 2
+    assert not manifest.exists()
+    assert reason in capsys.readouterr().err

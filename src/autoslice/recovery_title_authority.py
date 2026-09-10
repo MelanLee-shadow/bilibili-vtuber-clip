@@ -315,7 +315,7 @@ def _validated_publication_entry(
             )
     elif (
         manual is None
-        or manual != observed_title
+        or observed_title not in {manual, canonicalize_publish_title(manual, lane="talk")}
         or publish_title_policy_violations(
             canonicalize_publish_title(manual, lane="talk"),
             lane="talk",
@@ -493,6 +493,14 @@ def validate_recovery_publication_authority(
     repo_root: Path = ROOT,
 ) -> dict[str, object]:
     """Replay one committed registry entry and bind title plus BV identity."""
+
+    if isinstance(value, Mapping) and value.get("schema_version") == "original-fastlane-authorized-same-bv.v1":
+        from src.autoslice.original_patch_package import validate_publication
+        try:
+            return validate_publication(value, candidate_id=candidate_id,
+                                        expected_final_title=expected_final_title, repo_root=repo_root)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            raise RecoveryTitleAuthorityError(str(exc)) from exc
 
     # C1 is the one explicitly sealed fastlane formal package.  It is not a
     # registry-shaped recovery record and must never be coerced into one.

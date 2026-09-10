@@ -7,7 +7,7 @@ import os
 import re
 from dataclasses import replace
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from .chat_authority import ChatEvidence, load_chat_jsonl, recording_start_epoch_ms
 from .danmaku_evidence import load_danmaku_xml
@@ -276,3 +276,38 @@ def _load_independent_chat_support_srts(media_path: Path) -> list[str]:
     if not raw_audio_asr.is_file():
         return []
     return [raw_audio_asr.read_text(encoding="utf-8", errors="replace")]
+
+
+def build_structured_chat_binding_audit(
+    spec: Mapping[str, object], authoritative_chat: Sequence[ChatEvidence]
+) -> dict[str, object]:
+    """Describe the source bindings and events retained in the clip window."""
+
+    retained_chat_counts: dict[str, int] = {}
+    for item in authoritative_chat:
+        retained_chat_counts[item.kind] = retained_chat_counts.get(item.kind, 0) + 1
+    binding_rows = []
+    for piece in spec["pieces"]:
+        binding_rows.append(
+            {
+                "status": piece.get("chat_binding_status", "LEGACY_UNDECLARED"),
+                "required": piece.get("structured_chat_required", False),
+                "jsonl_path": piece.get("chat_jsonl_local"),
+                "jsonl_sha256": piece.get("chat_jsonl_sha256"),
+                "origin_epoch_ms": piece.get("chat_origin_epoch_ms"),
+                "timeline_offset_ms": piece.get("chat_timeline_offset_ms"),
+                "source_alias_id": piece.get("chat_source_alias_id"),
+                "canonical_recording_basename": piece.get("chat_canonical_recording_basename"),
+            }
+        )
+    return {
+        "schema_version": "structured-chat-binding-audit.v1",
+        "status": "PASS",
+        "pieces": binding_rows,
+        "retained_clip_window_counts": retained_chat_counts,
+        "retained_clip_window_total": len(authoritative_chat),
+        "zero_retained_meaning": (
+            "bound source parsed successfully but no event survived the clip window; "
+            "binding failures raise before this audit"
+        ),
+    }

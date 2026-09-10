@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from src.autoslice import entity_audio_verifier as verifier_module
 from src.autoslice.acoustic_witness_adjudication import build_witness_request
 from src.autoslice.read_aloud_llm_verifier import (
@@ -157,3 +159,15 @@ def test_cpa_wrapper_preserves_metadata_only_probe():
         "cached": request,
         "served_from_cache": True,
     }
+
+
+@pytest.fixture(autouse=True)
+def _generated_media_probe_isolated_from_transport_tests(monkeypatch):
+    # These transport/cache unit tests stub FFmpeg with arbitrary byte strings.
+    # Actual media validation (including a real silent clip) is covered separately
+    # by test_entity_audio_crop_regression.py; keep provider tests hermetic.
+    from src.autoslice import entity_audio_verifier
+    monkeypatch.setattr(
+        entity_audio_verifier, "_validate_cropped_audio_media",
+        lambda *_args, **_kwargs: (True, ""),
+    )

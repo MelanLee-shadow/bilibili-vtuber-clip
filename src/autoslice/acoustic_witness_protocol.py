@@ -9,6 +9,7 @@ from typing import Any
 
 
 BLIND_PINYIN_PROTOCOL = "blind_pinyin"
+CANDIDATE_BLIND_TRANSCRIPT_PROTOCOL = "candidate_blind_transcript"
 LEGACY_SIGHTED_PROTOCOL = "legacy_sighted"
 _HAN_CODEPOINT_RANGES = (
     (0x3400, 0x4DBF),
@@ -41,6 +42,7 @@ def witness_protocol(witness: Mapping[str, Any]) -> str:
 def supported_witness_protocol(witness: Mapping[str, Any]) -> bool:
     return witness_protocol(witness) in {
         BLIND_PINYIN_PROTOCOL,
+        CANDIDATE_BLIND_TRANSCRIPT_PROTOCOL,
         LEGACY_SIGHTED_PROTOCOL,
     }
 

@@ -385,7 +385,7 @@ def write_ass(cues: list[Cue], path: Path, *, show_speaker_labels: bool = False)
 ScriptType: v4.00+
 PlayResX: 1920
 PlayResY: 1080
-WrapStyle: 0
+WrapStyle: 2
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
@@ -397,22 +397,22 @@ Style: GUEST,{GUEST_WHITE_STYLE}
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     events = []
-    # Reuse the approved production line-layout policy: <=28 display chars per
-    # line, <=2 lines, and sequential sub-cues for genuinely long text.
-    from scripts.run_auto_review_shadow_pipeline import _layout_cue_for_display
+    from src.autoslice.subtitle_rendering import _layout_cue_sequence_for_display
 
-    for cue in cues:
+    rows = [(timestamp_ms(cue.start), timestamp_ms(cue.end),
+             f"[{cue.speaker}] {cue.text}" if show_speaker_labels else cue.text) for cue in cues]
+    keys = [(cue.speaker, cue.layer, cue.placement) for cue in cues]
+    for source_index, start_ms, end_ms, display_text in _layout_cue_sequence_for_display(
+        rows, continuity_keys=keys
+    ):
+        cue = cues[source_index]
         style = "LDS" if cue.speaker == HOST_SPEAKER else "GUEST"
         margin_v = 142 if cue.placement == "above" else 0
-        visible = f"[{cue.speaker}] {cue.text}" if show_speaker_labels else cue.text
-        for start_ms, end_ms, display_text in _layout_cue_for_display(
-            timestamp_ms(cue.start), timestamp_ms(cue.end), visible
-        ):
-            text = _ass_escape(display_text)
-            events.append(
-                f"Dialogue: {cue.layer},{_ass_timestamp_ms(start_ms)},{_ass_timestamp_ms(end_ms)},"
-                f"{style},,0,0,{margin_v},,{text}"
-            )
+        text = _ass_escape(display_text)
+        events.append(
+            f"Dialogue: {cue.layer},{_ass_timestamp_ms(start_ms)},{_ass_timestamp_ms(end_ms)},"
+            f"{style},,0,0,{margin_v},,{text}"
+        )
     atomic_write_text(path, header + "\n".join(events) + "\n")
 
 

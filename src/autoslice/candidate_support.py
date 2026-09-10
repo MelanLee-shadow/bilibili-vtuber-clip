@@ -60,9 +60,12 @@ def bound_structured_chat_surface(
     rows = clip_context.get("structured_chat") if isinstance(clip_context, Mapping) else None
     if not isinstance(rows, list) or not surface:
         return None
-    pattern = re.compile(
-        rf"(?<![A-Za-z0-9_]){re.escape(surface)}(?![A-Za-z0-9_])", re.IGNORECASE
-    )
+    # Latin token boundaries protect names such as Novus from partial hits.
+    # A Han phrase may legitimately follow a digit without a space (李1我是…),
+    # so imposing a Latin boundary on its Han edge discards real SC evidence.
+    left = r"(?<![A-Za-z0-9_])" if re.match(r"[A-Za-z0-9_]", surface[0]) else ""
+    right = r"(?![A-Za-z0-9_])" if re.match(r"[A-Za-z0-9_]", surface[-1]) else ""
+    pattern = re.compile(left + re.escape(surface) + right, re.IGNORECASE)
     for row in rows:
         if not isinstance(row, Mapping):
             continue

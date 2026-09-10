@@ -130,6 +130,54 @@ def test_confident_context_rejection_is_a_cpa_current_decision_without_audio():
     assert audio_calls == []
 
 
+def test_entity_text_decision_precedes_audio_and_can_resolve_without_it():
+    events = []
+
+    def judge(prompt):
+        events.append("CPA")
+        assert "TEXT_FIRST" in prompt
+        return json.dumps({
+            "ranking": [{"canonical": "外套是什么颜色", "p": .9},
+                        {"canonical": "歪了是什么颜色", "p": .1}],
+            "choice": "外套是什么颜色", "needs_audio": False,
+            "reason": "平台原文、上下文问答一致",
+        }, ensure_ascii=False)
+
+    def audio(request):
+        events.append("AUDIO")
+        return _audio_witness_stub()(request)
+
+    verdict = verifier_module.build_cpa_read_aloud_verifier(
+        judge, next_verifier=audio,
+    )(_request(schema_version="chat-entity-verification-request.v1"))
+    assert events == ["CPA"]
+    assert verdict["canonical_entity"] == "外套是什么颜色"
+    assert verdict["acoustic_evidence_used"] is False
+    assert verdict["witness_reason_code"] == "CPA_TEXT_FIRST_NOT_REQUESTED"
+
+
+def test_entity_explicit_audio_need_runs_one_blind_witness_then_final_cpa():
+    events = []
+
+    def judge(prompt):
+        events.append("CPA")
+        return json.dumps({
+            "ranking": [{"canonical": "外套是什么颜色", "p": .9},
+                        {"canonical": "歪了是什么颜色", "p": .1}],
+            "choice": "外套是什么颜色", "needs_audio": len(events) == 1,
+        }, ensure_ascii=False)
+
+    def audio(request):
+        events.append("AUDIO")
+        return _audio_witness_stub()(request)
+
+    verdict = verifier_module.build_cpa_read_aloud_verifier(
+        judge, next_verifier=audio,
+    )(_request(schema_version="chat-entity-verification-request.v1"))
+    assert events == ["CPA", "AUDIO", "CPA"]
+    assert verdict["acoustic_evidence_used"] is True
+
+
 def test_weak_context_uses_candidate_blind_audio_then_cpa_highest_probability():
     prompts = []
     audio_calls = []
@@ -684,7 +732,8 @@ def test_confident_meme_spelling_near_miss_wins_ownership_via_closed_set_witness
     assert arbitration["outcome"] == (
         "authority_confirmed_by_cpa_with_blind_audio_witness"
     )
-    assert len(calls) == 2
+    assert len(calls) == 3  # read detection, text-first closed choice, audio-backed choice
+    assert "TEXT_FIRST" in calls[1]
 
 
 def test_prompt_and_closed_choice_rules_flag_meme_spelling_and_emote_as_not_typos():
@@ -755,3 +804,29 @@ def test_completeness_heuristic_extends_partial_read_to_full_danmu_boundary():
     assert row["cue_indexes"] == [1, 2]
     assert row["owner_eligible"] is True
     assert row["exact_text"] == danmu
+
+
+def test_meme_read_aloud_text_first_decision_reaches_actual_chat_owner():
+    calls = []
+    audio_calls = []
+    def cpa(prompt):
+        calls.append(prompt)
+        if "TEXT_FIRST" not in prompt:
+            return json.dumps({"is_read_aloud": True, "confidence": .97})
+        return json.dumps({"ranking": [{"canonical": _MEME_DANMU, "p": .9},
+                                       {"canonical": _MEME_ASR, "p": .1}],
+                           "choice": _MEME_DANMU, "needs_audio": False}, ensure_ascii=False)
+    verify = verifier_module.build_cpa_read_aloud_verifier(
+        cpa, next_verifier=_audio_witness_stub(audio_calls),
+    )
+    output, audit = apply_authoritative_chat_evidence(
+        _srt(_MEME_ASR, "完整收束"), [ChatEvidence("danmaku", 0, _MEME_DANMU)],
+        entity_verifier=verify,
+    )
+    assert parse_srt_cues(output)[0].text == _MEME_DANMU
+    assert audio_calls == []
+    assert len(calls) == 2
+    arbitration = audit["read_aloud_arbitrations"][0]
+    assert arbitration["owner_eligible"] is True
+    assert arbitration["outcome"] == "authority_confirmed_by_cpa_text_first"
+    assert arbitration["whole_line_exact_copy_gate"]["full_span_cpa_text_verdict"] is True

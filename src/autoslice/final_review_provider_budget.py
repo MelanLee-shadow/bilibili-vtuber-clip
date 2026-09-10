@@ -46,6 +46,7 @@ class ContextAdjudicationBudget:
             clip_context=self.clip_context,
             source_media_timeline_offset_ms=(self.source_media_timeline_offset_ms),
             adjudicate_context=self.adjudicate_context,
+            judge_llm_call=self.judge_llm_call,
         )
         if replayed is not None:
             return replayed
@@ -83,6 +84,7 @@ def replay_cached_context_adjudication(
     clip_context: Mapping[str, object] | None,
     source_media_timeline_offset_ms: int,
     adjudicate_context: AdjudicateContext,
+    judge_llm_call: Callable[[str], str] | None = None,
 ) -> dict[str, Any] | None:
     """Return a strict witness+CPA double/triple hit, or ``None`` on any miss.
 
@@ -114,10 +116,18 @@ def replay_cached_context_adjudication(
         witness_misses += 1
         return None
 
+    cached_witness_only.probe_witness_cache = cached_witness_only
+
     def provider_forbidden(_prompt: str) -> str:
         nonlocal provider_seam_attempts
         provider_seam_attempts += 1
         raise _CacheMiss("cache-only replay reached a provider seam")
+
+    # A no-network sentinel still needs the actual caller's model/effort.
+    # Unknown identity remains a cache miss; it must not inherit an old model.
+    provider_forbidden.cpa_cache_identity = getattr(
+        judge_llm_call, "cpa_cache_identity", None
+    )
 
     def cached_exact_only(request: Mapping[str, Any]) -> Mapping[str, Any] | None:
         nonlocal exact_misses

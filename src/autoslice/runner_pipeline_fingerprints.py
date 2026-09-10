@@ -80,6 +80,7 @@ def song_pipeline_fingerprint(
         "src/autoslice/boundary_resolver.py", "src/autoslice/candidate_selection.py",
         "src/autoslice/channel_profile.py", "src/autoslice/content_evidence.py",
         "src/autoslice/cover_emote.py", "src/autoslice/cover_generation.py",
+        "src/autoslice/cpa_image_edit.py",
         "src/autoslice/cpa_semantic_qa.py", "src/autoslice/danmaku_evidence.py",
         "src/autoslice/delivery_recovery.py", "src/autoslice/full_session_candidate_selector.py",
         "src/autoslice/full_session_transcription.py", "src/autoslice/gemini_backup_policy.py",

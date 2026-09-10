@@ -197,13 +197,8 @@ def _validate_exact_final_cpa_self_heal(
         )
 
 
-def validate_final_review_release(
-    audit: object,
-    *,
-    expected_srt_sha256: str | None = None,
-) -> dict[str, object]:
-    """Validate a positive receipt; every other state is a release block."""
-
+def _validate_review_integrity(audit, *, expected_srt_sha256):
+    """Common byte/discovery/mutation requirements; does not decide scope."""
     if not isinstance(audit, Mapping):
         raise FinalReviewContractError("FINAL_REVIEW_AUDIT_MISSING_OR_INVALID")
     if audit.get("schema_version") != SCHEMA_VERSION:
@@ -233,32 +228,10 @@ def validate_final_review_release(
         raise FinalReviewContractError(
             "FINAL_REVIEW_CARRYOVER_UNCONSUMED"
         )
-    findings = audit.get("findings")
-    if not isinstance(findings, list):
-        raise FinalReviewContractError("FINAL_REVIEW_FINDINGS_CONTRACT_INVALID")
-    validated_count = audit.get("validated_finding_count")
-    if (
-        isinstance(validated_count, bool)
-        or not isinstance(validated_count, int)
-        or validated_count != len(findings)
-    ):
-        raise FinalReviewContractError("FINAL_REVIEW_FINDINGS_CONTRACT_INVALID")
-    if findings:
-        raise FinalReviewContractError("FINAL_REVIEW_UNRESOLVED_FINDINGS")
-    # 维护者（无人值守裁定）：`unresolved_findings_disclosed` 只允许
-    # 完整走完闭集裁决且策略分支为 KEEP_CURRENT 的条目——它们随包披露、不
-    # 阻断交付；混入任何非该形态的条目仍视为合同违规。
-    disclosed = audit.get("unresolved_findings_disclosed")
-    if disclosed is not None:
-        if not isinstance(disclosed, list):
-            raise FinalReviewContractError(
-                "FINAL_REVIEW_FINDINGS_CONTRACT_INVALID"
-            )
-        for row in disclosed:
-            if not is_keep_current_disclosed(row):
-                raise FinalReviewContractError(
-                    "FINAL_REVIEW_FINDINGS_CONTRACT_INVALID"
-                )
+
+
+def _validate_review_geometry(audit, *, expected_srt_sha256):
+    """Common exact boundary/clock/self-heal checks, never relaxed by scope."""
     boundary = audit.get("boundary_semantic_review")
     if not isinstance(boundary, Mapping) or boundary.get("status") != "PASS":
         raise FinalReviewContractError("FINAL_REVIEW_BOUNDARY_SEMANTIC_BLOCKED")
@@ -348,8 +321,6 @@ def validate_final_review_release(
         raise FinalReviewContractError(
             "FINAL_REVIEW_BOUNDARY_SOURCE_WITNESS_INVALID"
         )
-    if audit.get("release_gate") != "PASS" or audit.get("status") != "CLEAN":
-        raise FinalReviewContractError("FINAL_REVIEW_RELEASE_GATE_BLOCKED")
     _validate_exact_final_cpa_self_heal(
         audit,
         expected_srt_sha256=expected_srt_sha256,
@@ -365,6 +336,48 @@ def validate_final_review_release(
     )
     if unreadable_problem is not None:
         raise FinalReviewContractError(unreadable_problem)
+
+
+def validate_final_review_release(
+    audit: object,
+    *,
+    expected_srt_sha256: str | None = None,
+) -> dict[str, object]:
+    """Validate a positive receipt; every other state is a release block."""
+
+    if isinstance(audit, Mapping) and audit.get("schema_version") == "original-preserved-final-review.v1":
+        from src.autoslice.operator_preserved_final_review import validate_preserved_review
+        return validate_preserved_review(audit, expected_srt_sha256=expected_srt_sha256)
+    _validate_review_integrity(audit, expected_srt_sha256=expected_srt_sha256)
+    findings = audit.get("findings")
+    if not isinstance(findings, list):
+        raise FinalReviewContractError("FINAL_REVIEW_FINDINGS_CONTRACT_INVALID")
+    validated_count = audit.get("validated_finding_count")
+    if (
+        isinstance(validated_count, bool)
+        or not isinstance(validated_count, int)
+        or validated_count != len(findings)
+    ):
+        raise FinalReviewContractError("FINAL_REVIEW_FINDINGS_CONTRACT_INVALID")
+    if findings:
+        raise FinalReviewContractError("FINAL_REVIEW_UNRESOLVED_FINDINGS")
+    # 维护者（无人值守裁定）：`unresolved_findings_disclosed` 只允许
+    # 完整走完闭集裁决且策略分支为 KEEP_CURRENT 的条目——它们随包披露、不
+    # 阻断交付；混入任何非该形态的条目仍视为合同违规。
+    disclosed = audit.get("unresolved_findings_disclosed")
+    if disclosed is not None:
+        if not isinstance(disclosed, list):
+            raise FinalReviewContractError(
+                "FINAL_REVIEW_FINDINGS_CONTRACT_INVALID"
+            )
+        for row in disclosed:
+            if not is_keep_current_disclosed(row):
+                raise FinalReviewContractError(
+                    "FINAL_REVIEW_FINDINGS_CONTRACT_INVALID"
+                )
+    _validate_review_geometry(audit, expected_srt_sha256=expected_srt_sha256)
+    if audit.get("release_gate") != "PASS" or audit.get("status") != "CLEAN":
+        raise FinalReviewContractError("FINAL_REVIEW_RELEASE_GATE_BLOCKED")
     return dict(audit)
 
 

@@ -7,6 +7,7 @@ candidate-private transaction store; they never create a public delivery path.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping
 from pathlib import Path
@@ -14,6 +15,7 @@ from pathlib import Path
 from src.autoslice.producer_delivery_transaction import (
     DeliveryArtifact,
     PreparedDelivery,
+    ProducerDeliveryTransactionError,
     _read_document,
     deployment_authority_binding,
     prepare_delivery,
@@ -22,6 +24,7 @@ from src.autoslice.producer_media import (
     _validated_burned_artifact,
     _validated_burned_ass_artifact,
 )
+from src.autoslice.final_subtitle_audio_gate import subtitle_audio_artifact_paths
 from src.autoslice.shadow_review import _sha256
 
 
@@ -61,6 +64,15 @@ def prepare_talk_delivery(
     rendered = generation.get("rendered_text_pixels")
     rendered = rendered if isinstance(rendered, Mapping) else {}
     clip_context = Path(str(record["clip_context_path"])) if record.get("clip_context_path") else None
+    subtitle_audio_paths = subtitle_audio_artifact_paths(
+        record, candidate_id=candidate_id
+    )
+    subtitle_audio_sources = [
+        ("subtitle_audio_witness", subtitle_audio_paths[0] if len(subtitle_audio_paths) > 0 else None, ".subtitle-audio-witness.srt"),
+        ("subtitle_audio_provenance", subtitle_audio_paths[1] if len(subtitle_audio_paths) > 1 else None, ".subtitle-audio-provenance.json"),
+        ("subtitle_audio_correspondence", subtitle_audio_paths[2] if len(subtitle_audio_paths) > 2 else None, ".subtitle-audio-correspondence.json"),
+        ("subtitle_audio_raw_result", subtitle_audio_paths[3] if len(subtitle_audio_paths) > 3 else None, ".subtitle-audio-bcut.raw.json"),
+    ]
     sources: list[tuple[str, Path | None, str]] = [
         ("video", _validated_burned_artifact(dict(record)), ".mp4"),
         ("subtitle", subtitle_path, ".srt"),
@@ -81,10 +93,30 @@ def prepare_talk_delivery(
         ("record", record_path, ".record.json"),
         ("cover", Path(str(staging["cover_path"])) if staging.get("cover_path") else None, ".cover.png"),
     ]
+    sources.extend(subtitle_audio_sources)
     artifacts = [
         prepared for role, source, suffix in sources
         if (prepared := _optional(source, role=role, destination=delivery / f"{basename}{suffix}")) is not None
     ]
+    if any(
+        row.target.is_symlink() or (row.target.exists() and not row.target.is_file())
+        for row in artifacts
+    ):
+        raise ProducerDeliveryTransactionError("delivery target is unsafe")
+    if any(row.target.exists() for row in artifacts):
+        # An incomplete delivery may already own this basename. Keep its bytes
+        # intact; the content-bound retry still uses create-only batch commit.
+        digest = hashlib.sha256(json.dumps([
+            (row.role, row.expected_sha256) for row in artifacts
+        ], separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
+        artifacts = [
+            DeliveryArtifact(
+                row.role, row.source,
+                row.target.with_name(f"retry-{digest}__{row.target.name}"),
+                row.expected_sha256,
+            )
+            for row in artifacts
+        ]
     return prepare_delivery(
         runtime_root=runtime_root,
         lane="talk",
@@ -114,6 +146,10 @@ def talk_delivery_summary(
 ) -> dict[str, object]:
     """One output projection shared by direct and prepare-only finalization."""
 
+    document = _read_document(prepared) if prepared is not None else None
+    if document is not None:
+        video = next(entry for entry in document["artifacts"] if entry["role"] == "video")
+        delivery = Path(str(video["target_path"])).with_suffix("")
     result: dict[str, object] = {
         "candidate_id": candidate_id,
         "final_end_ms": final_end,
@@ -144,7 +180,7 @@ def talk_delivery_summary(
         # The runner must form its state after-image before public target
         # renames.  Bind that projection to the sealed prepared artifact map,
         # not merely to role names or title-derived paths.
-        document = _read_document(prepared)
+        assert document is not None
         result["prepared_artifacts"] = {
             str(entry["role"]): {
                 "path": str(entry["target_path"]),
