@@ -253,9 +253,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout-seconds", type=float, default=90.0)
     parser.add_argument(
         "--fallback-model",
-        help="direct transport only: second model tried when the primary exhausts its retries "
-        "(2026-07-10: the 5.6 family shares one provider usage window — 429s hit all of it at "
-        "once, so the judge falls back per 维护者's standing rule, e.g. gpt-5.5).",
+        help="direct transport only: an explicitly authorized second model. "
+        "The production GPT-6 Astra factory configures no GPT-5 downgrade.",
     )
     args = parser.parse_args(argv)
 

@@ -17,6 +17,7 @@ BGM 排除、重叠隔离、内容门等一切非配额判定照常可以把冻�
 from __future__ import annotations
 
 from collections.abc import Mapping
+import re
 
 from src.autoslice.talk_quota_policy import TalkQuotaPolicy
 
@@ -71,7 +72,19 @@ def frozen_admission(item: Mapping[str, object], scope_key: str) -> dict | None:
         return None
     if stamp.get("schema_version") != FREEZE_SCHEMA:
         return None
-    if str(stamp.get("scope_key") or "") != scope_key:
+    stamped_scope = str(stamp.get("scope_key") or "")
+    # Carry existing admissions into the daily scope without rewriting their
+    # receipt. The date and lane must still match; another date or a now-shared
+    # ungranted event scope cannot borrow the old seat.
+    legacy = re.fullmatch(
+        r"(talk|event|game):live-(\d{4})(\d{2})(\d{2})T(?:\d{6}|unknown)(?:[+-]\d{4})?",
+        stamped_scope,
+    )
+    if legacy:
+        date = "-".join(legacy.group(2, 3, 4))
+        if stamp.get("recording_date") == date:
+            stamped_scope = f"{legacy.group(1)}:{date}"
+    if stamped_scope != scope_key:
         return None
     cap = stamp.get("cap")
     if not isinstance(cap, int) or isinstance(cap, bool) or cap < 1:

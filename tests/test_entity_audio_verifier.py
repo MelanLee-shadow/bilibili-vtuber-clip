@@ -1863,3 +1863,15 @@ def test_witness_acoustic_cache_never_stores_failures(tmp_path, monkeypatch):
     assert verdict.get("status") != "OBSERVED"
     cache_root = tmp_path / "base" / "cache" / "witness-acoustic"
     assert not cache_root.exists() or not any(cache_root.rglob("*.json"))
+
+
+@pytest.fixture(autouse=True)
+def _generated_media_probe_isolated_from_transport_tests(monkeypatch):
+    # These transport/cache unit tests stub FFmpeg with arbitrary byte strings.
+    # Actual media validation (including a real silent clip) is covered separately
+    # by test_entity_audio_crop_regression.py; keep provider tests hermetic.
+    from src.autoslice import entity_audio_verifier
+    monkeypatch.setattr(
+        entity_audio_verifier, "_validate_cropped_audio_media",
+        lambda *_args, **_kwargs: (True, ""),
+    )

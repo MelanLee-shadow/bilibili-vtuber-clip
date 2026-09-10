@@ -5,7 +5,7 @@
 `session_autoslice.list_dates()` 只取录像根目录**最新三个**日期，另加两个
 例外：`status == "source_incomplete"`，以及 `historical_source_recovery_in_progress`
 （后者要求 `state["source_recoveries"]` 非空）。维护者 要求
-「**把 tier1 的 4 条做了**」并明确「**87 现在需要纳入处理范围**」，但 
+「**把 tier1 的 4 条做了**」并明确「**87 现在需要纳入处理范围**」，但
 早已滑出最新三天窗口，而且它的 `source_recoveries` 是空的——两个既有例外一个都
 不成立。仓里此前**没有任何**「运维显式指定某天进处理范围」的通道。
 

@@ -18,24 +18,46 @@ import os
 import re
 import time
 from collections.abc import Mapping
-from contextlib import contextmanager
 from pathlib import Path
-
-import fcntl
 
 from . import fastlane_c1_technical_receipt
 from . import fastlane_c2_authorized_upload
+from .repository_asset_authority import (
+    RepositoryAssetAuthorityError,
+    require_repository_asset_authority,
+)
+
+from .publication_state_projection import (
+    PUBLICATION_RECOVERY_PROJECTION_KIND,
+    PUBLICATION_RECOVERY_SCHEMA,
+    RECONCILIATION_SCHEMA,
+    RUNTIME_REGISTRY_SCHEMA,
+    PublicationReconciliationError,
+    _DATE_RX,
+    _apply_publication_to_state,
+    _reconciliation_lock,
+    _state_candidate_count,
+    _state_roots,
+    _update_state_file,
+    _validate_runtime_registry,
+    missing_state_publication_reconciliation_block,  # noqa: F401
+    project_publication_closure,  # noqa: F401
+    publication_recovery_sidecar_path,
+    publication_row_is_verified,  # noqa: F401
+    runtime_registry_path,
+    validate_runtime_registry_entry,
+)
 
 
-RECONCILIATION_SCHEMA = "publication-reconciliation.v1"
-RUNTIME_REGISTRY_SCHEMA = "publication-reconciliation-registry.v1"
 STATIC_REGISTRY_SCHEMA = "publication-registry.v1"
-_DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _SHA256_RX = re.compile(r"^[0-9a-f]{64}$")
-
-
-class PublicationReconciliationError(ValueError):
-    """A purported public completion cannot safely update local authority."""
+_DEPLOYED_REGISTRY_PROJECTION_MODE = "DEPLOYED_RUNTIME_OVERLAY"
+_STATIC_REGISTRY_PROJECTION_MODE = "STATIC_REGISTRY"
+_DEPLOYED_REGISTRY_MARKERS = (
+    "DEPLOYED_COMMIT",
+    "DEPLOYED_MANIFEST.json",
+    "DEPLOYED_AUTHORITY_MANIFEST.json",
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -150,6 +172,27 @@ def _create_or_validate_authority(path: Path, expected: dict) -> dict:
             return [stable_payload(item) for item in value]
         return value
 
+    def stable_role_payload(role: str, value: object) -> object:
+        payload = stable_payload(value)
+        if not isinstance(payload, dict):
+            return payload
+        if role == "public_verify" and isinstance(payload.get("public_tags"), list):
+            # Public tag ordering may change between identical successful reads.
+            # Sort without deduplication so missing/extra tags remain conflicts.
+            payload["public_tags"] = sorted(payload["public_tags"])
+        if (
+            role == "season_verify"
+            and payload.get("status") == "IN_SEASON_PUBLIC"
+            and type(payload.get("season_add_code")) is int
+            and (payload["season_add_code"], payload.get("season_add_message"))
+            in ((0, "OK"), (20080, "当前稿件已存在在合集中"))
+        ):
+            # Retrying the same verified membership returns "already in season".
+            # Preserve the original receipt; compare its completed outcome.
+            payload["season_add_code"] = 0
+            payload.pop("season_add_message", None)
+        return payload
+
     def validate_existing() -> dict:
         actual = _load_object(path, "publication reconciliation authority")
         stable_fields = (
@@ -185,8 +228,8 @@ def _create_or_validate_authority(path: Path, expected: dict) -> dict:
                 not isinstance(actual_role, Mapping)
                 or not isinstance(expected_role, Mapping)
                 or actual_role.get("path") != expected_role.get("path")
-                or stable_payload(actual_role.get("payload"))
-                != stable_payload(expected_role.get("payload"))
+                or stable_role_payload(role, actual_role.get("payload"))
+                != stable_role_payload(role, expected_role.get("payload"))
             ):
                 raise PublicationReconciliationError(
                     f"existing publication reconciliation {role} evidence differs"
@@ -238,6 +281,39 @@ def _create_or_validate_authority(path: Path, expected: dict) -> dict:
         finally:
             os.close(directory_fd)
     return expected
+
+
+def _original_review_date(manifest, record, review, candidate_id):
+    """Read the registered original target, not a new wrapper date or a C2 shape."""
+    from src.autoslice import original_patch_package
+
+    if review.get("schema_version") != original_patch_package.MANIFEST_SCHEMA:
+        return None
+    items = review.get("items")
+    authority = manifest.get("recovery_publication_authority")
+    if (
+        not isinstance(items, list)
+        or len(items) != 1
+        or not isinstance(items[0], dict)
+        or items[0].get("candidate_id") != candidate_id
+        or record.get("recovery_publication_authority") != authority
+        or items[0].get("recovery_publication_authority") != authority
+    ):
+        raise PublicationReconciliationError("original review candidate/authority differs")
+    try:
+        target = original_patch_package.validate_publication(
+            authority,
+            candidate_id=candidate_id,
+            expected_final_title=str(manifest.get("title") or ""),
+        )
+    except (ValueError, OSError) as exc:
+        raise PublicationReconciliationError("original review target is not registered") from exc
+    date = target.get("recording_date")
+    if not isinstance(date, str) or not _DATE_RX.fullmatch(date):
+        raise PublicationReconciliationError("original target recording date invalid")
+    if any(review[key] != date for key in ("date", "recording_date") if key in review):
+        raise PublicationReconciliationError("original review recording date differs from target")
+    return date
 
 
 def _candidate_and_date(manifest: Mapping[str, object]) -> tuple[str, str]:
@@ -361,6 +437,9 @@ def _candidate_and_date(manifest: Mapping[str, object]) -> tuple[str, str]:
             attestation.get("review_manifest"), "manifest review manifest"
         )
         review = _load_object(review_path, "manifest review manifest")
+        original_date = _original_review_date(manifest, record, review, candidate_id)
+        if original_date is not None:
+            return candidate_id, original_date
         if str(review.get("candidate_id") or "") != candidate_id:
             raise PublicationReconciliationError(
                 "manifest review manifest candidate differs from record"
@@ -785,306 +864,146 @@ def authority_sidecar_path(manifest_path: Path) -> Path:
     return manifest_path.parent / f"{stem}.publication_reconciliation.json"
 
 
-def runtime_registry_path(base: Path) -> Path:
-    return base.resolve() / "state" / "publication_registry.runtime.v1.json"
 
 
-def _state_roots(manifest: Mapping[str, object], base: Path) -> list[Path]:
-    roots = {base.resolve()}
-    attestation = manifest.get("package_attestation")
-    package_root = Path(
-        str(attestation.get("package_root") or "")
-        if isinstance(attestation, Mapping)
-        else ""
-    ).resolve()
-    parts = package_root.parts
-    for index, part in enumerate(parts[:-1]):
-        if part == "out" and index + 1 < len(parts):
-            roots.add(Path(*parts[:index]))
-    return sorted(roots, key=str)
+def _deployed_registry_binding(
+    registry_path: Path,
+) -> tuple[Path, Path] | None:
+    """Return the bounded deployed-repository binding for one registry path.
+
+    Production keeps the publication registry below exactly one channel
+    directory under ``assets``.  Deriving the repository root from that fixed
+    layout avoids searching arbitrary ancestors, while allowing ordinary
+    temporary/Git fixtures outside the layout to retain their mutable static
+    registry behavior.
+    """
+
+    path = Path(registry_path)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    if path.name != "publication_registry.v1.json":
+        return None
+    channel_dir = path.parent
+    assets_dir = channel_dir.parent
+    repo_root = assets_dir.parent
+    if assets_dir.name != "assets" or not channel_dir.name:
+        return None
+    relative = Path("assets") / channel_dir.name / path.name
+    if repo_root / relative != path:
+        return None
+
+    marker_paths = [repo_root / name for name in _DEPLOYED_REGISTRY_MARKERS]
+    if not any(marker.exists() or marker.is_symlink() for marker in marker_paths):
+        return None
+    for marker, name in (
+        (marker_paths[0], _DEPLOYED_REGISTRY_MARKERS[0]),
+        (marker_paths[2], _DEPLOYED_REGISTRY_MARKERS[2]),
+    ):
+        if marker.is_symlink() or not marker.is_file():
+            raise PublicationReconciliationError(
+                f"deployed publication registry marker is unavailable: {name}"
+            )
+    # DEPLOYED_MANIFEST.json is also a deployment marker when present, but
+    # its complete tree/mode validation belongs to the deployment soak gate.
+    return repo_root, relative
 
 
-@contextmanager
-def _reconciliation_lock(base: Path):
-    path = base.resolve() / "state" / "publication-reconciliation.lock"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+def _prepare_registry_projection(registry_path: Path) -> dict[str, object]:
+    """Validate deployed static authority and describe the write mode.
+
+    The returned readback is captured before any runtime/state projection is
+    written.  In deployed mode the static registry is deliberately never
+    rewritten; its exact deployed-manifest binding remains the immutable
+    source while the runtime overlay carries new publication rows.
+    """
+
+    binding = _deployed_registry_binding(registry_path)
+    if binding is None:
+        return {"mode": _STATIC_REGISTRY_PROJECTION_MODE}
+    repo_root, relative = binding
+    path = Path(registry_path)
+    if not path.is_absolute():
+        path = Path.cwd() / path
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
-        yield
-    finally:
-        fcntl.flock(descriptor, fcntl.LOCK_UN)
-        os.close(descriptor)
-
-
-def publication_row_is_verified(row: object) -> bool:
-    if not isinstance(row, Mapping) or row.get("status") != "published":
-        return False
-    publication = row.get("publication_reconciliation")
-    structurally_valid = bool(
-        isinstance(publication, Mapping)
-        and publication.get("schema_version") == RECONCILIATION_SCHEMA
-        and publication.get("status")
-        in {
-            "VERIFIED_PUBLIC",
-            "VERIFIED_SAME_BV",
-            "VERIFIED_SAME_BV_COVER",
-        }
-        and str(publication.get("candidate_id") or "")
-        == str(row.get("candidate_id") or row.get("cid") or "")
-        and str(publication.get("bvid") or "") == str(row.get("bvid") or "")
-        and isinstance(publication.get("authority"), Mapping)
-    )
-    if not structurally_valid:
-        return False
-    try:
-        _validate_sha_entry(
-            publication.get("authority"),
-            "state publication reconciliation authority",
+        authority = require_repository_asset_authority(
+            repo_root=repo_root,
+            relative_path=relative,
+            observed_bytes=path.read_bytes(),
         )
-    except (OSError, PublicationReconciliationError):
-        return False
-    return True
+    except (OSError, UnicodeError, RepositoryAssetAuthorityError) as exc:
+        raise PublicationReconciliationError(
+            f"deployed publication registry authority is invalid: {exc}"
+        ) from exc
+    if authority.mode != "DEPLOYED_MANIFEST":
+        raise PublicationReconciliationError(
+            "deployed publication registry authority mode is invalid"
+        )
+    commit = authority.commit
+    return {
+        "mode": _DEPLOYED_REGISTRY_PROJECTION_MODE,
+        "path": str(path.resolve()),
+        "relative_path": relative.as_posix(),
+        "commit": commit,
+        "sha256": sha256_file(path),
+        "bytes": path.stat().st_size,
+    }
 
 
-def project_publication_closure(state: Mapping[str, object]) -> dict:
-    rows = [
-        row
-        for lane in ("picks", "songs")
-        for row in (
-            state.get(lane) if isinstance(state.get(lane), list) else []
-        )
-        if isinstance(row, Mapping)
-    ]
-    published = [row for row in rows if publication_row_is_verified(row)]
-    if not published:
-        return {
-            "schema_version": "daily-publication-closure.v1",
-            "status": "NOT_APPLICABLE",
-            "published_candidate_ids": [],
-            "ready_unpublished_candidate_ids": [],
-            "unresolved_candidate_ids": [],
-        }
-    ready_statuses = {"ok", "review_ready", "quarantine"}
-    ready = [
-        row
-        for row in rows
-        if row not in published
-        and (
-            row.get("status") in ready_statuses
-            or bool(row.get("delivered"))
-        )
-    ]
-    unresolved = [row for row in rows if row not in published and row not in ready]
-    pending = sum(
-        len(state.get(key)) if isinstance(state.get(key), list) else 0
-        for key in ("pending_talk", "pending_song")
-    )
-    if pending:
-        status = "publication_in_progress"
-    elif ready and unresolved:
-        status = "ready_unpublished_with_failures"
-    elif ready:
-        status = "ready_unpublished"
-    elif unresolved:
-        status = "published_with_failures"
-    else:
-        status = "published"
-    def candidate(row: Mapping[str, object]) -> str:
-        return str(row.get("candidate_id") or row.get("cid") or "")
+def _registry_readback(path: Path) -> dict[str, object]:
+    resolved = path.resolve()
+    return {
+        "path": str(resolved),
+        "sha256": sha256_file(resolved),
+        "bytes": resolved.stat().st_size,
+    }
+
+
+
+
+def _publication_identity(value: Mapping[str, object]) -> dict[str, object]:
+    """Return the immutable part of a verified publication projection."""
 
     return {
-        "schema_version": "daily-publication-closure.v1",
-        "status": status,
-        "published_candidate_ids": sorted(candidate(row) for row in published),
-        "ready_unpublished_candidate_ids": sorted(candidate(row) for row in ready),
-        "unresolved_candidate_ids": sorted(candidate(row) for row in unresolved),
+        key: value.get(key)
+        for key in (
+            "schema_version",
+            "status",
+            "candidate_id",
+            "recording_date",
+            "bvid",
+            "aid",
+            "cid",
+            "title",
+            "authority",
+        )
     }
 
 
-def _apply_publication_to_state(
-    state: dict,
-    publication: Mapping[str, object],
-) -> bool | None:
-    candidate_id = str(publication.get("candidate_id") or "")
-    matches: list[dict] = []
-    for lane in ("picks", "songs"):
-        values = state.get(lane)
-        if not isinstance(values, list):
-            continue
-        matches.extend(
-            row
-            for row in values
-            if isinstance(row, dict)
-            and str(row.get("candidate_id") or row.get("cid") or "")
-            == candidate_id
-        )
-    if not matches:
-        return None
-    if len(matches) != 1:
-        raise PublicationReconciliationError(
-            f"daily state has {len(matches)} rows for candidate {candidate_id}"
-        )
-    row = matches[0]
-    if publication_row_is_verified(row):
-        current = row.get("publication_reconciliation")
-        if (
-            isinstance(current, Mapping)
-            and current.get("bvid") != publication.get("bvid")
-        ):
-            raise PublicationReconciliationError(
-                "daily state publication BVID conflicts with reconciliation"
-            )
-    changed = False
-    if row.get("status") != "published" and "prepublication_status" not in row:
-        row["prepublication_status"] = row.get("status")
-        changed = True
-    intended = {
-        "status": "published",
-        "rc": 0,
-        "bvid": publication.get("bvid"),
-        "aid": publication.get("aid"),
-        "published_cid": publication.get("cid"),
-        "publication_reconciliation": dict(publication),
-    }
-    for key, value in intended.items():
-        if row.get(key) != value:
-            row[key] = value
-            changed = True
-    closure = project_publication_closure(state)
-    if state.get("publication_closure") != closure:
-        state["publication_closure"] = closure
-        changed = True
-    if state.get("status") != closure["status"]:
-        state["status"] = closure["status"]
-        changed = True
-    return changed
-
-
-def _update_state_file(
-    state_path: Path,
-    publication: Mapping[str, object],
-) -> bool:
-    if not state_path.is_file():
-        return False
-    for _attempt in range(5):
-        before = state_path.read_bytes()
-        try:
-            state = json.loads(before.decode("utf-8"))
-        except (UnicodeDecodeError, ValueError) as exc:
-            raise PublicationReconciliationError(
-                f"daily state unreadable: {state_path}: {exc}"
-            ) from exc
-        if not isinstance(state, dict):
-            raise PublicationReconciliationError(
-                f"daily state is not an object: {state_path}"
-            )
-        changed = _apply_publication_to_state(state, publication)
-        if changed is None:
-            return False
-        if not changed:
-            return True
-        if state_path.read_bytes() != before:
-            continue
-        _atomic_write_json(state_path, state, preserve_state_backup=True)
-        return True
-    raise PublicationReconciliationError(
-        f"daily state changed concurrently too many times: {state_path}"
-    )
-
-
-def _validate_runtime_registry(value: dict) -> list[dict]:
-    if value.get("schema_version") != RUNTIME_REGISTRY_SCHEMA:
-        raise PublicationReconciliationError(
-            "runtime publication registry schema is invalid"
-        )
-    entries = value.get("entries")
-    if not isinstance(entries, list) or any(
-        not isinstance(entry, dict) for entry in entries
-    ):
-        raise PublicationReconciliationError(
-            "runtime publication registry entries are invalid"
-        )
-    return entries
-
-
-def validate_runtime_registry_entry(
-    entry: object,
+def _assert_publication_identity_compatible(
+    current: object,
+    expected: Mapping[str, object],
     *,
-    verify_authority: bool = True,
-) -> dict:
-    if not isinstance(entry, dict):
+    label: str,
+) -> None:
+    """Reject a different authority or publication tuple during a rerun."""
+
+    if not isinstance(current, Mapping):
         raise PublicationReconciliationError(
-            "runtime publication registry row is invalid"
+            f"{label} has no publication reconciliation mapping"
         )
-    publication = entry.get("publication_reconciliation")
-    if (
-        entry.get("status") != "published"
-        or not str(entry.get("candidate_id") or "")
-        or not _DATE_RX.fullmatch(str(entry.get("recording_date") or ""))
-        or not str(entry.get("bvid") or "")
-        or not isinstance(publication, Mapping)
-        or publication.get("schema_version") != RECONCILIATION_SCHEMA
-        or publication.get("status")
-        not in {
-            "VERIFIED_PUBLIC",
-            "VERIFIED_SAME_BV",
-            "VERIFIED_SAME_BV_COVER",
-        }
-        or publication.get("candidate_id") != entry.get("candidate_id")
-        or publication.get("recording_date") != entry.get("recording_date")
-        or publication.get("bvid") != entry.get("bvid")
-    ):
-        raise PublicationReconciliationError(
-            "runtime publication registry row is not a verified projection"
-        )
-    if verify_authority:
-        authority_path = _validate_sha_entry(
-            publication.get("authority"),
-            "runtime publication reconciliation authority",
-        )
-        authority = _load_object(
-            authority_path, "runtime publication reconciliation authority"
-        )
-        if publication.get("status") == "VERIFIED_PUBLIC":
-            valid_authority = (
-                authority.get("schema_version")
-                == "new-bv-publication-reconciliation-authority.v1"
-                and authority.get("status") == "VERIFIED_PUBLIC"
-                and authority.get("candidate_id") == entry.get("candidate_id")
-                and authority.get("recording_date")
-                == entry.get("recording_date")
-                and authority.get("bvid") == entry.get("bvid")
-                and authority.get("aid") == publication.get("aid")
-                and authority.get("cid") == publication.get("cid")
-            )
-        elif publication.get("status") == "VERIFIED_SAME_BV":
-            valid_authority = (
-                authority.get("schema_version")
-                == "same-bv-repair-completed.v1"
-                and authority.get("status") == "VERIFIED_FRESH_LIVE"
-                and authority.get("rc") == 0
-                and authority.get("candidate_id") == entry.get("candidate_id")
-                and authority.get("bvid") == entry.get("bvid")
-                and authority.get("aid") == publication.get("aid")
-                and authority.get("new_cid") == publication.get("cid")
-            )
-        else:
-            valid_authority = (
-                authority.get("schema_version")
-                == "same-bv-cover-repair-completed.v1"
-                and authority.get("status") == "VERIFIED_FRESH_LIVE"
-                and authority.get("rc") == 0
-                and authority.get("candidate_id") == entry.get("candidate_id")
-                and authority.get("bvid") == entry.get("bvid")
-                and authority.get("aid") == publication.get("aid")
-                and authority.get("unchanged_cid") == publication.get("cid")
-            )
-        if not valid_authority:
+    current_identity = _publication_identity(current)
+    expected_identity = _publication_identity(expected)
+    # Older committed static rows carry only the status and authority pointer;
+    # those fields still bind the immutable authority.  Runtime rows and new
+    # recovery sidecars carry the complete tuple and are compared exactly.
+    for key, current_value in current_identity.items():
+        if key in {"aid", "cid", "title", "candidate_id", "recording_date", "bvid"}:
+            if key not in current or current_value is None:
+                continue
+        if current_value != expected_identity.get(key):
             raise PublicationReconciliationError(
-                "runtime publication registry authority content conflicts"
+                f"{label} authority/publication tuple conflicts"
             )
-    return entry
 
 
 def _upsert_runtime_registry(
@@ -1266,18 +1185,437 @@ def _assert_static_registry_compatible(
         )
 
 
-def _state_candidate_count(path: Path, candidate_id: str) -> int:
-    if not path.is_file():
-        return 0
-    state = _load_object(path, "daily state")
-    return sum(
-        1
-        for lane in ("picks", "songs")
-        for row in (state.get(lane) if isinstance(state.get(lane), list) else [])
-        if isinstance(row, Mapping)
-        and str(row.get("candidate_id") or row.get("cid") or "")
-        == candidate_id
+_PUBLICATION_RECOVERY_ENTRY_KEYS = frozenset(
+    {
+        "candidate_id",
+        "recording_date",
+        "status",
+        "rc",
+        "cid",
+        "published_cid",
+        "bvid",
+        "aid",
+        "title",
+        "publication_reconciliation",
+    }
+)
+_PUBLICATION_RECOVERY_FORBIDDEN_KEYS = frozenset(
+    {
+        "picks",
+        "songs",
+        "pending_talk",
+        "pending_song",
+        "publication_closure",
+        "prepublication_status",
+    }
+)
+
+
+def _publication_recovery_entry(
+    publication: Mapping[str, object],
+) -> dict[str, object]:
+    """Build one identity-preserving entry for a missing-state projection."""
+
+    candidate_id = str(publication.get("candidate_id") or "")
+    recording_date = str(publication.get("recording_date") or "")
+    bvid = str(publication.get("bvid") or "")
+    published_cid = publication.get("cid")
+    if (
+        not candidate_id
+        or not _DATE_RX.fullmatch(recording_date)
+        or not bvid
+        or not isinstance(published_cid, int)
+        or isinstance(published_cid, bool)
+        or not isinstance(publication.get("authority"), Mapping)
+    ):
+        raise PublicationReconciliationError(
+            "publication recovery projection identity is incomplete"
+        )
+    aid = publication.get("aid")
+    if aid is not None and (not isinstance(aid, int) or isinstance(aid, bool)):
+        raise PublicationReconciliationError(
+            "publication recovery projection aid is invalid"
+        )
+    return {
+        "candidate_id": candidate_id,
+        "recording_date": recording_date,
+        "status": "published",
+        "rc": 0,
+        # ``cid`` remains the source candidate identity.  The online numeric
+        # CID is deliberately carried in a separate field below.
+        "cid": candidate_id,
+        "published_cid": published_cid,
+        "bvid": bvid,
+        "aid": aid,
+        "title": publication.get("title"),
+        "publication_reconciliation": dict(publication),
+    }
+
+
+def _validate_publication_recovery_entry(
+    entry: object,
+    *,
+    recording_date: str,
+    verify_authority: bool = True,
+) -> dict:
+    if not isinstance(entry, dict) or set(entry) != set(
+        _PUBLICATION_RECOVERY_ENTRY_KEYS
+    ):
+        raise PublicationReconciliationError(
+            "publication recovery projection entry shape is invalid"
+        )
+    candidate_id = str(entry.get("candidate_id") or "")
+    if (
+        not candidate_id
+        or entry.get("recording_date") != recording_date
+        or entry.get("status") != "published"
+        or entry.get("rc") != 0
+        or entry.get("cid") != candidate_id
+        or not isinstance(entry.get("published_cid"), int)
+        or isinstance(entry.get("published_cid"), bool)
+        or not str(entry.get("bvid") or "")
+    ):
+        raise PublicationReconciliationError(
+            "publication recovery projection entry identity is invalid"
+        )
+    aid = entry.get("aid")
+    if aid is not None and (not isinstance(aid, int) or isinstance(aid, bool)):
+        raise PublicationReconciliationError(
+            "publication recovery projection entry aid is invalid"
+        )
+    validate_runtime_registry_entry(
+        {
+            "candidate_id": candidate_id,
+            "recording_date": recording_date,
+            "status": "published",
+            "bvid": entry["bvid"],
+            "publication_reconciliation": entry["publication_reconciliation"],
+        },
+        verify_authority=verify_authority,
     )
+    publication = entry["publication_reconciliation"]
+    assert isinstance(publication, Mapping)
+    if (
+        publication.get("candidate_id") != candidate_id
+        or publication.get("recording_date") != recording_date
+        or publication.get("bvid") != entry.get("bvid")
+        or publication.get("aid") != aid
+        or publication.get("cid") != entry.get("published_cid")
+        or publication.get("title") != entry.get("title")
+    ):
+        raise PublicationReconciliationError(
+            "publication recovery projection entry mapping conflicts"
+        )
+    return entry
+
+
+def _validate_publication_recovery_projection(
+    value: object,
+    *,
+    recording_date: str,
+    verify_authority: bool = True,
+) -> list[dict]:
+    if not isinstance(value, dict):
+        raise PublicationReconciliationError(
+            "publication recovery projection is not an object"
+        )
+    if value.get("schema_version") != PUBLICATION_RECOVERY_SCHEMA:
+        raise PublicationReconciliationError(
+            "publication recovery projection schema is invalid"
+        )
+    if value.get("projection_kind") != PUBLICATION_RECOVERY_PROJECTION_KIND:
+        raise PublicationReconciliationError(
+            "publication recovery projection kind is invalid"
+        )
+    if value.get("recording_date") != recording_date:
+        raise PublicationReconciliationError(
+            "publication recovery projection date conflicts"
+        )
+    for key in (
+        "original_state_status",
+        "original_candidate_set",
+        "day_completion",
+    ):
+        if value.get(key) != (
+            "MISSING" if key == "original_state_status" else "UNKNOWN"
+        ):
+            raise PublicationReconciliationError(
+                f"publication recovery projection {key} is invalid"
+            )
+    if _PUBLICATION_RECOVERY_FORBIDDEN_KEYS.intersection(value):
+        raise PublicationReconciliationError(
+            "publication recovery projection contains canonical state fields"
+        )
+    allowed = {
+        "schema_version",
+        "projection_kind",
+        "recording_date",
+        "original_state_status",
+        "original_candidate_set",
+        "day_completion",
+        "entries",
+    }
+    if set(value) != allowed:
+        raise PublicationReconciliationError(
+            "publication recovery projection shape is invalid"
+        )
+    entries = value.get("entries")
+    if not isinstance(entries, list) or not entries:
+        raise PublicationReconciliationError(
+            "publication recovery projection entries are invalid"
+        )
+    validated = [
+        _validate_publication_recovery_entry(
+            entry,
+            recording_date=recording_date,
+            verify_authority=verify_authority,
+        )
+        for entry in entries
+    ]
+    candidate_keys = [entry["candidate_id"] for entry in validated]
+    if len(set(candidate_keys)) != len(candidate_keys):
+        raise PublicationReconciliationError(
+            "publication recovery projection has duplicate candidate/date rows"
+        )
+    bvid_keys = [entry["bvid"] for entry in validated]
+    if len(set(bvid_keys)) != len(bvid_keys):
+        raise PublicationReconciliationError(
+            "publication recovery projection has duplicate BVID targets"
+        )
+    return validated
+
+
+def _repair_bound_object(entry: object, label: str) -> tuple[Path, dict]:
+    """Read the SHA-bound plan/manifest format, which has no byte-count field."""
+
+    if not isinstance(entry, Mapping):
+        raise PublicationReconciliationError(f"{label} binding is missing")
+    path = Path(str(entry.get("path") or ""))
+    if not path.is_absolute() or path.is_symlink() or not path.is_file():
+        raise PublicationReconciliationError(f"{label} missing or unsafe")
+    if entry.get("sha256") != sha256_file(path) or (
+        "bytes" in entry and entry["bytes"] != path.stat().st_size
+    ):
+        raise PublicationReconciliationError(f"{label} hash/bytes drifted")
+    return path.resolve(), _load_object(path, label)
+
+
+def _snapshot_matches_publication(
+    snapshot: object, publication: Mapping[str, object]
+) -> bool:
+    """Require one exact media identity across Creator, public, and section."""
+
+    if not isinstance(snapshot, Mapping):
+        return False
+    creator, public, section = (snapshot.get(k) for k in ("creator", "public", "section"))
+    if not all(isinstance(v, Mapping) and v.get("available") is True
+               for v in (creator, public, section)):
+        return False
+    videos, matches = creator.get("videos"), section.get("matches")
+    if not all(isinstance(v, list) and len(v) == 1 and isinstance(v[0], Mapping)
+               for v in (videos, matches)):
+        return False
+    return (
+        all(row.get("bvid") == publication.get("bvid")
+            and row.get("aid") == publication.get("aid")
+            for row in (creator, public, matches[0]))
+        and all(cid == publication.get("cid")
+                for cid in (videos[0].get("cid"), public.get("cid"), matches[0].get("cid")))
+        and public.get("state") == 0
+    )
+
+
+def _repair_successor_authority_valid(authority, manifest, incoming) -> bool:
+    """Admit only existing typed repair authorities with their native proof."""
+    if not isinstance(authority, Mapping):
+        return False
+    schema = authority.get("schema_version")
+    if schema == "recovery-same-bv-publication-authority.v1":
+        return True  # Existing path retains the full plan/before checks below.
+    if schema != "original-fastlane-authorized-same-bv.v1":
+        return False
+    if manifest.get("recovery_publication_authority") != authority:
+        return False
+    from src.autoslice.original_patch_package import validate_publication
+
+    try:
+        validate_publication(
+            authority,
+            candidate_id=str(incoming.get("candidate_id") or ""),
+            expected_final_title=str(manifest.get("title") or ""),
+        )
+    except (OSError, ValueError, TypeError, KeyError):
+        return False
+    return True
+
+
+def _verified_same_bv_successor(
+    current: Mapping[str, object], incoming: Mapping[str, object]
+) -> bool:
+    """Allow a changed recovery tuple only through its verified repair plan."""
+
+    if _publication_identity(current) == _publication_identity(incoming):
+        return False  # An exact rerun still uses the ordinary immutable comparison.
+    if (
+        incoming.get("status") != "VERIFIED_SAME_BV"
+        or current.get("status") not in {
+            "VERIFIED_PUBLIC", "VERIFIED_SAME_BV", "VERIFIED_SAME_BV_COVER"
+        }
+        or any(current.get(k) != incoming.get(k)
+               for k in ("schema_version", "candidate_id", "recording_date", "bvid", "aid"))
+        or any(not isinstance(v, int) or isinstance(v, bool) or v <= 0
+               for v in (current.get("aid"), current.get("cid"), incoming.get("cid")))
+        or current.get("cid") == incoming.get("cid")
+    ):
+        return False
+    completed_path = _validate_sha_entry(
+        incoming.get("authority"), "same-BV successor completed authority"
+    )
+    completed = _load_object(completed_path, "same-BV successor completed authority")
+    manifest_path, manifest = _repair_bound_object(
+        completed.get("manifest"), "same-BV successor manifest"
+    )
+    completed, bvid, aid, cid = _validate_same_bv_completed(
+        completed_path=completed_path, manifest=manifest, manifest_path=manifest_path
+    )
+    candidate, date = _candidate_and_date(manifest)
+    if (
+        completed.get("remote_mutation") is not False
+        or completed.get("candidate_id") != incoming.get("candidate_id")
+        or (candidate, date, bvid, aid, cid) != (
+            incoming.get("candidate_id"), incoming.get("recording_date"),
+            incoming.get("bvid"), incoming.get("aid"), incoming.get("cid")
+        )
+        or manifest.get("title") != incoming.get("title")
+        or not _snapshot_matches_publication(completed.get("live_snapshot"), incoming)
+    ):
+        return False
+    _, plan = _repair_bound_object(completed.get("plan"), "same-BV successor plan")
+    plan_binding = completed["plan"]
+    authority = plan.get("recovery_publication_authority")
+    return bool(
+        plan.get("schema_version") == "same-bv-repair-plan.v2"
+        and plan.get("plan_id")
+        and plan.get("plan_id") == plan_binding.get("plan_id")
+        and plan.get("bvid") == incoming.get("bvid")
+        and plan.get("manifest") == completed.get("manifest")
+        and plan.get("replacement") == completed.get("replacement")
+        and isinstance(authority, Mapping)
+        and _repair_successor_authority_valid(authority, manifest, incoming)
+        and all(authority.get(k) == current.get(k) for k in ("candidate_id", "bvid", "aid"))
+        # The recovery asset may predate an earlier repair. The plan's actual
+        # before snapshot is the predecessor CID authority for this transition.
+        and _snapshot_matches_publication(plan.get("before"), current)
+    )
+
+
+def _assert_publication_recovery_compatible(
+    path: Path,
+    publication: Mapping[str, object],
+) -> None:
+    """Validate an existing sidecar before any registry write takes place."""
+
+    if not path.exists() and not path.is_symlink():
+        return
+    date = str(publication.get("recording_date") or "")
+    projection = _load_object(path, "publication recovery projection")
+    entries = _validate_publication_recovery_projection(
+        projection, recording_date=date
+    )
+    incoming = _publication_recovery_entry(publication)
+    for entry in entries:
+        if entry["candidate_id"] == incoming["candidate_id"]:
+            if _verified_same_bv_successor(entry["publication_reconciliation"], publication):
+                continue
+            _assert_publication_identity_compatible(
+                entry["publication_reconciliation"],
+                publication,
+                label="publication recovery projection",
+            )
+            if entry["published_cid"] != incoming["published_cid"]:
+                raise PublicationReconciliationError(
+                    "publication recovery projection CID tuple conflicts"
+                )
+        elif entry["bvid"] == incoming["bvid"]:
+            raise PublicationReconciliationError(
+                "publication recovery projection BVID identity conflicts"
+            )
+
+
+def _upsert_publication_recovery_sidecar(
+    path: Path,
+    publication: Mapping[str, object],
+) -> bool:
+    """Create or append one missing-state projection entry idempotently."""
+
+    recording_date = str(publication.get("recording_date") or "")
+    incoming = _publication_recovery_entry(publication)
+    if path.exists() or path.is_symlink():
+        projection = _load_object(path, "publication recovery projection")
+        entries = _validate_publication_recovery_projection(
+            projection, recording_date=recording_date
+        )
+    else:
+        projection = {
+            "schema_version": PUBLICATION_RECOVERY_SCHEMA,
+            "projection_kind": PUBLICATION_RECOVERY_PROJECTION_KIND,
+            "recording_date": recording_date,
+            "original_state_status": "MISSING",
+            "original_candidate_set": "UNKNOWN",
+            "day_completion": "UNKNOWN",
+            "entries": [],
+        }
+        entries = []
+    matching = [
+        entry
+        for entry in entries
+        if entry["candidate_id"] == incoming["candidate_id"]
+    ]
+    if len(matching) > 1:
+        raise PublicationReconciliationError(
+            "publication recovery projection has duplicate candidate/date rows"
+        )
+    if matching:
+        if _verified_same_bv_successor(matching[0]["publication_reconciliation"], publication):
+            entries[entries.index(matching[0])] = incoming
+            projection["entries"] = entries
+            _atomic_write_json(path, projection)
+            return True
+        _assert_publication_identity_compatible(
+            matching[0]["publication_reconciliation"],
+            publication,
+            label="publication recovery projection",
+        )
+        if any(
+            matching[0].get(key) != incoming.get(key)
+            for key in (
+                "candidate_id",
+                "recording_date",
+                "status",
+                "cid",
+                "published_cid",
+                "bvid",
+                "aid",
+                "title",
+            )
+        ):
+            raise PublicationReconciliationError(
+                "publication recovery projection candidate tuple conflicts"
+            )
+        return False
+    if any(entry["bvid"] == incoming["bvid"] for entry in entries):
+        raise PublicationReconciliationError(
+            "publication recovery projection BVID identity conflicts"
+        )
+    entries = [*entries, incoming]
+    entries.sort(key=lambda entry: str(entry["candidate_id"]))
+    projection["entries"] = entries
+    _atomic_write_json(path, projection)
+    return True
+
+
+
+
 
 
 def _commit_projection(
@@ -1294,21 +1632,87 @@ def _commit_projection(
                 runtime_registry_path(root), publication
             )
         _assert_static_registry_compatible(registry_path, publication)
+        registry_projection = _prepare_registry_projection(registry_path)
+        deployed_registry = (
+            registry_projection.get("mode")
+            == _DEPLOYED_REGISTRY_PROJECTION_MODE
+        )
         state_paths = [
             root / "state" / f"{publication['recording_date']}.json"
             for root in roots
         ]
+        backup_paths = [path.with_suffix(".json.bak") for path in state_paths]
+        # A missing primary with any backup path is a state recovery
+        # restore case.  Do not silently route it through the missing-state
+        # sidecar; the backup must be restored by the established state
+        # recovery path first.
+        if any(
+            not path.is_file() and (backup.exists() or backup.is_symlink())
+            for path, backup in zip(state_paths, backup_paths, strict=True)
+        ):
+            raise PublicationReconciliationError(
+                "daily state primary is missing but .bak exists; restore backup first"
+            )
+        state_present = []
+        for path in state_paths:
+            present = path.exists() or path.is_symlink()
+            if present and not path.is_file():
+                raise PublicationReconciliationError(
+                    f"daily state path is not a regular file: {path}"
+                )
+            state_present.append(present)
         counts = [
             _state_candidate_count(path, str(publication["candidate_id"]))
             for path in state_paths
         ]
+        all_state_missing = not any(state_present)
+        if all_state_missing:
+            # Validate existing recovery sidecars before touching either
+            # registry.  This keeps authority/tuple drift from leaving a
+            # partially updated projection on disk.
+            recovery_paths = [
+                publication_recovery_sidecar_path(
+                    root, str(publication["recording_date"])
+                )
+                for root in roots
+            ]
+            for path in recovery_paths:
+                _assert_publication_recovery_compatible(path, publication)
+            for root in roots:
+                _upsert_runtime_registry(runtime_registry_path(root), publication)
+            if not deployed_registry:
+                _upsert_static_registry(registry_path, publication)
+            for path in recovery_paths:
+                _upsert_publication_recovery_sidecar(path, publication)
+            registry_projection["readback"] = _registry_readback(registry_path)
+            return {
+                "schema_version": RECONCILIATION_SCHEMA,
+                "status": publication["status"],
+                "candidate_id": publication["candidate_id"],
+                "recording_date": publication["recording_date"],
+                "bvid": publication["bvid"],
+                "state_paths": [],
+                "publication_recovery_paths": [
+                    str(path.resolve()) for path in recovery_paths
+                ],
+                "candidate_projection_status": PUBLICATION_RECOVERY_PROJECTION_KIND,
+                "day_state_status": "UNKNOWN",
+                "runtime_registry_paths": [
+                    str(runtime_registry_path(root)) for root in roots
+                ],
+                "registry_path": str(registry_path.resolve()),
+                "registry_projection_mode": registry_projection["mode"],
+                "registry_readback": registry_projection["readback"],
+                "registry_projection": registry_projection,
+            }
         if any(count > 1 for count in counts) or not any(counts):
             raise PublicationReconciliationError(
                 "daily state does not contain exactly one published candidate"
             )
         for root in roots:
             _upsert_runtime_registry(runtime_registry_path(root), publication)
-        _upsert_static_registry(registry_path, publication)
+        if not deployed_registry:
+            _upsert_static_registry(registry_path, publication)
         updated_states: list[str] = []
         for path in state_paths:
             if _update_state_file(path, publication):
@@ -1317,6 +1721,7 @@ def _commit_projection(
             raise PublicationReconciliationError(
                 "no daily state contained the published candidate"
             )
+        registry_projection["readback"] = _registry_readback(registry_path)
     return {
         "schema_version": RECONCILIATION_SCHEMA,
         "status": publication["status"],
@@ -1328,6 +1733,9 @@ def _commit_projection(
             str(runtime_registry_path(root)) for root in roots
         ],
         "registry_path": str(registry_path.resolve()),
+        "registry_projection_mode": registry_projection["mode"],
+        "registry_readback": registry_projection["readback"],
+        "registry_projection": registry_projection,
     }
 
 
@@ -1486,6 +1894,10 @@ def apply_runtime_publications_to_state(
         publication = entry.get("publication_reconciliation")
         assert isinstance(publication, Mapping)
         projected = _apply_publication_to_state(state, publication)
-        if projected is not None:
-            changed = projected or changed
+        if projected is None:
+            raise PublicationReconciliationError(
+                f"daily state does not contain runtime publication candidate "
+                f"{entry.get('candidate_id')} for {date}"
+            )
+        changed = projected or changed
     return changed

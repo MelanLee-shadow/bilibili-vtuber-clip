@@ -16,6 +16,51 @@ from src.autoslice.jingting_chunker import parse_srt_cues
 FIDELITY_REVIEW_CANDIDATE_LIMIT = 8
 
 
+def fidelity_kept_contexts(padded: Path, current_srt: str) -> list[dict[str, object]]:
+    """Keep cue evidence even when a multi-edit rejection cannot be a candidate.
+
+    This is metadata for the existing judge, not another proposal or call. Only
+    an unchanged kept cue on its original draft timeline can carry the signal.
+    """
+    try:
+        audit_bytes = padded.with_suffix(".fidelity-audit.json").read_bytes()
+        audit = json.loads(audit_bytes)
+        draft_bytes = padded.with_suffix(".asr_draft.srt").read_bytes()
+    except (OSError, ValueError, TypeError):
+        return []
+    if not isinstance(audit, Mapping) or audit.get("schema_version") != "subtitle-fidelity-audit.v2":
+        return []
+    rows = audit.get("reverted")
+    if not isinstance(rows, list):
+        return []
+    cues = [cue for cue in parse_srt_cues(current_srt) if cue.text.strip()]
+    draft = [cue for cue in parse_srt_cues(draft_bytes.decode("utf-8", "replace")) if cue.text.strip()]
+    contexts = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        index = row.get("cue_index")
+        if isinstance(index, bool) or not isinstance(index, int) or not 1 <= index <= min(len(cues), len(draft)):
+            continue
+        cue, source = cues[index - 1], draft[index - 1]
+        violations = row.get("violations")
+        if not (
+            cue.text == row.get("kept")
+            and source.text == row.get("draft")
+            and (cue.start_ms, cue.end_ms) == (source.start_ms, source.end_ms)
+            and isinstance(violations, list) and violations
+        ):
+            continue
+        contexts.append(_draft_kept_provenance(
+            cue_index=index, start_ms=cue.start_ms, end_ms=cue.end_ms,
+            kept=cue.text, current=cue.text, kept_candidate="CURRENT",
+            audit_sha256=hashlib.sha256(audit_bytes).hexdigest(),
+            source_srt_sha256=hashlib.sha256(draft_bytes).hexdigest(),
+            violations=violations,
+        ))
+    return contexts
+
+
 def _draft_kept_surface(
     kept: str, violations: list[object]
 ) -> str:

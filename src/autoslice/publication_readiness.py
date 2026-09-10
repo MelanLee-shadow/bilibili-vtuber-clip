@@ -390,9 +390,30 @@ def _inspect_package(root: Path | None, candidate_id: str, date: str) -> tuple[s
         return reasons | {"PACKAGE_ARTIFACT_HASHES_MISSING"}, dependencies, None
     preview = record.get("burned_preview")
     nested_burn = _field_path(preview, "burned_path", "path") if isinstance(preview, Mapping) else None
+    # Uniform-host rendering creates the actual ASS after the optional speaker
+    # stage.  Its committed producer locator therefore lives in burned_preview.
+    # Validate every declared nested locator even when a top-level one exists;
+    # a good mirror must not hide a missing, escaped or conflicting file.
+    nested_ass = _field_path(preview, "ass_path") if isinstance(preview, Mapping) else None
+    if isinstance(preview, Mapping) and preview.get("ass_path") is not None:
+        if nested_ass is None:
+            reasons.add("PACKAGE_ARTIFACT_LOCATOR_MISSING")
+        else:
+            try:
+                nested_ass_sha = _sha256(nested_ass, root)
+            except (OSError, ValueError):
+                reasons.add("PACKAGE_ARTIFACT_FILE_INVALID")
+            else:
+                if hashes.get("ass_sha256") != nested_ass_sha:
+                    reasons.add("PACKAGE_ARTIFACT_HASH_DRIFT")
     required = ((("media_path", "main_path"), "video_sha256", "media"), (("subtitle_path",), "subtitle_sha256", "subtitle"), (("subtitle_ass_path",), "ass_sha256", "subtitle_ass"), (("burned_video_path",), "burned_video_sha256", "burned_video"))
     for fields, hash_key, role in required:
         path = nested_burn if role == "burned_video" and nested_burn is not None else _field_path(record, *fields)
+        if role == "subtitle_ass" and path is None:
+            if record.get("subtitle_ass_path") is not None:
+                reasons.add("PACKAGE_ARTIFACT_LOCATOR_MISSING")
+            elif isinstance(preview, Mapping) and preview.get("status") == "BURNED":
+                path = nested_ass
         if path is None:
             reasons.add("PACKAGE_ARTIFACT_LOCATOR_MISSING")
             continue

@@ -13,7 +13,8 @@
 
 1. 语义召回为主：`select_semantic_session_candidates`（`src/autoslice/semantic_candidate_selector.py`），关键词只兜底（维护者拍板）。
    - 单段超过 45 分钟时，必须按 30 分钟核心窗 + 前后各 2 分钟上下文重叠分别召回，再在整段范围按信心分去重排序；禁止把 2 小时字幕塞进一次调用后，把模型只返回前半场少数候选误当作整场无内容。
-   - 每段候选池上限 12 是召回余量，不是交付配额；最终仍按每场 talk top-5 上限、scorecard 硬 Tier 与最低信心门筛选，不为凑数降门槛。
+   - 每段候选池上限 12 是召回余量，不是交付配额；最终按下节的杂谈/游戏/事件场配额、
+     scorecard 硬 Tier 与最低信心门筛选，不为凑数降门槛。不能把杂谈 top-5 套到所有场。
    - 已选候选若被边界、说话人或字幕 authority 的确定性安全门拒绝，保留拒绝记录但立即从已排序 backlog 补位；只有 provider/运行时等可恢复故障才占位等待，不能因一个不可交付候选把全场最终数量永久压低。
    - 上述补位只适用于普通生产。`RECOVERY_REVIEW` 若绑定
      `talk-selection-contract.v1 / EXACT_CANDIDATE_SET_NO_BACKFILL`，候选集合本身就是
@@ -39,14 +40,21 @@
   tick 重试但本 tick 仍按杂谈。事件场必须同时命中
   3D/生日/周年类标题语境且为横屏，竖屏永远是杂谈场；标题、探针缺失/不可读或方向
   unknown 都 fail closed 到杂谈场，不得静默放宽。
-- 普通生产在 exact contract 短路之后，互斥优先级为
-  `RESOLVED game > event > talk`，三类政策不叠加：游戏场保留既有 `20 / 第 6 席起 >=85`；
-  事件场为 `15 / 第 6 席起 >=85`；杂谈场为默认 `5`。同一坍缩 session 内分别使用
-  `game:`、`event:`、`talk:` scope，因此同日事件场的 15 席与杂谈场的 5 席独立计数。
-- 裁定出处（维护者 2026-08-09，裁定失落案重申）：「我记得我当时说过 88 这个 3D live 场
-  放宽到 15 个,然后当天的杂谈场认为是独立的,自然有 5 个」。实现见
-  `src/autoslice/segment_scene_context.py`、`src/autoslice/talk_quota_policy.py` 和
-  `src/autoslice/candidate_selection.py`。
+- 普通生产在 exact contract 短路之后，互斥范围优先级为
+  `RESOLVED game > event > talk`；范围只决定记账身份，**不自带放宽数字**。
+  唯一配额数字 authority 是 `assets/lidousha/talk_quota_policy_authority.v1.json`，按
+  `(recording_date, scope)` 精确匹配，不能用最近日期、另一场特批或历史全局常量。
+- 当前资产的缺省为 5 条、无额外席；已登记的 2026-08-07 game 为 10 条/第 6 席起 85，
+  2026-08-08 event 为 15 条/第 6 席起 85，同日 talk 仍独立 5 条。以后具体数字以经授权
+  更新的资产为准，不从本段复制旧快照。无条目的游戏/事件日也回落缺省 5 条。
+- 默认总量口径是每天 5 条（维护者 2026-08-18 原话），只有明确特批的日期/范围才独立放宽。
+  未经另行授权，不能用同日多场或场景分类自动叠出多个 5 条。
+  `TalkQuotaPolicy.scope_key` 按录制日期记账；没有日期特批的 event 与 talk 共享普通日额度。
+  同一特批范围的多个 session 也共享该范围额度。合法旧准入回执按相同日期与 lane 识别，
+  不重写历史回执；已交付、已预留和新准入都进入实际额度消费。部署状态须现场核对。
+- 旧“游戏一律 20、事件一律 15”是把特定日期放宽扩成了全局默认，已过时；
+  `talk_quota_policy.py` / `talk_quota_authority.py` 已使用上述 dated authority，本文同步
+  这一现有实现。8/8 的 20/85 旧裁定亦不能覆盖其较晚 15/85 条目。
 
 场次联动关系的现行 authority 是
 `src/autoslice/session_relation_authority.py` +

@@ -1,15 +1,16 @@
-"""Deterministic graphic-poster treatment for strong real-moment covers.
-
-This module keeps the live screenshot intact while materializing the selected
-batch diversity family as actual pixels around it.
-"""
+"""Source-led screenshot composition plus replay of explicit legacy poster styles."""
 
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from pathlib import Path
 
-from .cover_generation import LidoushaCoverArtDirection, _COVER_CANVAS, _sha256
+from .cover_generation import (
+    LidoushaCoverArtDirection, _COVER_CANVAS, _COVER_LAYOUT_RENDER, _sha256,
+    _COVER_BASE_FILL, _COVER_HOOK_COLORS, COVER_MIN_TALK_FONT_SIZE,
+    _cover_font_for_text, _fit_cover_punch_lines,
+)
 
 
 _SCREENSHOT_POSTER_PALETTES = {
@@ -58,6 +59,116 @@ _SCREENSHOT_POSTER_PALETTES = {
 }
 
 
+def _is_source_led(direction):
+    return not direction.is_song and direction.background_style not in (
+        *_SCREENSHOT_POSTER_PALETTES, "pop-art-burst", "halftone-dots", "speed-lines",
+        "soft-radial", "clean-scenic",
+    )
+
+
+def _source_region(source_size, title_zone):
+    x0, y0, x1, y1 = title_zone
+    regions = ((240, 0, x0 - 8, 1080), (x1 + 8, 0, 1680, 1080),
+               (240, 0, 1680, y0 - 8), (240, y1 + 8, 1680, 1080))
+    def scale(box):
+        return min((box[2] - box[0]) / source_size[0], (box[3] - box[1]) / source_size[1])
+    return max((box for box in regions if box[2] > box[0] and box[3] > box[1]), key=scale)
+
+
+def _source_frame_layout(screenshot_path, direction):
+    """Keep source pixels large, and fit a compact caption before compositing.
+
+    A landscape frame cannot occupy a narrow side column at the same scale as
+    a footer layout. Compare actual source dimensions, not the model's label.
+    Explicit historical styles and full-text contracts retain their geometry.
+    """
+    from PIL import Image
+
+    if not _is_source_led(direction) or not direction.cover_punch:
+        return direction, None, None
+    with Image.open(screenshot_path) as source:
+        size = source.size
+    font = _cover_font_for_text("\n".join(direction.cover_punch), title_style=direction.title_style)
+    # Find the smallest band meeting the existing font floor, then allow eight
+    # pixels of breathing room. Never allocate half the canvas merely because
+    # a legacy layout has a large maximum title rectangle.
+    lo, hi = 1, 486
+    while lo < hi:
+        height = (lo + hi) // 2
+        lines = _fit_cover_punch_lines(
+            direction.cover_punch, zone=(260, 0, 1660, height), font_path=font,
+            hook_rgb=_COVER_HOOK_COLORS[direction.hook_color], base_fill=_COVER_BASE_FILL,
+            max_size=COVER_MIN_TALK_FONT_SIZE,
+        )
+        if max(line["size"] for line in lines) >= COVER_MIN_TALK_FONT_SIZE:
+            hi = height
+        else:
+            lo = height + 1
+    height = min(486, hi + 8)
+    footer_zone = (260, 1080 - height, 1660, 1080)
+    requested = direction.layout
+    if requested in ("banner", "footer"):
+        zone = (260, 0, 1660, height) if requested == "banner" else footer_zone
+    else:
+        zone = _COVER_LAYOUT_RENDER[requested]["zone"]
+        current = _source_region(size, zone)
+        fallback = _source_region(size, footer_zone)
+        scale = lambda box: min((box[2] - box[0]) / size[0], (box[3] - box[1]) / size[1])
+        if scale(current) < scale(fallback):
+            direction = replace(direction, layout="footer")
+            zone = footer_zone
+    return direction, zone, {
+        "requested_layout": requested, "selected_layout": direction.layout,
+        "source_size": list(size), "title_zone": list(zone),
+        "reason": ("side column would shrink the complete source; use the larger footer area"
+                   if direction.layout != requested else "compact caption preserves more source pixels"),
+    }
+
+
+def _compose_source_frame(screenshot_path, output_path, *, art_direction, source_ai_modified, title_zone=None):
+    """Contain the complete input outside the actual title reservation.
+
+    Geometry, not a decorative family, determines the remaining image area.
+    The exact transformed source stays inside the center 4:3 crop and cannot
+    be touched by the title layer; relationship proof consumes this same box.
+    """
+    from PIL import Image, ImageEnhance, ImageOps
+
+    source = Image.open(screenshot_path).convert("RGB")
+    x0, y0, x1, y1 = title_zone or _COVER_LAYOUT_RENDER[art_direction.layout]["zone"]
+    safe = [240, 0, 1680, 1080]
+    region = _source_region(source.size, (x0, y0, x1, y1))
+    contained = ImageOps.contain(
+        source, (region[2] - region[0], region[3] - region[1]), Image.Resampling.LANCZOS
+    )
+    offset = ((region[0] + region[2] - contained.width) // 2,
+              (region[1] + region[3] - contained.height) // 2)
+    # Extend only the source's broad color gradients into the surrounding area,
+    # without repeating a blurred face, adding motifs or changing source pixels.
+    wash = source.resize((1, 16), Image.Resampling.BOX).resize(_COVER_CANVAS, Image.Resampling.BICUBIC)
+    canvas = ImageEnhance.Brightness(wash).enhance(0.38)
+    canvas.paste(contained, offset)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(output_path)
+    content_box = [offset[0], offset[1], offset[0] + contained.width, offset[1] + contained.height]
+    return {
+        "schema_version": "screenshot-graphic-poster.v2", "status": "COMPOSED",
+        "background_style": art_direction.background_style,
+        "composition": "source_frame_with_title_reservation", "palette": {},
+        "title_zone": [x0, y0, x1, y1],
+        "screenshot_card": {"size": list(contained.size), "rotation_degrees": 0.0},
+        "source_frame_transform": {
+            "input_sha256": "sha256:" + _sha256(screenshot_path),
+            "source_size": list(source.size), "rendered_content_box": content_box,
+            "crop_applied": False, "full_frame_preserved": True,
+            "face_safe_contain": True, "card_fit": "full_frame",
+            "ai_modified": bool(source_ai_modified),
+            "center_4_3_box": safe, "center_4_3_safe": True,
+        },
+        "output_path": str(output_path), "output_sha256": "sha256:" + _sha256(output_path),
+    }
+
+
 def _compose_screenshot_poster_background(
     screenshot_path: Path,
     output_path: Path,
@@ -66,18 +177,52 @@ def _compose_screenshot_poster_background(
     preserve_full_frame: bool = False,
     source_ai_modified: bool = False,
     face_safe_contain: bool = False,
+    source_title_zone: tuple[int, int, int, int] | None = None,
 ) -> dict[str, object]:
-    """Put a faithful real-moment screenshot on a visibly rotating poster.
-
-    The July 22 cover incident exposed a routing hole: ``background_style`` was
-    assigned correctly, but strong frames took the screenshot-direct lane and
-    never rendered that style.  This deterministic layer keeps the real facial
-    expression (the useful part of the screenshot route) while making palette,
-    motif, card angle and surrounding graphic field materially different across
-    a batch.  No segmentation or generative redraw is involved.
-    """
-
+    """Compose a real frame; explicit historic styles retain their old pixels."""
     from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
+
+    if _is_source_led(art_direction):
+        return _compose_source_frame(
+            screenshot_path, output_path, art_direction=art_direction,
+            source_ai_modified=source_ai_modified, title_zone=source_title_zone,
+        )
+
+    if (art_direction.visual_brief and art_direction.title_style == "clean"
+            and art_direction.layout == "footer" and not preserve_full_frame):
+        # A real frame can carry the cover without another decorative card.
+        # Contain the complete authorized crop; only darken the caption area.
+        source = Image.open(screenshot_path).convert("RGB")
+        contained = ImageOps.contain(source, _COVER_CANVAS, Image.Resampling.LANCZOS)
+        offset = ((_COVER_CANVAS[0] - contained.width) // 2,
+                  (_COVER_CANVAS[1] - contained.height) // 2)
+        canvas = Image.new("RGB", _COVER_CANVAS, (16, 20, 27))
+        canvas.paste(contained, offset)
+        shade = Image.new("RGBA", _COVER_CANVAS)
+        draw = ImageDraw.Draw(shade)
+        for y in range(640, 1080):
+            draw.line((0, y, 1920, y), fill=(8, 12, 20, round(235 * (y - 640) / 439)))
+        canvas = Image.alpha_composite(canvas.convert("RGBA"), shade).convert("RGB")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        canvas.save(output_path)
+        box = [offset[0], offset[1], offset[0] + contained.width, offset[1] + contained.height]
+        return {
+            "schema_version": "screenshot-graphic-poster.v2", "status": "COMPOSED",
+            "background_style": art_direction.background_style,
+            "composition": "source_frame_with_footer", "palette": {},
+            "screenshot_card": {"size": list(contained.size), "rotation_degrees": 0.0},
+            "source_frame_transform": {
+                "input_sha256": "sha256:" + _sha256(screenshot_path),
+                "source_size": list(source.size), "rendered_content_box": box,
+                "crop_applied": False, "full_frame_preserved": True,
+                "face_safe_contain": True, "card_fit": "full_frame",
+                "ai_modified": bool(source_ai_modified),
+                "center_4_3_box": [240, 0, 1680, 1080],
+                "center_4_3_safe": box[0] >= 240 and box[2] <= 1680,
+                "caption_shade_box": [0, 640, 1920, 1080],
+            },
+            "output_path": str(output_path), "output_sha256": "sha256:" + _sha256(output_path),
+        }
 
     style = art_direction.background_style
     palette = _SCREENSHOT_POSTER_PALETTES.get(

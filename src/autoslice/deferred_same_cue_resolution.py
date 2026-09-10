@@ -280,6 +280,7 @@ def adjudicate_routed_findings(
         for index, cue in enumerate(initial_cues, start=1)
     }
     adjudicated_windows: set[tuple[int, int]] = set()
+    acoustic_history: dict[tuple[int, int], list[dict[str, Any]]] = {}
     admitted_windows: set[tuple[int, int]] = set()
     rejected_windows: set[tuple[int, int]] = set()
     group_sizes = Counter(
@@ -364,7 +365,20 @@ def adjudicate_routed_findings(
             continue
         adjudication_count += 1
         adjudicated_windows.add(window)
+        # Re-entry changes the proposed text, not what was already heard in
+        # this source window. Preserve observations as scoped history; do not
+        # rebind an old witness to the new candidate's request.
+        if window in acoustic_history:
+            row["_prior_acoustic_observations"] = list(acoustic_history[window])
         srt_text, audit = adjudicate(srt_text, row)
+        if (
+            isinstance(audit.get("verdict"), Mapping)
+            and audit["verdict"].get("status") == "OBSERVED"
+        ):
+            acoustic_history.setdefault(window, []).append({
+                "request": audit.get("request"),
+                "verdict": audit["verdict"],
+            })
         rebuilt_finding = audit.get("rebuilt_finding")
         if isinstance(rebuilt_finding, Mapping):
             for key in (

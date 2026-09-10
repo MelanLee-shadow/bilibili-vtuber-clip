@@ -59,7 +59,7 @@ from scripts.run_auto_review_shadow_pipeline import (
 
 # Art direction is a structured pick with a known good shape (deterministic
 # fallback + judge guardrails) → gpt-5.6-luna, the doc-exact luna lane.
-_CPA_ART_DIRECTION_LLM = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-luna gpt-5.5 gpt-5.4' medium"
+_CPA_ART_DIRECTION_LLM = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-astra' medium"
 
 
 def _extract_reference_frame(media: Path, out: Path) -> None:
@@ -262,6 +262,8 @@ def regenerate_cover(
             "expression_en": art_direction.expression_en,
             "background_style": art_direction.background_style,
             "layout": art_direction.layout,
+            "visual_brief": art_direction.visual_brief,
+            "title_style": art_direction.title_style,
             "hook_color": art_direction.hook_color,
             "hook_word": art_direction.hook_word,
             "is_song": art_direction.is_song,
@@ -348,13 +350,13 @@ def main(argv=None) -> int:
     p.add_argument("--ai-bg", type=Path, help="Path for the no-text AI background (default: <out>.ai-bg.png).")
     p.add_argument("--reuse-bg", action="store_true", help="Fail closed unless a future bound-source-manifest workflow is implemented.")
     p.add_argument("--no-llm", action="store_true", help="Skip the CPA art-direction judge; use the deterministic baseline.")
-    p.add_argument("--layout", choices=("left-split", "right-split", "banner", "song-clean"),
+    p.add_argument("--layout", choices=("left-split", "right-split", "banner", "footer", "song-clean"),
                    help="force the text layout (right-split=text LEFT/character RIGHT; left-split=text RIGHT). Use when the reused AI bg's character is on the side the auto-layout put text.")
     p.add_argument("--emote", help="force an emote sticker as the cover subject by library id (e.g. 09); 维护者's manual strong-reason channel. replace mode needs no --ref/--media at all.")
     p.add_argument("--emote-mode", choices=("replace", "companion"), default="replace",
                    help="replace = the sticker IS the subject (no character redraw); companion = sticker inset beside the character (分身/代画粉丝kmx; needs --ref or --media).")
     p.add_argument("--emote-reason", default="", help="one-line strong reason recorded in the evidence manifest.")
-    p.add_argument("--diversity-slot", type=int, help="stable same-session cover slot; slots 0-5 map to distinct background families.")
+    p.add_argument("--diversity-slot", type=int, help="non-negative same-session fallback slot for layout and accent; explicit art direction takes precedence.")
     p.add_argument("--allow-punch", action="store_true",
                    help="opt IN to the punch lane for short cover_text. NOT an off switch: "
                         "cover_text that cannot fit the 1-2 line thumbnail contract turns the "
@@ -365,6 +367,8 @@ def main(argv=None) -> int:
                         "publish/record（与 runner cover-only repair 同一套校验与 "
                         "binding 回执；任何校验失败包保持原样，出图产物仍在）。")
     args = p.parse_args(argv)
+    if args.diversity_slot is not None and args.diversity_slot < 0:
+        p.error("--diversity-slot must be non-negative")
 
     meta = regenerate_cover(
         title=args.title,

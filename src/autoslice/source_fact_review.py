@@ -361,6 +361,18 @@ def _entity_context_prompt_block(
 ) -> str:
     if context is None:
         return ""
+    operator_fact = context.document.get("operator_public_fact_authority")
+    if isinstance(operator_fact, Mapping):
+        return (
+            "候选级人工事实纠正（已验证并绑定本 candidate、源区间与原话）：\n"
+            f"entity_context_sha256: {context.context_sha256}\n"
+            + json.dumps(operator_fact, ensure_ascii=False, sort_keys=True)
+            + "\n只将原话明确纠正的事件事实作为本片派生文案的事实依据，"
+            "归入 same_clip_context；不得因为它未逐字出现在字幕或弹幕中就将其抹去。"
+            "这不是仅有专名拼写的约束，也不是无条件批准整条标题。"
+            "其余事件、因果、程度仍须逐项由同片证据支持；"
+            "该原话不授权修改最终字幕、说话人、边界或发布状态。\n"
+        )
     rules = context.document.get("identity_spelling_rules")
     assert isinstance(rules, list)
     public_only = context.document.get("authority_scope") == (

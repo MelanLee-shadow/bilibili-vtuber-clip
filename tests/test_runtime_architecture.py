@@ -41,11 +41,11 @@ FUNCTION_DEBT_LEDGER = {
     # context-only 直改分支，统一落回候选盲声学见证路径并锁定拆解收益。
     # 净 -33：文字第三候选重建与 exact-source transcript receipt
     # 构造抽到 focused leaves；本函数只保留编排与既有 CPA/mutation audit。
-    ("src/autoslice/final_review_auditor.py", "adjudicate_context_finding"): 715,
+    ("src/autoslice/final_review_auditor.py", "adjudicate_context_finding"): 662,
     # +12:维护者 8/8 真值法证 F1 回声环修复(synthesis)——
     # 只接入登记误听面分类、弱 provenance 与声学路由；分类器在新小模块。
     # 净 -1：F16/F17 trusted priority provenance 接线压成薄调用。
-    ("src/autoslice/final_review_auditor.py", "audit_final_subtitles"): 420,
+    ("src/autoslice/final_review_auditor.py", "audit_final_subtitles"): 413,
     # +3：owned_intervals 执法接线（维护者 配额上传波
     # 修复——zsm8 案：baseline 已应用的 cue 被 exact-final CPA 自愈无声改写；
     # redelivery_subtitle_baseline.py 写 owned_intervals 从未被读取）。
@@ -68,7 +68,7 @@ FUNCTION_DEBT_LEDGER = {
     # （baseline）同一模式。测试
     # tests/test_producer_package_finalization.py::
     # test_exact_final_review_gate_suppresses_chat_authority_owned_finding。
-    ("src/autoslice/producer_package_finalization.py", "_run_exact_final_review_gate"): 383,
+    ("src/autoslice/producer_package_finalization.py", "_run_exact_final_review_gate"): 379,
     # +17：狍哥案实施指令（维护者「你把狍哥案解决了」，
     # 内部设计文档留存）——
     # SOURCE_FACT_REPAIRED_HOOK_SCORECARD_STALE 不再落 EXHAUSTED，改写
@@ -84,7 +84,7 @@ FUNCTION_DEBT_LEDGER = {
     # source_truth 同款 DEFERRED 惯例）。连续吃增长，下次动它先拆。
     # 净 -25：source boundary review 整体抽到
     # producer_source_boundary_review.py；锁定本次拆解收益。
-    ("src/autoslice/producer_text_pipeline.py", "_finalize_text_evidence"): 320,
+    ("src/autoslice/producer_text_pipeline.py", "_finalize_text_evidence"): 317,
     # +6：会话内重述修复接线（维护者 当日指令，
     # 内部设计文档留存 §4）——同上，
     # 重活在 restatement_recall.py，这里只留调用点。
@@ -100,7 +100,7 @@ FUNCTION_DEBT_LEDGER = {
     # 本文件只有一处薄调用点（赋值 + 调用 + 出处注释）。
     # 测试 tests/test_final_review_carryover_hard_exit.py。
     # 净 -31：同一 source boundary router 抽取后的实测值。
-    ("src/autoslice/producer_text_pipeline.py", "run_text_pipeline"): 316,
+    # extracted structured chat binding; function now 293, below cap.
     # +6：full-text contract 穿透形参与调用（维护者 07-31 `/goal`
     # 「直接按照 fable 的 advise 继续，直至修复所有问题」授权；Fable 裁定 4
     # 点名「contract 不穿透 = 静默把唯一合法全文通道杀死」，必须补）。
@@ -143,7 +143,7 @@ MODULE_DEBT_LEDGER = {
     # module; retain the exact lower bound so this entrypoint cannot regrow.
     # C2 sealed-release authority replay moved into its own bounded
     # module; retain the lower bound rather than compressing the upload gate.
-    "scripts/authorized_upload.py": 2_820,
+    "scripts/authorized_upload.py": 2_775,
     # 新记（维护者 逐字「立刻开工」授权的切片提速）：上下文裁决
     # 证人预热接线。重活全在新模块 src/autoslice/context_adjudication_witness_prewarm.py
     # （只读复演准入算术、有界并发、失败静默、串行循环零改动），这里只有 import +
@@ -151,7 +151,6 @@ MODULE_DEBT_LEDGER = {
     # ⚠️ 欠账：本文件需要真正的拆解（既有 _run_final_review 等大函数已在函数账本里），
     # 不是靠删注释凑行数。下次再动它必须先拆。测试
     # tests/test_context_adjudication_witness_prewarm.py。
-    "src/autoslice/producer_text_pipeline.py": 2_007,
 
     # +15：--smoke-segment 有界 backfill（帽 3）——维护者 8/2 /goal
     # 「全都按你的想法进行修复，当然都要配测试」授权；测试 test_smoke_backfill.py。
@@ -205,12 +204,14 @@ MODULE_DEBT_LEDGER = {
     # 数字为合并后实测,非估算。
     # +8：reviewed-punch 实现迁至 cover_punch_semantics 后保留
     # _punch_wrap 的旧签名入口；它只转发至同一 fail-closed 实现。
-    "src/autoslice/cover_generation.py": 2_346,
+    "src/autoslice/cover_generation.py": 2080,
     # +166：bind_manual_package_cover——手动产线包封面回写（同一套
     # 校验/binding/原子写；维护者 8/2 /goal 授权；测试 test_manual_cover_bind.py）。
     # -39: screenshot-polish route validation/story projection moved
     # into cover_repair_route_lineage; keep the compatibility helper alias.
-    "src/autoslice/cover_repair.py": 2_178,
+    # active screenshot binding preflight moved into the focused
+    # route-lineage module; lock in the 12-line reduction, not a larger budget.
+    "src/autoslice/cover_repair.py": 2_166,
     # +79：cue59「殉情」顶替真值「偶遇」实案（维护者
     # auto_203735_555_680 speaker-truth-diff 裁决 + 落地授权）——新增
     # _glossary_session_candidate_undecidable / _adjudicate_with_glossary_witness_guard
@@ -240,7 +241,8 @@ MODULE_DEBT_LEDGER = {
     # 可信 provenance、request 接线，锁定本轮债务偿还。
     # 净 -146：closed-set proposal rebuild 与 exact-source transcript
     # contract/provider/authority 分拆到 focused leaves，锁定此次提取收益。
-    "src/autoslice/final_review_auditor.py": 3_067,
+    # Discovery prompt moved to its own module without changing prompt bytes.
+    "src/autoslice/final_review_auditor.py": 2_953,
     "src/autoslice/live_source_review.py": 2_035,
     # +18：狍哥案实施指令（同上）——marker 选择改判
     # SOURCE_FACT_REPAIRED_RESCORE_REQUIRED + 写 pending sidecar。
@@ -272,7 +274,7 @@ MODULE_DEBT_LEDGER = {
     # deferred exact-replay receipt 分别收束到窄模块，避免 producer 回涨。
     # net -12: source binding and provenance writes extracted into
     # producer_final_recut_source_binding.py and producer_recut_provenance.py.
-    "src/autoslice/producer_package_finalization.py": 2_620,
+    "src/autoslice/producer_package_finalization.py": 2_598,
     # +40：同上（SC 发送者 deferral）。
     # +7：会话内重述修复接线（维护者 当日指令，
     # 内部设计文档留存 §4）——会话内

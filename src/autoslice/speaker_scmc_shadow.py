@@ -1,6 +1,6 @@
 """Session-stratified centroid--medoid speaker verification in shadow mode.
 
-This module implements the score-only architecture selected in the 
+This module implements the score-only architecture selected in the
 ChatGPT Pro review.  It is deliberately isolated from production speaker,
 centrality, selection, and release code.  A missing threshold manifest means
 every real-data decision is UNKNOWN even when diagnostic scores are available.

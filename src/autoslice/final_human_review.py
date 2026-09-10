@@ -707,12 +707,20 @@ def replay_final_human_review_attestation(
     receipt = _json_object(
         paths["final_human_review"], source="final_human_review"
     )
-    validate_final_human_review(
-        receipt,
-        package_root,
-        review_manifest,
-        attestation,
-    )
+    if receipt.get("schema_version") == "original-fastlane-delta-technical-review.v1":
+        from src.autoslice.original_patch_review import validate_technical_receipt
+        try:
+            validate_technical_receipt(receipt, package_root, paths["package_audit"],
+                                       publication_authority=manifest.get("recovery_publication_authority"))
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            raise FinalHumanReviewError("ORIGINAL_PATCH_TECHNICAL_REVIEW_INVALID", str(exc)) from exc
+    else:
+        validate_final_human_review(
+            receipt,
+            package_root,
+            review_manifest,
+            attestation,
+        )
     return {
         "package_root": package_root_text,
         **entries,

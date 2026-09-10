@@ -30,6 +30,29 @@ from src.autoslice.acoustic_witness_protocol import BLIND_PINYIN_PROTOCOL
 
 WITNESS_SCHEMA = "subtitle-span-acoustic-witness.v1"
 AUDIO_VERIFIER_UNAVAILABLE = "AUDIO_VERIFIER_UNAVAILABLE"
+TEXT_FIRST_REASON = "CPA_TEXT_FIRST_NOT_REQUESTED"
+TEXT_FIRST_INSTRUCTIONS = """
+## TEXT_FIRST：本轮先做文字裁决
+还没有调用音频证人。这是正常调用顺序，不是 provider 不可用或听音失败；
+本轮没有拼音/转写观察，不得虚构声音依据。
+先比较全部候选、完整语境和有来源的文字证据。若这些证据已经足以作出选择，
+返回 needs_audio=false；仍有具体、可以通过局部听音解决的疑点时，返回
+needs_audio=true 并说明疑点，此次排序只是暂定，随后才会听音并交你终裁。
+缺少拼音本身不是请求音频的理由，也不允许因此默认保留 CURRENT。
+在原 JSON 输出中加上布尔字段 "needs_audio"，不要字符串，不要省略。
+"""
+
+
+def pending_acoustic_witness(witness_request: Mapping[str, Any]) -> dict[str, Any]:
+    """Explicit absence of an observation before CPA requests local listening."""
+    return {
+        "schema_version": WITNESS_SCHEMA,
+        "witness_protocol": BLIND_PINYIN_PROTOCOL,
+        "request_sha256": witness_request.get("request_sha256"),
+        "status": "UNCERTAIN",
+        "reason_code": TEXT_FIRST_REASON,
+        "audio_attempted": False,
+    }
 
 
 def witness_audio_locally_resolvable(padded: Path, *, host: str) -> bool:

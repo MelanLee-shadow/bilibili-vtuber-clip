@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import base64
+import base64 as base64  # compatibility export
 import hashlib
 import json
 import os
 import re
 import urllib.error
-import urllib.request
+import urllib.request  # noqa: F401 — existing transport monkeypatch surface
 from dataclasses import dataclass, field, replace as dataclass_replace
 from pathlib import Path
 from typing import Callable, Mapping, NamedTuple, Sequence
@@ -43,9 +43,16 @@ from src.autoslice.cover_title_rendering import (
     FEED_SAFE_X0,
     FEED_SAFE_X1,
     materialize_title_layer_spec,
+    title_layer_position,
 )
 from src.autoslice.llm_client import LlmCall, extract_json_object
+from src.autoslice.cover_story_direction import (
+    _COVER_BG_BUSY as _COVER_BG_BUSY, _COVER_BG_CALM, _COVER_BG_PHRASES,
+    _COVER_FORBIDDEN_EXPR, _COVER_ROLE_LEXICON,
+    final_copy_image_prompt, image_identity_prompt, refresh_visual_brief, story_composition_prompt,
+)
 from src.autoslice.provider_slots import provider_transport
+from src.autoslice.cpa_image_edit import perform_image_edit
 
 ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(ROOT)
@@ -110,9 +117,14 @@ class LidoushaCoverArtDirection:
     cover_punch_semantic_review: dict[str, object] = field(
         default_factory=dict
     )
+    # Story-specific camera, staging and material direction. This is consumed
+    # by the image prompt; it must not be reduced to a background color choice.
+    visual_brief: str = ""
+    title_style: str = "outline"  # outline | clean
 
 
 _COVER_TALK_LAYOUTS = ("left-split", "right-split", "banner")
+_COVER_STORY_LAYOUTS = (*_COVER_TALK_LAYOUTS, "footer")
 _COVER_SONG_LAYOUT = "song-clean"
 _COVER_BASE_FILL = (255, 246, 214)  # cream #FFF6D6 — approved base fill
 _COVER_STROKE = (18, 36, 79)        # navy  #12244F — approved outer stroke
@@ -127,87 +139,6 @@ _COVER_HOOK_COLORS = {
     "orange": (255, 140, 60),
     "red": (233, 69, 69),
 }
-_COVER_BG_BUSY = (
-    # These are deliberately different *visual families*, not three synonyms
-    # for the same blue comic background.  The deterministic batch rotation
-    # below owns this axis so a fashionable LLM preference cannot collapse a
-    # whole day's covers back onto one template.
-    "cobalt-comic-burst",
-    "warm-scrapbook-collage",
-    "violet-neon-stage",
-    "mint-doodle-stickers",
-    "mono-manga-panels",
-    "coral-checker-pop",
-)  # talk
-_COVER_BG_CALM = ("soft-radial", "clean-scenic")                    # song
-_COVER_BG_PHRASES = {
-    "cobalt-comic-burst": (
-        "a high-energy cobalt-and-navy comic-book burst with lemon-yellow accents, "
-        "radial speed lines, coarse halftone shadows and a few sharp starbursts; "
-        "the dominant palette must be cobalt/navy/yellow"
-    ),
-    "warm-scrapbook-collage": (
-        "a warm handmade scrapbook collage in coral, peach, cream and dark forest-green, "
-        "with torn-paper layers, masking-tape shapes and hand-cut blank stickers; "
-        "no blue-dominant comic burst and no written marks"
-    ),
-    "violet-neon-stage": (
-        "a sleek night-stage visual in deep plum and near-black with vivid magenta and cyan "
-        "neon rim lights, glowing arcs and soft lens bokeh; polished luminous depth, "
-        "not halftone comic art"
-    ),
-    "mint-doodle-stickers": (
-        "a playful pastel sticker-board in mint, turquoise, warm cream and tangerine, "
-        "with rounded doodle blobs, tiny flower and paw-print shapes and layered blank stickers; "
-        "soft flat shapes, not a radial comic burst"
-    ),
-    "mono-manga-panels": (
-        "a bold editorial manga-panel design in ink black, warm ivory and one vermilion-red accent, "
-        "with angular panel blocks, dry-brush textures and dramatic high contrast; "
-        "keep the character naturally colored while the graphic field stays mostly monochrome"
-    ),
-    "coral-checker-pop": (
-        "a cheerful retro magazine-pop composition in coral, brick red, pale aqua and mustard, "
-        "using large checkerboard blocks and clean Memphis-style circles and arches; "
-        "flat geometric design, no blue comic speed lines"
-    ),
-    # Legacy keys remain renderable for old committed metadata and fixtures.
-    "pop-art-burst": "an energetic pop-art comic background — radiating burst/speed lines, halftone dots, scattered sparkles and little stars, filling the frame",
-    "halftone-dots": "a vivid halftone dot-pattern background with a few bold stars and soft sparkles, filling the frame",
-    "speed-lines": "a dynamic comic speed-line / radial motion background with halftone shading and sparkles, filling the frame",
-    "soft-radial": "a soft radial glow background with gentle bokeh and a few sparkles, calm and uncluttered",
-    "clean-scenic": "a clean dreamy scene — a starry night sky with a crescent moon, soft bokeh and a few floating music notes, low-detail and uncluttered",
-}
-# Expression guardrail (维护者 — 表情永不吐舌头, never 油滑/挑衅/sexy).  Match bad
-# PHRASES, not bare "tongue" (else a benign "no tongue" would be rejected); the
-# global no-tongue rule is enforced unconditionally in _cover_prompt.
-_COVER_FORBIDDEN_EXPR = (
-    "tongue out", "tongue-out", "tongue sticking", "sticking tongue", "stick out her tongue",
-    "licking", "sexy", "seductive", "挑衅", "provocative", "油滑", "媚", "cleavage", "flirt", "吐舌",
-)
-
-# Title-keyword → in-character role/expression/background.  DEFAULT is soft/cute
-# 清纯邻家女同学; 机灵/得意 is SECONDARY (only when the clip role calls for it).
-# Role keywords may choose the face, but never the talk-lane visual family:
-# otherwise every "惊讶" clip becomes the same speed-line cover again.
-_COVER_ROLE_LEXICON: tuple[tuple[tuple[str, ...], str, str, str | None], ...] = (
-    (("破防", "害怕", "好可怕", "吓", "怕", "惊", "傻眼", "？！", "!？", "遇到"), "shocked_bites_back",
-     "wide-eyed startled gasp, mouth open in surprise, flushed cheeks, hands drawn up near her face, scared-but-cute", None),
-    (("哭", "眼泪", "又哭", "哭哭"), "teary_cute",
-     "big welling teary eyes, a cute comedic about-to-cry frown, blush, sniffly", None),
-    (("拆台", "反杀", "反怼", "玩梗", "一眼AI", "得意", "整活", "谐音", "反沙", "嘴瓢", "掏兜", "买弹幕", "自封"), "witty_smug",
-     "clever pleased closed-mouth grin, one eyebrow slightly raised, a little smug but cute", None),
-    (("嘴硬", "澄清", "不是", "嘴犟", "才不"), "stubborn_pout",
-     "pouty defiant frown, puffed cheeks, cute-stubborn hmph, arms-crossed energy", None),
-    (("吃醋", "你只能", "占有", "醋"), "jealous_pout",
-     "jealous puffed-cheek pout, small knit brows, clingy-cute possessive look", None),
-    (("一本正经", "犯傻", "歪理", "认真", "讲道理"), "earnest_silly",
-     "earnest deadpan serious face, flat calm eyes, taking herself absurdly seriously", None),
-    (("看傻", "离谱", "越看越", "当场看", "越整越", "奇遇", "猴群", "见猴", "第一次见"), "dumbstruck",
-     "dumbstruck frozen face, wide round sparkly eyes, small O-shaped open mouth, hands near chin", None),
-    (("哄睡", "晚安", "温柔", "细声"), "tender_soft",
-     "tender warm soft-smiling face, gentle half-lidded caring eyes, soothing", None),
-)
 _COVER_HOOK_LEXICON = (
     "反沙", "反杀", "拆台", "一群猴", "翻车", "破防", "看傻", "清唱", "一眼AI", "嘴硬", "吃醋", "哄睡",
     "犯傻", "离谱", "掏兜", "买弹幕", "回扣", f"反{CHANNEL_PROFILE.display_name}", "海王", "认输", "自封", "妈妈", "宝宝", "破大防",
@@ -390,10 +321,8 @@ def _cover_art_direction(
             % len(_COVER_TALK_LAYOUTS)
         ]
         role, expression_en, forced_bg = _cover_role_from_title(title, cover_text)
-        background_style = forced_bg if forced_bg is not None else _COVER_BG_BUSY[
-            (diversity_slot if valid_diversity_slot else digest // 7)
-            % len(_COVER_BG_BUSY)
-        ]
+        # The slot supplies missing layout/color hints, never a mandatory skin.
+        background_style = forced_bg or "source-led"
     baseline = LidoushaCoverArtDirection(
         role=role,
         expression_en=expression_en,
@@ -486,6 +415,7 @@ def _cover_art_direction(
                 )
     except Exception:
         direction = baseline
+    original_punch = direction.cover_punch
     if allow_punch and not direction.is_song:
         reviewed, proof = review_cover_punch_semantics(
             title=title,
@@ -500,21 +430,33 @@ def _cover_art_direction(
             cover_punch=reviewed,
             cover_punch_semantic_review=proof,
         )
-    return _talk_font_floor_layout_override(
-        _punch_layout_override(direction), cover_text
+    return refresh_visual_brief(
+        _talk_font_floor_layout_override(_punch_layout_override(direction), cover_text),
+        original_punch=original_punch, title=title, story_hook=story_hook,
+        llm_call=art_direction_llm_call,
     )
 
 
 def _punch_layout_override(direction: LidoushaCoverArtDirection) -> LidoushaCoverArtDirection:
-    """梗字封面强制 banner 文字区（生态调研）。
+    """Keep the story's layout when the actual punch fits at the font floor.
 
-    高播放封面的大字横贯全宽——窄边栏 zone 里 9-10 字的梗字只能到 ~80px，比
-    整段文案还小，梗字的意义就没了；banner 宽区里同样的字直接翻倍。CPA 构图
-    prompt 与叠字 zone 都跟着 layout 走，所以必须在艺术指导终态统一改。
+    Resolve any necessary change before image generation, never while overlaying
+    a background that already reserves a different title zone.
     """
-
-    if direction.cover_punch and direction.layout != "banner" and not direction.is_song:
-        return dataclass_replace(direction, layout="banner")
+    if direction.cover_punch and not direction.is_song:
+        render = _COVER_LAYOUT_RENDER[direction.layout]
+        lines = _fit_cover_punch_lines(
+            direction.cover_punch,
+            zone=render["zone"],
+            font_path=_cover_font_for_text(
+                "\n".join(direction.cover_punch), title_style=direction.title_style
+            ),
+            hook_rgb=_COVER_HOOK_COLORS[direction.hook_color],
+            base_fill=_COVER_BASE_FILL,
+            max_size=render["max_size"],
+        )
+        if max(line["size"] for line in lines) < COVER_MIN_TALK_FONT_SIZE:
+            return dataclass_replace(direction, layout="banner")
     return direction
 
 
@@ -603,14 +545,27 @@ def _cover_art_direction_prompt(
         f"\n{CHANNEL_PROFILE.display_name}人设(权威):\n{persona}\n"
         "\n硬护栏:表情要贴这条切片里她扮演的角色;默认是软糯清纯邻家女同学(被欺负又软软反击);"
         "机灵鬼怪/得意只在角色需要时用(次要);**永远不要吐舌头**,不要油滑/挑衅/性感/媚。"
-        "外观由参考帧决定,你不描述服装。\n"
+        "外观完全由图像参考决定。你未看到参考图，所以 visual_brief 不得描述发色、发型、耳朵、"
+        "眼睛颜色、脸部标志、服装或配饰，也不得按角色名或故事里的外号猜测它们。"
+        "即使故事提及另一发色/皮肤，未提供相应受信图像参考时也不能要求画出；"
+        "用同一参考形象在不同时刻的动作、表情、节奏表达反差。\n"
         f"\n本切片标题: {title}\n封面文案(分行): {cover_text}\n"
         f"完整 StoryContract selection_hook: {story_hook or '(未提供，按标题裁决)'}\n"
-        "\n系统已经为本条锁定下列三个抗同质化轴，禁止改动；它们由跨切片稳定轮换决定，而不是语义裁判决定:\n"
+        "\n以下是可用的默认建议，不是锁定模板。根据故事选择画面组织，不能只靠换色制造多样性:\n"
         f"- layout: {baseline.layout}\n"
         f"- background_style: {baseline.background_style}\n"
         f"- hook_color: {baseline.hook_color}\n"
-        "\n请只选择/生成以下语义轴:\n"
+        "\n请选择/生成以下艺术指导字段:\n"
+        "- layout: left-split(人物左/字右)、right-split(人物右/字左)、banner(字上)、footer(字下)。"
+        "先决定故事如何被看懂，再为1-2行短文字留区。歌切保留song-clean。\n"
+        "先考虑保留真实截图：按源帧与故事选择上方、下方或侧边文字区；不默认套卡片或图形皮肤。visual_brief 仅在需要生图时指导重绘，截图布局和字样选择不依赖它，不要求截图演出所有故事动作。\n"
+        "- visual_brief: 80-1200字符英文画面导演说明，写明具体故事反差、镜头尺度、构图/主次、"
+        "质感和为何有助于观众读懂事件。可用连续漫画、真实场景、纸艺、电影光影等；不强制大头或贴纸描边。"
+        "人物仍须清楚可辨且承担反应。不得发明人物/服装/现实事件；时间分格须明确是同一个人的不同时刻，"
+        "图形比喻要明确是编辑表达，不是源画面事实。文字仍由本地层渲染。\n"
+        "- title_style: outline(粗描边活泼字)或clean(不额外旋转的奶油色细描边字)，依画面质感与对比选择。\n"
+        "- background_style: 默认 source-led 保留源画面；重绘时可写简短英文场景或质感说明，不限六种配色。\n"
+        "- hook_color: yellow/pink/purple/blue/orange/red，按实际对比选择；默认建议可覆盖。\n"
         + punch_block +
         "- role: 一个简短英文角色键(如 shy_cute_default/shocked_bites_back/witty_smug/tender_soft/gentle_song)\n"
         "- expression_en: 一句英文脸部表情(贴角色,不吐舌)\n"
@@ -634,7 +589,7 @@ def _cover_art_direction_prompt(
         "left-split/right-split/song-clean 这类竖窄文字区**必须多分几行、每行更短**(长文案 5-8 行,每行 2-4 字),"
         "让文字铺满整个竖直文字区;banner 是横宽区,行可以长一点(3-4 行)。宁可多一行也不要留一行太长把字压小。\n"
         + emote_block
-        + '只输出一个 JSON 对象: {"role":"...","expression_en":"...","hook_word":"...","scene_props":["..."],"words":["...","..."],"lines":["...","..."]'
+        + '只输出一个 JSON 对象: {"layout":"...","visual_brief":"...","title_style":"outline|clean","background_style":"source-led","hook_color":"...","role":"...","expression_en":"...","hook_word":"...","scene_props":["..."],"words":["...","..."],"lines":["...","..."]'
         + punch_output_field
         + emote_output_field
         + "}"
@@ -675,12 +630,26 @@ def _normalize_cover_art_direction(
     emote_library: EmoteLibrary | None = None,
     allow_punch: bool = False,
 ) -> LidoushaCoverArtDirection:
-    # These axes are the deterministic anti-monotony schedule.  The LLM may
-    # refine semantic choices below, but may not collapse a whole batch back
-    # onto one fashionable layout/background/color.
-    layout = baseline.layout
-    hook_color = baseline.hook_color
-    background_style = baseline.background_style
+    # Layout and typography are valid choices even for a real screenshot,
+    # which does not need an AI scene brief.
+    proposed_brief = payload.get("visual_brief")
+    story_direction = (
+        not baseline.is_song
+        and isinstance(proposed_brief, str)
+        and 40 <= len(proposed_brief.strip()) <= 1600
+    )
+    layout = payload.get("layout")
+    if baseline.is_song or layout not in _COVER_STORY_LAYOUTS:
+        layout = baseline.layout
+    hook_color = payload.get("hook_color")
+    if baseline.is_song or not isinstance(hook_color, str) or hook_color not in _COVER_HOOK_COLORS:
+        hook_color = baseline.hook_color
+    background_style = payload.get("background_style")
+    if (baseline.is_song or not isinstance(background_style, str)
+            or not 1 <= len(background_style.strip()) <= 240):
+        background_style = baseline.background_style
+    else:
+        background_style = background_style.strip()
 
     expression_en = payload.get("expression_en")
     if not (isinstance(expression_en, str) and expression_en.strip()) or any(
@@ -763,6 +732,16 @@ def _normalize_cover_art_direction(
         emote_reason=emote_reason,
         cover_punch=cover_punch,
         scene_props=scene_props,
+        visual_brief=(
+            proposed_brief.strip()
+            if story_direction
+            else baseline.visual_brief
+        ),
+        title_style=(
+            payload["title_style"]
+            if not baseline.is_song and payload.get("title_style") in ("outline", "clean")
+            else baseline.title_style
+        ),
     )
 
 
@@ -818,10 +797,8 @@ def _lidousha_emote_cover_prompt(
 ) -> str:
     """Replace-mode prompt: the official emote sticker IS the cover subject.
 
-    The sticker replaces the live-frame character redraw one-for-one, so it
-    follows the same rules: it owns most of the frame (same layout zones), gets
-    only a LIGHT redraw (polish + background integration — 维护者: 表情包也可以
-    重绘,但不能太过), and the title area stays text-free for the local overlay.
+    Preserve the official pose and proportions through a light redraw, then
+    arrange it with the same story-led title reservation as other talk covers.
     """
 
     if emote.subject == "panda_creature":
@@ -853,27 +830,14 @@ def _lidousha_emote_cover_prompt(
         "of the frame — feed thumbnails crop the outer ~13% of the width on EACH side, so place nothing important "
         "in the far-left or far-right edges; those edges may hold only background. "
     )
-    layout = art_direction.layout
-    if layout == "left-split":
-        composition = (
-            "COMPOSITION: place the redrawn sticker character LARGE, filling the LEFT ~55% of the frame and most "
-            "of its height, big and expressive, with a clean white sticker-style outline so it pops off the "
-            f"background. The RIGHT ~45% is an empty graphic zone reserved for a title (keep the sticker out of "
-            f"it): fill it and the whole frame with {background}. Minimal empty space, high energy. "
-        )
-    elif layout == "banner":
-        composition = (
-            "COMPOSITION: place the redrawn sticker character LARGE in the LOWER-CENTER, head around the middle "
-            "of the frame, with a clean white sticker outline. Keep the TOP ~40% a clear vibrant band reserved "
-            f"for a big title. Fill the whole frame with {background}. Minimal empty space. "
-        )
-    else:  # right-split (and the defensive song-clean case: subject right, text left)
-        composition = (
-            "COMPOSITION: place the redrawn sticker character LARGE, filling the RIGHT ~55% of the frame and most "
-            "of its height, big and expressive, with a clean white sticker-style outline so it pops off the "
-            f"background. The LEFT ~45% is an empty graphic zone reserved for a title (keep the sticker out of "
-            f"it): fill it and the whole frame with {background}. Minimal empty space, high energy. "
-        )
+    composition = story_composition_prompt(
+        art_direction, _COVER_LAYOUT_RENDER[art_direction.layout]["zone"]
+    )
+    composition += (
+        "STICKER STAGING: use the scene direction only to arrange the faithful sticker and background. "
+        "The sticker's existing pose, expression and proportions take precedence over any suggested new action. "
+        "Choose its scale for legibility and the story, without adding an outline absent from the reference. "
+    )
     return identity_block + composition + _COVER_NO_TEXT_CRITICAL
 
 
@@ -904,66 +868,23 @@ def _cover_prompt(
     cover_identity_prompt = profile_asset_text("cover_identity_prompt")
     background = _COVER_BG_PHRASES.get(
         art_direction.background_style,
-        _COVER_BG_PHRASES[_COVER_BG_BUSY[0]],
+        art_direction.background_style,
     )
     emote_mode = art_direction.emote_mode if emote is not None else ""
     if emote_mode == "replace":
-        return _lidousha_emote_cover_prompt(
+        return final_copy_image_prompt(art_direction, cover_text) + _lidousha_emote_cover_prompt(
             emote=emote,
             art_direction=art_direction,
             background=background,
             cover_identity_prompt=cover_identity_prompt,
         )
-    identity_block = (
-        f"Create a bold 16:9 (1920x1080) anime VTuber livestream cover thumbnail for {CHANNEL_PROFILE.prompt_name}. "
-        "Use the supplied image ONLY as identity/style reference. "
-        f"IDENTITY (keep her instantly recognizable): {cover_identity_prompt} "
-        f"Persona identity descriptors (Chinese, authoritative): {identity_descriptor} "
-        "MULTI-PERSON REFERENCE RULE: if the supplied image contains several people, the ONLY protagonist is "
-        f"the source person visibly labelled {CHANNEL_PROFILE.display_name}, or the one matching the {CHANNEL_PROFILE.prompt_name} {CHANNEL_PROFILE.cover_identity.prompt_tag_en} identity when "
-        "no label is visible. Never copy another participant's face, hair, outfit, horns or accessories into the "
-        f"protagonist, and never treat adding {CHANNEL_PROFILE.cover_identity.feature_en} to another participant as identity preservation. Other "
-        "participants may appear only as clearly secondary figures when the reference supports them. "
-        "PRESERVE THE EXACT OUTFIT, skin tone, hairstyle and accessories shown in the reference frame — she wears "
-        "DIFFERENT costumes on different streams, so do NOT invent or lock a fixed costume; copy what the reference shows. "
-        f"EXPRESSION (must fit her in-character role for this clip): {art_direction.expression_en}. "
-        "Her mouth may be open for a gasp/shout/laugh but she must NEVER stick her tongue out — no tongue showing; "
-        "never look sly beyond cute, never provocative or sexy. "
-        f"MANDATORY SUBJECT PROMINENCE: {CHANNEL_PROFILE.prompt_name} must be the immediate first visual focus and carry the story reaction. "
-        "Never shrink her into a corner, never make viewers search for her, and never let a prop, border, color bar, "
-        "empty region, or secondary participant become more prominent than her. Her complete face must remain large, "
-        "clear, and expressive at feed-thumbnail size. A clean title zone is intentional, but it must not become vast "
-        "dead space or a meaningless solid-color strip; every non-title element must support this clip's story. "
-        "FEED-SAFE FRAMING: keep her FACE and all key features within the central 4:3 portion of the frame — feed "
-        "thumbnails crop the outer ~13% of the width on EACH side, so place nothing important (face, hands, key props) "
-        "in the far-left or far-right edges; those edges may hold only background. "
+    identity_block = image_identity_prompt(
+        profile=CHANNEL_PROFILE, identity_descriptor=identity_descriptor,
+        identity_asset=cover_identity_prompt, art_direction=art_direction,
     )
-    # 维护者 批准加大脸部占比（B站 20万+ 播放封面共性：脸占画面 50-90%）：
-    # talk 三版式从 chest-up 半身收紧到 head-and-shoulders 特写，脸≈画面高 1/3+。
-    layout = art_direction.layout
-    if layout == "left-split":
-        composition = (
-            "COMPOSITION: draw her as a VERY LARGE head-and-shoulders CLOSE-UP filling the LEFT ~55% of the frame — "
-            "camera close, her FACE alone spans roughly a THIRD of the frame height, bold and expressive, "
-            "with a clean white sticker-style outline so she pops off the background. "
-            f"The RIGHT ~45% is an empty graphic zone reserved for a title (keep her body out of it): fill it and the "
-            f"whole frame with {background}. Minimal empty space, high energy. "
-        )
-    elif layout == "right-split":
-        composition = (
-            "COMPOSITION: draw her as a VERY LARGE head-and-shoulders CLOSE-UP filling the RIGHT ~55% of the frame — "
-            "camera close, her FACE alone spans roughly a THIRD of the frame height, bold and expressive, "
-            "with a clean white sticker-style outline so she pops off the background. "
-            f"The LEFT ~45% is an empty graphic zone reserved for a title (keep her body out of it): fill it and the "
-            f"whole frame with {background}. Minimal empty space, high energy. "
-        )
-    elif layout == "banner":
-        composition = (
-            "COMPOSITION: place her as a VERY LARGE head-and-shoulders CLOSE-UP in the LOWER-CENTER — camera close, "
-            "her FACE alone spans roughly a THIRD of the frame height, "
-            "with a clean white sticker outline. Keep the TOP ~40% a clear vibrant band reserved for a big title. "
-            f"Fill the whole frame with {background}. Minimal empty space. "
-        )
+    if not art_direction.is_song:
+        title_zone = _COVER_LAYOUT_RENDER[art_direction.layout]["zone"]
+        composition = story_composition_prompt(art_direction, title_zone)
     else:  # song-clean
         composition = (
             "COMPOSITION: draw her as a soft chest-up portrait on the RIGHT ~55%, optionally holding a microphone, "
@@ -974,8 +895,8 @@ def _cover_prompt(
     if art_direction.scene_props and not art_direction.is_song:
         props = "; ".join(art_direction.scene_props)
         props_block = (
-            f"STORY PROPS (anchor this cover to THIS clip's moment): include {props} as small, clearly readable "
-            "props near her hands or in the immediate background. Props must NOT be worn on her (no new clothing/"
+            f"STORY PROPS (anchor this cover to THIS clip's moment): include {props} where their scale and placement "
+            "help explain the event. Props must NOT be worn on her (no new clothing/"
             "hats/accessories — her outfit stays exactly as the reference) and must never cover her face. "
         )
     companion_block = ""
@@ -990,7 +911,7 @@ def _cover_prompt(
             f"sticker's pose, expression and design{caption_note}; do NOT reproduce the inset panel's frame/border "
             f"itself. Reason this companion appears (from the clip): {art_direction.emote_reason}. "
         )
-    return identity_block + composition + props_block + companion_block + _COVER_NO_TEXT_CRITICAL
+    return final_copy_image_prompt(art_direction, cover_text) + identity_block + composition + props_block + companion_block + _COVER_NO_TEXT_CRITICAL
 
 
 def _cover_screenshot_polish_prompt() -> str:
@@ -1087,207 +1008,16 @@ def _call_cpa_image_edit(
     model_candidates: Sequence[str] | None = None,
     normalize_canvas: Callable[[Path], tuple[int, int]] | None = None,
 ) -> dict[str, object]:
-    endpoint = f"{base_url}/images/edits"
-    candidates = tuple(
-        dict.fromkeys(
-            model.strip()
-            for model in (model_candidates or _cpa_image_model_candidates())
-            if isinstance(model, str) and model.strip()
-        )
+    return perform_image_edit(
+        base_url=base_url, api_key=api_key, reference_path=reference_path,
+        output_path=output_path, prompt=prompt, request_path=request_path,
+        response_path=response_path, timeout_seconds=timeout_seconds,
+        model_candidates=model_candidates or _cpa_image_model_candidates(),
+        request_size=_COVER_REQUEST_SIZE,
+        normalize_canvas=normalize_canvas or _normalize_cover_canvas,
+        make_body=_multipart_form_data, file_sha256=_sha256,
+        explicit_model_unavailable=_explicit_cpa_model_unavailable,
     )
-    if not candidates:
-        return {
-            "status": "FAILED",
-            "reason_code": "CPA_IMAGE_EDIT_MODEL_CONFIG_INVALID",
-            "detail": "no CPA image model candidate configured",
-            "attempted_models": [],
-        }
-    request_attempts: list[dict[str, object]] = []
-    response_attempts: list[dict[str, object]] = []
-    reference_sha256 = "sha256:" + _sha256(reference_path)
-    reference_bytes = reference_path.read_bytes()
-    request_path.parent.mkdir(parents=True, exist_ok=True)
-    response_path.parent.mkdir(parents=True, exist_ok=True)
-
-    def persist_evidence() -> None:
-        request_path.write_text(
-            json.dumps(
-                {
-                    "endpoint": endpoint,
-                    "method": "images.edit",
-                    "image_gen_model": "cpa",
-                    "prompt": prompt,
-                    "reference_image": str(reference_path),
-                    "reference_sha256": reference_sha256,
-                    "api_key": "<redacted>",
-                    "attempts": request_attempts,
-                },
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        response_path.write_text(
-            json.dumps(
-                {"attempts": response_attempts},
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-
-    attempted_models: list[str] = []
-    for attempt_index, model in enumerate(candidates):
-        attempted_models.append(model)
-        request_attempts.append(
-            {"attempt": attempt_index + 1, "model": model, "size": _COVER_REQUEST_SIZE}
-        )
-        persist_evidence()
-        try:
-            body, content_type = _multipart_form_data(
-                fields={"model": model, "prompt": prompt, "size": _COVER_REQUEST_SIZE},
-                files={"image": (reference_path.name, reference_bytes, "image/png")},
-            )
-            request = urllib.request.Request(
-                endpoint,
-                data=body,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": content_type,
-                    # the CPA endpoint sits behind Cloudflare, which 403s the
-                    # default Python-urllib user agent
-                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-                },
-                method="POST",
-            )
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-                status_code = response.status
-                raw = response.read().decode("utf-8", errors="replace")
-        except urllib.error.HTTPError as exc:
-            raw = exc.read().decode("utf-8", errors="replace")
-            unavailable = _explicit_cpa_model_unavailable(exc.code, raw)
-            response_attempts.append(
-                {
-                    "attempt": attempt_index + 1,
-                    "model": model,
-                    "status_code": exc.code,
-                    "body_tail": raw[-4000:],
-                    "explicit_model_unavailable": unavailable,
-                }
-            )
-            persist_evidence()
-            if unavailable and attempt_index + 1 < len(candidates):
-                continue
-            return {
-                "status": "FAILED",
-                "reason_code": "CPA_IMAGE_EDIT_HTTP_ERROR",
-                "detail": f"HTTP {exc.code}: {raw[-500:]}",
-                "attempted_models": attempted_models,
-                "model_fallback_used": len(attempted_models) > 1,
-            }
-        except Exception as exc:
-            response_attempts.append(
-                {
-                    "attempt": attempt_index + 1,
-                    "model": model,
-                    "error": type(exc).__name__,
-                    "message": str(exc),
-                }
-            )
-            persist_evidence()
-            return {
-                "status": "FAILED",
-                "reason_code": "CPA_IMAGE_EDIT_REQUEST_FAILED",
-                "detail": f"{type(exc).__name__}: {exc}",
-                "attempted_models": attempted_models,
-                "model_fallback_used": len(attempted_models) > 1,
-            }
-
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError:
-            response_attempts.append(
-                {
-                    "attempt": attempt_index + 1,
-                    "model": model,
-                    "status_code": status_code,
-                    "body_tail": raw[-4000:],
-                }
-            )
-            persist_evidence()
-            return {
-                "status": "FAILED",
-                "reason_code": "CPA_IMAGE_EDIT_BAD_JSON",
-                "detail": raw[-500:],
-                "attempted_models": attempted_models,
-                "model_fallback_used": len(attempted_models) > 1,
-            }
-        image_record = (
-            (payload.get("data") or [{}])[0]
-            if isinstance(payload.get("data"), list)
-            else {}
-        )
-        if not isinstance(image_record, Mapping):
-            image_record = {}
-        redacted_response: dict[str, object] = {
-            "attempt": attempt_index + 1,
-            "model": model,
-            "status_code": status_code,
-            "keys": sorted(payload.keys()),
-            "data_keys": sorted(image_record.keys()),
-        }
-        try:
-            b64_json = image_record.get("b64_json")
-            image_url = image_record.get("url")
-            if isinstance(b64_json, str) and b64_json:
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                output_path.write_bytes(base64.b64decode(b64_json))
-                redacted_response["b64_json_bytes"] = len(b64_json)
-            elif isinstance(image_url, str) and image_url:
-                with urllib.request.urlopen(image_url, timeout=timeout_seconds) as image_response:
-                    output_path.parent.mkdir(parents=True, exist_ok=True)
-                    output_path.write_bytes(image_response.read())
-                redacted_response["url"] = image_url
-            else:
-                response_attempts.append(redacted_response)
-                persist_evidence()
-                return {
-                    "status": "FAILED",
-                    "reason_code": "CPA_IMAGE_EDIT_NO_IMAGE",
-                    "detail": "response had no b64_json/url image",
-                    "attempted_models": attempted_models,
-                    "model_fallback_used": len(attempted_models) > 1,
-                }
-            redacted_response["canvas"] = list(
-                (normalize_canvas or _normalize_cover_canvas)(output_path)
-            )
-        except Exception as exc:  # noqa: BLE001 — broken images must block
-            response_attempts.append(redacted_response)
-            persist_evidence()
-            return {
-                "status": "FAILED",
-                "reason_code": "CPA_IMAGE_EDIT_BAD_IMAGE",
-                "detail": f"{type(exc).__name__}: {exc}",
-                "attempted_models": attempted_models,
-                "model_fallback_used": len(attempted_models) > 1,
-            }
-        redacted_response["output_path"] = str(output_path)
-        redacted_response["output_sha256"] = "sha256:" + _sha256(output_path)
-        response_attempts.append(redacted_response)
-        persist_evidence()
-        return {
-            "status": "AI_BACKGROUND_READY",
-            "output_path": str(output_path),
-            "selected_model": model,
-            "attempted_models": attempted_models,
-            "model_fallback_used": len(attempted_models) > 1,
-        }
-
-    raise AssertionError("CPA image model loop exhausted without a result")
 
 
 def _multipart_form_data(*, fields: Mapping[str, str], files: Mapping[str, tuple[str, bytes, str]]) -> tuple[bytes, str]:
@@ -1340,6 +1070,7 @@ _COVER_LAYOUT_RENDER = {
     "left-split": {"zone": (960, 66, 1660, 1014), "angle": -4.0, "scrim": _COVER_SCRIM_SIDE, "max_lines": 8, "max_size": 360},
     "right-split": {"zone": (260, 66, 960, 1014), "angle": -3.0, "scrim": _COVER_SCRIM_SIDE, "max_lines": 8, "max_size": 360},
     "banner": {"zone": (260, 16, 1660, 486), "angle": -2.0, "scrim": _COVER_SCRIM_BAR, "max_lines": 4, "max_size": 360},
+    "footer": {"zone": (260, 730, 1660, 1060), "angle": 0.0, "scrim": _COVER_SCRIM_BAR, "max_lines": 2, "max_size": 300},
     "song-clean": {"zone": (260, 110, 1000, 940), "angle": -4.0, "scrim": _COVER_SCRIM_SOFT, "max_lines": 7, "max_size": 320},
 }
 _COVER_OUTLINE_NAVY_RATIO = 0.085   # outer stroke ≈ 8.5% of font size (chunky, scales up)
@@ -1449,7 +1180,7 @@ def _cover_font_chain(*, prefer_jp: bool) -> list["_CoverFontChoice"]:
     return unique
 
 
-def _cover_font_for_text(cover_text, selection_audit: dict | None = None):
+def _cover_font_for_text(cover_text, selection_audit: dict | None = None, *, title_style="outline"):
     """Choose ONE font face for the whole cover (uniform — never mix): the first
     chain member with a REAL glyph for every char (raster .notdef probe) and no
     known wrong-shape glyph for this text.  If nothing fully covers, keep the
@@ -1458,7 +1189,11 @@ def _cover_font_for_text(cover_text, selection_audit: dict | None = None):
     prefer_jp = any("぀" <= ch <= "ヿ" for ch in cover_text)
     rejected: list[dict[str, object]] = []
     best: tuple[int, _CoverFontChoice, list[str]] | None = None
-    for choice in _cover_font_chain(prefer_jp=prefer_jp):
+    chain = _cover_font_chain(prefer_jp=prefer_jp)
+    if title_style == "clean":
+        # Reorder only the committed profile chain; never add a host font.
+        chain.sort(key=lambda choice: choice.name != "SmileySans-Oblique.ttf")
+    for choice in chain:
         wrong_shape = _COVER_WRONG_SHAPE_GLYPHS.get(choice.stem, frozenset())
         wrong_hits = sorted({ch for ch in cover_text if ch in wrong_shape})
         missing = _cover_missing_checker(choice)
@@ -1816,7 +1551,8 @@ def _punch_wrap(
 def _fit_cover_punch_lines(punch_lines, *, zone, font_path, hook_rgb, base_fill, max_size):
     """Ecosystem-style punch typesetting (B站高播放封面调研)。
 
-    主梗字整行 hook 色、越大越好；副行奶油色半号。不走通用 fitter 的候选竞争
+    主梗字整行 hook 色；副行保留八成字号，使反差的后半句在 feed 中仍能读清。
+    不走通用 fitter 的候选竞争
     （它会把整行梗字当不可拆 hook 原子钉死字号），直接对固定行结构解最大字号：
     宽度 ≤ zone、总高 ≤ zone。搜索可下探到 72px 以便给出确定性排版结果，但 talk
     成品低于 COVER_MIN_TALK_FONT_SIZE 会在写盘前 fail closed。
@@ -1832,7 +1568,7 @@ def _fit_cover_punch_lines(punch_lines, *, zone, font_path, hook_rgb, base_fill,
     sub_lines = [line for frag in punch_lines[1:] for line in _punch_wrap(frag)]
 
     def build(emph: int):
-        sub_size = max(56, int(round(emph * 0.5)))
+        sub_size = max(56, int(round(emph * 0.8)))
         lines = []
         for text in main_lines:
             lines.append({"segs": [(text, hook_rgb)], "size": emph, "gap": max(6, int(emph * 0.08))})
@@ -2058,6 +1794,7 @@ def _overlay_cover_title(
     art_direction: LidoushaCoverArtDirection | None = None,
     full_text_cover_contract: object = None,
     identity_landmark_title_exclusion: Mapping[str, object] | None = None,
+    source_title_zone: tuple[int, int, int, int] | None = None,
 ) -> dict[str, object]:
     """Overlay the multi-color artistic title onto the text-free CPA background.
 
@@ -2081,11 +1818,13 @@ def _overlay_cover_title(
     zone = (
         tuple(identity_exclusion["title_zone"])
         if identity_exclusion is not None
-        else render["zone"]
+        else (source_title_zone or render["zone"])
     )
-    angle = render["angle"]
+    angle = 0.0 if art_direction.title_style == "clean" else render["angle"]
     scrim = render["scrim"]
     hook_rgb = _COVER_HOOK_COLORS.get(art_direction.hook_color, _COVER_HOOK_COLORS["yellow"])
+    if art_direction.title_style == "clean":
+        hook_rgb = _COVER_BASE_FILL
 
     # 梗字模式（生态调研）：cover_punch 非空时只渲染 1-2 行短梗字
     # （主行=hook 色整行、巨大；副行奶油色小一号），整段 cover_text 退为语境/
@@ -2094,7 +1833,9 @@ def _overlay_cover_title(
     render_text = "\n".join(punch_lines) if punch_lines else cover_text
     font_selection: dict[str, object] = {}
     # ZCOOL, or the first chain font whose glyph coverage is verified for this text
-    font_path = _cover_font_for_text(render_text, selection_audit=font_selection)
+    font_path = _cover_font_for_text(
+        render_text, selection_audit=font_selection, title_style=art_direction.title_style
+    )
     image = ImageOps.fit(Image.open(ai_background_path).convert("RGB"), (1920, 1080), method=Image.Resampling.LANCZOS)
     if punch_lines:
         lines = _fit_cover_punch_lines(
@@ -2152,7 +1893,11 @@ def _overlay_cover_title(
         max_w = 0
         for line in lines:
             fonts = _cover_fonts(font_path, line["size"])
-            outlines = _cover_outlines_for(line["size"])
+            outlines = (
+                [(max(1, int(round(line["size"] * 0.012))), _COVER_STROKE)]
+                if art_direction.title_style == "clean"
+                else _cover_outlines_for(line["size"])
+            )
             width = _cover_line_width(
                 scratch,
                 line["segs"],
@@ -2204,15 +1949,20 @@ def _overlay_cover_title(
     # render spec itself owns the feed-safe result. Do not resize the finished
     # bitmap: that would make the independent render-spec proof dishonest.
     safe_title_width = zone[2] - zone[0]
+    safe_title_height = zone[3] - zone[1]
     for _attempt in range(4):
         rotated_bbox = layer.split()[3].getbbox()
         if (
             rotated_bbox is None
-            or rotated_bbox[2] - rotated_bbox[0] <= safe_title_width
+            or (
+                rotated_bbox[2] - rotated_bbox[0] <= safe_title_width
+                and rotated_bbox[3] - rotated_bbox[1] <= safe_title_height
+            )
         ):
             break
-        scale = (safe_title_width - 2) / (
-            rotated_bbox[2] - rotated_bbox[0]
+        scale = min(
+            (safe_title_width - 2) / (rotated_bbox[2] - rotated_bbox[0]),
+            (safe_title_height - 2) / (rotated_bbox[3] - rotated_bbox[1]),
         )
         changed = False
         for line in lines:
@@ -2242,8 +1992,8 @@ def _overlay_cover_title(
             # 无 atoms 让平衡器重开会复活 `表情小李` 洞、overlay 阶段换 banner 会把
             # 字压到已按分栏生成的人物上。唯一合法出路是打开梗字评审重跑。
             "Bounded rerun must enable the punch semantic review: a CPA "
-            "segment split routes through the 1:1 punch lane and forces the "
-            "banner text zone, which fixes the split and the size together."
+            "segment split routes through the 1:1 punch lane and chooses a "
+            "title zone that fits before regenerating the background."
         )
     if not art_direction.is_song:
         _assert_talk_thumbnail_contract(
@@ -2262,25 +2012,7 @@ def _overlay_cover_title(
         )
     elif _COVER_TEXT_BACKING == "glow" and bbox:
         backing = _build_cover_glow(layer)
-    x0, y0, x1, y1 = zone
-    paste_x = int(x0 + (x1 - x0 - layer.width) / 2)
-    paste_y = int(y0 + (y1 - y0 - layer.height) / 2)
-    # The fitter constrains the unrotated line widths, but the final title
-    # layer is expanded after rotation.  Centre the layer first, then clamp
-    # its *actual non-transparent pixels* to the layout's feed-safe zone.
-    # Without this post-rotation clamp a nominally exact fit can bleed one or
-    # two antialiased pixels outside the centre 4:3 crop and fail only at the
-    # delivery choke point.
-    if bbox:
-        min_safe_paste_x = x0 - bbox[0]
-        max_safe_paste_x = x1 - bbox[2]
-        if min_safe_paste_x > max_safe_paste_x:
-            raise ValueError(
-                "COVER_TITLE_EXCEEDS_FEED_SAFE_ZONE: "
-                f"title pixels are {bbox[2] - bbox[0]}px wide; "
-                f"safe zone is {x1 - x0}px"
-            )
-        paste_x = max(min_safe_paste_x, min(paste_x, max_safe_paste_x))
+    paste_x, paste_y = title_layer_position(layer.size, bbox=bbox, zone=zone)
     if backing is not None:
         canvas = Image.new("RGBA", image.size, (0, 0, 0, 0))
         canvas.paste(backing, (paste_x, paste_y), backing)
@@ -2316,6 +2048,8 @@ def _overlay_cover_title(
         "overlay_position": {"x": paste_x, "y": paste_y},
         "title_band": art_direction.layout,
         "layout": art_direction.layout,
+        "visual_brief": art_direction.visual_brief,
+        "title_style": art_direction.title_style,
         "background_style": art_direction.background_style,
         "hook_color": art_direction.hook_color,
         "hook_word": art_direction.hook_word,

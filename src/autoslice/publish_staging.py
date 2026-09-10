@@ -1577,7 +1577,7 @@ def _build_lidousha_cover_route(
                 else None
             ),
             "verified_stream_frame": verified_stream_frame,
-            **vertical_source_decision_inputs(source_frame_size),
+            **vertical_source_decision_inputs(source_frame_size, source_composition_verification),
             "thumbnail_text_requires_punch": thumbnail_text_requires_punch,
             "punch_semantic_status": punch_semantic_status,
             "reference_authority_id": (

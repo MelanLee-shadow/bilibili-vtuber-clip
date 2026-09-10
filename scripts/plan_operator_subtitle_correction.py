@@ -22,8 +22,9 @@ def main() -> int:
     parser.add_argument("--explicitly-exhaustive", action="store_true")
     parser.add_argument(
         "--only-these-errors",
-        action="store_true",
-        help="the operator explicitly states that the listed errors are complete",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="explicit complete report; --no-only-these-errors requests review of other errors",
     )
     args = parser.parse_args()
     print(

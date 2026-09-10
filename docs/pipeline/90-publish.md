@@ -6,9 +6,10 @@
 
 ## 快车道授权与串行发布边界
 
-对 Claude line 947 穷举批次，候选点名错误修复完成即使用本页既有 package、manifest、
-audit、授权和公开验收门进入上传；不新增 维护者 二次看片/复审。Qixi-first，随后按批次原
-顺序。candidate-private prepare/package/QC 可并行；transcription/AGY 之后仅 bounded per-cue
+候选只按其自身有效授权范围修复；公共模板不继承任何历史批次的审批。
+完成修复后仍须通过本页的 package、manifest、audit、授权和公开验收门。已通过全部发布门的候选
+先进入串行上传队列；较早候选未就绪不能卡住后面的合格片。就绪集合内优先时效性，其余
+按原批次顺序选取；问题候选留在独立修复队列。candidate-private prepare/package/QC 可并行；transcription/AGY 之后仅 bounded per-cue
 short calls 彼此并行，待字幕、媒体和标题输入冻结后 burn 与 cover 可并行；commit lease、formal state+journal、same-BV apply、upload mutation 与 queue
 advancement 必须串行。mutation 完成后 public/Creator/section 三个 read-only probes 可并行，
 但 joint acceptance 是屏障，三面收敛前不得释放下一候选。workflow 病因修复可并行推进，但
@@ -24,6 +25,12 @@ Creator，也不写 state/ledger/package。READY_TO_PREPARE 与 review_ready 都
 title-cover QC 和 ledger 无歧义重放后，才可被排入串行候选；仍须使用 manifest 中 维护者 的
 逐字授权，绝不把 graph 当 authority。单批、单部署与完整 suite 是实际 preparation/deploy
 的准入规则，不是该观察分类自动授予的后续动作。
+
+观察图必须识别真实 `uniform_host` 成品的 `burned_preview.ass_path`：没有单独说话人
+ASS 时，只有 `status=BURNED` 的嵌套定位符可补充空的 `subtitle_ass_path`；文件仍须为
+包内无链接普通文件且匹配 record 的 `ass_sha256`。两处都声明时各自验真，不得用一个
+有效副本掩盖另一处路径越界、缺失或字节漂移。这只修正观察定位，不替代 canonical
+package audit、联合检查、授权 manifest 或发布门。
 
 ## 增量 receipt 与发布隔离
 
@@ -42,6 +49,15 @@ snapshot/manifest，CLI 参数只是显式声明，不是独立信任来源。`R
 
 因此，旧修复即使内容上符合 维护者 要求，也必须先被重新绑定为同一 canonical package 的
 `RELEASE_CANDIDATE`，通过本页所有现有门禁；较晚的流水线诊断输出不得取代它，也不得被误传。
+
+部署树中的 `assets/lidousha/publication_registry.v1.json` 由
+`DEPLOYED_AUTHORITY_MANIFEST.json` 以当前 `DEPLOYED_COMMIT` 封存，运行中的发布对账不得
+改写这份静态文件。部署模式下，`state/publication_registry.runtime.v1.json` 是经 authority
+hash 校验的新增发布投影；`load_publication_registry()` 读取静态登记并合并该 runtime overlay，
+所得结果才是生产上传/封面闸口使用的有效登记。静态文件、`DEPLOYED_COMMIT`、
+authority manifest 缺失、漂移、损坏或含 symlink 时，对账必须在任何 runtime/state/recovery
+写入前失败关闭；完整部署树及其模式仍由 no-upload soak gate 验证。普通 Git/本地工作树仍按
+原规则更新静态登记。
 
 ## Reviewed-baseline replay 与上传隔离
 
@@ -62,6 +78,11 @@ outer receipt path/hash 冻结进 package attestation，`verify`、`repair-plan`
 `upload.lock` 下可产生上传副作用，且 transport/状态歧义不得重试上传。
 
 ## 发布准入
+
+- 新生成的谈话投稿和同 BV 视频修复 manifest 必须消费 [80](80-package-delivery.md) 的最终
+  声文对应证据；`make-manifest`、`verify` 与实际变更前重读包内见证并重新计算检查结果，
+  缺失、整体错位、锚点不足和哈希漂移均拒绝。已冻结、正在平台审核中的旧修复事务继续按
+  既有 resume 合同校验原字节；仅换封面且已有 scope 证明视频未变的事务不重新调用 ASR。
 
 - 每条都需要 维护者 明确授权；manifest 保存授权原话，工具不能替用户创造授权。
 - publication registry 的人工搁置不得靠删除历史来解除：
@@ -85,6 +106,24 @@ outer receipt path/hash 冻结进 package attestation，`verify`、`repair-plan`
   authorized manifest、最终感知 receipt、recovery publication authority 与 artifact hash
   全部绑定的既有稿修复 lane，并继续保持 `upload_allowed=false`。
 - 授权上传/修复的证据必须 commit；媒体本身不因此入库。
+
+## 已受审原稿的同源定点纠正
+
+维护者 2026-09-08明确快车道是“在原本听写稿件上，就地修改我指出的错误然后发布”。对已经发布、
+已有hash固定的受审原稿且不改变源镜头范围的修复，允许独立的
+`original-reviewed-fastlane-package.v1`与`original-fastlane-delta-technical-review.v1`。
+它不是新一次人工全片观看，必须明示`fresh_human_full_playback_claimed=false`；不能把reviewer伪写维护者。
+准入由`original_patch_package.py`独立重验：仓库封存原稿+明确补丁、原/新主素材相同、原/新完整音频
+PCM相同、片头字节与offset相同、原/新窗口一致、实际ASS文字与时钟、独立最终声文见证、未改封面、
+新标题事实与标题封面联合检查。源原稿不被新ASR覆盖，不为补“新的recut证明”再次裁切。
+
+只有独立committed `.original-repair-target.v1.json`与`.original-delivery-closure.v1.json`，且
+target源于fresh登录canary/public/Creator/section、精确绑定原BVID/AID/CID、旧/新标题、原授权引用，
+才可用此lane。所有实际文件列入闭包并逐字节重验；未变文件的旧失败不能被技术receipt洗成PASS。
+`original_patch_review.build_technical_receipt`只能对当前canonical audit通过的闭包生成机器delta证据。
+现有`--final-human-review`参数作为兼容载体接收这个独立schema，不能伪装成`lidousha-final-human-review.v2`。
+既有make-manifest/verify/repair-plan/dry-run/repair-run/verify-live与单upload锁保持；只能修原BV，
+普通upload明确拒绝recovery authority，不扩大授权，不自动放行其他候选或未review的素材。
 
 ## 最终感知复核 receipt 的权限边界
 
@@ -234,7 +273,8 @@ journal 与 CID 闭环；fresh snapshot 只允许 Creator/public cover asset 与
 `/opt/bilive/autoslice/reports/same_bv_cover_repair_ledger.jsonl`。多稿仍在同一 upload lock 下
 逐稿顺序执行。旧脚本、手工 API、跳过 CPA 联合质检或只看 Creator 单面均禁止。
 
-执行前必须确认当前 source 已部署到 `free`，目标修复包通过本页发布准入，并先完成真实
+执行前必须确认所用工具 source 与本次授权的实际远端部署/私有冻结快照一致（host 见
+[10](10-source-recording.md)，不得默认选旧 `free`），目标修复包通过本页发布准入，并先完成真实
 dry plan；本地存在代码/测试不等于 production 已可用，也不等于五条线上稿件已经修复。
 
 同 BV 的顺序固定为：
@@ -395,6 +435,13 @@ completed sidecar：
 公开/创作中心任一面尚在转码、重审或传播中，状态就是 `posted_unverified`；后续只能复验/
 补合集，不得重复上传。
 
+上述四面证明稿件身份与元数据，不单独证明观众播放到的成片正确。发布/换片后的主会话
+验收还应绑定该**最终 CID** 的真实可播放媒体，确认片头、字幕呈现、关键修复窗和结尾，
+并检查音轨没有漏段/错位。平台转码后 SHA 通常不同，不能要求 CDN 字节等于上传字节，
+也不能因只有 metadata 成功就跳过播放面。无法取得播放面证据时须单列未验收项；
+不能借此重传已成功提交的稿件。复用既有音频听证须说明其与当前音轨的对应关系，
+不得把 ASR 文本、视频抽帧或一次相关性计算写成新的实际听证。
+
 ## 公开真值回写
 
 公开验收闭环必须在同一次命令中幂等对账 publication registry 与逐日 runner state；只拿到
@@ -418,6 +465,18 @@ BVID、只写 upload ledger 或只生成 completed sidecar 都不能把命令报
   崩溃”能够自动收敛；overlay 损坏或 authority 漂移时 fail closed 为
   `publication_reconciliation_blocked`，不能把旧 `candidate_rejected`/`review_ready` 当成
   当前发布结论。
+- 若所需 canonical `state/<date>.json` 与其 `.bak` 都不存在，强证据仍可完成
+  runtime/static registry 对账，但不得凭公开事实伪造候选集或整日状态。命令会在每个适用
+  runtime root 下 create-or-append 独立的 `state/publication-recovery/<date>.json`，其 schema
+  为 `publication-recovery-projection.v1`、`projection_kind=PUBLISHED_TARGET_ONLY`，并固定声明
+  `original_state_status=MISSING`、`original_candidate_set=UNKNOWN`、`day_completion=UNKNOWN`。
+  `entries` 按 candidate 追加，保留字符串 `candidate_id`/`cid` 身份，另列数字
+  `published_cid`，并绑定完整 hash-validated publication mapping；同日第二个已发布候选只能合并
+  到既有 sidecar，不能覆盖不同 authority、BVID 或 publication tuple。该 sidecar 不是公开 authority，
+  不含 `picks`、`songs`、pending 集合、`publication_closure` 或 `prepublication_status`，也不参与
+  day closure/terminal 判定。runner 发现缺失 state 但存在该 sidecar 或该日期 runtime registry 时，
+  只返回内存 `publication_reconciliation_blocked`（明确 original state/candidate set unknown），
+  直到真实 state 恢复；已有 state 但目标缺失或重复仍拒绝 overlay。
 
 ## 安全边界
 
@@ -426,3 +485,11 @@ BVID、只写 upload ledger 或只生成 completed sidecar 都不能把命令报
 - `do_upload.sh`、裸 `biliup`、legacy app uploader 和历史 memory playbook 都不能绕过
   authorized manifest。
 - emergency `--skip-season` 不构成完成状态；必须补跑公开闭环。
+
+### 原稿修复与缺失日状态的后继对账
+
+`publication-recovery-projection.v1`的旧CID只能由完整verified same-BV计划的before→new
+证据迁移；除既有recovery authority外，原稿lane的`original-fastlane-authorized-same-bv.v1`
+也须被消费。后者必须与manifest精确相同并由原生`validate_publication`重读仓库封存target
+验证，不能仅加入一个字符串白名单或手改published_cid。迁移后仍保留candidate字符串身份与
+`day_completion=UNKNOWN`，不凭单片公开完成伪造整日state。

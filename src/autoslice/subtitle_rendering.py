@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+from functools import lru_cache
+import re
 from typing import Sequence
 
 from src.autoslice.review_evidence import SourceCue
@@ -27,7 +29,11 @@ def _parse_srt(path: Path, *, source_offset_ms: int = 0) -> list[SourceCue]:
             continue
         start, end = [part.strip() for part in timing.split("-->", 1)]
         text = normalize_text("\n".join(text_lines).strip(), lexicon=lexicon)
-        kind = "singing" if any(marker in text for marker in ("《", "啦", "アイドル", "言って")) else "speech"
+        kind = (
+            "singing"
+            if any(marker in text for marker in ("《", "啦", "アイドル", "言って"))
+            else "speech"
+        )
         cues.append(
             SourceCue(
                 cue_id=f"u_{index:06d}",
@@ -51,16 +57,14 @@ def _parse_time_ms(value: str) -> int:
 def _write_sapphire_ass_from_srt(srt_path: Path, ass_path: Path) -> None:
     cues = _parse_srt(srt_path)
     event_rows = []
-    for cue in cues:
-        for sub_start_ms, sub_end_ms, sub_text in _layout_cue_for_display(
-            cue.source_start_ms, cue.source_end_ms, cue.text
-        ):
-            text = _ass_escape_text(sub_text)
-            event_rows.append(
-                f"Dialogue: 0,{_format_ass_time(sub_start_ms)},{_format_ass_time(sub_end_ms)},Default,,0,0,0,,{text}"
-            )
+    rows = [(cue.source_start_ms, cue.source_end_ms, cue.text) for cue in cues]
+    for _, sub_start_ms, sub_end_ms, sub_text in _layout_cue_sequence_for_display(rows):
+        text = _ass_escape_text(sub_text)
+        event_rows.append(
+            f"Dialogue: 0,{_format_ass_time(sub_start_ms)},{_format_ass_time(sub_end_ms)},Default,,0,0,0,,{text}"
+        )
     ass_path.parent.mkdir(parents=True, exist_ok=True)
-    # header must byte-match the approved sapphire72 spec emitted by
+    # Typography retains the approved sapphire72 metrics emitted by
     # .agent/skills/song-lyrics-timeline-aligner/scripts/align_timed_lyrics.py
     # write_ass at --play-res 1920x1080: Fontsize 72 belongs to the 1080p
     # PlayRes with margins 60,60,40, Shadow 2, BackColour &H70000000
@@ -71,7 +75,7 @@ def _write_sapphire_ass_from_srt(srt_path: Path, ass_path: Path) -> None:
                 "ScriptType: v4.00+",
                 "PlayResX: 1920",
                 "PlayResY: 1080",
-                "WrapStyle: 0",
+                "WrapStyle: 2",
                 "ScaledBorderAndShadow: yes",
                 "",
                 "[V4+ Styles]",
@@ -104,34 +108,152 @@ def _format_ass_time(ms: int) -> str:
 ASS_MAX_CHARS_PER_LINE = 28
 ASS_MAX_VISUAL_LINES = 2
 ASS_MIN_SUBCUE_MS = 700
+# 24 full-width glyphs * 72 px = 1728px, inside the unchanged 1800px content
+# width (1920 - 2*60 margins), including outline. Do not let libass re-wrap
+# a planned word at arbitrary glyph boundaries. 28 remains the audit ceiling.
+ASS_SAFE_DISPLAY_CHARS = 24
+ASS_MAX_JOIN_GAP_MS = 120
+ASS_MAX_JOIN_DURATION_MS = 6000
 
 _TEXT_BREAK_STRONG = "。！？…；;!?"
 _TEXT_BREAK_WEAK = "，、,: ：~〜 "
 
 
-def _split_text_segments(text: str) -> list[str]:
-    """Split cue text into natural phrase segments at punctuation boundaries."""
+@lru_cache(maxsize=1)
+def _layout_protected_terms() -> frozenset[str]:
+    # Existing profile glossary/referent authority, used only for display
+    # segmentation. It never replaces a word or certifies an acoustic reading.
+    from src.autoslice.term_authority import protected_terms
 
-    normalized = " ".join(text.replace("\r", "\n").split())
-    segments: list[str] = []
-    current = ""
-    for char in normalized:
-        current += char
-        if char in _TEXT_BREAK_STRONG or char in _TEXT_BREAK_WEAK:
-            if current.strip():
-                segments.append(current.strip())
-            current = ""
-    if current.strip():
-        segments.append(current.strip())
-    # hard-split any single segment that alone exceeds the line limit
+    return protected_terms()
+
+
+def _unsafe_word_cuts(text: str) -> set[int]:
+    blocked: set[int] = set()
+    for term in _layout_protected_terms():
+        for match in re.finditer(re.escape(term), text, re.IGNORECASE):
+            blocked.update(range(match.start() + 1, match.end()))
+    # Latin words, acronyms and numbers should not be split into glyphs either.
+    for match in re.finditer(r"[A-Za-z0-9]+(?:[._'’-][A-Za-z0-9]+)*", text):
+        blocked.update(range(match.start() + 1, match.end()))
+    return blocked
+
+
+def _term_crosses_cue_boundary(left: str, right: str) -> bool:
+    seam = len(left)
+    text = left + right
+    return any(
+        match.start() < seam < match.end()
+        for term in _layout_protected_terms()
+        for match in re.finditer(re.escape(term), text, re.IGNORECASE)
+    )
+
+
+def _small_boundary_shift(left: str, right: str) -> tuple[str, str]:
+    """Move <=2 lexical characters (plus attached punctuation), never merge cues.
+
+    The concatenated spelling is immutable.  Natural punctuation breaks ties;
+    phrase length alone is not a reason to advance an entire next sentence.
+    """
+    text = left + right
+    seam = len(left)
+    if not _term_crosses_cue_boundary(left, right):
+        return left, right
+    blocked = _unsafe_word_cuts(text)
+    closing = "，。！？、；：,.!?;:…~〜）)]】』」”’"
+    punctuation = closing + "（([【『「“‘ "
+    candidates = []
+    for cut in range(max(1, seam - 4), min(len(text), seam + 5)):
+        moved = text[min(cut, seam) : max(cut, seam)]
+        lexical = sum(char not in punctuation for char in moved)
+        new_left, new_right = text[:cut], text[cut:]
+        if (
+            cut == seam
+            or cut in blocked
+            or not 1 <= lexical <= 2
+            or max(len(new_left), len(new_right)) > ASS_SAFE_DISPLAY_CHARS
+            or not new_left.strip(punctuation)
+            or not new_right.strip(punctuation)
+            or new_right[0] in closing
+        ):
+            continue
+        # Prefer the smallest lexical adjustment.  Punctuation must stay with
+        # its phrase; do not carry the rest of that phrase across the cue seam.
+        score = (lexical, 0 if new_left[-1] in closing else 1, abs(cut - seam))
+        candidates.append((score, cut))
+    if not candidates:
+        return left, right
+    cut = min(candidates)[1]
+    return text[:cut], text[cut:]
+
+
+def _layout_cue_sequence_for_display(
+    cues: Sequence[tuple[int, int, str]],
+    *,
+    continuity_keys: Sequence[object] | None = None,
+) -> list[tuple[int, int, int, str]]:
+    """Source-index/start/end/display projection with bounded seam adjustments.
+
+    Keep both events and both time intervals.  Only move a split word's small
+    prefix/suffix between touching same-speaker cues. The source SRT remains
+    byte-identical; deterministic long-line layout continues independently.
+    """
+    keys = list(continuity_keys) if continuity_keys is not None else [None] * len(cues)
+    if len(keys) != len(cues):
+        raise ValueError("display continuity key count differs from source cues")
+    texts = [" ".join(text.replace("\r", "\n").split()) for _, _, text in cues]
+    original_joined = "".join(texts)
+    for index in range(len(cues) - 1):
+        start, end, _ = cues[index]
+        next_start, next_end, _ = cues[index + 1]
+        if (
+            keys[index] == keys[index + 1]
+            and 0 <= next_start - end <= ASS_MAX_JOIN_GAP_MS
+            and end < next_end
+            and next_end - start <= ASS_MAX_JOIN_DURATION_MS
+        ):
+            texts[index], texts[index + 1] = _small_boundary_shift(texts[index], texts[index + 1])
+    if "".join(texts) != original_joined:
+        raise ValueError("display boundary adjustment changed words")
+    return [
+        (index, a, b, text)
+        for index, ((start, end, _), visible) in enumerate(zip(cues, texts, strict=True))
+        for a, b, text in _layout_cue_for_display(start, end, visible)
+    ]
+
+
+def _safe_long_segments(segment: str, max_chars: int) -> list[str]:
     result: list[str] = []
-    for segment in segments:
-        while len(segment) > ASS_MAX_CHARS_PER_LINE:
-            result.append(segment[:ASS_MAX_CHARS_PER_LINE])
-            segment = segment[ASS_MAX_CHARS_PER_LINE:]
-        if segment:
-            result.append(segment)
-    return result or ([normalized] if normalized else [])
+    while len(segment) > max_chars:
+        blocked = _unsafe_word_cuts(segment)
+        valid = [i for i in range(1, max_chars + 1) if i not in blocked]
+        if not valid:
+            raise ValueError("an indivisible subtitle word exceeds display width")
+        cut = valid[-1]
+        result.append(segment[:cut])
+        segment = segment[cut:]
+    if segment:
+        result.append(segment)
+    return result
+
+
+def _split_text_segments(text: str) -> list[str]:
+    """Natural punctuation first; word-safe length split only when necessary."""
+    normalized = " ".join(text.replace("\r", "\n").split())
+    blocked = _unsafe_word_cuts(normalized)
+    segments: list[str] = []
+    start = 0
+    for index, char in enumerate(normalized):
+        if char in _TEXT_BREAK_STRONG + _TEXT_BREAK_WEAK and index + 1 not in blocked:
+            segments.append(normalized[start : index + 1])
+            start = index + 1
+    if start < len(normalized):
+        segments.append(normalized[start:])
+    return [
+        part
+        for segment in segments
+        for part in _safe_long_segments(segment, ASS_SAFE_DISPLAY_CHARS)
+    ]
 
 
 def _pack_segments(segments: Sequence[str], max_chars: int) -> list[str]:
@@ -139,42 +261,37 @@ def _pack_segments(segments: Sequence[str], max_chars: int) -> list[str]:
     current = ""
     for segment in segments:
         if current and len(current) + len(segment) > max_chars:
-            chunks.append(current)
-            current = segment
+            chunks.append(current.rstrip())
+            current = segment.lstrip()
         else:
             current += segment
     if current:
-        chunks.append(current)
+        chunks.append(current.rstrip())
     return chunks
 
 
-def _layout_cue_for_display(
-    start_ms: int,
-    end_ms: int,
-    text: str,
-) -> list[tuple[int, int, str]]:
-    """Viewability contract (维护者,): at most 28 chars per visual
-    line, at most 2 lines per dialogue, single line preferred.  Over-long cue
-    text is split into sequential sub-cues (time allocated by text share)
-    instead of stacking 3-4 lines that cover half the screen."""
+def _layout_cue_for_display(start_ms: int, end_ms: int, text: str) -> list[tuple[int, int, str]]:
+    """Prefer one complete phrase per line, with <=2 safe visual lines.
 
+    This is presentation only. Existing long cues retain bounded sequential
+    display subcues; no recognized term is cut in half to balance line lengths.
+    """
     segments = _split_text_segments(text)
     if not segments:
         return []
     duration_ms = max(0, end_ms - start_ms)
-    # prefer single-line chunks; fall back to 2-line chunks when the cue is too
-    # short to give each single-line sub-cue a readable minimum duration
-    chunks = _pack_segments(segments, ASS_MAX_CHARS_PER_LINE)
+    chunks = _pack_segments(segments, ASS_SAFE_DISPLAY_CHARS)
     if len(chunks) > 1 and duration_ms // len(chunks) < ASS_MIN_SUBCUE_MS:
-        chunks = _pack_segments(segments, ASS_MAX_CHARS_PER_LINE * ASS_MAX_VISUAL_LINES)
+        chunks = _pack_segments(segments, ASS_SAFE_DISPLAY_CHARS * ASS_MAX_VISUAL_LINES)
     total_chars = sum(len(chunk) for chunk in chunks) or 1
     result: list[tuple[int, int, str]] = []
     cursor_ms = start_ms
     for index, chunk in enumerate(chunks):
-        if index == len(chunks) - 1:
-            chunk_end_ms = end_ms
-        else:
-            chunk_end_ms = min(end_ms, cursor_ms + max(1, (duration_ms * len(chunk)) // total_chars))
+        chunk_end_ms = (
+            end_ms
+            if index == len(chunks) - 1
+            else min(end_ms, cursor_ms + max(1, (duration_ms * len(chunk)) // total_chars))
+        )
         display = _wrap_ass_text(chunk)
         if chunk_end_ms > cursor_ms and display:
             result.append((cursor_ms, chunk_end_ms, display))
@@ -183,26 +300,21 @@ def _layout_cue_for_display(
 
 
 def _wrap_ass_text(text: str, *, max_chars: int = ASS_MAX_CHARS_PER_LINE) -> str:
-    """Wrap one display chunk to at most 2 visual lines of <= max_chars,
-    breaking at a punctuation boundary near the middle when possible."""
-
     line = " ".join(text.replace("\r", "\n").split())
+    max_chars = min(max_chars, ASS_SAFE_DISPLAY_CHARS)
     if len(line) <= max_chars:
         return line
-    # choose the break closest to the middle, preferring natural boundaries
-    candidates = [
-        index + 1
-        for index, char in enumerate(line[:-1])
-        if char in _TEXT_BREAK_STRONG or char in _TEXT_BREAK_WEAK
+    blocked = _unsafe_word_cuts(line)
+    valid = [
+        i
+        for i in range(1, len(line))
+        if i <= max_chars and len(line) - i <= max_chars and i not in blocked
     ]
-    valid = [i for i in candidates if 0 < i <= max_chars and len(line) - i <= max_chars]
-    if valid:
-        break_at = min(valid, key=lambda i: abs(i - len(line) / 2))
-    else:
-        # no natural boundary: break at the middle, clamped so both halves fit
-        break_at = min(max_chars, max(len(line) - max_chars, (len(line) + 1) // 2))
-    first, second = line[:break_at].rstrip(), line[break_at:].lstrip()
-    return f"{first}\\N{second}" if second else first
+    if not valid:
+        raise ValueError("subtitle cannot fit two lines without splitting a protected word")
+    natural = [i for i in valid if line[i - 1] in _TEXT_BREAK_STRONG + _TEXT_BREAK_WEAK]
+    cut = min(natural or valid, key=lambda i: abs(i - len(line) / 2))
+    return line[:cut].rstrip() + r"\N" + line[cut:].lstrip()
 
 
 def _ass_escape_text(text: str) -> str:

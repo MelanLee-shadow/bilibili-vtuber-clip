@@ -121,6 +121,8 @@ def unify_terms_across_cues(
             continue  # an anonymous speaker change is not a word continuation
         a = result[i]
         b = result[i + 1]
+        if not 0 <= b.start_ms - a.end_ms <= 120:
+            continue  # No cross-speaker pause/overlap guessing from words alone.
         a_text = a.text
         b_text = b.text
         for term in sorted_terms:
@@ -138,7 +140,7 @@ def unify_terms_across_cues(
             start, end = match
             a_len = boundary_idx - start
             b_len = end - boundary_idx
-            if a_len <= 0 or b_len <= 0:
+            if a_len <= 0 or b_len <= 0 or min(a_len, b_len) > 2:
                 continue
             if b_len >= a_len:
                 # Majority of the term is in B (or tied -> later cue wins):

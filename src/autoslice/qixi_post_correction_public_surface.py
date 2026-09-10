@@ -623,7 +623,7 @@ def _default_source_fact_llm(runtime_root: Path | None = None) -> LlmCall:
             transport="command",
             command_template=(
                 "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} "
-                "'gpt-5.6-sol gpt-5.5 gpt-5.4' high"
+                "'gpt-6-astra' high"
             ),
             timeout_seconds=600.0,
             runtime_root=str(runtime_root) if runtime_root is not None else None,

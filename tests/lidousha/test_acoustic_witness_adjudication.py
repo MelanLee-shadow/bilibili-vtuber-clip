@@ -65,6 +65,28 @@ def test_witness_request_strips_every_textual_channel():
     assert request["syllable_count_hint"] == 6
 
 
+@pytest.mark.parametrize("contamination", [
+    {"heard_pinyin": "shi be wu wu"},
+    {"confidence": 0.85},
+    {"candidate_exposure": "current_and_proposed"},
+    {"exact_transcript": ""},
+])
+def test_transcript_protocol_rejects_manufactured_acoustic_fields(contamination):
+    observed = {
+        "schema_version": "subtitle-span-acoustic-witness.v1",
+        "witness_protocol": "candidate_blind_transcript",
+        "status": "OBSERVED", "target_audible": True,
+        "candidate_exposure": "none", "exact_transcript": "食べ物屋さんが",
+        **contamination,
+    }
+    applied, branch, _ = adjudicate_with_witness(
+        check_request=CHECK_REQUEST, witness=observed,
+        llm_call=lambda _: pytest.fail("invalid transcript evidence reached CPA"),
+    )
+    assert not applied
+    assert branch == "TRANSCRIPT_OBSERVATION_INVALID_KEEP_CURRENT"
+
+
 def test_neutral_syllable_hint_ignores_punctuation_without_biasing_length():
     assert neutral_syllable_count_hint("你好！", "你好吗") is None
     assert neutral_syllable_count_hint("你好！", "你好。") == 2
@@ -374,6 +396,7 @@ def test_judge_verdict_cache_round_trip(tmp_path, monkeypatch):
         calls["n"] += 1
         return json.dumps({"choice": "PROPOSED", "reason": "r"})
 
+    counting_llm.cpa_cache_identity = {"models": ["gpt-6-astra"], "effort": "medium"}
     kwargs = dict(
         check_request=CHECK_REQUEST,
         witness=_witness("hai mei you ge zhai ne"),

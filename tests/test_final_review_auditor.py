@@ -34,6 +34,113 @@ def _extract(raw):
     return json.loads(raw)
 
 
+@pytest.mark.parametrize("needs_audio", [False, True])
+@pytest.mark.parametrize("force_acoustic", [False, True])
+def test_final_context_judge_asks_for_audio_only_when_text_is_unresolved(needs_audio, force_acoustic):
+    source = _srt("这首歌还欠着呢", "还没有歌杂呢", "之后再唱", "换个话题", "说回刚才欠的歌")
+    events = []
+
+    def judge(prompt):
+        events.append("CPA")
+        if len(events) == 1:
+            assert "TEXT_FIRST" in prompt
+            assert "说回刚才欠的歌" in prompt
+        return json.dumps({"choice": "PROPOSED", "needs_audio": needs_audio,
+                           "ranking": [{"choice": "PROPOSED", "p": .9},
+                                       {"choice": "CURRENT", "p": .09},
+                                       {"choice": "NEITHER", "p": .01}],
+                           "reason": "欠歌的语境支持歌债"}, ensure_ascii=False)
+
+    def audio(request):
+        events.append("AUDIO")
+        assert "whole_clip_current_srt" not in request
+        return _witness(request, "hai mei you ge zhai ne")
+
+    output, audit = adjudicate_context_finding(
+        source, {"cue_index": 2, "suspect": "歌杂", "suggestion": "歌债",
+                 "proposed_full_cue": "还没有歌债呢", "repair_class": "phonetic",
+                 "why": "欠歌话题", "force_acoustic": force_acoustic},
+        entity_verifier=audio, judge_llm_call=judge,
+    )
+    assert events == (["CPA", "AUDIO", "CPA"] if needs_audio else ["CPA"])
+    assert "还没有歌债呢" in output
+    assert "00:00:10,000 --> 00:00:14,000" in output
+    assert audit["mutation_authority"]["status"] == "PASS"
+    assert audit["verdict"]["status"] == ("OBSERVED" if needs_audio else "UNCERTAIN")
+
+
+def test_same_cue_reentry_keeps_prior_audio_in_text_judge_only():
+    from src.autoslice.deferred_same_cue_resolution import adjudicate_routed_findings
+
+    text = "我们把链子看完"
+    source = _srt(text, text)
+    findings = []
+    for cue, suspect, suggestion in ((1, "链子", "恋死"), (1, "链", "片"), (2, "链", "片")):
+        start = text.index(suspect)
+        findings.append({
+            "cue_index": cue, "suspect": suspect, "suggestion": suggestion,
+            "proposed_full_cue": text.replace(suspect, suggestion),
+            "base_text_sha256": hashlib.sha256(text.encode()).hexdigest(),
+            "span_start_codepoint": start, "span_end_codepoint": start + len(suspect),
+            "repair_class": "phonetic",
+        })
+    prompts = []
+    audio_requests = []
+
+    def judge(prompt):
+        prompts.append(prompt)
+        if len(prompts) == 3:
+            assert "同一源时间窗此前已取得的音频观察" in prompt
+            assert "wo men ba lian zi kan wan" in prompt
+            assert '"prior_suspect": "链子"' in prompt
+        if len(prompts) == 4:
+            assert "prior_acoustic_observations" not in prompt
+            assert "同一源时间窗此前已取得的音频观察" not in prompt
+        return json.dumps({
+            "choice": "CURRENT", "needs_audio": len(prompts) == 1,
+            "ranking": [{"choice": "CURRENT", "p": .95},
+                        {"choice": "PROPOSED", "p": .04},
+                        {"choice": "NEITHER", "p": .01}],
+            "reason": "结合已有证据保留当前文字",
+        }, ensure_ascii=False)
+
+    def audio(request):
+        audio_requests.append(request)
+        assert "prior_acoustic_observations" not in request
+        return _witness(request, "wo men ba lian zi kan wan")
+
+    output, *_ = adjudicate_routed_findings(
+        source, findings, max_adjudications=3,
+        adjudicate=lambda current, finding: adjudicate_context_finding(
+            current, finding, entity_verifier=audio, judge_llm_call=judge,
+        ),
+    )
+    assert output == source
+    assert len(prompts) == 4 and len(audio_requests) == 1
+    history = findings[1]["context_audio_adjudication"]["request"]["prior_acoustic_observations"]
+    assert history[0]["verdict"]["request_sha256"] == audio_requests[0]["request_sha256"]
+    assert findings[1]["context_audio_adjudication"]["verdict"]["audio_attempted"] is False
+
+
+@pytest.mark.parametrize("invalid", ["binding", "window"])
+def test_prior_audio_context_rejects_wrong_binding_or_source_window(invalid):
+    from src.autoslice.acoustic_witness_adjudication import build_witness_request
+
+    source = _srt("我们把链子看完")
+    finding = {"cue_index": 1, "suspect": "链子", "suggestion": "片子",
+               "proposed_full_cue": "我们把片子看完", "repair_class": "phonetic"}
+    prior = build_context_adjudication_request(source, finding)
+    witness = _witness(build_witness_request(prior), "wo men ba lian zi kan wan")
+    if invalid == "binding":
+        witness["request_sha256"] = "f" * 64
+    else:
+        prior["matched_start_ms"] += 1
+    request = build_context_adjudication_request(source, {
+        **finding, "_prior_acoustic_observations": [{"request": prior, "verdict": witness}],
+    })
+    assert "prior_acoustic_observations" not in request
+
+
 def test_auditor_validates_and_drops_unanchored_findings():
     source = _srt("欢迎季下", "正常的一句话")
     findings = audit_final_subtitles(
@@ -967,6 +1074,8 @@ def test_neither_rebuilds_one_third_candidate_then_cpa_judges_it():
     calls: list[str] = []
 
     def cpa(prompt):
+        if "TEXT_FIRST" in prompt:
+            return json.dumps({"choice": "NEITHER", "needs_audio": True})
         calls.append(prompt)
         if "# 字幕坏闭集重建" in prompt:
             assert "普通日语词句必须写成假名/惯用日文" in prompt
@@ -1016,6 +1125,8 @@ def test_exact_release_adopts_rebuilt_candidate_for_same_run_self_heal():
     judge_count = 0
 
     def cpa(prompt):
+        if "TEXT_FIRST" in prompt:
+            return json.dumps({"choice": "NEITHER", "needs_audio": True})
         nonlocal judge_count
         if "# 字幕坏闭集重建" in prompt:
             return json.dumps(
@@ -1079,6 +1190,8 @@ def test_missing_disclosure_candidate_is_proposed_then_acoustically_judged():
         return _witness(request, "en zan you dian xiang zi cheng")
 
     def cpa(prompt):
+        if "TEXT_FIRST" in prompt:
+            return json.dumps({"choice": "NEITHER", "needs_audio": True})
         calls.append(prompt)
         if "# 字幕缺失候选重建" in prompt:
             return json.dumps(
@@ -1843,6 +1956,8 @@ def test_near_homophone_without_authority_still_goes_to_cpa():
     judge_calls = []
 
     def counting_judge(prompt):
+        if "TEXT_FIRST" in prompt:
+            return json.dumps({"choice": "NEITHER", "needs_audio": True})
         judge_calls.append(prompt)
         return _judge("PROPOSED")(prompt)
 
@@ -2255,6 +2370,8 @@ def test_inaudible_cpa_drop_bypasses_text_rebuild_and_drops_whole_cue():
     calls: list[str] = []
 
     def cpa(prompt):
+        if "TEXT_FIRST" in prompt:
+            return json.dumps({"choice": "NEITHER", "needs_audio": True})
         calls.append(prompt)
         if "# 字幕坏闭集重建" in prompt:
             raise AssertionError("inaudible three-way choice must not rebuild text")
@@ -2613,6 +2730,8 @@ def test_exact_source_transcript_is_candidate_blind_third_candidate_only():
         )
 
     def cpa(prompt):
+        if "TEXT_FIRST" in prompt:
+            return json.dumps({"choice": "NEITHER", "needs_audio": True})
         calls.append(prompt)
         if len(calls) == 1:
             return json.dumps({"choice": "NEITHER", "reason": "bad closed set"})
@@ -2742,7 +2861,7 @@ def test_exact_source_transcript_uses_real_806_geometry_and_source_identity():
         },
         entity_verifier=witness,
         judge_llm_call=lambda _prompt: json.dumps(
-            {"choice": next(choices)}
+            ({"choice": "NEITHER", "needs_audio": True} if "TEXT_FIRST" in _prompt else {"choice": next(choices)})
         ),
         exact_source_transcript_provider=exact_transcript,
         source_media_timeline_offset_ms=9_780,
@@ -3904,3 +4023,59 @@ def test_pinned_replay_skip_without_disclosure_blocks():
         assert audit["failures"][0]["reason_code"] == (
             "PINNED_REPLAY_SKIP_UNDISCLOSED"
         )
+
+
+@pytest.mark.parametrize("cache_case", ["valid", "miss", "wrong_request", "uncertain", "error"])
+def test_existing_bound_audio_is_not_ignored_by_text_first_judge(cache_case):
+    source = _srt("这图书馆没人", "这是图书馆没人")
+    events = []
+
+    def audio(_request):
+        raise AssertionError("no fresh audio call is needed")
+
+    def probe(request):
+        events.append("CACHE")
+        if cache_case == "miss":
+            return None
+        if cache_case == "error":
+            raise OSError("cache unavailable")
+        result = {**_witness(request, "zhe shi tu shu guan mei ren"), "served_from_cache": True}
+        if cache_case == "wrong_request":
+            result["request_sha256"] = "0" * 64
+        if cache_case == "uncertain":
+            result["status"] = "UNCERTAIN"
+        return result
+
+    audio.probe_witness_cache = probe
+
+    def judge(prompt):
+        events.append("CPA")
+        if cache_case == "valid":
+            assert "TEXT_FIRST" not in prompt
+            assert "zhe shi tu shu guan mei ren" in prompt
+            choice = "CURRENT"
+        else:
+            assert "TEXT_FIRST" in prompt
+            choice = "PROPOSED"
+        return json.dumps({"choice": choice, "needs_audio": False,
+                           "ranking": [{"choice": choice, "p": .98},
+                                       {"choice": "PROPOSED" if choice == "CURRENT" else "CURRENT", "p": .01},
+                                       {"choice": "NEITHER", "p": .01}], "reason": "根据已有证据裁决"})
+
+    output, audit = adjudicate_context_finding(
+        source, {"cue_index": 2, "suspect": "是", "suggestion": "",
+                 "proposed_full_cue": "这图书馆没人", "repair_class": "spoken_unit",
+                 "base_text_sha256": hashlib.sha256("这是图书馆没人".encode()).hexdigest(),
+                 "span_start_codepoint": 1, "span_end_codepoint": 2,
+                 "why": "语法怀疑，但已有实际听音"},
+        entity_verifier=audio, judge_llm_call=judge,
+    )
+    assert events == ["CACHE", "CPA"]
+    if cache_case == "valid":
+        assert output == source
+        assert audit["policy_branch"] == "JUDGE_KEEPS_CURRENT"
+        assert audit["verdict"]["served_from_cache"] is True
+        assert "text_first_judge" not in audit
+    else:
+        assert output != source
+        assert audit["verdict"]["reason_code"] == "CPA_TEXT_FIRST_NOT_REQUESTED"

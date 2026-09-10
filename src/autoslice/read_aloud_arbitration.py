@@ -269,11 +269,23 @@ def whole_line_exact_copy_gate(
             )
         )
     )
+    full_span_cpa_text_verdict = bool(
+        verdict.get("authority_kind") == "cpa_context_only_closed_set_adjudication"
+        and verdict.get("decision_authority") == "CPA_JUDGE"
+        and verdict.get("text_first_decision") is True
+        and verdict.get("witness_reason_code") == "CPA_TEXT_FIRST_NOT_REQUESTED"
+        and verdict.get("canonical_entity") == item.text
+        and all(_valid_sha256(verdict.get(key)) for key in (
+            "judge_prompt_sha256", "judge_completion_sha256",
+        ))
+    )
     thread_anchored = bool(proposal.get("thread_anchored"))
     if full_span_audio_verdict:
         proof_basis = "hash_bound_full_span_audio_verdict"
     elif full_span_cpa_witness_verdict:
         proof_basis = "hash_bound_candidate_blind_witness_plus_cpa_judge"
+    elif full_span_cpa_text_verdict:
+        proof_basis = "hash_bound_cpa_text_first_closed_set_judge"
     elif thread_anchored:
         proof_basis = "strong_thread_anchor"
     elif independent_owner_supports:
@@ -283,6 +295,7 @@ def whole_line_exact_copy_gate(
     owner_eligible = bool(
         full_span_audio_verdict
         or full_span_cpa_witness_verdict
+        or full_span_cpa_text_verdict
         or independent_owner_supports
         or thread_anchored
     )
@@ -292,6 +305,7 @@ def whole_line_exact_copy_gate(
         "owner_eligible": owner_eligible,
         "proof_basis": proof_basis,
         "full_span_audio_verdict": full_span_audio_verdict,
+        "full_span_cpa_text_verdict": full_span_cpa_text_verdict,
         "full_span_cpa_witness_verdict": (
             full_span_cpa_witness_verdict
         ),
@@ -443,6 +457,8 @@ def _arbitrate_read_aloud_near_match(
                 arbitration_row["outcome"] = (
                     "authority_confirmed_by_cpa_with_blind_audio_witness"
                 )
+            elif whole_line_metrics["full_span_cpa_text_verdict"]:
+                arbitration_row["outcome"] = "authority_confirmed_by_cpa_text_first"
             else:
                 arbitration_row["outcome"] = (
                     "authority_confirmed_by_independent_transcript"

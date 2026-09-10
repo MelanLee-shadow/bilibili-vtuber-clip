@@ -74,7 +74,7 @@ _PROVIDER_CONTRACT = {
     "schema_version": "semantic-evidence-scorecard-refresh-provider.v1",
     "transport": "command",
     "command": "scripts/llm_via_cpa.sh",
-    "model_chain": ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4"],
+    "model_chain": ["gpt-6-astra"],
     "reasoning_effort": "medium",
     "timeout_seconds": 600,
     "prompt_schema": REFRESH_PROMPT_SCHEMA,
@@ -571,7 +571,7 @@ def build_refresh_llm_call() -> Callable[[str], str]:
             transport="command",
             command_template=(
                 "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} "
-                "'gpt-5.6-sol gpt-5.5 gpt-5.4' medium"
+                "'gpt-6-astra' medium"
             ),
             timeout_seconds=600.0,
         )

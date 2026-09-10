@@ -11,7 +11,7 @@ from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 class _Runner:
     DELIVERED_TALK_STATUSES = {"ok", "review_ready"}
-    MAX_SONGS_PER_SESSION = 1
+    MAX_SONGS_PER_DATE = 1
     PROFILE_DISPLAY_NAME = CHANNEL_PROFILE.display_name
 
     def __init__(self, root: Path) -> None:

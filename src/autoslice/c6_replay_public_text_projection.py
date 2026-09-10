@@ -62,7 +62,10 @@ EXPECTED_FRESH_STORY_SHA256 = "sha256:e002cc5732ffb261274d255754c3ed6e6e17c95982
 # surfaces after the replay receipt is sealed.  The receipt keeps binding the
 # complete pre-downstream StoryContract above; this digest binds the exact
 # candidate-specific runtime projection used by package-time consumers.
-EXPECTED_C6_RUNTIME_FRESH_STORY_PROJECTION_SHA256 = "sha256:b3397c38bddaa4fa4915eb596e6a6ec2d60905d3d539aa928c116833e2a4c612"
+# Recomputed from the preimage matching EXPECTED_FRESH_STORY_SHA256.  Keep
+# the real preimage regression: a synthetic fixture with monkeypatched pins
+# cannot detect a mistyped production projection digest.
+EXPECTED_C6_RUNTIME_FRESH_STORY_PROJECTION_SHA256 = "sha256:0f9715b16ffbaf16eeafaded9e9b1894ea44a764c98c61ab1de969145b5476da"
 EXPECTED_AUTHORITY_SHA256 = "sha256:7395daf13d25062e9de5ed7de3b292ecdb085c7c729876735bb4aa5399e50d45"
 EXPECTED_BASELINE_SHA256 = "sha256:3cfcf2954c1d32a078e99aaff5585213b5edbbedd6db8f87d62097d06775ea77"
 EXPECTED_DECISION_LEDGER_SHA256 = "sha256:ecef045ba999ca94f3afa58a57562ce728fd004e9dc0d03cec949e0f27f737f3"

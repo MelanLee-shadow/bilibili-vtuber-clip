@@ -126,12 +126,13 @@ def validate_screenshot_route_authority(
     frame/reference, model chain, selected route, and host requirement are not.
     """
 
-    if generation.get("method") != "screenshot_polish":
+    method = generation.get("method")
+    if method not in SCREENSHOT_ROUTE_TREATMENTS:
         return
     authorities = _active_cover_generations(documents, prior_generation)
     if not authorities:
         raise ValueError("screenshot repair has no active screenshot_polish authority")
-    if any(candidate.get("method") != "screenshot_polish" for candidate in authorities):
+    if any(candidate.get("method") != method for candidate in authorities):
         raise ValueError("active cover authority mixes screenshot and non-screenshot routes")
     if any(
         isinstance(candidate.get("route_decision"), Mapping)
@@ -154,6 +155,13 @@ def validate_screenshot_route_authority(
     for key in _SCREENSHOT_FROZEN_GENERATION_KEYS:
         if generation.get(key) != authority.get(key):
             raise ValueError(f"screenshot repair changed frozen authority {key}")
+    if method == "screenshot_direct":
+        # The direct extension authorizes only a title-layer change, not a
+        # new crop, backdrop, source frame, or covert image-generation route.
+        for candidate in (*authorities[1:], generation):
+            for key in ("ai_background_sha256", "screenshot_graphic_poster"):
+                if candidate.get(key) != authority.get(key):
+                    raise ValueError(f"direct title repair changed frozen {key}")
     if generation.get("title") != title or authority.get("title") != title:
         raise ValueError("screenshot repair changed frozen title authority")
     source_hash = screenshot_polish_source_input_sha256(generation)
@@ -171,6 +179,16 @@ def validate_screenshot_route_authority(
 
 def validate_screenshot_polish_generation(
     *, cover: Path, title: str, candidate_id: str
+) -> tuple[dict, Path]:
+    """Preserve the existing polish-only validator entrypoint."""
+
+    return _validate_screenshot_generation(
+        cover=cover, title=title, candidate_id=candidate_id, method="screenshot_polish"
+    )
+
+
+def _validate_screenshot_generation(
+    *, cover: Path, title: str, candidate_id: str, method: str
 ) -> tuple[dict, Path]:
     """Validate one locally recomposed screenshot-polish generation.
 
@@ -192,6 +210,8 @@ def validate_screenshot_polish_generation(
         or document.get("title") != title
     ):
         raise ValueError("screenshot cover candidate/title/status binding mismatch")
+    if method not in SCREENSHOT_ROUTE_TREATMENTS:
+        raise ValueError("unknown screenshot repair treatment")
     model = str(document.get("model") or "")
     attempted_models = document.get("attempted_models")
     model_fallback_used = document.get("model_fallback_used")
@@ -210,7 +230,24 @@ def validate_screenshot_polish_generation(
             or attempted_models == ["gpt-image-2", "gpt-image-1.5"]
         )
     )
-    if (
+    if method == "screenshot_direct":
+        poster = document.get("screenshot_graphic_poster")
+        transform = poster.get("source_frame_transform") if isinstance(poster, Mapping) else None
+        if not (
+            document.get("method") == method
+            and model == document.get("image_gen_model") == "none"
+            and attempted_models == []
+            and model_fallback_used is False
+            and document.get("cover_origin") == "SOURCE_SCREENSHOT"
+            and document.get("fallback_used") is False
+            and all(document.get(key) is False for key in (
+                "image_generation_planned", "image_generation_attempted", "image_generation_used"
+            ))
+            and isinstance(transform, Mapping)
+            and transform.get("ai_modified") is False
+        ):
+            raise ValueError("cover generation is not a preserved screenshot_direct result")
+    elif (
         document.get("method") != "screenshot_polish"
         or not model_chain_valid
         or document.get("cover_origin") != "SOURCE_SCREENSHOT_AI_POLISH"
@@ -266,6 +303,7 @@ def validate_screenshot_polish_generation(
         not pre_overlay.is_file()
         or not _matches_sha256(pre_overlay, str(document.get("pre_overlay_sha256") or ""))
         or not mask_path.is_file()
+        or not _matches_sha256(mask_path, str(text_pixels.get("mask_sha256") or ""))
         or not validate_rendered_text_pixel_evidence(document)
     ):
         raise ValueError("screenshot title-render evidence is incomplete")
@@ -274,6 +312,11 @@ def validate_screenshot_polish_generation(
     )
     if face_detail is not None:
         raise ValueError(f"screenshot face witness is invalid: {face_detail}")
+    if method == "screenshot_direct":
+        from src.autoslice.cover_host_identity_gate import validate_final_host_identity_verification
+
+        if not validate_final_host_identity_verification(document):
+            raise ValueError("direct title repair lacks a final-pixel host witness")
     return document, manifest_path
 
 
@@ -292,9 +335,9 @@ def validate_cover_generation_for_binding(
         method = json.loads(manifest_path.read_text(encoding="utf-8")).get("method")
     except (OSError, AttributeError, TypeError, ValueError) as exc:
         raise ValueError(f"cover generation manifest is missing or invalid: {exc}") from exc
-    if method == "screenshot_polish":
-        validated = validate_screenshot_polish_generation(
-            cover=cover, title=title, candidate_id=candidate_id
+    if method in SCREENSHOT_ROUTE_TREATMENTS:
+        validated = _validate_screenshot_generation(
+            cover=cover, title=title, candidate_id=candidate_id, method=method
         )
         if documents is not None:
             validate_screenshot_route_authority(
@@ -311,6 +354,39 @@ def validate_cover_generation_for_binding(
     return _validate_repaired_cover_generation(
         cover=cover, title=title, candidate_id=candidate_id
     )
+
+
+def prepare_active_cover_binding(
+    *, runtime_root: Path, date: str, candidate_id: str, title: str,
+    mp4: Path, generated_cover: Path, prior_generation: object,
+) -> tuple[dict, Path, str, str, list[tuple[Path, dict]]]:
+    """Resolve the active frozen authority before any delivery transaction.
+
+    Keep the same namespace predicate as the binding replay validator. A
+    diagnostic-root image may be reviewed but cannot acquire active pointers.
+    """
+    from src.autoslice import cover_repair as repair
+
+    expected_root = (
+        runtime_root / "out" / date / candidate_id / "cover_repair" / "generations"
+    ).resolve()
+    binding_path = generated_cover.with_suffix(".cover-binding.json").resolve()
+    if not binding_path.is_relative_to(expected_root):
+        raise ValueError("active cover binding is outside the candidate generation root")
+    generation, generation_path = validate_cover_generation_for_binding(
+        cover=generated_cover, title=title, candidate_id=candidate_id
+    )
+    cover_sha256 = "sha256:" + repair._runner._sha256_regular_file(generated_cover)
+    media_sha256 = "sha256:" + repair._runner._sha256_regular_file(mp4)
+    documents = repair._active_cover_documents(
+        date=date, candidate_id=candidate_id, title=title,
+        mp4=mp4, media_sha256=media_sha256,
+    )
+    generation, generation_path = repair._enrich_repaired_cover_generation(
+        generation=generation, generation_path=generation_path,
+        documents=documents, title=title, prior_generation=prior_generation,
+    )
+    return generation, generation_path, cover_sha256, media_sha256, documents
 
 
 def enrich_screenshot_polish_generation(
@@ -342,10 +418,11 @@ def enrich_screenshot_polish_generation(
         title=title,
     )
     _atomic_write_json_file(generation_path, enriched)
-    return validate_screenshot_polish_generation(
+    return _validate_screenshot_generation(
         cover=Path(str(enriched["final_cover"])),
         title=title,
         candidate_id=str(enriched["candidate_id"]),
+        method=str(enriched["method"]),
     )
 
 

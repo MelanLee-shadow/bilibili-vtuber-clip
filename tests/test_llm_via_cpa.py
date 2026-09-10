@@ -306,15 +306,15 @@ def test_cpa_failure_does_not_print_secret_and_cleans_temp_files(tmp_path):
     assert list(fake_tmp_root.iterdir()) == []
 
 
-def test_default_chain_is_sol_then_55_then_54_medium(tmp_path):
-    """No env/argv override → the default chain, 3 attempts each."""
+def test_default_chain_is_astra_without_gpt5_downgrade(tmp_path):
+    """No env/argv override: GPT-6 Astra, three bounded attempts, no old-model downgrade."""
     completed, capture, _completion, _tmp = _run_bridge(
         tmp_path, curl_fails=True, chat_models_env=None
     )
 
     assert completed.returncode == 1
     models = [body["model"] for body in capture["bodies"]]
-    assert models == ["gpt-5.6-sol"] * 3 + ["gpt-5.5"] * 3 + ["gpt-5.4"] * 3
+    assert models == ["gpt-6-astra"] * 3
     assert {body["reasoning"]["effort"] for body in capture["bodies"]} == {"medium"}
 
 

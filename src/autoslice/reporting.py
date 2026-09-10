@@ -606,7 +606,7 @@ def write_reports(date: str, state: dict) -> None:
     lines += _selection_metric_v2_shadow_section(selection_metric_v2_shadow)
     lines += [
         "",
-        f"## 歌切（每场至多 {_runner.MAX_SONGS_PER_SESSION} 个、本日汇总；按弹幕量排序；已发布歌曲跳过；仅{_runner.PROFILE_DISPLAY_NAME}本人演唱且完整才切；背景音乐/原曲播放/SONG_PARTIAL 均不交付；被拦不占配额、备份自动回填）",
+        f"## 歌切（每日至多 {_runner.MAX_SONGS_PER_DATE} 个、同日多场共享；按弹幕量排序；已发布歌曲跳过；仅{_runner.PROFILE_DISPLAY_NAME}本人演唱且完整才切；背景音乐/原曲播放/SONG_PARTIAL 均不交付；被拦不占配额、备份自动回填）",
         "",
     ]
     if songs:

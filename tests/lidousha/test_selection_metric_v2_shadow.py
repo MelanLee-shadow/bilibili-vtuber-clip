@@ -365,7 +365,7 @@ def test_shadow_cannot_change_v1_order_quota_bytes_or_release_gate(
 
 class _ReportingRunner:
     DELIVERED_TALK_STATUSES = {"ok", "review_ready"}
-    MAX_SONGS_PER_SESSION = 1
+    MAX_SONGS_PER_DATE = 1
     PROFILE_DISPLAY_NAME = CHANNEL_PROFILE.display_name
 
     def __init__(self, root: Path) -> None:

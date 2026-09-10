@@ -1993,6 +1993,130 @@ def test_connection_stub_reused_portable_timestamp_rebind_fails_closed(
     assert len(receipts) == 1
 
 
+def test_connection_stub_reused_portable_partial_rebind_is_hash_bound(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """CloudFS may retain a finalized MP4 inode during a partial view reindex."""
+
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    receipts = _seed_prior_fuse_rebind(
+        stub, successor, webhook_files, finalized, row, monkeypatch
+    )
+    real_fingerprint = adapter._regular_file_fingerprint
+    real_attestation = adapter._attest_regular_file
+    reindexed_paths = {stub, stub.with_suffix(".xml"), successor}
+
+    def partial_reindexed_fingerprint(path: Path) -> dict:
+        fingerprint = real_fingerprint(path)
+        if path in reindexed_paths:
+            fingerprint["inode"] += 10_000
+        return fingerprint
+
+    def partial_reindexed_attestation(path: Path) -> dict:
+        attestation = real_attestation(path)
+        if path in reindexed_paths:
+            attestation["inode"] += 10_000
+        return attestation
+
+    monkeypatch.setattr(adapter, "_regular_file_fingerprint", partial_reindexed_fingerprint)
+    monkeypatch.setattr(adapter, "_attest_regular_file", partial_reindexed_attestation)
+    monkeypatch.setattr(
+        adapter,
+        "_mount_identity_for_path",
+        lambda _path: _fuse_mount_identity_with_id(88),
+    )
+
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+        identity_rebinds=receipts,
+        identity_rebind_attestations=_identity_rebind_attestations(stub, successor),
+    )
+
+    assert len(receipts) == 2
+    receipt = receipts[-1]
+    assert receipt["policy"] == adapter.SOURCE_DISPOSITION_REUSED_PORTABLE_REBIND_POLICY
+    assert "changed_fields" not in receipt
+    for role in ("source", "xml", "successor_source"):
+        assert receipt["previous_bindings"][role]["inode"] != receipt["current_bindings"][role][
+            "inode"
+        ]
+    assert (
+        receipt["previous_bindings"]["successor_mp4"]["inode"]
+        == receipt["current_bindings"]["successor_mp4"]["inode"]
+    )
+
+    monkeypatch.setattr(
+        adapter,
+        "_attest_regular_file",
+        lambda _path: pytest.fail("settled partial rebind must remain metadata-only"),
+    )
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+        identity_rebinds=receipts,
+    )
+    assert len(receipts) == 2
+
+
+def test_connection_stub_reused_portable_partial_rebind_same_mount_epoch_stays_blocked(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Partial inode drift in one mount epoch remains a hard failure."""
+
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+    )
+    assert row is not None
+    receipts = _seed_prior_fuse_rebind(
+        stub, successor, webhook_files, finalized, row, monkeypatch
+    )
+    real_fingerprint = adapter._regular_file_fingerprint
+    reindexed_paths = {stub, stub.with_suffix(".xml"), successor}
+
+    def partial_reindexed_fingerprint(path: Path) -> dict:
+        fingerprint = real_fingerprint(path)
+        if path in reindexed_paths:
+            fingerprint["inode"] += 10_000
+        return fingerprint
+
+    monkeypatch.setattr(adapter, "_regular_file_fingerprint", partial_reindexed_fingerprint)
+    monkeypatch.setattr(
+        adapter,
+        "_mount_identity_for_path",
+        lambda _path: _fuse_mount_identity_with_id(77),
+    )
+
+    with pytest.raises(adapter.AdapterError, match="identity drifted within one FUSE mount epoch"):
+        adapter.validate_connection_stub_disposition(
+            stub,
+            row,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+            identity_rebinds=receipts,
+        )
+    assert len(receipts) == 1
+
 @pytest.mark.parametrize("canary", ["hash", "stable_field", "partial_reindex", "same_mount"])
 def test_connection_stub_reused_portable_mount_rebind_fails_closed(
     tmp_path: Path,

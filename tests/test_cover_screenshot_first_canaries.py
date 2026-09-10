@@ -385,20 +385,22 @@ def test_canary_2b_final_game_gate_rejects_an_empty_panel(tmp_path):
         assert receipt["reason_code"] == expected, field
 
 
-# ───────────────── ③ 保真：talk 提问逐字节等价 ─────────────────
+# ───────────────── ③ 保真：当前 talk 提问契约 ─────────────────
 
-# These pins capture the talk-prompt baseline after the
-# source-visible headwear authority update: the source image decides the actual
-# visible headwear, while the game-scene branch remains isolated from talk.
+# Source pixels decide appearance; a calm expression can support a screenshot.
+# Final talk QC also allows story-related calm states and joint image/text hooks.
+# Game-scene contracts remain unchanged.
 _TALK_SOURCE_QUESTION_SHA = (
-    "ea279ac905e0549bfe21a9374528e4e1dd8644cf511fff53f13edea2e5d8eedb"
+    "12e68752fdb2633437d40b1f07be43b097e0ff278eea6d0a0f6bca2c944a073e"
 )
+# 143f711f intentionally separates narrated actions from visible pixels.
+# Keep this exact pin plus semantic assertions; do not revert the valid prompt.
 _TALK_HOST_GATE_QUESTION_SHA = (
-    "2de4da0140e52efc4b6ee64f1e1b553a5ff190cc6d4eb81903a282e4012dedcc"
+    "a358d30a15e51cdc57334b5dea0837d4558f380a1cf274b4a481fb5ca74581a5"
 )
 
 
-def test_canary_3_talk_prompts_are_byte_identical_to_base():
+def test_canary_3_talk_prompts_match_current_contract_fingerprints():
     from src.autoslice.cover_host_identity_gate import _QUESTION as HOST_QUESTION
 
     assert (
@@ -410,6 +412,9 @@ def test_canary_3_talk_prompts_are_byte_identical_to_base():
         == _TALK_HOST_GATE_QUESTION_SHA
     )
     assert "源图实际可见" in _QUESTION_PREFIX and "头戴物" in _QUESTION_PREFIX
+    assert "本图像门不能仅凭没有画出动作或对象" in HOST_QUESTION
+    assert "只有人物名/空泛口号、主体缺失" in HOST_QUESTION
+    assert "图文存在可指出的事实矛盾，仍须判 false" in HOST_QUESTION
 
 
 def test_canary_3b_talk_receipt_and_call_shape_are_unchanged(tmp_path):
@@ -519,9 +524,9 @@ def test_canary_4_story_reaction_false_no_longer_blocks_the_crop(tmp_path):
     [
         (4.91, True, "screenshot_direct"),   # 8/8 auto_200130_1323_1603
         (4.46, True, "screenshot_direct"),   # 8/8 auto_213135_469_710
-        (3.55, False, "screenshot_polish"),  # 8/7 auto_200736_298_383
-        (3.02, False, "screenshot_polish"),  # 8/8 auto_210131_1576_1802
-        (3.46, False, "screenshot_polish"),  # 8/8 auto_230125_960_1072
+        (3.55, False, "screenshot_direct"),  # 8/7 auto_200736_298_383
+        (3.02, False, "screenshot_direct"),  # 8/8 auto_210131_1576_1802
+        (3.46, False, "screenshot_direct"),  # 8/8 auto_230125_960_1072
     ],
 )
 def test_canary_4b_the_five_demoted_candidates_route_to_screenshot(
@@ -858,8 +863,8 @@ def _hash_bound_authority() -> dict[str, object]:
     }
 
 
-def test_canary_7a_vertical_source_routes_to_redraw_as_normal_route(tmp_path):
-    """竖版源即使拿到 4.91 强名场面分也走重绘，且回执不得记成降级。"""
+def test_canary_7a_verified_usable_vertical_source_can_preserve_screenshot(tmp_path):
+    """竖屏比例不推翻已验证的完整脸和忠实裁切，最终图仍受人物门约束。"""
 
     reference = _reference(tmp_path)
     verification = _verified(reference, _REAL_8_8_DEMOTED_VERDICT)
@@ -874,9 +879,10 @@ def test_canary_7a_vertical_source_routes_to_redraw_as_normal_route(tmp_path):
         },
         source_frame_size=_VERTICAL_SOURCE_SIZE,
     )
-    assert treatment == "cpa_redraw"
+    assert treatment == "screenshot_direct"
 
-    assert route["vertical_source_redraw"] is True
+    assert route["source_frame_is_vertical"] is True
+    assert route["vertical_source_redraw"] is False
     assert route["source_frame_size"] == [1920, 3414]
     assert route["source_frame_aspect_ratio"] == 1.7781
     assert route["vertical_source_min_aspect_ratio"] == 1.2
@@ -884,14 +890,11 @@ def test_canary_7a_vertical_source_routes_to_redraw_as_normal_route(tmp_path):
     selected = next(
         row for row in route["alternatives"] if row["status"] == "SELECTED"
     )
-    # 正常路由，不是"帧不够好"。措辞与逐帧证据都必须这么说。
-    assert "redraw is the normal route here (维护者 2026-08-10)" in selected["rationale"]
-    assert "1.7781 >= 1.20" in selected["rationale"]
+    assert "verified face and faithful crop" in selected["rationale"]
     rejected = next(
-        row for row in route["alternatives"] if row["treatment"] == "screenshot_direct"
+        row for row in route["alternatives"] if row["treatment"] == "cpa_redraw"
     )
-    assert "vertical_source_redraw=true" in rejected["rejected_reason"]
-    assert "非降级" in rejected["rejected_reason"]
+    assert "vertical_source_redraw=true" not in rejected["rejected_reason"]
 
 
 _RELATIONSHIP_STORY_CONTRACT = {
@@ -917,9 +920,8 @@ _RELATIONSHIP_STORY_CONTRACT = {
         {"cover_mode": "screenshot"},
     ],
 )
-def test_canary_7b_vertical_beats_every_screenshot_forcing_branch(tmp_path, kwargs):
-    reference = _reference(tmp_path)
-    verification = _verified(reference, _REAL_8_8_DEMOTED_VERDICT)
+def test_canary_7b_unverified_vertical_beats_screenshot_forcing_branches(tmp_path, kwargs):
+    verification = None
     # 分数刻意压到 0：这样**只有**被测的那条强制分支能产出 screenshot_direct，
     # 下面的标定评分路径在同样输入下只会给 cpa_redraw。否则对照组会被评分路径
     # 顺带满足，"优先级"就没被证明过。
@@ -953,6 +955,8 @@ def test_canary_7b_vertical_beats_every_screenshot_forcing_branch(tmp_path, kwar
         **kwargs,
     )
     assert treatment == "cpa_redraw"
+    assert _route_decision["vertical_source_redraw"] is True
+    assert "vertical source lacks a verified faithful screenshot composition" in _route_decision["selected_rationale"]
 
 
 @pytest.mark.parametrize(

@@ -87,6 +87,9 @@
 - 核心原则：标题围绕主播本人；替换成任何别的主播还成立的标题就是失败。
 - 自动标题除共享门外，还受违禁词与 selection-hook 锚点约束；失败可做有界重写。
   人工正文不自动重写，但结构/长度不合规仍 fail closed 并要求修正文档 authority。
+- 自动生成优先一个中心梗，补充理解必需的语境/真实反应即可；三拍是可选结构，不是摘要
+  检查清单。`build_automatic_talk_title_prompt` 与 `title_style.md` 同步表达这一取舍，不能
+  把事实审查或字数合格当成标题风格已经被用户接受；不因此改动手定标题或绕过事实门。
 - profile 中即使某个 canonical entity 只有一个 confusable group，也必须进入 producer 与
   `term_authority` 的共享实体上下文；不得因默认过滤 singleton 而让 `南天` 一类已登记误听
   在 transcript、hook、source-fact 与标题之间互相自证。登记只提供待裁决的 canonical/
@@ -122,4 +125,6 @@
 
 ## 封面嵌字与标题的关系
 
-- 封面文字 = 标题去前缀（歌切即 `《歌名》`，大字 banner）；从不用冒号，分句用换行。细则见 [70-cover.md](70-cover.md) 与 `.agent/skills/title-style/SKILL.md` §档案标题 vs 封面嵌字。
+- 封面文字按 [70-cover.md](70-cover.md) 的短梗字/歌切/显式全文合同选择；投稿标题与封面
+  文案是不同字段。旧“封面必须等于完整标题去前缀”已被后来的短梗字要求取代，不能因
+  投稿标题是 维护者 手定就恢复该旧默认。

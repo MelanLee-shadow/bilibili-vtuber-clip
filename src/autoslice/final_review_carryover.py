@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 from collections import Counter
 from pathlib import Path
 from typing import Any, Mapping
@@ -659,3 +660,40 @@ def load_replayable_final_review_carryover(path: Path) -> list[dict[str, Any]]:
         *sealed,
         *(row for row in checkpointed if _row_key(row) not in sealed_keys),
     ]
+
+
+def _snapshot_file_bytes(
+    paths: list[Path],
+) -> dict[Path, bytes | None]:
+    return {
+        path: path.read_bytes() if path.exists() else None
+        for path in dict.fromkeys(paths)
+    }
+
+
+def _write_bytes_atomic(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.exact-final-",
+        suffix=".tmp",
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _restore_file_bytes(
+    snapshots: Mapping[Path, bytes | None],
+) -> None:
+    for path, payload in snapshots.items():
+        if payload is None:
+            path.unlink(missing_ok=True)
+        else:
+            _write_bytes_atomic(path, payload)

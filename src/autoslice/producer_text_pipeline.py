@@ -52,9 +52,6 @@ from src.autoslice.exact_final_convergence import (
     converge_reconsidered_exact_final_findings,
     resolve_findings_from_exact_final_convergence_memos,
 )
-from src.autoslice.context_adjudication_witness_prewarm import (
-    prewarm_context_adjudication_witnesses,
-)
 from src.autoslice.danmaku_evidence import DanmakuItem
 from src.autoslice.deferred_same_cue_resolution import adjudicate_routed_findings
 from src.autoslice.final_review_auditor import (
@@ -77,10 +74,12 @@ from src.autoslice.review_priority_candidates import (
     review_priority_candidate_counts as _review_priority_candidate_counts,  # noqa: F401
     review_priority_candidates as _review_priority_candidates,
 )
+from src.autoslice.fidelity_review_candidates import fidelity_kept_contexts
 from src.autoslice.final_source_language_owner import register_final_foreign_script_cpa_repairs, register_final_source_language_cpa_repairs
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import LlmConfig, build_llm_call, extract_json_object
 from src.autoslice.producer_chat_input import (
+    build_structured_chat_binding_audit,
     DANMAKU_PRE_CONTEXT_MS,
     GIFT_PRE_CONTEXT_MS,
     GUARD_PRE_CONTEXT_MS,
@@ -401,7 +400,7 @@ def _build_entity_verification_context(
                 transport="command",
                 command_template=(
                     "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} "
-                    "'gpt-5.6-sol gpt-5.5 gpt-5.4' medium"
+                    "'gpt-6-astra' medium"
                 ),
                 timeout_seconds=180.0,
             )
@@ -738,6 +737,7 @@ def _run_final_review(
     source_truth_protected_cue_indexes: Sequence[int] = (),
     carryover_file: Path | None = None,
     priority_raw_findings: Sequence[Mapping[str, Any]] = (),
+    draft_fidelity_contexts: Sequence[Mapping[str, Any]] = (),
     screen_read_probe: Callable[[int, int], Mapping[str, object]] | None = None,
 ) -> tuple[str, dict]:
     final_review_audit: dict[str, Any] = {
@@ -775,6 +775,7 @@ def _run_final_review(
                 candidate_context=clip_context,
                 extra_raw_findings=priority_rows,
                 prioritize_extra_raw_findings=bool(priority_rows),
+                draft_fidelity_contexts=draft_fidelity_contexts,
             )
             protected_review_cues = set(handled_entity_cues)
             cue_count = len([cue for cue in parse_srt_cues(srt_text) if cue.text.strip()])
@@ -832,14 +833,15 @@ def _run_final_review(
                     screen_read_probe=screen_read_probe,
                 )
 
-            # 提速接线（维护者）：理由与不变量见
-            # context_adjudication_witness_prewarm 模块 docstring。
-            prewarm_receipt = prewarm_context_adjudication_witnesses(
-                srt_text, adjudicable,
-                entity_verifier=verify_confusable_entity,
-                max_adjudications=MAX_CONTEXT_ADJUDICATIONS,
-                original_srt_text=original_srt_text, clip_context=clip_context,
-            )
+            # Only CPA-unresolved findings need local audio. Eager prewarming
+            # would spend calls before that decision and defeat text-first.
+            prewarm_receipt = {
+                "schema_version": "context-adjudication-witness-prewarm.v1",
+                "status": "SKIPPED",
+                "reason_code": "CPA_TEXT_FIRST_DEMAND_DRIVEN_AUDIO",
+                "fired_count": 0,
+                "mutation_authorized": False,
+            }
 
             (
                 srt_text,
@@ -942,6 +944,7 @@ def _run_exact_final_release_review(
     timeline_offset_ms: int = 0,
     screen_read_probe: Callable[[int, int], Mapping[str, object]] | None = None,
     priority_raw_findings: Sequence[Mapping[str, Any]] = (),
+    draft_fidelity_contexts: Sequence[Mapping[str, Any]] = (),
     acoustic_discovery_audit: Mapping[str, object] | None = None,
     final_review_llm: Callable[[str], str] | None = None, pronoun_audit_llm: Callable[[str], str] | None = None,
 ) -> dict[str, object]:
@@ -1004,6 +1007,7 @@ def _run_exact_final_release_review(
             candidate_context=clip_context,
             extra_raw_findings=priority_findings,
             prioritize_extra_raw_findings=bool(priority_findings),
+            draft_fidelity_contexts=draft_fidelity_contexts,
         )
     except CandidatePronounAuditError as exc:
         return {
@@ -1324,47 +1328,41 @@ def _post_truth_release_hygiene(srt_text: str, chat_authority_audit: dict) -> st
     return srt_text
 
 
-def _adjudicate_final_foreign_script(
+def _adjudicate_final_language(
     padded: Path,
     srt_text: str,
     audit: dict[str, Any],
     out_root: Path,
     cid: str,
     chat_authority_audit: dict[str, Any],
+    *,
+    source_language: bool,
+    source_srt: str,
 ) -> tuple[str, dict[str, Any]]:
     input_srt = srt_text
-    srt_text, audit = adjudicate_foreign_script_audit(
-        media_path=padded,
-        srt_text=srt_text,
-        audit=audit,
-        out_root=out_root,
-        cid=cid,
-        llm_call=_build_final_review_llm_call(),
+    adjudicate = (adjudicate_language_preservation_audit if source_language
+                  else adjudicate_foreign_script_audit)
+    srt_text, audit = adjudicate(
+        media_path=padded, srt_text=srt_text, audit=audit,
+        out_root=out_root, cid=cid,
+        llm_call=_build_final_review_llm_call(), source_srt=source_srt,
     )
-    register_final_foreign_script_cpa_repairs(chat_authority_audit, input_srt=input_srt, output_srt=srt_text, foreign_script_audit=audit)
+    register = (register_final_source_language_cpa_repairs if source_language
+                else register_final_foreign_script_cpa_repairs)
+    key = "source_language_audit" if source_language else "foreign_script_audit"
+    register(chat_authority_audit, input_srt=input_srt, output_srt=srt_text, **{key: audit})
     return srt_text, audit
 
 
-def _adjudicate_final_source_language(
-    padded: Path,
-    srt_text: str,
-    audit: dict[str, Any],
-    out_root: Path,
-    cid: str,
-    chat_authority_audit: dict[str, Any],
-) -> tuple[str, dict[str, Any]]:
-    input_srt = srt_text
-    srt_text, audit = adjudicate_language_preservation_audit(
-        media_path=padded,
-        srt_text=srt_text,
-        audit=audit,
-        out_root=out_root,
-        cid=cid,
-        llm_call=_build_final_review_llm_call(),
-    )
-    register_final_source_language_cpa_repairs(
-        chat_authority_audit, input_srt=input_srt, output_srt=srt_text, source_language_audit=audit)
-    return srt_text, audit
+def _optional_text_override_document(path: Path | None) -> dict[str, Any]:
+    if path is not None:
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                return loaded
+        except (OSError, json.JSONDecodeError):
+            pass
+    return {}
 
 
 def _finalize_text_evidence(
@@ -1393,14 +1391,7 @@ def _finalize_text_evidence(
         structured_chat_names=_structured_chat_names(clip_context),
     )
     chat_authority_audit["final_source_language_preservation_audit"] = final_source_language_audit
-    override_document: dict[str, Any] = {}
-    if text_override_path is not None:
-        try:
-            loaded_override = json.loads(text_override_path.read_text(encoding="utf-8"))
-            if isinstance(loaded_override, dict):
-                override_document = loaded_override
-        except (OSError, json.JSONDecodeError):
-            pass
+    override_document = _optional_text_override_document(text_override_path)
     if str(final_source_language_audit["status"]).startswith(
         "BLOCKED_UNPROVEN_FOREIGN_"
     ) and unproven_foreign_introductions_covered_by_overrides(
@@ -1413,13 +1404,15 @@ def _finalize_text_evidence(
         )
     if padded is not None:
         # AGY listens candidate-blind; mismatches go to the text-only CPA judge.
-        srt_text, final_source_language_audit = _adjudicate_final_source_language(
+        srt_text, final_source_language_audit = _adjudicate_final_language(
             padded,
             srt_text,
             final_source_language_audit,
             out_root,
             cid,
             chat_authority_audit,
+            source_srt=source_language_witness_srt,
+            source_language=True,
         )
         chat_authority_audit["final_source_language_preservation_audit"] = (
             final_source_language_audit
@@ -1480,8 +1473,10 @@ def _finalize_text_evidence(
             foreign_script_audit = audit_foreign_script_consistency(srt_text)
         foreign_script_audit["cluster_retranscription"] = cluster_repair_audit
     if padded is not None:
-        srt_text, foreign_script_audit = _adjudicate_final_foreign_script(
-            padded, srt_text, foreign_script_audit, out_root, cid, chat_authority_audit
+        srt_text, foreign_script_audit = _adjudicate_final_language(
+            padded, srt_text, foreign_script_audit, out_root, cid, chat_authority_audit,
+            source_srt=source_language_witness_srt,
+            source_language=False,
         )
     chat_authority_audit["foreign_script_consistency_audit"] = foreign_script_audit
     srt_text, title_mark_balance_audit = apply_title_mark_balance_guard(srt_text)
@@ -1786,34 +1781,9 @@ def run_text_pipeline(
     authority.chat_authority_audit["source_truth_preview_receipts"] = {
         "pre_entity_arbitration": draft_source_truth_preview,
     }
-    retained_chat_counts: dict[str, int] = {}
-    for item in authoritative_chat:
-        retained_chat_counts[item.kind] = retained_chat_counts.get(item.kind, 0) + 1
-    binding_rows = []
-    for piece in spec["pieces"]:
-        binding_rows.append(
-            {
-                "status": piece.get("chat_binding_status", "LEGACY_UNDECLARED"),
-                "required": piece.get("structured_chat_required", False),
-                "jsonl_path": piece.get("chat_jsonl_local"),
-                "jsonl_sha256": piece.get("chat_jsonl_sha256"),
-                "origin_epoch_ms": piece.get("chat_origin_epoch_ms"),
-                "timeline_offset_ms": piece.get("chat_timeline_offset_ms"),
-                "source_alias_id": piece.get("chat_source_alias_id"),
-                "canonical_recording_basename": piece.get("chat_canonical_recording_basename"),
-            }
-        )
-    authority.chat_authority_audit["structured_chat_binding_audit"] = {
-        "schema_version": "structured-chat-binding-audit.v1",
-        "status": "PASS",
-        "pieces": binding_rows,
-        "retained_clip_window_counts": retained_chat_counts,
-        "retained_clip_window_total": len(authoritative_chat),
-        "zero_retained_meaning": (
-            "bound source parsed successfully but no event survived the clip window; "
-            "binding failures raise before this audit"
-        ),
-    }
+    authority.chat_authority_audit["structured_chat_binding_audit"] = (
+        build_structured_chat_binding_audit(spec, authoritative_chat)
+    )
     _discarded_review_truth_text, review_source_truth_preview_audit = apply_source_subtitle_truth(
         authority.srt_text,
         spec=spec,
@@ -1860,6 +1830,7 @@ def run_text_pipeline(
                 padded,
                 authority.srt_text,
             ),
+            draft_fidelity_contexts=fidelity_kept_contexts(padded, authority.srt_text),
             screen_read_probe=screen_read_probe,
         )
     evidence = _finalize_text_evidence(
@@ -1984,6 +1955,7 @@ def run_text_pipeline(
             verified_authority_audit=verified_authority_audit,
             timeline_offset_ms=timeline_offset_ms,
             priority_raw_findings=microcue_findings,
+            draft_fidelity_contexts=fidelity_kept_contexts(padded, final_srt_text),
             acoustic_discovery_audit=microcue_audit,
         )
         # 硬退出侧车（维护者 15:05Z 交棒清单第 7 项「硬退出丢

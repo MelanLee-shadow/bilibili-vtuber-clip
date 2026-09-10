@@ -665,3 +665,77 @@ def test_fixed_cli_bootstraps_from_non_repo_cwd_without_runtime_writes(tmp_path:
     assert graph["schema_version"] == "publication-readiness-graph.v1"
     assert all(row["dependencies"] == ["publication_registry"] for row in graph["rows"])
     assert before == {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+
+
+def test_uniform_host_nested_ass_locator_is_read_only(tmp_path: Path) -> None:
+    """Uniform-host renders declare ASS in burned_preview, not speaker ASS."""
+    repo, runtime = _runtime(tmp_path)
+    root, record = _package(runtime, "2026-08-20", "uniform", nested_burn=True)
+    doc = json.loads(record.read_text())
+    expected_ass = doc["subtitle_ass_path"]
+    doc["subtitle_ass_path"] = None
+    doc["burned_preview"].update(status="BURNED", ass_path=expected_ass)
+    record.write_text(json.dumps(doc))
+    state = runtime / "state/2026-08-20.json"
+    state.write_text(json.dumps({"picks": [{"candidate_id": "uniform", "status": "review_ready", "rc": 0}]}))
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    rows = _rows(build_readiness_graph(
+        repository_root=repo, runtime_root=runtime,
+        registry_loader=lambda *_a, **_k: _registry(),
+    ))
+    assert rows["uniform"]["category"] == READY_TO_PREPARE
+    assert rows["uniform"]["package_dependencies"]["subtitle_ass"] == expected_ass
+    assert {p: p.read_bytes() for p in before} == before
+
+
+@pytest.mark.parametrize("fault", ["different_bytes", "escaped", "symlink", "missing", "invalid_locator"])
+def test_nested_ass_locator_still_rejects_drift(tmp_path: Path, fault: str) -> None:
+    repo, runtime = _runtime(tmp_path)
+    root, record = _package(runtime, "2026-08-20", "bad-ass", nested_burn=True)
+    doc = json.loads(record.read_text())
+    ass = Path(doc["subtitle_ass_path"])
+    # An explicit top-level locator does not permit a conflicting nested one.
+    if fault == "different_bytes":
+        other = root / "different.ass"
+        other.write_bytes(b"wrong subtitle rendering")
+        nested: object = str(other)
+    elif fault == "escaped":
+        other = tmp_path / "outside.ass"
+        other.write_bytes(ass.read_bytes())
+        nested = str(other)
+    elif fault == "symlink":
+        other = root / "linked.ass"
+        other.symlink_to(ass)
+        nested = str(other)
+    elif fault == "missing":
+        nested = str(root / "missing.ass")
+    else:
+        nested = 123
+    doc["burned_preview"].update(status="BURNED", ass_path=nested)
+    record.write_text(json.dumps(doc))
+    (runtime / "state/2026-08-20.json").write_text(json.dumps({"picks": [{"candidate_id": "bad-ass", "status": "review_ready", "rc": 0}]}))
+    rows = _rows(build_readiness_graph(
+        repository_root=repo, runtime_root=runtime,
+        registry_loader=lambda *_a, **_k: _registry(),
+    ))
+    assert rows["bad-ass"]["category"] == STATE_DRIFT
+    assert set(rows["bad-ass"]["reason_codes"]) & {
+        "PACKAGE_ARTIFACT_HASH_DRIFT", "PACKAGE_ARTIFACT_FILE_INVALID", "PACKAGE_ARTIFACT_LOCATOR_MISSING"
+    }
+
+
+@pytest.mark.parametrize("status", [None, "DRY_RUN", "FAILED"])
+def test_nested_ass_fallback_requires_burned_status(tmp_path: Path, status: object) -> None:
+    repo, runtime = _runtime(tmp_path)
+    root, record = _package(runtime, "2026-08-20", "unburned", nested_burn=True)
+    doc = json.loads(record.read_text())
+    doc["burned_preview"].update(ass_path=doc["subtitle_ass_path"], status=status)
+    doc["subtitle_ass_path"] = None
+    record.write_text(json.dumps(doc))
+    (runtime / "state/2026-08-20.json").write_text(json.dumps({"picks": [{"candidate_id": "unburned", "status": "review_ready", "rc": 0}]}))
+    rows = _rows(build_readiness_graph(
+        repository_root=repo, runtime_root=runtime,
+        registry_loader=lambda *_a, **_k: _registry(),
+    ))
+    assert rows["unburned"]["category"] == STATE_DRIFT
+    assert "PACKAGE_ARTIFACT_LOCATOR_MISSING" in rows["unburned"]["reason_codes"]

@@ -715,7 +715,7 @@ def _production_review_punch(
     try:
         llm = llm_factory(LlmConfig(
             transport="command",
-            command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-5.6-luna gpt-5.5 gpt-5.4' medium",
+            command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-astra' medium",
             timeout_seconds=600.0,
         ))
         lines, receipt = review_cover_punch_semantics(

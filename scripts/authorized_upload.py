@@ -36,6 +36,10 @@ from scripts.audit_review_package import (  # noqa: E402
     AUDIT_SCHEMA_VERSION,
     audit_package,
 )
+from src.autoslice.authorized_upload_artifact_bindings import (  # noqa: E402
+    sha256_file, _strip_sha_prefix, _record_artifact_hash_problems,
+    _subtitle_audio_correspondence_problems,
+)
 from src.autoslice import authorized_upload_cli_parser  # noqa: E402
 from src.autoslice import authorized_upload_recovery_cli as upload_recovery  # noqa: E402
 from src.autoslice import bilibili_member_api as member_api  # noqa: E402
@@ -190,14 +194,6 @@ class UploadLockBusy(RuntimeError):
     """Another upload/repair transaction owns the shared critical section."""
 
 
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 # Tag policy (维护者, see scripts/suggest_upload_tags.py + memory
 # lidousha-upload-tags-policy): per-archive cap 12 (empirically probed via a
 # 12-tag edit on BV1EQNk6KErE), per-tag <=20 chars, no separators, no dups.
@@ -232,11 +228,6 @@ def _sha_entry(path: Path) -> dict:
         "sha256": sha256_file(path),
         "bytes": path.stat().st_size,
     }
-
-
-def _strip_sha_prefix(value: object) -> str:
-    text = str(value or "")
-    return text.removeprefix("sha256:")
 
 
 def _is_within(path: Path, root: Path) -> bool:
@@ -498,60 +489,6 @@ def _strict_verified_song_package(
     return True
 
 
-def _record_artifact_hash_problems(
-    record: dict,
-    *,
-    video: Path,
-    cover: Path,
-    subtitle: Path,
-    title: str,
-    story_contract_required: bool = True,
-) -> list[str]:
-    problems: list[str] = []
-    artifact_hashes = record.get("artifact_hashes")
-    if not isinstance(artifact_hashes, dict):
-        return ["record.json has no artifact_hashes object"]
-
-    expected = {
-        "video": sha256_file(video),
-        "cover": sha256_file(cover),
-        "subtitle": sha256_file(subtitle),
-    }
-    accepted_video = {
-        _strip_sha_prefix(artifact_hashes.get("burned_video_sha256")),
-        _strip_sha_prefix(artifact_hashes.get("video_sha256")),
-    }
-    if expected["video"] not in accepted_video:
-        problems.append("record artifact hashes do not bind the reviewed video")
-    if expected["cover"] != _strip_sha_prefix(artifact_hashes.get("cover_sha256")):
-        problems.append("record artifact hashes do not bind the reviewed cover")
-    accepted_subtitle = {
-        _strip_sha_prefix(artifact_hashes.get("delivery_subtitle_sha256")),
-        _strip_sha_prefix(artifact_hashes.get("subtitle_sha256")),
-    }
-    if expected["subtitle"] not in accepted_subtitle:
-        problems.append("record artifact hashes do not bind the reviewed SRT")
-
-    publish_staging = record.get("publish_staging")
-    record_title = publish_staging.get("title") if isinstance(publish_staging, dict) else None
-    if record_title != title:
-        problems.append(
-            f"record publish title mismatch: record={record_title!r} manifest={title!r}"
-        )
-    if story_contract_required:
-        story_contract = record.get("story_contract")
-        if not isinstance(story_contract, dict):
-            problems.append("record.json has no story_contract object")
-        else:
-            if not str(story_contract.get("schema_version") or "").strip():
-                problems.append("record story_contract has no schema_version")
-            if not str(story_contract.get("candidate_id") or "").strip():
-                problems.append("record story_contract has no candidate_id")
-            if not str(story_contract.get("transcript_sha256") or "").strip():
-                problems.append("record story_contract has no transcript_sha256")
-    return problems
-
-
 def _validate_v3_package_attestation(
     manifest: dict,
     *,
@@ -718,6 +655,16 @@ def _validate_v3_package_attestation(
                 and c2_upload.verified_c2_release_candidate_id(root, record) is None,
             )
         )
+        # Fresh talk releases must carry a real post-burn witness. Existing
+        # frozen transactions may resume under their original media contract;
+        # cover-only scope validation above independently proves unchanged media.
+        if not verified_song and (
+            (live_policy_recheck and not isinstance(attestation.get("cover_only_audit_scope"), dict))
+            or record.get("subtitle_audio_correspondence") is not None
+        ):
+            problems.extend(_subtitle_audio_correspondence_problems(
+                record, video=video, subtitle=subtitle_path, package_root=root,
+            ))
         record_tags = (record.get("upload_tags") or {}).get("final_tags")
         if record_tags != manifest.get("tags"):
             problems.append("manifest tags do not exactly match record.upload_tags.final_tags")
@@ -1086,8 +1033,8 @@ def effective_season_block(manifest: dict) -> tuple[dict | None, str]:
 def _build_season_http(cookie_json: Path):
     """(http, csrf) using the production bilibili cookie file.
 
-    ``http(url, data=None, is_json=False) -> dict`` — member.* endpoints get the
-    cookie jar; the public view/tags API only needs a browser UA.  Cookie values
+    ``http(url, data=None, is_json=False) -> dict`` — the member and public API
+    origins use the login jar; anonymous public reads can return HTTP 412. Cookie values
     are never printed or embedded in results."""
     session = member_api.BiliSession(cookie_path=cookie_json)
     jar = session.cookie_header
@@ -1095,9 +1042,15 @@ def _build_season_http(cookie_json: Path):
 
     def http(url: str, data: dict | None = None, is_json: bool = False) -> dict:
         headers = {"User-Agent": _BROWSER_UA}
-        if "member.bilibili.com" in url:
-            headers["Cookie"] = jar
-            headers["Referer"] = "https://member.bilibili.com/"
+        origin = urllib.parse.urlsplit(url)
+        cookie_origin = origin.scheme == "https" and origin.hostname in {
+            "member.bilibili.com", "api.bilibili.com"
+        }
+        if cookie_origin:
+            headers["Referer"] = (
+                "https://member.bilibili.com/" if origin.hostname == "member.bilibili.com"
+                else "https://www.bilibili.com/"
+            )
         body: bytes | None = None
         if data is not None:
             if is_json:
@@ -1106,6 +1059,8 @@ def _build_season_http(cookie_json: Path):
             else:
                 body = urllib.parse.urlencode(data).encode("utf-8")
         request = urllib.request.Request(url, data=body, headers=headers)
+        if cookie_origin:
+            request.add_unredirected_header("Cookie", jar)
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.load(response)
 

@@ -66,7 +66,7 @@ def source_frame_is_vertical(
     *,
     min_ratio: float = VERTICAL_SOURCE_MIN_ASPECT_RATIO,
 ) -> bool:
-    """Return whether one source frame is too tall for a 16:9 screenshot.
+    """Return whether a tall source needs a faithful-composition check.
 
     Fail-open on unknown geometry: a missing or unparseable size is not proof
     of a vertical source, and the ordinary scoring route still owns that clip.
@@ -104,23 +104,18 @@ def vertical_source_redraw_reason(
     *,
     min_ratio: float = VERTICAL_SOURCE_MIN_ASPECT_RATIO,
 ) -> str | None:
-    """Route reason when the source is vertical, else ``None``.
-
-    这是**正常路由，不是降级**：帧本身可以完全合格，只是装不进 16:9。回执措辞
-    因此写「redraw is the normal route here」并带上实测比例与阈值，别让下游把它
-    读成选帧失败或质量不合格。
-    """
+    """Fallback reason for a tall source lacking verified usable composition."""
 
     if not source_frame_is_vertical(size, min_ratio=min_ratio):
         return None
     return (
-        "vertical source is unsuitable for a screenshot cover; redraw is the "
-        "normal route here (维护者 2026-08-10) — source h/w="
+        "vertical source lacks a verified faithful screenshot composition; "
+        "redraw required — source h/w="
         f"{source_frame_aspect_ratio(size):.4f} >= {float(min_ratio):.2f}"
     )
 
 
-def vertical_source_decision_inputs(size: object) -> dict[str, object]:
+def vertical_source_decision_inputs(size: object, verification: object = None) -> dict[str, object]:
     """Disclose the measured geometry and the threshold in the route receipt."""
 
     return {
@@ -131,7 +126,8 @@ def vertical_source_decision_inputs(size: object) -> dict[str, object]:
         ),
         "source_frame_aspect_ratio": source_frame_aspect_ratio(size),
         "vertical_source_min_aspect_ratio": VERTICAL_SOURCE_MIN_ASPECT_RATIO,
-        "vertical_source_redraw": source_frame_is_vertical(size),
+        "source_frame_is_vertical": source_frame_is_vertical(size),
+        "vertical_source_redraw": source_frame_is_vertical(size) and not source_composition_supports_subject(verification),
     }
 
 
@@ -299,7 +295,9 @@ _QUESTION_PREFIX = (
     f"给出{CHANNEL_PROFILE.display_name}完整可见区域的归一化 bbox=[x0,y0,x1,y1]，坐标必须在 0..1 且紧包住"
     "她的脸和承担反应的上半身。判断脸是否完整；在不生成、不补画、不扭曲身份且不裁掉"
     "关键反应的前提下，能否只靠 16:9 裁切让她成为大号第一主体；源图中的表情/动作是否"
-    "确实承载给定故事反应。只要脸不完整、无法忠实裁成大主体、或源图不承载故事反应，"
+    "承载给定故事中的任一相关情绪或状态，无需单帧同时演出所有动作、反转和结尾。"
+    "平静、温柔或笑容也可以是有效状态；没有拍到的故事信息可以由封面文字承担。"
+    "只要脸不完整、无法忠实裁成大主体、或源图不承载故事反应，"
     "就必须 cpa_redraw_recommended=true。不要因为运动框、弹幕或游戏画面显眼而放行。"
     "只输出 JSON："
     '{"lidousha_bbox_frac":[0.0,0.0,1.0,1.0],'

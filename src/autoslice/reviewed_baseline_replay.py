@@ -830,7 +830,7 @@ def _production_llm_call(*, runtime_root: Path, effort: str) -> Callable[[str], 
         transport="command",
         command_template=(
             f"bash {shlex.quote(str(bridge))} {{prompt_file}} {{completion_file}} "
-            f"'gpt-5.6-sol gpt-5.5 gpt-5.4' {effort} 1"
+            f"'gpt-6-astra' {effort} 1"
         ),
         timeout_seconds=600.0,
         runtime_root=str(runtime),
@@ -894,7 +894,25 @@ def replay_exact_final_reviewer(
     def tracked(call: Callable) -> Callable:
         if provider_invocation is None:
             return call
-        return lambda *args, **kwargs: (provider_invocation(), call(*args, **kwargs))[1]
+
+        def counted(*args, **kwargs):
+            provider_invocation()
+            return call(*args, **kwargs)
+
+        # Tracking is observational: it cannot erase model identity or turn
+        # a cache hit into a provider request. Object methods are not __dict__.
+        counted.cpa_cache_identity = getattr(call, "cpa_cache_identity", None)
+        for seam in ("probe_witness_cache", "probe_exact_source_transcript_cache"):
+            probe = getattr(call, seam, None)
+            if callable(probe):
+                setattr(counted, seam, probe)
+        exact = getattr(call, "exact_source_transcript", None)
+        if callable(exact):
+            def counted_exact(*args, **kwargs):
+                provider_invocation()
+                return exact(*args, **kwargs)
+            counted.exact_source_transcript = counted_exact
+        return counted
 
     boundary_call = tracked(boundary_llm or _production_llm_call(runtime_root=runtime, effort="medium"))
     final_call = tracked(final_llm or _production_llm_call(runtime_root=runtime, effort="medium"))

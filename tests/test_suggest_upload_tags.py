@@ -2,7 +2,6 @@
 the fail-safe pipeline entry (generate_upload_tags must never block delivery)."""
 import json
 
-import pytest
 
 import scripts.suggest_upload_tags as st
 from src.autoslice.llm_client import LlmCallError
@@ -87,7 +86,8 @@ def test_f19_important_content_ip_is_a_final_subtitle_tag_candidate(tmp_path):
 
 def test_generate_upload_tags_ok_with_stub_llm(tmp_path):
     srt = _srt(tmp_path, ["我是直女", "好可爱"])
-    stub = lambda prompt: json.dumps({"tags": [{"tag": "可爱", "why": "字幕说好可爱"}, {"tag": "彩排", "why": "硬毙词必须被过滤"}]})
+    def stub(prompt):
+        return json.dumps({"tags": [{"tag": "可爱", "why": "字幕说好可爱"}, {"tag": "彩排", "why": "硬毙词必须被过滤"}]})
     out = st.generate_upload_tags(f"{CHANNEL_PROFILE.talk_title_prefix}标题", srt, llm_call=stub)
     assert out["status"] == "OK" and out["engine"] == st.ENGINE_VERSION
     assert "侄女" in out["final_tags"] and "可爱" in out["final_tags"]
@@ -125,7 +125,7 @@ def test_cpa_command_effort_is_low_same_model_chain():
     dropping medium -> low is zero-blast-radius.  Pin the model chain too so
     a future edit can't silently widen it while touching effort."""
 
-    assert "'gpt-5.6-sol gpt-5.5 gpt-5.4'" in st.CPA_COMMAND
+    assert "'gpt-6-astra'" in st.CPA_COMMAND
     assert st.CPA_COMMAND.split()[-1] == "low"
 
 

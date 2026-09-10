@@ -1,117 +1,80 @@
-# AGENTS.md — 给 AI 代理的项目地图与操作约定
+# AGENTS.md — 公开版操作约定
 
-本仓是一条 fail-closed、证据链驱动的 B 站直播切片流水线。给代理的三条铁律：
+本项目可以由人手工配置，也可以由 AI 代理协助维护。开始前读 [README.md](README.md)，
+修改某一步前读 [流水线索引](docs/pipeline/README.md) 及对应 step。
+以下是操作地图，不覆盖代码、schema、profile 或分步规则。
 
-1. **过不了门就修产物，不许修门**。所有质量门（字幕真值、边界、封面身份、
-   出版登记）默认拒绝；让某个门"变松"的改动必须有独立证据并写进提交信息。
-2. **证据先于结论**。"已运行/已通过/已交付"只能来自实际执行输出；改字幕
-   必须有出处（平台弹幕/礼物记录、独立听写、闭集裁决回执）。
-3. **运营状态 ≠ 代码**。出版登记、真值台账、评审契约是部署自己的数据
-   （本仓只有模板）；不要把示例 profile 的内容当成约束。
+## 首次运行
 
-## 第一次拿到本仓（人与代理通用）
+1. 创建 Python 3.11+ 虚拟环境并安装 `requirements.txt`。
+2. 不加载凭据、不设置 `AUTOSLICE_PROFILE`，先执行配置验证、CLI `--help` 和测试：
 
-按顺序做，每步有验证点：
+   ```bash
+   .venv/bin/python scripts/validate_channel_profile.py --profile lidousha --config-only
+   .venv/bin/python scripts/session_autoslice.py --help
+   .venv/bin/python scripts/produce_slice_package.py --help
+   .venv/bin/python -m pytest -q
+   ```
 
-1. **装依赖**：`python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`。
-2. **冒烟**：`.venv/bin/python -m pytest -q` —— 应全绿（无凭据/无网络也能跑，
-   LLM/HTTP 边界全部 mock；缺 `ffmpeg` 时个别用例 skip）。套件以
-   **默认 profile** 为基准：跑测试时不要设置 `AUTOSLICE_PROFILE`。
-3. **配环境**：`cp .env.example .env`，填 `CPA_BASE_URL`/`CPA_API_KEY` 与
-   听音腿（**AGY 订阅或 Gemini API key 二选一**——同一个模型的两种接入）。**`.env` 只是模板，不会被任何脚本自动加载**——跑脚本前
-   `set -a; source .env; set +a`，无人值守 runner 的参考部署读
-   `$AUTOSLICE_BASE/cpa.env`（`deploy_autoslice.sh` 生成）。配完跑
-   `python3 scripts/preflight.py` 一次体检（字体/ffmpeg/目录/凭据/VAD）。
-   没有 CPA？先读 README 的 LLM 通道一节——没有 LLM 入口时
-   选题/校对/封面 lane 会 fail-closed 拒绝，而不是降级。
-4. **认识 profile**：读 [profiles/README.md](profiles/README.md)。默认
-   profile 是 `lidousha`（示例频道）；`AUTOSLICE_PROFILE` 在进程 import 时
-   读取。校验：`python3 scripts/validate_channel_profile.py --profile lidousha
-   --config-only`（输出里的 `voiceprint_status` 为 UNCONFIGURED 属预期——
-   声纹不随仓分发，READY≠声纹已 enroll）。
-5. **给新频道建 profile**（本仓的预期配置者就是你——agent；人类用户会把
-   这一步整个交给你）：复制 `profiles/_template/profile.json` 与
-   `assets/_template/` 骨架，按骨架 README 的**分层**填充——层 0 默认给全
-   （字体/政策/度量/原则，agent 独立完成）；层 1 身份四件套**先问后写**
-   （词表、persona、标题风格、封面形象——模板内已写好该问频道主人的问题与
-   真实示例，答完代写；先写 3–5 条就能开跑，之后边用边攒）；层 2 配 cron
-   由 crawler 代填；
-   层 3 台账运行时自长；层 4（声纹/片头）用到才配。每层收敛后跑 validator
-   与入口 `--help` 验证。**发布 lane 另需 `AUTOSLICE_SEASON_IDS`（部署方
-   自己账号的合集/小节 ID，账号专属、无默认值、必填；获取方式见
-   `.env.example`）。**
-   换频道的耦合现状见下方「换频道耦合现状」一节（发布面已全 profile 化，
-   持久证据词汇保留示例拼写属刻意）。凭据逐项按
-   [docs/credentials.md](docs/credentials.md) 配置并跑其校验命令。
-6. **跑第一支切片**：README「快速开始」的 `--smoke-segment` 冒烟路径。
-7. **整线部署**：`ops/recording/README.md`（录制层）→
-   `scripts/deploy_autoslice.sh`（参考部署，按主机改写）→ cron `--once`。
+3. 按 [profiles/README.md](profiles/README.md) 建立自己的频道；词表、人设、标题风格和
+   封面身份描述来自频道提供者，不能代为编造。模板资产和真实运营状态必须区分。
+4. 按 `.env.example` 与 [凭据说明](docs/credentials.md) 配置服务，再跑 `preflight.py`。
+   `.env` 不会自动加载；`set -a; source .env; set +a` 才会导出它。参考部署另读
+   `$AUTOSLICE_BASE/cpa.env`。CPA 的文字/视觉能力与局部听音服务要分别验证。
+5. 运行 README 的真实切片示例前确认源素材、目录、额度和所需外部工具。
+   这不是离线测试：可能联网、写入工作目录并调用计费服务；不保证任何输入都出片。
+6. 发布需要另行授权、账号凭据、出版登记和自己的 `AUTOSLICE_SEASON_IDS`；
+   不从“制作一个包”的请求推断“允许上传”。
+
+示例 profile 的片头媒体和声纹不随仓分发。配置检查的 READY 不等于声纹已录入，
+也不等于所有生产前提齐备。普通样式归属不表示音频身份已经逐段确认。
+
+## 关键不变量
+
+**修产物，不靠放松门通过。** 任何质量门变化都需要独立依据和回归测试。
+不能删除测试、静默接受不合法数据或用旧回执替代当前输入的验证。
+
+**证据先于结论。** 只对实际运行过的测试、真实读取的状态和验收过的产物声称通过。
+明确区分离线测试、服务体检、真实阶段实验、完整包与公开发布。
+
+**BCUT 是基础，CPA 裁决文字。** 普通谈话先做整片文字校对，再按具体疑点请求局部盲音频证据。
+不默认整片 AGY 精听，不以未经验证的 MOSS / MAI 研究替代 BCUT。
+
+**缓存不授予放行权。** 成功的阶段结果只在内容、上下文、配置和代码绑定仍有效时复用。
+后置检查仍执行，也可能调用模型；不要承诺最终字幕一致或整个重试零请求。
+
+**已审原稿只改授权范围。** 冻结未受影响内容，按需要重新烧录并检查实际成片。
+公共仓库的空台账或兼容占位不是维护者的历史授权。
+
+**上传只走 `authorized_upload.py` 的闭环。** 禁止裸调 `do_upload.sh`。
+已发布候选不得重复新投稿，修复走同 BV 路径；`review_ready` 不等于已发布。
 
 ## 仓库地图
 
-| 位置 | 内容 |
+| 位置 | 用途 |
 |---|---|
-| `docs/pipeline/README.md` | 分步权威文档入口（源录像→选片→边界→字幕→歌切→标题/封面→打包→发布） |
-| `src/autoslice/` | 全部管线模块（约 190 个文件） |
-| `scripts/README.md` | 脚本地图（按 lane 分组，先读这个再翻 scripts/） |
-| `scripts/session_autoslice.py` | 无人值守 runner（cron 驱动；`--smoke-segment` 单段冒烟） |
-| `scripts/produce_slice_package.py` | 单候选产线入口（spec 字段见 docstring） |
-| `scripts/authorized_upload.py` | 发布/同稿修复的唯一副作用入口 |
-| `profiles/`、`assets/_template/`、`assets/lidousha/` | 频道 profile 模板、最小骨架与完整实战示例 |
-| `.agent/skills/` | 可复用的代理技能（发布闭环、标题风格、歌词对轴等） |
+| `src/autoslice/` | 流水线实现、契约、门和可复用模块 |
+| `scripts/README.md` | 按用途组织的 CLI 地图 |
+| `scripts/session_autoslice.py` | runner；`--smoke-segment` 是单段真实制作入口 |
+| `scripts/produce_slice_package.py` | 指定候选的制作入口，spec 以其文档为准 |
+| `docs/pipeline/` | 分步规则及其机器强制层 |
+| `profiles/`、`assets/_template/` | 频道配置与资产骨架 |
+| `tests/`、`.github/workflows/ci.yml` | 隔离回归测试与实际 CI 命令 |
+| `.agent/skills/` | 操作配方；不能反向覆盖分步规则 |
 
-**背景阅读（非规则，理解"为什么长这样"时看）**：
-[docs/auto-review-architecture.md](docs/auto-review-architecture.md)（一页式
-高层结构图：录制权威→选题→边界→字幕→封面/标题→交付→发布）、
-[docs/bilibili-ai-subtitle-via-bcut.md](docs/bilibili-ai-subtitle-via-bcut.md)
-（当初为什么选必剪免费 ASR 做中文转写层的调研底稿）。两者都不定义规则——
-规则只在 `docs/pipeline/`。
+## 配置、兼容与验证
 
-## 常用命令
+默认 profile 是 `lidousha`，在进程 import 时读取；不要在长进程运行中切换。
+频道知识只放进 profile 资产，不硬编码到业务逻辑。部署路径按自己的实际机器配置；
+公共版媒体宿主的参考默认是 `localhost`，部分音频入口仍可能需要 SSH。
 
-```bash
-python3 -m pytest -q                  # 全套件；无凭据可跑（密闭守卫机械封死真实 LLM 通道）
-python3 scripts/preflight.py          # 部署体检：字体/ffmpeg/目录/凭据/VAD
-python3 scripts/validate_channel_profile.py --profile <id> [--config-only]
-python3 scripts/produce_slice_package.py --spec <spec.json> --ssh-host localhost
-```
+持久证据词汇保留 `lidousha-` 拼写以兼容旧包，例如 schema、`lidousha_role`、
+`human_reviewed_lidousha`、`verified_lidousha_voiceprint`、`LIDOUSHA_*` 兼容环境变量和
+`lidousha_centrality`。这些兼容键不是当前频道身份，不能为美观直接重命名。
 
-## 代理禁区
+修改后先跑相关回归，再跑全量公开测试；记录 Python 版本、commit、命令、通过和跳过范围。
+`tests/test_runtime_architecture.py` 的债务基线不能为了过测试随意上调。
+模型调用点的标识、effort 与环境覆盖范围要从当前源码核实，不能照搬旧 README 或私有部署值。
 
-- **上传只走 `authorized_upload.py` 的 manifest 闭环**；`do_upload.sh` 拒绝
-  裸调（需要 `AUTHORIZED_UPLOAD=1`），不要绕。出版登记里 `published` 的候选
-  永远不允许再新投稿，修复走同 BV repair lane。
-- **不要把示例 profile 的专名/风格写进代码**；频道知识只进 profile 资产。
-- **不要靠删测试/放宽断言过门**；债务棘轮（`tests/test_runtime_architecture.py`
-  的行数账本）只许降不许升，改了要在提交里说明。
-
-## 架构约定与核心不变量
-
-- **证据链而非黑箱**：每处字幕修正都要有出处（平台弹幕/礼物记录、独立声学
-  听写、闭集裁决回执），并以哈希绑定进交付包。
-- **出版登记是唯一上传授权**：已发布内容只能走同 BV 修复链（换源不换稿）。
-- **精确重放**：同稿修复用 `subtitle-redelivery-baseline.v2` 逐字节恢复已审
-  文本，只有真值台账拥有的区间允许偏离——修复不会引入新的回归。
-- **内容寻址缓存**：声学/裁决调用按输入哈希缓存，重试轮零重复请求。
-- **债务棘轮**：`tests/test_runtime_architecture.py` 冻结每个超限函数/模块的
-  行数，只许降不许升；新增行数=显式改账本并在提交里说明。
-- **凭据**：每个 cookie/key 的模板与校验命令见
-  [docs/credentials.md](docs/credentials.md)；全部凭据不入库。
-
-## 换频道耦合现状（发布前必读）
-
-身份/prompt/控制流/**发布与声纹 lane 的资产路径**已全部 profile 化（默认
-profile 渲染与路径逐字节等价）：出版登记、终审契约、真值台账、手动标题
-授权目录、审计指纹源、声纹接受门都按 `CHANNEL_PROFILE.asset_file()`/
-`profile_id` 派生——换频道即各用各的登记台账与授权面，可产包评审也可走
-完整发布闭环（上传授权仍归 `authorized_upload` 的 manifest+出版登记门）。
-
-**词汇级兼容，绝对不要改**：持久证据/schema 词汇保留 `lidousha-` 拼写以不打碎
-旧包哈希——`lidousha-*.v1` schema 串、`lidousha_role`、`human_reviewed_lidousha`、
-`verified_lidousha_voiceprint`、`LIDOUSHA_*` 兼容 env 别名、scorecard 维度键
-`lidousha_centrality`。
-
-部署位默认值全部指向本机或由用户显式决定：`--ssh-host` 默认 `localhost`
-（媒体在别的机器时显式传）、监控脚本的宿主/房间号走
-`AUTOSLICE_MONITOR_SSH_HOST`/`AUTOSLICE_MONITOR_ROOM` 环境变量、
-`pull` 工具的 `--host` 必填。`/opt/bilive` 布局是参考部署约定，可整体换路径。
+凭据、真实账号状态、私有授权和声纹不得提交。安全问题使用 [SECURITY.md](SECURITY.md)
+的私密渠道；贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。

@@ -35,8 +35,13 @@ def _witness(request, heard):
     }
 
 
+def _identified(call):
+    call.cpa_cache_identity = {"models": ["gpt-6-astra"], "effort": "medium"}
+    return call
+
+
 def _judge(choice):
-    return lambda _prompt: json.dumps({"choice": choice, "reason": "test"})
+    return _identified(lambda _prompt: json.dumps({"choice": choice, "reason": "test"}))
 
 
 def _finding():
@@ -47,6 +52,39 @@ def _finding():
         "proposed_full_cue": "一百五十首",
         "repair_class": "phonetic",
     }
+
+
+@pytest.mark.parametrize("effort, hit", [("medium", True), ("low", False)])
+def test_budget_cache_replay_binds_actual_model_effort(tmp_path, monkeypatch, effort, hit):
+    import src.autoslice.final_review_auditor as auditor
+
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path))
+    monkeypatch.setattr(auditor, "MAX_CONTEXT_ADJUDICATIONS", 0)
+    source = _srt("一百五十秒")
+    finding = {**_finding(), "cue_index": 1}
+    request = build_context_adjudication_request(source, finding)
+    wr = build_witness_request(request)
+    witness = {**_witness(wr, "yi bai wu shi miao"),
+               "witness_protocol": "blind_pinyin", "served_from_cache": True}
+    judge_word_choice(llm_call=_judge("CURRENT"), check_request=request, witness=witness)
+
+    class Verifier:
+        def __call__(self, _request):
+            raise AssertionError("no fresh audio after cap")
+
+        def probe_witness_cache(self, _request):
+            return witness
+
+    def forbidden(_prompt):
+        raise AssertionError("no fresh CPA after cap")
+
+    forbidden.cpa_cache_identity = {"models": ["gpt-6-astra"], "effort": effort}
+    unresolved, resolved = adjudicate_exact_release_findings(
+        source, [finding], entity_verifier=Verifier(), judge_llm_call=forbidden
+    )
+    assert bool(resolved) is hit
+    if not hit:
+        assert unresolved[0]["exact_release_adjudication"]["status"] == "SKIPPED_BUDGET"
 
 
 def test_exact_release_budget_counts_only_new_provider_adjudications(tmp_path, monkeypatch):
@@ -114,13 +152,13 @@ def test_exact_release_budget_counts_only_new_provider_adjudications(tmp_path, m
         source,
         findings,
         entity_verifier=verifier,
-        judge_llm_call=judge_provider,
+        judge_llm_call=_identified(judge_provider),
     )
 
     assert unresolved == []
     assert len(resolved) == 2
     assert len(verifier.provider_calls) == 1
-    assert len(judge_calls) == 1
+    assert len(judge_calls) == 2  # one text-first decision plus one acoustic decision
     replay = resolved[1]["exact_release_adjudication"]["provider_budget_replay"]
     assert replay["status"] == "PASS"
     assert replay["provider_call_count"] == 0
@@ -189,13 +227,13 @@ def test_second_pass_replays_twelve_cached_rows_then_adjudicates_remaining_four(
         source,
         findings,
         entity_verifier=verifier,
-        judge_llm_call=judge_provider,
+        judge_llm_call=_identified(judge_provider),
     )
 
     assert unresolved == []
     assert len(resolved) == 16
     assert len(verifier.provider_calls) == 4
-    assert len(judge_calls) == 4
+    assert len(judge_calls) == 8  # text-first and acoustic decisions for four new rows
     assert all(
         row["exact_release_adjudication"]["provider_budget_replay"]
         ["provider_call_count"]
@@ -455,9 +493,9 @@ def test_exhausted_budget_replays_exact_source_triple_cache(tmp_path, monkeypatc
         [finding],
         entity_verifier=TripleCacheVerifier(),
         clip_context=clip_context,
-        judge_llm_call=lambda _prompt: (_ for _ in ()).throw(
+        judge_llm_call=_identified(lambda _prompt: (_ for _ in ()).throw(
             AssertionError("budget-exhausted CPA provider ran")
-        ),
+        )),
     )
 
     assert resolved == [] and len(unresolved) == 1
@@ -502,9 +540,9 @@ def test_exact_triple_cache_partial_hit_never_crosses_exhausted_budget(
         [finding],
         entity_verifier=PartialTripleVerifier(),
         clip_context=clip_context,
-        judge_llm_call=lambda _prompt: (_ for _ in ()).throw(
+        judge_llm_call=_identified(lambda _prompt: (_ for _ in ()).throw(
             AssertionError("budget-exhausted CPA provider ran")
-        ),
+        )),
     )
     assert resolved == []
     assert unresolved[0]["exact_release_adjudication"]["status"] == "SKIPPED_BUDGET"

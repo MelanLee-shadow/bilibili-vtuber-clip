@@ -511,7 +511,3 @@ def test_rejects_receipt_srt_or_corrected_hook_mismatch_before_provider(tmp_path
             llm_call=provider,
         )
     assert calls == 0
-
-
-
-

@@ -115,7 +115,7 @@ def _enrich_repaired_cover_generation(
     attach those active documents and record the actual cpa_redraw execution.
     """
 
-    if generation.get("method") == "screenshot_polish":
+    if generation.get("method") in _route_lineage.SCREENSHOT_ROUTE_TREATMENTS:
         return _route_lineage.enrich_screenshot_polish_generation(
             generation=generation,
             generation_path=generation_path,
@@ -1129,24 +1129,12 @@ def _bind_repaired_cover(
     cid = str(rec.get("candidate_id") or "")
     title = str(rec.get("title") or "")
     generated_cover = generated_cover or cover
-    generation, generation_path = _route_lineage.validate_cover_generation_for_binding(
-        cover=generated_cover, title=title, candidate_id=cid
-    )
-    cover_sha256 = "sha256:" + _runner._sha256_regular_file(generated_cover)
-    media_sha256 = "sha256:" + _runner._sha256_regular_file(mp4)
-    documents = _active_cover_documents(
-        date=date,
-        candidate_id=cid,
-        title=title,
-        mp4=mp4,
-        media_sha256=media_sha256,
-    )
-    generation, generation_path = _enrich_repaired_cover_generation(
-        generation=generation,
-        generation_path=generation_path,
-        documents=documents,
-        title=title,
-        prior_generation=rec.get("cover_generation"),
+    generation, generation_path, cover_sha256, media_sha256, documents = (
+        _route_lineage.prepare_active_cover_binding(
+            runtime_root=_runner.BASE, date=date, candidate_id=cid, title=title,
+            mp4=mp4, generated_cover=generated_cover,
+            prior_generation=rec.get("cover_generation"),
+        )
     )
     generation_sha256 = "sha256:" + _runner._sha256_regular_file(generation_path)
     song_manifest = _active_song_delivery_manifest(

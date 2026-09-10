@@ -16,8 +16,9 @@ Gemini-family, so one quota wall reverted a slice to garble).  Placing CPA
 *before* the audio verifier also removes AGY from the hot path for the common
 read-aloud case. When audio is useful, this module sends AGY a physically
 candidate-free pinyin request and then gives the full closed set back to CPA.
-The same witness→CPA route owns registered-name conflicts (立希/Saki etc.);
-the audio provider never emits the delivered canonical choice.
+Registered-name conflicts use a text-first closed choice too; only an explicit
+unresolved request reaches the witness→CPA route. The audio provider never
+emits the delivered canonical choice.
 
 Contract: this is an ``entity_verifier(request) -> verdict`` matching
 ``entity_audio_verifier``.  For a read-aloud request it returns a
@@ -46,6 +47,9 @@ from src.autoslice.acoustic_witness_adjudication import (
 )
 from src.autoslice.acoustic_witness_availability import (
     unavailable_acoustic_witness,
+    pending_acoustic_witness,
+    TEXT_FIRST_REASON,
+    TEXT_FIRST_INSTRUCTIONS,
 )
 from src.autoslice.acoustic_witness_protocol import (
     BLIND_PINYIN_PROTOCOL,
@@ -225,6 +229,7 @@ def _closed_choice_with_witness(
     request: Mapping[str, Any],
     llm_call: LlmCall,
     next_verifier: Verifier | None,
+    context_unresolved: bool = False,
 ) -> dict[str, Any] | None:
     candidates = [
         dict(candidate)
@@ -249,6 +254,145 @@ def _closed_choice_with_witness(
     if check_request is None:
         return None
     witness_request = build_witness_request(check_request)
+    def judge(witness):
+        witness_valid = bool(
+            valid_witness_evidence(
+                witness,
+                request_sha256=witness_request["request_sha256"],
+            )
+            and witness_protocol(witness) == BLIND_PINYIN_PROTOCOL
+        )
+        if not witness_valid:
+            witness = {
+                "schema_version": _WITNESS_VERDICT_SCHEMA,
+                "request_sha256": witness_request["request_sha256"],
+                "status": "UNCERTAIN",
+                "reason_code": "WITNESS_INVALID",
+            }
+        context = {
+            "current_transcript": current,
+            "context_before": request.get("context_before"),
+            "context_after": request.get("context_after"),
+            "kind": request.get("kind"),
+            "structured_chat_text": request.get("exact_text"),
+            "structured_chat_canonical": request.get(
+                "structured_chat_canonical"
+            ),
+            "structured_chat_surface": request.get("structured_chat_surface"),
+            "candidate_provenance": check_request["candidate_provenance"],
+            "whole_clip_context": request.get("whole_clip_context"),
+            "adjacent_structured_event_chain": (
+                request.get("whole_clip_context") or {}
+            ).get("adjacent_structured_event_chain")
+            if isinstance(request.get("whole_clip_context"), Mapping)
+            else None,
+        }
+        template = _CLOSED_CHOICE_PROMPT
+        text_first = witness.get("reason_code") == TEXT_FIRST_REASON
+        if text_first:
+            intro_end = template.index("铁律：")
+            template = "# 字幕文字闭集裁决\n\n你是最终文字/语义法官，先依据全部文字证据裁决。\n\n" + template[intro_end:]
+        prompt = template.format(
+            witness=json.dumps(witness, ensure_ascii=False, sort_keys=True),
+            candidates=json.dumps(
+                candidates, ensure_ascii=False, indent=2, sort_keys=True
+            ),
+            context=json.dumps(context, ensure_ascii=False, indent=2, sort_keys=True),
+        )
+        if text_first:
+            prompt += TEXT_FIRST_INSTRUCTIONS
+        try:
+            completion = llm_call(prompt)
+            payload = extract_json_object(completion)
+        except Exception:
+            return None
+        ranking_raw = payload.get("ranking")
+        if not isinstance(ranking_raw, list):
+            return None
+        ranking: list[dict[str, object]] = []
+        for row in ranking_raw:
+            if not isinstance(row, Mapping):
+                continue
+            canonical = str(row.get("canonical") or "")
+            probability = row.get("p")
+            if (
+                canonical in canonicals
+                and not isinstance(probability, bool)
+                and isinstance(probability, (int, float))
+                and math.isfinite(float(probability))
+                and 0.0 <= float(probability) <= 1.0
+            ):
+                ranking.append({"canonical": canonical, "p": float(probability)})
+        if {str(row["canonical"]) for row in ranking} != set(canonicals):
+            return None
+        if len(ranking) != len(canonicals):
+            return None
+        top = max(ranking, key=lambda row: float(row["p"]))
+        choice = str(payload.get("choice") or "")
+        if choice != top["canonical"]:
+            choice = str(top["canonical"])
+        heard_pinyin = str(witness.get("heard_pinyin") or "")
+        uncertain_positions = list(witness.get("uncertain_positions") or [])
+        compatibility = {
+            canonical: pinyin_compatibility(
+                canonical,
+                heard_pinyin=heard_pinyin,
+                uncertain_positions=uncertain_positions,
+            )
+            for canonical in canonicals
+        }
+        context_only = witness.get("status") != "OBSERVED"
+        return {
+            "schema_version": VERDICT_SCHEMA,
+            "request_sha256": request.get("request_sha256"),
+            "status": "RESOLVED",
+            "canonical_entity": choice,
+            "confidence": float(top["p"]),
+            "authority_kind": (
+                "cpa_context_only_closed_set_adjudication"
+                if context_only
+                else "cpa_witness_adjudication"
+            ),
+            "decision_authority": "CPA_JUDGE",
+            "witness_authority": "EVIDENCE_ONLY",
+            "witness_status": witness.get("status"),
+            "witness_reason_code": witness.get("reason_code"),
+            "text_first_decision": text_first and payload.get("needs_audio") is False,
+            "needs_audio": payload.get("needs_audio") is not False,
+            "witness_protocol": witness_protocol(witness),
+            "acoustic_evidence_used": not context_only,
+            "witness_target_audible": witness.get("target_audible"),
+            "witness_request_sha256": witness_request["request_sha256"],
+            "witness_source_media_sha256": witness.get(
+                "source_media_sha256"
+            ),
+            "witness_audio_clip_sha256": witness.get("audio_clip_sha256"),
+            "witness_prompt_sha256": witness.get("prompt_sha256"),
+            "witness_response_sha256": witness.get("response_sha256"),
+            "judge_prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+            "judge_completion_sha256": hashlib.sha256(
+                completion.encode()
+            ).hexdigest(),
+            "ranking": ranking,
+            "pinyin_compatibility": compatibility,
+            "reason_code": (
+                "CPA_CONTEXT_ONLY_CLOSED_SET_DISAMBIGUATION"
+                if context_only
+                else (
+                    "READ_ALOUD_CPA_WITNESS_ADJUDICATED"
+                    if request.get("schema_version") == READ_ALOUD_REQUEST_SCHEMA
+                    else "REGISTERED_ENTITY_CPA_WITNESS_ADJUDICATED"
+                )
+            ),
+            "reason": str(payload.get("reason") or "")[:300],
+        }
+
+    text_decision = None
+    if not context_unresolved and next_verifier is not None:
+        text_decision = judge(pending_acoustic_witness(witness_request))
+        if text_decision is not None and not text_decision["needs_audio"]:
+            return text_decision
+
     try:
         observed = (
             next_verifier(witness_request)
@@ -269,127 +413,10 @@ def _closed_choice_with_witness(
         observed if isinstance(observed, Mapping) else {},
         witness_request=witness_request,
     )
-    witness_valid = bool(
-        valid_witness_evidence(
-            witness,
-            request_sha256=witness_request["request_sha256"],
-        )
-        and witness_protocol(witness) == BLIND_PINYIN_PROTOCOL
-    )
-    if not witness_valid:
-        witness = {
-            "schema_version": _WITNESS_VERDICT_SCHEMA,
-            "request_sha256": witness_request["request_sha256"],
-            "status": "UNCERTAIN",
-            "reason_code": "WITNESS_INVALID",
-        }
-    context = {
-        "current_transcript": current,
-        "context_before": request.get("context_before"),
-        "context_after": request.get("context_after"),
-        "kind": request.get("kind"),
-        "structured_chat_text": request.get("exact_text"),
-        "structured_chat_canonical": request.get(
-            "structured_chat_canonical"
-        ),
-        "structured_chat_surface": request.get("structured_chat_surface"),
-        "candidate_provenance": check_request["candidate_provenance"],
-        "whole_clip_context": request.get("whole_clip_context"),
-        "adjacent_structured_event_chain": (
-            request.get("whole_clip_context") or {}
-        ).get("adjacent_structured_event_chain")
-        if isinstance(request.get("whole_clip_context"), Mapping)
-        else None,
-    }
-    prompt = _CLOSED_CHOICE_PROMPT.format(
-        witness=json.dumps(witness, ensure_ascii=False, sort_keys=True),
-        candidates=json.dumps(
-            candidates, ensure_ascii=False, indent=2, sort_keys=True
-        ),
-        context=json.dumps(context, ensure_ascii=False, indent=2, sort_keys=True),
-    )
-    try:
-        completion = llm_call(prompt)
-        payload = extract_json_object(completion)
-    except Exception:
-        return None
-    ranking_raw = payload.get("ranking")
-    if not isinstance(ranking_raw, list):
-        return None
-    ranking: list[dict[str, object]] = []
-    for row in ranking_raw:
-        if not isinstance(row, Mapping):
-            continue
-        canonical = str(row.get("canonical") or "")
-        probability = row.get("p")
-        if (
-            canonical in canonicals
-            and not isinstance(probability, bool)
-            and isinstance(probability, (int, float))
-            and math.isfinite(float(probability))
-            and 0.0 <= float(probability) <= 1.0
-        ):
-            ranking.append({"canonical": canonical, "p": float(probability)})
-    if {str(row["canonical"]) for row in ranking} != set(canonicals):
-        return None
-    if len(ranking) != len(canonicals):
-        return None
-    top = max(ranking, key=lambda row: float(row["p"]))
-    choice = str(payload.get("choice") or "")
-    if choice != top["canonical"]:
-        choice = str(top["canonical"])
-    heard_pinyin = str(witness.get("heard_pinyin") or "")
-    uncertain_positions = list(witness.get("uncertain_positions") or [])
-    compatibility = {
-        canonical: pinyin_compatibility(
-            canonical,
-            heard_pinyin=heard_pinyin,
-            uncertain_positions=uncertain_positions,
-        )
-        for canonical in canonicals
-    }
-    context_only = witness.get("status") != "OBSERVED"
-    return {
-        "schema_version": VERDICT_SCHEMA,
-        "request_sha256": request.get("request_sha256"),
-        "status": "RESOLVED",
-        "canonical_entity": choice,
-        "confidence": float(top["p"]),
-        "authority_kind": (
-            "cpa_context_only_closed_set_adjudication"
-            if context_only
-            else "cpa_witness_adjudication"
-        ),
-        "decision_authority": "CPA_JUDGE",
-        "witness_authority": "EVIDENCE_ONLY",
-        "witness_status": witness.get("status"),
-        "witness_protocol": witness_protocol(witness),
-        "acoustic_evidence_used": not context_only,
-        "witness_target_audible": witness.get("target_audible"),
-        "witness_request_sha256": witness_request["request_sha256"],
-        "witness_source_media_sha256": witness.get(
-            "source_media_sha256"
-        ),
-        "witness_audio_clip_sha256": witness.get("audio_clip_sha256"),
-        "witness_prompt_sha256": witness.get("prompt_sha256"),
-        "witness_response_sha256": witness.get("response_sha256"),
-        "judge_prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
-        "judge_completion_sha256": hashlib.sha256(
-            completion.encode()
-        ).hexdigest(),
-        "ranking": ranking,
-        "pinyin_compatibility": compatibility,
-        "reason_code": (
-            "CPA_CONTEXT_ONLY_CLOSED_SET_DISAMBIGUATION"
-            if context_only
-            else (
-                "READ_ALOUD_CPA_WITNESS_ADJUDICATED"
-                if request.get("schema_version") == READ_ALOUD_REQUEST_SCHEMA
-                else "REGISTERED_ENTITY_CPA_WITNESS_ADJUDICATED"
-            )
-        ),
-        "reason": str(payload.get("reason") or "")[:300],
-    }
+    verdict = judge(witness)
+    if verdict is not None and text_decision is not None:
+        verdict["text_first_judge"] = text_decision
+    return verdict
 
 
 def build_cpa_read_aloud_verifier(
@@ -482,15 +509,9 @@ used by the CPA judge.
             }
             if normalize_chat_text(asr) == normalize_chat_text(danmu):
                 return bare_confirm
-            # 维护者 审片裁定 #2「弹幕不修正」（主包/主播案）：一个
-            # 纯文字的高置信度确认不足以让 whole_line_exact_copy_gate 把这个
-            # cue 判给弹幕原文——它只认音频见证+CPA 闭集裁决或独立转录，否则
-            # confirmed 的原文会被判 owner_eligible=False 白白丢弃，ASR 的
-            # 结构性听错反而留存（这正是主包给→主播给案的成因）。danmu 与
-            # ASR 不同的高置信度确认因此多走一轮候选盲拼音见证+闭集裁决，
-            # 补齐能真正落笔的证据链；无音频 provider 时退回纯语境闭集裁决，
-            # 与既有弱置信度分支同一条路，不放宽任何门槛；闭集裁决失败才
-            # 退回纯文字确认，保住至少不丢已有召回。
+            # Detection alone does not grant whole-line ownership. Ask CPA to
+            # compare the full closed set; an explicit text-resolved decision
+            # carries its own bound receipt. Only an unresolved choice listens.
             closed = _closed_choice_with_witness(
                 request=request,
                 llm_call=llm_call,
@@ -520,6 +541,7 @@ used by the CPA judge.
             request=request,
             llm_call=llm_call,
             next_verifier=next_verifier,
+            context_unresolved=True,
         )
 
     # Preserve exact-final's object-method provider/cache seams through CPA.

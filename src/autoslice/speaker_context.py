@@ -440,7 +440,7 @@ def _call_context_via_cpa(prompt: str, *, repo_root: Path, work_dir: Path) -> st
                 str(repo_root / "scripts" / "llm_via_cpa.sh"),
                 str(prompt_path),
                 str(output_path),
-                "gpt-5.6-sol gpt-5.5 gpt-5.4",
+                "gpt-6-astra",
                 "medium",
             ],
             cwd=str(repo_root),

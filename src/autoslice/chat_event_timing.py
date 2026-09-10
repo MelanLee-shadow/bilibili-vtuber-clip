@@ -82,6 +82,15 @@ def send_time_ms(payload: dict, command: str = "") -> int | None:
                 return event_ms
     if command.startswith("GUARD_BUY"):
         return event_epoch_ms(data.get("start_time"))
+    if command in ("SEND_GIFT", "COMBO_SEND"):
+        # Recorder-native gifts may have only data.timestamp, not send_time.
+        # Preserve the event clock and do not infer an unmasked sender name.
+        try:
+            event_ms = event_epoch_ms(data.get("timestamp"))
+        except (OverflowError, ValueError):
+            event_ms = None
+        if event_ms is not None:
+            return event_ms
     value = payload.get("send_time")
     if not isinstance(value, (int, float)):
         value = data.get("send_time")

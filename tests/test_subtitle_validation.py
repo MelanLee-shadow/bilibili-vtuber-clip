@@ -183,3 +183,47 @@ def test_merge_release_grade_cues_absorbs_slivers_and_single_chars():
     )
     out3, rows3 = merge_release_grade_cues(gap)
     assert rows3 and rows3[0]["action"] == "UNMERGEABLE_NOT_CONTIGUOUS"
+
+
+def test_release_srt_preserves_standalone_puff_and_does_not_bridge_silence():
+    """A one-second exhalation is not a shattered word or a missing sentence.
+
+    Timing comes from auto_133040_1407_1703, cues 117-119.  This only tests
+    release structure; existing semantic/audio evidence remains mandatory.
+    """
+    from src.autoslice.cue_split_hygiene import merge_release_grade_cues
+
+    text = (
+        "1\n00:04:40,880 --> 00:04:42,440\n谢谢大家\n\n"
+        "2\n00:04:43,580 --> 00:04:44,580\n噗\n\n"
+        "3\n00:04:45,260 --> 00:04:48,420\n还有黑发小女孩在\n"
+    )
+    for puff in ("噗", "噗！", "噗…"):
+        case = text.replace("噗", puff)
+        result = validate_srt_text(case)
+        assert result["status"] == "PASS", result["errors"]
+        merged, changes = merge_release_grade_cues(case)
+        assert changes == []
+        assert merged == case
+
+
+def test_standalone_puff_still_requires_release_grade_timing():
+    """Word classification never exempts duration, overlap or media bounds."""
+    text = (
+        "1\n00:00:00,000 --> 00:00:00,240\n噗\n\n"
+        "2\n00:00:00,200 --> 00:00:01,200\n下一句话\n"
+    )
+    result = validate_srt_text(text, media_duration_ms=1000)
+    codes = {item["code"] for item in result["errors"]}
+    assert {"SRT_CUE_TOO_SHORT", "SRT_CUE_OVERLAP", "SRT_END_AFTER_MEDIA"} <= codes
+    assert "SRT_SINGLE_CJK_CHARACTER" not in codes
+    assert result["status"] == "FAIL"
+
+
+def test_standalone_sound_exception_does_not_admit_content_fragments():
+    """Keep arbitrary word fragments blocked, even with final punctuation."""
+    for fragment in ("的", "切，", "行", "好", "她", "书！"):
+        text = f"1\n00:00:00,000 --> 00:00:01,000\n{fragment}\n"
+        result = validate_srt_text(text)
+        assert result["status"] == "FAIL"
+        assert {item["code"] for item in result["errors"]} == {"SRT_SINGLE_CJK_CHARACTER"}

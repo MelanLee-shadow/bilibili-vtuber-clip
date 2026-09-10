@@ -284,7 +284,7 @@ def recall_candidates(srt_path: Path, hints: str | None, danmaku_xml: Path | Non
         LlmConfig(
             transport="command",
             # Talk semantic recall = deep open-ended lane → gpt-5.6-sol medium.
-            command_template=f"bash {_runner.REPO_ROOT}/scripts/llm_via_cpa.sh {{prompt_file}} {{completion_file}} 'gpt-5.6-sol gpt-5.5 gpt-5.4' medium",
+            command_template=f"bash {_runner.REPO_ROOT}/scripts/llm_via_cpa.sh {{prompt_file}} {{completion_file}} 'gpt-6-astra' medium",
             timeout_seconds=600.0,
         )
     )
@@ -1163,7 +1163,7 @@ def _prepare_talk_filler_plan(item: dict) -> dict[str, object]:
             command_template=(
                 f"bash {_runner.REPO_ROOT}/scripts/llm_via_cpa.sh "
                 "{prompt_file} {completion_file} "
-                "'gpt-5.6-sol gpt-5.5 gpt-5.4' medium"
+                "'gpt-6-astra' medium"
             ),
             timeout_seconds=600.0,
         )
@@ -1899,7 +1899,7 @@ def produce_talk(
     # append-only; a stale boundary marker followed by a transient CPA error
     # must not make the new attempt terminal again.
     tail = attempt_output[-4000:]
-    result["summary"] = _runner.last_json_block(tail)
+    result["summary"] = _runner.last_json_block(attempt_output)
     result.update(_runner.read_publish_meta(out_root / cid))
     if completed.returncode != 0:
         result.update(_runner.classify_talk_failure(attempt_output))

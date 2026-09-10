@@ -12,6 +12,16 @@ from src.autoslice import qixi_post_correction_diagnostics as diagnostics
 AUTHORITY_SHA = "sha256:" + "a" * 64
 
 
+def _candidate_root(tmp_path: Path) -> Path:
+    candidate = tmp_path / "candidate"
+    candidate.mkdir(mode=0o700)
+    os.chown(candidate, os.geteuid(), os.getegid())
+    assert (candidate.stat().st_uid, candidate.stat().st_gid) == (
+        os.geteuid(), os.getegid()
+    )
+    return candidate
+
+
 def _body() -> dict[str, object]:
     return {
         "schema_version": "qixi-public-surface-full-dry-run-diagnostic.v1",
@@ -37,8 +47,7 @@ def _write(root: Path, body: dict[str, object]) -> Path:
 
 
 def test_receipt_is_body_bound_create_only_and_exact_idempotent(tmp_path: Path) -> None:
-    candidate = tmp_path / "candidate"
-    candidate.mkdir(mode=0o700)
+    candidate = _candidate_root(tmp_path)
     root = diagnostics.diagnostic_root(candidate_root=candidate, authority_sha256=AUTHORITY_SHA)
     body = _body()
     receipt = _write(root, body)
@@ -58,8 +67,7 @@ def test_receipt_is_body_bound_create_only_and_exact_idempotent(tmp_path: Path) 
 
 
 def test_receipt_rejects_foreign_or_broken_symlink_inventory(tmp_path: Path) -> None:
-    candidate = tmp_path / "candidate"
-    candidate.mkdir(mode=0o700)
+    candidate = _candidate_root(tmp_path)
     root = diagnostics.diagnostic_root(candidate_root=candidate, authority_sha256=AUTHORITY_SHA)
     foreign = root / "foreign"
     foreign.symlink_to(root / "missing")
@@ -68,8 +76,7 @@ def test_receipt_rejects_foreign_or_broken_symlink_inventory(tmp_path: Path) -> 
 
 
 def test_receipt_recovers_only_a_complete_body_bound_pending(tmp_path: Path) -> None:
-    candidate = tmp_path / "candidate"
-    candidate.mkdir(mode=0o700)
+    candidate = _candidate_root(tmp_path)
     root = diagnostics.diagnostic_root(candidate_root=candidate, authority_sha256=AUTHORITY_SHA)
     body = _body()
     document = dict(body)
@@ -90,8 +97,7 @@ def test_receipt_recovers_only_a_complete_body_bound_pending(tmp_path: Path) -> 
 def test_pending_source_swap_never_becomes_a_trusted_receipt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    candidate = tmp_path / "candidate"
-    candidate.mkdir(mode=0o700)
+    candidate = _candidate_root(tmp_path)
     root = diagnostics.diagnostic_root(candidate_root=candidate, authority_sha256=AUTHORITY_SHA)
     body = _body()
     digest = diagnostics.canonical_sha256(body)[7:]
@@ -122,8 +128,7 @@ def test_pending_source_swap_never_becomes_a_trusted_receipt(
 def test_root_path_swap_refuses_to_return_a_receipt_in_replacement_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    candidate = tmp_path / "candidate"
-    candidate.mkdir(mode=0o700)
+    candidate = _candidate_root(tmp_path)
     root = diagnostics.diagnostic_root(candidate_root=candidate, authority_sha256=AUTHORITY_SHA)
     parked = candidate / "parked-original-root"
     original_recover = diagnostics._recover_pending
@@ -143,8 +148,7 @@ def test_root_path_swap_refuses_to_return_a_receipt_in_replacement_directory(
 def test_pending_same_inode_content_swap_cannot_publish_a_receipt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    candidate = tmp_path / "candidate"
-    candidate.mkdir(mode=0o700)
+    candidate = _candidate_root(tmp_path)
     root = diagnostics.diagnostic_root(candidate_root=candidate, authority_sha256=AUTHORITY_SHA)
     body = _body()
     digest = diagnostics.canonical_sha256(body)[7:]
@@ -170,8 +174,7 @@ def test_pending_same_inode_content_swap_cannot_publish_a_receipt(
 def test_pending_phase_recovery_handles_prelink_and_postlink_crashes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    candidate = tmp_path / "candidate"
-    candidate.mkdir(mode=0o700)
+    candidate = _candidate_root(tmp_path)
     root = diagnostics.diagnostic_root(candidate_root=candidate, authority_sha256=AUTHORITY_SHA)
     body = _body()
     digest = diagnostics.canonical_sha256(body)[7:]
@@ -212,8 +215,7 @@ def test_pending_phase_recovery_handles_prelink_and_postlink_crashes(
 def test_pending_recovers_a_real_partial_write_after_first_fsync(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    candidate = tmp_path / "candidate"
-    candidate.mkdir(mode=0o700)
+    candidate = _candidate_root(tmp_path)
     root = diagnostics.diagnostic_root(candidate_root=candidate, authority_sha256=AUTHORITY_SHA)
     body = _body()
     digest = diagnostics.canonical_sha256(body)[7:]
@@ -242,8 +244,7 @@ def test_pending_recovers_a_real_partial_write_after_first_fsync(
 def test_pending_inventory_rejects_foreign_regular_and_broken_symlink(
     tmp_path: Path,
 ) -> None:
-    candidate = tmp_path / "candidate"
-    candidate.mkdir(mode=0o700)
+    candidate = _candidate_root(tmp_path)
     root = diagnostics.diagnostic_root(candidate_root=candidate, authority_sha256=AUTHORITY_SHA)
     regular = root / ("." + "f" * 64 + ".pending")
     regular.write_bytes(b"foreign pending")
@@ -260,8 +261,7 @@ def test_pending_inventory_rejects_foreign_regular_and_broken_symlink(
 def test_current_digest_partial_prefix_is_rewritten_but_foreign_pending_is_preserved(
     tmp_path: Path,
 ) -> None:
-    candidate = tmp_path / "candidate"
-    candidate.mkdir(mode=0o700)
+    candidate = _candidate_root(tmp_path)
     root = diagnostics.diagnostic_root(candidate_root=candidate, authority_sha256=AUTHORITY_SHA)
     body = _body()
     digest = diagnostics.canonical_sha256(body)[7:]

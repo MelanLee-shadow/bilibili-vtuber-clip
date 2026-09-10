@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from PIL import Image, ImageStat
+import pytest
 
 from src.autoslice.cover_source_composition import (
     validate_source_composition_verification,
@@ -52,6 +53,55 @@ def _safe_verification(reference: Path) -> dict[str, object]:
             }
         ),
     )
+
+
+@pytest.mark.parametrize("treatment,mode", [
+    ("screenshot_direct", "screenshot"),
+    ("screenshot_polish", "polish"),
+])
+@pytest.mark.parametrize("proof_kind", ["valid", "missing", "hash_drift", "unsafe_face"])
+def test_forced_screenshot_accepts_only_bound_face_safe_subject_witness(
+    tmp_path, treatment, mode, proof_kind
+):
+    from src.autoslice.cover_route_evidence import (
+        build_cover_route_decision,
+        record_cover_route_execution,
+        validate_cover_route_decision,
+    )
+
+    reference = tmp_path / "reference.png"
+    Image.new("RGB", (1920, 1080), (15, 25, 35)).save(reference)
+    verification = _safe_verification(reference)
+    if proof_kind == "unsafe_face":
+        verdict = dict(verification["verdict"], source_face_complete=False,
+                       cpa_redraw_recommended=True)
+        verification = verify_source_composition(
+            reference_path=reference,
+            reference_sha256=_sha(reference),
+            story_hook="故事", title="标题", image_probe=_probe(verdict),
+        )
+        assert validate_source_composition_verification(
+            verification, reference_sha256=_sha(reference)
+        )
+    generation = {
+        "reference_sha256": _sha(reference) if proof_kind != "hash_drift" else "sha256:" + "0" * 64,
+        "source_composition_verification": verification if proof_kind != "missing" else None,
+        "route_decision": build_cover_route_decision(
+            selected_treatment=treatment,
+            selected_rationale="forced screenshot with source witness",
+            story_contract=None, reference_authority=None,
+            decision_inputs={"cover_mode": mode, "subject_confident": False,
+                             "verified_stream_frame": False},
+        ),
+        "method": treatment,
+        "cover_origin": "SOURCE_SCREENSHOT_AI_POLISH" if mode == "polish" else "SOURCE_SCREENSHOT",
+    }
+    record_cover_route_execution(
+        generation, actual_treatment=treatment, execution_status="READY",
+        image_generation_attempted=mode == "polish",
+        image_generation_used=mode == "polish",
+    )
+    assert validate_cover_route_decision(generation) is (proof_kind == "valid")
 
 
 def test_1411_source_composition_selects_initial_v2_redraw():

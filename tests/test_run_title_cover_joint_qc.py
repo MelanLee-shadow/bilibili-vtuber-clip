@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from scripts.run_title_cover_joint_qc import (
+    build_joint_qc_receipt,
     preflight_create_only_output,
     resolve_candidate_id,
     resolve_package_inputs,
@@ -412,3 +413,57 @@ def test_joint_qc_rejects_symlinked_record(tmp_path: Path) -> None:
         assert "traverses a symlink" in str(exc)
     else:
         raise AssertionError("symlinked record was accepted")
+
+
+def _joint_verdict(**changes) -> dict:
+    return {
+        "lidousha_primary": True, "thumbnail_readable": True,
+        "single_clear_hook": True, "text_overcrowded": False,
+        "title_cover_aligned": True, "physical_text_line_count": 2,
+        "unrelated_or_misleading_elements": [],
+        "reason": "Visible host and readable text carry the spoken hook.",
+        "pass": True, **changes,
+    }
+
+
+def test_joint_question_distinguishes_background_from_factual_contradiction(tmp_path):
+    cover = tmp_path / "cover.png"
+    cover.write_bytes(b"frozen source-backed cover")
+    prompts = []
+
+    def probe(path, question):
+        assert path == cover
+        prompts.append(question)
+        return {"status": "OBSERVED", "answer": json.dumps(_joint_verdict())}
+
+    result = build_joint_qc_receipt(
+        cover_path=cover, title="【李豆沙】一次口头回应", candidate_id="test",
+        image_probe=probe,
+    )
+    assert len(prompts) == 1
+    assert "不要求普通室内或虚拟直播背景逐字演示标题" in prompts[0]
+    assert "不能仅凭背景没有被标题提及就认定图文无关" in prompts[0]
+    assert "具体图文矛盾、虚构人物或事件、抢占主体的无关元素仍须列出" in prompts[0]
+    assert result["status"] == "PASS"
+
+
+@pytest.mark.parametrize("changes", [
+    {"unrelated_or_misleading_elements": ["The image invents an event absent from the story."]},
+    {"unrelated_or_misleading_elements": ["Background unrelated to the livestream."]},
+    {"title_cover_aligned": False},
+    {"lidousha_primary": False},
+    {"single_clear_hook": False},
+    {"text_overcrowded": True},
+    {"pass": False},
+])
+def test_joint_scene_clarification_does_not_override_any_failed_verdict(tmp_path, changes):
+    cover = tmp_path / "cover.png"
+    cover.write_bytes(b"test pixels")
+    verdict = _joint_verdict(**changes)
+    result = build_joint_qc_receipt(
+        cover_path=cover, title="【李豆沙】一次口头回应", candidate_id="test",
+        image_probe=lambda *_: {"status": "OBSERVED", "answer": json.dumps(verdict)},
+    )
+    assert result["verdict"] == verdict
+    assert result["status"] == "FAIL"
+    assert result["pass"] is False

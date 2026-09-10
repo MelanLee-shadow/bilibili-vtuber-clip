@@ -150,15 +150,40 @@ def test_produce_song_skips_known_visual_title_before_model_or_media_work(monkey
     assert result["published_song_match"]["bvid"] == "BV18eN967ENy"
 
 
-def test_one_song_delivery_slot_per_live_session():
-    assert runner.MAX_SONGS_PER_SESSION == 1
+@pytest.mark.parametrize("reservation", [
+    {"delivered": True},
+    {"verified_delivery_pending_commit": True},
+])
+def test_one_song_delivery_slot_per_recording_date(reservation):
+    assert runner.MAX_SONGS_PER_DATE == 1
     state = {
         "songs": [
-            {"session_id": "first", "delivered": True},
+            {"session_id": "first", **reservation},
         ]
     }
     assert runner.song_delivery_budget(state, "first") == 0
-    assert runner.song_delivery_budget(state, "second") == 1
+    assert runner.song_delivery_budget(state, "second") == 0
+    assert runner.song_delivery_budget({"songs": []}, "second") == 1
+
+
+def test_daily_song_backfill_ranks_across_sessions_and_reuses_blocked_slot():
+    early = {"cid": "early", "session_id": "early", "danmaku": 10,
+             "anchor_start_ms": 0, "anchor_end_ms": 60_000}
+    late = {"cid": "late", "session_id": "late", "danmaku": 20,
+            "anchor_start_ms": 0, "anchor_end_ms": 60_000}
+    state = {"songs": [], "pending_song": [early, late], "song_backlog": []}
+    runner.refill_songs(state)
+    assert state["pending_song"] == [late]
+    assert state["song_backlog"] == [early]
+    state["songs"].append({**late, "status": "blocked"})
+    state["pending_song"] = []
+    runner.refill_songs(state)
+    assert state["pending_song"] == [early]
+    state["songs"].append({**early, "delivered": "/early.mp4"})
+    state["pending_song"] = [late]
+    runner.refill_songs(state)
+    assert state["pending_song"] == []
+    assert state["song_backlog"] == [late]
 
 
 def test_final_canonical_title_gate_blocks_before_delivery(monkeypatch):
