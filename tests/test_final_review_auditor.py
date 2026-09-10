@@ -1601,7 +1601,7 @@ def test_exact_release_self_heals_a_bootstrapped_missing_candidate():
     assert repairs[0]["decision_authority"] == "CPA_JUDGE"
 
 
-def test_missing_candidate_without_structured_support_keeps_current_on_conflict():
+def test_missing_candidate_applies_final_cpa_choice_with_conflict_disclosed():
     source = _srt(
         "那咱算不算？咱",
         "烦 嗯 烦死人了下 はい りっちゃん",
@@ -1636,12 +1636,17 @@ def test_missing_candidate_without_structured_support_keeps_current_on_conflict(
         judge_llm_call=cpa,
     )
 
-    assert output == source
-    assert audit["repaired"] is False
-    assert audit["policy_branch"] == (
-        "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
+    assert output == _srt(
+        "那咱算不算？咱", "嗯，咱有点像あたし", "我要吃午饭"
     )
-    assert audit["witness_judge"]["witness_conflict_gate"]["status"] == "BLOCK"
+    assert audit["repaired"] is True
+    assert audit["policy_branch"] == (
+        "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
+    )
+    diagnostic = audit["witness_judge"]["witness_conflict_diagnostic"]
+    assert diagnostic["effect"] == "DISCLOSURE_ONLY"
+    assert diagnostic["additional_support_found"] is False
+    assert "witness_conflict_gate" not in audit["witness_judge"]
     assert audit["proposal_bootstrap"]["bounded_full_cue_repair"] is True
     assert audit["proposal_bootstrap"]["mutation_authorized"] is False
     assert audit["rebuilt_finding"]["span_start_codepoint"] == 0
@@ -1710,15 +1715,13 @@ def test_source_backed_letter_name_spelling_survives_acoustic_grapheme_veto():
     assert audit["orthography_equivalence"]["matched"] is True
 
 
-def test_glossary_candidate_cannot_win_bare_witness_conflict_on_semantics_alone():
-    """auto_203735_555_680 cue59 实案回归：候选「殉情」来自
-    game-glossary 注入（鹅鸭杀恋人机制词），拼音证人只听到前句尾字「懂吗」
-    与错位片段，核心候选词拼音与真值「偶遇」明显不容；CPA judge 仍以
-    「语境更通顺」为由选中 PROPOSED（生产实况 p=0.96），把真实听写（AGY
-    refine 与 fidelity guard 双双给出「偶遇」）顶替成误听「殉情」。此案没有
-    任何 declared respell / strict homophone / ascii 发音键等正向文字证据
-    （``orthography_ambiguous`` 应为 False），F3 通用门必须记无支持并保留
-    原字幕，不得让语义合理性单独盖过拼音冲突。"""
+@pytest.mark.parametrize("choice", ["CURRENT", "PROPOSED"])
+def test_glossary_conflict_follows_final_cpa_choice_without_granting_glossary_authority(choice):
+    """Keep the historical conflicting inputs without restoring the retired veto.
+
+    Step 41 assigns final ordinary text choice to CPA. These synthetic verdicts
+    test that consumer contract, not which historical word was actually spoken.
+    """
 
     source = _srt("你知道我要偶遇啊！偶遇")
     finding = {
@@ -1742,15 +1745,21 @@ def test_glossary_candidate_cannot_win_bare_witness_conflict_on_semantics_alone(
         source,
         finding,
         entity_verifier=short_misaligned_witness,
-        judge_llm_call=_judge("PROPOSED"),
+        judge_llm_call=_judge(choice),
     )
 
-    assert "偶遇" in output
-    assert "殉情" not in output
-    assert audit["repaired"] is False
-    assert audit["policy_branch"] == (
-        "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
-    )
+    if choice == "CURRENT":
+        assert output == source
+        assert audit["repaired"] is False
+        assert audit["policy_branch"] == "JUDGE_KEEPS_CURRENT"
+    else:
+        assert output == _srt("你知道我要殉情啊！殉情")
+        assert audit["repaired"] is True
+        assert audit["policy_branch"] == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
+        diagnostic = audit["witness_judge"]["witness_conflict_diagnostic"]
+        assert diagnostic["effect"] == "DISCLOSURE_ONLY"
+        assert diagnostic["additional_support_found"] is False
+        assert "witness_conflict_gate" not in audit["witness_judge"]
     assert audit["orthography_ambiguous"] is False
 
 
@@ -3112,7 +3121,7 @@ def test_exact_source_handoff_rejects_resealed_stale_or_unbound_receipts(drift):
     )
 
 
-def test_witness_conflict_support_requires_the_strict_exact_source_handoff():
+def test_witness_conflict_diagnostic_validates_exact_source_handoff_without_veto():
     import copy
 
     from src.autoslice.acoustic_witness_adjudication import adjudicate_with_witness
@@ -3125,7 +3134,10 @@ def test_witness_conflict_support_requires_the_strict_exact_source_handoff():
         clip_context=clip_context,
     )
     assert repaired is True
-    assert audit["witness_conflict_gate"]["exact_source_transcript_handoff"] is True
+    assert branch == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
+    assert audit["witness_conflict_diagnostic"]["exact_source_transcript_handoff"] is True
+    assert audit["witness_conflict_diagnostic"]["effect"] == "DISCLOSURE_ONLY"
+    assert "witness_conflict_gate" not in audit
 
     invalid_request = copy.deepcopy(request)
     invalid_handoff = copy.deepcopy(handoff)
@@ -3137,9 +3149,11 @@ def test_witness_conflict_support_requires_the_strict_exact_source_handoff():
         llm_call=lambda _prompt: json.dumps({"choice": "PROPOSED"}),
         clip_context=clip_context,
     )
-    assert repaired is False
-    assert branch == "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
-    assert audit["witness_conflict_gate"]["exact_source_transcript_handoff"] is False
+    assert repaired is True
+    assert branch == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
+    assert audit["witness_conflict_diagnostic"]["exact_source_transcript_handoff"] is False
+    assert audit["witness_conflict_diagnostic"]["effect"] == "DISCLOSURE_ONLY"
+    assert "witness_conflict_gate" not in audit
 
 
 @pytest.mark.parametrize(

@@ -1261,7 +1261,8 @@ def adjudicate_with_witness(
     )
     audit["witness_diagnostic_conflict"] = witness_conflict
     if witness_conflict:
-        # 维护者 卡1结案：贴音优先；背离耳朵必须有第三方结构化证据。
+        # Current step 40/41: the witness disagreement is evidence, not a
+        # second veto after an explicit CPA choice. Preserve support diagnostics.
         suspect = str(check_request.get("suspect") or "")
         replacement = str(check_request.get("replacement") or "")
         support = {
@@ -1290,14 +1291,31 @@ def adjudicate_with_witness(
                 )
             ),
         }
-        supported = any(support.values())
-        audit["witness_conflict_gate"] = {
-            "schema_version": "witness-conflict-proposed-support.v1",
-            "status": "PASS" if supported else "BLOCK",
+        # The candidate relaxation applies only to ordinary nonempty text.
+        # Deletion and malformed/empty proposals retain the accepted path;
+        # PROPOSED must not become an implicit whole-cue DROP.
+        proposed_text = check_request.get("proposed_cue")
+        ordinary_text_choice = (
+            isinstance(proposed_text, str)
+            and bool(proposed_text.strip())
+            and check_request.get("repair_class") != "acoustic_delete"
+        )
+        if not ordinary_text_choice:
+            supported = any(support.values())
+            audit["witness_conflict_gate"] = {
+                "schema_version": "witness-conflict-proposed-support.v1",
+                "status": "PASS" if supported else "BLOCK",
+                **support,
+                "reason_code": None if supported else WITNESS_CONFLICT_UNSUPPORTED_PROPOSED,
+            }
+            if not supported:
+                return False, WITNESS_CONFLICT_UNSUPPORTED_PROPOSED, audit
+            return True, "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT", audit
+        audit["witness_conflict_diagnostic"] = {
+            "witness_authority": "EVIDENCE_ONLY",
+            "effect": "DISCLOSURE_ONLY",
             **support,
-            "reason_code": None if supported else WITNESS_CONFLICT_UNSUPPORTED_PROPOSED,
+            "additional_support_found": any(support.values()),
         }
-        if not supported:
-            return False, WITNESS_CONFLICT_UNSUPPORTED_PROPOSED, audit
         return True, "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT", audit
     return True, "WITNESS_JUDGE_APPLY_PROPOSED", audit
