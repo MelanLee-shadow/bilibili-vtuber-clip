@@ -64,16 +64,18 @@ def _review(findings: list[dict[str, object]]):
     return lambda _prompt: json.dumps({"findings": findings}, ensure_ascii=False)
 
 
-def test_f3_cue2_pattern_blocks_unsupported_proposed_over_witness_conflict():
+def test_f3_cue2_pattern_discloses_conflict_without_vetoing_final_cpa_choice():
     repaired, reason, audit = adjudicate_with_witness(
         check_request=_request(),
         witness=_witness("wo shi wo bao shi de"),
         llm_call=_choose_proposed,
     )
 
-    assert repaired is False
-    assert reason == "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
-    assert audit["witness_conflict_gate"]["reason_code"] == reason
+    assert repaired is True
+    assert reason == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
+    assert audit["witness_conflict_diagnostic"]["effect"] == "DISCLOSURE_ONLY"
+    assert audit["witness_conflict_diagnostic"]["additional_support_found"] is False
+    assert "witness_conflict_gate" not in audit
     assert audit["witness_diagnostic_conflict"] is True
 
 
@@ -93,7 +95,8 @@ def test_f3_registered_expected_value_direction_still_wins_conflict():
 
     assert repaired is True
     assert reason == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
-    assert audit["witness_conflict_gate"]["registered_direction"] is True
+    assert audit["witness_conflict_diagnostic"]["registered_direction"] is True
+    assert audit["witness_conflict_diagnostic"]["effect"] == "DISCLOSURE_ONLY"
 
 
 def test_f3_session_restatement_is_structured_support():
@@ -110,7 +113,8 @@ def test_f3_session_restatement_is_structured_support():
 
     assert repaired is True
     assert reason == "CPA_JUDGE_APPLY_PROPOSED_OVER_WITNESS_CONFLICT"
-    assert audit["witness_conflict_gate"]["structured_text_support"] is True
+    assert audit["witness_conflict_diagnostic"]["structured_text_support"] is True
+    assert audit["witness_conflict_diagnostic"]["effect"] == "DISCLOSURE_ONLY"
 
 
 def test_f3_prompt_states_reviewer_pinyin_first_evidence_fallback_duty():
