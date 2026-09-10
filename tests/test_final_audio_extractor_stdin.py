@@ -91,7 +91,23 @@ def test_real_final_audio_extraction_cannot_quit_on_parent_input(
         os.killpg(process.pid, signal.SIGKILL)
         process.communicate(timeout=5)
         pytest.fail("real audio extraction exceeded the bounded test deadline")
-    assert process.returncode == 0, stderr.decode("utf-8", errors="replace")
+    decoded_stderr = stderr.decode("utf-8", errors="replace")
+    if protected:
+        assert process.returncode == 0, decoded_stderr
+    elif process.returncode != 0:
+        # FFmpeg versions differ in how early a keyboard ``q`` is observed.
+        # Ubuntu may exit before writing packets (nonzero), while macOS may
+        # leave a short but valid MP3 with rc=0. Both are the unsafe behavior
+        # this mutation control must demonstrate; the protected cases below
+        # must always finish the complete source.
+        assert "FINAL_SUBTITLE_AUDIO_FFMPEG_FAILED" in decoded_stderr
+        assert not target.is_file() or target.stat().st_size == 0
+        print(json.dumps({"readrate": readrate, "protected": protected,
+                          "parent_input": parent_input.decode(),
+                          "source_seconds": source_seconds,
+                          "duration_seconds": None,
+                          "extract_rc": process.returncode}))
+        return
     inspected = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", str(target)],
         stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10, check=False,
