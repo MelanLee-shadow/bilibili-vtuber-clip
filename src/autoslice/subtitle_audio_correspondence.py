@@ -70,6 +70,7 @@ ANCHOR_MIN_CHARS = 6
 ANCHOR_MIN_UNIQUE_CHARS = 3
 ANCHOR_MIN_SIMILARITY = 0.78
 ANCHOR_TIE_MARGIN = 0.05
+FUZZY_START_ANCHOR_RULE = "first_nonempty_matching_block_starts_at_zero_on_both_sides"
 GLOBAL_SHIFT_THRESHOLD_MS = 1_500
 INCONSISTENT_SPREAD_THRESHOLD_MS = 3_000
 INCONSISTENT_MAD_THRESHOLD_MS = 1_000
@@ -409,6 +410,25 @@ def _similarity(left: str, right: str) -> float:
     return ratio
 
 
+def _has_shared_text_start(left: str, right: str) -> bool:
+    """Return whether the first non-empty match starts each text.
+
+    A fuzzy anchor must share its actual sentence start on both sides.  This
+    prevents a later shared phrase from becoming a cue-start timing anchor;
+    exact normalized matches remain eligible without this fuzzy-only rule.
+    """
+
+    first_match = next(
+        (
+            block
+            for block in difflib.SequenceMatcher(None, left, right, autojunk=False).get_matching_blocks()
+            if block.size
+        ),
+        None,
+    )
+    return first_match is not None and first_match.a == 0 and first_match.b == 0
+
+
 def _find_anchors(
     final_cues: Sequence[TimedCue],
     witness_cues: Sequence[TimedCue],
@@ -433,6 +453,12 @@ def _find_anchors(
             key=lambda item: item[0],
             reverse=True,
         )
+        scored = [
+            (similarity, witness_cue)
+            for similarity, witness_cue in scored
+            if similarity == 1.0
+            or _has_shared_text_start(final_cue.normalized_text, witness_cue.normalized_text)
+        ]
         if not scored or scored[0][0] < ANCHOR_MIN_SIMILARITY:
             continue
         if (
@@ -668,6 +694,7 @@ def check_subtitle_audio_correspondence(
             "minimum_normalized_chars": ANCHOR_MIN_CHARS,
             "minimum_unique_chars": ANCHOR_MIN_UNIQUE_CHARS,
             "minimum_similarity": ANCHOR_MIN_SIMILARITY,
+            "fuzzy_start_anchor_rule": FUZZY_START_ANCHOR_RULE,
             "global_shift_threshold_ms": GLOBAL_SHIFT_THRESHOLD_MS,
             "inconsistent_spread_threshold_ms": INCONSISTENT_SPREAD_THRESHOLD_MS,
             "inconsistent_mad_threshold_ms": INCONSISTENT_MAD_THRESHOLD_MS,
