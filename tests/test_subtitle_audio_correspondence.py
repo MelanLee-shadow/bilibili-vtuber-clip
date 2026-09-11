@@ -117,6 +117,93 @@ def test_corrected_timing_passes_and_intro_is_added_once(tmp_path: Path):
     assert final.read_text(encoding="utf-8") == before
 
 
+def test_fuzzy_anchor_requires_shared_text_start_and_rejects_b_false_match(tmp_path: Path):
+    # These rows preserve the relevant B timing/text shape: the cue-47-like
+    # overlap shares only a later phrase, while the PSP/LIVE pair is a valid
+    # ASR tail variation with the same sentence start.
+    intro_offset_ms = 5750
+    final_rows = [
+        (250, 1800, "主播什么时候进的psp"),
+        (48720, 51000, "主播现在确实是 PSP LIVE 了"),
+        (108240, 109560, "channel家族"),
+        (112500, 113660, "本人就是关系户"),
+        (204960, 208560, "因为暗影大熊猫，我是隐藏姿态"),
+    ]
+    witness_rows = [
+        (6060, 8000, "主播什么时候进的 PSP"),
+        (54500, 57000, "主播现在确实是 PSP 来舞了"),
+        (109320, 113220, "谁哈 CHANEL 家族吗"),
+        (118250, 119450, "本人就是关系户"),
+        (210740, 214140, "因为暗影大熊猫，我是隐藏姿态"),
+    ]
+    final, media, witness, provenance, offset = _inputs(
+        tmp_path,
+        final_rows=final_rows,
+        witness_rows=witness_rows,
+        intro_offset_ms=intro_offset_ms,
+    )
+
+    receipt = check_subtitle_audio_correspondence(final, media, witness, provenance, offset)
+
+    assert receipt["status"] == "PASS"
+    assert receipt["timing_status"] == "PASS"
+    assert receipt["timing_summary"]["anchor_count"] == 4
+    assert receipt["anchor_policy"]["fuzzy_start_anchor_rule"] == (
+        "first_nonempty_matching_block_starts_at_zero_on_both_sides"
+    )
+    anchor_texts = {row["final_text"] for row in receipt["anchors"]}
+    assert "channel家族" not in anchor_texts
+    assert "主播现在确实是 PSP LIVE 了" in anchor_texts
+
+
+def test_fuzzy_start_anchor_still_blocks_global_shift(tmp_path: Path):
+    final_rows = [
+        (1000, 5000, "主播现在确实是 PSP LIVE 了"),
+        (23000, 27000, _TEXTS[1]),
+        (42000, 46000, _TEXTS[2]),
+    ]
+    witness_rows = [
+        (10750, 14750, "主播现在确实是 PSP 来舞了"),
+        (32750, 36750, _TEXTS[1]),
+        (51750, 55750, _TEXTS[2]),
+    ]
+    final, media, witness, provenance, offset = _inputs(
+        tmp_path, final_rows=final_rows, witness_rows=witness_rows
+    )
+
+    receipt = check_subtitle_audio_correspondence(final, media, witness, provenance, offset)
+
+    assert receipt["status"] == "BLOCK"
+    assert receipt["timing_status"] == "BLOCK"
+    assert "GLOBAL_TIMING_SHIFT" in receipt["reason_codes"]
+    assert receipt["timing_summary"]["median_start_delta_ms"] == 9750
+    assert any(row["similarity"] < 1.0 for row in receipt["anchors"])
+
+
+def test_fuzzy_start_anchor_still_blocks_local_drift(tmp_path: Path):
+    final_rows = [
+        (1000, 5000, _TEXTS[0]),
+        (23000, 27000, _TEXTS[1]),
+        (42000, 46000, "主播现在确实是 PSP LIVE 了"),
+    ]
+    witness_rows = [
+        (1000, 5000, _TEXTS[0]),
+        (23000, 27000, _TEXTS[1]),
+        (46000, 50000, "主播现在确实是 PSP 来舞了"),
+    ]
+    final, media, witness, provenance, offset = _inputs(
+        tmp_path, final_rows=final_rows, witness_rows=witness_rows
+    )
+
+    receipt = check_subtitle_audio_correspondence(final, media, witness, provenance, offset)
+
+    assert receipt["status"] == "BLOCK"
+    assert receipt["timing_status"] == "BLOCK"
+    assert "INCONSISTENT_TIMING_DRIFT" in receipt["reason_codes"]
+    assert receipt["timing_summary"]["start_delta_spread_ms"] == 4000
+    assert any(row["similarity"] < 1.0 for row in receipt["anchors"])
+
+
 def test_short_common_words_do_not_count_as_anchors(tmp_path: Path):
     rows = [(1000, 2000, "然后"), (20000, 21000, "我们"), (40000, 41000, "看看")]
     final, media, witness, provenance, offset = _inputs(tmp_path, final_rows=rows, witness_rows=rows)

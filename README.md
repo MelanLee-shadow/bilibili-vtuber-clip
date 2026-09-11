@@ -1,34 +1,60 @@
-# bilibili-vtuber-clip
+<p align="center">
+  <img src="assets/lidousha/emote/hd/07_%E6%9D%8E%E8%B1%86%E6%B2%99_%E8%B4%A1%E4%B8%B8.png" width="300" alt="李豆沙表情包：贡丸">
+  <br>
+  欢迎关注侄女小李，<a href="https://space.bilibili.com/1703797642">关注李豆沙</a>谢谢喵
+</p>
+
+# bilibili-vtuber-clip — 无人值守的直播录播切片流水线
 
 [![CI](https://github.com/MelanLee-shadow/bilibili-vtuber-clip/actions/workflows/ci.yml/badge.svg)](https://github.com/MelanLee-shadow/bilibili-vtuber-clip/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
-**把中文直播录播变成可审阅的切片包：选片、字幕、标题封面、烧录和交付。**
-软件围绕可追溯证据组织流程；质量检查不通过就保留诊断并停止交付，
-不会把“脚本跑完”当成“内容已经正确”。
+主播下播后，这套系统自己完成从录播到成品的全部工作：挑出值得切的片段、
+生成并校对字幕、烧录、配 AI 封面和标题，最后把等待人工过目的成品包放到
+交付目录。它为"发布错误不可接受"的场景设计：任何一步证据不齐就**拒绝交付**，
+而不是硬着头皮发出去。
 
-> A Chinese-first, evidence-driven VTuber clipping pipeline for Bilibili.
-> Producing a review package and authorizing publication are separate operations.
+> An unattended VTuber-stream clipping pipeline for Bilibili (Chinese-first;
+> docs are in Chinese). Fail-closed at every stage.
 
-这是面向愿意配置 Python、媒体工具和模型服务的维护者的工程项目，不是双击即用的视频编辑器。
-可以手工配置，也可以让 AI 代理依据 [AGENTS.md](AGENTS.md) 协助配置；
-频道身份、素材授权和发布决定仍由部署者提供。
+> [!IMPORTANT]
+> **不推荐人类手动配置本项目——请直接把整个仓库交给你的 AI agent 去配置。**
+> 本项目的配置面（profile 体系、资产模板、校验器、文档）就是按“由 agent
+> 阅读并执行”设计的，[AGENTS.md](AGENTS.md) 是它的完整操作手册；人类只需要
+> 回答 agent 提出的频道问题、最后过目成品。
+>
+> 本项目需要两个**多模态** LLM 才能完整工作：一个**能听音频**的模型
+> （默认 `gemini-3.6-flash`：声学听写、字幕听音仲裁、歌词对轴——两种接入
+> **二选一**：[Google Antigravity](https://antigravity.google/) 官方订阅的
+> CLI（AGY），或 Gemini API key。**它们是同一个模型**，只是订阅面和 API 面
+> 的区别；都配上则自动按订阅→API 的次序做配额兜底），和一个**能看画面**
+> 的模型（默认 `gpt-6-astra`：CPA 文字裁决、封面视觉裁判、构图/身份核验）。
+> 纯文本模型跑不完整条产线。
 
-## 能做什么，不能替你做什么
+## 功能一览
 
-| 入口 | 输入 | 产出与边界 |
-|---|---|---|
-| 自动谈话切片 | 录播 `.flv` / `.mp4`，可用的弹幕 `.xml` 与频道配置 | 从候选选题走到字幕、标题、封面和成品包；失败时保留阶段诊断 |
-| 单候选制作 | 描述源文件、时间区间和频道的 spec JSON | 只制作指定候选；仍须通过边界、字幕和成品检查 |
-| 歌切 | 歌曲片段、歌词及所需音频证据 | 独立的歌词对轴和人声证明流程，不等同于普通谈话转写 |
-| 已审原稿的定点修改 | 哈希绑定的已审底稿、明确修改范围和相应授权 | 复用未变内容，只修获准部分；需要时重新烧录并审计实际成片 |
-| 授权发布 / 同稿修复 | 通过审计的包、独立授权、账号凭据和出版登记 | 经唯一发布入口执行；已发布候选不能重复新投稿，修复走同 BV 路径 |
+| 功能 | 输入 | 输出 | 它做了什么 |
+|---|---|---|---|
+| 自动切片主线（`session_autoslice.py`） | 录播姬录出的 `.flv/.mp4` + 弹幕 `.xml` | 交付目录里的成品包：视频、烧好字幕、封面、标题、审片材料 | 下播后自动挑选题（用 LLM 从观众视角找“值得切”的片段）→ 免费 ASR 出字幕 → 用弹幕/礼物记录和声学证据校对专名与误听 → 烧录 → AI 封面标题 → 等人工评审 |
+| 单候选产线（`produce_slice_package.py`） | 一个 spec（指定录播文件和起止时间） | 同上的单个成品包 | 跳过自动选题，把你指定的片段走完整条产线 |
+| 人工评审与授权上传（`audit_review_package.py` → `build_final_human_review.py` → `authorized_upload.py`） | 成品包 | B 站稿件（含合集、tag）+ 入库的上传凭证 | 机器先全面审计包的一致性，人确认后由唯一入口投稿；已发布的稿件只允许“同 BV 修复”（换源不换稿），杜绝重复投稿 |
+| 歌切 | 歌曲片段、歌词及所需音频证据 | 独立的歌词对轴和人声证明结果 | 使用专门的歌切入口，不把歌曲当普通谈话转写 |
+| 已审原稿的定点修改 | 哈希绑定的已审底稿、明确修改范围和相应授权 | 只修获准部分的成品包 | 复用未变内容，需要时重新烧录并审计实际成片 |
+| 新闻/社区 crawler | 官方成员源、B 站切片 metadata 与有限评论、ACG 新闻源 | 低频官方名册 + 每日时效词/社区称呼/话题图 | 官方成员只低频校验；新闻和新出现的昵称、粉丝名、事件梗每天增量抓取并累积证据；CPA 负责关系语义分类，确定性证据门负责接受；社区词不冒充官方词面也不直接改字幕 |
+| 活字乱刷（`huozi_luanshua.py`） | 历史直播语料 + 你想拼的句子 | 可追溯的试听音频候选 | 从主播说过的话里拼出新句子，分三步（先选料、再核对出处、最后渲染），每步留痕可查，绝不自动上传 |
+| 修复/救援（`scripts/README.md` 修复组） | 出问题的包或丢失的录制段 | 修好的包 / 重建的源文件 | 换源、修封面、从官方回放重建丢失录制、复活被误拒的候选——都要先出计划、过文件校验才动手 |
+| 录制监控（`slice_monitor.py` 等） | 录制主机状态 | 报告文件（唯一告警通道） | 盯挂载、盯录制健康、备份弹幕，出事宁可停下也不吃坏字节 |
 
 **公共仓库提供软件、通用契约、模板和测试，不提供运营账户、真实授权记录、私有审片材料或声纹。**
 某些特定历史修复适配器仅保留拒绝执行的兼容占位；文件存在不表示相应私有快车道可用。
 没有有效输入或授权，不能通过手写 `PASS`、放松质量门或直接调用上传脚本来补齐。
 
-## 快速开始：先离线验证
+## 快速上手
+
+这里的默认使用方式是**把整个仓库交给 AI agent**：让 agent 先读本 README 和
+[AGENTS.md](AGENTS.md)，再按它的提问填写频道资料、准备凭据并执行检查。
+人类不需要自己通读后面的复杂手工步骤，只需回答 agent 的频道问题，并在交付前
+过目成品和授权决定。下面的命令是 agent 的执行参考，也方便维护者核对实际入口。
 
 ### 1. 安装环境
 
@@ -110,6 +136,50 @@ GEMINI_PAID_BACKUP_DAILY_CAP=0 \
 需要指定确切片段时，使用 `scripts/produce_slice_package.py --spec <spec.json>`；
 spec 结构以该入口的文档和 `--help` 为准。不要给不支持的入口添加 `--dry-run` 或 `--ssh-host`。
 
+## 你需要准备什么
+
+| 组件 | 说明 |
+|---|---|
+| 一台服务器 | 推荐 8 核 / 32 GB / 500 GB+ 磁盘；资源更小也可以先让 agent 做配置检查 |
+| [BililiveRecorder](https://github.com/BililiveRecorder/BililiveRecorder) | 录播姬；`ops/recording/` 是参考配置 |
+| LLM 通道 | 两条独立的腿，**都必须是多模态模型**：能看画面的 GPT 系列经自建 [CLIProxyAPI](https://github.com/luispater/CLIProxyAPI)，能听音频的 Gemini 系列使用 [Google Antigravity](https://antigravity.google/) 订阅 CLI（AGY）或 `GEMINI_API_KEY`；后两者是同一个模型的两种入口，按订阅→API 兜底 |
+| 系统 CJK 字体 | Linux 上安装 `fonts-noto-cjk`；字幕烧录经 libass 使用系统字体，`preflight` 会检查 |
+| [biliup](https://github.com/biliup/biliup) | 投稿 CLI；只产包评审时可以不装 |
+| Python 3.11+，`ffmpeg` 6.1+ | 依赖和外部工具版本先让 agent 按配置检查确认 |
+
+全部凭据（cookie 放哪、长什么样、怎么验证）见
+[docs/credentials.md](docs/credentials.md)；不要把凭据提交进仓库。
+
+## 第一次逛仓库，只需要看这几个文件
+
+1. 本 README；
+2. [profiles/README.md](profiles/README.md) —— 怎么配你的频道；
+3. [scripts/README.md](scripts/README.md) —— CLI 按用途组织的地图；
+4. 要深挖规则再看 [docs/pipeline/README.md](docs/pipeline/README.md)（给 agent/维护者的分步权威）；
+5. [AGENTS.md](AGENTS.md) —— 给 AI 代理的完整操作约定与架构细节。
+
+`assets/` 下的 JSON 是频道数据（词表、策略、台账模板），不是代码，不需要人类逐个阅读。
+配新频道时由 agent 按 `assets/_template/` 建立骨架，先回答它提出的词表、人设、标题风格和
+封面形象问题，之后再边用边补充。
+
+## 为什么文件这么多（以及为什么你不用怕）
+
+- `src/` 是多个可独立检查的模块；agent 会按入口和对应 step 找到需要的代码。
+- `tests/` 是质量门的回归安全网；测试成功也不代表外部服务、真实音频或账号权限已就绪。
+- `assets/` 是频道知识和运行模板；大多数文件由模板和校验器管理，不要求人类手填。
+- 结论：**你需要读的只有上面那几个 README**；其余交给 agent 和测试。
+
+## 术语表
+
+| 词 | 含义 |
+|---|---|
+| CPA | 自建 [CLIProxyAPI](https://github.com/luispater/CLIProxyAPI) 统一 LLM 入口 |
+| BCUT | 必剪开放转写接口（免费、词级毫秒时间轴的 ASR） |
+| AGY | [Google Antigravity](https://antigravity.google/) 的 CLI；与 `GEMINI_API_KEY` 是同一个听音模型的两种入口 |
+| bilive | 本项目部署层的约定名（`/opt/bilive` 目录、`ops/recording/` 服务名） |
+| 出版登记 | 候选 ↔ B 站稿件的对应台账，是唯一上传授权 |
+| 真值台账 | 已发布字幕修复的唯一合法记录（防止修复引入新错误） |
+
 ## 输入、输出与进度
 
 工作根由 `AUTOSLICE_BASE` 指定，参考默认值是 `/opt/bilive/autoslice`。
@@ -181,16 +251,24 @@ AGY CLI 与 Gemini API 是不同接入方式，模型名称、能力、配额与
 实现指纹变化或阶段证据不足时回到普通入口。等待期、配额、确定性弃选和授权条件不变，
 详见 [歌切步骤](docs/pipeline/50-song-lane.md)。
 
-## 实验与已知限制
+## 路线图与已知限制
 
+- **说话人分离（多人自动分轨）：待做，欢迎 PR。** 目前成品统一按主播处理；
+  声纹需要单独配置，匿名说话人编号不能自动绑定为真实人物。
+- **Docker 化与跨平台部署：待做，欢迎 PR。** 参考脚本要按自己的主机、目录、锁和
+  服务配置审查后使用，首次声纹模型下载和外部登录也不在离线测试范围内。
+- 示例 profile 的**片头媒体不随仓分发**：默认 profile 跑 talk 交付要
+  `AUTOSLICE_BRANDING_INTRO=off`，或按 profile 的 manifest 自备媒体。
+- VAD 在 `--ssh-host localhost` 下可以本地直跑，但使用的是 PATH 里的 `python3`；
+  系统 python3 需要 `numpy`/`onnxruntime`，`preflight` 会探测。
+- 测试套件以默认 profile 为基准：跑 `pytest` 时不要设置 `AUTOSLICE_PROFILE`。
+- 出版登记、真值台账等运营状态在公开仓库只有空模板，属于每个部署自己的数据。
+- 声纹不随仓分发（生物特征）；配置检查返回 `voiceprint_status=ABSENT` 时，
+  **READY 不等于声纹已 enroll，也不等于具备生产资格**。
 - **外部依赖不稳定。** BCUT 接口、模型网关、AGY 客户端和 B 站接口不受本仓控制；
   服务不可用、配额不足或不兼容响应会留下失败诊断，不能由测试通过推定在线可用。
-- **身份与多人场景有限。** 普通统一主播样式不是逐段身份鉴定；声纹需要单独配置。
-  不要把匿名说话人编号自动绑定为真实人物。
 - **研究不等于默认功能。** MOSS / MAI 的局部听证比较不改变本版 BCUT → CPA 主线，
   也不作为公开版已经启用的默认后端。离线实验结论必须限定输入、阶段、费用和质量回归范围。
-- **部署不是通用的一键安装器。** Docker 化与跨平台部署仍需完善；参考脚本要按自己的主机、
-  目录、锁和服务配置审查后使用。首次声纹模型下载和外部登录不在离线测试范围内。
 
 ## 进一步阅读与发布
 
@@ -210,14 +288,34 @@ AGY CLI 与 Gemini API 是不同接入方式，模型名称、能力、配额与
 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。CI 的具体环境与命令以
 [工作流文件](.github/workflows/ci.yml) 为准。
 
-## 致谢与许可
+## 致谢
 
 感谢 [bcut-asr](https://github.com/SocialSisterYi/bcut-asr)、
 [BililiveRecorder](https://github.com/BililiveRecorder/BililiveRecorder) 和
 [biliup](https://github.com/biliup/biliup)。示例频道为
-[李豆沙](https://space.bilibili.com/1703797642)；另有社区项目
-[沙按钮](https://lu-91015.github.io/shadowlee.github.io/)。
+[李豆沙](https://space.bilibili.com/1703797642)。
 
-[Apache-2.0](LICENSE)。再分发请保留 `LICENSE` 与 [NOTICE](NOTICE)。
-商业使用时注明本项目并附仓库链接是礼节性请求，不是额外许可条件。
-使用者对所处理素材和发布内容负责；本项目不承诺成品一定正确，也无法代替平台处置站外内容。
+## 参与
+
+- 贡献流程与铁律：[CONTRIBUTING.md](CONTRIBUTING.md)（agent 写的 PR 完全欢迎，
+  人对结果负责）
+- 安全漏洞：走 [SECURITY.md](SECURITY.md) 的私密披露通道，不要开公开 issue
+- 行为准则：[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- CI：每个 PR 自动跑全量测试套件（无凭据无网络，密闭守卫强制）
+
+## 许可
+
+[Apache-2.0](LICENSE)。再分发（含衍生品）须保留 `LICENSE` 与 [NOTICE](NOTICE)；
+闭源修改允许。
+
+**礼节性请求（非许可条款）**：若你把本项目用于商业服务或商业化内容，
+请在至少一处公开材料（产品页/关于页/视频简介）注明使用了
+bilibili-vtuber-clip 并附仓库链接——这是社区回馈的最低形式。
+
+**责任边界**：用本软件产出并发布的内容由使用者自行负责（Apache-2.0 本就
+不含担保）。切片内容相关的纠纷（授权、侵权、下架）发生在 B 站，请走
+B 站平台的举报/申诉渠道——本仓库无权也无法处置站外内容。
+
+## 友情链接
+
+- [沙按钮](https://lu-91015.github.io/shadowlee.github.io/)
