@@ -205,11 +205,26 @@ FLAGGED/失效 receipt。最终 materialize 后仍必须重算 exact-final SRT�
   receipt 固定 `EVIDENCE_ONLY / mutation_authorized=false`。该 seam 只是供后续 text-first
   `needs_audio=true` 路线显式调用的能力，本身不让普通 producer 自动增加第二 provider。
 - 补证调用只有在上游已经形成**具体疑点窗口**时才允许。共享
-  `supplement_audio_budget` 默认最多 3 个不同窗口、每窗 20 秒、总提交 60 秒；provider 失败、
-  timeout 或切换另一 provider 的实际提交照样计费，精确 cache 命中不计。这个预算是防止把
-  “局部补证”退化成整片多 ASR，不是质量阈值。MOSS/MAI 与 Gemini/AGY 的结果不能多数表决；
+  `supplement_audio_budget` 默认最多 3 个不同窗口、每窗 20 秒、总提交 60 秒。预算在 provider
+  client 的 `before_request`、也就是实际 HTTP dispatch 前扣除；provider 失败、timeout 或切换
+  另一 provider 的实际提交照样计费，绑定完整的精确 cache 命中只披露、不扣费。窗口数/总时长
+  cap 的拒绝单列为 typed `refusals`，但不伪装成已经发出的 attempt；裁窗几何本身非法也不能
+  写成 provider 失败。这个预算是防止把“局部补证”退化成整片多 ASR，不是质量阈值。
+  MOSS/MAI 与 Gemini/AGY 的结果不能多数表决；
   相互冲突时必须保留各自 raw/hash provenance 并交既有 CPA/源语言门裁决，任何由某一路文本
   派生的拼音或摘要不得冒充第二个独立声学证人。
+- 私有 producer 若已明确选择 `local_audio_witness_provider=moss|mai`，可在 spec 中显式给出
+  `local_audio_witness_budget` 的 `max_windows`/`max_audio_ms`；每个精确窗口仍固定不超过 20
+  秒。显式预算在局部音频可解析门之前注册；同一 producer 的 context 与外国脚本消费者必须
+  复用同一 source budget，不因分目录或换 provider 重置额度，不同上限也不得静默覆盖。该对象
+  是本次实验的局部配置，不是用户提供的付款或全片 ASR 上限；未配置时仍为默认 3/60，文档或
+  测试中的 24 窗/180 秒不是生产默认。
+- 同一 producer/source 的 canonical 私有回执固定为 `out_root/native-audio-budget.json`，当前
+  schema 为 `native-audio-budget.v2`。回执以单调 `revision` 和 self-hash 绑定 source SHA、
+  provider 集合、实际 `attempts`、`cache_hits` 与 cap `refusals`；attempt 从 `DISPATCHED`
+  只能一次封存为 `OBSERVED / TEXT_UNLOCATED / FAILED / RESPONSE_REJECTED`。同 revision 内容冲突、
+  旧 revision 覆盖新 revision、坏 self-hash 或旧 v1 证据不得静默补签。回执不保存凭据或 raw
+  provider 文本；它证明预算记账，不证明字幕正确、CPA 已裁决或最终包已放行。
 - MAI 原生证据允许保留既有 `ENCODER_TOLERANCE_MS` 内的尾部时标误差，但必须有
   独立输入时长，且原生终点同时处于声明/输入时长的容差内。原始字节与时间不改，
   `MAI_NATIVE_ENCODER_TAIL_OVERHANG` 显式披露超出毫秒数；该结果
@@ -281,12 +296,12 @@ FLAGGED/失效 receipt。最终 materialize 后仍必须重算 exact-final SRT�
   context 一并进入 clip-context digest，不能在终审后偷换。
 - 会话游戏语境是场级候选通道：runner 按日从录制元数据/全场弹幕/选片草稿确定性解析
   当前游戏（`session-game-context.v1`，规则见
-  [游戏语境实现](../../src/autoslice/game_context.py)），RESOLVED 时该游戏
+  [../workflows/session-game-context.md](../workflows/session-game-context.md)），RESOLVED 时该游戏
   的审定词表随 `glossary()` 注入为候选闭集。它与 roster/社区称呼同级：只扩大候选与解释
   空间，不证明本句出现，无机械改字权限；NO_MATCH/AMBIGUOUS/失败一律不注入且不阻断。
   同级还有会话主题提示（不是所有直播都是游戏，主播近期 B 站动态命中会话日窗口时同样作为
   候选闭集注入，规则见
-  [场次主题实现](../../src/autoslice/streamer_dynamics.py)）。
+  [../workflows/session-theme-hints.md](../workflows/session-theme-hints.md)）。
 - “语境”默认是**整个切片和当前场次**，不是争议 cue 前后几句。clip-context 必须让审片员
   看见片内开头到结尾的 callback/复述/调侃链，也可携带与该日期和话题直接相关的结构化
   直播标题、联动对象、游戏/活动/公告实体；这些只能扩大候选与解释空间，不能在没有音频/

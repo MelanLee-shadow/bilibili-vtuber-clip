@@ -30,6 +30,14 @@ from src.autoslice.subtitle_regression import load_subtitle_regression_document
 from src.autoslice.subtitle_text_override_schema import (
     validate_text_override_document_header,
 )
+from src.autoslice.supplement_audio_budget import (
+    BUDGET_CONFIG_INVALID,
+    BudgetConfigurationError,
+    validate_budget_config,
+)
+
+
+_FOREIGN_SCRIPT_WITNESS_PROVIDERS = frozenset({"agy", "moss", "mai"})
 
 
 @dataclass(frozen=True)
@@ -196,6 +204,28 @@ def _validate_truth_input_schemas(
         )
 
 
+def _validate_foreign_script_witness_provider(spec: dict) -> None:
+    for field in ("foreign_script_witness_provider", "local_audio_witness_provider"):
+        provider = spec.get(field)
+        if provider is None:
+            continue
+        if (
+            isinstance(provider, bool)
+            or not isinstance(provider, str)
+            or provider not in _FOREIGN_SCRIPT_WITNESS_PROVIDERS
+        ):
+            raise ValueError(f"{field} must be unset, agy, moss or mai")
+    native_budget = validate_budget_config(spec.get("local_audio_witness_budget"))
+    if native_budget is not None and spec.get("local_audio_witness_provider") not in {
+        "moss",
+        "mai",
+    }:
+        raise BudgetConfigurationError(
+            BUDGET_CONFIG_INVALID,
+            "local_audio_witness_budget requires local_audio_witness_provider moss or mai",
+        )
+
+
 def load_producer_request(
     args: argparse.Namespace,
     *,
@@ -203,6 +233,7 @@ def load_producer_request(
     profile_asset_file: Callable[[str], Path],
 ) -> ProducerRequest:
     spec = json.loads(args.spec.read_text(encoding="utf-8"))
+    _validate_foreign_script_witness_provider(spec)
     if spec.get(EXACT_INTERVAL_RUNTIME_CONFIG_KEY) is not None:
         raise ValueError(
             "reviewed exact source interval runtime authority is internal; "

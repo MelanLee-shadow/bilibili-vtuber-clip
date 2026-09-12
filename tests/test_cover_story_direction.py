@@ -130,6 +130,36 @@ def test_source_geometry_retains_side_only_when_it_keeps_more_source_pixels(tmp_
     assert _source_frame_layout(source, legacy) == (legacy, None, None)
 
 
+@pytest.mark.parametrize("punch", [
+    ("安静十秒拿提督？", "谢提督，七秒破功"),
+    ("说好沉默一分钟", "七秒就开口谢提督"),
+])
+def test_compact_banner_reserves_tilt_before_overlay(tmp_path, punch):
+    from src.autoslice.cover_polish_gate import _compose_screenshot_cover_with_face_gate
+
+    source = tmp_path / "source.png"
+    Image.new("RGB", (1920, 1080), (90, 130, 160)).save(source)
+    direction = replace(BASE, background_style="source-led", layout="banner",
+                        title_style="outline", cover_punch=punch)
+    poster, overlay, _ = _compose_screenshot_cover_with_face_gate(
+        overlay_source=source, crop_evidence={"full_frame_preserved": True},
+        candidate_id="tilted", ai_dir=tmp_path / "backgrounds", covers_dir=tmp_path,
+        cover_text="\n".join(punch), art_direction=direction,
+        relationship_visual_required=True, method="screenshot_direct", base_url="", api_key="",
+    )
+    assert overlay["font_size"] >= 120
+    assert overlay["rendered_lines"] == list(punch)
+    assert poster["source_frame_transform"]["full_frame_preserved"] is True
+    evidence = overlay["rendered_text_pixels"]
+    assert verify_rendered_text_pixel_artifacts(
+        evidence, final_cover_path=tmp_path / "tilted.screenshot-title.cover.png",
+        pre_overlay_path=Path(evidence["pre_overlay_path"]),
+        mask_path=Path(evidence["mask_path"]),
+        font_path=ROOT / "assets/lidousha/fonts" / overlay["font"],
+        expected_pre_overlay_sha256=evidence["pre_overlay_sha256"],
+    )
+
+
 def test_short_punch_preserves_story_layout_but_long_punch_gets_wide_zone():
     assert _punch_layout_override(BASE).layout == "right-split"
     long = replace(BASE, cover_punch=("一个主播竟能看到俩",))

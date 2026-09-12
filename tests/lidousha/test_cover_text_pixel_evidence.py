@@ -16,7 +16,9 @@ from src.autoslice.cover_text_pixel_evidence import (
 )
 from src.autoslice.cover_title_rendering import (
     CoverTitleRenderError,
+    LAYOUT_ENGINE_BASIC,
     SCHEMA_VERSION,
+    render_spec_sha256,
     render_title_layer,
     sha256_file,
 )
@@ -29,6 +31,7 @@ FONT = ROOT / "assets/lidousha/fonts/ZCOOLKuaiLe-Regular.ttf"
 def _spec(text: str = "真实标题") -> dict[str, object]:
     return {
         "schema_version": SCHEMA_VERSION,
+        "layout_engine": LAYOUT_ENGINE_BASIC,
         "font_file_name": FONT.name,
         "font_file_sha256": sha256_file(FONT),
         "font_face_index": 0,
@@ -103,30 +106,58 @@ def test_v3_replays_exact_visible_title_and_route_background(
     )
 
 
-def test_v3_replays_basic_layout_artifacts_on_raqm_hosts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_v3_declares_basic_layout_engine_and_rejects_tampering(
+    tmp_path: Path,
 ) -> None:
-    if not ImageFont.core.HAVE_RAQM:
-        pytest.skip("RAQM is unavailable on this host")
-
-    original_renderer = pixel_evidence.render_title_layer
-
-    def basic_renderer(*args: object, **kwargs: object) -> Image.Image:
-        kwargs["layout_engine"] = ImageFont.Layout.BASIC
-        return original_renderer(*args, **kwargs)
-
-    monkeypatch.setattr(pixel_evidence, "render_title_layer", basic_renderer)
     _route, pre, final, evidence = _materialize(tmp_path)
-    monkeypatch.undo()
+    render_spec = evidence["render_spec"]
+    assert isinstance(render_spec, dict)
+    assert render_spec["layout_engine"] == LAYOUT_ENGINE_BASIC
 
-    assert verify_rendered_text_pixel_artifacts(
-        evidence,
+    tampered = deepcopy(evidence)
+    tampered_spec = tampered["render_spec"]
+    assert isinstance(tampered_spec, dict)
+    tampered_spec["layout_engine"] = "raqm"
+    tampered["render_spec_sha256"] = render_spec_sha256(tampered_spec)
+    assert not verify_rendered_text_pixel_artifacts(
+        tampered,
         final_cover_path=final,
         pre_overlay_path=pre,
         mask_path=Path(str(evidence["mask_path"])),
         font_path=FONT,
         expected_pre_overlay_sha256=evidence["pre_overlay_sha256"],
     )
+
+
+def test_legacy_v3_basic_artifact_remains_replayable(
+    tmp_path: Path,
+) -> None:
+    _route, pre, final, evidence = _materialize(tmp_path)
+    legacy = deepcopy(evidence)
+    legacy_spec = legacy["render_spec"]
+    assert isinstance(legacy_spec, dict)
+    del legacy_spec["layout_engine"]
+    legacy["render_spec_sha256"] = render_spec_sha256(legacy_spec)
+    assert verify_rendered_text_pixel_artifacts(
+        legacy,
+        final_cover_path=final,
+        pre_overlay_path=pre,
+        mask_path=Path(str(evidence["mask_path"])),
+        font_path=FONT,
+        expected_pre_overlay_sha256=evidence["pre_overlay_sha256"],
+    )
+
+
+def test_declared_basic_layout_rejects_conflicting_override() -> None:
+    with pytest.raises(
+        CoverTitleRenderError,
+        match="COVER_TITLE_RENDER_LAYOUT_ENGINE_MISMATCH",
+    ):
+        render_title_layer(
+            _spec(),
+            font_path=FONT,
+            layout_engine=ImageFont.Layout.RAQM,
+        )
 
 
 def test_nonfinite_and_clipped_glyph_specs_fail_closed() -> None:

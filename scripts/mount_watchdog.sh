@@ -116,7 +116,7 @@ tick_lock_holders() {
 
 check_runner_not_starved() {
     # A cron tick rejected by `flock -n tick.lock` writes NOTHING: no log line, no
-    # heartbeat, no alert. that silence hid a seven-hour outage.
+    # heartbeat, no alert.  On that silence hid a seven-hour outage.
     # The heartbeat's own age is the only signal that survives starvation.
     [ -e "$DISABLED_FLAG" ] && return 0   # paused on purpose (deploy/operator)
     [ -f "$HEARTBEAT" ] || return 0       # fresh base: nothing to compare yet

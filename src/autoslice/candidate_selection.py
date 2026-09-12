@@ -916,7 +916,7 @@ def refill_songs(state: dict) -> None:
             item for item in selected_repairs if _item_session_id(item) == session_id
         ]
         # A repair past SONG_INFRA_RETRY_CAP loses its *first claim* on the
-        # available delivery budget.
+        # available delivery budget. On
         # one such candidate held that single slot across 26 superseded
         # attempts while eight never-attempted candidates starved in the
         # backlog.  It is demoted, not dropped: it still takes any slot no

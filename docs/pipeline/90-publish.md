@@ -6,8 +6,9 @@
 
 ## 快车道授权与串行发布边界
 
-候选只按其自身有效授权范围修复；公共模板不继承任何历史批次的审批。
-完成修复后仍须通过本页的 package、manifest、audit、授权和公开验收门。已通过全部发布门的候选
+对 Claude line 947 穷举批次，候选点名错误修复完成即使用本页既有 package、manifest、
+audit、授权和公开验收门进入上传；不新增 维护者 二次看片/复审。按 维护者 2026-09-08
+[最新就绪优先指令](../reviews/2026-09-08-ready-first-publication.md)，已通过全部发布门的候选
 先进入串行上传队列；较早候选未就绪不能卡住后面的合格片。就绪集合内优先时效性，其余
 按原批次顺序选取；问题候选留在独立修复队列。candidate-private prepare/package/QC 可并行；transcription/AGY 之后仅 bounded per-cue
 short calls 彼此并行，待字幕、媒体和标题输入冻结后 burn 与 cover 可并行；commit lease、formal state+journal、same-BV apply、upload mutation 与 queue

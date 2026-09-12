@@ -43,6 +43,40 @@ CPA judge 缓存 v2 同时绑定完整 prompt、实际调用模型和思考档�
 
 是否已在生产生效须读部署和实际请求，不能从本页或测试分支推断。
 
+## 显式原生整 cue 听证接入（2026-09-09）
+
+`producer_text_pipeline._adjudicate_final_language(..., native_provider="mai"|"moss")`
+只对`source_language=False`的现有mixed-script裁决入口开放；缺省`None`保留原AGY/Gemini
+路径，不读取新环境开关，也不自动更换普通生产提供商。新调用不是先AGY再追加一票，而是
+由显式指定的原生提供商独立承担该次听证。实际是否可用/已部署要看输入、客户端和运行回执。
+
+`native_foreign_witness`复用已存在的原生客户端、内容寻址cache、source级音频预算和
+`exact_target_evidence`；provider输入只有音频及整cue起止，物理MP3无padding，不传
+CURRENT/PROPOSED/上下文候选/热词。完整解码时长不符、源漂移或链接均拒绝；原生行重叠或
+乱序不能拼成假的单句。MOSS对精确整cue可独立使用提供商原回包的完整`text`字段；保留
+`raw_native_segments`及时间错误/重叠诊断，并标`provider_full_crop_text`和无文字内部时间轴。
+这不允许用长音频的完整文字填入一个短cue，也不对native行排序/拼接。时间无效的MOSS
+完整文字缓存限定`evidence_scope=exact_cue`，普通整片ASR消费者不得把它读成有效分段。
+原生转写不制造拼音、语言识别或人物身份结论，不能凭相似度免掉CPA。
+原BCUT候选、当前完整字幕、原生文字和范围/hash一起送现有闭集裁决；晚期owner仍由
+`register_final_foreign_script_cpa_repairs`按实际单cue变动与不变时间轴登记。
+
+保留原生错误的provider、reason_code和HTTP status。现有foreign failure/recovery消费者对
+明确MAI/MOSS超时、网络错误、408/429/5xx按既有transient路线处理；坏时间、坏schema、
+缺配置和确定性HTTP拒绝不伪装成短暂服务故障。历史AGY/Gemini marker解释保持不变。
+显式native失败不暗中换另一家，预算上限与失败记账不变。
+
+原生预算回执与内容审计分开：同一 source 在一个 producer 进程内只写
+`out_root/native-audio-budget.json`，当前为 `native-audio-budget.v2`。真实 dispatch 从
+`DISPATCHED` 单向封存为 `OBSERVED / TEXT_UNLOCATED / FAILED / RESPONSE_REJECTED`；精确
+cache hit 和 cap refusal 分表记录，前者不扣额度，后者不是 provider attempt。回执的单调
+revision/self-hash 防止不同 consumer 分目录写出互相覆盖的旧快照，但它不携带 raw 转写、
+不授予 mutation authority，也不能替代 foreign audit、CPA judge、exact-final 或 package gate。
+显式 24 窗/180 秒只能来自具体私有 spec，默认仍是 3 窗/60 秒。
+
+该接口的实现/测试不等于MOSS/MAI已经通过默认推广。冻结音频的新CPA裁决不是新鲜ASR
+速度测试；只覆盖半条BCUT cue的历史裁窗不能拿来替换整条字幕或按字符比例猜时间。
+
 ## 分层架构
 
 ```
@@ -173,8 +207,8 @@ CPA judge 缓存 v2 同时绑定完整 prompt、实际调用模型和思考档�
      不得把已由 CPA 解决的前序 mixed-script finding 误报为终局原因。
    - 其他局部声学路线的接入/替换必须区分待测候选与已验收默认。BCUT span 重转写、
      MAI 或 Gemini 输出只能按真实来源进入候选闭集；不按模型名先验偏信，不以拼音距离
-     单独裁定汉字，不因为增加一路就声称 AGY 已被替换。默认路线与证据接口见
-     [字幕文本链](40-subtitle-text.md)；实验结果不代表部署已切换。
+     单独裁定汉字，不因为增加一路就声称 AGY 已被替换。当前实际版本/验证差异见
+     [要求核对报告](../reviews/2026-09-06-pipeline-requirements-reconciliation.md)。
    - **删除专线**：`acoustic_delete` 仅提议删除一个有界疑似幻听 span，`acoustic_drop_cue`
      仅提议整条无声。AGY 的“不可闻”仍只是证据；一旦 typed witness 明示
      `target_audible=false`，CPA 必须在 `CURRENT / PROPOSED / DROP` 中显式三选一。只有

@@ -9,6 +9,7 @@ import pytest
 from src.autoslice.acoustic_witness_adjudication import build_witness_request
 from src.autoslice.exact_final_witness_authority import (
     build_acoustic_witness_binding,
+    valid_acoustic_witness_binding,
     valid_convergence_mutation_authority,
 )
 from src.autoslice.exact_final_convergence import (
@@ -1441,3 +1442,97 @@ def test_cycle_memo_reopens_when_witness_material_changes(
 
     assert pending == [changed]
     assert locked == []
+
+
+def _native_finding() -> dict:
+    """Synthetic transport receipt; CPA still explicitly selects the proposal."""
+    from src.autoslice.local_asr_target_evidence import exact_target_evidence, digest
+    from src.autoslice.acoustic_witness_adjudication import judge_word_choice
+
+    finding = _reconsidered_finding('三二', '方案二')
+    adjudication = finding['exact_release_adjudication']
+    request = adjudication['request']
+    wr = build_witness_request(request)
+    native = exact_target_evidence(
+        {'provider': 'moss', 'model': 'moss-transcribe-diarize-pro',
+         'input_audio_sha256': _sha('fixture-audio'), 'response_sha256': _sha('fixture-response'),
+         'native_segments': [{'start_ms': 0, 'end_ms': 1000, 'text': '方案二'}],
+         'raw_response': {'text': '方案二'}},
+        audio=b'fixture-audio', source_sha256=_sha('fixture-source'),
+        start_ms=1100, end_ms=2100, prefer_provider_text=True,
+    )
+    native['observation_scope'] = 'complete_exact_cue_no_padding'
+    native.pop('receipt_sha256')
+    native['receipt_sha256'] = digest(native)
+    witness = {
+        'schema_version': 'subtitle-span-acoustic-witness.v1',
+        'witness_protocol': 'candidate_blind_transcript',
+        'status': 'OBSERVED', 'target_audible': True,
+        'audibility_basis': 'nonempty_provider_transcript',
+        'candidate_exposure': 'none', 'authority': 'EVIDENCE_ONLY',
+        'mutation_authorized': False, 'exact_transcript': native['transcript'],
+        'request_sha256': wr['request_sha256'],
+        'source_media_sha256': native['source_media_sha256'],
+        'audio_clip_sha256': native['input_audio_sha256'],
+        'audio_start_ms': 1100, 'audio_end_ms': 2100,
+        'provider': native['provider'], 'model': native['model'],
+        'response_sha256': native['response_sha256'], 'native_observation': native,
+    }
+    adjudication['verdict'] = witness
+    adjudication['witness_judge']['judge'] = judge_word_choice(
+        llm_call=lambda _p: json.dumps({'choice': 'PROPOSED', 'candidate_id': 'PROPOSAL',
+                                       'reason': 'Synthetic native receipt supports this choice'}),
+        check_request=request, witness=witness,
+    )
+    return finding
+
+
+def test_native_transcript_convergence_consumes_bound_cpa_proposal() -> None:
+    finding = _native_finding()
+    unresolved, resolved = converge_reconsidered_exact_final_findings(
+        _srt('三二'), [finding], authority_audit=_authority('旧文本', '三二'),
+        judge_llm_call=lambda _p: json.dumps({'choice': 'PROPOSED', 'reason': 'fixture evidence'}),
+    )
+    assert resolved == []
+    assert len(unresolved) == 1  # The mutation remains pending until canonical self-heal.
+    repaired, receipts = _apply_exact_final_cpa_repairs(_srt('三二'), {'findings': unresolved})
+    assert repaired == _srt('方案二')
+    assert len(receipts) == 1
+    binding = receipts[0]['acoustic_witness_binding']
+    assert valid_acoustic_witness_binding(binding, proposed='方案二', window=(1100, 2100))
+    assert binding['witness_protocol'] == 'candidate_blind_transcript'
+    assert 'heard_pinyin' not in binding['witness']
+
+
+@pytest.mark.parametrize('tamper', [
+    'transcript', 'source', 'geometry', 'receipt', 'confidence', 'candidate',
+    'selected_text', 'native_model', 'native_exposure',
+])
+def test_native_convergence_rejects_wrong_or_unbound_evidence(tamper: str) -> None:
+    from src.autoslice.local_asr_target_evidence import digest
+    finding = _native_finding()
+    a = finding['exact_release_adjudication']
+    w, j = a['verdict'], a['witness_judge']['judge']
+    if tamper == 'transcript':
+        w['exact_transcript'] = '三二'
+    elif tamper == 'source':
+        w['source_media_sha256'] = _sha('other-source')
+    elif tamper == 'geometry':
+        w['audio_start_ms'] += 10
+    elif tamper == 'receipt':
+        w['native_observation']['receipt_sha256'] = '0' * 64
+    elif tamper == 'confidence':
+        w['confidence'] = .99
+    elif tamper == 'candidate':
+        j['candidate_id'] = 'SOURCE_1'
+    elif tamper == 'selected_text':
+        j['selected_candidate_text'] = '别的文本'
+    else:
+        n = w['native_observation']
+        if tamper == 'native_model':
+            n['model'] = w['model'] = 'wrong-model'
+        else:
+            n['candidate_exposure'] = 'current-and-proposed'
+        n.pop('receipt_sha256')
+        n['receipt_sha256'] = digest(n)
+    assert build_acoustic_witness_binding(check_request=a['request'], witness=w, judge=j) is None

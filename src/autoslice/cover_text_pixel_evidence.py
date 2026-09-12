@@ -11,6 +11,7 @@ from PIL import Image, ImageChops, ImageFont, ImageOps
 
 from src.autoslice.cover_title_rendering import (
     CoverTitleRenderError,
+    LAYOUT_ENGINE_BASIC,
     render_spec_sha256,
     render_title_layer,
     sha256_file,
@@ -103,6 +104,8 @@ def materialize_rendered_text_pixel_evidence(
             separators=(",", ":"),
         )
     )
+    if canonical_spec.get("layout_engine") != LAYOUT_ENGINE_BASIC:
+        raise ValueError("COVER_RENDERED_TEXT_LAYOUT_ENGINE_INVALID")
     title_layer = render_title_layer(canonical_spec, font_path=font_path)
     raw_lines = canonical_spec.get("lines")
     spec_text = "".join(
@@ -233,6 +236,9 @@ def verify_rendered_text_pixel_artifacts(
         or not isinstance(expected_pre_overlay_sha256, str)
     ):
         return False
+    declared_layout_engine = render_spec.get("layout_engine")
+    if declared_layout_engine not in (None, LAYOUT_ENGINE_BASIC):
+        return False
     try:
         if (
             evidence.get("final_cover_sha256")
@@ -310,6 +316,8 @@ def verify_rendered_text_pixel_artifacts(
     expected_mask = Image.new("L", final_rgb.size, 0)
     expected_mask.paste(title_layer.getchannel("A"), paste_xy)
     if ImageChops.difference(mask, expected_mask).getbbox() is not None:
+        if declared_layout_engine is not None:
+            return False
         try:
             title_layer = render_title_layer(
                 render_spec,

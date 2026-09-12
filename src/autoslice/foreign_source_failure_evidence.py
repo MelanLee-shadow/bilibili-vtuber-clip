@@ -225,6 +225,31 @@ def _judge_row_provider_transient(row: object) -> bool:
     )
 
 
+def witness_row_provider_transient(row: dict[str, object]) -> bool:
+    """Keep native transport/quota failures distinct from semantic/contract errors.
+
+    The clients already expose typed reason codes and HTTP status. Do not lose
+    them and then guess from a generic exception message. Legacy rows retain
+    the existing marker policy, unchanged.
+    """
+    provider = row.get("provider")
+    code = row.get("failure_reason_code")
+    if provider in {"mai", "moss"} and code is not None:
+        prefix = str(provider).upper() + "_"
+        if code in {prefix + "TIMEOUT", prefix + "TRANSPORT_ERROR"}:
+            return True
+        if code == prefix + "HTTP_ERROR":
+            status = row.get("failure_http_status")
+            return type(status) is int and (status in {408, 429} or 500 <= status < 600)
+        return False
+    markers = (
+        "AGY_FOREIGN_WITNESS_", "WITNESS_PROVIDERS_FAILED",
+        "WITNESS_AUDIO_EXTRACTION_FAILED", "HTTPERROR", "QUOTA",
+        "TIMED OUT", "TIMEOUT", "SUBPROCESS",
+    )
+    return any(marker in str(row.get("failure") or "").upper() for marker in markers)
+
+
 def foreign_source_provider_transient(
     violation: dict[str, object] | None,
 ) -> bool:
@@ -244,25 +269,8 @@ def foreign_source_provider_transient(
         for row in (rows if isinstance(rows, list) else [])
         if isinstance(row, dict) and row.get("cue_index") in unresolved_indexes
     ]
-    if relevant_witness:
-        provider_markers = (
-            "AGY_FOREIGN_WITNESS_",
-            "WITNESS_PROVIDERS_FAILED",
-            "WITNESS_AUDIO_EXTRACTION_FAILED",
-            "HTTPERROR",
-            "QUOTA",
-            "TIMED OUT",
-            "TIMEOUT",
-            "SUBPROCESS",
-        )
-        if all(
-            any(
-                marker in str(row.get("failure") or "").upper()
-                for marker in provider_markers
-            )
-            for row in relevant_witness
-        ):
-            return True
+    if relevant_witness and all(witness_row_provider_transient(row) for row in relevant_witness):
+        return True
     # 维护者 工程优化②授权：判者层瞬断（同 cue 的 CPA judge 调用
     # 失败，而非听写本身有问题）同样属于可恢复基础设施等待，不是文本终态。
     cpa_rows = violation.get("cpa_adjudication_rows")

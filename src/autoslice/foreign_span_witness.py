@@ -4,8 +4,9 @@ The language-preservation and script-consistency audits fail closed when the
 final subtitle carries foreign-language or Latin-phrase content the Chinese
 ASR draft never witnessed.  维护者: foreign (e.g. Japanese)
 transcription capability belongs to AGY, while CPA remains a text-only judge.
-An independent AGY listen over the exact blocked cue interval is therefore an
-acceptable machine witness.  The witness only supplies a candidate-blind
+A candidate-blind observation over the blocked interval is machine evidence.
+The legacy route uses AGY/Gemini; explicit native MAI/MOSS selection uses an
+exact whole-cue crop without padding and always retains final CPA judgment.  The witness only supplies a candidate-blind
 transcript; it never chooses between subtitle surfaces.  A mismatch is sent to
 CPA, while an unparseable observation or provider failure stays retryable.
 """
@@ -390,10 +391,20 @@ def _witness_rows(
     out_root: Path,
     cid: str,
     observe: Callable[..., str] | None,
+    native_provider: str | None = None,
 ) -> list[dict[str, Any]]:
     audio_dir = out_root / f"{cid}.foreign-witness"
     audio_dir.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, Any]] = []
+    native_observer = None
+    if native_provider is not None:
+        from src.autoslice.native_foreign_witness import build_native_foreign_witness
+        native_observer = build_native_foreign_witness(
+            source_media=media_path,
+            output_dir=audio_dir,
+            provider=native_provider,
+            budget_receipt_path=out_root / "native-audio-budget.json",
+        )
     for row in rows:
         start_ms = row.get("start_ms")
         end_ms = row.get("end_ms")
@@ -413,6 +424,29 @@ def _witness_rows(
             or not claim_text.strip()
         ):
             result["failure"] = "ROW_NOT_ADDRESSABLE"
+            continue
+        if native_observer is not None:
+            result["provider"] = native_provider
+            try:
+                evidence = native_observer(start_ms=start_ms, end_ms=end_ms)
+                if evidence.get("status") != "OBSERVED" or not evidence.get("transcript"):
+                    raise RuntimeError("AUDIO_TRANSCRIPT_UNUSABLE")
+                result.update(
+                    exact_transcript=evidence["transcript"],
+                    provider=evidence["provider"], model=evidence["model"],
+                    audio_sha256=evidence["input_audio_sha256"],
+                    response_sha256=evidence["response_sha256"],
+                    source_media_sha256=evidence["source_media_sha256"],
+                    audible_language=None, speaker_impression="uncertain",
+                    witness_native_evidence=evidence,
+                    witnessed=False,  # native text has no independent verbatim/language authority
+                )
+            except Exception as exc:
+                result["failure"] = f"{type(exc).__name__}: {exc}"[:200]
+                result["failure_reason_code"] = getattr(exc, "reason_code", None)
+                metadata = getattr(exc, "metadata", None)
+                status = metadata.get("http_status") if isinstance(metadata, dict) else None
+                result["failure_http_status"] = status if type(status) is int else None
             continue
         audio_path = audio_dir / f"span_{start_ms}_{end_ms}.mp3"
         try:
@@ -945,6 +979,7 @@ def adjudicate_foreign_script_audit(
     llm_call: Callable[[str], str] | None,
     observe: Callable[..., str] | None = None,
     source_srt: str = "",
+    native_provider: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Let the audio lane propose and CPA finally judge mixed-script cues.
 
@@ -956,6 +991,10 @@ def adjudicate_foreign_script_audit(
     typed JUDGED receipt resolves the gate.
     """
 
+    if native_provider is not None and native_provider not in {"mai", "moss"}:
+        raise ValueError("native_provider must be explicitly mai or moss")
+    if native_provider is not None and observe is not None:
+        raise ValueError("native and legacy injected observers are mutually exclusive")
     if audit.get("status") != "BLOCKED_MIXED_CJK_LATIN_PHRASE":
         return srt_text, audit
     rows = [
@@ -973,6 +1012,7 @@ def adjudicate_foreign_script_audit(
             out_root=out_root,
             cid=cid,
             observe=observe,
+            native_provider=native_provider,
         )
     except Exception as exc:
         audit["audio_witness_error"] = f"{type(exc).__name__}: {exc}"[:200]
@@ -1038,6 +1078,7 @@ def adjudicate_foreign_script_audit(
         source_candidates = _target_source_candidates(result, rows, source_srt=source_srt)
         check_request = {
             "current_cue": cue.text,
+            "whole_clip_current_srt": srt_text,
             "proposed_cue": transcript,
             "proposed_candidates": source_candidates,
             "closed_set_structured_evidence": {

@@ -89,9 +89,9 @@ def _source_frame_layout(screenshot_path, direction):
     with Image.open(screenshot_path) as source:
         size = source.size
     font = _cover_font_for_text("\n".join(direction.cover_punch), title_style=direction.title_style)
-    # Find the smallest band meeting the existing font floor, then allow eight
-    # pixels of breathing room. Never allocate half the canvas merely because
-    # a legacy layout has a large maximum title rectangle.
+    # The fitter measures unrotated lines. Reserve the rotated rectangle too:
+    # even a two-degree banner tilt adds up to 49 px to a 1400 px text block.
+    # Otherwise the final alpha fit shrinks an apparently legal 120 px title.
     lo, hi = 1, 486
     while lo < hi:
         height = (lo + hi) // 2
@@ -104,7 +104,11 @@ def _source_frame_layout(screenshot_path, direction):
             hi = height
         else:
             lo = height + 1
-    height = min(486, hi + 8)
+    band_layout = "banner" if direction.layout == "banner" else "footer"
+    angle = (0.0 if direction.title_style == "clean" else
+             _COVER_LAYOUT_RENDER[band_layout]["angle"])
+    radians = math.radians(abs(angle))
+    height = min(486, math.ceil(hi * math.cos(radians) + 1400 * math.sin(radians)) + 8)
     footer_zone = (260, 1080 - height, 1660, 1080)
     requested = direction.layout
     if requested in ("banner", "footer"):
