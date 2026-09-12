@@ -11,10 +11,12 @@ from typing import Any
 from src.autoslice.acoustic_witness_adjudication import build_witness_request
 from src.autoslice.acoustic_witness_protocol import (
     BLIND_PINYIN_PROTOCOL,
+    CANDIDATE_BLIND_TRANSCRIPT_PROTOCOL,
     contains_han_text,
     supported_witness_protocol,
     witness_protocol,
 )
+from src.autoslice.local_asr_target_evidence import MODELS, SCHEMA as NATIVE_SCHEMA
 
 
 BINDING_SCHEMA = "subtitle-repair-acoustic-witness-binding.v1"
@@ -166,6 +168,7 @@ def _valid_proposed_judge(
     judge: Mapping[str, Any],
     *,
     check_request_sha256: str,
+    transcript_proposed: str | None = None,
 ) -> bool:
     similarities = judge.get("candidate_pinyin_similarity")
     choice_set = judge.get("choice_set")
@@ -173,7 +176,15 @@ def _valid_proposed_judge(
         judge.get("schema_version") == "acoustic-witness-adjudication.v1"
         and judge.get("status") == "JUDGED"
         and judge.get("choice") == "PROPOSED"
-        and judge.get("decision_contract") == "current-proposed-neither.v1"
+        and (
+            judge.get("decision_contract") == "current-proposed-neither.v1"
+            if transcript_proposed is None
+            else (
+                judge.get("decision_contract") == "current-proposed-candidate-id-neither.v1"
+                and judge.get("candidate_id") == "PROPOSAL"
+                and judge.get("selected_candidate_text") == transcript_proposed
+            )
+        )
         and isinstance(choice_set, list)
         and all(isinstance(value, str) for value in choice_set)
         and set(choice_set) == {"CURRENT", "PROPOSED", "NEITHER"}
@@ -197,6 +208,62 @@ def _valid_proposed_judge(
         )
         and _valid_digest(judge.get("prompt_sha256"))
         and _valid_digest(judge.get("completion_sha256"))
+    )
+
+
+def _valid_native_witness(
+    witness: Mapping[str, Any], *, witness_request: Mapping[str, Any]
+) -> bool:
+    """Revalidate native crop provenance, without inventing phonetic support."""
+    native = witness.get("native_observation")
+    if not isinstance(native, Mapping):
+        return False
+    payload = dict(native)
+    receipt_sha = payload.pop("receipt_sha256", None)
+    offset = witness_request.get("source_media_timeline_offset_ms")
+    start = witness_request.get("matched_start_ms")
+    end = witness_request.get("matched_end_ms")
+    if not all(type(v) is int for v in (offset, start, end)):
+        return False
+    physical = (start + offset, end + offset)
+    provider = native.get("provider")
+    transcript = witness.get("exact_transcript")
+    return bool(
+        witness.get("schema_version") == "subtitle-span-acoustic-witness.v1"
+        and witness.get("witness_protocol") == CANDIDATE_BLIND_TRANSCRIPT_PROTOCOL
+        and witness.get("status") == "OBSERVED"
+        and witness.get("target_audible") is True
+        and witness.get("audibility_basis") == "nonempty_provider_transcript"
+        and witness.get("request_sha256") == witness_request.get("request_sha256")
+        and witness.get("candidate_exposure") == "none"
+        and witness.get("authority") == "EVIDENCE_ONLY"
+        and witness.get("mutation_authorized") is False
+        and not any(key in witness for key in (*_WITNESS_TEXT_CHANNELS, "heard_pinyin", "confidence", "syllable_count"))
+        and isinstance(transcript, str) and bool(transcript.strip())
+        and native.get("schema_version") == NATIVE_SCHEMA
+        and native.get("status") == "OBSERVED"
+        and native.get("candidate_exposure") == "none"
+        and native.get("authority") == "EVIDENCE_ONLY"
+        and native.get("mutation_authorized") is False
+        and native.get("crop_is_exact_target") is True
+        and native.get("observation_scope") == "complete_exact_cue_no_padding"
+        and native.get("transcript") == transcript
+        and isinstance(provider, str) and provider in MODELS
+        and native.get("model") == MODELS[provider]
+        and witness.get("provider") == provider
+        and witness.get("model") == native.get("model")
+        and receipt_sha == _sha_json(payload)
+        and 0 <= physical[0] < physical[1] <= physical[0] + 20_000
+        and (native.get("target_start_ms"), native.get("target_end_ms")) == physical
+        and (witness.get("audio_start_ms"), witness.get("audio_end_ms")) == physical
+        and all(
+            _valid_digest(witness.get(outer)) and witness.get(outer) == native.get(inner)
+            for outer, inner in (
+                ("source_media_sha256", "source_media_sha256"),
+                ("audio_clip_sha256", "input_audio_sha256"),
+                ("response_sha256", "response_sha256"),
+            )
+        )
     )
 
 
@@ -236,16 +303,21 @@ def build_acoustic_witness_binding(
         return None
     protocol = witness_protocol(witness)
     check_request_sha256 = _digest(check_request.get("request_sha256"))
+    valid_observation = (
+        _valid_blind_witness(
+            witness, request_sha256=str(witness_request.get("request_sha256") or "")
+        ) if protocol == BLIND_PINYIN_PROTOCOL else (
+            protocol == CANDIDATE_BLIND_TRANSCRIPT_PROTOCOL
+            and _valid_native_witness(witness, witness_request=witness_request)
+        )
+    )
     if not (
         supported_witness_protocol(witness)
-        and protocol == BLIND_PINYIN_PROTOCOL
-        and _valid_blind_witness(
-            witness,
-            request_sha256=str(witness_request.get("request_sha256") or ""),
-        )
+        and valid_observation
         and _valid_proposed_judge(
             judge,
             check_request_sha256=check_request_sha256,
+            transcript_proposed=proposed if protocol == CANDIDATE_BLIND_TRANSCRIPT_PROTOCOL else None,
         )
     ):
         return None
@@ -357,7 +429,6 @@ def convergence_witness_gate(
         binding = binding_from_adjudication(adjudication)
         if (
             binding is not None
-            and binding.get("witness_protocol") == BLIND_PINYIN_PROTOCOL
             and valid_acoustic_witness_binding(
                 binding,
                 proposed=proposed,

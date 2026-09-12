@@ -12,6 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 SCHEMA_VERSION = "lidousha-cover-title-render-spec.v1"
+LAYOUT_ENGINE_BASIC = "basic"
 FEED_SAFE_X0 = 260
 FEED_SAFE_X1 = 1660
 TITLE_BASE_FILL = (255, 246, 214)
@@ -75,6 +76,7 @@ def materialize_title_layer_spec(
         y += int(line["height"]) + int(line["gap"])
     spec: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
+        "layout_engine": LAYOUT_ENGINE_BASIC,
         "font_file_name": font_path.name,
         "font_file_sha256": sha256_file(font_path),
         "font_face_index": int(font_face_index),
@@ -136,6 +138,19 @@ def render_title_layer(
 
     if spec.get("schema_version") != SCHEMA_VERSION:
         raise CoverTitleRenderError("COVER_TITLE_RENDER_SPEC_SCHEMA_INVALID")
+    declared_layout_engine = spec.get("layout_engine")
+    if declared_layout_engine is None:
+        resolved_layout_engine = layout_engine
+    elif declared_layout_engine == LAYOUT_ENGINE_BASIC:
+        if layout_engine not in (None, ImageFont.Layout.BASIC):
+            raise CoverTitleRenderError(
+                "COVER_TITLE_RENDER_LAYOUT_ENGINE_MISMATCH"
+            )
+        resolved_layout_engine = ImageFont.Layout.BASIC
+    else:
+        raise CoverTitleRenderError(
+            "COVER_TITLE_RENDER_LAYOUT_ENGINE_INVALID"
+        )
     if str(spec.get("font_file_name") or "") != font_path.name:
         raise CoverTitleRenderError("COVER_TITLE_RENDER_FONT_NAME_MISMATCH")
     if spec.get("font_file_sha256") != sha256_file(font_path):
@@ -191,7 +206,10 @@ def render_title_layer(
             maximum=512,
         )
         font = ImageFont.truetype(
-            str(font_path), size, index=face_index, layout_engine=layout_engine
+            str(font_path),
+            size,
+            index=face_index,
+            layout_engine=resolved_layout_engine,
         )
         raw_outlines = raw_line.get("outlines")
         if (

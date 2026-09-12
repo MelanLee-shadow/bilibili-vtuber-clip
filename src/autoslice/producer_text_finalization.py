@@ -1605,6 +1605,38 @@ def _exact_final_cpa_retires_decision_row(
     return True
 
 
+_NON_MUTATING_GIFT_REPAIR_OUTCOMES = frozenset(
+    {
+        "asr_win_no_change",
+        "uncertain_no_change",
+        "no_verifier_no_change",
+        "gift_arbitration_cap_exceeded_no_change",
+    }
+)
+
+
+def _non_mutating_gift_repair(row: Mapping[str, object]) -> bool:
+    """Return whether gift arbitration left the entire cue unchanged."""
+
+    before = row.get("before")
+    return bool(
+        isinstance(before, str)
+        and before
+        and row.get("after") == before
+        and row.get("outcome") in _NON_MUTATING_GIFT_REPAIR_OUTCOMES
+    )
+
+
+def _exact_final_cpa_supersession_candidate(kind: str, row: Mapping[str, object]) -> bool:
+    return bool(
+        (
+            kind == "entity_repair"
+            and row.get("mode") == "final_review_context_adjudication"
+        )
+        or (kind == "gift_name" and _non_mutating_gift_repair(row))
+    )
+
+
 def _final_authority_decision_rows(audit: dict) -> list[tuple[str, dict, str]]:
     rows: list[tuple[str, dict, str]] = []
     rows.extend(
@@ -1733,8 +1765,7 @@ def verify_chat_authority_final_surfaces(
             superseded_by_redelivery += 1
             continue
         if (
-            kind == "entity_repair"
-            and row.get("mode") == "final_review_context_adjudication"
+            _exact_final_cpa_supersession_candidate(kind, row)
             and _exact_final_cpa_retires_decision_row(
                 row,
                 expected_text=expected_text,

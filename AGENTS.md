@@ -1,6 +1,6 @@
 # AGENTS.md — 公开版操作约定
 
-本项目可以由人手工配置，也可以由 AI 代理协助维护。开始前读 [README.md](README.md)，
+本项目优先由 AI 代理完成配置与验证，人类提供真实频道信息与授权。开始前读 [README.md](README.md)，
 修改某一步前读 [流水线索引](docs/pipeline/README.md) 及对应 step。
 以下是操作地图，不覆盖代码、schema、profile 或分步规则。
 

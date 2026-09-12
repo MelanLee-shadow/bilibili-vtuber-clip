@@ -29,7 +29,8 @@ def valid_sha(value: object) -> bool:
 
 
 def exact_target_evidence(
-    metadata: Mapping[str, Any], *, audio: bytes, source_sha256: str, start_ms: int, end_ms: int
+    metadata: Mapping[str, Any], *, audio: bytes, source_sha256: str, start_ms: int, end_ms: int,
+    prefer_provider_text: bool = False,
 ) -> dict[str, Any]:
     """Validate a native transcript of the entire exact target, with no padding.
 
@@ -76,11 +77,14 @@ def exact_target_evidence(
                 "text": text,
             }
         )
+    raw = metadata.get("raw_response")
+    provider_text = raw.get("text") if isinstance(raw, Mapping) else None
+    use_full_text = prefer_provider_text and isinstance(provider_text, str) and bool(provider_text.strip())
     output = {
         "schema_version": SCHEMA,
         "provider": provider,
         "model": MODELS[provider],
-        "status": "OBSERVED" if native else "NO_SPEECH_REPORTED",
+        "status": "OBSERVED" if native or use_full_text else "NO_SPEECH_REPORTED",
         "candidate_exposure": "none",
         "authority": "EVIDENCE_ONLY",
         "mutation_authorized": False,
@@ -90,12 +94,18 @@ def exact_target_evidence(
         "target_start_ms": start_ms,
         "target_end_ms": end_ms,
         "crop_is_exact_target": True,
-        "transcript": " ".join(texts),
+        "transcript": provider_text if use_full_text else " ".join(texts),
         "native_segments": native,
         "source_segments": spans,
         "native_timeline": metadata.get("native_timeline"),
         "diagnostics": metadata.get("diagnostics", []),
         "note": "Provider-native text is fallible evidence. No independent phonetic claim or deletion authority.",
     }
+    if use_full_text:
+        output.update(
+            transcript_basis="provider_full_crop_text",
+            transcript_timeline_available=False,
+            raw_native_segments=raw.get("segments"),
+        )
     output["receipt_sha256"] = digest(output)
     return output

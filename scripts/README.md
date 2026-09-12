@@ -75,7 +75,9 @@
 | `rescue_from_official_replay.py` | 用官方回放重建丢失的录制段（分段时间映射） |
 | `repair_screenshot_cover.py` | 按已审计划重组截图路线封面；特定历史维修脚本不随公共版分发 |
 | `regenerate_channel_cover.py` | 重出单候选封面（profile 的 cover_regenerator 工具位） |
-| `swap_video_p.py` | 同 BV 换源（biliup append 后置换 P） |
+
+`swap_video_p.py` 是历史兼容工具，不是允许直接运行的修复入口；同 BV 修复仍只走
+`authorized_upload.py repair-plan / repair-run / repair-verify-live`。
 
 ## 发布 / 稿件维护
 

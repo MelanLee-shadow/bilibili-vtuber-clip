@@ -60,5 +60,6 @@ Talk scope 也必须冻结为空；不能借“grant 不生效”恢复 broad Ta
   点名批次/日期的额外授权只在该范围生效，不改全局默认。
 - 执行入口是 `candidate_selection.song_delivery_budget`、跨场 refill 与
   `delivery_recovery.recover_bound_song_deliveries`：已交付和已验证公开/待提交预留应共享
-  日名额，各场内容尝试上限仍独立。是否已部署须核对实际运行入口与版本；
-  不能凭文档更新宣布部署已生效。
+  日名额，各场内容尝试上限仍独立。旧 `session_id` 交付计数与当前要求的差异、候选修复及
+  是否已部署见[本轮核对报告](../reviews/2026-09-06-pipeline-requirements-reconciliation.md)；
+  不能把旧“多场日待拍板”当成没有用户要求，也不能凭文档更新宣布部署已生效。

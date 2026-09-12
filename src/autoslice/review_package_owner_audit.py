@@ -668,6 +668,20 @@ def _story_owner_set_valid(
                         )
                     )
                 elif (
+                    owner_kind == "gift_name"
+                    and isinstance(reconciliation, Mapping)
+                    and reconciliation.get("schema_version")
+                    == "exact-final-cpa-receipt-chain-supersession.v1"
+                ):
+                    valid = valid and (
+                        _exact_final_receipt_chain_boundary_owner_valid(
+                            row=row,
+                            chat_authority=chat_authority,
+                            chat_authority_path=chat_authority_path,
+                            delivery_start_ms=qixi_delivery_start_ms,
+                        )
+                    )
+                elif (
                     owner_kind == "entity_repair"
                     and isinstance(reconciliation, Mapping)
                     and reconciliation.get("schema_version") == "fastlane-c9-source-action-replay.v1"
@@ -860,6 +874,226 @@ def _exact_final_superseded_boundary_owner_valid(
             chat_authority_path=chat_authority_path,
         )
     )
+
+
+_NON_MUTATING_GIFT_REPAIR_OUTCOMES = frozenset(
+    {
+        "asr_win_no_change",
+        "uncertain_no_change",
+        "no_verifier_no_change",
+        "gift_arbitration_cap_exceeded_no_change",
+    }
+)
+
+
+def _non_mutating_gift_repair(row: Mapping[str, object]) -> bool:
+    before = row.get("before")
+    return bool(
+        isinstance(before, str)
+        and before
+        and row.get("after") == before
+        and row.get("outcome") in _NON_MUTATING_GIFT_REPAIR_OUTCOMES
+    )
+
+
+def _positive_cue_index(value: object) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value > 0
+    return bool(
+        isinstance(value, str)
+        and value.isdigit()
+        and str(int(value)) == value
+        and int(value) > 0
+    )
+
+
+def _exact_final_receipt_chain_boundary_owner_valid(
+    *,
+    row: Mapping[str, object],
+    chat_authority: Mapping[str, object],
+    chat_authority_path: Path | None = None,
+    delivery_start_ms: int | None = None,
+) -> bool:
+    """Validate legacy exact-final supersession without dropping its boundary owner."""
+
+    if not _non_mutating_gift_repair(row):
+        return False
+    reconciliation = row.get("reconciliation")
+    start_ms = row.get("matched_start_ms")
+    end_ms = row.get("matched_end_ms")
+    if not (
+        isinstance(reconciliation, Mapping)
+        and reconciliation.get("schema_version")
+        == "exact-final-cpa-receipt-chain-supersession.v1"
+        and reconciliation.get("status") == "SUPERSEDED_BY_EXACT_FINAL_CPA"
+        and reconciliation.get("timing_immutable") is True
+        and _strict_nonnegative_int(start_ms)
+        and _strict_int(end_ms)
+        and int(end_ms) > int(start_ms)
+        and reconciliation.get("matched_start_ms") == start_ms
+        and reconciliation.get("matched_end_ms") == end_ms
+        and _positive_cue_index(reconciliation.get("cue_index"))
+        and _strict_nonnegative_int(delivery_start_ms)
+        and _is_sha256(reconciliation.get("final_cue_sha256"))
+        and isinstance(reconciliation.get("receipt_chain"), list)
+        and reconciliation["receipt_chain"]
+    ):
+        return False
+
+    self_heal = chat_authority.get("exact_final_cpa_self_heal")
+    passes = self_heal.get("passes") if isinstance(self_heal, Mapping) else None
+    if not (
+        isinstance(self_heal, Mapping)
+        and self_heal.get("schema_version")
+        == "exact-final-cpa-self-heal-audit.v1"
+        and self_heal.get("status") == "PASS"
+        and isinstance(passes, list)
+    ):
+        return False
+
+    predecessor_text = str(row.get("after") or "")
+    chain_hash = (
+        "sha256:" + hashlib.sha256(predecessor_text.encode("utf-8")).hexdigest()
+    )
+    last_repair: Mapping[str, object] | None = None
+    for link in reconciliation["receipt_chain"]:
+        if not (
+            isinstance(link, Mapping)
+            and set(link)
+            == {
+                "pass_index",
+                "finding_sha256",
+                "request_sha256",
+                "before_sha256",
+                "after_sha256",
+            }
+            and _strict_int(link.get("pass_index"))
+            and _is_sha256(link.get("finding_sha256"))
+            and _is_sha256(link.get("request_sha256"))
+            and _is_sha256(link.get("before_sha256"))
+            and _is_sha256(link.get("after_sha256"))
+            and link.get("before_sha256") == chain_hash
+        ):
+            return False
+        matching_passes = [
+            pass_row
+            for pass_row in passes
+            if isinstance(pass_row, Mapping)
+            and pass_row.get("pass_index") == link["pass_index"]
+        ]
+        if len(matching_passes) != 1:
+            return False
+        repairs = matching_passes[0].get("repairs")
+        if not isinstance(repairs, list):
+            return False
+        matching_repairs = []
+        for repair in repairs:
+            if not isinstance(repair, Mapping):
+                continue
+            mutation = repair.get("mutation_authority")
+            before = repair.get("before")
+            after = repair.get("after")
+            if (
+                repair.get("schema_version")
+                == "exact-final-cpa-self-heal.v1"
+                and str(repair.get("cue_index"))
+                == str(reconciliation["cue_index"])
+                and repair.get("decision_authority") == "CPA_JUDGE"
+                and repair.get("timing_immutable") is True
+                and _strict_nonnegative_int(repair.get("matched_start_ms"))
+                and _strict_int(repair.get("matched_end_ms"))
+                and int(repair["matched_end_ms"])
+                > int(repair["matched_start_ms"])
+                and int(repair["matched_start_ms"])
+                + int(delivery_start_ms)
+                == int(start_ms)
+                and int(repair["matched_end_ms"])
+                + int(delivery_start_ms)
+                == int(end_ms)
+                and isinstance(mutation, Mapping)
+                and mutation.get("schema_version")
+                == "subtitle-correction-mutation-authority.v1"
+                and mutation.get("status") == "PASS"
+                and isinstance(before, str)
+                and before
+                and isinstance(after, str)
+                and repair.get("finding_sha256")
+                == link["finding_sha256"]
+                and repair.get("request_sha256")
+                == link["request_sha256"]
+                and repair.get("before_sha256") == link["before_sha256"]
+                and repair.get("after_sha256") == link["after_sha256"]
+                and repair.get("before_sha256")
+                == "sha256:"
+                + hashlib.sha256(before.encode("utf-8")).hexdigest()
+                and repair.get("after_sha256")
+                == "sha256:"
+                + hashlib.sha256(after.encode("utf-8")).hexdigest()
+            ):
+                matching_repairs.append(repair)
+        if len(matching_repairs) != 1:
+            return False
+        last_repair = matching_repairs[0]
+        chain_hash = str(link["after_sha256"])
+
+    final_cue_sha256 = reconciliation["final_cue_sha256"]
+    if chain_hash != final_cue_sha256 or last_repair is None:
+        return False
+    repair_sha256 = "sha256:" + hashlib.sha256(
+        json.dumps(
+            last_repair,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    entity_rows = chat_authority.get("entity_repairs")
+    registrations = chat_authority.get("exact_final_cpa_surface_registrations")
+    if not isinstance(entity_rows, list) or not isinstance(registrations, list):
+        return False
+    successors: list[tuple[int, Mapping[str, object]]] = []
+    for index, successor in enumerate(entity_rows):
+        if not isinstance(successor, Mapping):
+            continue
+        successor_text = successor.get("structured_exact_text")
+        successor_is_typed_drop = bool(
+            successor.get("mode") == "exact_final_cpa_self_heal"
+            and valid_inaudible_drop_repair(successor)
+        )
+        if (
+            successor.get("mode") == "exact_final_cpa_self_heal"
+            and successor.get("matched_start_ms") == start_ms
+            and successor.get("matched_end_ms") == end_ms
+            and successor.get("exact_final_repair_sha256") == repair_sha256
+            and isinstance(successor_text, str)
+            and (successor_text or successor_is_typed_drop)
+            and "sha256:"
+            + hashlib.sha256(successor_text.encode("utf-8")).hexdigest()
+            == final_cue_sha256
+            and _post_boundary_freeze_surface_owner_valid(
+                row=successor,
+                row_index=index,
+                chat_authority=chat_authority,
+                chat_authority_path=chat_authority_path,
+            )
+        ):
+            successors.append((index, successor))
+    if len(successors) != 1:
+        return False
+    successor_index = successors[0][0]
+    matching_registrations = [
+        registration
+        for registration in registrations
+        if isinstance(registration, Mapping)
+        and registration.get("schema_version")
+        == "exact-final-cpa-surface-registration.v1"
+        and registration.get("status") == "REGISTERED"
+        and registration.get("owner_entity_repair_index") == successor_index
+        and registration.get("exact_final_repair_sha256") == repair_sha256
+    ]
+    return len(matching_registrations) == 1
 
 
 def _final_surface_registration_and_history_valid(

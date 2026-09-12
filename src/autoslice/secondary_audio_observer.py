@@ -20,7 +20,7 @@ from src.autoslice.acoustic_witness_protocol import BLIND_PINYIN_PROTOCOL
 from src.autoslice.diarized_transcription import DiarizedTranscriptionError
 from src.autoslice.entity_audio_verifier import _crop_black_frame_audio, _prepare_audio_span
 from src.autoslice.subtitle_audio_evidence import observe_secondary
-from src.autoslice.supplement_audio_budget import BudgetExceeded, get_budget, start_budget
+from src.autoslice.supplement_audio_budget import BudgetExceeded, ensure_budget
 
 
 SCHEMA_VERSION = "secondary-audio-witness-evidence.v1"
@@ -161,8 +161,7 @@ def build_secondary_audio_observer(
     output_dir.mkdir(parents=True, exist_ok=True)
     if output_dir.is_symlink() or not output_dir.is_dir():
         raise ValueError("secondary audio output directory is invalid")
-    if get_budget(source_media) is None:
-        start_budget(source_media)
+    ensure_budget(source_media)
 
     def observe(request: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(request, Mapping) or not _valid_request(request):

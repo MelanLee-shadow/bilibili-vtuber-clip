@@ -18,7 +18,7 @@ Two lessons are encoded here:
   ``live_signal_divergence``.
 
 Deliberately NOT a liveness signal: recording files appearing on the cloud
-mount. a genuine 11:03Z→14:38Z session first materialised .mp4
+mount.  On a genuine 11:03Z→14:38Z session first materialised .mp4
 bytes at 18:59Z — upload lag makes file growth useless as a veto, and only
 weakly useful (day-directory presence) as corroboration.
 """

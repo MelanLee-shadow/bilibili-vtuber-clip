@@ -91,6 +91,10 @@ from src.autoslice.producer_final_review_transport import (
     build_final_review_llm_call as _build_final_review_llm_call,
     build_pronoun_audit_llm_call as _build_pronoun_audit_llm_call,
 )
+from src.autoslice.producer_native_witness import (
+    ensure_local_native_audio_budget as _ensure_local_native_audio_budget,
+    native_foreign_script_kwargs as _native_foreign_script_kwargs,
+)
 from src.autoslice.pronoun_consistency import (
     CandidatePronounAuditError,
     discover_candidate_pronoun_findings,
@@ -368,6 +372,7 @@ def _build_entity_verification_context(
         else None
     )
     audio_entity_verifier = None
+    native_provider = _ensure_local_native_audio_budget(spec, padded)
     if witness_audio_locally_resolvable(padded, host=host):  # F21：音频窗可解析门，不再是 host 门
         from src.autoslice.entity_audio_verifier import build_local_audio_entity_verifier
 
@@ -377,6 +382,15 @@ def _build_entity_verification_context(
             recording_date=str(spec.get("date") or ""),
             source_duration_ms=padded_dur,
         )
+        if native_provider in {"moss", "mai"}:
+            from src.autoslice.native_context_witness import build_native_context_verifier
+
+            audio_entity_verifier = build_native_context_verifier(
+                fallback=audio_entity_verifier,
+                source_media=padded,
+                output_dir=out_root,
+                provider=native_provider, **(spec.get("local_audio_witness_budget") or {}),
+            )
 
     # Read-aloud (danmaku/SC) arbitration is a pure-context judgment, so route it
     # through a general LLM on CPA *before* the audio verifier: this keeps
@@ -1338,7 +1352,10 @@ def _adjudicate_final_language(
     *,
     source_language: bool,
     source_srt: str,
+    native_provider: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
+    if source_language and native_provider is not None:
+        raise ValueError("native provider is currently scoped to mixed-script adjudication")
     input_srt = srt_text
     adjudicate = (adjudicate_language_preservation_audit if source_language
                   else adjudicate_foreign_script_audit)
@@ -1346,6 +1363,7 @@ def _adjudicate_final_language(
         media_path=padded, srt_text=srt_text, audit=audit,
         out_root=out_root, cid=cid,
         llm_call=_build_final_review_llm_call(), source_srt=source_srt,
+        **({"native_provider": native_provider} if native_provider is not None else {}),
     )
     register = (register_final_source_language_cpa_repairs if source_language
                 else register_final_foreign_script_cpa_repairs)
@@ -1477,6 +1495,7 @@ def _finalize_text_evidence(
             padded, srt_text, foreign_script_audit, out_root, cid, chat_authority_audit,
             source_srt=source_language_witness_srt,
             source_language=False,
+            **_native_foreign_script_kwargs(spec),
         )
     chat_authority_audit["foreign_script_consistency_audit"] = foreign_script_audit
     srt_text, title_mark_balance_audit = apply_title_mark_balance_guard(srt_text)
@@ -1551,7 +1570,6 @@ def _finalize_text_evidence(
             )
     # 称呼串等价类：、包夹单字近音按成员词补全，与 hard canon 同级。
     from src.autoslice.surface_canon import repair_address_enumerations
-
     srt_text, address_enumeration_audit = repair_address_enumerations(srt_text)
     chat_authority_audit["address_enumeration_audit"] = address_enumeration_audit
     # Final meme canon runs after every mutable text stage; the later bound

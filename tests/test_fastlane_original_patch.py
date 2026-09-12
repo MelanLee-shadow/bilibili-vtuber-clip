@@ -241,6 +241,21 @@ def test_canonical_auditor_calls_original_gate_even_without_record_pin(tmp_path,
     assert any(i["code"] == "OPERATOR_FASTLANE_ORIGINAL_BINDING_INVALID" for i in result["issues"])
 
 
+
+
+def test_ready_original_with_no_requested_text_changes_is_not_forced_to_rerun():
+    plan = recipe()
+    plan["patches"] = []
+    output, receipt = compile_original_patch(RAW, plan)
+    assert output == RAW
+    assert receipt["scope_plan"] is None
+    assert receipt["change_scope"] == "UNCHANGED_ORIGINAL_REPLAY"
+    assert receipt["changed_cues"] == []
+    assert receipt["provider_calls"] == 0
+
+
+
+
 def test_synthetic_original_restoration_keeps_unlisted_mentions_and_timing():
     from src.autoslice.jingting_chunker import parse_srt_cues
 
@@ -255,18 +270,6 @@ def test_synthetic_original_restoration_keeps_unlisted_mentions_and_timing():
         (r.start_ms, r.end_ms) for r in after
     ]
     assert proof["provider_calls"] == 0
-
-
-def test_ready_original_with_no_requested_text_changes_is_not_forced_to_rerun():
-    plan = recipe()
-    plan["patches"] = []
-    output, receipt = compile_original_patch(RAW, plan)
-    assert output == RAW
-    assert receipt["scope_plan"] is None
-    assert receipt["change_scope"] == "UNCHANGED_ORIGINAL_REPLAY"
-    assert receipt["changed_cues"] == []
-    assert receipt["provider_calls"] == 0
-
 
 
 def test_committed_synthetic_anchor_survives_without_new_transcription(tmp_path):

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from src.autoslice.foreign_source_failure_evidence import witness_row_provider_transient
+
 
 def cover_route_retry_is_eligible(record: Mapping[str, object]) -> bool:
     """Match the existing bounded screenshot-route retry branch."""
@@ -59,20 +61,7 @@ def _provider_backfilled_foreign_rejection(
         for row in rows
         if isinstance(row, Mapping) and row.get("cue_index") in unresolved_indexes
     ]
-    provider_markers = (
-        "AGY_FOREIGN_WITNESS_",
-        "WITNESS_PROVIDERS_FAILED",
-        "WITNESS_AUDIO_EXTRACTION_FAILED",
-        "HTTPERROR",
-        "QUOTA",
-        "TIMED OUT",
-        "TIMEOUT",
-        "SUBPROCESS",
-    )
-    return bool(relevant) and all(
-        any(marker in str(row.get("failure") or "").upper() for marker in provider_markers)
-        for row in relevant
-    )
+    return bool(relevant) and all(witness_row_provider_transient(dict(row)) for row in relevant)
 
 
 def supplemental_recovery_candidate(

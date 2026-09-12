@@ -34,8 +34,8 @@ private prepare/package/QC 并行；同一候选的 transcription/AGY 之后，�
 short calls 彼此并行；待字幕、媒体和标题输入冻结后，burn 与 cover 可并行。commit lease、formal state+journal、same-BV apply、
 upload mutation 与 queue advancement 必须串行；同一候选 mutation 完成后，public/Creator/
 section 三个 read-only probes 可以并行，但 joint acceptance 是屏障，三面收敛前不得释放
-下一候选。全局 workflow 病因修复可并行，但不能扩大原有授权范围。
-发布采用[就绪优先与串行发布边界](90-publish.md)：
+下一候选。全局 workflow 病因修复可并行，但不成为重新人工审片的节点。按 维护者
+2026-09-08 [最新指令](../reviews/2026-09-08-ready-first-publication.md)，发布采用就绪优先：
 未修好的前序候选不阻断后续通过全部发布门的候选；就绪集合内时效优先，其余按原批次
 顺序选取。修复和串行发布可并行，`review_ready` 仍不等于 publication。
 
