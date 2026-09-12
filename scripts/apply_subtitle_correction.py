@@ -1252,10 +1252,19 @@ def _parse_args(argv=None):
     return p.parse_args(argv)
 
 
-def _should_regenerate_upload_tags(sealed_transaction_context: object | None) -> bool:
-    """Only ordinary correction invocations may request tag-generation work."""
+def _should_regenerate_upload_tags(
+    sealed_transaction_context: object | None,
+    *,
+    text_changed: bool = True,
+) -> bool:
+    """Only actual ordinary SRT changes may request tag-generation work.
 
-    return sealed_transaction_context is None
+    A refresh preserves the existing title and may only re-render its exact
+    input SRT. Keep the prior tag object in that case; the refresh flag alone
+    is not evidence, because it can also accompany a real text correction.
+    """
+
+    return sealed_transaction_context is None and text_changed
 
 
 def main(
@@ -1503,7 +1512,9 @@ def main(
             "burned_preview": final_burned_value,
         })
         staging_title = str(((record.get("publish_staging") or {}).get("title")) or "")
-        if staging_title and _should_regenerate_upload_tags(_sealed_transaction_context):
+        if staging_title and _should_regenerate_upload_tags(
+            _sealed_transaction_context, text_changed=srt != before
+        ):
             updated["upload_tags"] = generate_upload_tags(staging_title, staged_srt, timeout=180.0)
         if _sealed_transaction_context is not None:
             try:
