@@ -137,3 +137,65 @@ def test_generation_title_binding_mismatch_refused(tmp_path: Path) -> None:
         bind_manual_package_cover(package_dir=pkg, cover=cover)
     publish = json.loads((pkg / "delivery.publish.json").read_text())
     assert publish["cover_status"] == "BLOCKED_AI_COVER_REQUIRED"
+
+
+def test_bind_replaces_existing_top_level_generation_without_changing_history(tmp_path):
+    # Some real producer records mirror current generation both here and in
+    # publish_staging. Both are current surfaces, not an archival generation.
+    pkg, _mp4 = _package(tmp_path)
+    cover = _cover(tmp_path)
+    record_path = pkg / "delivery.record.json"
+    old = {"final_cover": "old-cover.png", "final_cover_sha256": "sha256:" + "a" * 64}
+    record = json.loads(record_path.read_text())
+    record.update(cover_generation=old, cover_path="old-cover.png",
+                  cover_status="BLOCKED_AI_COVER_REQUIRED", cover_text="old caption")
+    record["publish_staging"]["cover_generation"] = old
+    record["previous_cover_generation"] = old
+    record["cover_repair_history"] = [{"generation": old, "status": "FAIL"}]
+    _write_json(record_path, record)
+    generation_path = cover.with_suffix(".cover_generation.json")
+    generation = json.loads(generation_path.read_text())
+    generation["cover_text"] = "new caption"
+    _write_json(generation_path, generation)
+
+    result = bind_manual_package_cover(package_dir=pkg, cover=cover)
+    current = json.loads(record_path.read_text())
+    publish = json.loads((pkg / "delivery.publish.json").read_text())
+    assert result["status"] == "BOUND"
+    assert current["cover_generation"] == current["publish_staging"]["cover_generation"]
+    assert current["cover_generation"] == publish["cover_generation"]
+    assert current["cover_path"] == str(cover)
+    assert current["cover_status"] == "AI_COVER_READY"
+    assert current["cover_text"] == "new caption"
+    assert current["previous_cover_generation"] == old
+    assert current["cover_repair_history"] == [{"generation": old, "status": "FAIL"}]
+    assert current["publish_staging"]["upload_enabled"] is False
+    assert current["artifact_hashes"]["publish_draft_sha256"] == _sha(pkg / "delivery.publish.json")
+
+
+def test_bind_does_not_add_legacy_top_level_generation_to_staging_only_record(tmp_path):
+    pkg, _mp4 = _package(tmp_path)
+    cover = _cover(tmp_path)
+    bind_manual_package_cover(package_dir=pkg, cover=cover)
+    current = json.loads((pkg / "delivery.record.json").read_text())
+    assert "cover_generation" not in current
+    assert "cover_path" not in current
+    assert current["publish_staging"]["cover_generation"]["final_cover"] == str(cover)
+
+
+def test_bad_generation_preserves_all_current_and_historical_record_surfaces(tmp_path):
+    pkg, _mp4 = _package(tmp_path)
+    cover = _cover(tmp_path)
+    record_path = pkg / "delivery.record.json"
+    record = json.loads(record_path.read_text())
+    old = {"final_cover": "old-cover.png", "final_cover_sha256": "sha256:" + "a" * 64}
+    record["cover_generation"] = old
+    record["publish_staging"]["cover_generation"] = old
+    record["previous_cover_generation"] = old
+    _write_json(record_path, record)
+    originals = {p: p.read_bytes() for p in pkg.iterdir()}
+    cover.write_bytes(b"changed png without valid generation")
+    with pytest.raises(ValueError, match="hash mismatch"):
+        bind_manual_package_cover(package_dir=pkg, cover=cover)
+    assert {p: p.read_bytes() for p in pkg.iterdir()} == originals
+    assert not cover.with_suffix(".cover-binding.json").exists()

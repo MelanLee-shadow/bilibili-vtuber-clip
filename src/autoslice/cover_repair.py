@@ -472,35 +472,33 @@ def _updated_cover_document(
         "path": str(binding_path),
         "sha256": binding_sha256,
     }
-    if updated.get("schema_version") == "shadow-publish-draft.v1":
-        updated.update(
-            {
-                "cover_status": "AI_COVER_READY",
-                "cover_path": str(cover),
-                "cover_generation": generation,
-                "reason_codes": _cover_reason_codes_without_transient_failure(
-                    updated.get("reason_codes")
-                ),
-                "upload_enabled": False,
-            }
-        )
-        if generation_cover_text is not None:
+    # Existing producer mirrors describe the current cover, not repair history.
+    # Preserve staging-only record shapes and all explicitly archived evidence.
+    if isinstance(updated.get("cover_generation"), dict):
+        updated["cover_generation"] = copy.deepcopy(generation)
+        for key, value in (("cover_path", str(cover)), ("cover_status", "AI_COVER_READY")):
+            if key in updated:
+                updated[key] = value
+        if "cover_text" in updated and generation_cover_text is not None:
             updated["cover_text"] = generation_cover_text
+    surfaces = [updated] if updated.get("schema_version") == "shadow-publish-draft.v1" else []
     staging = updated.get("publish_staging")
     if isinstance(staging, dict):
-        staging.update(
+        surfaces.append(staging)
+    for surface in surfaces:
+        surface.update(
             {
                 "cover_status": "AI_COVER_READY",
                 "cover_path": str(cover),
                 "cover_generation": generation,
                 "reason_codes": _cover_reason_codes_without_transient_failure(
-                    staging.get("reason_codes")
+                    surface.get("reason_codes")
                 ),
                 "upload_enabled": False,
             }
         )
         if generation_cover_text is not None:
-            staging["cover_text"] = generation_cover_text
+            surface["cover_text"] = generation_cover_text
     return updated
 
 
