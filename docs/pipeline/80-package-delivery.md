@@ -494,6 +494,9 @@ prepare 工作。一个被阻候选不得阻断其它候选。
   typed 回执落 `<pkg>/<cid>.external-import-receipt.json`；不带 `--apply` 为 dry-run。
   dry-run 默认仅向 stdout 输出回执，不因目标包已存在而创建或覆盖包内回执；只有显式
   `--receipt` 才写指定诊断文件。`--apply` 的既有回执保存、失败与状态回滚规则不变。
+  源包根的 `package_audit.json` 与歌切导入一样保留在源目录，不复制成目标根审计；
+  预检回执披露 `skipped_source_artifacts`。目标必须重跑当前 canonical auditor，已有不同的
+  目标审计仍拒绝覆盖；不借此抹掉旧失败、跳过审计或排除嵌套证据。
   用法：`python3 scripts/import_external_package.py --source <外部包的
   replacement_recuts 目录> --date <date> --candidate <cid> [--allow-new-pick] --apply`
   （跨主机传输不在工具内，先 rsync/scp 到 free 的暂存目录；暂存目录与目标目录必须不同）。

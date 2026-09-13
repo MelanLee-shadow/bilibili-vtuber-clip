@@ -47,6 +47,7 @@ from src.autoslice.failed_pick_import import (
     canonical_json_sha256,  # noqa: F401 - compatibility API
     load_failed_pick_import_authorization,  # noqa: F401 - compatibility API
 )
+from src.autoslice.package_import_inventory import iter_source_files
 from src.autoslice.review_package_ass_audit import (
     uniform_host_fallback_declared,
 )
@@ -701,32 +702,11 @@ class ImportPlan:
     documents: PackageDocuments
     copies: tuple[CopyItem, ...]
     repo_assets: tuple[str, ...]
+    skipped_source_artifacts: tuple[str, ...] = ()
 
 
 def _iter_source_files(root: Path) -> Iterator[Path]:
-    for current, directories, files in os.walk(root):
-        current_path = Path(current)
-        for name in sorted(directories):
-            if (current_path / name).is_symlink():
-                raise PackageImportError(
-                    "UNSAFE_PATH_SYMLINK",
-                    f"source package contains a symlinked directory: "
-                    f"{current_path / name}",
-                )
-        for name in sorted(files):
-            path = current_path / name
-            if path.is_symlink():
-                raise PackageImportError(
-                    "UNSAFE_PATH_SYMLINK",
-                    f"source package contains a symlink: {path}",
-                )
-            if not _regular_file(path):
-                raise PackageImportError(
-                    "UNSAFE_SOURCE_FILE",
-                    f"source package contains a non-regular file: {path}",
-                )
-            yield path
-        directories[:] = sorted(directories)
+    yield from iter_source_files(root, regular_file=_regular_file)
 
 
 def _referenced_locators(
@@ -815,12 +795,18 @@ def plan_import(
 
     destination_package = Path(roots.destination_package_root)
     copies: list[CopyItem] = []
+    skipped_source_artifacts: list[str] = []
     seen: set[str] = set()
     for path in _iter_source_files(source_package_dir):
         relative = str(path.relative_to(source_package_dir))
         if relative.startswith(".") or "/." in relative:
             # Transaction scratch from an earlier import attempt on the
             # producing host must never travel; the destination writes its own.
+            continue
+        if relative == "package_audit.json":
+            # Like the song importer, retain the source-root audit in place.
+            # Only the destination's fresh auditor may create its audit file.
+            skipped_source_artifacts.append(relative)
             continue
         copies.append(
             CopyItem(
@@ -906,6 +892,7 @@ def plan_import(
         documents=documents,
         copies=tuple(copies),
         repo_assets=tuple(sorted(set(repo_assets))),
+        skipped_source_artifacts=tuple(skipped_source_artifacts),
     )
 
 
