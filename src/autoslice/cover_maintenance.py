@@ -72,6 +72,16 @@ def _json_file_bytes(payload: dict) -> bytes:
     return (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
+def _require_unused_cover_binding_path(cover: Path) -> Path:
+    """Reject occupied evidence before enrichment; this does not reserve a path."""
+    path = cover.with_suffix(".cover-binding.json")
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return path
+    raise ValueError(f"immutable cover binding already exists: {path}")
+
+
 def _atomic_write_bytes_file(path: Path, payload: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary: Path | None = None

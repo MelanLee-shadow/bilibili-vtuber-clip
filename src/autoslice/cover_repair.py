@@ -34,6 +34,7 @@ from src.autoslice.publication_registry import cover_maintenance_block_reason
 from src.autoslice.cover_maintenance import (
     _atomic_write_bytes_file,
     _json_file_bytes,
+    _require_unused_cover_binding_path,
 )
 from src.autoslice.verified_io import (
     _matches_sha256,
@@ -1026,6 +1027,7 @@ def bind_manual_package_cover(*, package_dir: Path, cover: Path) -> dict:
         documents.append((record_path, record_document))
     documents.append((publish_path, publish_document))
 
+    binding_path = _require_unused_cover_binding_path(cover)
     generation, generation_path = _route_lineage.validate_cover_generation_for_binding(
         cover=cover, title=title, candidate_id=cid
     )
@@ -1037,9 +1039,7 @@ def bind_manual_package_cover(*, package_dir: Path, cover: Path) -> dict:
     )
     cover_sha256 = "sha256:" + _runner._sha256_regular_file(cover)
     generation_sha256 = "sha256:" + _runner._sha256_regular_file(generation_path)
-    binding_path = cover.with_suffix(".cover-binding.json")
-    if binding_path.exists():
-        raise ValueError(f"immutable cover binding already exists: {binding_path}")
+    _require_unused_cover_binding_path(cover)
     binding = {
         "schema_version": "lidousha-cover-repair-binding.v1",
         "candidate_id": cid,
@@ -1126,6 +1126,7 @@ def _bind_repaired_cover(
     cid = str(rec.get("candidate_id") or "")
     title = str(rec.get("title") or "")
     generated_cover = generated_cover or cover
+    binding_path = _require_unused_cover_binding_path(generated_cover)
     generation, generation_path, cover_sha256, media_sha256, documents = (
         _route_lineage.prepare_active_cover_binding(
             runtime_root=_runner.BASE, date=date, candidate_id=cid, title=title,
@@ -1140,9 +1141,7 @@ def _bind_repaired_cover(
         mp4=mp4,
         documents=documents,
     )
-    binding_path = generated_cover.with_suffix(".cover-binding.json")
-    if binding_path.exists():
-        raise ValueError(f"immutable cover binding already exists: {binding_path}")
+    _require_unused_cover_binding_path(generated_cover)
     binding = {
         "schema_version": "lidousha-cover-repair-binding.v1",
         "candidate_id": cid,
