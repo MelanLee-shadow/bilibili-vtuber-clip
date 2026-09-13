@@ -200,3 +200,96 @@ def test_bad_generation_preserves_all_current_and_historical_record_surfaces(tmp
         bind_manual_package_cover(package_dir=pkg, cover=cover)
     assert {p: p.read_bytes() for p in pkg.iterdir()} == originals
     assert not cover.with_suffix(".cover-binding.json").exists()
+
+
+@pytest.mark.parametrize("entrypoint", ["manual", "runner"])
+@pytest.mark.parametrize("occupied_kind", ["file", "malformed", "directory", "dangling_link"])
+def test_occupied_cover_binding_rejected_before_enrichment(
+    tmp_path: Path, monkeypatch, entrypoint: str, occupied_kind: str
+) -> None:
+    """The native write-capable preparation boundary must never run on a retry.
+
+    The preparation double deliberately changes generation bytes, exposing the
+    ordering defect without a provider, image render, or real delivery write.
+    """
+    from src.autoslice import cover_repair as repair
+
+    package, media = _package(tmp_path)
+    cover = _cover(tmp_path)
+    generation_path = cover.with_suffix(".cover_generation.json")
+    binding_path = cover.with_suffix(".cover-binding.json")
+    if occupied_kind == "directory":
+        binding_path.mkdir()
+    elif occupied_kind == "dangling_link":
+        binding_path.symlink_to(tmp_path / "missing-binding-target")
+    else:
+        binding_path.write_bytes(b'{"historical": true}\n' if occupied_kind == "file" else b'invalid old receipt')
+    files = [generation_path, cover, media, package / "delivery.record.json",
+             package / "delivery.publish.json"]
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns, p.stat().st_ino) for p in files}
+    binding_before = binding_path.lstat()
+    calls = []
+
+    def write_generation():
+        calls.append("write-capable preparation")
+        generation = json.loads(generation_path.read_bytes())
+        generation["synthetic_enrichment"] = "must never be written"
+        _write_json(generation_path, generation)
+        return generation
+
+    if entrypoint == "manual":
+        def enrich(**kwargs):
+            return write_generation(), generation_path
+        monkeypatch.setattr(repair, "_enrich_repaired_cover_generation", enrich)
+        def invoke():
+            return repair.bind_manual_package_cover(package_dir=package, cover=cover)
+    else:
+        def prepare(**kwargs):
+            return write_generation(), generation_path, _sha(cover), _sha(media), []
+        monkeypatch.setattr(repair._route_lineage, "prepare_active_cover_binding", prepare)
+        monkeypatch.setattr(repair, "_active_song_delivery_manifest", lambda *a, **kw: None)
+        def invoke():
+            return repair._bind_repaired_cover(
+                "2026-08-21", {"candidate_id": "manual_cand_1", "title": "unchanged title"},
+                media, cover,
+            )
+    with pytest.raises(ValueError, match="immutable cover binding already exists"):
+        invoke()
+    assert calls == []
+    assert {p: (p.read_bytes(), p.stat().st_mtime_ns, p.stat().st_ino) for p in files} == before
+    after = binding_path.lstat()
+    assert (after.st_mode, after.st_ino, after.st_mtime_ns) == (
+        binding_before.st_mode, binding_before.st_ino, binding_before.st_mtime_ns,
+    )
+
+
+@pytest.mark.parametrize("entrypoint", ["manual", "runner"])
+def test_binding_created_during_enrichment_still_refused(tmp_path: Path, monkeypatch, entrypoint: str) -> None:
+    """An early check must not replace the established post-preparation recheck."""
+    from src.autoslice import cover_repair as repair
+
+    package, media = _package(tmp_path)
+    cover = _cover(tmp_path)
+    generation_path = cover.with_suffix(".cover_generation.json")
+    binding_path = cover.with_suffix(".cover-binding.json")
+    occupied = b"another writer's immutable binding"
+    before = {p: p.read_bytes() for p in package.iterdir()}
+
+    def enrich(**kwargs):
+        binding_path.write_bytes(occupied)
+        return json.loads(generation_path.read_bytes()), generation_path
+
+    monkeypatch.setattr(repair, "_enrich_repaired_cover_generation", enrich)
+    if entrypoint == "manual":
+        with pytest.raises(ValueError, match="immutable cover binding already exists"):
+            repair.bind_manual_package_cover(package_dir=package, cover=cover)
+    else:
+        def prepare(**kwargs):
+            generation, path = enrich()
+            return generation, path, _sha(cover), _sha(media), []
+        monkeypatch.setattr(repair._route_lineage, "prepare_active_cover_binding", prepare)
+        monkeypatch.setattr(repair, "_active_song_delivery_manifest", lambda *a, **kw: None)
+        with pytest.raises(ValueError, match="immutable cover binding already exists"):
+            repair._bind_repaired_cover("2026-08-21", {"candidate_id": "manual_cand_1"}, media, cover)
+    assert binding_path.read_bytes() == occupied
+    assert {p: p.read_bytes() for p in package.iterdir()} == before
