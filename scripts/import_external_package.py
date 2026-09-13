@@ -16,7 +16,8 @@ make-manifest），于是 wsl 产的每条片都要人伺候。本脚本把前�
 ``--allow-new-pick`` 共用，也不会替代 audit/QC/authorized-upload。
 
 不带 ``--apply`` 是 dry-run：解析根、验证定位符契约、列出要搬的字节、并在**持
-runner.lock 只读**的前提下预判 state 能不能绑——一个字节都不写。
+runner.lock 只读**的前提下预判 state 能不能绑；默认只向 stdout 输出回执，
+不写目标包。仅显式 ``--receipt`` 会写指定的诊断回执。
 
 做了什么 / 没做什么：
 
@@ -1206,10 +1207,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         adopt_failed_pick=args.adopt_failed_pick,
         release_quote=args.release_quote,
     )
-    # 回执落包内（要求：每步结果 typed 存档）。包目录还不存在时——dry-run，或
-    # PREFLIGHT 就被拒——不为了写回执去凭空创建产线目录：退回 stdout。
+    # Dry-run defaults to stdout even when a destination package already exists.
+    # Only an explicit --receipt opts into diagnostic output; --apply retains
+    # the existing package receipt behavior, including a refused apply attempt.
     written = ""
-    if args.receipt is not None or receipt_path.parent.is_dir():
+    if args.receipt is not None or (args.apply and receipt_path.parent.is_dir()):
         pi.atomic_write_json(receipt_path, document)
         written = str(receipt_path)
     print(json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True))

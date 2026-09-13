@@ -492,6 +492,8 @@ prepare 工作。一个被阻候选不得阻断其它候选。
   → 逐文件 sha256 前后比对的字节搬运 → `slice-package-relocation.v2` 事务化路径规整 →
   持 `runner.lock` 的 state 绑定 → manifest → package audit → 标题+封面联合质检，
   typed 回执落 `<pkg>/<cid>.external-import-receipt.json`；不带 `--apply` 为 dry-run。
+  dry-run 默认仅向 stdout 输出回执，不因目标包已存在而创建或覆盖包内回执；只有显式
+  `--receipt` 才写指定诊断文件。`--apply` 的既有回执保存、失败与状态回滚规则不变。
   用法：`python3 scripts/import_external_package.py --source <外部包的
   replacement_recuts 目录> --date <date> --candidate <cid> [--allow-new-pick] --apply`
   （跨主机传输不在工具内，先 rsync/scp 到 free 的暂存目录；暂存目录与目标目录必须不同）。
