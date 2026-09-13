@@ -411,6 +411,7 @@ def _step_preflight(
         uniform_host_fallback=plan.documents.uniform_fallback,
         upload_stem=plan.documents.upload_stem,
         planned_file_count=len(plan.copies),
+        skipped_source_artifacts=list(plan.skipped_source_artifacts),
         repo_assets=list(plan.repo_assets),
         declared_artifact_sha256=verified,
     )
