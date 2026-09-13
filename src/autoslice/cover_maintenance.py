@@ -27,9 +27,52 @@ from src.autoslice.runner_proxy import RunnerProxy
 _runner = RunnerProxy()
 
 
+def _imported_delivery_paths(date: str, rec: dict) -> tuple[Path, Path] | None:
+    """Consume the native import binding; never fall back to superseded bytes."""
+    from src.autoslice import package_import as pi
+
+    binding = rec.get("external_package_import")
+    cid = rec.get("candidate_id")
+    if (not isinstance(binding, dict)
+            or binding.get("schema_version") != pi.STATE_BINDING_SCHEMA_VERSION
+            or binding.get("status") != "VERIFIED_PACKAGE_BOUND"
+            or not isinstance(cid, str) or re.fullmatch(r"[A-Za-z0-9_-]{1,96}", cid) is None
+            or not isinstance(date, str) or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", date) is None):
+        return None
+    root = _runner.BASE / "out" / date / cid / "replacement_recuts"
+    try:
+        journal = pi.relocation_journal_path(root, cid)
+        pi.require_regular_file(journal, label="imported delivery journal")
+        if (binding.get("package_relocation_journal_path") != str(journal)
+                or binding.get("package_relocation_journal_sha256")
+                != "sha256:" + pi.sha256_file(journal)):
+            return None
+        # Reuse the importer rather than introducing a second media validator.
+        package = pi.read_bound_package(package_root=root, candidate_id=cid)
+        expected = {
+            "record_path": str(package.record_path),
+            "publish_path": str(package.publish_path),
+            "burned_video_path": str(package.burned_path),
+            "burned_video_sha256": package.burned_video_sha256,
+            "cover_path": str(package.cover_path),
+            "cover_sha256": package.cover_sha256,
+            "same_stem_cover_path": str(package.same_stem_cover_path),
+        }
+        if (any(binding.get(k) != value for k, value in expected.items())
+                or rec.get("video_sha256") != package.burned_video_sha256
+                or rec.get("cover_sha256") != package.cover_sha256
+                or rec.get("title") != package.publish.get("title")):
+            return None
+        return package.burned_path, package.same_stem_cover_path
+    except (pi.PackageImportError, OSError, ValueError):
+        return None
+
+
 def delivered_paths(date: str, rec: dict) -> tuple[Path, Path] | None:
     """(mp4, cover) delivery paths for a pick/song record, or None if the mp4
     was never delivered (failed/gated records have nothing to repair)."""
+    if "external_package_import" in rec:
+        return _imported_delivery_paths(date, rec)
     explicit = rec.get("delivered")
     strict_cid_bound = False
     if not isinstance(explicit, str):
