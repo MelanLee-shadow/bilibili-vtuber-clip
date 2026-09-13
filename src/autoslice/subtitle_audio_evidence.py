@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 import hashlib
@@ -116,10 +117,13 @@ def observe_secondary(
     crop_start_ms=None,
     crop_end_ms=None,
     exact_cue: bool = False,
+    persist_before_dispatch: Callable[[], None] | None = None,
 ):
     from src.autoslice.supplement_audio_budget import get_budget
 
     budget = get_budget(supplement_source) if supplement_source is not None else None
+    if persist_before_dispatch is not None and budget is None:
+        raise ValueError("durable dispatch requires an active source budget")
     with budget.lock if budget is not None else nullcontext():
         return _observe_secondary(
             audio,
@@ -130,6 +134,7 @@ def observe_secondary(
             crop_start_ms=crop_start_ms,
             crop_end_ms=crop_end_ms,
             exact_cue=exact_cue,
+            persist_before_dispatch=persist_before_dispatch,
         )
 
 
@@ -228,6 +233,7 @@ def _observe_secondary(
     crop_start_ms,
     crop_end_ms,
     exact_cue=False,
+    persist_before_dispatch: Callable[[], None] | None = None,
 ):
     """Reuse only this provider's successful, identically configured call."""
 
@@ -263,20 +269,26 @@ def _observe_secondary(
         return {**cached, "served_from_cache": True}
 
     attempt_id: int | None = None
+    reserved_attempt_id: int | None = None
     terminal_status = "OBSERVED"
     terminal_reason: str | None = None
     terminal_http_status: int | None = None
 
     def charge_request() -> None:
-        nonlocal attempt_id
-        if attempt_id is not None:
+        nonlocal attempt_id, reserved_attempt_id
+        if reserved_attempt_id is not None:
             raise RuntimeError("secondary before_request invoked more than once")
-        attempt_id = budget.consume(
+        reserved_attempt_id = budget.consume(
             provider=provider,
             model=model,
             start_ms=crop_start_ms,
             end_ms=crop_end_ms,
         )
+        # Commit the pending reservation before the provider may send HTTP.
+        # A persistence error leaves it pending, not a fabricated provider FAIL.
+        if persist_before_dispatch is not None:
+            persist_before_dispatch()
+        attempt_id = reserved_attempt_id
 
     kwargs = {"before_request": charge_request} if budget is not None else {}
     try:

@@ -216,6 +216,18 @@ def build_native_foreign_witness(
             receipt_path=budget_receipt_path,
         )
 
+    def persist_dispatch_reservation() -> None:
+        # This is called inside the existing source/receipt locks, at the actual
+        # before-HTTP seam; it adds neither retries nor allowance restoration.
+        if get_budget(source_media) is not budget:
+            raise BudgetReceiptPersistenceError(
+                "native audio budget object changed before dispatch persistence"
+            )
+        _persist_budget_receipt(
+            source_media=source_media, source_sha256=source_sha,
+            receipt_path=budget_receipt_path,
+        )
+
     def observe(*, start_ms: int, end_ms: int) -> dict:
         # A stale callable must not spend from a replacement process ledger.
         with budget.lock, exclusive_native_audio_budget(budget_receipt_path):
@@ -260,6 +272,7 @@ def build_native_foreign_witness(
                     crop_start_ms=start_ms,
                     crop_end_ms=end_ms,
                     exact_cue=True,
+                    persist_before_dispatch=persist_dispatch_reservation,
                 )
                 if _identity(source_media) != before:
                     raise ValueError("native witness source changed during observation")
