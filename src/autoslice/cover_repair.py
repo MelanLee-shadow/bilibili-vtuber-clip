@@ -99,7 +99,6 @@ def _validate_repaired_cover_generation(
             raise ValueError(f"cover generation {path_key} hash mismatch")
     return document, manifest_path
 
-
 def _enrich_repaired_cover_generation(
     *,
     generation: dict,
@@ -216,9 +215,9 @@ def _enrich_repaired_cover_generation(
         candidate_id=str(enriched["candidate_id"]),
     )
 
-
 def _active_cover_documents(
-    *, date: str, candidate_id: str, title: str, mp4: Path, media_sha256: str
+    *, date: str, candidate_id: str, title: str, mp4: Path, media_sha256: str,
+    runtime_root: Path | None = None,
 ) -> list[tuple[Path, dict]]:
     """Load and validate only the delivery record plus its explicitly-bound
     active source record/publish draft.  Never recursively glob a candidate
@@ -237,7 +236,7 @@ def _active_cover_documents(
     if _document_video_hash(delivery_document) != media_sha256:
         raise ValueError("delivery record video hash does not match current delivery")
 
-    active_root = (_runner.BASE / "out" / date / candidate_id).resolve()
+    active_root = ((runtime_root or _runner.BASE) / "out" / date / candidate_id).resolve()
     explicit_publish = delivery_staging.get("publish_json_path")
     if isinstance(explicit_publish, str) and explicit_publish:
         publish_path = Path(explicit_publish)
@@ -290,7 +289,6 @@ def _active_cover_documents(
         documents.append((source_record, source_document))
     documents.append((publish_resolved, publish_document))
     return documents
-
 
 def _active_song_delivery_manifest(
     rec: dict,
@@ -372,7 +370,6 @@ def _active_song_delivery_manifest(
         ):
             raise ValueError("song delivery state cover binding mismatch")
     return manifest_resolved, manifest
-
 
 def _updated_song_delivery_manifest(
     manifest: dict,
@@ -1341,13 +1338,13 @@ def _bind_repaired_cover(
     rec.update(repaired_record)
 
 
-def _cover_binding_valid(date: str, rec: dict, mp4: Path, cover: Path) -> bool:
+def _cover_binding_valid(date: str, rec: dict, mp4: Path, cover: Path, *, runtime_root: Path | None = None) -> bool:
     binding_path_value = rec.get("cover_binding_path")
     binding_sha256 = rec.get("cover_binding_sha256")
     if not isinstance(binding_path_value, str) or not isinstance(binding_sha256, str):
         return False
     binding_path = Path(binding_path_value)
-    expected_root = (_runner.BASE / "out" / date / str(rec.get("candidate_id") or "") / "cover_repair" / "generations").resolve()
+    expected_root = ((runtime_root or _runner.BASE) / "out" / date / str(rec.get("candidate_id") or "") / "cover_repair" / "generations").resolve()
     try:
         binding_resolved = binding_path.resolve(strict=True)
         state_cover_resolved = Path(str(rec.get("cover_path") or "")).resolve(
@@ -1392,6 +1389,7 @@ def _cover_binding_valid(date: str, rec: dict, mp4: Path, cover: Path) -> bool:
             title=str(rec.get("title") or ""),
             mp4=mp4,
             media_sha256=str(binding.get("media_sha256") or ""),
+            **({"runtime_root": runtime_root} if runtime_root is not None else {}),
         )
     except (OSError, ValueError):
         return False
