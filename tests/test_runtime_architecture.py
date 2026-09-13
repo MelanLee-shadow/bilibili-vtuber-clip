@@ -211,7 +211,7 @@ MODULE_DEBT_LEDGER = {
     # into cover_repair_route_lineage; keep the compatibility helper alias.
     # active screenshot binding preflight moved into the focused
     # route-lineage module; lock in the 12-line reduction, not a larger budget.
-    "src/autoslice/cover_repair.py": 2_164,
+    "src/autoslice/cover_repair.py": 2_163,
     # +79：cue59「殉情」顶替真值「偶遇」实案（维护者
     # auto_203735_555_680 speaker-truth-diff 裁决 + 落地授权）——新增
     # _glossary_session_candidate_undecidable / _adjudicate_with_glossary_witness_guard

@@ -99,6 +99,7 @@ def test_bind_updates_publish_and_record_with_binding_receipt(tmp_path: Path) ->
     assert binding["upload_enabled"] is False
     record = json.loads((pkg / "delivery.record.json").read_text())
     assert record["publish_staging"]["cover_status"] == "AI_COVER_READY"
+    assert record["publish_staging"]["cover_repair_binding"] == publish["cover_repair_binding"]
     assert (
         record["artifact_hashes"]["publish_draft_sha256"]
         == result["publish_draft_sha256"]
