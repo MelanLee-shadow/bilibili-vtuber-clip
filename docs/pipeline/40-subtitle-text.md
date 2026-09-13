@@ -225,6 +225,14 @@ FLAGGED/失效 receipt。最终 materialize 后仍必须重算 exact-final SRT�
   只能一次封存为 `OBSERVED / TEXT_UNLOCATED / FAILED / RESPONSE_REJECTED`。同 revision 内容冲突、
   旧 revision 覆盖新 revision、坏 self-hash 或旧 v1 证据不得静默补签。回执不保存凭据或 raw
   provider 文本；它证明预算记账，不证明字幕正确、CPA 已裁决或最终包已放行。
+- 共享同一回执的合作进程，在观察器构造、每次观察及直接回执写入时，共用
+  `native-audio-budget.json.lock` 的非阻塞排他锁；先持 source 的进程内锁，再持该文件锁，
+  同线程嵌套写回复用原描述符。忙锁或不安全锁文件沿既有
+  `LOCAL_AUDIO_BUDGET_RECEIPT_PERSIST_FAILED` 拒绝，不能先抽音/派发再报错；锁文件须为
+  当前用户的0600、单链接、空普通文件，并核对路径/FD inode，结束时不删除锁inode。
+  fork 子进程不继承父进程的逻辑所有权。此互斥只覆盖使用同一回执入口的合作执行器，
+  不恢复跨进程余额、不把旧回执当新预算，也不补齐进程崩溃前的持久化派发记账；
+  任意不合作的同UID文件替换仍不在隔离保证内。原结构、历史连续性、预算上限及CPA权限不变。
 - MAI 原生证据允许保留既有 `ENCODER_TOLERANCE_MS` 内的尾部时标误差，但必须有
   独立输入时长，且原生终点同时处于声明/输入时长的容差内。原始字节与时间不改，
   `MAI_NATIVE_ENCODER_TAIL_OVERHANG` 显式披露超出毫秒数；该结果

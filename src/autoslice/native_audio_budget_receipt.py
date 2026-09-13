@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import tempfile
+import threading
 from typing import Any, Mapping
 
 from src.autoslice.supplement_audio_budget import (
@@ -28,6 +32,91 @@ class BudgetReceiptPersistenceError(OSError):
 def _no_links(path: Path) -> None:
     if any(parent.is_symlink() for parent in (path, *path.parents)):
         raise ValueError("native audio budget receipt path contains a symlink")
+
+
+class _ReceiptLockState:
+    def __init__(self) -> None:
+        self.mutex = threading.RLock()
+        self.fd: int | None = None
+
+
+_PROCESS_LOCKS_GUARD = threading.Lock()
+_PROCESS_LOCKS: dict[tuple[int, str], _ReceiptLockState] = {}
+
+
+def _forget_inherited_locks() -> None:
+    # Close child duplicates, never LOCK_UN the parent's shared open description.
+    global _PROCESS_LOCKS_GUARD, _PROCESS_LOCKS
+    for state in _PROCESS_LOCKS.values():
+        if state.fd is not None:
+            os.close(state.fd)
+    _PROCESS_LOCKS_GUARD = threading.Lock()
+    _PROCESS_LOCKS = {}
+
+
+os.register_at_fork(after_in_child=_forget_inherited_locks)
+
+
+def _validate_lock_identity(path: Path, fd: int) -> None:
+    _no_links(path)
+    current, opened = path.lstat(), os.fstat(fd)
+    if (
+        (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino)
+        or not stat.S_ISREG(opened.st_mode)
+        or opened.st_uid != os.geteuid()
+        or stat.S_IMODE(opened.st_mode) != 0o600
+        or opened.st_nlink != 1
+        or opened.st_size != 0
+    ):
+        raise BudgetReceiptPersistenceError("native audio budget lock identity is unsafe")
+
+
+@contextmanager
+def exclusive_native_audio_budget(receipt_path: Path):
+    """Serialize cooperating processes, without restoring budget or authorizing spend.
+
+    Acquire after the source's existing RLock. The nested canonical writer reuses
+    this thread's fd; another process/thread fails before media/provider work.
+    Keep the empty lock inode after release so waiters never lock different files.
+    """
+    path = receipt_path.absolute()
+    lock_path = path.with_name(path.name + ".lock")
+    owner_pid = os.getpid()
+    with _PROCESS_LOCKS_GUARD:
+        state = _PROCESS_LOCKS.setdefault((owner_pid, str(path)), _ReceiptLockState())
+    if not state.mutex.acquire(blocking=False):
+        raise BudgetReceiptPersistenceError("native audio budget receipt is already in use")
+    opened: int | None = None
+    try:
+        try:
+            _no_links(path)
+            _no_links(lock_path)
+            if state.fd is None:
+                lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                _no_links(lock_path)
+                opened = os.open(
+                    lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK
+                    | os.O_CLOEXEC, 0o600,
+                )
+                _validate_lock_identity(lock_path, opened)
+                fcntl.flock(opened, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                _validate_lock_identity(lock_path, opened)
+                state.fd = opened
+            else:
+                _validate_lock_identity(lock_path, state.fd)
+        except (OSError, ValueError) as exc:
+            if isinstance(exc, BudgetReceiptPersistenceError):
+                raise
+            raise BudgetReceiptPersistenceError(
+                "native audio budget lock unavailable or held by another process"
+            ) from exc
+        yield
+    finally:
+        if os.getpid() == owner_pid:
+            if opened is not None:
+                state.fd = None
+                os.close(opened)
+            state.mutex.release()
 
 
 def _canonical_sha256(value: Mapping[str, object]) -> str:
@@ -344,7 +433,7 @@ def persist_native_audio_budget_receipt(
         )
     resolved_source = source_media.resolve()
     resolved_receipt = receipt_path.absolute()
-    with budget.lock:
+    with budget.lock, exclusive_native_audio_budget(resolved_receipt):
         snapshot = budget.snapshot()
         if snapshot.get("source_media") != str(resolved_source):
             raise BudgetReceiptPersistenceError(
@@ -392,6 +481,7 @@ __all__ = [
     "BudgetReceiptPersistenceError",
     "SCHEMA_VERSION",
     "require_native_audio_budget_continuity",
+    "exclusive_native_audio_budget",
     "persist_native_audio_budget_receipt",
     "receipt_sha256",
 ]

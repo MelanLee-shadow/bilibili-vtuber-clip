@@ -18,6 +18,7 @@ import time
 from src.autoslice.local_asr_target_evidence import exact_target_evidence, digest
 from src.autoslice.native_audio_budget_receipt import (
     BudgetReceiptPersistenceError,
+    exclusive_native_audio_budget,
     persist_native_audio_budget_receipt,
     require_native_audio_budget_continuity,
 )
@@ -202,7 +203,7 @@ def build_native_foreign_witness(
         max_windows=max_windows,
         max_audio_ms=max_audio_ms,
     )
-    with budget.lock:
+    with budget.lock, exclusive_native_audio_budget(budget_receipt_path):
         require_native_audio_budget_continuity(
             source_media=source_media,
             source_media_sha256=source_sha,
@@ -217,7 +218,7 @@ def build_native_foreign_witness(
 
     def observe(*, start_ms: int, end_ms: int) -> dict:
         # A stale callable must not spend from a replacement process ledger.
-        with budget.lock:
+        with budget.lock, exclusive_native_audio_budget(budget_receipt_path):
             if get_budget(source_media) is not budget:
                 raise BudgetReceiptPersistenceError(
                     "native audio budget object changed before observation"
