@@ -147,6 +147,10 @@ def main() -> int:
     )
     parser.add_argument("--out", required=True, help="new final cover PNG path")
     parser.add_argument(
+        "--preserve-existing-pixels", action="store_true",
+        help="copy verified existing screenshot bytes to a new evidence namespace; no rendering/providers",
+    )
+    parser.add_argument(
         "--host-identity-receipt",
         default="",
         help="optional final-host witness JSON for the new exact cover bytes",
@@ -195,6 +199,24 @@ def main() -> int:
     except ValueError as exc:
         print(f"REFUSE: {exc}", file=sys.stderr)
         return 2
+    if args.preserve_existing_pixels:
+        if any((args.polished, args.host_identity_receipt,
+                args.face_verification_receipt, args.identity_landmark_title_exclusion)):
+            print("REFUSE: pixel preservation cannot override source pixels or witnesses", file=sys.stderr)
+            return 2
+        from src.autoslice.cover_pixel_preservation import preserve_existing_pixels
+
+        try:
+            result = preserve_existing_pixels(
+                record_path=Path(args.record), generation=generation,
+                candidate_id=candidate_id, title=title, out=Path(args.out),
+            )
+        except (OSError, ValueError, RuntimeError) as exc:
+            print(f"REFUSE: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+
     identity_exclusion = generation.get("identity_landmark_title_exclusion")
     if args.identity_landmark_title_exclusion:
         try:

@@ -153,6 +153,15 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
 封面；旧 `delivered` 路径只作历史保留，不能压过新绑定。导入绑定缺失/漂移不回退旧媒体；
 无导入记录的历史 Talk/Song 路径规则保持。路径解析成功不替代封面证据、审计或发布授权。
 
+当现成封面只需为新媒体建立后继证据、无须改变图片时，可用既有截图入口的
+`--preserve-existing-pixels`。它从当前 record 验证原截图路线、最终脸部/主播见证、受信字体、
+遮罩与背景逐像素重放，随后只在新的专用目录 create-only 复制原 PNG 和完整 record 前像；
+不重排、不重新编码、不调用 provider，也不改写历史 witness、模型或日期。该模式拒绝
+替换图源、身份见证或布局输入；原像素/见证失效时仍拒绝，不能把旧 FAIL 洗成 PASS。
+`pixel_preserving_successor` 绑定前像原字节及相同最终哈希，绑定器会重放该前像，并只允许
+最终 locator 变化及既有原生 StoryContract 富化。该产物不自带新视频绑定或上传权，仍由
+既有 transactional binder、package audit、状态接纳和90步骤完成后续；旧 binding 原件保留。
+
 绑定入口在任何可写的 generation 富化前，先拒绝已经占用的 immutable binding 路径
 （含损坏文件、目录与悬空链接）；富化后仍复核该路径。预检不预留路径，也不宣称提供并发
 隔离；不得先改写旧生成记录再报绑定已存在。旧视频 binding 不自动成为新成片证据。

@@ -202,6 +202,20 @@ def _validate_screenshot_generation(
         document = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise ValueError(f"screenshot cover generation manifest is invalid: {exc}") from exc
+    validate_screenshot_generation_document(
+        document, cover=cover, title=title, candidate_id=candidate_id, method=method,
+    )
+    if "pixel_preserving_successor" in document:
+        from src.autoslice.cover_pixel_preservation import validate_pixel_preserving_successor
+
+        validate_pixel_preserving_successor(document, cover=cover)
+    return document, manifest_path
+
+
+def validate_screenshot_generation_document(
+    document: object, *, cover: Path, title: str, candidate_id: str, method: str,
+) -> dict:
+    """Same native checks for an active record's already-bound generation."""
     if not isinstance(document, dict):
         raise ValueError("screenshot cover generation manifest must be an object")
     if (
@@ -317,7 +331,7 @@ def _validate_screenshot_generation(
 
         if not validate_final_host_identity_verification(document):
             raise ValueError("direct title repair lacks a final-pixel host witness")
-    return document, manifest_path
+    return document
 
 
 def validate_cover_generation_for_binding(
