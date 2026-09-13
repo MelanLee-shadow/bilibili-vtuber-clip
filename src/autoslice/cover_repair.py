@@ -468,10 +468,8 @@ def _updated_cover_document(
     if not isinstance(artifacts, dict):
         raise ValueError("artifact_hashes is not an object")
     artifacts["cover_sha256"] = cover_sha256
-    updated["cover_repair_binding"] = {
-        "path": str(binding_path),
-        "sha256": binding_sha256,
-    }
+    binding = {"path": str(binding_path), "sha256": binding_sha256}
+    updated["cover_repair_binding"] = dict(binding)
     # Existing producer mirrors describe the current cover, not repair history.
     # Preserve staging-only record shapes and all explicitly archived evidence.
     if isinstance(updated.get("cover_generation"), dict):
@@ -491,6 +489,7 @@ def _updated_cover_document(
                 "cover_status": "AI_COVER_READY",
                 "cover_path": str(cover),
                 "cover_generation": generation,
+                "cover_repair_binding": dict(binding),
                 "reason_codes": _cover_reason_codes_without_transient_failure(
                     surface.get("reason_codes")
                 ),
