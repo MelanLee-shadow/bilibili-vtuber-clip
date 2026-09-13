@@ -148,6 +148,11 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
 
 ## 路由证据与审计
 
+封面维护在 native import 已写 `external-package-state-binding.v1 / VERIFIED_PACKAGE_BOUND` 时，
+先重验该候选固定生产包的 journal、record/publish、视频和封面哈希，使用绑定的新视频与同 stem
+封面；旧 `delivered` 路径只作历史保留，不能压过新绑定。导入绑定缺失/漂移不回退旧媒体；
+无导入记录的历史 Talk/Song 路径规则保持。路径解析成功不替代封面证据、审计或发布授权。
+
 绑定入口在任何可写的 generation 富化前，先拒绝已经占用的 immutable binding 路径
 （含损坏文件、目录与悬空链接）；富化后仍复核该路径。预检不预留路径，也不宣称提供并发
 隔离；不得先改写旧生成记录再报绑定已存在。旧视频 binding 不自动成为新成片证据。
