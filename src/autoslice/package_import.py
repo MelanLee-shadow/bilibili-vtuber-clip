@@ -1648,6 +1648,13 @@ def read_bound_package(
             "TITLE_SURFACE_DRIFT", "record.publish_staging and publish disagree on title"
         )
     for label in ("boundary_audit", "subtitle_timing_qa", "redelivery_baseline"):
+        # The ordinary producer explicitly emits two nulls when baseline replay
+        # was not requested. Do not fabricate an empty or passing baseline.
+        if (label == "redelivery_baseline"
+                and label in documents.record and documents.record[label] is None
+                and "redelivery_baseline_audit_path" in documents.record
+                and documents.record["redelivery_baseline_audit_path"] is None):
+            continue
         if not isinstance(documents.record.get(label), Mapping):
             raise PackageImportError(
                 "PACKAGE_DOCUMENT_INVALID", f"record lacks {label}"
