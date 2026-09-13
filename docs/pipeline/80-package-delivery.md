@@ -497,6 +497,9 @@ prepare 工作。一个被阻候选不得阻断其它候选。
   源包根的 `package_audit.json` 与歌切导入一样保留在源目录，不复制成目标根审计；
   预检回执披露 `skipped_source_artifacts`。目标必须重跑当前 canonical auditor，已有不同的
   目标审计仍拒绝覆盖；不借此抹掉旧失败、跳过审计或排除嵌套证据。
+  最终声文证据只迁移 record 的 `output_dir` 和四个附件定位符，且均限定在 package role；
+  内嵌 receipt、原始附件字节、媒体/字幕哈希和片头偏移保持不变，目标仍按实际包重跑
+  `validate_final_subtitle_audio_check`。未知额外路径及错误 root role 仍拒绝。
   用法：`python3 scripts/import_external_package.py --source <外部包的
   replacement_recuts 目录> --date <date> --candidate <cid> [--allow-new-pick] --apply`
   （跨主机传输不在工具内，先 rsync/scp 到 free 的暂存目录；暂存目录与目标目录必须不同）。
