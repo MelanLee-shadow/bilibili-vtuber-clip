@@ -639,6 +639,11 @@ def read_package_documents(
         raise PackageImportError(
             "PACKAGE_INCOMPLETE", f"declared final burn is missing: {burn}"
         )
+    from src.autoslice.package_import_cover import project_preserved_cover_locators
+
+    record, publish = project_preserved_cover_locators(
+        record, publish, package_root=package_root, candidate_id=candidate_id,
+    )
     return PackageDocuments(
         candidate_id=candidate_id,
         record=record,

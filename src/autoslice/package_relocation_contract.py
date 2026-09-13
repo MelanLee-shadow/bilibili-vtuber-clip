@@ -141,6 +141,8 @@ _SPEAKER_ROOT_ROLES: Mapping[JsonPointer, frozenset[str]] = {
 }
 
 _RECORD_FROZEN_PREFIXES: tuple[JsonPointer, ...] = (
+    ("cover_repair_binding",),
+    ("publish_staging", "cover_repair_binding"),
     ("burned_preview", "command"),
     ("burned_preview", "branding_intro"),
     ("redelivery_baseline",),
@@ -160,6 +162,7 @@ _RECORD_FROZEN_PREFIXES: tuple[JsonPointer, ...] = (
     ("publish_staging", "recovery_publication_authority"),
 )
 _PUBLISH_FROZEN_PREFIXES: tuple[JsonPointer, ...] = (
+    ("cover_repair_binding",),
     ("cover_generation",),
     ("source_fact_review",),
     ("title_story_audit",),

@@ -500,6 +500,12 @@ prepare 工作。一个被阻候选不得阻断其它候选。
   最终声文证据只迁移 record 的 `output_dir` 和四个附件定位符，且均限定在 package role；
   内嵌 receipt、原始附件字节、媒体/字幕哈希和片头偏移保持不变，目标仍按实际包重跑
   `validate_final_subtitle_audio_check`。未知额外路径及错误 root role 仍拒绝。
+  同像素后继封面可以仍位于候选的 `cover_repair/generations`，但导入必须先重放
+  原生当前视频/封面 binding、原 record/publish 和 manifest，再逐字节核对原图、源包及
+  实际暂存包的已有封面/遮罩/背景/参考副本。仅将现有白名单 locator 在内存规范到源包，
+  之后由原迁移事务生成目标定位符与真实原件 before-image；不改原图、历史见证或旧 binding。
+  历史 `cover_repair_binding` 三面引用保持不可变，不当作可随意重写的运行路径。
+  该窄接续不接受任意候选外文件、漂移副本或未验证生成记录，也不豁免当前审计/状态/发布门。
   普通 producer 未请求 baseline replay 时原生写出两个显式 null：`redelivery_baseline` 与
   `redelivery_baseline_audit_path`。导入保留这两个 null，不虚构通过的基线；字段缺失、
   声明了 audit path 却缺 audit 对象、非对象值仍拒绝。目标完整审计和其他权威门照常执行。
