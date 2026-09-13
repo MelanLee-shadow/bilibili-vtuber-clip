@@ -393,22 +393,23 @@ def _write_atomic(path: Path, payload: Mapping[str, object]) -> None:
             suffix=".json",
             dir=path.parent,
         )
-        os.close(descriptor)
         temp = Path(name)
-        temp.write_text(
-            json.dumps(
-                payload,
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        os.chmod(temp, 0o600)
+        # Atomic rename alone is not a durable pre-dispatch reservation. Flush
+        # the complete payload first, then commit and sync the directory entry.
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fchmod(handle.fileno(), 0o600)
+            os.fsync(handle.fileno())
         _no_links(path)
         os.replace(temp, path)
         temp = None
+        directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     except (OSError, TypeError, ValueError) as exc:
         raise BudgetReceiptPersistenceError(
             "native audio budget receipt could not be persisted"
