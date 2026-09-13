@@ -369,6 +369,48 @@ def _valid_joint_qc(
     return all(isinstance(verdict.get(key), bool) and verdict[key] is value for key, value in expected_verdict.items())
 
 
+def _final_review_cover(
+    root: Path, *, candidate_id: str, title: object, record_path: Path,
+    publish_path: Path, burned_path: str | None, generated_cover: Path,
+) -> Path:
+    """Reuse native same-stem cover resolution for an assembled current package.
+
+    Before assembly the existing generation locator remains the only input.
+    An occupied canonical review manifest is never ignored on validation failure.
+    This resolves a locator, not a new QC verdict or an upload authorization.
+    """
+    manifests = list(root.rglob("review_manifest.json"))
+    if not manifests:
+        return generated_cover
+    if len(manifests) != 1:
+        raise ValueError("current review manifest is ambiguous")
+    manifest_path = _safe_path(manifests[0], root)
+    before = _snapshot_regular(manifest_path, root)
+    manifest = _load_json(manifest_path, root)
+    items = manifest.get("items")
+    if (manifest.get("schema_version") != "lidousha-daily-review-manifest.v1"
+            or manifest.get("candidate_id") != candidate_id
+            or not isinstance(items, list) or len(items) != 1
+            or not isinstance(items[0], Mapping)):
+        raise ValueError("current review manifest identity is invalid")
+    item = items[0]
+    if str(item.get("candidate_id") or item.get("id") or "") != candidate_id:
+        raise ValueError("review item candidate differs from canonical record")
+    for key, expected in (("evidence_json", record_path), ("publish_json", publish_path),
+                          ("video", Path(burned_path) if burned_path else None)):
+        value = item.get(key)
+        if (not isinstance(value, str) or not value or Path(value).is_absolute()
+                or expected is None
+                or _safe_path(manifest_path.parent / value, root) != _safe_path(expected, root)):
+            raise ValueError("review item does not bind current package artifacts")
+    from scripts.run_title_cover_joint_qc import resolve_package_inputs
+
+    _record, _publish, cover = resolve_package_inputs(manifest_path.parent, title)
+    if _snapshot_regular(manifest_path, root) != before:
+        raise ValueError("current review manifest changed during resolution")
+    return _safe_path(cover, root)
+
+
 def _inspect_package(root: Path | None, candidate_id: str, date: str) -> tuple[set[str], dict[str, str], Path | None]:
     """Replay the minimum local descriptor closure required for readiness."""
     reasons: set[str] = set()
@@ -461,6 +503,21 @@ def _inspect_package(root: Path | None, candidate_id: str, date: str) -> tuple[s
                 dependencies["cover"] = str(cover)
                 if generation.get("final_cover_sha256") != actual_cover or (hashes.get("cover_sha256") is not None and hashes.get("cover_sha256") != actual_cover):
                     reasons.add("PACKAGE_ARTIFACT_HASH_DRIFT")
+    if cover is not None and actual_cover is not None:
+        try:
+            final_cover = _final_review_cover(
+                root, candidate_id=candidate_id, title=publish.get("title"),
+                record_path=record_path, publish_path=publish_path,
+                burned_path=dependencies.get("burned_video"), generated_cover=cover,
+            )
+            if _sha256(final_cover, root) != actual_cover:
+                raise ValueError("final cover differs from generation bytes")
+        except (OSError, ValueError, KeyError, TypeError):
+            reasons.add("PACKAGE_ARTIFACT_FILE_INVALID")
+            cover = None  # Never rescue an invalid assembled package via the old locator.
+        else:
+            cover = final_cover
+            dependencies["cover"] = str(cover)
     source_fact = record.get("source_fact_review")
     if not isinstance(source_fact, Mapping):
         contract = record.get("story_contract")

@@ -33,6 +33,13 @@ ASS 时，只有 `status=BURNED` 的嵌套定位符可补充空的 `subtitle_ass
 有效副本掩盖另一处路径越界、缺失或字节漂移。这只修正观察定位，不替代 canonical
 package audit、联合检查、授权 manifest 或发布门。
 
+已装配单候选包的观察图，须通过现有 `resolve_package_inputs` 选择 review manifest 中与
+最终视频同 stem 的封面，不能把生成目录中的同字节图片路径当作最终质检的图片身份。
+选择前重验当前候选、canonical record、publish/video 定位与唯一 manifest；原生成图片和最终
+副本均须为安全普通文件、哈希相同。当前 manifest 缺文件、路径/身份漂移或多个候选时仍拒绝，
+不得回退旧图来通过。尚无 canonical review manifest 的准备阶段保留旧生成路径规则。
+此定位修复不改旧 QC 回执、不调用 provider，不替代实际上传器的原回答、哈希、audit 和授权验证。
+
 ## 增量 receipt 与发布隔离
 
 `incremental-artifact-audit.v2` 只说明当前版本相对上一版本哪些组件、cue、时间窗或封面 ROI
