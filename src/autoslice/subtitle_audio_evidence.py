@@ -283,6 +283,9 @@ def _observe_secondary(
             model=model,
             start_ms=crop_start_ms,
             end_ms=crop_end_ms,
+            # A canonical recovery gets at most three total dispatches for this
+            # provider/window; cache recovery above remains free even at the cap.
+            max_attempts_per_window=3 if persist_before_dispatch is not None else None,
         )
         # Commit the pending reservation before the provider may send HTTP.
         # A persistence error leaves it pending, not a fabricated provider FAIL.

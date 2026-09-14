@@ -1,14 +1,15 @@
 """Process-local budget and outcome ledger for additive audio evidence calls.
 
 The budget counts actual provider dispatches, not successful responses.  It is
-scoped to one resolved source path and deliberately has no cross-process state;
-the producer persists sanitized snapshots separately.  Cache hits and typed
+scoped to one resolved source path. The canonical receipt consumer may restore
+a validated persisted history under its cross-process lock, without refunding it.  Cache hits and typed
 pre-dispatch cap refusals are disclosed without consuming audio allowance.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 import os
 from pathlib import Path
 import threading
@@ -26,6 +27,7 @@ TOTAL_AUDIO_CAP = "LOCAL_AUDIO_TOTAL_CAP"
 PROVIDER_INVALID = "LOCAL_AUDIO_PROVIDER_INVALID"
 BUDGET_CONFIG_INVALID = "LOCAL_AUDIO_BUDGET_CONFIG_INVALID"
 BUDGET_CONFIG_MISMATCH = "LOCAL_AUDIO_BUDGET_CONFIG_MISMATCH"
+ATTEMPT_CAP = "LOCAL_AUDIO_ATTEMPT_CAP"
 
 _BUDGET_CONFIG_KEYS = frozenset({"max_windows", "max_audio_ms"})
 _ATTEMPT_FINAL_STATUSES = frozenset(
@@ -158,6 +160,8 @@ class SupplementAudioBudget:
         model: str,
         start_ms: int,
         end_ms: int,
+        *,
+        max_attempts_per_window: int | None = None,
     ) -> int:
         """Reserve one actual provider dispatch and return its stable id.
 
@@ -208,6 +212,20 @@ class SupplementAudioBudget:
                     TOTAL_AUDIO_CAP,
                     "audio duration limit is exhausted",
                 )
+            if max_attempts_per_window is not None:
+                if type(max_attempts_per_window) is not int or max_attempts_per_window < 1:
+                    raise ValueError("per-window attempt limit must be positive")
+                prior_count = sum(
+                    row["provider"] == provider and row["model"] == model
+                    and (row["start_ms"], row["end_ms"]) == window
+                    for row in self._attempts
+                )
+                if prior_count >= max_attempts_per_window:
+                    self._record_refusal_locked(
+                        provider=provider, model=model, start_ms=start_ms,
+                        end_ms=end_ms, reason_code=ATTEMPT_CAP,
+                    )
+                    raise BudgetExceeded(ATTEMPT_CAP, "audio retry limit is exhausted")
             attempt_id = self._attempt_count + 1
             self._windows[window] = self._windows.get(window, 0) + 1
             self._total_audio_ms += duration_ms
@@ -307,6 +325,37 @@ class SupplementAudioBudget:
                 }
             )
             self._revision += 1
+
+    def restore_validated_snapshot(self, snapshot: Mapping[str, Any]) -> None:
+        """Restore a receipt-validated history; never reset limits or refund attempts.
+
+        The canonical receipt consumer validates the self-hash, event structure,
+        source content and monotonic history under its cross-process lock first.
+        Build a temporary object so a failed restore cannot partially change us.
+        """
+        with self._lock:
+            if (snapshot.get("source_media") != str(self.source_media)
+                    or snapshot.get("max_windows") != self.max_windows
+                    or snapshot.get("max_audio_ms") != self.max_audio_ms):
+                raise ValueError("restored budget source or limits differ")
+            candidate = SupplementAudioBudget(
+                self.source_media, max_windows=self.max_windows, max_audio_ms=self.max_audio_ms,
+            )
+            candidate._attempts = deepcopy(snapshot["attempts"])
+            candidate._cache_hits = deepcopy(snapshot["cache_hits"])
+            candidate._refusals = deepcopy(snapshot["refusals"])
+            candidate._windows = {
+                (row["start_ms"], row["end_ms"]): row["attempt_count"]
+                for row in snapshot["windows"]
+            }
+            candidate._total_audio_ms = snapshot["total_audio_ms"]
+            candidate._attempt_count = snapshot["attempt_count"]
+            candidate._revision = snapshot["revision"]
+            if candidate.snapshot() != dict(snapshot):
+                raise ValueError("restored budget counters differ")
+            for name in ("_attempts", "_cache_hits", "_refusals", "_windows",
+                         "_total_audio_ms", "_attempt_count", "_revision"):
+                setattr(self, name, getattr(candidate, name))
 
     def snapshot(self) -> dict[str, Any]:
         """Return deterministic accounting without credentials or raw output."""

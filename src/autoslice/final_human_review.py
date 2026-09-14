@@ -707,7 +707,20 @@ def replay_final_human_review_attestation(
     receipt = _json_object(
         paths["final_human_review"], source="final_human_review"
     )
-    if receipt.get("schema_version") == "original-fastlane-delta-technical-review.v1":
+    if receipt.get("schema_version") == "lidousha-mechanical-delivery-review.v1":
+        from src.autoslice.mechanical_delivery_review import validate_mechanical_receipt
+        try:
+            if paths["review_manifest"] != package_root / "review_manifest.json":
+                raise ValueError("mechanical review requires the canonical review manifest")
+            if not isinstance(manifest.get("recovery_publication_authority"), Mapping):
+                raise ValueError("mechanical same-BV review requires publication authority")
+            validate_mechanical_receipt(
+                receipt, package_root, paths["package_audit"],
+                publication_authority=manifest["recovery_publication_authority"],
+            )
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            raise FinalHumanReviewError("MECHANICAL_DELIVERY_REVIEW_INVALID", str(exc)) from exc
+    elif receipt.get("schema_version") == "original-fastlane-delta-technical-review.v1":
         from src.autoslice.original_patch_review import validate_technical_receipt
         try:
             validate_technical_receipt(receipt, package_root, paths["package_audit"],
