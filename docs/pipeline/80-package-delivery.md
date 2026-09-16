@@ -1,5 +1,16 @@
 # 80 打包与交付
 
+## 机械制作验收优先（维护者 2026-09-14）
+
+已验证的烧录实现、字体/布局与本次 source/SRT/ASS/片头/音轨参数一致，且现有机械检查通过时，
+不把“没有逐条读完/没有全片播放/没有原色概览”单独列成交付阻塞。内容正确性仍由已经生效的
+BCUT→CPA 与按需局部听证、文字/边界/声源/标题封面门负责；机械层复用这些有效结果，不因烧录
+又从头人工或模型全文审阅。正常批量制作以实际输入/输出绑定、现有 ASS 重放、片头/音轨/时长
+和编码验证为准；实现、字体、布局改变或发现具体异常时，只对受影响位置做回归抽帧/局部复核。
+既有失败、来源不明或字节漂移不因本条变成通过，也不得填写从未发生的观看声明。
+同 BV 的可执行机械验收入口与旧人工 receipt 的区别只见 [90](90-publish.md#机械验收与真实人工复核的分流2026-09-14)。
+
+
 本文件是打包步骤的**分步权威**。入口：`src/autoslice/producer_package_finalization.py`。
 
 ## 成片交付原则
@@ -23,7 +34,7 @@
 包内保留同 stem 的 `.subtitle-audio-witness.srt`、`.subtitle-audio-provenance.json`、
 `.subtitle-audio-bcut.raw.json` 与 `.subtitle-audio-correspondence.json`，record 同时绑定检查结果。
 该检查是粗偏移门，不证明所有短句或每条字幕的消失时刻，不授权按 BCUT 改字，也不替代
-CPA 文字裁决和最终烧录视频的全片声文复核。原音轨相关性、文件哈希一致、旧字幕审片
+CPA 文字裁决及本页规定的最终机械验收/具体异常局部复核。原音轨相关性、文件哈希一致、旧字幕审片
 PASS 均不能代替声文对应检查。
 
 
@@ -453,13 +464,11 @@ prepare 工作。一个被阻候选不得阻断其它候选。
   它不能证明人已完整播放最终烧录 MP4、逐句对齐音频/静音、确认结尾闭合或看过最终封面。
   因此 audit `passed=true`、state `review_ready`、本地包覆盖或该 pending-human manifest
   都不能转写为人工通过，更不能自行改成发布许可。
-- exact same-BV repair 在生成 authorized manifest 前还必须有对**当前最终字节**的
-  `lidousha-final-human-review.v2`；它不是 package auditor 的产物，也不改变 pending-human
-  manifest 或 `upload_allowed=false`。receipt 必须绑定并重验 create-only 提交的
-  `lidousha-final-human-review-evidence.v2` 路径、SHA-256 与字节数；reviewer 身份、exact
-  points、八项检查、封面 claims、evidence v2、create-only builder 与全部漂移/权限规则只读
-  [90-publish.md](90-publish.md)；80 步只负责保证 review manifest、audit、record 和三类最终
-  artifact 已冻结且可供该复核逐字节绑定。
+- exact same-BV repair 在生成 authorized manifest 前使用 90 的机械验收或真实人工复核
+  分流；不再无条件要求新一次 `lidousha-final-human-review.v2`。既有 pending-human manifest
+  名称是兼容状态，不自行制造逐片观看任务，也不产生上传授权。80 步保证 review manifest、
+  当前 audit、record 和最终 artifact 已冻结并可重新验真；两种 receipt 的字段、入口和发布
+  边界只读 [90-publish.md](90-publish.md)。旧人工证据不得自动补签或改称机械通过。
 - committed `subtitle_review_points` 使用最终视频时间轴，任何窗口不得越过 record 中片头
   verification 绑定的真实 EOS（只容许与 canonical receipt 相同的 500ms 尾端取整余量）。
   evidence template 必须在创建时先做这项检查；禁止先生成一个不可能通过的模板，再把越界

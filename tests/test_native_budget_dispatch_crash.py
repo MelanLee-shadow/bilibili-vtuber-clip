@@ -55,13 +55,13 @@ def _crash_worker(root: str, provider: str, run: int, before_send: bool) -> None
 
 @pytest.mark.parametrize("provider", ["moss", "mai"])
 @pytest.mark.parametrize("before_send", [False, True])
-def test_crash_after_dispatch_does_not_erase_attempt_or_allow_restart(
+def test_crash_preserves_history_and_allows_only_bounded_restart(
     tmp_path: Path, provider: str, before_send: bool,
 ) -> None:
     (tmp_path / "synthetic-source.bin").write_bytes(b"immutable synthetic input")
     ctx = multiprocessing.get_context("spawn")
     snapshots = []
-    for run in (1, 2):
+    for run in (1, 2, 3, 4):
         worker = ctx.Process(target=_crash_worker, args=(str(tmp_path), provider, run, before_send))
         try:
             worker.start()
@@ -89,10 +89,17 @@ def test_crash_after_dispatch_does_not_erase_attempt_or_allow_restart(
     assert snapshots[0]["exitcode"] == 73, observed
     assert snapshots[0]["recorded_attempts"] == 1, observed
     assert snapshots[0]["pending_attempts"] == 1, observed
-    assert snapshots[1]["exitcode"] == 0, observed
-    assert snapshots[1]["outcome"]["reason_code"] == "LOCAL_AUDIO_BUDGET_RECEIPT_PERSIST_FAILED"
-    assert snapshots[1]["recorded_attempts"] == 1, observed
-    assert len(dispatches) == (0 if before_send else 1), observed
+    # 维护者: an unknown compute outcome is recoverable, not a
+    # permanent lockout. Every retry remains charged; the fourth is refused.
+    for count, snapshot in enumerate(snapshots[:3], 1):
+        assert snapshot["exitcode"] == 73, observed
+        assert snapshot["recorded_attempts"] == count, observed
+        assert snapshot["pending_attempts"] == count, observed
+    assert snapshots[3]["exitcode"] == 0, observed
+    assert snapshots[3]["outcome"]["reason_code"] == "LOCAL_AUDIO_ATTEMPT_CAP"
+    assert snapshots[3]["recorded_attempts"] == 3, observed
+    assert snapshots[3]["pending_attempts"] == 3, observed
+    assert len(dispatches) == (0 if before_send else 3), observed
 
 
 def _native_fixture(tmp_path, monkeypatch, provider, *, max_audio_ms=1_000):
@@ -117,7 +124,7 @@ def _native_fixture(tmp_path, monkeypatch, provider, *, max_audio_ms=1_000):
     def fake_dispatch(audio, **kwargs):
         kwargs["before_request"]()
         pending = json.loads(receipt.read_bytes())
-        assert pending["budget"]["pending_attempt_count"] == 1
+        assert pending["budget"]["pending_attempt_count"] >= 1
         assert pending["budget"]["attempts"][-1]["status"] == "DISPATCHED"
         calls.append(kwargs["provider"])
         return {
@@ -195,10 +202,14 @@ def test_persistence_failure_stops_before_http_and_keeps_outcome_unresolved(
     else:
         assert json.loads(receipt.read_bytes())["budget"]["pending_attempt_count"] == 1
     assert not list(receipt.parent.glob(".native-audio-budget-*.json"))
-    # The same process cannot pretend the unresolved request freed its budget.
-    with pytest.raises(receipts.BudgetReceiptPersistenceError):
+    # Once disk writes work, reconcile instead of permanent lockout. This
+    # fixture has only 1s total: the retained 1s reservation still exhausts it.
+    from src.autoslice.supplement_audio_budget import BudgetExceeded, TOTAL_AUDIO_CAP
+    with pytest.raises(BudgetExceeded) as failure:
         observer(start_ms=1_000, end_ms=2_000)
-    assert calls == [] and extracted == [(1_000, 2_000)]
+    assert failure.value.reason_code == TOTAL_AUDIO_CAP
+    assert calls == [] and extracted == [(1_000, 2_000), (1_000, 2_000)]
+    assert json.loads(receipt.read_bytes())["budget"]["attempt_count"] == 1
 
 
 def test_receipt_fsyncs_file_before_replace_and_directory_after(tmp_path, monkeypatch):
@@ -235,7 +246,7 @@ def test_receipt_fsyncs_file_before_replace_and_directory_after(tmp_path, monkey
 
 
 @pytest.mark.parametrize("provider", ["mai", "moss"])
-def test_terminal_write_failure_preserves_pending_dispatch_and_blocks_replay(
+def test_terminal_write_failure_recovers_cached_result_without_redispatch(
     tmp_path, monkeypatch, provider,
 ):
     from src.autoslice import native_audio_budget_receipt as receipts
@@ -254,9 +265,12 @@ def test_terminal_write_failure_preserves_pending_dispatch_and_blocks_replay(
     assert calls == [provider]
     assert budget.snapshot()["sealed_attempt_count"] == 1
     assert json.loads(receipt.read_bytes())["budget"]["pending_attempt_count"] == 1
-    with pytest.raises(receipts.BudgetReceiptPersistenceError):
-        observer(start_ms=1_000, end_ms=2_000)
-    assert calls == [provider] and extracted == [(1_000, 2_000)]
+    assert observer(start_ms=1_000, end_ms=2_000)["served_from_cache"] is True
+    assert calls == [provider] and extracted == [(1_000, 2_000), (1_000, 2_000)]
+    packet = json.loads(receipt.read_bytes())
+    assert packet["budget"]["attempt_count"] == 1
+    assert packet["budget"]["pending_attempt_count"] == 0
+    assert packet["budget"]["cache_hit_count"] == 1
 
 
 def test_persistence_hook_without_budget_is_rejected_before_provider(tmp_path, monkeypatch):
@@ -290,3 +304,72 @@ def test_different_native_consumers_share_one_durable_source_budget(tmp_path, mo
     assert packet["budget"]["distinct_window_count"] == 1
     assert packet["providers"] == ["mai", "moss"]
     assert not (tmp_path / "other-consumer/native-audio-budget.json").exists()
+
+
+@pytest.mark.parametrize("provider", ["mai", "moss"])
+def test_restart_recovers_exact_cache_even_with_pending_and_no_balance(
+    tmp_path, monkeypatch, provider,
+):
+    from src.autoslice import native_audio_budget_receipt as receipts
+    from src.autoslice import native_foreign_witness as native
+    from src.autoslice.supplement_audio_budget import start_budget
+
+    observer, budget, receipt, calls, _ = _native_fixture(tmp_path, monkeypatch, provider)
+    original = receipts._write_atomic
+
+    def fail_terminal(path, payload):
+        if payload["budget"]["sealed_attempt_count"]:
+            raise receipts.BudgetReceiptPersistenceError("synthetic lost final write")
+        original(path, payload)
+
+    with monkeypatch.context() as fault:
+        fault.setattr(receipts, "_write_atomic", fail_terminal)
+        with pytest.raises(receipts.BudgetReceiptPersistenceError):
+            observer(start_ms=1_000, end_ms=2_000)
+    original_attempt = json.loads(receipt.read_bytes())["budget"]["attempts"][0]
+    source = tmp_path / "synthetic-source.bin"
+    restarted = start_budget(source, max_windows=1, max_audio_ms=1_000)
+    fresh = native.build_native_foreign_witness(
+        source_media=source, output_dir=receipt.parent, provider=provider,
+    )
+    result = fresh(start_ms=1_000, end_ms=2_000)
+    assert result["served_from_cache"] is True
+    assert calls == [provider]
+    snapshot = restarted.snapshot()
+    assert snapshot["attempts"] == [original_attempt]
+    assert snapshot["pending_attempt_count"] == 1  # no fabricated old completion
+    assert snapshot["remaining_audio_ms"] == 0
+    assert snapshot["cache_hit_count"] == 1
+    assert json.loads(receipt.read_bytes())["budget"] == snapshot
+
+
+@pytest.mark.parametrize("provider", ["mai", "moss"])
+def test_unretrievable_pending_is_retained_and_resend_can_finish(tmp_path, monkeypatch, provider):
+    import hashlib
+    from src.autoslice import native_audio_budget_receipt as receipts
+    from src.autoslice import native_foreign_witness as native
+    from src.autoslice.mai_transcription import MAI_MODEL
+    from src.autoslice.moss_transcription import MOSS_MODEL
+    from src.autoslice.supplement_audio_budget import start_budget
+
+    _, budget, path, calls, _ = _native_fixture(tmp_path, monkeypatch, provider, max_audio_ms=4_000)
+    source = tmp_path / "synthetic-source.bin"
+    budget.consume(provider, {"mai": MAI_MODEL, "moss": MOSS_MODEL}[provider], 1_000, 2_000)
+    receipts.persist_native_audio_budget_receipt(
+        source_media=source, source_media_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+        receipt_path=path,
+    )
+    original_attempt = json.loads(path.read_bytes())["budget"]["attempts"][0]
+    restarted = start_budget(source, max_windows=1, max_audio_ms=4_000)
+    observer = native.build_native_foreign_witness(
+        source_media=source, output_dir=path.parent, provider=provider,
+    )
+    assert observer(start_ms=1_000, end_ms=2_000)["served_from_cache"] is False
+    snapshot = restarted.snapshot()
+    assert snapshot["attempts"][0] == original_attempt
+    assert snapshot["attempts"][1]["status"] == "OBSERVED"
+    assert snapshot["total_audio_ms"] == 2_000
+    assert snapshot["pending_attempt_count"] == 1
+    assert observer(start_ms=1_000, end_ms=2_000)["served_from_cache"] is True
+    assert calls == [provider]
+    assert restarted.snapshot()["attempt_count"] == 2

@@ -31,12 +31,13 @@ B 站 public/Creator/section 状态。本地 checkout、旧包、某个状态字
 ## 3. 打包与最终复核
 
 按 [80-package-delivery.md](../../../docs/pipeline/80-package-delivery.md) 构建当前审片包并运行
-canonical auditor。机器 audit 不代替人对最终烧录字节的完整观看。
+canonical auditor。机械验收、具体异常局部复核与真实人工 receipt 的分流只按 80/90 step；
+不得在 step 之外新增逐片完整观看前置，也不得伪造观看。
 
-需要 exact same-BV repair 时，先用
-`scripts/build_final_human_review.py --prepare-evidence-template` 冻结当前 package、
-manifest 与 canonical audit 的字节绑定；实际 reviewer 再按 90 step 逐点观看这些相同最终字节、
-填写独立 observations；最后用同一 builder create-only 构建 receipt。具体输入、证据与绑定规则
+需要 exact same-BV repair 时，按 90 step 先选机械验收 `--mechanical` 或真实人工复核路线。
+正常机械路线复用当前 package/audit，不新建全片观看任务；只有选择真实人工复核时才使用
+`--prepare-evidence-template` 并由实际 reviewer 填写 observations。两种路线均通过原 builder
+create-only 构建各自独立的 receipt，不互相冒充。具体输入、证据与绑定规则
 只读 [90-publish.md](../../../docs/pipeline/90-publish.md) 和脚本当前 `--help`。无上传授权时
 停在 `NO_UPLOAD`，仍可完成打包、审计与诊断。
 

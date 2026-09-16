@@ -1342,6 +1342,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--package-audit", type=Path, required=True)
     parser.add_argument("--evidence", type=Path)
     parser.add_argument(
+        "--mechanical", action="store_true",
+        help="verify the current canonical package without claiming new human full playback",
+    )
+    parser.add_argument(
         "--prepare-evidence-template",
         action="store_true",
         help=(
@@ -1353,13 +1357,43 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
     root = args.package_root.resolve()
+    if args.mechanical and (args.prepare_evidence_template or args.evidence is not None):
+        parser.error("--mechanical cannot fabricate or consume human review evidence")
+    if args.mechanical and args.review_manifest is not None:
+        parser.error("--mechanical uses the canonical package review_manifest.json")
     if args.prepare_evidence_template and args.evidence is not None:
         parser.error(
             "--prepare-evidence-template and --evidence are mutually exclusive"
         )
-    if not args.prepare_evidence_template and args.evidence is None:
+    if not args.mechanical and not args.prepare_evidence_template and args.evidence is None:
         parser.error("--evidence is required unless preparing a template")
     try:
+        if args.mechanical:
+            from src.autoslice.mechanical_delivery_review import (
+                build_mechanical_receipt, validate_mechanical_receipt,
+            )
+            try:
+                receipt = build_mechanical_receipt(args.package_root, args.package_audit)
+                output = args.out or root / "verification/mechanical-delivery-review.json"
+
+                def revalidate_mechanical() -> None:
+                    try:
+                        validate_mechanical_receipt(receipt, args.package_root, args.package_audit)
+                    except (OSError, ValueError, TypeError, KeyError) as exc:
+                        raise FinalHumanReviewBuildError(str(exc)) from exc
+
+                written = _secure_json_create_only(
+                    path=output, value=receipt, package_root=args.package_root,
+                    before_link=revalidate_mechanical,
+                )
+            except (ValueError, TypeError, KeyError, human_review.FinalHumanReviewError) as exc:
+                raise FinalHumanReviewBuildError(str(exc)) from exc
+            print(json.dumps({
+                "receipt": str(written), "sha256": _sha256(written),
+                "status": receipt["status"], "fresh_human_full_playback_claimed": False,
+                "items": len(receipt["bindings"]["items"]),
+            }, ensure_ascii=False))
+            return 0
         if args.prepare_evidence_template:
             output = (
                 args.out

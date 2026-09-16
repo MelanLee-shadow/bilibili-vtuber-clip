@@ -252,6 +252,55 @@ def require_native_audio_budget_continuity(
             )
 
 
+def resume_native_audio_budget(
+    *, source_media: Path, source_media_sha256: str, receipt_path: Path,
+    require_existing: bool = False,
+) -> None:
+    """Reconcile persisted attempts before cache recovery or a bounded resend.
+
+    Unknown attempts stay charged and unknown. A free file lock means the prior
+    cooperating process is no longer sending locally, not that the server has
+    cancelled its work. Resending may duplicate compute, never reset allowance.
+    """
+    budget = get_budget(source_media)
+    if budget is None:
+        raise BudgetReceiptPersistenceError("native audio budget is not registered")
+    path = receipt_path.absolute()
+    with budget.lock, exclusive_native_audio_budget(path):
+        existing = _load_existing(path)
+        if existing is None:
+            if require_existing:
+                raise BudgetReceiptPersistenceError("native audio budget receipt disappeared")
+            return
+        _validate_existing(existing, source_media_sha256=source_media_sha256)
+        _validate_budget_history(existing["budget"])
+        snapshot = budget.snapshot()
+        _validate_budget_history(snapshot)
+        if snapshot["source_media"] != str(source_media.resolve()):
+            raise BudgetReceiptPersistenceError("native audio budget source binding is invalid")
+        active = {"budget": snapshot, "providers": _providers(snapshot)}
+        if existing["revision"] >= snapshot["revision"]:
+            # Includes a freshly restarted process with an empty ledger. Only a
+            # valid extension of its history may be restored; no branch merging.
+            _require_budget_history_extension(active, existing)
+            if existing["revision"] == snapshot["revision"] and existing["budget"] != snapshot:
+                raise BudgetReceiptPersistenceError("native audio history conflicts at one revision")
+            try:
+                budget.restore_validated_snapshot(existing["budget"])
+            except (TypeError, ValueError, KeyError) as exc:
+                raise BudgetReceiptPersistenceError("native audio budget restore failed") from exc
+        else:
+            # A result or reservation survived in memory but its last disk write
+            # failed. Re-persist that exact extension before permitting more work.
+            _require_budget_history_extension(existing, active)
+            persist_native_audio_budget_receipt(
+                source_media=source_media, source_media_sha256=source_media_sha256,
+                receipt_path=path,
+            )
+        # No pending==0 requirement: the existing exact cache is checked next;
+        # a miss reserves another attempt under the unchanged cumulative caps.
+
+
 def _history_error(detail: str) -> None:
     raise BudgetReceiptPersistenceError("native audio budget history " + detail)
 
@@ -482,6 +531,7 @@ __all__ = [
     "BudgetReceiptPersistenceError",
     "SCHEMA_VERSION",
     "require_native_audio_budget_continuity",
+    "resume_native_audio_budget",
     "exclusive_native_audio_budget",
     "persist_native_audio_budget_receipt",
     "receipt_sha256",

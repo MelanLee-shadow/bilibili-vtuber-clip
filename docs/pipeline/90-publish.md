@@ -4,6 +4,35 @@
 `scripts/authorized_upload.py`；`.agent/skills/bilive-autoslice-publish/SKILL.md`
 只提供操作顺序，不得另立规则。
 
+## 机械验收与真实人工复核的分流（2026-09-14）
+
+维护者 最新要求：已验证的机械烧录流程及本次输入/输出检查正确时，不必每片再完整读/看一遍。
+正常交付不额外增加全片人工或模型观看；流程/字体/布局变化与具体异常只做影响范围复核。
+本段替代下文历史“每片完整观看”的普遍前置，不抹掉既有内容失败、原件缺口或真实发布权限。
+
+普通新 BV 的当前代码本就不要求 `final_human_review`；不得在其现有 package/声文/边界/
+标题封面/授权门外凭报告添加这一项。对有 recovery authority 的同 BV 包，正常机械路线为：
+
+```sh
+python3 scripts/build_final_human_review.py <package> \
+  --package-audit <current-audit.json> --mechanical --out <package>/verification/mechanical-delivery-review.json
+```
+
+该命令复用当前 canonical auditor、同候选/目标/标题/封面/片头绑定和 create-only writer，输出
+独立的 `lidousha-mechanical-delivery-review.v1 / VERIFIED_MECHANICAL_DELIVERY`。
+`fresh_human_full_playback_claimed=false`、`new_upload_authorized=false` 必须保持；没有 reviewer
+个人身份、伪造八项观看 observations 或补签旧人审。receipt 绑定当前 review manifest/audit、
+实际 record/video/SRT/cover 字节与精确 publication authority；构建和使用时均重跑当前审计并
+重新计算绑定，旧 PASS、损坏/漂移包、错 BV/CID 或未决内容不能借此放行。
+
+`make-manifest --final-human-review <mechanical-receipt>` 仅是既有兼容参数名；validator 会按独立
+schema 走机械重验，并继续拒绝新建 BV、越权、错目标及未知上传效果重发。接到这个入口不等于
+已经完成任何稿件投稿。已有原稿+delta/C1 技术路线继续适用，不重建其历史证明。
+
+真正需要并实际完成人工复核时，仍可使用下文 v2 人工路线；它的身份、具体 observations、
+完整播放声明必须真实，不能把本机械规则解释成可以给人工 v2 模板自动填 PASS。
+旧进行中事务按它原先封存的 receipt 继续恢复，不为切换验收类型重发平台变更。
+
 ## 快车道授权与串行发布边界
 
 对 Claude line 947 穷举批次，候选点名错误修复完成即使用本页既有 package、manifest、
@@ -133,12 +162,12 @@ target源于fresh登录canary/public/Creator/section、精确绑定原BVID/AID/C
 既有make-manifest/verify/repair-plan/dry-run/repair-run/verify-live与单upload锁保持；只能修原BV，
 普通upload明确拒绝recovery authority，不扩大授权，不自动放行其他候选或未review的素材。
 
-## 最终感知复核 receipt 的权限边界
+## 选择真实人工复核时的 v2 receipt 权限边界（非每片默认前置）
 
 - recovery review manifest 的
   `finished_review_package_no_upload_pending_human_review` / `upload_allowed=false`
-  是机器打包状态，不是发布许可。机器 audit 与最终感知复核是两道独立门，不能用其中一面
-  替代另一面。
+  是机器打包状态，不是发布许可。已选择人工 v2 的证据不能由机器填写；正常机械验收使用
+  上面的独立 schema，不能伪装成这份人工证据。
 - `lidousha-final-human-review.v2` 只接受
   `scope=same_bv_repair`、`status=ACCEPTED_FOR_SAME_BV`。`reviewer_kind` 可为
   `human_owner`、`human_delegate` 或 `delegated_root_agent`，但必须与真实观看者一致：
@@ -151,6 +180,7 @@ target源于fresh登录canary/public/Creator/section、精确绑定原BVID/AID/C
   expectation 并提供 PASS/evidence；八个总检查也各自需要非空具体 evidence，裸 PASS 或任意
   泛化检查表无效。逐 candidate 的 exact review point 来自 profile 的
   final_media_review_contracts 资产（本仓只有空模板，示例见其 `_example` 条目）。
+  本段只约束所选的真实人工路线，机械验收按前述分流执行。
 - receipt 同时绑定 create-only 提交的
   `lidousha-final-human-review-evidence.v2` 路径、SHA-256 与字节数，以及 package review
   manifest/audit、record、reviewed title、原 BVID/AID/CID publication target 和 final
@@ -208,7 +238,7 @@ target源于fresh登录canary/public/Creator/section、精确绑定原BVID/AID/C
    主体不突出、破碎钩子或三行以上叠字都必须 BLOCK 并先重做封面/标题。
 2. 在上述 receipt 和审片字节冻结后运行 `make-manifest --title-cover-qc ...`，只引用 package 内
    最终文件与 维护者 授权原话。普通新 BV 缺 receipt 直接拒绝；exact same-BV repair 继续走下文
-   `--final-human-review` v2 lane，不借此削弱或替代既有最终感知复核。
+   `--final-human-review` carrier，按前述机械/真实人工 schema 分流。
 3. 先运行 `verify`；它必须重算全部 hashes、current audit、联合质检语义与政策绑定。
 4. `upload` 只从 manifest 取路径/标题/元数据，禁止再手输一套参数。ledger 对同 artifact
    重传硬拒；拿到 BVID 后不得为“再取一次结果”重跑上传。
@@ -295,11 +325,10 @@ dry plan；本地存在代码/测试不等于 production 已可用，也不等�
     `--published-recovery-bvid ... --plan`，确认 package 内完整 state tuple/predecessor authority 仍
     对应当前 state；`make-manifest` 必须消费 VERIFIED outer receipt 而非 pending/裸 package。
     不得用历史 `candidate_rejected` 前像、手工 state 或 package copy 代替；
-2. 冻结最终包，重建 pending-human review manifest，运行 current canonical package audit；
-3. 先用 final-human-review builder 的 `--prepare-evidence-template` 冻结 v2 bindings；被如实
-   命名的 reviewer 按 committed exact review contract 完整复核最终烧录字节、填写实际
-   observations，再由 builder create-only 签出 `lidousha-final-human-review.v2`；只有真的
-   完成观看后才可出 receipt；
+2. 冻结最终包，重建兼容名称的 pending-human review manifest，运行 current canonical package audit；
+3. 正常使用 builder `--mechanical` 生成独立机械 receipt；只有实际选择人工复核时，才准备
+   v2 evidence template 并由真实观看者填写 observations。不得把人工全片观看作为每片默认
+   前置，也不得给未观看的 v2 receipt 补签；
 3b. 逐案放行：批仍 `recovery_incomplete` 时，可用
    `build_recovery_review_manifest.py --release-candidate <cid>`（可重复）
    只冻结已交付合规的单案；manifest 以 `partial_release_scope` 披露范围、批状态与

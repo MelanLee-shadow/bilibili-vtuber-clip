@@ -20,7 +20,7 @@ from src.autoslice.native_audio_budget_receipt import (
     BudgetReceiptPersistenceError,
     exclusive_native_audio_budget,
     persist_native_audio_budget_receipt,
-    require_native_audio_budget_continuity,
+    resume_native_audio_budget,
 )
 from src.autoslice.subtitle_audio_evidence import observe_secondary
 from src.autoslice.supplement_audio_budget import ensure_budget, get_budget
@@ -191,12 +191,6 @@ def build_native_foreign_witness(
         raise ValueError("native witness source changed while hashing")
     _no_links(output_dir)
     _no_links(budget_receipt_path)
-    # Inspect occupied output before ensure_budget can create a fresh ledger.
-    require_native_audio_budget_continuity(
-        source_media=source_media,
-        source_media_sha256=source_sha,
-        receipt_path=budget_receipt_path,
-    )
     output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     budget = ensure_budget(
         source_media,
@@ -204,7 +198,7 @@ def build_native_foreign_witness(
         max_audio_ms=max_audio_ms,
     )
     with budget.lock, exclusive_native_audio_budget(budget_receipt_path):
-        require_native_audio_budget_continuity(
+        resume_native_audio_budget(
             source_media=source_media,
             source_media_sha256=source_sha,
             receipt_path=budget_receipt_path,
@@ -218,7 +212,7 @@ def build_native_foreign_witness(
 
     def persist_dispatch_reservation() -> None:
         # This is called inside the existing source/receipt locks, at the actual
-        # before-HTTP seam; it adds neither retries nor allowance restoration.
+        # before-HTTP seam; it never refunds previous attempts or changes configured limits.
         if get_budget(source_media) is not budget:
             raise BudgetReceiptPersistenceError(
                 "native audio budget object changed before dispatch persistence"
@@ -236,7 +230,7 @@ def build_native_foreign_witness(
                     "native audio budget object changed before observation"
                 )
             # Deliberately outside try/finally: rejection must not rewrite evidence.
-            require_native_audio_budget_continuity(
+            resume_native_audio_budget(
                 source_media=source_media,
                 source_media_sha256=source_sha,
                 receipt_path=budget_receipt_path,
