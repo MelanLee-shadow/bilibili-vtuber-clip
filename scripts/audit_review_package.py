@@ -24,6 +24,9 @@ from src.autoslice.cover_route_evidence import (  # noqa: E402
     validate_cover_route_decision,
     validate_rendered_text_pixel_evidence,
 )
+from src.autoslice.review_package_cover_diagnostics import (  # noqa: E402
+    host_only_identity_route_blocker_detail as _host_only_identity_route_blocker_detail,
+)
 from src.autoslice.cover_text_pixel_evidence import (  # noqa: E402
     verify_pre_overlay_route_background,
     verify_rendered_text_pixel_artifacts,
@@ -507,12 +510,26 @@ def _audit_story_bound_cover(
             ),
         )
     if required and (not validate_cover_route_decision(generation, allow_legacy_v1=False)):
+        host_only_detail = _host_only_identity_route_blocker_detail(generation)
         _add_issue(
             issues,
-            "COVER_ROUTE_DECISION_MISSING_OR_INVALID",
+            (
+                "COVER_HOST_ONLY_IDENTITY_VERIFICATION_MISSING_OR_STALE"
+                if host_only_detail
+                else "COVER_ROUTE_DECISION_MISSING_OR_INVALID"
+            ),
             stem=stem,
             path=record_path,
+            detail=host_only_detail,
         )
+    if "approved_punch_successor" in generation:
+        from src.autoslice.screenshot_punch_successor import validate_successor
+
+        try:
+            validate_successor(generation)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            _add_issue(issues, "COVER_APPROVED_PUNCH_SUCCESSOR_INVALID",
+                       stem=stem, path=record_path, detail=str(exc))
     if required and not validate_rendered_text_pixel_evidence(generation):
         _add_issue(
             issues,
@@ -552,10 +569,17 @@ def _contains_japanese(text: str) -> bool:
 
 
 def _looks_song_like(item: dict[str, Any], evidence: dict[str, Any]) -> bool:
-    if str(item.get("classification") or "").lower() == "song":
+    item_lane = str(item.get("classification") or "").lower()
+    evidence_lane = str(evidence.get("classification") or "").lower()
+    if "song" in (item_lane, evidence_lane):
         return True
     if str(item.get("title") or "").startswith(CHANNEL_PROFILE.song_title_prefix):
         return True
+    # A talk clip can discuss singing or lyrics. Keep its talk-specific gates
+    # when the manifest and bound producer record agree on the explicit lane.
+    # Unclassified/conflicting legacy inputs still use the conservative clues.
+    if item_lane == evidence_lane == "talk":
+        return False
     joined = " ".join(
         str(value)
         for value in [
@@ -787,13 +811,16 @@ def _audit_finished_cover_evidence(
             generation.get("reference_sha256")
         )
         route_ready = validate_cover_route_decision(generation, allow_legacy_v1=True)
-        if not (
+        host_only_detail = _host_only_identity_route_blocker_detail(generation)
+        physical_evidence_ready = bool(
             valid_method
             and frame_binding_valid
-            and route_ready
             and reference_ready
             and rendered_text_ready
             and _artifact_matches_sha256(final_path, final_hash)
+        )
+        if not physical_evidence_ready or (
+            not route_ready and not host_only_detail
         ):
             _add_issue(
                 issues,
@@ -857,7 +884,11 @@ def _audit_finished_cover_evidence(
     )
     if treatment == "cpa_redraw":
         route_ready = validate_cover_route_decision(generation, allow_legacy_v1=True)
-        if not (route_ready and rendered_text_ready and actual_ai_ready):
+        host_only_detail = _host_only_identity_route_blocker_detail(generation)
+        physical_evidence_ready = bool(rendered_text_ready and actual_ai_ready)
+        if not physical_evidence_ready or (
+            not route_ready and not host_only_detail
+        ):
             _add_issue(
                 issues,
                 "CPA_COVER_EVIDENCE_MISSING",

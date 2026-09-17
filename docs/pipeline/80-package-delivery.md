@@ -258,6 +258,13 @@ prepare 工作。一个被阻候选不得阻断其它候选。
   `lidousha-branding-intro.v2` 机械改成 v5。audit 绑定 auditor/策略代码与关键资产的
   `policy_fingerprint`、auditor source hash 以及完整 portable `audited_inputs` 闭包；
   任一文件或政策漂移都使旧 audit 失效。单独一个 `passed: true` JSON 不是证据。
+- SRT 渲染读取复用现有 release validator 的空行分块规则：只含空格/制表符的行也分隔字幕。
+  不能把下一条的编号、时间戳和文字吃进上一条；保持原词面及各自时间窗。无编号的旧 source
+  读取兼容性不等于 release 合格，最终结构检查和独立 SRT/ASS 对应检查继续执行。
+- 最终 SRT 到 ASS 的字形/布局投影不得再发现或套用 `term_lexicon.json` 改词。
+  词表规范化保留在草稿/来源读取和既有文字裁决阶段；最终烧录使用已完成这些步骤的 SRT。
+  同一最终 SRT 不应因旁边目录或环境中的词表而产生另一种词面。现有小范围移字、换行、
+  时间取整、已绑定 prebuilt ASS 和独立 SRT/ASS 逐事件复核保持不变；本规则不替代前置词面审定。
 - 2026-09-09（UTC）维护者 对上一版整句合并提出纠正：必须保留两条原有字幕节奏，
   不能以“24字以内放得下”为由把后句提前合并。相邻同说话人/同层/同位置、无重叠、
   间隙≤120ms时，只把断词的1–2个原字符及紧随标点移动到相邻条。源SRT原字节不动，

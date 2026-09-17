@@ -26,6 +26,14 @@ SCHEMA_VERSION = "lidousha-cover-final-host-identity-verification.v3"
 AUTHORITY = (
     "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_AND_PROMINENCE_COMPARISON"
 )
+HOST_ONLY_SCHEMA_VERSION = "lidousha-cover-final-host-identity-verification.v4"
+HOST_ONLY_AUTHORITY = (
+    "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_PROMINENCE_AND_HOST_ONLY_COMPARISON"
+)
+HOST_ONLY_FALLBACK_MODES = frozenset(
+    {"HOST_ONLY_GENERIC", "HOST_ONLY_RELATION_EXPLICIT"}
+)
+HOST_ONLY_REASON_CODE = "FINAL_COVER_HOST_ONLY_POLICY_FAILED"
 # 冻结出版结转条款：字节等同复用一张**已发布**
 # 封面时，其发布时点的身份见证是该字节的既成证据；对同一字节按今日更严的
 # v3 门重考属于对冻结资产做 live 政策重算（7/27 裁定禁止），且视觉裁判对
@@ -226,13 +234,19 @@ def _normalize_scene_kind(value: object) -> str:
     return text if text in _SCENE_VERDICT_FIELDS else "talk"
 
 
-def _identity_answer_valid(answer: str, *, scene_kind: str = "talk") -> bool:
+def _identity_answer_valid(
+    answer: str,
+    *,
+    scene_kind: str = "talk",
+    host_only_required: bool = False,
+) -> bool:
     try:
         verdict = _extract_json_object(answer)
     except (ValueError, json.JSONDecodeError):
         return False
-    fields = _SCENE_VERDICT_FIELDS[_normalize_scene_kind(scene_kind)]
-    return bool(
+    scene = _normalize_scene_kind(scene_kind)
+    fields = _SCENE_VERDICT_FIELDS[scene]
+    base_valid = bool(
         all(isinstance(verdict.get(key), bool) for key in fields)
         and isinstance(verdict.get("identity_conflicts"), list)
         and isinstance(verdict.get("composition_conflicts"), list)
@@ -243,6 +257,55 @@ def _identity_answer_valid(answer: str, *, scene_kind: str = "talk") -> bool:
         )
         and isinstance(verdict.get("reason"), str)
         and str(verdict.get("reason") or "").strip()
+    )
+    if not base_valid or not host_only_required:
+        return base_valid
+    visible = verdict.get("other_recognizable_people_or_avatars_visible")
+    others = verdict.get("other_recognizable_people_or_avatars")
+    return bool(
+        scene == "talk"
+        and isinstance(visible, bool)
+        and isinstance(others, list)
+        and all(isinstance(value, str) and value.strip() for value in others)
+        and visible == bool(others)
+    )
+
+
+def story_contract_requires_host_only_final(
+    story_contract: object,
+    *,
+    scene_kind: str = "talk",
+) -> bool:
+    """Return whether the final Talk cover must contain only Lidousha.
+
+    ``HOST_ONLY_*`` is already the StoryContract's fallback decision when no
+    hash-bound, verified multi-participant reference owns the cover.  Game
+    covers retain their separate full-frame policy and are deliberately not
+    converted into host-only portraits.
+    """
+
+    return bool(
+        _normalize_scene_kind(scene_kind) == "talk"
+        and isinstance(story_contract, Mapping)
+        and story_contract.get("cover_fallback_mode")
+        in HOST_ONLY_FALLBACK_MODES
+    )
+
+
+def cover_generation_requires_host_only_final(
+    cover_generation: Mapping[str, object],
+) -> bool:
+    source_composition = cover_generation.get("source_composition_verification")
+    # The result being checked cannot choose a weaker scene for its own check.
+    # Use the same source-composition binding as the production witness caller.
+    scene_kind = (
+        str(source_composition.get("scene_kind") or "")
+        if isinstance(source_composition, Mapping)
+        else ""
+    ) or "talk"
+    return story_contract_requires_host_only_final(
+        cover_generation.get("story_contract"),
+        scene_kind=scene_kind,
     )
 
 
@@ -354,6 +417,27 @@ _GAME_QUESTION = (
     '"composition_conflicts":["小窗被裁/小窗换人/死空白/无意义装饰/空面板等"],'
     '"reason":"简短中文说明"}'
 )
+
+_HOST_ONLY_QUESTION_SUFFIX = (
+    "\n本条 StoryContract 明确要求 HOST_ONLY：只检查右侧 FINAL COVER。除李豆沙外，"
+    "任何可辨识的人形或虚拟角色都不得出现，包括旧视频面板、小窗、头像、截图中的人物、"
+    "局部脸、被裁掉一部分的角色或作为次要装饰的人物。普通物件、文字和无人形游戏画面不计。"
+    "额外输出字段："
+    '"other_recognizable_people_or_avatars_visible":true|false,'
+    '"other_recognizable_people_or_avatars":["位置+简短描述"]。'
+    "两字段必须一致：没有其他人物时布尔为 false 且列表为空；看见任意一个时布尔为 true 且列出。"
+)
+
+
+def _identity_question(*, scene_kind: str, host_only_required: bool) -> str:
+    question = _SCENE_QUESTION[_normalize_scene_kind(scene_kind)]
+    if host_only_required:
+        question = question.replace(
+            f"次要人物可以存在，但主角必须是{CHANNEL_PROFILE.display_name}。",
+            f"成品只能出现{CHANNEL_PROFILE.display_name}，不得出现其他人物或虚拟角色。",
+        )
+    return question + (_HOST_ONLY_QUESTION_SUFFIX if host_only_required else "")
+
 
 _SCENE_QUESTION = {"talk": _QUESTION, "game": _GAME_QUESTION}
 
@@ -481,18 +565,25 @@ def verify_final_host_identity(
     base_url: str = "",
     api_key: str = "",
     scene_kind: str = "talk",
+    host_only_required: bool = False,
 ) -> dict[str, object]:
     """Return a fail-closed CPA-primary verdict bound to source/final bytes."""
 
     scene = _normalize_scene_kind(scene_kind)
     final_cover_path = Path(final_cover_path)
     reference_path = Path(reference_path)
+    if host_only_required and scene != "talk":
+        raise ValueError("host-only final-cover policy is only valid for Talk covers")
     verification: dict[str, object] = {
-        "schema_version": SCHEMA_VERSION,
-        "authority": AUTHORITY,
+        "schema_version": (
+            HOST_ONLY_SCHEMA_VERSION if host_only_required else SCHEMA_VERSION
+        ),
+        "authority": HOST_ONLY_AUTHORITY if host_only_required else AUTHORITY,
         "final_cover_path": str(final_cover_path),
         "reference_path": str(reference_path),
     }
+    if host_only_required:
+        verification["host_only_required"] = True
     if scene != "talk":
         # talk 回执逐字节保持既有形状（保真钉）。
         verification["scene_kind"] = scene
@@ -538,15 +629,15 @@ def verify_final_host_identity(
     comparison_sha = _sha256(comparison_path)
     witness = image_vision_probe(
         comparison_path,
-        _SCENE_QUESTION[scene],
+        _identity_question(
+            scene_kind=scene, host_only_required=host_only_required
+        ),
         api_base=base_url,
         api_key=api_key,
-        answer_validator=(
-            _identity_answer_valid
-            if scene == "talk"
-            else lambda answer: _identity_answer_valid(
-                answer, scene_kind=scene
-            )
+        answer_validator=lambda answer: _identity_answer_valid(
+            answer,
+            scene_kind=scene,
+            host_only_required=host_only_required,
         ),
     )
     verification.update(
@@ -635,8 +726,25 @@ def verify_final_host_identity(
             and isinstance(composition_conflicts, list)
             and not composition_conflicts
         )
-    if identity_passed and composition_passed:
+    host_only_passed = bool(
+        not host_only_required
+        or (
+            verdict.get("other_recognizable_people_or_avatars_visible") is False
+            and verdict.get("other_recognizable_people_or_avatars") == []
+        )
+    )
+    if identity_passed and composition_passed and host_only_passed:
         verification["status"] = "PASS"
+    elif identity_passed and composition_passed and not host_only_passed:
+        verification.update(
+            status="FAIL",
+            reason_code=HOST_ONLY_REASON_CODE,
+            detail=str(
+                verdict.get("other_recognizable_people_or_avatars")
+                or verdict.get("reason")
+                or "non-host person or avatar remains visible"
+            ),
+        )
     elif identity_passed:
         verification.update(
             status="FAIL",
@@ -895,27 +1003,58 @@ def validate_final_host_identity_verification(
             and primary_receipt.get("provider") == "cpa"
         )
     )
-    generation_pin_valid = (
-        verification.get("schema_version") == SCHEMA_VERSION
-        and verification.get("authority") == AUTHORITY
-    ) or (
-        # 冻结出版结转条款：仅字节等同结转 bundle + 恰为 v2 历史世代对。
-        cover_generation.get("carried_forward_from_published_record") is True
-        and verification.get("schema_version")
-        == PUBLISHED_CARRY_SCHEMA_VERSION
-        and verification.get("authority") == PUBLISHED_CARRY_AUTHORITY
+    host_only_required = cover_generation_requires_host_only_final(
+        cover_generation
     )
+    if host_only_required:
+        generation_pin_valid = bool(
+            verification.get("schema_version") == HOST_ONLY_SCHEMA_VERSION
+            and verification.get("authority") == HOST_ONLY_AUTHORITY
+            and verification.get("host_only_required") is True
+        )
+    else:
+        generation_pin_valid = (
+            verification.get("schema_version") == SCHEMA_VERSION
+            and verification.get("authority") == AUTHORITY
+        ) or (
+            # 冻结出版结转条款：仅字节等同结转 bundle + 恰为 v2 历史世代对。
+            cover_generation.get("carried_forward_from_published_record") is True
+            and verification.get("schema_version")
+            == PUBLISHED_CARRY_SCHEMA_VERSION
+            and verification.get("authority") == PUBLISHED_CARRY_AUTHORITY
+        )
     # 结论面二选一：①见证自己给出 PASS；②见证自相矛盾被整体作废，结论由
     # 第三方承接证据承担（维护者 亲裁）。除这一项外，其余每条合取
     # ——世代锁、成品字节绑定、对比图哈希绑定、provider 路由——一律照旧。
     # 否则一份"矛盾形状"但根本没打过见证的回执就能只凭联合 QC 放行，正是
     # 维护者 禁的"没有 witness 也能过"的侧门。
-    verdict_lane_valid = verification.get(
-        "status"
-    ) == "PASS" or _self_inconsistent_disregard_valid(
-        verification,
-        final_cover_sha256=str(cover_generation.get("final_cover_sha256") or ""),
-    )
+    verdict_lane_valid = verification.get("status") == "PASS"
+    if not host_only_required:
+        verdict_lane_valid = verdict_lane_valid or _self_inconsistent_disregard_valid(
+            verification,
+            final_cover_sha256=str(
+                cover_generation.get("final_cover_sha256") or ""
+            ),
+        )
+    if host_only_required:
+        verdict = verification.get("verdict")
+        answer = witness.get("answer") if isinstance(witness, Mapping) else None
+        try:
+            parsed_answer = (
+                dict(_extract_json_object(answer))
+                if isinstance(answer, str)
+                else None
+            )
+        except (ValueError, json.JSONDecodeError):
+            parsed_answer = None
+        verdict_lane_valid = bool(
+            verdict_lane_valid
+            and isinstance(verdict, Mapping)
+            and parsed_answer == dict(verdict)
+            and verdict.get("other_recognizable_people_or_avatars_visible")
+            is False
+            and verdict.get("other_recognizable_people_or_avatars") == []
+        )
     return bool(
         generation_pin_valid
         and verdict_lane_valid

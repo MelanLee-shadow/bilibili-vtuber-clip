@@ -332,8 +332,15 @@ def _pending_payload(path: Path, payload: bytes) -> bytes:
 
 
 def _pending_is_owned_recoverable(path: Path, *, target: Path, payload: bytes, target_mode: int, target_uid: int, target_gid: int, target_exists: bool) -> bool:
-    """A pending file is mutable only after its sealed header identifies this target."""
+    """Accept a private owned prefix, then require exact metadata after publication.
 
+    Before publication, a filesystem may assign either the process group or the
+    parent-directory group.  Mode 0600 and ownership by this uid are the private
+    boundary.  Once the final hard link exists, both names share an inode, so
+    the exact target gid is required again.
+    """
+
+    del target
     try:
         observed = os.lstat(path)
         raw = path.read_bytes()
@@ -341,10 +348,10 @@ def _pending_is_owned_recoverable(path: Path, *, target: Path, payload: bytes, t
         return False
     expected_mode = target_mode if target_exists else _PRIVATE_FILE_MODE
     expected_uid = target_uid if target_exists else os.geteuid()
-    expected_gid = target_gid if target_exists else os.getegid()
+    gid_matches = not target_exists or observed.st_gid == target_gid
     return (
         not path.is_symlink() and stat.S_ISREG(observed.st_mode)
-        and observed.st_uid == expected_uid and observed.st_gid == expected_gid
+        and observed.st_uid == expected_uid and gid_matches
         and stat.S_IMODE(observed.st_mode) == expected_mode
         and payload.startswith(raw)
     )
@@ -961,7 +968,7 @@ def _stage_transaction(*, date: str, state_raw: bytes, updated: Mapping[str, Any
             "before_sha256": _sha256(before), "after_sha256": _sha256(after), "before_bytes_b64": _b64(before), "after_bytes_b64": _b64(after),
             "before_mode": _mode(target), "after_mode": descriptor.get("post_mode"),
             "before_uid": os.lstat(target).st_uid, "before_gid": os.lstat(target).st_gid,
-            "after_uid": os.geteuid(), "after_gid": os.getegid(),
+            "after_uid": descriptor.get("uid"), "after_gid": descriptor.get("gid"),
         })
     authority = receipt.get("candidate_public_text_source_fact_refresh", {}).get("authority_sha256")
     if not isinstance(authority, str):

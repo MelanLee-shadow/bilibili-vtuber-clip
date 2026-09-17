@@ -365,6 +365,66 @@ def test_recording_date_qixi_portable_clone_uses_attested_review_date(
     )
 
 
+def test_recording_date_review_package_uses_exact_candidate_surfaces(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "portable-review-package"
+    record = package / f"{CANDIDATE}.record.json"
+    review = package / "review_manifest.json"
+    _write_json(record, {"story_contract": {"candidate_id": CANDIDATE}})
+    _write_json(
+        review,
+        {
+            "date": DATE,
+            "exact_candidate_ids": [CANDIDATE],
+            "selection_contract": {"candidate_ids": [CANDIDATE]},
+            "items": [{"candidate_id": CANDIDATE}],
+        },
+    )
+    manifest = {
+        "package_attestation": {
+            "package_root": str(package.resolve()),
+            "record": _entry(record),
+            "review_manifest": _entry(review),
+        }
+    }
+
+    assert reconciliation._candidate_and_date(manifest) == (  # noqa: SLF001
+        CANDIDATE,
+        DATE,
+    )
+
+
+def test_recording_date_review_package_rejects_conflicting_candidate_surfaces(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "portable-review-package"
+    record = package / f"{CANDIDATE}.record.json"
+    review = package / "review_manifest.json"
+    _write_json(record, {"story_contract": {"candidate_id": CANDIDATE}})
+    _write_json(
+        review,
+        {
+            "date": DATE,
+            "exact_candidate_ids": [CANDIDATE],
+            "items": [{"candidate_id": "other"}],
+        },
+    )
+    manifest = {
+        "package_attestation": {
+            "package_root": str(package.resolve()),
+            "record": _entry(record),
+            "review_manifest": _entry(review),
+        }
+    }
+
+    with pytest.raises(
+        reconciliation.PublicationReconciliationError,
+        match="candidate differs",
+    ):
+        reconciliation._candidate_and_date(manifest)  # noqa: SLF001
+
+
 @pytest.mark.parametrize(
     ("review", "message"),
     [

@@ -123,6 +123,30 @@ def test_video_hash_mismatch_leaves_package_untouched(tmp_path: Path) -> None:
     assert not cover.with_suffix(".cover-binding.json").exists()
 
 
+@pytest.mark.parametrize("source_matches", [True, False])
+def test_final_burned_media_requires_matching_source_chain(tmp_path, source_matches):
+    pkg, mp4 = _package(tmp_path)
+    cover = _cover(tmp_path)
+    publish_path, record_path = pkg / "delivery.publish.json", pkg / "delivery.record.json"
+    publish, record = json.loads(publish_path.read_text()), json.loads(record_path.read_text())
+    source_sha = "sha256:" + "a" * 64
+    publish["artifact_hashes"]["video_sha256"] = source_sha
+    record["artifact_hashes"].update(
+        burned_video_sha256=_sha(mp4),
+        video_sha256=source_sha if source_matches else "sha256:" + "b" * 64)
+    _write_json(publish_path, publish)
+    _write_json(record_path, record)
+    before = {p: p.read_bytes() for p in pkg.iterdir()}
+    if source_matches:
+        assert bind_manual_package_cover(package_dir=pkg, cover=cover)["status"] == "BOUND"
+        assert json.loads(publish_path.read_text())["artifact_hashes"]["video_sha256"] == source_sha
+        assert mp4.read_bytes() == before[mp4]
+    else:
+        with pytest.raises(ValueError, match="video hash"):
+            bind_manual_package_cover(package_dir=pkg, cover=cover)
+        assert {p: p.read_bytes() for p in pkg.iterdir()} == before
+
+
 def test_existing_binding_is_immutable(tmp_path: Path) -> None:
     pkg, _mp4 = _package(tmp_path)
     cover = _cover(tmp_path)

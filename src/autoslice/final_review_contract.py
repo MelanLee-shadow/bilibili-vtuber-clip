@@ -345,6 +345,18 @@ def validate_final_review_release(
 ) -> dict[str, object]:
     """Validate a positive receipt; every other state is a release block."""
 
+    if isinstance(audit, Mapping) and audit.get("schema_version") == "c10-operator-final-review-successor.v1":
+        from src.autoslice.c10_operator_review_successor import (
+            C10OperatorReviewSuccessorError,
+            validate_c10_operator_review_successor,
+        )
+
+        try:
+            return validate_c10_operator_review_successor(
+                audit, expected_srt_sha256=expected_srt_sha256
+            )
+        except C10OperatorReviewSuccessorError as exc:
+            raise FinalReviewContractError(exc.reason_code) from exc
     if isinstance(audit, Mapping) and audit.get("schema_version") == "original-preserved-final-review.v1":
         from src.autoslice.operator_preserved_final_review import validate_preserved_review
         return validate_preserved_review(audit, expected_srt_sha256=expected_srt_sha256)

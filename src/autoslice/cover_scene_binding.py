@@ -11,8 +11,8 @@
   `camera_window_bbox_frac`（固定位置的面捕小窗，正是"全屏游戏 + 角落小窗"版式）。
 
 两条都拿到才是游戏场。任何缺失、读坏、schema 不合、status 非 RESOLVED，或者这一条
-根本没有小窗（游戏场里的纯杂谈切片就是这样），都退回 talk——talk 面的提问、问卷与
-回执形状逐字节不变，放宽面永远不会靠"猜"生效。
+根本没有小窗（游戏场里的纯杂谈切片就是这样），都退回 talk，放宽面不会靠"猜"生效。
+最终身份检查另消费当前 StoryContract；谈话场的 HOST_ONLY 约束不能在接线时丢失。
 """
 
 from __future__ import annotations
@@ -138,8 +138,8 @@ def run_final_host_identity_witness(
 
 def host_identity_scene_kwargs(
     cover_generation: Mapping[str, object],
-) -> dict[str, str]:
-    """Scene kwargs for the final host-identity gate (empty on talk).
+) -> dict[str, object]:
+    """Derive final-image constraints from the bound scene and StoryContract.
 
     终检的场景**不重新推导**，直接读那份已经 hash-bound 的 source-composition
     回执自称的 scene：终检必须问的是"这张成品是按哪套判据放行的"，重算一次会让
@@ -149,4 +149,14 @@ def host_identity_scene_kwargs(
     scene = source_composition_scene_kind(
         cover_generation.get("source_composition_verification")
     )
-    return {} if scene == TALK_SCENE else {"scene_kind": scene}
+    kwargs: dict[str, object] = (
+        {} if scene == TALK_SCENE else {"scene_kind": scene}
+    )
+    story_contract = cover_generation.get("story_contract")
+    from src.autoslice.cover_host_identity_gate import (
+        story_contract_requires_host_only_final,
+    )
+
+    if story_contract_requires_host_only_final(story_contract, scene_kind=scene):
+        kwargs["host_only_required"] = True
+    return kwargs

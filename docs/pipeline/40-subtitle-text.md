@@ -464,7 +464,13 @@ FLAGGED/失效 receipt。最终 materialize 后仍必须重算 exact-final SRT�
   [30-boundary.md](30-boundary.md)。
 - 最终裁决顺序固定为：**先按最终边界恢复 reviewed baseline → 再重放更高权威 source truth
   → 对每个 baseline mapping 与 source-truth declared output 在最终 clean SRT 和 speaker SRT
-  上逐项验活 → 才允许低权威 repair 记为 `SUPERSEDED_*`**。owner 自己未通过时，不能用
+  上逐项验活 → 才允许低权威 repair 记为 `SUPERSEDED_*`**。候选专属 materializer/projection 若
+  自己封印 source rows，也必须在 output row 与最终 SRT hash 生成前消费晚到的
+  `REVIEWER_OPERATOR_TRUTH`；不得先用旧 reviewed baseline 生成并封印输出，再让 operator truth 无处落地。
+  该 overlay 必须绑定 candidate、source row/cue、不可变时窗、整行前像 SHA、精确字符 span、用户
+  truth receipt 与局部 occurrence receipt。用户决定规范专名，短窗只决定这次口播出现一遍还是两遍；
+  二者不能合并成无条件全局谐音替换。任一前像、时钟、span 或证据 hash 漂移都 fail closed，最终
+  clean/speaker SRT、ASS 与 burn 必须消费同一 effective source text。owner 自己未通过时，不能用
   “低权威项已被覆盖”制造 `final_required_decision_count=0` 的假绿。审计字段
   `final_source_truth_owner_verification` 与
   `final_redelivery_baseline_owner_verification` 在对应 owner 存在时必须为 PASS，且该类

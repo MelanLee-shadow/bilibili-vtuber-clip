@@ -283,6 +283,65 @@ def _create_or_validate_authority(path: Path, expected: dict) -> dict:
     return expected
 
 
+def _validate_review_manifest_candidate(
+    review: Mapping[str, object], candidate_id: str
+) -> None:
+    """Require every present review-manifest identity surface to name one candidate."""
+    identities: list[str] = []
+    top_level = str(review.get("candidate_id") or "")
+    if top_level:
+        identities.append(top_level)
+
+    if "exact_candidate_ids" in review:
+        exact = review.get("exact_candidate_ids")
+        if (
+            not isinstance(exact, list)
+            or len(exact) != 1
+            or not isinstance(exact[0], str)
+            or not exact[0]
+        ):
+            raise PublicationReconciliationError(
+                "manifest review manifest candidate differs from record"
+            )
+        identities.append(exact[0])
+
+    if "items" in review:
+        items = review.get("items")
+        if (
+            not isinstance(items, list)
+            or len(items) != 1
+            or not isinstance(items[0], Mapping)
+        ):
+            raise PublicationReconciliationError(
+                "manifest review manifest candidate differs from record"
+            )
+        item_candidate = str(items[0].get("candidate_id") or "")
+        if not item_candidate:
+            raise PublicationReconciliationError(
+                "manifest review manifest candidate differs from record"
+            )
+        identities.append(item_candidate)
+
+    selection = review.get("selection_contract")
+    if isinstance(selection, Mapping) and "candidate_ids" in selection:
+        selected = selection.get("candidate_ids")
+        if (
+            not isinstance(selected, list)
+            or len(selected) != 1
+            or not isinstance(selected[0], str)
+            or not selected[0]
+        ):
+            raise PublicationReconciliationError(
+                "manifest review manifest candidate differs from record"
+            )
+        identities.append(selected[0])
+
+    if not identities or any(value != candidate_id for value in identities):
+        raise PublicationReconciliationError(
+            "manifest review manifest candidate differs from record"
+        )
+
+
 def _original_review_date(manifest, record, review, candidate_id):
     """Read the registered original target, not a new wrapper date or a C2 shape."""
     from src.autoslice import original_patch_package
@@ -395,10 +454,7 @@ def _candidate_and_date(manifest: Mapping[str, object]) -> tuple[str, str]:
             attestation.get("review_manifest"), "manifest review manifest"
         )
         review = _load_object(review_path, "manifest review manifest")
-        if str(review.get("candidate_id") or "") != candidate_id:
-            raise PublicationReconciliationError(
-                "manifest review manifest candidate differs from record"
-            )
+        _validate_review_manifest_candidate(review, candidate_id)
         review_dates = {
             str(review[key])
             for key in ("date", "recording_date")
@@ -440,10 +496,7 @@ def _candidate_and_date(manifest: Mapping[str, object]) -> tuple[str, str]:
         original_date = _original_review_date(manifest, record, review, candidate_id)
         if original_date is not None:
             return candidate_id, original_date
-        if str(review.get("candidate_id") or "") != candidate_id:
-            raise PublicationReconciliationError(
-                "manifest review manifest candidate differs from record"
-            )
+        _validate_review_manifest_candidate(review, candidate_id)
         review_dates = {
             str(review[key])
             for key in ("date", "recording_date")

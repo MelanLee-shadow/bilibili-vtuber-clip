@@ -51,6 +51,7 @@ EXPECTED_SOURCE="${AUTOSLICE_WATCHDOG_EXPECTED_SOURCE:-CloudFS}"
 # while Docker binds its parent).  Keep Free's historical default intact.
 EXPECTED_RECORDING_BIND_ROOT="${AUTOSLICE_WATCHDOG_EXPECTED_RECORDING_BIND_ROOT:-$PROBE_DIR}"
 COMPOSE_FILE="${AUTOSLICE_WATCHDOG_COMPOSE_FILE:-/opt/bilive/compose.yml}"
+CLOUDDRIVE_COMPOSE_FILE="${AUTOSLICE_WATCHDOG_CLOUDDRIVE_COMPOSE_FILE:-/root/clouddrive2/docker-compose.yml}"
 QUARANTINE_ROOT="${AUTOSLICE_WATCHDOG_QUARANTINE_ROOT:-/opt/bilive/mount-fallback-quarantine}"
 
 HEARTBEAT="${AUTOSLICE_WATCHDOG_HEARTBEAT:-$BASE/reports/heartbeat.txt}"
@@ -61,6 +62,11 @@ STALL_AFTER_S="${AUTOSLICE_WATCHDOG_STALL_AFTER_S:-1800}"
 SELF_HOLDER_RX="${AUTOSLICE_WATCHDOG_SELF_HOLDER_RX:-session_autoslice\.py}"
 PROC_LOCKS="${AUTOSLICE_WATCHDOG_PROC_LOCKS:-/proc/locks}"
 PROC_ROOT="${AUTOSLICE_WATCHDOG_PROC_ROOT:-/proc}"
+MOUNTINFO="${AUTOSLICE_WATCHDOG_MOUNTINFO:-/proc/1/mountinfo}"
+FUSE_CONNECTIONS_ROOT="${AUTOSLICE_WATCHDOG_FUSE_CONNECTIONS_ROOT:-/sys/fs/fuse/connections}"
+MAINTENANCE_HOLD_ROOT="${AUTOSLICE_WATCHDOG_MAINTENANCE_HOLD_ROOT:-$BASE/reports}"
+MAINTENANCE_HOLD_PATH="${AUTOSLICE_WATCHDOG_MAINTENANCE_HOLD_PATH:-}"
+MAINTENANCE_HOLD_EXIT_CODE=75
 
 DOCKER_BIN="${AUTOSLICE_WATCHDOG_DOCKER_BIN:-docker}"
 STAT_BIN="${AUTOSLICE_WATCHDOG_STAT_BIN:-stat}"
@@ -72,6 +78,9 @@ MV_BIN="${AUTOSLICE_WATCHDOG_MV_BIN:-mv}"
 SLEEP_BIN="${AUTOSLICE_WATCHDOG_SLEEP_BIN:-sleep}"
 TIMEOUT_BIN="${AUTOSLICE_WATCHDOG_TIMEOUT_BIN:-timeout}"
 UMOUNT_BIN="${AUTOSLICE_WATCHDOG_UMOUNT_BIN:-umount}"
+PYTHON_BIN="${AUTOSLICE_WATCHDOG_PYTHON_BIN:-python3}"
+LS_BIN="${AUTOSLICE_WATCHDOG_LS_BIN:-ls}"
+PROBE_TIMEOUT_S="${AUTOSLICE_WATCHDOG_PROBE_TIMEOUT_S:-25}"
 
 ts() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 say() { echo "[$(ts)] $*"; }
@@ -85,6 +94,86 @@ stall_alert() {
     mkdir -p "$(dirname "$STALL_ALERT")"
     echo "$(ts) $*" >> "$STALL_ALERT"
     say "$*"
+}
+
+maintenance_hold_block_reason() {
+    # Recovery incidents install a root-owned hold below the local reports
+    # tree before disabling the mount lane. Both normal watchdog runs and the
+    # record-health ``--probe-only`` cron must consume that authority *before*
+    # touching CloudFS: even a read-only ``ls`` can leave an unkillable D-state
+    # child when the provider endpoint is hung.
+    "$PYTHON_BIN" -B - "$MAINTENANCE_HOLD_ROOT" "$MAINTENANCE_HOLD_PATH" <<'PYHOLD'
+import json
+import os
+import stat
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+explicit = sys.argv[2]
+candidates = (
+    [Path(explicit)]
+    if explicit
+    else sorted(root.glob("clouddrive-source-recovery-*/HOLD.json"))
+)
+
+for path in candidates:
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        continue
+    except OSError as exc:
+        print(f"maintenance hold metadata unreadable: {path}: {type(exc).__name__}")
+        raise SystemExit(0)
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        print(f"maintenance hold metadata unsafe: {path}: not a regular file")
+        raise SystemExit(0)
+    mode = stat.S_IMODE(info.st_mode)
+    if info.st_uid != os.geteuid() or mode != 0o600:
+        print(
+            f"maintenance hold metadata unsafe: {path}: "
+            f"owner={info.st_uid} mode={mode:o}"
+        )
+        raise SystemExit(0)
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        print(f"maintenance hold metadata invalid: {path}: {type(exc).__name__}")
+        raise SystemExit(0)
+    if not isinstance(document, dict):
+        print(f"maintenance hold metadata invalid: {path}: expected object")
+        raise SystemExit(0)
+    if document.get("schema_version") != "clouddrive-source-recovery-hold.v1":
+        print(f"maintenance hold metadata invalid: {path}: unsupported schema")
+        raise SystemExit(0)
+    if document.get("status") != "ACTIVE_MAINTENANCE_HOLD":
+        continue
+    if document.get("restoration_required") is not True:
+        print(f"maintenance hold metadata invalid: {path}: restoration_required")
+        raise SystemExit(0)
+    print(f"maintenance hold active: {path}")
+    raise SystemExit(0)
+
+raise SystemExit(1)
+PYHOLD
+}
+
+exit_if_maintenance_hold_blocks_probes() {
+    hold_reason=$(maintenance_hold_block_reason)
+    hold_rc=$?
+    case "$hold_rc" in
+        0)
+            say "$hold_reason; watchdog probe/repair skipped"
+            exit "$MAINTENANCE_HOLD_EXIT_CODE"
+            ;;
+        1)
+            return 0
+            ;;
+        *)
+            say "maintenance hold check failed closed (rc=$hold_rc); watchdog probe/repair skipped"
+            exit "$MAINTENANCE_HOLD_EXIT_CODE"
+            ;;
+    esac
 }
 
 tick_lock_holders() {
@@ -160,9 +249,50 @@ mount_is_real() {
     [ "$source" = "$EXPECTED_SOURCE" ]
 }
 
+probe_directory_readable() {
+    # GNU timeout waits for a D-state FUSE child forever even after SIGKILL.
+    # Spawn the probe with close_fds in its own process group; on deadline the
+    # controller exits without wait(), allowing the recovery path to abort the
+    # exact kernel connection that will finally release the orphaned child.
+    "$PYTHON_BIN" -B - "$LS_BIN" "$PROBE_DIR" "$PROBE_TIMEOUT_S" <<'PYPROBE'
+import math
+import os
+import signal
+import subprocess
+import sys
+import time
+
+ls_bin, probe_dir, raw_timeout = sys.argv[1:]
+try:
+    timeout_seconds = float(raw_timeout)
+except ValueError:
+    raise SystemExit(2)
+if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+    raise SystemExit(2)
+with open(os.devnull, "rb") as stdin, open(os.devnull, "wb") as output:
+    process = subprocess.Popen(
+        [ls_bin, probe_dir],
+        stdin=stdin,
+        stdout=output,
+        stderr=output,
+        close_fds=True,
+        start_new_session=True,
+    )
+    deadline = time.monotonic() + timeout_seconds
+    while process.poll() is None and time.monotonic() < deadline:
+        time.sleep(min(0.1, max(timeout_seconds / 10, 0.01)))
+    if process.poll() is None:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        raise SystemExit(1)
+    raise SystemExit(process.returncode)
+PYPROBE
+}
+
 probe() {
-    mount_is_real &&
-        "$TIMEOUT_BIN" 25 ls "$PROBE_DIR" > /dev/null 2>&1
+    mount_is_real && probe_directory_readable
 }
 
 consumer_mount_ok() {
@@ -209,6 +339,109 @@ stop_consumers() {
     done
 }
 
+STALE_FUSE_MINOR=""
+STALE_FUSE_WAITING="unknown"
+
+resolve_stale_fuse_connection() {
+    # Validate the exact host-namespace mount and connection before stopping
+    # CloudDrive. Ambiguous ownership must have zero container side effects.
+    STALE_FUSE_MINOR=""
+    STALE_FUSE_WAITING="unknown"
+    [ -f "$MOUNTINFO" ] && [ ! -L "$MOUNTINFO" ] || {
+        alert "repair FAILED: host PID 1 mountinfo is unavailable or unsafe — NEEDS HUMAN"
+        return 1
+    }
+    rows=$(
+        awk -v target="$MOUNT" -v expected_source="$EXPECTED_SOURCE" '
+            $5 == target {
+                separator = 0
+                for (field = 7; field <= NF; field++) {
+                    if ($field == "-") {
+                        separator = field
+                        break
+                    }
+                }
+                if (separator > 0 && $(separator + 1) ~ /^fuse([.]|$)/ && $(separator + 2) == expected_source && $3 ~ /^[0-9]+:[0-9]+$/) {
+                    print $3
+                } else {
+                    print "UNSAFE"
+                }
+            }
+        ' "$MOUNTINFO"
+    ) || {
+        alert "repair FAILED: cannot inspect the host PID 1 mount namespace — NEEDS HUMAN"
+        return 1
+    }
+    [ -n "$rows" ] || return 0
+    count=$(printf '%s\n' "$rows" | awk 'NF { count += 1 } END { print count + 0 }')
+    [ "$count" -eq 1 ] && [ "$rows" != UNSAFE ] || {
+        alert "repair FAILED: exact CloudFS mount has ambiguous or unsafe mountinfo — NEEDS HUMAN"
+        return 1
+    }
+    device_minor=${rows#*:}
+    case "$device_minor" in
+        ''|*[!0-9]*)
+            alert "repair FAILED: exact CloudFS mount has an invalid FUSE device id — NEEDS HUMAN"
+            return 1
+            ;;
+    esac
+    connection="$FUSE_CONNECTIONS_ROOT/$device_minor"
+    abort_file="$connection/abort"
+    waiting_file="$connection/waiting"
+    if [ ! -e "$connection" ]; then
+        say "exact CloudFS mount has no live kernel FUSE connection; continuing with detach"
+        return 0
+    fi
+    [ -d "$connection" ] && [ ! -L "$connection" ] && [ -w "$abort_file" ] && [ ! -L "$abort_file" ] || {
+        alert "repair FAILED: FUSE connection $device_minor is unavailable or unsafe — NEEDS HUMAN"
+        return 1
+    }
+    STALE_FUSE_MINOR=$device_minor
+    if [ -f "$waiting_file" ] && [ ! -L "$waiting_file" ]; then
+        STALE_FUSE_WAITING=$(cat "$waiting_file" 2>/dev/null || echo unknown)
+    fi
+}
+
+stop_clouddrive() {
+    if ! "$DOCKER_BIN" stop clouddrive2 > /dev/null 2>&1; then
+        alert "repair FAILED: docker stop clouddrive2 returned non-zero — NEEDS HUMAN"
+        return 1
+    fi
+}
+
+abort_stale_fuse_connection() {
+    [ -n "$STALE_FUSE_MINOR" ] || return 0
+    connection="$FUSE_CONNECTIONS_ROOT/$STALE_FUSE_MINOR"
+    abort_file="$connection/abort"
+    # Stopping CloudDrive may itself release the connection. That is already a
+    # successful detach precondition, not a reason to recreate a stale id.
+    if [ ! -e "$connection" ]; then
+        say "stale CloudFS FUSE connection $STALE_FUSE_MINOR disappeared after CloudDrive stopped"
+        return 0
+    fi
+    [ -d "$connection" ] && [ ! -L "$connection" ] && [ -w "$abort_file" ] && [ ! -L "$abort_file" ] || {
+        alert "repair FAILED: FUSE connection $STALE_FUSE_MINOR drifted after CloudDrive stopped — NEEDS HUMAN"
+        return 1
+    }
+    if ! printf '1\n' > "$abort_file"; then
+        alert "repair FAILED: could not abort stale FUSE connection $STALE_FUSE_MINOR — NEEDS HUMAN"
+        return 1
+    fi
+    alert "aborted stale CloudFS FUSE connection $STALE_FUSE_MINOR (waiting=$STALE_FUSE_WAITING) after CloudDrive stopped"
+}
+
+recreate_clouddrive() {
+    # Reusing the stopped container can preserve its rshared mount namespace
+    # peer and reproduce the dead CloudFS endpoint. Recreate only this service,
+    # while pinning the already-present local image and forbidding pull/build.
+    if ! "$DOCKER_BIN" compose -f "$CLOUDDRIVE_COMPOSE_FILE" up -d \
+        --force-recreate --no-deps --no-build --pull never clouddrive2 \
+        > /dev/null 2>&1; then
+        alert "repair FAILED: CloudDrive force-recreate returned non-zero — NEEDS HUMAN"
+        return 1
+    fi
+}
+
 verify_consumers() {
     for attempt in $(seq 1 "$RECORDER_RETRIES"); do
         if all_consumers_ok; then
@@ -234,6 +467,18 @@ start_consumers() {
 quarantine_unmounted_contents() {
     # Never move files out of a mounted filesystem. -M checks the exact
     # mountpoint, unlike -T which otherwise falls back to the root filesystem.
+    if [ -L "$MOUNT" ]; then
+        alert "repair FAILED: unmounted mountpoint is a symlink — NEEDS HUMAN"
+        return 1
+    fi
+    if [ ! -e "$MOUNT" ]; then
+        say "unmounted mountpoint disappeared with the stale FUSE endpoint; no fallback entries to preserve"
+        return 0
+    fi
+    if [ ! -d "$MOUNT" ]; then
+        alert "repair FAILED: unmounted mountpoint is not a directory — NEEDS HUMAN"
+        return 1
+    fi
     if "$TIMEOUT_BIN" 10 "$FINDMNT_BIN" -n -M "$MOUNT" > /dev/null 2>&1; then
         alert "repair FAILED: $MOUNT is still a mountpoint after unmount — NEEDS HUMAN"
         return 1
@@ -268,6 +513,7 @@ case "${1:-}" in
     "")
         ;;
     --probe-only)
+        exit_if_maintenance_hold_blocks_probes
         probe
         exit $?
         ;;
@@ -276,6 +522,8 @@ case "${1:-}" in
         exit 2
         ;;
 esac
+
+exit_if_maintenance_hold_blocks_probes
 
 # Independent of mount health: a healthy mount with a starved runner is still
 # a dead pipeline, and this is the only cron line that keeps running when
@@ -306,15 +554,26 @@ if [ -f "$COOLDOWN_STAMP" ]; then
 fi
 date +%s > "$COOLDOWN_STAMP"
 
-alert "repair start: consumers stopped; unmounting stale endpoint"
+alert "repair start: consumers stopped; validating stale endpoint ownership"
+if ! resolve_stale_fuse_connection; then
+    exit 1
+fi
+alert "repair: stopping CloudDrive before aborting the host-namespace endpoint"
+if ! stop_clouddrive; then
+    exit 1
+fi
+if ! abort_stale_fuse_connection; then
+    recreate_clouddrive > /dev/null 2>&1 || true
+    exit 1
+fi
 "$FUSERMOUNT_BIN" -uz "$MOUNT" > /dev/null 2>&1 || true
 "$UMOUNT_BIN" -l "$MOUNT" > /dev/null 2>&1 || true
 if ! quarantine_unmounted_contents; then
+    recreate_clouddrive > /dev/null 2>&1 || true
     exit 1
 fi
 
-if ! "$DOCKER_BIN" restart clouddrive2 > /dev/null 2>&1; then
-    alert "repair FAILED: docker restart clouddrive2 returned non-zero — NEEDS HUMAN"
+if ! recreate_clouddrive; then
     exit 1
 fi
 

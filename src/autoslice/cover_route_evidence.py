@@ -23,6 +23,7 @@ from src.autoslice.cover_title_rendering import (
     render_spec_sha256,
 )
 from src.autoslice.cover_host_identity_gate import (
+    story_contract_requires_host_only_final,
     validate_final_host_identity_verification,
 )
 
@@ -43,6 +44,13 @@ RELATIONSHIP_VISUAL_SAFETY_SCHEMA = (
 RELATIONSHIP_VISUAL_SAFETY_BASIS = (
     "CONFIRMED_MULTI_PARTICIPANT_STORY_CONTRACT"
 )
+HOST_ONLY_VISUAL_SAFETY_SCHEMA = "lidousha-cover-host-only-visual-safety.v1"
+HOST_ONLY_VISUAL_SAFETY_BASIS = "STORY_CONTRACT_HOST_ONLY_FALLBACK"
+_HOST_ONLY_FORBIDDEN_VISUAL_CLASSES = [
+    "NON_HOST_PERSON",
+    "NON_HOST_VIRTUAL_AVATAR",
+    "NON_HOST_FACE_IN_PANEL_WINDOW_AVATAR_OR_SCREENSHOT",
+]
 RENDERED_TEXT_PIXEL_SCHEMA = "lidousha-cover-rendered-text-pixels.v3"
 TITLE_RENDER_SPEC_SCHEMA = "lidousha-cover-title-render-spec.v1"
 NO_CROP_PARTICIPANT_AUTHORITY = (
@@ -186,6 +194,43 @@ def relationship_visual_safety_evidence(
         "required_participant_ids": required_participant_ids,
         "requirement_basis": (
             [RELATIONSHIP_VISUAL_SAFETY_BASIS] if required else []
+        ),
+    }
+
+
+def host_only_visual_safety_evidence(
+    story_contract: object,
+    *,
+    scene_kind: str,
+) -> dict[str, object]:
+    """Bind a host-only StoryContract to a final-pixel exclusion rule.
+
+    This is intentionally separate from relationship participant inclusion:
+    verified dual-stream stories may require multiple people, while a
+    ``HOST_ONLY_*`` Talk fallback forbids every recognizable non-host person or
+    avatar in panels, windows, screenshots, profile images, and partial faces.
+    Game frames keep their independent full-frame policy.
+    """
+
+    fallback_mode = (
+        str(story_contract.get("cover_fallback_mode") or "")
+        if isinstance(story_contract, Mapping)
+        else ""
+    )
+    required = story_contract_requires_host_only_final(
+        story_contract,
+        scene_kind=scene_kind,
+    )
+    return {
+        "schema_version": HOST_ONLY_VISUAL_SAFETY_SCHEMA,
+        "status": "REQUIRED" if required else "NOT_REQUIRED",
+        "scene_kind": scene_kind,
+        "cover_fallback_mode": fallback_mode,
+        "forbidden_visual_classes": (
+            list(_HOST_ONLY_FORBIDDEN_VISUAL_CLASSES) if required else []
+        ),
+        "requirement_basis": (
+            [HOST_ONLY_VISUAL_SAFETY_BASIS] if required else []
         ),
     }
 
@@ -729,6 +774,12 @@ def build_cover_route_decision(
     relationship_visual_required = (
         visual_safety_evidence["status"] == "REQUIRED"
     )
+    scene_kind = source_composition_scene_kind(source_composition_verification)
+    host_only_evidence = host_only_visual_safety_evidence(
+        story_contract,
+        scene_kind=scene_kind,
+    )
+    host_only_visual_required = host_only_evidence["status"] == "REQUIRED"
     reference_is_hash_bound = is_hash_bound_reference_authority(
         reference_authority
     )
@@ -741,6 +792,13 @@ def build_cover_route_decision(
         "reason": rationale,
         "selected_rationale": rationale,
         **dict(decision_inputs),
+        "scene_kind": scene_kind,
+        "host_identity_required": bool(
+            decision_inputs.get("host_identity_required")
+            or host_only_visual_required
+        ),
+        "host_only_visual_required": host_only_visual_required,
+        "host_only_visual_safety_evidence": host_only_evidence,
         "required_participant_ids": story_participant_ids(story_contract),
         "source_visible_participant_ids": source_visible_participant_ids(
             reference_authority
@@ -902,6 +960,13 @@ def validate_cover_route_decision(
         and not isinstance(route.get("host_identity_required"), bool)
     ):
         return False
+    if "scene_kind" in route and route.get("scene_kind") not in {"talk", "game"}:
+        return False
+    if (
+        "host_only_visual_required" in route
+        and not isinstance(route.get("host_only_visual_required"), bool)
+    ):
+        return False
     for key in (
         "subject_confident",
         "verified_stream_frame",
@@ -918,6 +983,9 @@ def validate_cover_route_decision(
         and source_composition_supports_subject(source_composition)
         and source_composition["verdict"].get("source_face_complete") is True
     )
+    scene_kind = source_composition_scene_kind(source_composition)
+    if "scene_kind" in route and route.get("scene_kind") != scene_kind:
+        return False
     if (
         route.get("cover_mode") in {"screenshot", "polish"}
         and selected in {"screenshot_direct", "screenshot_polish"}
@@ -1024,6 +1092,29 @@ def validate_cover_route_decision(
             != expected_visual_safety_evidence
         ):
             return False
+    expected_host_only_evidence = host_only_visual_safety_evidence(
+        story_contract,
+        scene_kind=scene_kind,
+    )
+    host_only_required = expected_host_only_evidence["status"] == "REQUIRED"
+    route_host_only_evidence = route.get("host_only_visual_safety_evidence")
+    if host_only_required:
+        if (
+            route.get("host_only_visual_required") is not True
+            or route.get("host_identity_required") is not True
+            or not isinstance(route_host_only_evidence, Mapping)
+            or dict(route_host_only_evidence) != expected_host_only_evidence
+        ):
+            return False
+    elif (
+        route_host_only_evidence is not None
+        or "host_only_visual_required" in route
+    ) and (
+        route.get("host_only_visual_required") is not False
+        or not isinstance(route_host_only_evidence, Mapping)
+        or dict(route_host_only_evidence) != expected_host_only_evidence
+    ):
+        return False
     relationship_required = (
         route.get("relationship_visual_required") is True
     )
@@ -1040,7 +1131,7 @@ def validate_cover_route_decision(
     if used and not attempted:
         return False
     if (
-        route.get("host_identity_required") is True
+        (route.get("host_identity_required") is True or host_only_required)
         and not validate_final_host_identity_verification(cover_generation)
     ):
         return False

@@ -830,3 +830,115 @@ def test_meme_read_aloud_text_first_decision_reaches_actual_chat_owner():
     assert arbitration["owner_eligible"] is True
     assert arbitration["outcome"] == "authority_confirmed_by_cpa_text_first"
     assert arbitration["whole_line_exact_copy_gate"]["full_span_cpa_text_verdict"] is True
+
+
+def _secondary_capable_audio(*, heard, secondary_text, events):
+    primary = _audio_witness_stub(heard=heard)
+
+    def audio(request):
+        events.append("AUDIO")
+        return primary(request)
+
+    def secondary(request):
+        events.append("SECONDARY")
+        assert request["schema_version"] == "subtitle-span-acoustic-witness-request.v1"
+        assert "candidate_entities" not in request
+        return {
+            "schema_version": "secondary-audio-witness-evidence.v1",
+            "status": "OBSERVED",
+            "authority": "EVIDENCE_ONLY",
+            "mutation_authorized": False,
+            "candidate_exposure": "none",
+            "provider": "moss",
+            "model": "moss-transcribe-diarize-pro",
+            "provider_response_sha256": "5" * 64,
+            "receipt_sha256": "6" * 64,
+            "target_overlap_segments": [
+                {"start_ms": 5_000, "end_ms": 9_000, "text": secondary_text}
+            ],
+        }
+
+    audio.secondary_audio_evidence = secondary
+    return audio
+
+
+def _audio_needed_request():
+    return _request(
+        schema_version="chat-entity-verification-request.v1",
+        exact_text="要是能变成她",
+        matched_audio_text="蘸酱油",
+        candidate_entities=[
+            {"canonical": "要是能变成她"},
+            {"canonical": "蘸酱油"},
+        ],
+    )
+
+
+def test_secondary_zero_pinyin_conflict_fails_closed_before_final_cpa():
+    events = []
+    cpa_calls = []
+
+    def judge(_prompt):
+        cpa_calls.append("CPA")
+        return json.dumps({
+            "ranking": [
+                {"canonical": "要是能变成她", "p": .8},
+                {"canonical": "蘸酱油", "p": .2},
+            ],
+            "choice": "要是能变成她",
+            "needs_audio": True,
+            "reason": "文字还不足以定案",
+        }, ensure_ascii=False)
+
+    verify = verifier_module.build_cpa_read_aloud_verifier(
+        judge,
+        next_verifier=_secondary_capable_audio(
+            heard="yao shi neng bian cheng ta",
+            secondary_text="してベンツを",
+            events=events,
+        ),
+    )
+    verdict = verify(_audio_needed_request())
+
+    assert cpa_calls == ["CPA"]
+    assert events == ["AUDIO", "SECONDARY"]
+    assert verdict["status"] == "UNCERTAIN"
+    assert verdict["reason_code"] == "ACOUSTIC_WITNESS_PROVIDER_CONFLICT"
+    assert verdict["decision_authority"] == "NONE"
+    assert verdict["acoustic_conflict"]["pinyin_compatibility"] == 0.0
+    assert "canonical_entity" not in verdict
+
+
+def test_nonconflicting_secondary_does_not_gain_authority_or_change_existing_judge_flow():
+    events = []
+    cpa_calls = []
+
+    def judge(_prompt):
+        cpa_calls.append("CPA")
+        needs_audio = len(cpa_calls) == 1
+        return json.dumps({
+            "ranking": [
+                {"canonical": "要是能变成她", "p": .9},
+                {"canonical": "蘸酱油", "p": .1},
+            ],
+            "choice": "要是能变成她",
+            "needs_audio": needs_audio,
+            "reason": "闭集裁决",
+        }, ensure_ascii=False)
+
+    verify = verifier_module.build_cpa_read_aloud_verifier(
+        judge,
+        next_verifier=_secondary_capable_audio(
+            heard="yao shi neng bian cheng ta",
+            secondary_text="要是能变成她",
+            events=events,
+        ),
+    )
+    verdict = verify(_audio_needed_request())
+
+    assert cpa_calls == ["CPA", "CPA"]
+    assert events == ["AUDIO", "SECONDARY"]
+    assert verdict["status"] == "RESOLVED"
+    assert verdict["canonical_entity"] == "要是能变成她"
+    assert verdict["decision_authority"] == "CPA_JUDGE"
+    assert "secondary_audio_evidence" not in verdict

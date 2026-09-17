@@ -64,6 +64,13 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   仍然 fail closed，不得退到全幅。游戏场（上文分叉）恒走全幅不裁。motion/
   camera-window bbox 只能作候选，不能覆盖 CPA identity bbox；关系型 no-crop participant proof
   仍按下文独立规则保留完整 hash-bound source frame。
+- **HOST_ONLY 不是“主播最大即可”**：谈话场 StoryContract 的
+  `cover_fallback_mode=HOST_ONLY_GENERIC/HOST_ONLY_RELATION_EXPLICIT` 时，最终像素只能出现李豆沙。
+  旧视频面板、小窗、头像、截图中的人物、局部脸或作为次要装饰的可辨识真人/虚拟角色均须由
+  hash-bound final-pixel witness 明确判为不存在；即使李豆沙仍是最大主体也不能 PASS。单人 identity
+  crop 已排除的角色不得被后续两区版式重新塞回。`VERIFIED_DUAL_STREAM_FRAME` 的真实多人任务继续
+  走 required-participant inclusion/no-crop 合同；已证游戏场继续保留完整游戏画面与主播小窗，二者
+  都不得被 HOST_ONLY 规则误伤。
 - 返修不得单向吞掉截图路线：cover-only repair 在付费生图**之前**先看被顶替的路线。原路线
   是 `screenshot_direct/polish` 且其 hash-bound 像素仍在盘上时，通用重绘 fail closed 报
   `COVER_SCREENSHOT_ROUTE_REPAIR_REQUIRED`，返修改走 `scripts/repair_screenshot_cover.py`；
@@ -73,6 +80,11 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   `screenshot_graphic_poster` 变换证据完全不变，文字、源帧、路由与其余冻结权威仍逐项核对；
   新最终像素须重新通过脸部、主播身份、字形与联合检查。`model/image_gen_model=none`、
   生图 planned/attempted/used 全为 false；不能把 direct 改标为 polish 来通过修复器。
+- 已有 direct 背景上的新梗字可走 `screenshot_punch_successor.prepare_successor`：须提供
+  当前记录的原始字节、绑定同一故事和封面文案的真实 CPA v2 语义裁决，以及新像素的脸部和
+  主播身份回执。绑定器逐项对照当前包权威；标题、字体、设计、源帧、背景字节及变换证据
+  保持不变，只允许已裁决梗字的重新排版和 hash 相同的文件路径迁移。审计重读原始记录、
+  裁决和像素文件并重放字形；联合检查仍由发布步骤独立验收。
 - 路由证据的逐项拒绝理由必须带**这一帧**的真实判据（见证 verdict 的 reason 原文、场景类型、
   分数、情绪命中、主体几何置信），查表模板只能作后缀；只有模板串的 `rejected_reason` 视为
   「默认/自动选择」充数，不满足下文的逐项记录要求。
@@ -189,7 +201,10 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
 - 当前生产只接受 `lidousha-cover-route-decision.v2`：必须同时记录 `required_participant_ids`、
   hash-bound `source_visible_participant_ids`、`image_generation_planned/attempted/used`、selected 与
   actual treatment、执行结果，以及 screenshot_direct / screenshot_polish / cpa_redraw 三条路线中
-  两条逐项拒绝理由；旧 v1 只允许历史包读取兼容，不能作为新生产证据。
+  两条逐项拒绝理由；旧 v1 只允许历史包读取兼容，不能作为新生产证据。HOST_ONLY 谈话场还须记录
+  `lidousha-cover-host-only-visual-safety.v1 / REQUIRED`，强制 `host_identity_required=true`，并由
+  `lidousha-cover-final-host-identity-verification.v4` 在最终字节上证明零非主播人物/头像；普通 v3
+  “李豆沙是主角、次要人物可存在”的回执不能满足该合同。
 - `screenshot_direct` / `screenshot_polish` 必须有官方源 SHA 绑定的 reference、实际 final cover
   文件与 SHA、逐字 rendered text；指定双人帧还必须匹配 reference override 的 candidate、
   source time、participant IDs 与 required treatment。截图路线不要求、也不得伪造 AI model 证据。

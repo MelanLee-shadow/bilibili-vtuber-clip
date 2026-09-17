@@ -7,10 +7,12 @@ import json
 from pathlib import Path
 from typing import Mapping
 
-from PIL import Image, ImageChops, ImageFont, ImageOps
+from PIL import Image, ImageChops, ImageOps
 
 from src.autoslice.cover_title_rendering import (
     CoverTitleRenderError,
+    _basic_layout_engine,
+    _image_resampling_filter,
     LAYOUT_ENGINE_BASIC,
     render_spec_sha256,
     render_title_layer,
@@ -51,7 +53,7 @@ def verify_pre_overlay_route_background(
             expected = ImageOps.fit(
                 route_background.convert("RGB"),
                 (1920, 1080),
-                method=Image.Resampling.LANCZOS,
+                method=_image_resampling_filter("LANCZOS"),
             )
             actual = pre_overlay.convert("RGB")
     except (OSError, Image.DecompressionBombError):
@@ -322,7 +324,7 @@ def verify_rendered_text_pixel_artifacts(
             title_layer = render_title_layer(
                 render_spec,
                 font_path=font_path,
-                layout_engine=ImageFont.Layout.BASIC,
+                layout_engine=_basic_layout_engine(),
             )
         except (
             OSError,

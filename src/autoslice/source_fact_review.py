@@ -1217,7 +1217,6 @@ def review_and_repair_source_facts(
         }
     )
 
-
 def source_fact_review_passes(review: object) -> bool:
     return source_fact_review_passes_shape(
         review,
@@ -1769,7 +1768,6 @@ def _validate_receipt_speaker_evidence(
             if isinstance(row, Mapping)
         )
     )
-
 
 def validate_source_fact_review(
     review: object,

@@ -21,6 +21,8 @@ from typing import Any, Mapping, Sequence
 
 from src.autoslice.source_truth_target_selection import (  # noqa: E402
     MIN_CUE_OVERLAP_MS,
+    _cue_window_containment,
+    _operator_cues_fully_owned,
     _drop_cue_targets,
     _target_indexes,
 )
@@ -1162,23 +1164,6 @@ def _truth_pinyin_ratio(a: str, b: str) -> float:
     ).ratio()
 
 
-def _cue_window_containment(
-    cue: SrtCue,
-    windows: Sequence[Mapping[str, object]],
-) -> float:
-    """Fraction of the cue's duration owned by truth windows (0.0-1.0)."""
-
-    duration = max(1, cue.end_ms - cue.start_ms)
-    covered = 0
-    for window in windows:
-        try:
-            start_ms = int(window["start_ms"])  # type: ignore[index]
-            end_ms = int(window["end_ms"])  # type: ignore[index]
-        except (KeyError, TypeError, ValueError):
-            continue
-        covered += max(0, min(cue.end_ms, end_ms) - max(cue.start_ms, start_ms))
-    return min(1.0, covered / duration)
-
 
 def _apply_replace_cue_action(
     *,
@@ -1233,7 +1218,19 @@ def _apply_replace_cue_action(
         kept_joined_norm = _normalize_truth_surface(
             "".join(texts[index] for index in kept)
         )
-        if replacement_norm and replacement_norm in joined_norm:
+        contains_reviewed = bool(replacement_norm and replacement_norm in joined_norm)
+        # A complete reviewed utterance owns every word inside these cues.
+        # Merely containing it cannot certify extra words as already correct.
+        # Keep partial-window/legacy behavior and the existing redistribution.
+        exact_rewrite_needed = (
+            contains_reviewed and replacement_norm != joined_norm
+            and _operator_cues_fully_owned(entry, cues, target_indexes, windows)
+        )
+        if exact_rewrite_needed and kept != target_indexes:
+            # Do not drop an unrelated cue or invent its text/time allocation.
+            row["reason_code"] = "REPLACE_CUE_TARGET_NOT_UNIQUE"
+            return False, False, target_indexes, before
+        if contains_reviewed and not exact_rewrite_needed:
             satisfied = True
             if contiguous and replacement_norm in kept_joined_norm:
                 target_indexes = kept

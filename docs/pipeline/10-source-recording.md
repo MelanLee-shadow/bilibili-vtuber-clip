@@ -204,7 +204,9 @@
 - `scripts/mount_watchdog.sh` 是 CloudDrive FUSE 与录制消费者的唯一启动/
   恢复门。健康判定必须同时满足：`findmnt -T` 的精确 TARGET 是 CloudDrive
   根、FSTYPE 是 `fuse*`、SOURCE 是 `CloudFS`，并且录制目录可读；普通 ext4
-  目录即使 `ls` 成功也必须判失败。三个消费者还必须分别通过
+  目录即使 `ls` 成功也必须判失败。录制目录探针必须在关闭继承 fd 的独立进程组内
+  有界执行；到期后不得等待不可杀死的 FUSE D-state 子进程，必须继续进入唯一 connection
+  的受控 abort 恢复。三个消费者还必须分别通过
   `docker inspect` 的 exact `bind` source 校验，再通过容器内 `/app/Videos`、
   `/adapter/Videos`、`/rec/Videos` 的 FUSE 校验；Free 缺省仍以历史 probe 目录
   作为 bind root。
@@ -212,6 +214,17 @@
  `/opt/bilive/autoslice/recording-health.env`；仅 regular、root-owned、0600 的
  文件可被加载，缺失时保持 Free 的历史默认。OCI3 现有 root crontab 与宿主
  `bilive-recording-consumers.service` 都直接调用同一脚本，因此共享同一 authority。
+- CloudDrive 恢复事件若在本地 reports 树写入
+  `clouddrive-source-recovery-*/HOLD.json`，watchdog 的普通模式和 `--probe-only`
+  必须在 runner、`findmnt`、目录 `ls`、Docker 或 FUSE connection 操作之前消费它。
+  只接受当前 uid、0600、regular/no-symlink 且 schema 为
+  `clouddrive-source-recovery-hold.v1` 的 JSON；`ACTIVE_MAINTENANCE_HOLD` 还必须
+  明确 `restoration_required=true`。合法 active hold、损坏 JSON、危险类型/权限或
+  hold 检查器异常均以 `EX_TEMPFAIL=75` fail-closed，且不得产生 repair、alert、
+  cooldown、容器或状态副作用。`RELEASED` hold 不阻断。record-health cron 使用
+  `watchdog --probe-only && record_health_audit.py`，因此 rc75 同时阻止后半段继续
+  触碰挂起 provider；解除 hold 必须由恢复流程在真实 provider 目录与 host/容器
+  FUSE 探针全绿后显式完成，不能由容器 running 或根 mount 存在自动推断。
 - `bilive_record`、`bililive_adapter`、`bililive_recorder` 固定使用
   `restart: on-failure:5`，不得用 `always`/`unless-stopped` 在 Docker daemon
   重启时抢在 CloudDrive 前启动。宿主
@@ -219,11 +232,20 @@
   挂载通过后才 `docker compose up --force-recreate`；该 unit 以
   `PartOf=docker.service` 跟随显式 Docker service restart，并逐容器用
   `stat -f` 验证 `/app/Videos`、`/adapter/Videos`、`/rec/Videos` 都是 FUSE。
-- 挂载失败时顺序固定为：先停三个消费者 → lazy-unmount → 将未挂载目录中的
-  系统盘残件移动到 `/opt/bilive/mount-fallback-quarantine/` 保留 → 重启
-  `clouddrive2` → 等真实 CloudFS → recreate 三个消费者 → 逐容器验证。不得
-  删除残件，也不得在 ext4 目录上继续录制。`bilive-record-health` cron 也须先
-  通过同一 `--probe-only` 门，避免健康报告反过来制造非空挂载点；随后只读
+- 挂载失败时顺序固定为：先停三个消费者 → 从宿主 PID 1 的 `mountinfo` 唯一解析
+  该 exact CloudFS mount 对应的 FUSE device minor → 停止 `clouddrive2`，解除其 `rshared`
+  mount peer → 写对应 `/sys/fs/fuse/connections/<minor>/abort` → lazy-unmount → 将未挂载目录中的系统盘残件
+  移动到 `/opt/bilive/mount-fallback-quarantine/` 保留 → 启动 `clouddrive2` → 等真实
+  CloudFS → recreate 三个消费者 → 逐容器验证。mountinfo 多义、source/fstype 不符或
+  connection 路径不安全时 fail closed；不得枚举或批量 abort 其他 FUSE connection。
+  detach 后 mountpoint 本身随旧 endpoint 消失表示没有系统盘 fallback 可搬运，是合法空状态；
+  随后必须用独立的 `/root/clouddrive2/docker-compose.yml`、固定本地镜像、
+  `--pull never --no-build --no-deps --force-recreate` 只重建 `clouddrive2`；不得误用消费者
+  `/opt/bilive/compose.yml`，也不得 `start/restart` 复用旧容器的 rshared mount peer。
+  该步骤用于清理 userspace 重启后仍占据 PID 1 namespace、并导致 CloudDrive 持续报告
+  `mount syscall failed in PID 1 namespace` 的旧 endpoint。不得删除残件，也不得在 ext4
+  目录上继续录制。`bilive-record-health` cron 也须先通过同一 `--probe-only` 门，避免
+  健康报告反过来制造非空挂载点；随后只读
   `record_health_audit.py --lookback-hours 96` 对 status/state freshness、服务/
   错误及 OPEN/CLOSED 与 finalized/source-disposition unresolved inventory fail-closed。
 - **CloudFS 写缓存可读 ≠ 云端已持久化。** 录播姬直写 FUSE，字节先落

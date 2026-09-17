@@ -33,6 +33,36 @@ class CoverTitleRenderError(ValueError):
     pass
 
 
+def _basic_layout_engine(image_font: object = ImageFont) -> object:
+    """Resolve Pillow's BASIC engine across the enum and legacy APIs."""
+
+    layout = getattr(image_font, "Layout", None)
+    basic = getattr(layout, "BASIC", None) if layout is not None else None
+    if basic is not None:
+        return basic
+    legacy = getattr(image_font, "LAYOUT_BASIC", None)
+    if legacy is not None:
+        return legacy
+    raise CoverTitleRenderError("COVER_TITLE_RENDER_BASIC_LAYOUT_UNAVAILABLE")
+
+
+def _image_resampling_filter(
+    name: str, image_module: object = Image
+) -> object:
+    """Resolve Pillow resampling filters across enum and legacy APIs."""
+
+    resampling = getattr(image_module, "Resampling", None)
+    value = getattr(resampling, name, None) if resampling is not None else None
+    if value is not None:
+        return value
+    legacy = getattr(image_module, name, None)
+    if legacy is not None:
+        return legacy
+    raise CoverTitleRenderError(
+        f"COVER_TITLE_RENDER_RESAMPLING_UNAVAILABLE:{name}"
+    )
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -132,21 +162,22 @@ def render_title_layer(
     *,
     font_path: Path,
     verify_output_size: bool = True,
-    layout_engine: ImageFont.Layout | None = None,
+    layout_engine: object | None = None,
 ) -> Image.Image:
     """Strictly validate and replay one renderer-produced RGBA title layer."""
 
     if spec.get("schema_version") != SCHEMA_VERSION:
         raise CoverTitleRenderError("COVER_TITLE_RENDER_SPEC_SCHEMA_INVALID")
     declared_layout_engine = spec.get("layout_engine")
+    basic_layout_engine = _basic_layout_engine()
     if declared_layout_engine is None:
         resolved_layout_engine = layout_engine
     elif declared_layout_engine == LAYOUT_ENGINE_BASIC:
-        if layout_engine not in (None, ImageFont.Layout.BASIC):
+        if layout_engine not in (None, basic_layout_engine):
             raise CoverTitleRenderError(
                 "COVER_TITLE_RENDER_LAYOUT_ENGINE_MISMATCH"
             )
-        resolved_layout_engine = ImageFont.Layout.BASIC
+        resolved_layout_engine = basic_layout_engine
     else:
         raise CoverTitleRenderError(
             "COVER_TITLE_RENDER_LAYOUT_ENGINE_INVALID"
@@ -344,7 +375,7 @@ def render_title_layer(
     if angle:
         layer = layer.rotate(
             float(angle),
-            resample=Image.Resampling.BICUBIC,
+            resample=_image_resampling_filter("BICUBIC"),
             expand=True,
         )
     expected_size = spec.get("rendered_layer_size")

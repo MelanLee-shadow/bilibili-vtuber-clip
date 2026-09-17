@@ -141,6 +141,17 @@ def validate_screenshot_route_authority(
     ):
         raise ValueError("active screenshot authority was already produced by cpa_redraw")
     authority = authorities[0]
+    approved_punch = "approved_punch_successor" in generation
+    if approved_punch:
+        from src.autoslice.screenshot_punch_successor import validate_successor
+
+        for candidate in authorities:
+            validate_successor(dict(generation), active_parent=candidate)
+        source_story = active_story_contract(documents)
+        if source_story is not None and not cover_story_contract_binding_matches(
+            source_story, generation.get("story_contract")
+        ):
+            raise ValueError("approved punch does not match the active StoryContract")
     for candidate in authorities[1:]:
         for key in _SCREENSHOT_FROZEN_GENERATION_KEYS:
             if candidate.get(key) != authority.get(key):
@@ -153,6 +164,10 @@ def validate_screenshot_route_authority(
             if candidate_route.get(key) != authority_route.get(key):
                 raise ValueError(f"active screenshot route authority disagrees on {key}")
     for key in _SCREENSHOT_FROZEN_GENERATION_KEYS:
+        if approved_punch and key in {"cover_punch", "art_direction", "reference_image"}:
+            # The successor validator permits only approved words and a
+            # hash-identical reference locator; all other design fields freeze.
+            continue
         if generation.get(key) != authority.get(key):
             raise ValueError(f"screenshot repair changed frozen authority {key}")
     if method == "screenshot_direct":
@@ -209,6 +224,10 @@ def _validate_screenshot_generation(
         from src.autoslice.cover_pixel_preservation import validate_pixel_preserving_successor
 
         validate_pixel_preserving_successor(document, cover=cover)
+    if "approved_punch_successor" in document:
+        from src.autoslice.screenshot_punch_successor import validate_successor
+
+        validate_successor(document)
     return document, manifest_path
 
 

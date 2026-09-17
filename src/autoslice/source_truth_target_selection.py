@@ -103,3 +103,35 @@ def _drop_cue_targets(
             }
         )
     return targets, conflicts
+
+
+def _cue_window_containment(
+    cue: SrtCue,
+    windows: Sequence[Mapping[str, object]],
+) -> float:
+    """Fraction of the cue's duration owned by truth windows (0.0-1.0)."""
+
+    duration = max(1, cue.end_ms - cue.start_ms)
+    covered = 0
+    for window in windows:
+        try:
+            start_ms = int(window["start_ms"])  # type: ignore[index]
+            end_ms = int(window["end_ms"])  # type: ignore[index]
+        except (KeyError, TypeError, ValueError):
+            continue
+        covered += max(0, min(cue.end_ms, end_ms) - max(cue.start_ms, start_ms))
+    return min(1.0, covered / duration)
+
+
+def _operator_cues_fully_owned(
+    entry: Mapping[str, object], cues: Sequence[SrtCue],
+    target_indexes: Sequence[int], windows: Sequence[Mapping[str, object]],
+) -> bool:
+    """Require exact whole-cue coverage for the explicit operator text rule."""
+    return bool(
+        entry.get("decision_authority") == "REVIEWER_OPERATOR_TRUTH"
+        and entry.get("assertion_state") == "VERIFIED_ACTIVE"
+        and target_indexes and windows
+        and all(_cue_window_containment(cues[index], windows) == 1.0
+                for index in target_indexes)
+    )

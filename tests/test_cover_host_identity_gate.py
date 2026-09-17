@@ -8,6 +8,8 @@ import pytest
 from PIL import Image
 
 from src.autoslice.cover_host_identity_gate import (
+    HOST_ONLY_REASON_CODE,
+    HOST_ONLY_SCHEMA_VERSION,
     REVIEWER_SELF_INCONSISTENT_RULING,
     SELF_INCONSISTENT_DISREGARDED_STATUS,
     SELF_INCONSISTENT_REASON_CODE,
@@ -15,9 +17,12 @@ from src.autoslice.cover_host_identity_gate import (
     disregard_self_inconsistent_host_identity_witness,
     final_host_identity_witness_unavailable,
     host_identity_verdict_contradictions,
+    story_contract_requires_host_only_final,
     validate_final_host_identity_verification,
     verify_final_host_identity,
 )
+from src.autoslice.cover_route_evidence import build_cover_route_decision
+from src.autoslice.cover_scene_binding import run_final_host_identity_witness
 from src.autoslice.cover_source_composition import (
     verify_source_composition,
 )
@@ -1076,3 +1081,202 @@ def test_disregard_lane_never_rides_the_v2_published_carry_clause(
         "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_COMPARISON"
     )
     assert not validate_final_host_identity_verification(generation)
+
+
+_HOST_ONLY_BASE_VERDICT = {
+    "source_lidousha_located": True,
+    "primary_subject_is_lidousha": True,
+    "primary_subject_matches_other_source_participant": False,
+    "primary_subject_is_visually_dominant": True,
+    "primary_subject_face_is_large_and_clear": True,
+    "primary_subject_carries_story_reaction": True,
+    "excessive_dead_space": False,
+    "meaningless_dominant_decoration": False,
+    "thumbnail_has_clear_click_hook": True,
+    "primary_subject_identity": "李豆沙",
+    "identity_conflicts": [],
+    "composition_conflicts": [],
+    "reason": "李豆沙是唯一可辨识人物并承担故事反应",
+}
+
+
+def _host_only_story(mode: str = "HOST_ONLY_GENERIC") -> dict[str, object]:
+    return {
+        "schema_version": "lidousha-story-contract.v1",
+        "cover_fallback_mode": mode,
+        "participants": [],
+        "relation_state": "UNKNOWN",
+    }
+
+
+def test_host_only_story_rejects_secondary_avatar_even_when_host_is_primary(
+    tmp_path, monkeypatch
+):
+    from src.autoslice import cpa_frame_witness
+
+    reference = tmp_path / "source.png"
+    final = tmp_path / "final.png"
+    Image.new("RGB", (1920, 1080), (20, 30, 40)).save(reference)
+    Image.new("RGB", (1920, 1080), (80, 90, 100)).save(final)
+    verdict = {
+        **_HOST_ONLY_BASE_VERDICT,
+        "other_recognizable_people_or_avatars_visible": True,
+        "other_recognizable_people_or_avatars": ["左侧旧视频面板中的另一虚拟角色"],
+        "reason": "李豆沙是最大主体，但左侧仍有另一名可辨识虚拟角色",
+    }
+    monkeypatch.setattr(
+        cpa_frame_witness,
+        "image_vision_probe",
+        _fake_witness(verdict),
+    )
+
+    receipt = run_final_host_identity_witness(
+        verify_final_host_identity,
+        final_cover_path=final,
+        final_cover_sha256=_sha(final),
+        reference_path=reference,
+        base_url="",
+        api_key="",
+        cover_generation={"story_contract": _host_only_story()},
+    )
+    generation = {
+        "final_cover": str(final),
+        "final_cover_sha256": _sha(final),
+        "story_contract": _host_only_story(),
+        "final_host_identity_verification": receipt,
+    }
+
+    assert receipt["schema_version"] == HOST_ONLY_SCHEMA_VERSION
+    assert receipt["status"] == "FAIL"
+    assert receipt["reason_code"] == HOST_ONLY_REASON_CODE
+    assert not validate_final_host_identity_verification(generation)
+
+
+def test_host_only_story_passes_only_when_no_other_person_or_avatar_is_visible(
+    tmp_path, monkeypatch
+):
+    from src.autoslice import cpa_frame_witness
+
+    reference = tmp_path / "source.png"
+    final = tmp_path / "final.png"
+    Image.new("RGB", (1920, 1080), (20, 30, 40)).save(reference)
+    Image.new("RGB", (1920, 1080), (80, 90, 100)).save(final)
+    verdict = {
+        **_HOST_ONLY_BASE_VERDICT,
+        "other_recognizable_people_or_avatars_visible": False,
+        "other_recognizable_people_or_avatars": [],
+    }
+    monkeypatch.setattr(
+        cpa_frame_witness,
+        "image_vision_probe",
+        _fake_witness(verdict),
+    )
+
+    receipt = run_final_host_identity_witness(
+        verify_final_host_identity,
+        final_cover_path=final,
+        final_cover_sha256=_sha(final),
+        reference_path=reference,
+        base_url="",
+        api_key="",
+        cover_generation={"story_contract": _host_only_story()},
+    )
+    generation = {
+        "final_cover": str(final),
+        "final_cover_sha256": _sha(final),
+        "story_contract": _host_only_story(),
+        "final_host_identity_verification": receipt,
+    }
+
+    assert receipt["status"] == "PASS"
+    assert receipt["host_only_required"] is True
+    assert validate_final_host_identity_verification(generation)
+
+
+def test_verified_dual_stream_story_keeps_secondary_participant_lane(
+    tmp_path, monkeypatch
+):
+    from src.autoslice import cpa_frame_witness
+
+    reference = tmp_path / "source.png"
+    final = tmp_path / "final.png"
+    Image.new("RGB", (1920, 1080), (20, 30, 40)).save(reference)
+    Image.new("RGB", (1920, 1080), (80, 90, 100)).save(final)
+    monkeypatch.setattr(
+        cpa_frame_witness,
+        "image_vision_probe",
+        _fake_witness(dict(_HOST_ONLY_BASE_VERDICT)),
+    )
+
+    receipt = verify_final_host_identity(
+        final_cover_path=final,
+        final_cover_sha256=_sha(final),
+        reference_path=reference,
+    )
+    generation = {
+        "final_cover": str(final),
+        "final_cover_sha256": _sha(final),
+        "story_contract": _host_only_story("VERIFIED_DUAL_STREAM_FRAME"),
+        "final_host_identity_verification": receipt,
+    }
+
+    assert receipt["status"] == "PASS"
+    assert validate_final_host_identity_verification(generation)
+    assert not story_contract_requires_host_only_final(
+        generation["story_contract"], scene_kind="talk"
+    )
+
+
+def test_route_builder_records_host_only_policy_without_affecting_game_or_dual_stream():
+    common = {
+        "selected_treatment": "screenshot_direct",
+        "selected_rationale": "source frame is grounded",
+        "reference_authority": None,
+        "decision_inputs": {
+            "cover_mode": "screenshot",
+            "subject_confident": True,
+            "verified_stream_frame": True,
+            "thumbnail_text_requires_punch": False,
+        },
+    }
+    host_only = build_cover_route_decision(
+        **common,
+        story_contract=_host_only_story(),
+        source_composition_verification={"scene_kind": "talk"},
+    )
+    dual_stream = build_cover_route_decision(
+        **common,
+        story_contract=_host_only_story("VERIFIED_DUAL_STREAM_FRAME"),
+        source_composition_verification={"scene_kind": "talk"},
+    )
+    game = build_cover_route_decision(
+        **common,
+        story_contract=_host_only_story(),
+        source_composition_verification={"scene_kind": "game"},
+    )
+
+    assert host_only["host_only_visual_required"] is True
+    assert host_only["host_identity_required"] is True
+    assert host_only["host_only_visual_safety_evidence"]["status"] == "REQUIRED"
+    assert dual_stream["host_only_visual_required"] is False
+    assert game["host_only_visual_required"] is False
+
+
+def test_final_receipt_cannot_relax_bound_host_only_scene():
+    generation = _published_carry_generation()
+    generation["story_contract"] = _host_only_story()
+    generation["source_composition_verification"] = {"scene_kind": "talk"}
+    generation["final_host_identity_verification"]["scene_kind"] = "game"
+    generation["route_decision"] = {"scene_kind": "game"}
+    assert not validate_final_host_identity_verification(generation)
+
+
+def test_host_only_question_does_not_also_allow_secondary_people():
+    from src.autoslice.cover_host_identity_gate import _identity_question
+
+    assert "次要人物可以存在" not in _identity_question(
+        scene_kind="talk", host_only_required=True
+    )
+    assert "次要人物可以存在" in _identity_question(
+        scene_kind="talk", host_only_required=False
+    )
