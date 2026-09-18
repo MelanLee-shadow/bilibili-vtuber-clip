@@ -15,7 +15,7 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageFilter, ImageOps
 
 from src.autoslice.surface_canon import CHANNEL_PROFILE
 
@@ -600,13 +600,98 @@ def _bbox_crop_box(
     )
 
 
+# Keep the established status for downstream compatibility; ``crop_strategy``
+# is the typed discriminator for the new identity-card materialization.
+IDENTITY_CARD_STATUS = "HASH_BOUND_CPA_IDENTITY_CROP"
+IDENTITY_CARD_CROP_STRATEGY = "IDENTITY_CARD_WHEN_16_9_CROP_DEGENERATES"
+IDENTITY_CARD_FULL_FRAME_FALLBACK_REASON = (
+    "SOURCE_COMPOSITION_IDENTITY_CARD_CROP_DEGENERATE_FULL_FRAME"
+)
+
+
+def _box_is_full_frame(
+    crop_box: Sequence[int], *, width: int, height: int
+) -> bool:
+    return tuple(int(value) for value in crop_box) == (0, 0, int(width), int(height))
+
+
+def _bbox_identity_card_crop_box(
+    bbox_frac: Sequence[float], *, width: int, height: int
+) -> tuple[int, int, int, int]:
+    """Expand each bbox axis independently without forcing a 16:9 source crop.
+
+    A full-height VTuber bbox cannot fit a narrower 16:9 crop: the old geometry
+    necessarily expands back to the complete frame and leaves chat avatars in
+    place.  This box is used only for that degeneracy.  The resulting crop is
+    composited onto a 16:9 identity card below, preserving aspect ratio instead
+    of stretching the host pixels.
+    """
+
+    x0, y0, x1, y1 = (float(value) for value in bbox_frac)
+    bbox_left, bbox_top = x0 * width, y0 * height
+    bbox_right, bbox_bottom = x1 * width, y1 * height
+    bbox_width = bbox_right - bbox_left
+    bbox_height = bbox_bottom - bbox_top
+    margin_x = max(24.0, bbox_width * 0.08)
+    margin_y = max(12.0, bbox_height * 0.04)
+    left = max(0, int(math.floor(bbox_left - margin_x)))
+    top = max(0, int(math.floor(bbox_top - margin_y)))
+    right = min(width, int(math.ceil(bbox_right + margin_x)))
+    bottom = min(height, int(math.ceil(bbox_bottom + margin_y)))
+    if right <= left or bottom <= top:
+        raise ValueError(BBOX_INVALID)
+    return left, top, right, bottom
+
+
+def _compose_identity_card_crop(
+    source: Image.Image,
+    crop_box: Sequence[int],
+) -> tuple[Image.Image, list[int]]:
+    """Place one authority crop on a host-only 16:9 card without distortion."""
+
+    authority_crop = source.crop(tuple(int(value) for value in crop_box))
+    output_size = (1920, 1080)
+    backdrop = ImageOps.fit(
+        authority_crop,
+        output_size,
+        method=Image.Resampling.LANCZOS,
+        centering=(0.5, 0.5),
+    ).filter(ImageFilter.GaussianBlur(radius=36))
+    backdrop = Image.blend(
+        backdrop,
+        Image.new("RGB", output_size, (12, 16, 24)),
+        0.34,
+    )
+    foreground = ImageOps.contain(
+        authority_crop,
+        (1728, 1080),
+        method=Image.Resampling.LANCZOS,
+    )
+    offset = (
+        (output_size[0] - foreground.width) // 2,
+        (output_size[1] - foreground.height) // 2,
+    )
+    backdrop.paste(foreground, offset)
+    return backdrop, [
+        offset[0],
+        offset[1],
+        offset[0] + foreground.width,
+        offset[1] + foreground.height,
+    ]
+
+
 CROP_NOT_AUTHORIZED = "SOURCE_COMPOSITION_CROP_NOT_AUTHORIZED"
 BBOX_INVALID = "SOURCE_COMPOSITION_BBOX_INVALID"
 NO_CROP_COMPOSITOR = "HASH_BOUND_FULL_FRAME_NO_CROP_COMPOSITOR"
-# 只有这两种失败可以退到"全幅不裁"：它们说的都是**裁切**这一步不可行，源帧本身
-# 仍是 hash-bound 的真实瞬间。回执本身不可信（VERIFICATION_INVALID）绝不在此列
-# ——那是 fail-closed 的射程，退到全幅等于用一份废回执放行像素。
-_FULL_FRAME_FALLBACK_REASONS = (CROP_NOT_AUTHORIZED, BBOX_INVALID)
+# 只有这些失败可以退到"全幅不裁"：它们说的都是**裁切**这一步不可行，源帧本身
+# 仍是 hash-bound 的真实瞬间。包括 bbox 已占满全幅、identity-card 也无法再排除外围
+# 像素的退化情形。回执本身不可信（VERIFICATION_INVALID）绝不在此列——那是
+# fail-closed 的射程，退到全幅等于用一份废回执放行像素。
+_FULL_FRAME_FALLBACK_REASONS = (
+    CROP_NOT_AUTHORIZED,
+    BBOX_INVALID,
+    IDENTITY_CARD_FULL_FRAME_FALLBACK_REASON,
+)
 
 
 def extract_authority_source_crop_or_full_frame(
@@ -804,23 +889,56 @@ def extract_authority_source_crop(
         width=source.width,
         height=source.height,
     )
-    cropped = source.crop(crop_box).resize(
-        (1920, 1080),
-        Image.Resampling.LANCZOS,
-    )
+    crop_strategy = "BOUNDED_16_9_FACE_MARGIN"
+    foreground_box: list[int] | None = None
+    full_frame_degeneracy_avoided = False
+    status = IDENTITY_CARD_STATUS
+    if _box_is_full_frame(crop_box, width=source.width, height=source.height):
+        identity_crop_box = _bbox_identity_card_crop_box(
+            bbox,
+            width=source.width,
+            height=source.height,
+        )
+        if not _box_is_full_frame(
+            identity_crop_box,
+            width=source.width,
+            height=source.height,
+        ):
+            crop_box = identity_crop_box
+            cropped, foreground_box = _compose_identity_card_crop(source, crop_box)
+            crop_strategy = IDENTITY_CARD_CROP_STRATEGY
+            full_frame_degeneracy_avoided = True
+            status = IDENTITY_CARD_STATUS
+        else:
+            # Returning source.copy() here would falsely attest crop_applied=true
+            # while preserving every excluded pixel.  Let the explicit wrapper
+            # decide whether a typed full-frame fallback is permitted.
+            raise ValueError(IDENTITY_CARD_FULL_FRAME_FALLBACK_REASON)
+    else:
+        cropped = source.crop(crop_box).resize(
+            (1920, 1080),
+            Image.Resampling.LANCZOS,
+        )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     cropped.save(output_path, format="PNG", optimize=False)
     witness_sha = str(verification.get("witness_receipt_sha256") or "")
     return {
         "schema": "cover-frame-transfer.v2",
-        "status": "HASH_BOUND_CPA_IDENTITY_CROP",
+        "status": status,
         "frame_ms": int(frame_ms),
         "source_path": str(reference_path),
         "source_sha256": reference_sha256,
         "reference_sha256": reference_sha256,
         "crop_applied": True,
         "crop_box": list(crop_box),
+        "crop_strategy": crop_strategy,
+        "full_frame_degeneracy_avoided": full_frame_degeneracy_avoided,
+        "identity_card_foreground_box": foreground_box,
+        "identity_card_background": (
+            "BLURRED_AUTHORITY_CROP" if full_frame_degeneracy_avoided else None
+        ),
         "source_size": [source.width, source.height],
+        "output_size": list(cropped.size),
         "zoom": round(source.width / max(1, crop_box[2] - crop_box[0]), 4),
         "camera_window_crop": True,
         "authority_identity_crop": True,

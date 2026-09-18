@@ -40,6 +40,11 @@ from scripts.build_daily_review_manifest import (  # noqa: E402
     _sha256,
     _sync_record_bound_candidate_artifacts,
 )
+from src.autoslice.host_only_v4_package_binding import (  # noqa: E402
+    BINDING_ITEM_KEY,
+    HostOnlyV4PackageBindingError,
+    materialize_package_binding,
+)
 from src.autoslice.review_package_ass_audit import (  # noqa: E402
     uniform_host_fallback_declared,
 )
@@ -630,6 +635,19 @@ def build_manual(
         qixi_gate=qixi_gate,
         packaged_speaker_manifest=packaged_speaker_manifest,
     )
+    try:
+        host_only_binding = materialize_package_binding(
+            root=package_root,
+            item=item,
+            generation=cover_generation,
+        )
+    except HostOnlyV4PackageBindingError as exc:
+        raise DailyManifestError(
+            f"HOST_ONLY v4 package binding failed: {exc}"
+        ) from exc
+    if host_only_binding is not None:
+        item[BINDING_ITEM_KEY] = host_only_binding
+
     attestation = {
         "candidate_id": candidate_id,
         "reference_sha256": cover_generation.get("reference_sha256"),

@@ -253,11 +253,22 @@ prepare 工作。一个被阻候选不得阻断其它候选。
   各自的既有门。producer、package auditor 与 uploader 各自重跑，不能复用一次自报结果。
 - 审计闸是 `scripts/audit_review_package.py`，当前输出必须为
   `lidousha-review-package-audit.v2`，policy epoch 必须精确等于
-  `2026-07-31.final-artifact-gates.v5`。**schema 仍是 v2，epoch 才是 v5**；不要把仍合法的
+  `2026-09-17.host-only-v4-package-binding.v7`。**schema 仍是 v2，epoch 才是 v7**；不要把仍合法的
   audit schema、`lidousha-cover-route-decision.v2`、`subtitle-redelivery-baseline.v2` 或
   `lidousha-branding-intro.v2` 机械改成 v5。audit 绑定 auditor/策略代码与关键资产的
   `policy_fingerprint`、auditor source hash 以及完整 portable `audited_inputs` 闭包；
   任一文件或政策漂移都使旧 audit 失效。单独一个 `passed: true` JSON 不是证据。
+- HOST_ONLY v4 item 必须携带 `lidousha-host-only-v4-package-binding.v1`，把 canonical receipt、
+  comparison、reference 与 final cover 四个包内 regular file 的相对路径和 SHA 全部绑定。auditor 以
+  no-follow 描述符重新读取，要求 canonical receipt 与三面 generation verification 完全相同，且
+  receipt/witness 的像素 SHA 与包内实字节闭合；任一缺失、symlink/path escape、schema/authority/
+  candidate 或字节漂移，统一以 `COVER_HOST_ONLY_V4_PACKAGE_BINDING_MISSING_OR_INVALID` 阻断。
+- Talk/Song/Manual/Recovery builder 遇到 v4 时必须先物化 `evidence/` 内的 receipt/comparison/reference
+  并重放 binding validator。旧 v4 manifest 无 binding 不可重新 audit 放行。历史 v3 包若使用
+  successor，必须是 schema `host-only-v4-review-package-successor.v2`：外部 receipt/comparison 单次
+  冻结、source→destination preimage 同一、v7 binding 与 canonical audit 都为 0 issue/0 blocker；
+  旧 v1 TOCTOU 结果无效。successor 仍固定 `provider_calls=0 / image_generation_calls=0 /
+  upload_calls=0 / upload_allowed=false`。
 - SRT 渲染读取复用现有 release validator 的空行分块规则：只含空格/制表符的行也分隔字幕。
   不能把下一条的编号、时间戳和文字吃进上一条；保持原词面及各自时间窗。无编号的旧 source
   读取兼容性不等于 release 合格，最终结构检查和独立 SRT/ASS 对应检查继续执行。

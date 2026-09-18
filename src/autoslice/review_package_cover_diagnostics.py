@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import json
+from pathlib import Path
 from typing import Any, Mapping
 
 from src.autoslice.cover_host_identity_gate import (
@@ -22,6 +23,11 @@ from src.autoslice.cover_route_evidence import (
     validate_cover_route_decision,
 )
 from src.autoslice.cover_source_composition import source_composition_scene_kind
+from src.autoslice.host_only_v4_package_binding import (
+    BINDING_ISSUE_CODE,
+    HostOnlyV4PackageBindingError,
+    validate_package_binding,
+)
 
 
 def host_only_identity_route_blocker_detail(
@@ -89,3 +95,51 @@ def host_only_identity_route_blocker_detail(
         ensure_ascii=False,
         sort_keys=True,
     )
+
+
+def host_only_v4_package_binding_blocker_detail(
+    *,
+    root: Path,
+    item: Mapping[str, object],
+    generation: Mapping[str, object],
+) -> str:
+    """Return the current package-binding failure without mutating the package."""
+
+    verification = generation.get("final_host_identity_verification")
+    if not isinstance(verification, Mapping):
+        return ""
+    if verification.get("schema_version") != HOST_ONLY_SCHEMA_VERSION:
+        return ""
+    try:
+        validate_package_binding(root=root, item=item, generation=generation)
+    except HostOnlyV4PackageBindingError as exc:
+        return str(exc)
+    return ""
+
+
+def audit_host_only_v4_package_binding(
+    *,
+    root: Path,
+    item: Mapping[str, object],
+    generation: Mapping[str, object],
+    issues: list[dict[str, Any]],
+    stem: str,
+    record_path: Path | None,
+) -> None:
+    """Preserve the review-auditor compatibility surface around the focused check."""
+
+    detail = host_only_v4_package_binding_blocker_detail(
+        root=root, item=item, generation=generation
+    )
+    if not detail:
+        return
+    issue: dict[str, Any] = {
+        "code": BINDING_ISSUE_CODE,
+        "severity": "BLOCK",
+        "detail": detail,
+    }
+    if stem:
+        issue["stem"] = stem
+    if record_path is not None:
+        issue["path"] = str(record_path)
+    issues.append(issue)

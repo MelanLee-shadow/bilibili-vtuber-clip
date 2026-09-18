@@ -63,7 +63,16 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   ——重绘是兜底，不是首选**；回执本身不可信（`SOURCE_COMPOSITION_VERIFICATION_INVALID`）
   仍然 fail closed，不得退到全幅。游戏场（上文分叉）恒走全幅不裁。motion/
   camera-window bbox 只能作候选，不能覆盖 CPA identity bbox；关系型 no-crop participant proof
-  仍按下文独立规则保留完整 hash-bound source frame。
+  仍按下文独立规则保留完整 hash-bound source frame。若合法的单人 CPA identity bbox 因接近
+  全高而使 16:9 crop **精确退化为整幅 source frame**，不得继续写
+  `crop_applied=true` 却原样保留聊天栏/面板。此时只允许从同一 hash-bound reference 按
+  identity bbox 独立扩展横纵 margin，先裁出仅含该 authority 区域的像素，再以该裁片自身的
+  模糊背景和不变形前景确定性合成 1920×1080 identity card；回执必须记录
+  `crop_strategy=IDENTITY_CARD_WHEN_16_9_CROP_DEGENERATES`、实际 crop box、foreground box 与
+  `full_frame_degeneracy_avoided=true`，随后照常进入 face-safe poster 和最终 v4 像素门。若连
+  该 authority crop 也仍是整幅 frame，直接 crop 入口必须返回 typed degeneracy，只有显式
+  `..._or_full_frame` 包装器可如实降为 `HASH_BOUND_FULL_FRAME_NO_CROP_COMPOSITOR`，并记录
+  `crop_applied=false` 与 fallback reason；不得伪造 identity crop 成功。
 - **HOST_ONLY 不是“主播最大即可”**：谈话场 StoryContract 的
   `cover_fallback_mode=HOST_ONLY_GENERIC/HOST_ONLY_RELATION_EXPLICIT` 时，最终像素只能出现李豆沙。
   旧视频面板、小窗、头像、截图中的人物、局部脸或作为次要装饰的可辨识真人/虚拟角色均须由
@@ -204,7 +213,25 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   两条逐项拒绝理由；旧 v1 只允许历史包读取兼容，不能作为新生产证据。HOST_ONLY 谈话场还须记录
   `lidousha-cover-host-only-visual-safety.v1 / REQUIRED`，强制 `host_identity_required=true`，并由
   `lidousha-cover-final-host-identity-verification.v4` 在最终字节上证明零非主播人物/头像；普通 v3
-  “李豆沙是主角、次要人物可存在”的回执不能满足该合同。
+  “李豆沙是主角、次要人物可存在”的回执不能满足该合同。v4 producer receipt 不是 package
+  authority：current manifest item 还必须携带 `host_only_v4_binding`（schema
+  `lidousha-host-only-v4-package-binding.v1`），分别绑定 canonical receipt、comparison、reference 与
+  final cover 的 package-relative canonical path 和 SHA-256。canonical auditor 通过 no-follow 描述符
+  现场读取四个包内 regular file，要求 receipt 与三面 `cover_generation` verification 完全相同、
+  receipt/witness 中的像素 SHA 与包内实字节一致、bound final cover 就是 item `cover`，且四个 locator
+  不 alias。缺 binding、文件缺失、包外/path escape、任一父目录或文件 symlink、schema/authority/
+  candidate 漂移、receipt 漂移或任一字节漂移，都统一阻断为
+  `COVER_HOST_ONLY_V4_PACKAGE_BINDING_MISSING_OR_INVALID`。
+
+  Talk、Song、Manual、Recovery 四个 canonical manifest builder 遇到 v4 时，先把 receipt、comparison
+  与 reference 物化到 package `evidence/`：优先复用包内同哈希字节，必要时才对 producer locator 做
+  一次 no-follow 读取；随后写入 binding 并立即重放 validator。v3/非 HOST_ONLY 包不增加该字段。
+  历史 v3 完整包若只缺最终人物见证，只能使用安全 v2 create-only successor：外部 receipt 与
+  comparison 各自单次 no-follow 冻结，source→destination preimage 逐文件相同后，所有落包、hash、
+  binding 与 audit 都只消费冻结字节。旧 v1 “先校验 path、后再次打开复制” successor 已因 TOCTOU
+  撤销，不得消费。安全结果仍须 canonical audit 0 issue/0 blocker，固定
+  `provider_calls=0 / image_generation_calls=0 / upload_calls=0 / upload_allowed=false`，且不替代80步骤
+  接纳或90步骤候选级上传授权。
 - `screenshot_direct` / `screenshot_polish` 必须有官方源 SHA 绑定的 reference、实际 final cover
   文件与 SHA、逐字 rendered text；指定双人帧还必须匹配 reference override 的 candidate、
   source time、participant IDs 与 required treatment。截图路线不要求、也不得伪造 AI model 证据。

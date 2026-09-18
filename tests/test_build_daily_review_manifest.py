@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import scripts.build_daily_review_manifest as daily_builder
 from scripts.build_daily_review_manifest import (
     DailyManifestError,
     _atomic_project_bytes,
@@ -681,6 +682,32 @@ def test_build_uniform_host_package_keeps_legacy_sapphire72_naming(
     assert item["ass_path"] == f"{stem}.final-sapphire72.ass"
     assert item["speaker_srt"] == item["subtitle_srt"]
     assert item["speaker_srt_sha256"] == item["sha256"]["subtitle_srt"]
+
+
+def test_build_attaches_native_host_only_v4_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package_root, state_path, deployed_commit_file, candidate_id = _build_daily_talk_package(
+        tmp_path, speaker_finalized=False
+    )
+    expected = {
+        "schema_version": "lidousha-host-only-v4-package-binding.v1",
+        "candidate_id": candidate_id,
+    }
+    calls: list[tuple[Path, str]] = []
+
+    def materialize(*, root: Path, item: dict, generation: dict) -> dict:
+        assert generation["final_cover_sha256"].startswith("sha256:")
+        calls.append((root, str(item["candidate_id"])))
+        return expected
+
+    monkeypatch.setattr(daily_builder, "materialize_package_binding", materialize)
+
+    manifest = build(package_root, state_path, deployed_commit_file, candidate_id)
+
+    assert calls == [(package_root, candidate_id)]
+    assert manifest["items"][0]["host_only_v4_binding"] == expected
 
 
 def test_build_speaker_finalized_package_uses_speaker_artifact_family(

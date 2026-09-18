@@ -58,6 +58,11 @@ from src.autoslice.qixi_operator_exact_title_source_fact import (  # noqa: E402
     DECISION as QIXI_OPERATOR_EXACT_TITLE_DECISION,
     validate_receipt as validate_qixi_operator_exact_title_receipt,
 )
+from src.autoslice.host_only_v4_package_binding import (  # noqa: E402
+    BINDING_ITEM_KEY,
+    HostOnlyV4PackageBindingError,
+    materialize_package_binding,
+)
 from src.autoslice.fastlane_c3_terminal_source_fact_preservation import (  # noqa: E402
     CANDIDATE_ID as C3_SOURCE_FACT_CANDIDATE_ID,
     DECISION as C3_SOURCE_FACT_DECISION,
@@ -911,6 +916,19 @@ def build(
             "cover": _sha256(package_root / cover_rel),
         },
     }
+    try:
+        host_only_binding = materialize_package_binding(
+            root=package_root,
+            item=item,
+            generation=cover_generation,
+        )
+    except HostOnlyV4PackageBindingError as exc:
+        raise DailyManifestError(
+            f"HOST_ONLY v4 package binding failed: {exc}"
+        ) from exc
+    if host_only_binding is not None:
+        item[BINDING_ITEM_KEY] = host_only_binding
+
     attestation = {
         "candidate_id": candidate_id,
         "reference_sha256": cover_generation.get("reference_sha256"),

@@ -25,6 +25,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.autoslice.cover_route_evidence import validate_cover_route_decision
+from src.autoslice.host_only_v4_package_binding import (
+    BINDING_ITEM_KEY,
+    HostOnlyV4PackageBindingError,
+    materialize_package_binding,
+)
 from src.autoslice.cover_only_audit_scope import (
     CoverOnlyAuditScopeError,
     validate_scope as validate_cover_only_audit_scope,
@@ -362,6 +367,24 @@ def _normalized_release_authorities(
     return normalized_publication_authorities
 
 
+def _bind_host_only_v4_package_item(
+    package_root: Path,
+    item: dict[str, Any],
+    generation: dict[str, Any],
+    candidate_id: str,
+) -> None:
+    try:
+        binding = materialize_package_binding(
+            root=package_root, item=item, generation=generation
+        )
+    except HostOnlyV4PackageBindingError as exc:
+        raise ManifestBuildError(
+            f"HOST_ONLY v4 package binding failed: {candidate_id}: {exc}"
+        ) from exc
+    if binding is not None:
+        item[BINDING_ITEM_KEY] = binding
+
+
 def build_manifest(
     *,
     package_root: Path,
@@ -469,7 +492,6 @@ def build_manifest(
             "delivered record set does not exactly match the "
             + ("release scope" if release_scope else "selection contract")
         )
-
     items: list[dict[str, Any]] = []
     attestations: list[dict[str, Any]] = []
     for candidate_id in release_scope or candidate_ids:
@@ -623,6 +645,7 @@ def build_manifest(
             "ass_sha256": _sha256(speaker_ass),
             "cover_route_summary": _cover_route_summary(generation),
         }
+        _bind_host_only_v4_package_item(package_root, item, generation, candidate_id)
         item["recovery_publication_authority"] = recovery_publication_authority
         if regression is not None:
             item["subtitle_regression_audit"] = regression.name

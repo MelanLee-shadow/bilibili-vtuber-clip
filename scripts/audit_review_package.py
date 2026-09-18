@@ -25,6 +25,7 @@ from src.autoslice.cover_route_evidence import (  # noqa: E402
     validate_rendered_text_pixel_evidence,
 )
 from src.autoslice.review_package_cover_diagnostics import (  # noqa: E402
+    audit_host_only_v4_package_binding as _audit_host_only_v4_package_binding,
     host_only_identity_route_blocker_detail as _host_only_identity_route_blocker_detail,
 )
 from src.autoslice.cover_text_pixel_evidence import (  # noqa: E402
@@ -109,7 +110,7 @@ DEFAULT_MAX_VISUAL_LINE_CHARS = 18
 LONG_STATIC_CUE_SECONDS = 10.0
 STORY_CONTRACT_ENFORCED_FROM_DATE = "2026-07-22"
 AUDIT_SCHEMA_VERSION = "lidousha-review-package-audit.v2"
-AUDIT_POLICY_EPOCH = "2026-07-31.final-artifact-gates.v5"
+AUDIT_POLICY_EPOCH = "2026-09-17.host-only-v4-package-binding.v7"
 _DYNAMIC_ATTESTATION_SUFFIXES = (
     ".upload_manifest.json",
     ".uploaded.json",
@@ -691,6 +692,14 @@ def _audit_finished_cover_evidence(
             detail="No route-aware cover generation evidence found",
         )
         return
+    _audit_host_only_v4_package_binding(
+        root=root,
+        item=item,
+        generation=generation,
+        issues=issues,
+        stem=stem,
+        record_path=record_path,
+    )
     route_decision = generation.get("route_decision")
     selected_treatment = (
         str(route_decision.get("selected_treatment") or "")
