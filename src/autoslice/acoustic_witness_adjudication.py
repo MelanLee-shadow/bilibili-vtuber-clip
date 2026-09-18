@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -152,6 +153,33 @@ def valid_cpa_witness_adjudication(verdict: Mapping[str, Any]) -> bool:
             )
             for key in required_hashes
         )
+    )
+
+
+
+def valid_cpa_entity_repair(row: Mapping[str, Any], *, expected_entity: str) -> bool:
+    """Recognize a bound entity choice without inventing a second word-list vote.
+
+    The producer has already validated this verdict against the request. Keep
+    its request binding and selected text when the late entity guard sees it;
+    bare acoustic choices and incomplete/foreign verdicts retain their limits.
+    """
+    verdict = row.get("verdict")
+    if not isinstance(verdict, Mapping):
+        return False
+    request_sha = verdict.get("request_sha256")
+    return bool(
+        expected_entity
+        and verdict.get("schema_version") == "chat-entity-verdict.v1"
+        and verdict.get("status") == "RESOLVED"
+        and verdict.get("canonical_entity") == expected_entity
+        and verdict.get("authority_kind") in {
+            "cpa_witness_adjudication", "cpa_context_only_closed_set_adjudication",
+        }
+        and isinstance(request_sha, str)
+        and re.fullmatch(r"(?:sha256:)?[0-9a-fA-F]{64}", request_sha)
+        and row.get("request_sha256") == request_sha
+        and valid_cpa_witness_adjudication(verdict)
     )
 
 

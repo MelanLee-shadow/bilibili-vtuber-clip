@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -28,6 +30,9 @@ def _run_watchdog(
     tmp_path: Path,
     *,
     mount_real: bool = False,
+    stale_fuse_connection: bool = False,
+    ambiguous_fuse_connection: bool = False,
+    remove_mount_dir_on_unmount: bool = False,
     bind_source: Path | None = None,
     permanently_non_fuse: str = "",
     fallback_file: bool = False,
@@ -36,6 +41,7 @@ def _run_watchdog(
     disabled: bool = False,
     lock_holder_cmd: str = "",
     stall_after_s: int = 3600,
+    maintenance_hold: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], str, Path]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -52,6 +58,34 @@ def _run_watchdog(
         os.utime(heartbeat, (stamp, stamp))
     if disabled:
         (base / "DISABLED").touch()
+    if maintenance_hold:
+        hold_root = base / "reports" / "clouddrive-source-recovery-test"
+        hold_root.mkdir()
+        hold = hold_root / "HOLD.json"
+        if maintenance_hold == "symlink":
+            target = tmp_path / "hold-target.json"
+            target.write_text("{}\n", encoding="utf-8")
+            hold.symlink_to(target)
+        elif maintenance_hold == "malformed":
+            hold.write_text("{not-json\n", encoding="utf-8")
+            hold.chmod(0o600)
+        else:
+            hold.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "clouddrive-source-recovery-hold.v1",
+                        "status": (
+                            "ACTIVE_MAINTENANCE_HOLD"
+                            if maintenance_hold == "active"
+                            else "RELEASED"
+                        ),
+                        "restoration_required": maintenance_hold == "active",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            hold.chmod(0o600)
     if lock_holder_cmd:
         lock = base / "tick.lock"
         lock.touch()
@@ -88,8 +122,35 @@ print(
     probe_dir.mkdir(parents=True)
     expected_bind_source = bind_source or probe_dir
     mount_state = tmp_path / "mount-real"
-    if mount_real:
+    if mount_real or stale_fuse_connection or ambiguous_fuse_connection:
         mount_state.touch()
+    probe_blocked = tmp_path / "probe-blocked"
+    if stale_fuse_connection or ambiguous_fuse_connection:
+        probe_blocked.touch()
+    remove_mount_dir = tmp_path / "remove-mount-dir-on-unmount"
+    if remove_mount_dir_on_unmount:
+        remove_mount_dir.touch()
+    mountinfo = tmp_path / "mountinfo"
+    fuse_connections = tmp_path / "fuse-connections"
+    if stale_fuse_connection or ambiguous_fuse_connection:
+        mount_rows = [
+            f"85 32 0:50 / {mount} rw,nosuid,nodev shared:36 - fuse CloudFS rw"
+        ]
+        connection_ids = ["50"]
+        if ambiguous_fuse_connection:
+            mount_rows.append(
+                f"86 32 0:51 / {mount} rw,nosuid,nodev shared:37 - fuse CloudFS rw"
+            )
+            connection_ids.append("51")
+        mountinfo.write_text("\n".join(mount_rows) + "\n", encoding="utf-8")
+        for connection_id in connection_ids:
+            connection = fuse_connections / connection_id
+            connection.mkdir(parents=True)
+            (connection / "abort").write_text("", encoding="utf-8")
+            (connection / "waiting").write_text("1\n", encoding="utf-8")
+    else:
+        mountinfo.write_text("", encoding="utf-8")
+        fuse_connections.mkdir()
     if fallback_file:
         fallback = probe_dir / "record_health" / "health.json"
         fallback.parent.mkdir()
@@ -102,6 +163,15 @@ print(
     _executable(
         fake_bin / "timeout",
         "#!/bin/sh\nshift\nexec \"$@\"\n",
+    )
+    _executable(
+        fake_bin / "ls",
+        """#!/bin/sh
+if [ -f "$WATCHDOG_TEST_PROBE_BLOCKED" ]; then
+  while :; do /bin/sleep 1; done
+fi
+exec /bin/ls "$@"
+""",
     )
     _executable(
         fake_bin / "findmnt",
@@ -148,21 +218,26 @@ fi
     )
     _executable(
         fake_bin / "fusermount",
-        "#!/bin/sh\nrm -f \"$WATCHDOG_TEST_MOUNT_STATE\"\n",
+        """#!/bin/sh
+rm -f "$WATCHDOG_TEST_MOUNT_STATE" "$WATCHDOG_TEST_PROBE_BLOCKED"
+if [ -f "$WATCHDOG_TEST_REMOVE_MOUNT_DIR" ]; then
+  rm -rf "$WATCHDOG_TEST_MOUNT"
+fi
+""",
     )
     _executable(
         fake_bin / "umount",
-        "#!/bin/sh\nrm -f \"$WATCHDOG_TEST_MOUNT_STATE\"\n",
+        """#!/bin/sh
+rm -f "$WATCHDOG_TEST_MOUNT_STATE" "$WATCHDOG_TEST_PROBE_BLOCKED"
+if [ -f "$WATCHDOG_TEST_REMOVE_MOUNT_DIR" ]; then
+  rm -rf "$WATCHDOG_TEST_MOUNT"
+fi
+""",
     )
     _executable(
         fake_bin / "docker",
         """#!/bin/sh
 echo "$*" >> "$WATCHDOG_TEST_DOCKER_LOG"
-if [ "$1 $2" = "restart clouddrive2" ]; then
-  : > "$WATCHDOG_TEST_MOUNT_STATE"
-  mkdir -p "$WATCHDOG_TEST_PROBE_DIR"
-  exit 0
-fi
 if [ "$1" = "stop" ]; then
   rm -f "$WATCHDOG_TEST_CONTAINER_STATE/$2.started"
   exit 0
@@ -170,6 +245,14 @@ fi
 if [ "$1" = "compose" ]; then
   case " $* " in
     *" up "*)
+      case " $* " in
+        *" clouddrive2 "*)
+          : > "$WATCHDOG_TEST_MOUNT_STATE"
+          rm -f "$WATCHDOG_TEST_PROBE_BLOCKED"
+          mkdir -p "$WATCHDOG_TEST_PROBE_DIR"
+          exit 0
+          ;;
+      esac
       for container in bililive_adapter bililive_recorder bilive_record; do
         : > "$WATCHDOG_TEST_CONTAINER_STATE/$container.started"
       done
@@ -220,6 +303,9 @@ exit 1
         "AUTOSLICE_WATCHDOG_STAT_BIN": str(fake_bin / "fake-stat"),
         "AUTOSLICE_WATCHDOG_PROC_LOCKS": str(proc_locks),
         "AUTOSLICE_WATCHDOG_PROC_ROOT": str(proc_root),
+        "AUTOSLICE_WATCHDOG_MOUNTINFO": str(mountinfo),
+        "AUTOSLICE_WATCHDOG_FUSE_CONNECTIONS_ROOT": str(fuse_connections),
+        "AUTOSLICE_WATCHDOG_MAINTENANCE_HOLD_ROOT": str(base / "reports"),
         "AUTOSLICE_WATCHDOG_STALL_AFTER_S": str(stall_after_s),
         "AUTOSLICE_WATCHDOG_COOLDOWN_S": "0",
         "AUTOSLICE_WATCHDOG_MOUNT_RETRIES": "2",
@@ -227,16 +313,22 @@ exit 1
         "AUTOSLICE_WATCHDOG_RETRY_SLEEP_S": "0",
         "AUTOSLICE_WATCHDOG_RECORDER_SETTLE_S": "0",
         "AUTOSLICE_WATCHDOG_COMPOSE_FILE": str(tmp_path / "compose.yml"),
+        "AUTOSLICE_WATCHDOG_CLOUDDRIVE_COMPOSE_FILE": str(tmp_path / "clouddrive-compose.yml"),
         "AUTOSLICE_WATCHDOG_QUARANTINE_ROOT": str(quarantine_root),
         "AUTOSLICE_WATCHDOG_DOCKER_BIN": str(fake_bin / "docker"),
         "AUTOSLICE_WATCHDOG_FINDMNT_BIN": str(fake_bin / "findmnt"),
         "AUTOSLICE_WATCHDOG_FUSERMOUNT_BIN": str(fake_bin / "fusermount"),
         "AUTOSLICE_WATCHDOG_TIMEOUT_BIN": str(fake_bin / "timeout"),
         "AUTOSLICE_WATCHDOG_UMOUNT_BIN": str(fake_bin / "umount"),
+        "AUTOSLICE_WATCHDOG_PYTHON_BIN": sys.executable,
+        "AUTOSLICE_WATCHDOG_LS_BIN": str(fake_bin / "ls"),
+        "AUTOSLICE_WATCHDOG_PROBE_TIMEOUT_S": "0.2",
         "WATCHDOG_TEST_DOCKER_LOG": str(docker_log),
         "WATCHDOG_TEST_MOUNT": str(mount),
         "WATCHDOG_TEST_MOUNT_STATE": str(mount_state),
+        "WATCHDOG_TEST_PROBE_BLOCKED": str(probe_blocked),
         "WATCHDOG_TEST_PROBE_DIR": str(probe_dir),
+        "WATCHDOG_TEST_REMOVE_MOUNT_DIR": str(remove_mount_dir),
         "WATCHDOG_TEST_BIND_SOURCE": str(expected_bind_source),
         "WATCHDOG_TEST_CONTAINER_STATE": str(container_state),
         "WATCHDOG_TEST_PERMANENTLY_NON_FUSE": permanently_non_fuse,
@@ -263,17 +355,131 @@ def test_probe_only_rejects_a_readable_plain_directory(tmp_path):
     assert calls == ""
 
 
+def test_probe_only_returns_without_waiting_for_a_stale_fuse_child(tmp_path):
+    completed, calls, _ = _run_watchdog(
+        tmp_path,
+        stale_fuse_connection=True,
+        probe_only=True,
+    )
+
+    assert completed.returncode == 1
+    assert calls == ""
+    assert (tmp_path / "fuse-connections" / "50" / "abort").read_text() == ""
+
+
+def test_probe_only_skips_cloudfs_under_active_maintenance_hold(tmp_path):
+    completed, calls, _ = _run_watchdog(
+        tmp_path,
+        stale_fuse_connection=True,
+        probe_only=True,
+        maintenance_hold="active",
+    )
+
+    assert completed.returncode == 75
+    assert "maintenance hold active" in completed.stdout
+    assert "watchdog probe/repair skipped" in completed.stdout
+    assert calls == ""
+    assert (tmp_path / "fuse-connections" / "50" / "abort").read_text() == ""
+
+
+def test_full_watchdog_skips_all_repair_side_effects_under_active_hold(tmp_path):
+    completed, calls, quarantine_root = _run_watchdog(
+        tmp_path,
+        maintenance_hold="active",
+    )
+
+    assert completed.returncode == 75
+    assert "maintenance hold active" in completed.stdout
+    assert calls == ""
+    assert not quarantine_root.exists()
+    assert not (tmp_path / "autoslice" / "watchdog.last_repair").exists()
+
+
+@pytest.mark.parametrize("hold_shape", ["malformed", "symlink"])
+def test_probe_only_fails_closed_on_unsafe_hold_metadata(tmp_path, hold_shape):
+    completed, calls, _ = _run_watchdog(
+        tmp_path,
+        mount_real=True,
+        probe_only=True,
+        maintenance_hold=hold_shape,
+    )
+
+    assert completed.returncode == 75
+    assert "maintenance hold metadata" in completed.stdout
+    assert "watchdog probe/repair skipped" in completed.stdout
+    assert calls == ""
+
+
+def test_released_maintenance_hold_does_not_block_probe(tmp_path):
+    completed, calls, _ = _run_watchdog(
+        tmp_path,
+        mount_real=True,
+        probe_only=True,
+        maintenance_hold="released",
+    )
+
+    assert completed.returncode == 0
+    assert calls == ""
+
+
 def test_watchdog_recovers_mount_then_recreates_consumers(tmp_path):
     completed, calls, _ = _run_watchdog(tmp_path)
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "real CloudFS mount probe FAILED" in completed.stdout
-    assert "restart clouddrive2" in calls
+    call_rows = calls.splitlines()
+    assert "restart clouddrive2" not in call_rows
+    cloud_recreate = next(row for row in call_rows if "--pull never clouddrive2" in row)
+    assert call_rows.index("stop clouddrive2") < call_rows.index(cloud_recreate)
+    assert "--force-recreate --no-deps --no-build --pull never clouddrive2" in cloud_recreate
+    assert "clouddrive-compose.yml" in cloud_recreate
     assert "compose -f" in calls
     assert "up -d --force-recreate" in calls
     assert "exec bililive_recorder stat -f -c %T /rec/Videos" in calls
     assert "exec bililive_adapter stat -f -c %T /adapter/Videos" in calls
     assert "exec bilive_record stat -f -c %T /app/Videos" in calls
+
+
+def test_watchdog_aborts_exact_stale_fuse_connection_before_restart(tmp_path):
+    completed, calls, _ = _run_watchdog(
+        tmp_path,
+        stale_fuse_connection=True,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "aborted stale CloudFS FUSE connection 50" in completed.stdout
+    assert (tmp_path / "fuse-connections" / "50" / "abort").read_text() == "1\n"
+    call_rows = calls.splitlines()
+    assert "restart clouddrive2" not in call_rows
+    cloud_recreate = next(row for row in call_rows if "--pull never clouddrive2" in row)
+    assert call_rows.index("stop clouddrive2") < call_rows.index(cloud_recreate)
+
+
+def test_watchdog_accepts_mountpoint_removed_with_stale_fuse(tmp_path):
+    completed, calls, _ = _run_watchdog(
+        tmp_path,
+        stale_fuse_connection=True,
+        remove_mount_dir_on_unmount=True,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "mountpoint disappeared with the stale FUSE endpoint" in completed.stdout
+    assert "--force-recreate --no-deps --no-build --pull never clouddrive2" in calls
+
+
+def test_watchdog_refuses_ambiguous_stale_fuse_connections(tmp_path):
+    completed, calls, _ = _run_watchdog(
+        tmp_path,
+        ambiguous_fuse_connection=True,
+    )
+
+    assert completed.returncode == 1
+    assert "ambiguous or unsafe mountinfo" in completed.stdout
+    assert (tmp_path / "fuse-connections" / "50" / "abort").read_text() == ""
+    assert (tmp_path / "fuse-connections" / "51" / "abort").read_text() == ""
+    assert "stop clouddrive2" not in calls
+    assert "--pull never clouddrive2" not in calls
+    assert "restart clouddrive2" not in calls
 
 
 def test_watchdog_preserves_system_disk_fallback_before_mount(tmp_path):

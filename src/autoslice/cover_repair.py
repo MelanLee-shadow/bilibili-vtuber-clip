@@ -24,6 +24,7 @@ from pathlib import Path
 
 from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice import cover_repair_route_lineage as _route_lineage
+from src.autoslice.cover_package_media_lineage import validate_manual_cover_media_lineage
 from src.autoslice.cover_route_evidence import (
     build_cover_route_decision,
     record_cover_route_execution,
@@ -999,11 +1000,8 @@ def bind_manual_package_cover(*, package_dir: Path, cover: Path) -> dict:
     if not mp4.is_file():
         raise ValueError(f"package delivery media missing: {mp4}")
     media_sha256 = "sha256:" + _runner._sha256_regular_file(mp4)
-    if _document_video_hash(publish_document) != media_sha256:
-        raise ValueError(
-            "package publish draft video hash does not match delivery media"
-        )
     documents: list[tuple[Path, dict]] = []
+    record_document = None
     record_path = publish_path.with_name(stem + ".record.json")
     if record_path.is_file():
         record_document = _read_json_object(
@@ -1019,9 +1017,11 @@ def bind_manual_package_cover(*, package_dir: Path, cover: Path) -> dict:
             raise ValueError(
                 "package delivery record title/upload binding mismatch"
             )
-        if _document_video_hash(record_document) != media_sha256:
-            raise ValueError("package delivery record video hash mismatch")
         documents.append((record_path, record_document))
+    validate_manual_cover_media_lineage(
+        publish_document=publish_document,
+        record_document=record_document, media_sha256=media_sha256,
+    )
     documents.append((publish_path, publish_document))
 
     binding_path = _require_unused_cover_binding_path(cover)

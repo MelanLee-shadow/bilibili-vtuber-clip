@@ -10,7 +10,6 @@ from .c7b_failed_row_adoption import c7b_emergency_cpa_repair_allowed
 from .chat_authority import (
     _fragment_spoken_in,
     _strip_interjections_once,
-    canonicalize_hard_meme_surfaces,
     canonicalize_japanese_native_script_surfaces,
     normalize_chat_text,
     normalize_srt_payload_window,
@@ -19,6 +18,13 @@ from .chat_evidence import normalize_srt_owner_payload_window
 from .expected_value_canon_supersession import (
     expected_value_canon_supersession_receipt,
 )
+from .fastlane_c10_parallel_subtitle import (
+    consume_parallel_legacy_owner,
+    finalize_parallel_legacy_owner_consumption,
+    prepare_parallel_final_surface,
+    verify_final_script_surfaces,
+)
+from .final_surface_summary import record_final_authority_summary
 from .jingting_chunker import parse_srt_cues
 from .operator_text_owner_supersession import supersede_legacy_text_owner
 from .redelivery_subtitle_baseline import MIN_ALIGNMENT_OVERLAP_MS
@@ -1683,40 +1689,17 @@ def verify_chat_authority_final_surfaces(
     # REDELIVERY_BASELINE_FINAL_OWNER_NOT_VERIFIED).
     audit.pop("final_verification_failure", None)
 
-    hard_meme_failures = {}
-    for surface_name, srt_text in (
-        ("final_text_srt", final_text_srt),
-        ("final_speaker_srt", final_speaker_srt),
+    parallel_context = prepare_parallel_final_surface(
+        audit,
+        final_text_srt=final_text_srt,
+        final_speaker_srt=final_speaker_srt,
+    )
+    if parallel_context is None or not verify_final_script_surfaces(
+        audit,
+        final_text_srt=final_text_srt,
+        final_speaker_srt=final_speaker_srt,
+        context=parallel_context,
     ):
-        _normalized, replacements = canonicalize_hard_meme_surfaces(srt_text)
-        if replacements:
-            hard_meme_failures[surface_name] = replacements
-    audit["final_hard_meme_surface_verification"] = {
-        "status": "FAIL" if hard_meme_failures else "PASS",
-        "failures": hard_meme_failures,
-    }
-    if hard_meme_failures:
-        audit["final_verification_failure"] = (
-            "UNBYPASSABLE_HARD_MEME_SURFACE_PRESENT"
-        )
-        return False
-
-    japanese_script_failures = {}
-    for surface_name, srt_text in (
-        ("final_text_srt", final_text_srt),
-        ("final_speaker_srt", final_speaker_srt),
-    ):
-        _normalized, replacements = canonicalize_japanese_native_script_surfaces(
-            srt_text
-        )
-        if replacements:
-            japanese_script_failures[surface_name] = replacements
-    audit["final_japanese_native_script_verification"] = {
-        "status": "FAIL" if japanese_script_failures else "PASS",
-        "failures": japanese_script_failures,
-    }
-    if japanese_script_failures:
-        audit["final_verification_failure"] = "JAPANESE_ROMAJI_SURFACE_PRESENT"
         return False
 
     source_owner_ok, source_owner_count = _verify_source_truth_owners(
@@ -1757,10 +1740,30 @@ def verify_chat_authority_final_surfaces(
     superseded_by_redelivery = 0
     superseded_by_exact_final_cpa = 0
     superseded_by_expected_value_canon = 0
+    projected_by_parallel_subtitle = 0
+    superseded_by_parallel_subtitle = 0
     required_rows: list[dict] = []
     for kind, row, expected_text in decision_rows:
         matched_start, matched_end = int(row["matched_start_ms"]), int(row["matched_end_ms"])
         row["final_verification_kind"], _ = kind, row.pop("expected_value_canon_supersession", None)
+        parallel_outcome = consume_parallel_legacy_owner(
+            audit,
+            context=parallel_context,
+            row=row,
+            expected_text=expected_text,
+            matched_start=matched_start,
+            matched_end=matched_end,
+            delivery_start_ms=delivery_start_ms,
+            delivery_end_ms=delivery_end_ms,
+        )
+        if parallel_outcome == "INVALID":
+            return False
+        if parallel_outcome == "PROJECTED":
+            projected_by_parallel_subtitle += 1
+            continue
+        if parallel_outcome == "SUPERSEDED":
+            superseded_by_parallel_subtitle += 1
+            continue
         if supersede_legacy_text_owner(row, operator_text_full_ownership):
             superseded_by_redelivery += 1
             continue
@@ -1961,38 +1964,18 @@ def verify_chat_authority_final_surfaces(
             dropped_ok=dropped_ok,
         )
         required_rows.append(row)
-    audit["final_required_legacy_decision_count"] = len(required_rows)
-    audit["final_required_source_truth_owner_count"] = source_owner_count
-    audit["final_required_redelivery_baseline_owner_count"] = (
-        baseline_owner_count
-    )
-    audit["final_required_decision_count"] = (
-        len(required_rows) + source_owner_count + baseline_owner_count
-    )
-    audit["final_superseded_by_source_truth_count"] = superseded_by_truth
-    audit["final_superseded_by_redelivery_baseline_count"] = (
-        superseded_by_redelivery
-    )
-    audit["final_superseded_by_exact_final_cpa_count"] = (
-        superseded_by_exact_final_cpa
-    )
-    audit["final_superseded_by_expected_value_canon_count"] = (
-        superseded_by_expected_value_canon
-    )
-    audit["final_outside_delivery_count"] = (
-        len(decision_rows)
-        - len(required_rows)
-        - superseded_by_truth
-        - superseded_by_redelivery
-        - superseded_by_exact_final_cpa
-        - superseded_by_expected_value_canon
-    )
-    audit["final_boundary_required_exclusion_count"] = sum(
-        row.get("final_verification_scope")
-        == "BOUNDARY_REQUIRED_OWNER_EXCLUDED"
-        for row in required_rows
-    )
-    return all(
-        row.get("survived_final_text_srt") and row.get("survived_final_speaker_srt")
-        for row in required_rows
+    if not finalize_parallel_legacy_owner_consumption(audit, parallel_context):
+        return False
+    return record_final_authority_summary(
+        audit,
+        required_rows=required_rows,
+        decision_row_count=len(decision_rows),
+        source_owner_count=source_owner_count,
+        baseline_owner_count=baseline_owner_count,
+        superseded_by_truth=superseded_by_truth,
+        superseded_by_redelivery=superseded_by_redelivery,
+        superseded_by_exact_final_cpa=superseded_by_exact_final_cpa,
+        superseded_by_expected_value_canon=superseded_by_expected_value_canon,
+        projected_by_parallel_subtitle=projected_by_parallel_subtitle,
+        superseded_by_parallel_subtitle=superseded_by_parallel_subtitle,
     )

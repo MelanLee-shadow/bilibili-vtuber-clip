@@ -421,7 +421,11 @@ def _validate_artifacts(
         raise FinalSubtitleAudioGateError("FINAL_SUBTITLE_AUDIO_RAW_RESULT_HASH_DRIFT")
     try:
         raw_result = _read_json(paths["raw_result"], label="subtitle_audio_bcut_raw")
-        derived_witness = _bcut_to_srt(raw_result).encode("utf-8")
+        derived_witness: bytes | None = None
+        if derived_witness is None:
+            derived_witness = _bcut_to_srt(raw_result).encode("utf-8")
+    except FinalSubtitleAudioGateError:
+        raise
     except Exception as exc:
         raise FinalSubtitleAudioGateError(
             "FINAL_SUBTITLE_AUDIO_RAW_RESULT_TO_SRT_FAILED: "

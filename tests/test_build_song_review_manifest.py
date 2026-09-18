@@ -347,6 +347,30 @@ def _reseal_talk_refresh_block(state: dict) -> None:
     )
 
 
+def test_build_attaches_native_host_only_v4_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fx = _fixture(tmp_path)
+    expected = {
+        "schema_version": "lidousha-host-only-v4-package-binding.v1",
+        "candidate_id": CANDIDATE_ID,
+    }
+    calls: list[tuple[Path, str]] = []
+
+    def materialize(*, root: Path, item: dict, generation: dict) -> dict:
+        assert generation["final_cover_sha256"].startswith("sha256:")
+        calls.append((root, str(item["candidate_id"])))
+        return expected
+
+    monkeypatch.setattr(builder, "materialize_package_binding", materialize)
+
+    manifest = _build(fx, monkeypatch)
+
+    assert calls == [(fx["package"], CANDIDATE_ID)]
+    assert manifest["items"][0]["host_only_v4_binding"] == expected
+
+
 def test_build_allows_completed_song_package_when_only_talk_refresh_is_blocked(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

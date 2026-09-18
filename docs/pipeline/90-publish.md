@@ -128,10 +128,16 @@ outer receipt path/hash 冻结进 package attestation，`verify`、`repair-plan`
 - 新投稿只接受 `authorized-upload-manifest.v3`。它必须绑定同 stem 的最终视频、封面、
   record、SRT、review manifest、冻结标题、最终 tags、StoryContract 与当前 package audit。
 - package audit 必须为 `lidousha-review-package-audit.v2`，policy epoch 精确等于
-  `2026-07-31.final-artifact-gates.v5`。audit schema 仍是 v2；policy fingerprint、
+  `2026-09-17.host-only-v4-package-binding.v7`。audit schema 仍是 v2；policy fingerprint、
   auditor source hash 与完整
   portable `audited_inputs` 闭包有效。上传器在任何副作用前重跑当前 canonical auditor、
   严格 SRT 与共享标题门，并要求结果与 manifest 绑定一致；自报 `passed:true` 不算。
+- HOST_ONLY v4 publication 还要求 manifest item 的 `lidousha-host-only-v4-package-binding.v1` 现场
+  重放通过：canonical receipt、comparison、reference、final cover 必须都是包内 canonical regular
+  file，四面 SHA 闭合，receipt 与三面 generation verification 完全相同。缺 binding、旧 v1 successor、
+  任一 artifact 缺失/漂移、locator 逃出包根或经过 symlink，都以
+  `COVER_HOST_ONLY_V4_PACKAGE_BINDING_MISSING_OR_INVALID` 阻断。安全 v2 successor 即使 audit 通过也只到
+  ready-unpublished，不能自行产生上传权。
 - talk 标题统一 profile 前缀 envelope（默认 profile：`【李豆沙】`），song 精确目录式；人工正文不能绕过外壳、长度或
   结构门。tags 必须逐项等于 audited record 的冻结结果。
 - 新 BV 没有当前 audit + CPA 标题/最终封面联合质检 receipt + `AUTO_UPLOAD` manifest +

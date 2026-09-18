@@ -16,6 +16,8 @@ from src.autoslice.cover_text_pixel_evidence import (
 )
 from src.autoslice.cover_title_rendering import (
     CoverTitleRenderError,
+    _basic_layout_engine,
+    _image_resampling_filter,
     LAYOUT_ENGINE_BASIC,
     SCHEMA_VERSION,
     render_spec_sha256,
@@ -146,6 +148,21 @@ def test_legacy_v3_basic_artifact_remains_replayable(
         font_path=FONT,
         expected_pre_overlay_sha256=evidence["pre_overlay_sha256"],
     )
+
+
+def test_basic_layout_and_resampling_support_legacy_pillow_api() -> None:
+    class LegacyImageFont:
+        LAYOUT_BASIC = 0
+
+    class LegacyImage:
+        BICUBIC = 3
+        LANCZOS = 1
+
+    assert _basic_layout_engine(LegacyImageFont) == 0
+    assert _basic_layout_engine() == ImageFont.Layout.BASIC
+    assert _image_resampling_filter("BICUBIC", LegacyImage) == 3
+    assert _image_resampling_filter("LANCZOS", LegacyImage) == 1
+    assert _image_resampling_filter("BICUBIC") == Image.Resampling.BICUBIC
 
 
 def test_declared_basic_layout_rejects_conflicting_override() -> None:

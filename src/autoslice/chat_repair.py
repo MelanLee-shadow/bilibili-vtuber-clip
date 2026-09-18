@@ -8,6 +8,7 @@ import hashlib
 import re
 from typing import Any, Iterable, Mapping, Sequence
 
+from src.autoslice.acoustic_witness_adjudication import valid_cpa_entity_repair
 from src.autoslice.chat_alignment_context import (
     context_owned_internal_gap_rebase,
     fragment_spoken_in as _fragment_spoken_in,
@@ -69,14 +70,9 @@ def revert_unregistered_entity_repairs(
     entity_repairs: Sequence[Mapping[str, Any]],
     registered_names: set[str],
 ) -> tuple[str, list[dict[str, Any]]]:
-    """An entity repair may only land on a REGISTERED entity name.
+    """Keep bound CPA choices; revert unregistered acoustic-only candidates.
 
-    The repetition/divergence compiler builds ad-hoc confusable groups out of
-    raw draft fragments, so a nondeterministic ASR roll can elect a mishearing
-    (练死) or a plain function word (到时) as the "winning canonical" and
-    rewrite a correct registered entity away (恋青→到时 case).
-    Fail-safe: revert any repair whose expected entity is not a registered
-    graph/static entity name, mark the row, and disclose.
+    Dynamic candidate groups provide evidence, never independent text authority.
     """
 
     lowered = {name.lower() for name in registered_names}
@@ -89,6 +85,9 @@ def revert_unregistered_entity_repairs(
             continue
         expected = str(row.get("expected_entity") or row.get("resolved_canonical") or "")
         if not expected or expected.strip().lower() in lowered:
+            continue
+        if valid_cpa_entity_repair(row, expected_entity=expected):
+            # Keep the original owner for the downstream final-surface checks.
             continue
         row_indexes = list(row.get("cue_indexes") or [])
         befores = list(row.get("before") or [])
@@ -1003,6 +1002,7 @@ def apply_audio_entity_verification(
             resolved = str(verdict["canonical_entity"])
             base_row = {
                 "evidence_id": evidence_id,
+                "request_sha256": request["request_sha256"],
                 "cue_indexes": [cue_index],
                 "matched_start_ms": cue.start_ms,
                 "matched_end_ms": cue.end_ms,

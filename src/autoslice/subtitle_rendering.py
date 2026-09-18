@@ -9,14 +9,23 @@ from typing import Sequence
 
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.term_lexicon import load_discovered_term_lexicon, normalize_text
+from src.autoslice.subtitle_validation import _blocks as _srt_blocks
 
 
-def _parse_srt(path: Path, *, source_offset_ms: int = 0) -> list[SourceCue]:
+def _parse_srt(
+    path: Path, *, source_offset_ms: int = 0, normalize_terms: bool = True,
+) -> list[SourceCue]:
+    """Read source cues, optionally retaining the final delivery spelling.
+
+    Draft/source consumers keep legacy normalization. Final rendering consumes
+    already-finalized text and must not make a new lexical choice here.
+    """
     raw = path.read_text(encoding="utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")
-    lexicon = load_discovered_term_lexicon(path)
+    lexicon = load_discovered_term_lexicon(path) if normalize_terms else None
     cues: list[SourceCue] = []
-    for index, block in enumerate(raw.split("\n\n"), start=1):
-        lines = [line for line in block.splitlines() if line.strip()]
+    # Match the existing release validator's nonempty blocks. A separator
+    # containing spaces/tabs must not turn the next index and time into text.
+    for index, lines in enumerate(_srt_blocks(raw), start=1):
         if len(lines) < 2:
             continue
         if "-->" in lines[0]:
@@ -55,7 +64,10 @@ def _parse_time_ms(value: str) -> int:
 
 
 def _write_sapphire_ass_from_srt(srt_path: Path, ass_path: Path) -> None:
-    cues = _parse_srt(srt_path)
+    # The final SRT is the input authority for this display-only projection.
+    # Discovering a new lexicon here could silently disagree with that file
+    # (or a later operator correction) while leaving its recorded hash intact.
+    cues = _parse_srt(srt_path, normalize_terms=False)
     event_rows = []
     rows = [(cue.source_start_ms, cue.source_end_ms, cue.text) for cue in cues]
     for _, sub_start_ms, sub_end_ms, sub_text in _layout_cue_sequence_for_display(rows):
@@ -187,6 +199,18 @@ def _small_boundary_shift(left: str, right: str) -> tuple[str, str]:
     return text[:cut], text[cut:]
 
 
+def _normalize_display_source_text(text: str) -> str:
+    """Normalize whitespace without discarding authoritative physical lines."""
+
+    raw_lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    lines = [" ".join(line.split()) for line in raw_lines]
+    if not lines or any(not line for line in lines):
+        raise ValueError("subtitle contains an empty physical display line")
+    if len(lines) > ASS_MAX_VISUAL_LINES:
+        raise ValueError("subtitle has more than two physical display lines")
+    return "\n".join(lines)
+
+
 def _layout_cue_sequence_for_display(
     cues: Sequence[tuple[int, int, str]],
     *,
@@ -195,17 +219,21 @@ def _layout_cue_sequence_for_display(
     """Source-index/start/end/display projection with bounded seam adjustments.
 
     Keep both events and both time intervals.  Only move a split word's small
-    prefix/suffix between touching same-speaker cues. The source SRT remains
-    byte-identical; deterministic long-line layout continues independently.
+    prefix/suffix between touching same-speaker cues. Explicit physical lines
+    are immutable display authority and never participate in cross-cue shifts.
+    The source SRT remains byte-identical; deterministic long-line layout
+    continues independently.
     """
     keys = list(continuity_keys) if continuity_keys is not None else [None] * len(cues)
     if len(keys) != len(cues):
         raise ValueError("display continuity key count differs from source cues")
-    texts = [" ".join(text.replace("\r", "\n").split()) for _, _, text in cues]
-    original_joined = "".join(texts)
+    texts = [_normalize_display_source_text(text) for _, _, text in cues]
+    original_joined = "".join(text.replace("\n", "") for text in texts)
     for index in range(len(cues) - 1):
         start, end, _ = cues[index]
         next_start, next_end, _ = cues[index + 1]
+        if "\n" in texts[index] or "\n" in texts[index + 1]:
+            continue
         if (
             keys[index] == keys[index + 1]
             and 0 <= next_start - end <= ASS_MAX_JOIN_GAP_MS
@@ -213,7 +241,7 @@ def _layout_cue_sequence_for_display(
             and next_end - start <= ASS_MAX_JOIN_DURATION_MS
         ):
             texts[index], texts[index + 1] = _small_boundary_shift(texts[index], texts[index + 1])
-    if "".join(texts) != original_joined:
+    if "".join(text.replace("\n", "") for text in texts) != original_joined:
         raise ValueError("display boundary adjustment changed words")
     return [
         (index, a, b, text)
@@ -275,7 +303,17 @@ def _layout_cue_for_display(start_ms: int, end_ms: int, text: str) -> list[tuple
 
     This is presentation only. Existing long cues retain bounded sequential
     display subcues; no recognized term is cut in half to balance line lengths.
+    An explicit two-line SRT cue is already a display decision: retain its line
+    boundary for the whole cue instead of flattening and rebalancing it.
     """
+    physical_lines = text.split("\n")
+    if len(physical_lines) > 1:
+        if len(physical_lines) > ASS_MAX_VISUAL_LINES or any(not line for line in physical_lines):
+            raise ValueError("subtitle physical line contract is invalid")
+        if any(len(line) > ASS_SAFE_DISPLAY_CHARS for line in physical_lines):
+            raise ValueError("subtitle physical line exceeds the safe display width")
+        return [(start_ms, end_ms, r"\N".join(physical_lines))]
+
     segments = _split_text_segments(text)
     if not segments:
         return []

@@ -84,6 +84,120 @@ _ENTITY_REQUEST_SCHEMAS = frozenset(
     }
 )
 _WITNESS_VERDICT_SCHEMA = "subtitle-span-acoustic-witness.v1"
+_SECONDARY_EVIDENCE_SCHEMA = "secondary-audio-witness-evidence.v1"
+_ACOUSTIC_CONFLICT_SCHEMA = "candidate-blind-acoustic-provider-conflict.v1"
+
+
+def _secondary_target_text(
+    evidence: object,
+    *,
+    request_sha256: str,
+) -> str | None:
+    """Return one typed candidate-blind secondary transcript, or ``None``.
+
+    Secondary native ASR is evidence-only.  It may veto a contradictory primary
+    dictation, but it never sees candidates and never becomes mutation authority.
+    """
+
+    if not isinstance(evidence, Mapping):
+        return None
+    if not (
+        evidence.get("schema_version") == _SECONDARY_EVIDENCE_SCHEMA
+        and evidence.get("status") == "OBSERVED"
+        and evidence.get("authority") == "EVIDENCE_ONLY"
+        and evidence.get("mutation_authorized") is False
+        and evidence.get("candidate_exposure") == "none"
+    ):
+        return None
+    bound_request = evidence.get("witness_request_sha256")
+    if bound_request not in {None, request_sha256}:
+        return None
+    rows = evidence.get("target_overlap_segments")
+    if not isinstance(rows, list) or not rows:
+        return None
+    texts: list[str] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            return None
+        start = row.get("start_ms")
+        end = row.get("end_ms")
+        text = row.get("text")
+        if (
+            isinstance(start, bool)
+            or not isinstance(start, int)
+            or isinstance(end, bool)
+            or not isinstance(end, int)
+            or start < 0
+            or end <= start
+            or not isinstance(text, str)
+            or not text.strip()
+        ):
+            return None
+        texts.append(text.strip())
+    return "".join(texts)
+
+
+def _secondary_acoustic_conflict(
+    *,
+    request: Mapping[str, Any],
+    witness_request: Mapping[str, Any],
+    primary_witness: Mapping[str, Any],
+    secondary_evidence: object,
+) -> dict[str, Any] | None:
+    """Fail closed only on a typed, exact zero-pinyin provider conflict."""
+
+    request_sha256 = str(witness_request.get("request_sha256") or "")
+    if not (
+        valid_witness_evidence(primary_witness, request_sha256=request_sha256)
+        and witness_protocol(primary_witness) == BLIND_PINYIN_PROTOCOL
+    ):
+        return None
+    secondary_text = _secondary_target_text(
+        secondary_evidence,
+        request_sha256=request_sha256,
+    )
+    if secondary_text is None:
+        return None
+    heard_pinyin = str(primary_witness.get("heard_pinyin") or "")
+    compatibility = pinyin_compatibility(
+        secondary_text,
+        heard_pinyin=heard_pinyin,
+        uncertain_positions=list(primary_witness.get("uncertain_positions") or []),
+    )
+    if compatibility is None or float(compatibility) > 0.0:
+        return None
+    assert isinstance(secondary_evidence, Mapping)
+    conflict = {
+        "schema_version": _ACOUSTIC_CONFLICT_SCHEMA,
+        "status": "CONFLICT",
+        "pinyin_compatibility": 0.0,
+        "primary_witness_response_sha256": primary_witness.get("response_sha256"),
+        "secondary_provider": secondary_evidence.get("provider"),
+        "secondary_model": secondary_evidence.get("model"),
+        "secondary_provider_response_sha256": (
+            secondary_evidence.get("provider_response_sha256")
+            or secondary_evidence.get("response_sha256")
+        ),
+        "secondary_receipt_sha256": secondary_evidence.get("receipt_sha256"),
+        "secondary_target_text_sha256": hashlib.sha256(
+            secondary_text.encode("utf-8")
+        ).hexdigest(),
+    }
+    return {
+        "schema_version": VERDICT_SCHEMA,
+        "request_sha256": request.get("request_sha256"),
+        "status": "UNCERTAIN",
+        "authority_kind": "candidate_blind_acoustic_provider_conflict",
+        "decision_authority": "NONE",
+        "witness_authority": "EVIDENCE_ONLY",
+        "witness_status": primary_witness.get("status"),
+        "witness_protocol": witness_protocol(primary_witness),
+        "acoustic_evidence_used": True,
+        "witness_request_sha256": request_sha256,
+        "reason_code": "ACOUSTIC_WITNESS_PROVIDER_CONFLICT",
+        "reason": "independent candidate-blind acoustic witnesses have zero pinyin compatibility",
+        "acoustic_conflict": conflict,
+    }
 
 
 def _prompt(danmu: str, asr: str, ctx_before: str, ctx_after: str) -> str:
@@ -413,6 +527,22 @@ def _closed_choice_with_witness(
         observed if isinstance(observed, Mapping) else {},
         witness_request=witness_request,
     )
+    secondary_probe = getattr(next_verifier, "secondary_audio_evidence", None)
+    if callable(secondary_probe):
+        try:
+            secondary_evidence = secondary_probe(witness_request)
+        except Exception:
+            secondary_evidence = None
+        conflict = _secondary_acoustic_conflict(
+            request=request,
+            witness_request=witness_request,
+            primary_witness=witness,
+            secondary_evidence=secondary_evidence,
+        )
+        if conflict is not None:
+            if text_decision is not None:
+                conflict["text_first_judge"] = text_decision
+            return conflict
     verdict = judge(witness)
     if verdict is not None and text_decision is not None:
         verdict["text_first_judge"] = text_decision

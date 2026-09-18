@@ -23,6 +23,12 @@ Anti Gravity/API 的可靠性和内容一致性，网页暂不纳入该轮比较
 CPA 仍比较全部证据；新的原生 ASR 听写也不能仅凭“与自身提案相同”被重复计算支持。
 该修复不选择听音模型，不创建拼音冲突否决门，不更改普通生产默认。
 
+最终实体回退也不得把“未登记到全局词表”作为 CPA 之后的第二次否决。当前实体行的
+`chat-entity-verdict.v1 / RESOLVED`、选中字面、行与裁决相同的请求哈希及既有 CPA 证词链均有效时，保留原
+CPA 改字和 owner；这同时适用于有声学证词与明确的 context-only 闭集裁决。裸 ASR 选边、
+缺失/非法证词链、选中字面不符仍走原未注册回退。该例外不伪造 `reconciliation`、不改空实体的
+普通 final-text owner、不跳过矛盾检查或最终内容/时间/发布门。
+
 ## CPA 模型与推理档位（2026-09-09）
 
 用户明确要求 CPA 使用 `gpt-6-astra`，不再以 GPT-5.6 执行新请求。
@@ -293,6 +299,14 @@ revision/self-hash 防止不同 consumer 分目录写出互相覆盖的旧快照
     revision/state/evidence/authority/decision_authority；`VERIFIED_ACTIVE` 只允许
     `decision_authority=REVIEWER_OPERATOR_TRUTH`，否则拒绝加载。CPA/机器/结构化事件结论只能保持
     PROPOSED 候选，不得在 CPA 后面再覆盖字幕；旧错行必须 SUPERSEDED，不能原地改历史。
+    对显式 VERIFIED_ACTIVE / REVIEWER_OPERATOR_TRUTH 的整句 replace_cue，若当前多条字幕完全
+    位于审定区间，不能只因拼接文字“包含”审定句就报已满足。首尾多字须沿已有分句分配修复，
+    不改时间；含无法对应的额外整条字幕时仍拒绝，不自行删句。跨审定边界的邻句、旧未声明
+    operator 身份的条目及最终文字验证保持原规则，不将本规则推广为普通 ASR 的自动删词权。
+    候选专属并行字幕/多轨投影不得绕开这条 lane：它可以保留旧 reviewed SRT 作为不可变前像，
+    但必须在 output rows 与输出 SHA 封印前应用 hash-bound operator entity correction。专名正字来自
+    维护者 truth；“同一称呼在短窗里出现几遍”来自独立局部观察。修复只作用于绑定的 source row 和
+    精确 span，不在词表或全局字符串层把所有近音表面替换为该专名。
 13. **operator truth 必须消解同槽旧阻塞**：chat/entity 层先发现
     `ENTITY_VERDICT_REQUIRED` 时不得在晚期 source truth 之前提前退出。正式 truth 投影落地且
     preview/formal ledger 哈希一致后，若投影内已逐槽保留结构化聊天 canonical，并达到原要求的

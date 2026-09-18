@@ -49,6 +49,7 @@ from src.autoslice.cover_polish_gate import (  # noqa: E402
 from src.autoslice.cover_host_identity_gate import (  # noqa: E402
     verify_final_host_identity,
 )
+from src.autoslice.cover_scene_binding import run_final_host_identity_witness  # noqa: E402
 from src.autoslice.publish_staging import _verify_polish_face_integrity  # noqa: E402
 from src.autoslice.cover_route_evidence import (  # noqa: E402
     record_cover_route_execution,
@@ -365,12 +366,14 @@ def main() -> int:
             print("REFUSE: host identity receipt is not bound to new cover", file=sys.stderr)
             return 2
     elif ok and (method == "screenshot_direct" or route.get("host_identity_required") is True):
-        host_receipt = verify_final_host_identity(
+        host_receipt = run_final_host_identity_witness(
+            verify_final_host_identity,
             final_cover_path=out_path,
             final_cover_sha256=new_sha,
             reference_path=Path(str(generation["reference_image"])),
             base_url=args.cpa_base,
             api_key=args.cpa_key,
+            cover_generation=repaired_generation,
         )
     if host_receipt is not None:
         repaired_generation["final_host_identity_verification"] = host_receipt

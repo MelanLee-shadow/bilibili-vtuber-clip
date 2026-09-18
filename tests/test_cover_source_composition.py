@@ -4,10 +4,14 @@ import hashlib
 import json
 from pathlib import Path
 
-from PIL import Image, ImageStat
+from PIL import Image, ImageDraw, ImageStat
 import pytest
 
 from src.autoslice.cover_source_composition import (
+    IDENTITY_CARD_FULL_FRAME_FALLBACK_REASON,
+    IDENTITY_CARD_STATUS,
+    extract_authority_source_crop,
+    extract_authority_source_crop_or_full_frame,
     validate_source_composition_verification,
     verify_source_composition,
 )
@@ -199,7 +203,10 @@ def test_cpa_identity_bbox_is_the_screenshot_crop_authority(tmp_path):
 
     assert output.is_file()
     assert Image.open(output).size == (1920, 1080)
-    assert evidence["status"] == "HASH_BOUND_CPA_IDENTITY_CROP"
+    assert evidence["status"] == IDENTITY_CARD_STATUS
+    assert evidence["full_frame_degeneracy_avoided"] is True
+    assert evidence["crop_strategy"] == "IDENTITY_CARD_WHEN_16_9_CROP_DEGENERATES"
+    assert evidence["crop_box"] != [0, 0, 1920, 1080]
     assert evidence["source_sha256"] == _sha(reference)
     assert evidence["authority_bbox_frac"] == [0.42, 0.12, 0.78, 0.89]
     assert evidence["motion_bbox_role"] == "CANDIDATE_ONLY_NOT_AUTHORITY"
@@ -320,3 +327,122 @@ def test_face_safe_poster_is_1440x810_zero_degree_without_full_width_bar(
         bottom_band = rendered.crop((0, 1000, 1920, 1080)).convert("RGB")
         means = ImageStat.Stat(bottom_band).mean
         assert max(means) - min(means) > 3
+
+
+def test_identity_card_crop_excludes_sidebar_when_16_9_crop_would_be_full_frame(
+    tmp_path,
+):
+    reference = tmp_path / "sidebar-reference.png"
+    image = Image.new("RGB", (1920, 1080), (18, 42, 78))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, 479, 1079), fill=(240, 0, 0))
+    draw.rectangle((610, 0, 1499, 1079), fill=(20, 210, 90))
+    image.save(reference)
+    verification = verify_source_composition(
+        reference_path=reference,
+        reference_sha256=_sha(reference),
+        story_hook="主播讲述故事",
+        title="【主播】故事",
+        image_probe=_probe(
+            {
+                "lidousha_bbox_frac": [0.32, 0.0, 0.78, 1.0],
+                "source_face_complete": True,
+                "faithful_crop_can_make_dominant": True,
+                "source_carries_story_reaction": True,
+                "cpa_redraw_recommended": False,
+                "reason": "主体完整但聊天栏必须排除",
+            }
+        ),
+    )
+    receipt = tmp_path / "source-composition.json"
+    receipt.write_text(
+        json.dumps(verification, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "identity-card.png"
+
+    evidence = extract_authority_source_crop(
+        reference_path=reference,
+        output_path=output,
+        frame_ms=12_345,
+        verification=verification,
+        verification_receipt_path=receipt,
+        verification_receipt_sha256=_sha(receipt),
+    )
+
+    assert evidence["status"] == IDENTITY_CARD_STATUS
+    assert evidence["full_frame_degeneracy_avoided"] is True
+    assert evidence["crop_box"][0] > 480
+    assert evidence["output_size"] == [1920, 1080]
+    assert evidence["identity_card_background"] == "BLURRED_AUTHORITY_CROP"
+    rendered = Image.open(output).convert("RGB")
+    assert rendered.size == (1920, 1080)
+    colors = rendered.getcolors(maxcolors=rendered.width * rendered.height)
+    assert colors is not None
+    assert not any(
+        red > 220 and green < 20 and blue < 20
+        for _count, (red, green, blue) in colors
+    )
+    assert any(
+        green > 150 and red < 80 and blue < 140
+        for _count, (red, green, blue) in colors
+    )
+
+def test_identity_card_full_frame_degeneracy_is_typed_and_never_false_attested(
+    tmp_path,
+):
+    reference = tmp_path / "full-frame-host.png"
+    Image.new("RGB", (1920, 1080), (32, 96, 160)).save(reference)
+    verification = verify_source_composition(
+        reference_path=reference,
+        reference_sha256=_sha(reference),
+        story_hook="主播占满画面",
+        title="【主播】全幅反应",
+        image_probe=_probe(
+            {
+                "lidousha_bbox_frac": [0.0, 0.0, 1.0, 1.0],
+                "source_face_complete": True,
+                "faithful_crop_can_make_dominant": True,
+                "source_carries_story_reaction": True,
+                "cpa_redraw_recommended": False,
+                "reason": "主体已经占满全幅，无法再做排除性裁切",
+            }
+        ),
+    )
+    receipt = tmp_path / "source-composition.json"
+    receipt.write_text(
+        json.dumps(verification, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "base.png"
+
+    with pytest.raises(
+        ValueError,
+        match=IDENTITY_CARD_FULL_FRAME_FALLBACK_REASON,
+    ):
+        extract_authority_source_crop(
+            reference_path=reference,
+            output_path=output,
+            frame_ms=12_345,
+            verification=verification,
+            verification_receipt_path=receipt,
+            verification_receipt_sha256=_sha(receipt),
+        )
+    assert not output.exists()
+
+    evidence = extract_authority_source_crop_or_full_frame(
+        reference_path=reference,
+        output_path=output,
+        frame_ms=12_345,
+        verification=verification,
+        verification_receipt_path=receipt,
+        verification_receipt_sha256=_sha(receipt),
+    )
+    assert evidence["status"] == "HASH_BOUND_FULL_FRAME_NO_CROP_COMPOSITOR"
+    assert evidence["crop_applied"] is False
+    assert evidence["full_frame_preserved"] is True
+    assert (
+        evidence["crop_fallback_reason_code"]
+        == IDENTITY_CARD_FULL_FRAME_FALLBACK_REASON
+    )
+    assert Image.open(output).size == (1920, 1080)

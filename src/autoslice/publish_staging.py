@@ -765,15 +765,15 @@ def _stage_publish_draft(
                 fresh_api_key = os.environ.get("CPA_API_KEY", "").strip()
                 if identity_reference.is_file() and fresh_base_url and fresh_api_key:
                     try:
-                        carried_generation["final_host_identity_verification"] = dict(
-                            verify_final_host_identity(
-                                final_cover_path=reused_cover_path,
-                                final_cover_sha256=reused_sha,
-                                reference_path=identity_reference,
-                                base_url=fresh_base_url,
-                                api_key=fresh_api_key,
-                            )
+                        witness = run_final_host_identity_witness(
+                            verify_final_host_identity,
+                            final_cover_path=reused_cover_path,
+                            final_cover_sha256=reused_sha,
+                            reference_path=identity_reference,
+                            base_url=fresh_base_url,
+                            api_key=fresh_api_key, cover_generation=carried_generation,
                         )
+                        carried_generation["final_host_identity_verification"] = dict(witness)
                     except Exception as exc:
                         carry_drop_reason = f"identity_refresh_error:{type(exc).__name__}"
                         carried_generation = None
@@ -1304,15 +1304,15 @@ def _stage_cpa_redraw_cover(
 
         def verify_current_final() -> None:
             try:
-                cover_generation["final_host_identity_verification"] = dict(
-                    final_host_identity_verifier(
-                        final_cover_path=Path(str(cover_generation["final_cover"])),
-                        final_cover_sha256=cover_generation["final_cover_sha256"],
-                        reference_path=reference_path,
-                        base_url=base_url,
-                        api_key=api_key,
-                    )
+                witness = run_final_host_identity_witness(
+                    final_host_identity_verifier,
+                    final_cover_path=Path(str(cover_generation["final_cover"])),
+                    final_cover_sha256=cover_generation["final_cover_sha256"],
+                    reference_path=reference_path,
+                    base_url=base_url,
+                    api_key=api_key, cover_generation=cover_generation,
                 )
+                cover_generation["final_host_identity_verification"] = dict(witness)
             except Exception as exc:
                 cover_generation["final_host_identity_verification"] = {
                     "status": "FAIL",

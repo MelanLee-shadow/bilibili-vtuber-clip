@@ -1,6 +1,6 @@
 ---
 name: bilive-autoslice-publish
-description: "操作、修复、审查或发布 autoslice 成品；从 live runtime authority 开始，按当前打包审计、最终感知复核与 authorized-upload 闭环执行。"
+description: "操作、修复、审查或发布 autoslice 成品；从 live runtime authority 开始，按当前打包审计、适用最终复核与 authorized-upload 闭环执行。"
 ---
 
 # Bilive Autoslice Publish
@@ -49,9 +49,12 @@ create-only 构建各自独立的 receipt，不互相冒充。具体输入、证
 
 ## 5. 已发稿同 BV 修复
 
-先确认当前修复代码已部署、最终包通过当前 80/90 step，并完成真实最终感知复核。然后：
+先确认当前修复代码已部署、最终包通过当前 80/90 step，再按第 3 节与 90 step 选择适用的
+机械验收或真实人工复核 receipt；这里不另加完整观看前置。旧进行中事务按原封存 receipt
+接续，不为切换验收类型重发。然后：
 
-1. 用 `make-manifest --final-human-review ...` 与 `verify` 冻结并重验当前包、receipt 和授权；
+1. 用 `make-manifest --final-human-review <receipt>` 与 `verify` 冻结并重验当前包、receipt 和授权；
+   `--final-human-review` 是兼容参数名，可承载 90 step 允许的独立机械 schema，不等于必须填写人工模板；
 2. 运行 `repair-plan --dry-run`，确认后再 create-only 建立 plan/journal；
 3. 用 `repair-status` 查看**本地** plan/journal 状态，再运行 `repair-run --dry-run`；
 4. 只用 `repair-run` 顺序执行或幂等 resume；多稿不得并行修复；

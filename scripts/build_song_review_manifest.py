@@ -38,6 +38,11 @@ from src.autoslice.cover_route_evidence import (  # noqa: E402
     validate_cover_route_decision,
     validate_rendered_text_pixel_evidence,
 )
+from src.autoslice.host_only_v4_package_binding import (  # noqa: E402
+    BINDING_ITEM_KEY,
+    HostOnlyV4PackageBindingError,
+    materialize_package_binding,
+)
 from src.autoslice.channel_profile import load_channel_profile  # noqa: E402
 from src.autoslice import operator_processing_scope as operator_scope  # noqa: E402
 from src.autoslice import semantic_evidence_scorecard_refresh as semantic_refresh  # noqa: E402
@@ -1098,6 +1103,19 @@ def build(
         "delivery_manifest": portable_delivery_manifest.name,
         "sha256": item_sha,
     }
+    try:
+        host_only_binding = materialize_package_binding(
+            root=package_root,
+            item=item,
+            generation=generation,
+        )
+    except HostOnlyV4PackageBindingError as exc:
+        raise SongReviewManifestError(
+            f"HOST_ONLY v4 package binding failed: {exc}"
+        ) from exc
+    if host_only_binding is not None:
+        item[BINDING_ITEM_KEY] = host_only_binding
+
     attestation = {
         "candidate_id": candidate_id,
         "reference_sha256": generation.get("reference_sha256"),

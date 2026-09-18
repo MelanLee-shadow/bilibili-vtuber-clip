@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Build a hash-bound final perceptual-review receipt from completed evidence.
+"""Build a hash-bound final-delivery review receipt through one explicit lane.
 
-This command does not perform, simulate, or pre-fill the perceptual review.  It
-only accepts a strict external evidence document written after the declared
-reviewer completed the review.  Every reproducible field in the final receipt
-is derived from the current review package, current canonical package audit,
-committed exact-point contract, and package records.
+With --mechanical, validate the current canonical package and its bindings
+without claiming fresh human full playback.  The human route instead requires
+strict external evidence written after the declared reviewer completed review;
+this command never performs, simulates, or pre-fills that human review.
+
+Scope and publication gates are defined in docs/pipeline/90-publish.md.
+Neither route creates new upload authorization.
 """
 
 from __future__ import annotations
@@ -1335,7 +1337,8 @@ def write_evidence_template_create_only(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Build a create-only final perceptual-review receipt from completed external evidence"
+            "Build a create-only final-delivery review receipt: --mechanical checks the current package; "
+            "the human route requires completed external evidence"
         )
     )
     parser.add_argument("package_root", type=Path)
