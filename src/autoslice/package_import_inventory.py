@@ -1,10 +1,19 @@
 """Deterministic, no-symlink source inventory shared by talk and song imports."""
 
-from collections.abc import Callable, Iterator
+from __future__ import annotations
+
+from collections.abc import Callable, Iterator, Mapping
+from typing import TYPE_CHECKING
 import os
 from pathlib import Path
 
 from src.autoslice.failed_pick_import import PackageImportError
+from src.autoslice.package_relocation_contract import (
+    JsonPointer, RECORD_PATH_POINTERS, PUBLISH_PATH_POINTERS, SPEAKER_PATH_POINTERS, get_value,
+)
+
+if TYPE_CHECKING:
+    from src.autoslice.package_import import PackageDocuments
 
 
 def iter_source_files(
@@ -33,3 +42,32 @@ def iter_source_files(
                 )
             yield path
         directories[:] = sorted(directories)
+
+
+
+def _referenced_locators(
+    documents: PackageDocuments,
+) -> list[tuple[str, JsonPointer, str]]:
+    """Every locator value the relocation contract is allowed to project."""
+
+    found: list[tuple[str, JsonPointer, str]] = []
+    for kind, document, pointers in (
+        ("record", documents.record, RECORD_PATH_POINTERS),
+        ("publish", documents.publish, PUBLISH_PATH_POINTERS),
+        (
+            "speaker",
+            documents.speaker if documents.speaker is not None else {},
+            SPEAKER_PATH_POINTERS,
+        ),
+    ):
+        for pointer in sorted(pointers):
+            value = get_value(document, pointer)
+            if isinstance(value, str) and value.startswith("/"):
+                found.append((kind, pointer, value))
+    embedded = documents.record.get("speaker_finalization")
+    if isinstance(embedded, Mapping):
+        for pointer in sorted(SPEAKER_PATH_POINTERS):
+            value = get_value(embedded, pointer)
+            if isinstance(value, str) and value.startswith("/"):
+                found.append(("record", ("speaker_finalization", *pointer), value))
+    return found

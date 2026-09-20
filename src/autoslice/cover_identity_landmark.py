@@ -7,35 +7,50 @@ from collections.abc import Mapping
 
 SCHEMA_VERSION = "lidousha-cover-identity-landmark-title-exclusion.v1"
 LANDMARK = "lidousha_panda_ears"
+# A current outfit need not have panda ears. Preserve the old contract while
+# allowing a reviewed, conservative head/headwear exclusion without that claim.
+HEAD_AND_HEADWEAR = "host_head_and_headwear"
+LANDMARKS = frozenset({LANDMARK, HEAD_AND_HEADWEAR})
 
 
 def _boxes_intersect(left: object, right: object) -> bool:
     return bool(
-        isinstance(left, (list, tuple)) and isinstance(right, (list, tuple))
+        isinstance(left, (list, tuple))
+        and isinstance(right, (list, tuple))
         and len(left) == len(right) == 4
-        and left[0] < right[2] and right[0] < left[2]
-        and left[1] < right[3] and right[1] < left[3]
+        and left[0] < right[2]
+        and right[0] < left[2]
+        and left[1] < right[3]
+        and right[1] < left[3]
     )
 
 
 def resolve_title_exclusion(
-    value: Mapping[str, object] | None, *, background_sha256: str,
+    value: Mapping[str, object] | None,
+    *,
+    background_sha256: str,
 ) -> dict[str, object] | None:
     """Validate a concrete exclusion before any title pixels are produced."""
 
     if value is None:
         return None
     if not isinstance(value, Mapping) or set(value) != {
-        "schema_version", "landmark", "background_sha256", "protected_bbox", "title_zone",
+        "schema_version",
+        "landmark",
+        "background_sha256",
+        "protected_bbox",
+        "title_zone",
     }:
         raise ValueError("COVER_IDENTITY_LANDMARK_EXCLUSION_INVALID")
     protected, title_zone = value.get("protected_bbox"), value.get("title_zone")
     if (
         value.get("schema_version") != SCHEMA_VERSION
-        or value.get("landmark") != LANDMARK
+        or not isinstance(value.get("landmark"), str)
+        or value.get("landmark") not in LANDMARKS
         or value.get("background_sha256") != background_sha256
         or any(
-            not isinstance(box, list) or len(box) != 4
+            not isinstance(box, list)
+            or len(box) != 4
             or any(isinstance(part, bool) or not isinstance(part, int) for part in box)
             or not (0 <= box[0] < box[2] <= 1920 and 0 <= box[1] < box[3] <= 1080)
             for box in (protected, title_zone)
@@ -44,14 +59,18 @@ def resolve_title_exclusion(
     ):
         raise ValueError("COVER_IDENTITY_LANDMARK_EXCLUSION_INVALID")
     return {
-        "schema_version": value["schema_version"], "landmark": value["landmark"],
+        "schema_version": value["schema_version"],
+        "landmark": value["landmark"],
         "background_sha256": value["background_sha256"],
-        "protected_bbox": list(protected), "title_zone": list(title_zone),
+        "protected_bbox": list(protected),
+        "title_zone": list(title_zone),
     }
 
 
 def exclusion_evidence(
-    exclusion: Mapping[str, object] | None, *, text_pixel_bbox: object,
+    exclusion: Mapping[str, object] | None,
+    *,
+    text_pixel_bbox: object,
 ) -> dict[str, object] | None:
     """Prove final title pixels do not cover the sealed landmark."""
 
@@ -59,7 +78,8 @@ def exclusion_evidence(
         return None
     title_zone = exclusion["title_zone"]
     if (
-        not isinstance(text_pixel_bbox, list) or len(text_pixel_bbox) != 4
+        not isinstance(text_pixel_bbox, list)
+        or len(text_pixel_bbox) != 4
         or text_pixel_bbox[0] < title_zone[0]
         or text_pixel_bbox[1] < title_zone[1]
         or text_pixel_bbox[2] > title_zone[2]

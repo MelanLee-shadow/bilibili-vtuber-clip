@@ -75,6 +75,8 @@
 | `rescue_from_official_replay.py` | 用官方回放重建丢失的录制段（分段时间映射） |
 | `repair_screenshot_cover.py` | 按已审计划重组截图路线封面；特定历史维修脚本不随公共版分发 |
 | `regenerate_channel_cover.py` | 重出单候选封面（profile 的 cover_regenerator 工具位） |
+| `build_host_only_identity_card_trial.py` | 使用原源构图与已审文字区生成确定性截图试稿；不签发最终人物见证或发布授权 |
+| `build_host_only_identity_card_successor.py` | 将现成试稿与同一最终像素的有效 V4 回执接入独立完整包；保留包审计与发布前提 |
 
 `swap_video_p.py` 是历史兼容工具，不是允许直接运行的修复入口；同 BV 修复仍只走
 `authorized_upload.py repair-plan / repair-run / repair-verify-live`。

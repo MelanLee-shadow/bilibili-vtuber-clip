@@ -40,6 +40,8 @@ import os
 import re
 import subprocess
 
+from _cleanup_file_identity import capture_preimage
+
 TEXT_EXT = {".json", ".jsonl", ".md", ".txt", ".srt", ".ass", ".log",
             ".py", ".sh", ".lrc", ".yaml", ".yml", ".csv"}
 MEDIA_EXT = {".mp4", ".m4s", ".mp3", ".wav", ".flac", ".m4a", ".mkv", ".ts", ".aac"}
@@ -268,8 +270,16 @@ def main() -> int:
             if live or not ids:
                 held["gate3_owner_not_terminal"] += size
                 continue
+            try:
+                preimage = capture_preimage(base, path)
+                if preimage["bytes"] != size:
+                    raise ValueError("file size changed during planning")
+            except (OSError, ValueError):
+                held["gate1_unsafe_or_changed_file"] += size
+                continue
             plan.append({"path": path, "bytes": size, "day": day, "cls": klass,
-                         "owner": ids[0], "owner_status": status.get(ids[0])})
+                         "owner": ids[0], "owner_status": status.get(ids[0]),
+                         "preimage": preimage})
 
     print("\nHELD BACK:")
     for reason, size in held.most_common():

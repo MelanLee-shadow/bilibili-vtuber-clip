@@ -47,7 +47,7 @@ from src.autoslice.failed_pick_import import (
     canonical_json_sha256,  # noqa: F401 - compatibility API
     load_failed_pick_import_authorization,  # noqa: F401 - compatibility API
 )
-from src.autoslice.package_import_inventory import iter_source_files
+from src.autoslice.package_import_inventory import iter_source_files, _referenced_locators
 from src.autoslice.review_package_ass_audit import (
     uniform_host_fallback_declared,
 )
@@ -714,34 +714,6 @@ def _iter_source_files(root: Path) -> Iterator[Path]:
     yield from iter_source_files(root, regular_file=_regular_file)
 
 
-def _referenced_locators(
-    documents: PackageDocuments,
-) -> list[tuple[str, JsonPointer, str]]:
-    """Every locator value the relocation contract is allowed to project."""
-
-    found: list[tuple[str, JsonPointer, str]] = []
-    for kind, document, pointers in (
-        ("record", documents.record, RECORD_PATH_POINTERS),
-        ("publish", documents.publish, PUBLISH_PATH_POINTERS),
-        (
-            "speaker",
-            documents.speaker if documents.speaker is not None else {},
-            SPEAKER_PATH_POINTERS,
-        ),
-    ):
-        for pointer in sorted(pointers):
-            value = get_value(document, pointer)
-            if isinstance(value, str) and value.startswith("/"):
-                found.append((kind, pointer, value))
-    embedded = documents.record.get("speaker_finalization")
-    if isinstance(embedded, Mapping):
-        for pointer in sorted(SPEAKER_PATH_POINTERS):
-            value = get_value(embedded, pointer)
-            if isinstance(value, str) and value.startswith("/"):
-                found.append(("record", ("speaker_finalization", *pointer), value))
-    return found
-
-
 def plan_import(
     *,
     source_package_dir: Path,
@@ -1082,6 +1054,33 @@ def verify_declared_artifacts(
 def _package_internal_cover(
     package_root: Path, cover_generation: Mapping[str, Any]
 ) -> Path:
+    # Canonical V4 packages bind a relative cover; native receipts can retain
+    # absolute producer labels. Both forms resolve only verified package bytes.
+    verification = cover_generation.get("final_host_identity_verification")
+    if isinstance(verification, Mapping) and verification.get("schema_version") == (
+        "lidousha-cover-final-host-identity-verification.v4"
+    ):
+        from src.autoslice.host_only_v4_package_binding import read_package_file_once
+
+        try:
+            locator = verification.get("final_cover_path")
+            if isinstance(locator, str) and PurePosixPath(locator).is_absolute():
+                # Ordinary producer receipts retain historical absolute labels.
+                # Resolve their established local alias, never the external path.
+                declared = cover_generation.get("final_cover")
+                if not isinstance(declared, str) or not declared:
+                    raise ValueError("V4 generation final cover locator is missing")
+                old_path = PurePosixPath(declared)
+                locator = (PurePosixPath(old_path.parent.name) / old_path.name).as_posix()
+            relative, payload = read_package_file_once(
+                package_root, locator, label="V4 package cover",
+            )
+            expected = declared_digest(cover_generation.get("final_cover_sha256"), label="V4 cover hash")
+            if sha256_bytes(payload) != expected:
+                raise ValueError("V4 relative cover hash drift")
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise PackageImportError("DECLARED_ARTIFACT_SHA_DRIFT", str(exc)) from exc
+        return package_root / relative
     declared = cover_generation.get("final_cover")
     if not isinstance(declared, str) or not declared:
         raise PackageImportError(

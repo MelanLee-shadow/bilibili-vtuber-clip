@@ -17,6 +17,12 @@ def project_preserved_cover_locators(
     before-images, while the existing relocation only rewrites approved locators.
     """
     generation = publish.get("cover_generation")
+    if isinstance(generation, dict) and "identity_card_pixel_successor" in generation:
+        from src.autoslice.package_import_v4_cover import project_v4_cover_locators
+
+        return project_v4_cover_locators(
+            record, publish, package_root=package_root, candidate_id=candidate_id,
+        )
     if not isinstance(generation, dict) or "pixel_preserving_successor" not in generation:
         return record, publish
     from src.autoslice import package_import as pi
