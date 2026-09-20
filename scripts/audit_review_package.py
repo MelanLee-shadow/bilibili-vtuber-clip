@@ -118,6 +118,9 @@ _DYNAMIC_ATTESTATION_SUFFIXES = (
     ".season_verify.json",
 )
 _PORTABLE_ARTIFACT_SUFFIXES = (
+    ".subtitle-audio-provenance.json",
+    ".subtitle-audio-correspondence.json",
+    ".subtitle-audio-bcut.raw.json",
     ".mp4",
     ".flv",
     ".mkv",
