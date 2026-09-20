@@ -87,7 +87,12 @@ def image_vision_probe(
         return receipt
     try:
         source_bytes = Path(image_path).read_bytes()
-        with tempfile.NamedTemporaryFile(suffix=".jpg") as handle:
+        # FFmpeg must decode the same bytes we hash, not reopen the mutable
+        # caller path. Keep a seekable, private snapshot with the input suffix:
+        # piping bytes instead breaks formats accepted by the existing reader.
+        with tempfile.NamedTemporaryFile(suffix=Path(image_path).suffix) as source_handle, tempfile.NamedTemporaryFile(suffix=".jpg") as handle:
+            source_handle.write(source_bytes)
+            source_handle.flush()
             subprocess.run(
                 [
                     "ffmpeg",
@@ -96,7 +101,7 @@ def image_vision_probe(
                     "error",
                     "-y",
                     "-i",
-                    str(image_path),
+                    source_handle.name,
                     "-vf",
                     f"scale=min({max_width}\\,iw):-2",
                     "-q:v",
