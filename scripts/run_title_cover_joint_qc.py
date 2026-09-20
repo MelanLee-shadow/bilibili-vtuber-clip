@@ -6,6 +6,8 @@ Run on free from /opt/bilive/autoslice/repo:
 收编自 recording-host:/tmp/run_title_cover_joint_qc.py(受骗片会话手作工具):
 身份行按 assets/lidousha/persona.md 修正——墨镜是可选配饰不是身份特征
 (v1 把"墨镜"写成必备,lidousha_primary 系统性假阴性,213135 案 1P2F)。
+当前人物问卷以当场直播形象为准，不将某套造型的发色、耳朵或帽子写成跨场身份条件。
+此问卷修正不补造同场参考，也不替代独立 SOURCE/FINAL 身份门或重标旧 FAIL。
 The verdict is the exact parsed CPA answer (validator replays this bond);
 any gate the model fails leaves status=FAIL and the upload chain stops.
 """
@@ -336,7 +338,7 @@ def build_joint_qc_receipt(
         "具体图文矛盾、虚构人物或事件、抢占主体的无关元素仍须列出，并说明可见依据；"
         "只有空泛口号、主体缺失、文案与标题不同题时仍须拒绝，身份正确本身不等于通过。\n"
         "请只输出一个 JSON 对象(不要 markdown 代码块,不要多余文字),字段与含义:\n"
-        '{"lidousha_primary": bool 封面主体是否是李豆沙(白发+头顶小熊猫耳的虚拟熊猫少女;熊猫耳长在头上不是头套/帽子;头顶墨镜或发饰是可选配饰,可有可无),'
+        '{"lidousha_primary": bool 封面主体是否是李豆沙（以当场直播形象为准；不能把固定发色、熊猫耳、耳朵位置、帽子、墨镜或发饰当作所有场次必备或禁止的身份条件；证据不足时不得凭标题、白发或熊猫元素猜测身份，无法确认则为false）,'
         '"thumbnail_readable": bool 缩略图尺寸下封面大字是否清晰可读,'
         '"single_clear_hook": bool 封面文案是否构成一个清晰单一的钩子,'
         '"text_overcrowded": bool 文字是否过度拥挤,'
