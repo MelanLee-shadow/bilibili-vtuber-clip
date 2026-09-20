@@ -557,6 +557,58 @@ def _joint_qc_corroboration_problems(
     return problems
 
 
+def _verdict_pass_axes(
+    verdict: Mapping[str, object], *, scene: str, host_only_required: bool
+) -> tuple[bool, bool, bool]:
+    """Share the existing producer acceptance predicates with receipt replay."""
+
+    identity_conflicts = verdict.get("identity_conflicts")
+    composition_conflicts = verdict.get("composition_conflicts")
+    if scene == "game":
+        identity_passed = bool(
+            verdict.get("source_lidousha_located") is True
+            and verdict.get("host_window_visible_in_final") is True
+            and verdict.get("host_window_identity_matches") is True
+            and isinstance(identity_conflicts, list)
+            and not identity_conflicts
+        )
+        composition_passed = bool(
+            verdict.get("frame_is_interesting") is True
+            and verdict.get("excessive_dead_space") is False
+            and verdict.get("meaningless_dominant_decoration") is False
+            and verdict.get("thumbnail_has_clear_click_hook") is True
+            and isinstance(composition_conflicts, list)
+            and not composition_conflicts
+        )
+    else:
+        identity_passed = bool(
+            verdict.get("source_lidousha_located") is True
+            and verdict.get("primary_subject_is_lidousha") is True
+            and verdict.get("primary_subject_matches_other_source_participant")
+            is False
+            and isinstance(identity_conflicts, list)
+            and not identity_conflicts
+        )
+        composition_passed = bool(
+            verdict.get("primary_subject_is_visually_dominant") is True
+            and verdict.get("primary_subject_face_is_large_and_clear") is True
+            and verdict.get("primary_subject_carries_story_reaction") is True
+            and verdict.get("excessive_dead_space") is False
+            and verdict.get("meaningless_dominant_decoration") is False
+            and verdict.get("thumbnail_has_clear_click_hook") is True
+            and isinstance(composition_conflicts, list)
+            and not composition_conflicts
+        )
+    host_only_passed = bool(
+        not host_only_required
+        or (
+            verdict.get("other_recognizable_people_or_avatars_visible") is False
+            and verdict.get("other_recognizable_people_or_avatars") == []
+        )
+    )
+    return identity_passed, composition_passed, host_only_passed
+
+
 def verify_final_host_identity(
     *,
     final_cover_path: Path,
@@ -689,49 +741,8 @@ def verify_final_host_identity(
             ),
         )
         return verification
-    identity_conflicts = verdict.get("identity_conflicts")
-    composition_conflicts = verdict.get("composition_conflicts")
-    if scene == "game":
-        identity_passed = bool(
-            verdict.get("source_lidousha_located") is True
-            and verdict.get("host_window_visible_in_final") is True
-            and verdict.get("host_window_identity_matches") is True
-            and isinstance(identity_conflicts, list)
-            and not identity_conflicts
-        )
-        composition_passed = bool(
-            verdict.get("frame_is_interesting") is True
-            and verdict.get("excessive_dead_space") is False
-            and verdict.get("meaningless_dominant_decoration") is False
-            and verdict.get("thumbnail_has_clear_click_hook") is True
-            and isinstance(composition_conflicts, list)
-            and not composition_conflicts
-        )
-    else:
-        identity_passed = bool(
-            verdict.get("source_lidousha_located") is True
-            and verdict.get("primary_subject_is_lidousha") is True
-            and verdict.get("primary_subject_matches_other_source_participant")
-            is False
-            and isinstance(identity_conflicts, list)
-            and not identity_conflicts
-        )
-        composition_passed = bool(
-            verdict.get("primary_subject_is_visually_dominant") is True
-            and verdict.get("primary_subject_face_is_large_and_clear") is True
-            and verdict.get("primary_subject_carries_story_reaction") is True
-            and verdict.get("excessive_dead_space") is False
-            and verdict.get("meaningless_dominant_decoration") is False
-            and verdict.get("thumbnail_has_clear_click_hook") is True
-            and isinstance(composition_conflicts, list)
-            and not composition_conflicts
-        )
-    host_only_passed = bool(
-        not host_only_required
-        or (
-            verdict.get("other_recognizable_people_or_avatars_visible") is False
-            and verdict.get("other_recognizable_people_or_avatars") == []
-        )
+    identity_passed, composition_passed, host_only_passed = _verdict_pass_axes(
+        verdict, scene=scene, host_only_required=host_only_required
     )
     if identity_passed and composition_passed and host_only_passed:
         verification["status"] = "PASS"
@@ -755,7 +766,7 @@ def verify_final_host_identity(
             ),
             detail=str(
                 verdict.get("reason")
-                or composition_conflicts
+                or verdict.get("composition_conflicts")
                 or "host is identifiable but not a dominant clickworthy subject"
             ),
         )
@@ -765,7 +776,7 @@ def verify_final_host_identity(
             reason_code="FINAL_HOST_IDENTITY_MISMATCH",
             detail=str(
                 verdict.get("reason")
-                or identity_conflicts
+                or verdict.get("identity_conflicts")
                 or "identity mismatch"
             ),
         )
@@ -1050,10 +1061,14 @@ def validate_final_host_identity_verification(
         verdict_lane_valid = bool(
             verdict_lane_valid
             and isinstance(verdict, Mapping)
+            and isinstance(witness, Mapping)
+            and witness.get("status") == "OBSERVED"
+            and isinstance(answer, str)
+            and _identity_answer_valid(answer, scene_kind="talk", host_only_required=True)
             and parsed_answer == dict(verdict)
-            and verdict.get("other_recognizable_people_or_avatars_visible")
-            is False
-            and verdict.get("other_recognizable_people_or_avatars") == []
+            # Recompute all original identity/composition/host-only predicates.
+            # A PASS label cannot override a negative or incomplete answer.
+            and all(_verdict_pass_axes(verdict, scene="talk", host_only_required=True))
         )
     return bool(
         generation_pin_valid

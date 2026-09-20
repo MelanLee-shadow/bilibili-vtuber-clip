@@ -84,6 +84,12 @@ def build_policy_fingerprint(
         root / "src/autoslice/source_fact_review.py",
         root / "src/autoslice/cover_only_audit_scope.py",
         root / "src/autoslice/cover_route_evidence.py",
+        # These are consumed by route validation and the package auditor itself,
+        # not merely producer helpers. Their changes must expire stored audits.
+        root / "src/autoslice/cover_host_identity_gate.py",
+        root / "src/autoslice/host_only_v4_package_binding.py",
+        root / "src/autoslice/review_package_cover_diagnostics.py",
+        root / "src/autoslice/cover_source_composition.py",
         root / "src/autoslice/cover_punch_semantics.py",
         root / "src/autoslice/cover_text_pixel_evidence.py",
         root / "src/autoslice/cover_title_rendering.py",

@@ -1280,3 +1280,106 @@ def test_host_only_question_does_not_also_allow_secondary_people():
     assert "次要人物可以存在" in _identity_question(
         scene_kind="talk", host_only_required=False
     )
+
+
+@pytest.fixture
+def current_host_only_generation(tmp_path, monkeypatch):
+    """A synthetic native V4 PASS, with no live model or real-image claims."""
+    from src.autoslice import cpa_frame_witness
+
+    reference = tmp_path / "replay-source.png"
+    final = tmp_path / "replay-final.png"
+    Image.new("RGB", (192, 108), (20, 30, 40)).save(reference)
+    Image.new("RGB", (192, 108), (80, 90, 100)).save(final)
+    verdict = {
+        **_HOST_ONLY_BASE_VERDICT,
+        "other_recognizable_people_or_avatars_visible": False,
+        "other_recognizable_people_or_avatars": [],
+    }
+    monkeypatch.setattr(cpa_frame_witness, "image_vision_probe", _fake_witness(verdict))
+    receipt = verify_final_host_identity(
+        final_cover_path=final,
+        final_cover_sha256=_sha(final),
+        reference_path=reference,
+        host_only_required=True,
+    )
+    generation = {
+        "final_cover": str(final),
+        "final_cover_sha256": _sha(final),
+        "reference_sha256": _sha(reference),
+        "story_contract": _host_only_story(),
+        "final_host_identity_verification": receipt,
+    }
+    assert receipt["status"] == "PASS"
+    assert validate_final_host_identity_verification(generation)
+    return generation
+
+
+@pytest.mark.parametrize("field,value", [
+    ("source_lidousha_located", False),
+    ("primary_subject_is_lidousha", False),
+    ("primary_subject_matches_other_source_participant", True),
+    ("primary_subject_is_visually_dominant", False),
+    ("primary_subject_face_is_large_and_clear", False),
+    ("primary_subject_carries_story_reaction", False),
+    ("excessive_dead_space", True),
+    ("meaningless_dominant_decoration", True),
+    ("thumbnail_has_clear_click_hook", False),
+    ("identity_conflicts", ["different subject"]),
+    ("composition_conflicts", ["face hidden"]),
+    ("source_lidousha_located", 1),
+    ("reason", ""),
+])
+def test_v4_consumer_replays_verdict_instead_of_trusting_pass_label(
+    current_host_only_generation, field, value,
+):
+    generation = current_host_only_generation
+    receipt = generation["final_host_identity_verification"]
+    # Preserve raw/parsed equality; a PASS label must not override an actual
+    # negative or malformed original answer. No historical receipt is edited.
+    receipt["verdict"][field] = value
+    receipt["witness"]["answer"] = json.dumps(receipt["verdict"])
+    assert not validate_final_host_identity_verification(generation)
+
+
+@pytest.mark.parametrize("status", ["UNAVAILABLE", "ERROR", None])
+def test_v4_consumer_requires_an_observed_witness(current_host_only_generation, status):
+    generation = current_host_only_generation
+    generation["final_host_identity_verification"]["witness"]["status"] = status
+    assert not validate_final_host_identity_verification(generation)
+
+
+def test_v4_consumer_rejects_partial_verdict_with_only_avatar_exclusion(current_host_only_generation):
+    generation = current_host_only_generation
+    receipt = generation["final_host_identity_verification"]
+    receipt["verdict"] = {
+        "other_recognizable_people_or_avatars_visible": False,
+        "other_recognizable_people_or_avatars": [],
+    }
+    receipt["witness"]["answer"] = json.dumps(receipt["verdict"])
+    assert not validate_final_host_identity_verification(generation)
+
+
+
+def test_v4_consumer_keeps_disclosed_agy_fallback(current_host_only_generation):
+    generation = current_host_only_generation
+    receipt = generation["final_host_identity_verification"]
+    receipt["selected_witness_provider"] = "agy"
+    witness = receipt["witness"]
+    witness["provider"] = "agy"
+    witness["routing"] = {
+        "preferred_provider": "cpa",
+        "selected_provider": "agy",
+        "fallback_used": True,
+        "primary_status": "UNAVAILABLE",
+        "primary_receipt": {"provider": "cpa", "status": "UNAVAILABLE"},
+    }
+    assert validate_final_host_identity_verification(generation)
+    witness["routing"].pop("primary_receipt")
+    assert not validate_final_host_identity_verification(generation)
+
+
+def test_v4_consumer_still_rejects_raw_answer_verdict_drift(current_host_only_generation):
+    generation = current_host_only_generation
+    generation["final_host_identity_verification"]["verdict"]["reason"] = "not the original answer"
+    assert not validate_final_host_identity_verification(generation)

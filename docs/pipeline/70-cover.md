@@ -222,6 +222,11 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
   不 alias。缺 binding、文件缺失、包外/path escape、任一父目录或文件 symlink、schema/authority/
   candidate 漂移、receipt 漂移或任一字节漂移，都统一阻断为
   `COVER_HOST_ONLY_V4_PACKAGE_BINDING_MISSING_OR_INVALID`。
+  V4 回执消费还必须验证 witness 的 `status=OBSERVED`，原始 answer 满足完整现行字段合同、
+  与 verdict 逐字段相同，并重放 producer 原有 identity/composition/HOST_ONLY 全部通过谓词。
+  只把外层 status 标为 PASS、保留“没有其他头像”两字段，不能覆盖主体不符、脸不清楚、
+  构图失败、未观察或不完整回答。producer 与 consumer 复用同一组确定性谓词，不重调模型；
+  合法 AGY 故障后备继续要求原 CPA 失败披露，游戏/双人和冻结出版历史兼容范围不变。
 
   Talk、Song、Manual、Recovery 四个 canonical manifest builder 遇到 v4 时，先把 receipt、comparison
   与 reference 物化到 package `evidence/`：优先复用包内同哈希字节，必要时才对 producer locator 做
