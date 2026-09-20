@@ -183,6 +183,55 @@ memory 和日期化报告只作历史证据，不能覆盖这里或当前代码 
 最终 locator 变化及既有原生 StoryContract 富化。该产物不自带新视频绑定或上传权，仍由
 既有 transactional binder、package audit、状态接纳和90步骤完成后续；旧 binding 原件保留。
 
+当旧 `screenshot_direct` 的 CPA/source-composition 主播 bbox 在 16:9 扩展后退化为整帧，
+不得用 `--preserve-existing-pixels` 延续含侧栏/其他画面的旧 PNG，也不得在旧 record 上直接重跑
+`repair_screenshot_cover.py` 洗证据。先用 `build_host_only_identity_card_trial.py` 建立独立、
+owner-private、create-only 的像素 trial：输入包、reference、source-composition receipt、旧 base/poster/
+cover、review manifest 与 evidence/delivery/publish 三份记录必须 regular-file、hash-bound、前后逐字节
+不变；记录须先冻结原始 SHA 再解析，消费的同一次 no-follow 读取必须匹配该 SHA，预检结束及
+出图后继续核对，不能在解析后才把已经变化的记录当作前像。声明为退化整帧裁切的旧
+base 必须与 exact reference 逐像素相同；只允许当前 compositor 落
+`IDENTITY_CARD_WHEN_16_9_CROP_DEGENERATES`。已有 hash-bound 主播 landmark/title exclusion 时，才可
+通过旧/新 screen-space transform 仿射重绑该 exclusion、渲染标题与最终 trial cover；生成记录必须停在
+`BLOCKED_HOST_ONLY_V4_WITNESS_REQUIRED`。若前像没有该 exclusion，不能从人物 bbox、旧标题位置或
+模型常识猜耳朵/脸部保护区，也不能先画标题再补证据；只允许生成 base/poster，状态停在
+`PASS_BACKGROUND_READY_TITLE_EXCLUSION_AUTHORITY_REQUIRED`，不得生成 final cover 或
+cover_generation，下一门为 `CANDIDATE_BOUND_TITLE_EXCLUSION_AUTHORITY`。两条路径都固定
+`provider_calls=0 / image_generation_calls=0 / package_writes=0 / state_writes=0 / upload_calls=0 /
+upload_allowed=false`，不能写回原包、状态或发布面。历史包 relocation 导致内联 source-composition
+locator 改写时，只能消费现行 validator 通过的 hash-bound receipt；内联副本与 receipt 除
+`/reference_path`、`/witness/image_path` 外必须完全相等，对应 basename 与声明 witness 摘要也必须
+一致。只有已生成最终 cover 的 trial 才进入实际画面验收，并在通过后对最终新字节重打 current
+HOST_ONLY v4 witness；背景-only trial 的目视通过不等于标题或最终封面通过。之后仍由专用像素后继
+binder、canonical package audit、80步骤接纳与90步骤候选授权继续；trial 本身既不是 review package，
+也不获得上传权。
+
+原包使用原生 `source-led / source_frame_with_title_reservation` 时，trial 必须向同一 compositor
+传入原 poster 已冻结的 `title_zone`，不能退回未测量的默认标题带。其 `full_frame` 是原生
+不裁切 contain 的标签，不应被只识别历史 `contain_face_safe` 的检查误拒；前后内容框、卡片
+尺寸/旋转和标题区必须保持相同，完整帧、脸部安全、无 AI 改画及中央安全区声明仍逐项验证。
+该兼容不产生标题避让或 V4 见证，后续仍按原门分别完成。
+
+已有完整 identity-card trial 和同一最终字节的真实 current V4 后，可用
+`build_host_only_identity_card_successor.py` 在独立私有目录接纳封面。它先冻结 trial/新像素/V4
+原始字节，与完整原视频包的九项前像绑定，并用原生 trial 做确定性复算：五项图片 hash 与
+除明确 locator 迁移外的 generation 必须全部相等；安装的是已见证的原图片字节，复算不是新设计。
+旧视频、字幕、原包和历史失败见证不改写。中间 pixel bridge 不是交付物，最终仍由既有安全
+V4 successor 物化四件包内绑定、同步三面记录并运行 canonical audit；失败保留诊断，不输出成功
+回执。outer receipt 明示相对原包封面像素已变化、相对 trial 像素未变，不能把 inner 的同像素语义
+混成“旧封面没改”。该操作零 provider、零生产状态写入、零上传；当前包审计通过仍不替代
+80步骤接纳、标题封面联合QC或90步骤候选级上传授权。
+
+背景-only trial 已经实际查看且有安全文字区时，私有 trial 可显式接受
+`--title-exclusion-authority`：`host-only-title-exclusion-authority.v1` 必须绑定同一 candidate、
+原 generation canonical SHA、当前 poster SHA、真实 root reviewer/时间/具体观察和所见全幅
+派生图 SHA。scope 只能为 `TITLE_PLACEMENT_ONLY`，不能伪写 维护者/CPA；没有旧 exclusion 才能
+消费，不能覆盖原有已绑定保护区。几何仍复用现行 `resolve_title_exclusion`，支持保护当场
+`host_head_and_headwear`，不因旧 enum 强称画面有熊猫耳。先冻结复核文件、同次 no-follow
+读字节并验 hash，再按 exact poster 排字；authoritative 文案逐行不变、字号/字形/安全区门不变，
+复核文件也加入产物前后输入检查。它只解除试稿的标题摆放缺口，输出仍必须是
+`BLOCKED_HOST_ONLY_V4_WITNESS_REQUIRED`；不生成 provider/人物终检/包审计/上传许可。
+
 绑定入口在任何可写的 generation 富化前，先拒绝已经占用的 immutable binding 路径
 （含损坏文件、目录与悬空链接）；富化后仍复核该路径。预检不预留路径，也不宣称提供并发
 隔离；不得先改写旧生成记录再报绑定已存在。旧视频 binding 不自动成为新成片证据。

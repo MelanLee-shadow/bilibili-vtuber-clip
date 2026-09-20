@@ -8,6 +8,27 @@
   候选实际绑定的 source pieces；不是任意同名文件。
 - 录制服务与源账本：参考 `ops/recording/`，按自己的部署核对 compose、
   录播姬配置和 `recording/status.json`。
+## 已审清理计划的文件前像
+
+`cleanup_preflight_scan.py` 与 `cleanup_apply_plan.py` 仍只适用于原有 `out/`
+清理路线，不适用于 reports 冷归档。计划生成前的静默窗口、类白名单、引用、终态与
+源可恢复性条件不变；使用者仍须持同一 runner 锁，并取得针对精确集合的原有审批。
+
+计划的每个目标必须含 `cleanup-file-preimage.v1`：SHA-256、大小、device/inode、
+mtime/ctime、权限、uid/gid 和链接数。规划器与执行器共用 `_cleanup_file_identity.py`，
+沿 no-follow 目录描述符只读 out 目录内独立普通文件；symlink、跨出 `out/` 或共享 inode
+不进入该清理路线。缺少前像的旧计划必须重建，不能在 apply 时按当前文件补签。
+
+执行器先验证整批前像与既有类/owner 声明，再在逐文件执行前重新核字节和目录项。
+同大小内容变化、文件替换、元数据漂移或重复路径均拒绝；错误的整批前像在首次删除前
+停止。执行期间若后续目标才发生变化，则停止剩余工作、记录已处理子集并返回非零，
+不宣称整批原子回滚。检查与 unlink 不是内核原子 compare-and-unlink，仍依赖合作 writer
+被既有锁排除；本机制不证明目标没有引用、不刷新授权、不替代备份或源健康检查。
+历史 manifest 的 `freed_bytes` 是处理文件的逻辑大小合计，新增
+`freed_bytes_basis=SUM_LOGICAL_BYTES_NOT_MEASURED` 明示其口径；不能把它当成实际磁盘
+净释放，后者须另行测量。dry-run 的删除数量与释放字节记为零，预估另记为
+`would_delete_files` 与 `would_delete_logical_bytes`。
+
 
 ## 录制栈与源约定
 
