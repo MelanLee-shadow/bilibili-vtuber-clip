@@ -84,7 +84,7 @@ FUNCTION_DEBT_LEDGER = {
     # source_truth 同款 DEFERRED 惯例）。连续吃增长，下次动它先拆。
     # 净 -25：source boundary review 整体抽到
     # producer_source_boundary_review.py；锁定本次拆解收益。
-    ("src/autoslice/producer_text_pipeline.py", "_finalize_text_evidence"): 317,
+    ("src/autoslice/producer_text_pipeline.py", "_finalize_text_evidence"): 315,
     # +6：会话内重述修复接线（维护者 当日指令，
     # 内部设计文档留存 §4）——同上，
     # 重活在 restatement_recall.py，这里只留调用点。

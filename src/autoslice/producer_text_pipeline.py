@@ -113,6 +113,7 @@ from src.autoslice.producer_boundary_owner_contract import (
     redelivery_baseline_boundary_owner as _redelivery_baseline_boundary_owner,
 )
 from src.autoslice.producer_text_finalization import _render_cues_to_srt
+from src.autoslice.producer_text_checkpoint import retain_post_transcript_text
 from src.autoslice.producer_source_truth_authority import (
     reconcile_required_source_truth_chat_authority,
     verify_source_truth_preview_formal_binding,
@@ -1535,9 +1536,7 @@ def _finalize_text_evidence(
         )
     chat_authority_audit["final_review_audit"] = final_review_audit
     persist_review_audit(out_root / f"{cid}.review-flags.json", final_review_audit)
-    chat_authority_audit["post_transcript_entity_output_srt_sha256"] = hashlib.sha256(
-        srt_text.encode("utf-8")
-    ).hexdigest()
+    retain_post_transcript_text(chat_authority_audit, srt_text)
     chat_authority_path = out_root / f"{cid}.chat-authority.json"
     chat_authority_path.write_text(
         json.dumps(chat_authority_audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
