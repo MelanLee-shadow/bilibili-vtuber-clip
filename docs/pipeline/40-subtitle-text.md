@@ -75,6 +75,16 @@ aggregate后置代词专项须接收本次调用已经提供的selection hook、
 时间轴不变；后续exact-final/音轨/包门保持。此接线不保证随机模型重试同字节，也不把一次
 返回或与旧机器稿一致当成人工真值。
 
+## 中断时保留原生中间字幕
+
+在现有 `post_transcript_entity_output_srt_sha256` 检查点，producer 同时把当时完整、未规范化的
+字幕字符串保存为 chat audit 的 `post_transcript_entity_output_srt`。即使随后语言门阻断、
+`padded.fresh.srt` 尚未产生，恢复时也无需从较早 `.cpa-reviewed.srt` 猜测当前稿。
+`producer_text_checkpoint.load_post_transcript_text` 只重算已有 UTF-8 SHA 并返回精确原文；
+旧版只有 hash 时返回缺失，显式坏类型或字节漂移拒绝，不读取近似文件名或重新请求模型。
+这份中间文字仍可能 PARTIAL/BLOCK，不代表最终审查、正确字幕或发布许可；候选/源/context、
+原修改回执及后续原生门必须分别验真。该字段不自动触发重试，也不替代最终 raw-byte SHA。
+
 ## 阶段顺序（真实调用序）
 
 | # | 子阶段 | 模块 | 作用 |
