@@ -536,3 +536,28 @@ BVID、只写 upload ledger 或只生成 completed sidecar 都不能把命令报
 也须被消费。后者必须与manifest精确相同并由原生`validate_publication`重读仓库封存target
 验证，不能仅加入一个字符串白名单或手改published_cid。迁移后仍保留candidate字符串身份与
 `day_completion=UNKNOWN`，不凭单片公开完成伪造整日state。
+
+## 已公开手动成片的队列对账（2026-09-21）
+
+手动包通过原生 package/JQC/authorized-upload 后可能已公开，而同一候选仍在
+`pending_talk`。这不是再次上传的理由，也不能删除队列行或伪造 `review_ready`。
+`scripts/intake_published_manual_candidate.py` 默认为 dry-run；只有当前原生 manifest、
+manual review、record、源媒体/区间、完整新 BV public/Creator/精确 section/uploaded
+证据及 immutable reconciliation authority 都重验成功，且同日恰一匹配 Talk 队列行、
+无重复/冲突且实际源区间覆盖原候选，才允许显式 `--apply`。
+
+该操作只在维护 `DISABLED` 存在时持 runner 与 publication-reconciliation 锁，封存
+原行/完整状态 preimage，再按 state SHA/CAS 将该行转入 `published` picks，并完整保留
+原 CID、源码区间、原队列证据与既有暂停；不生成 `review_ready`、不改字幕/成片、
+不访问源挂载、不调 provider，也不授权上传。坏引用、另一 BV/日期/源、未公开、
+诊断产物、重复目标、Song 或非 pending_talk 均拒绝。中断先回读目标和原 preimage，
+同一 manifest/publication 的重复接纳幂等。
+
+接纳后只对**原 BVID**运行原生 `season-add`/reconciliation 闭合 runtime registry、
+state 与 ledger，再完成实际公开播放验收；不能拿本工具替代发布前审核或绕过正常
+external-package import 的准入要求。本条只修复已发生且完整验真的公开事实对账。
+
+已接纳后的幂等检查使用 immutable publication authority、当前 manifest/package、
+已写入的精确原队列行与接纳引用，不要求可变的 public/season 轮询文件恢复旧字节。
+该识别分支只返回 ALREADY_APPLIED，零状态写、零新发布；首次接纳仍必须完整验证
+原 public/Creator/section/uploaded 证据，缺证或漂移不能通过此分支首次接纳。

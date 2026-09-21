@@ -16,6 +16,7 @@ from src.autoslice.acoustic_witness_adjudication import (
 from src.autoslice.boundary_semantic_review import (
     boundary_search_scope_is_valid,
 )
+from src.autoslice.gift_correction_supersession import audit_package_gift_corrections
 from src.autoslice.exact_final_cpa_history import repair_history
 from src.autoslice.channel_profile import (
     load_channel_profile as _load_channel_profile,
@@ -1600,6 +1601,13 @@ def audit_source_truth_owner_attestations(
 ) -> None:
     """Audit final text ownership separately from boundary ownership."""
 
+    audit_package_gift_corrections(
+        audit=chat_authority, record=record, subtitle_path=subtitle_path,
+        report_invalid=lambda: issue_adder(
+            issues, "CHAT_AUTHORITY_CORRECTION_GIFT_SUPERSESSION_INVALID",
+            stem=stem, path=chat_authority_path,
+        ),
+    )
     truth_audit_raw = chat_authority.get("source_subtitle_truth_audit")
     truth_audit = truth_audit_raw if isinstance(truth_audit_raw, dict) else {}
     truth_audit_valid = _source_truth_audit_valid(
