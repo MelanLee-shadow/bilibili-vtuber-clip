@@ -8,6 +8,14 @@
   候选实际绑定的 source pieces；不是任意同名文件。
 - 录制服务与源账本：参考 `ops/recording/`，按自己的部署核对 compose、
   录播姬配置和 `recording/status.json`。
+
+## 本地成品与录像目录初始化
+
+`gemini_slice_jingting.py` 的模块导入、离线文字校验/CLI help 与显式单文件处理不探测
+默认录像根。只有实际目录扫描入口才延迟选择默认根；显式 `--root` 优先于已有
+`BILIVE_VIDEOS_ROOT`，未配置时保持宿主目录存在则选宿主、否则容器目录的原顺序。
+这只移除无关初始化 I/O，不证明源健康，也不取消目录扫描、provider、FUSE 或暂停门。
+
 ## 已审清理计划的文件前像
 
 `cleanup_preflight_scan.py` 与 `cleanup_apply_plan.py` 仍只适用于原有 `out/`

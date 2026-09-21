@@ -48,9 +48,9 @@ CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
 ROOM = CHANNEL_PROFILE.room_id
 HOST_VIDEOS = "/path/to/cloud-drive/live-streaming"
 CONTAINER_VIDEOS = "/app/Videos"
-VIDEOS = os.environ.get("BILIVE_VIDEOS_ROOT") or (
-    HOST_VIDEOS if os.path.isdir(HOST_VIDEOS) else CONTAINER_VIDEOS
-)
+# Importers also handle local final media and offline text. Resolving the
+# implicit recording mount here can block those unrelated callers on FUSE.
+VIDEOS = os.environ.get("BILIVE_VIDEOS_ROOT") or None
 
 GEMINI_MODEL = os.environ.get("JINGTING_GEMINI_MODEL", "gemini-3.6-flash")
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -1914,6 +1914,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.daemon and not args.once:
         args.once = True
+
+    # Only directory-discovery modes need a default recording root. Preserve
+    # explicit CLI/env roots and the existing host-then-container fallback.
+    if args.root is None:
+        args.root = HOST_VIDEOS if os.path.isdir(HOST_VIDEOS) else CONTAINER_VIDEOS
 
     if args.daemon:
         daemon_lock = Path("/opt/bilive/run") / f"jingting-{args.room}.daemon.lock"
