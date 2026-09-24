@@ -52,7 +52,10 @@ class _AdapterProcess:
             receipt.write_text(
                 json.dumps(
                     verifier_adapter_receipt(
-                        Path(self.command[3]), prompt, response, "3.1 Pro"
+                        Path(self.command[self.command.index("run") + 1]),
+                        prompt,
+                        response,
+                        "3.1 Pro",
                     ),
                     sort_keys=True,
                 )
@@ -92,9 +95,54 @@ def _observed() -> dict[str, object]:
     }
 
 
+def _hermetic_web_account(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> pwd.struct_passwd:
+    """Return a controlled adapter account without weakening the runtime guard."""
+
+    if os.geteuid() != 0:
+        return pwd.getpwuid(os.geteuid())
+
+    account = pwd.struct_passwd(
+        (
+            "autoslice-web-test",
+            "x",
+            65_532,
+            65_532,
+            "Autoslice hermetic web test",
+            str(tmp_path),
+            "/bin/sh",
+        )
+    )
+    original_getpwnam = pwd.getpwnam
+
+    def getpwnam(name: str) -> pwd.struct_passwd:
+        if name == account.pw_name:
+            return account
+        return original_getpwnam(name)
+
+    monkeypatch.setattr(verifier._gemini_web.pwd, "getpwnam", getpwnam)
+    # The unit tests never launch the adapter.  Avoid changing ownership on a
+    # developer checkout while still exercising the root -> non-root branch.
+    monkeypatch.setattr(verifier._gemini_web.os, "chown", lambda *_args, **_kwargs: None)
+
+    runuser = tmp_path / "runuser"
+    runuser.write_text("#!/bin/sh\nexit 127\n", encoding="utf-8")
+    runuser.chmod(0o755)
+    original_web_path = verifier._gemini_web._web_path
+
+    def web_path(value, label, **kwargs):
+        if str(value) == "/usr/sbin/runuser":
+            return original_web_path(runuser, label, **kwargs)
+        return original_web_path(value, label, **kwargs)
+
+    monkeypatch.setattr(verifier._gemini_web, "_web_path", web_path)
+    return account
+
+
 def _set_web_env(monkeypatch, tmp_path: Path, *, enabled: str = "1", shadow: str = "1", upload: str = "0"):
     adapter = Path(__file__).parents[1] / "scripts" / "gemini_web_subscription.py"
-    web_user = pwd.getpwuid(os.geteuid()).pw_name
+    web_user = _hermetic_web_account(monkeypatch, tmp_path).pw_name
     browser = tmp_path / "chromium"
     browser.write_bytes(b"chromium")
     browser.chmod(0o755)
@@ -180,14 +228,24 @@ def test_web_witness_is_first_and_receipt_bound(tmp_path, monkeypatch, shadow, u
     def fake_popen(command, **kwargs):
         calls.append(command)
         assert kwargs["start_new_session"] is True
+        account = pwd.getpwnam(
+            os.environ[verifier.ENTITY_AUDIO_GEMINI_WEB_USER_ENV]
+        )
         assert kwargs["env"] == {
-            "HOME": kwargs["env"]["HOME"],
-            "USER": pwd.getpwuid(os.geteuid()).pw_name,
-            "LOGNAME": pwd.getpwuid(os.geteuid()).pw_name,
+            "HOME": account.pw_dir,
+            "USER": account.pw_name,
+            "LOGNAME": account.pw_name,
             "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "LANG": "C.UTF-8",
             "LC_ALL": "C.UTF-8",
         }
+        if os.geteuid() == 0:
+            assert command[:4] == [
+                str(tmp_path / "runuser"),
+                "--user",
+                account.pw_name,
+                "--",
+            ]
         assert "UNRELATED_SECRET" not in kwargs["env"]
         return _AdapterProcess(command, observed=observed)
 
@@ -236,6 +294,33 @@ def test_web_data_path_rejects_symlink(tmp_path):
 
     with pytest.raises(ValueError, match="invalid file type"):
         verifier._gemini_web._web_path(link, "web data")
+
+
+def test_root_web_handoff_rejects_root_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job = tmp_path / "job"
+    job.mkdir()
+    audio = tmp_path / "input.webm"
+    audio.write_bytes(b"webm")
+    root_account = pwd.struct_passwd(
+        ("root", "x", 0, 0, "root", str(tmp_path), "/bin/sh")
+    )
+    monkeypatch.setattr(verifier._gemini_web.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(
+        verifier._gemini_web.pwd,
+        "getpwnam",
+        lambda _name: root_account,
+    )
+
+    with pytest.raises(ValueError, match="web adapter must not run as root"):
+        verifier._gemini_web._prepare_web_handoff(
+            job_dir=job,
+            audio_path=audio,
+            prompt="blind witness",
+            user_name="root",
+        )
+    assert not (job / "gemini-web" / "receipt.json").exists()
 
 
 def verifier_adapter_receipt(audio: Path, prompt: Path, response: Path, model: str):

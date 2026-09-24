@@ -66,6 +66,11 @@ RECORD_PATH_POINTERS: frozenset[JsonPointer] = frozenset(
         (
             "publish_staging",
             "cover_generation",
+            "builtin_imagegen_provenance_path",
+        ),
+        (
+            "publish_staging",
+            "cover_generation",
             "rendered_text_pixels",
             "mask_path",
         ),
@@ -85,6 +90,7 @@ PUBLISH_PATH_POINTERS: frozenset[JsonPointer] = frozenset(
         ("cover_generation", "pre_overlay_path"),
         ("cover_generation", "ai_background"),
         ("cover_generation", "reference_image"),
+        ("cover_generation", "builtin_imagegen_provenance_path"),
         ("cover_generation", "rendered_text_pixels", "mask_path"),
         ("cover_generation", "rendered_text_pixels", "pre_overlay_path"),
     }
@@ -145,6 +151,8 @@ _RECORD_FROZEN_PREFIXES: tuple[JsonPointer, ...] = (
     ("publish_staging", "cover_repair_binding"),
     ("burned_preview", "command"),
     ("burned_preview", "branding_intro"),
+    ("burned_preview", "successor_materialization"),
+    ("successor_media_binding",),
     ("redelivery_baseline",),
     ("subtitle_regression",),
     ("boundary_audit",),
@@ -154,7 +162,14 @@ _RECORD_FROZEN_PREFIXES: tuple[JsonPointer, ...] = (
     ("subtitle_audio_correspondence", "receipt"),
     ("upload_tags",),
     ("publish_staging", "cover_generation"),
+    ("publish_staging", "private_successor_binding"),
     ("publish_staging", "source_fact_review"),
+    (
+        "publish_staging",
+        "story_contract",
+        "source_fact_review",
+        "final_review_successor",
+    ),
     ("publish_staging", "title_story_audit"),
     ("publish_staging", "manual_title_repair_authority_consumption"),
     ("publish_staging", "manual_title_keep_authority_consumption"),
@@ -164,7 +179,9 @@ _RECORD_FROZEN_PREFIXES: tuple[JsonPointer, ...] = (
 _PUBLISH_FROZEN_PREFIXES: tuple[JsonPointer, ...] = (
     ("cover_repair_binding",),
     ("cover_generation",),
+    ("private_successor_binding",),
     ("source_fact_review",),
+    ("story_contract", "source_fact_review", "final_review_successor"),
     ("title_story_audit",),
     ("manual_title_repair_authority_consumption",),
     ("manual_title_keep_authority_consumption",),

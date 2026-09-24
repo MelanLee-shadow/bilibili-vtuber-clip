@@ -25,6 +25,7 @@ from src.autoslice.cover_route_evidence import (  # noqa: E402
     validate_rendered_text_pixel_evidence,
 )
 from src.autoslice.review_package_cover_diagnostics import (  # noqa: E402
+    audit_builtin_imagegen_cover, validate_package_cover_route,
     audit_host_only_v4_package_binding as _audit_host_only_v4_package_binding,
     host_only_identity_route_blocker_detail as _host_only_identity_route_blocker_detail,
 )
@@ -380,6 +381,7 @@ def _audit_story_bound_cover(
     record: dict[str, Any],
     story_contract: dict[str, Any],
     required: bool,
+    root: Path | None = None, item: Mapping[str, Any] | None = None,
 ) -> None:
     publish_staging = record.get("publish_staging")
     if not isinstance(publish_staging, dict):
@@ -513,7 +515,7 @@ def _audit_story_bound_cover(
                 sort_keys=True,
             ),
         )
-    if required and (not validate_cover_route_decision(generation, allow_legacy_v1=False)):
+    if required and (not validate_package_cover_route(generation, root=root, item=item)):
         host_only_detail = _host_only_identity_route_blocker_detail(generation)
         _add_issue(
             issues,
@@ -681,9 +683,7 @@ def _audit_finished_cover_evidence(
 ) -> None:
     """Audit the materialized route instead of treating model defaults as proof.
 
-    Screenshot covers and CPA redraws are both finished routes.  A route label,
-    ``model`` default, or ``ai_cover_generated`` boolean cannot prove that the
-    selected route actually produced its required artifacts.
+    Labels and model defaults alone cannot prove that a route produced its artifacts.
     """
 
     if not isinstance(generation, dict):
@@ -709,11 +709,7 @@ def _audit_finished_cover_evidence(
         if isinstance(route_decision, dict)
         else ""
     )
-    # A v2 route preserves the originally selected treatment even when a
-    # verified execution failure safely degrades to a different finished
-    # lane.  Audit the materialized lane; validate_cover_route_decision below
-    # remains the authority that decides whether the selected -> actual
-    # transition itself is legitimate.
+    # Validate the selected-to-actual transition; audit its materialized route.
     treatment = (
         str(route_decision.get("actual_treatment") or selected_treatment)
         if isinstance(route_decision, dict)
@@ -868,6 +864,11 @@ def _audit_finished_cover_evidence(
                         f"cover sha256: {face_failure}"
                     ),
                 )
+        return
+
+    if treatment == "builtin_imagegen_redraw":
+        audit_builtin_imagegen_cover(root=root, item=item, generation=generation,
+            rendered_text_ready=rendered_text_ready, issues=issues, stem=stem, record_path=record_path)
         return
 
     ai_background_path = (
@@ -1262,7 +1263,7 @@ def _audit_item_story_contract(
         record_path=record_path,
         record=record,
         story_contract=story_contract,
-        required=story_contract_required,
+        required=story_contract_required, root=root, item=item,
     )
     audit_boundary_contract(
         issue_adder=_add_issue,

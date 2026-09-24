@@ -317,6 +317,17 @@ source/state/deploy/adapter 漂移均拒绝重放；live=True/unknown 仍走普�
 - **主题一致的候选尽量合并成一个切片**，不许把同一话题在源时间轴上相邻/交错的两段切成两条成品。
 - 机制：候选定稿前跑主题聚合 pass——相邻候选（源时间间隔小）且主题/实体重叠高的合并为一个候选窗口，交给边界解析定最终起止。实现见 `src/autoslice/semantic_candidate_selector.py` 的 merge pass（落地记录 `merge_audit`）。
 - 合并后的标题按合并主题起，不是拼接两个子标题。
+- 合并成片的发布身份与它已消费的源候选必须分别记账。发布对账在验证包内的完整
+  父子内容映射后，保存 `content_coverage`；被完整覆盖的旧候选投影为
+  `covered_by_publication`，保留原 ID、包和历史，指向原 BV，不再进入
+  `ready_unpublished_candidate_ids`，也不增加一个公开视频。现行实现入口为
+  `publication_content_coverage.py`、`publication_state_projection.py` 和
+  `publication_registry.py`。只有已实现且验真的内容映射适配器能产生该结论；当前
+  支持 T06 的精确双父候选拼接。缺映射、字节漂移或仅标题相似不得伪造覆盖完成。
+  不同 ID/边界的新召回仍按本步的源区间与 published-topic review 规则核对，不能从
+  “旧候选号没有命中”推导是新内容。消费方必须读取当前 runtime registry overlay，
+  不能拿只含旧 committed 行的快照选下一条。报表把覆盖源候选与公开视频分开计数；
+  原 BV 的纯封面修改只有在 CID 不变并重验旧内容证明时才继承覆盖，不能丢失或扩张它。
 
 ## metric 硬维度（详见 metric 资产）
 

@@ -25,6 +25,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.autoslice.cover_route_evidence import validate_cover_route_decision
+from src.autoslice.builtin_imagegen_cover import copy_builtin_imagegen_source
 from src.autoslice.host_only_v4_package_binding import (
     BINDING_ITEM_KEY,
     HostOnlyV4PackageBindingError,
@@ -385,6 +386,28 @@ def _bind_host_only_v4_package_item(
         item[BINDING_ITEM_KEY] = binding
 
 
+def _bind_cover_only_audit_scope(
+    package_root: Path,
+    item: dict[str, Any],
+    scope_entry: tuple[Path, dict[str, Any]] | None,
+    candidate_id: str,
+) -> None:
+    if scope_entry is None:
+        return
+    scope_path, scope_payload = scope_entry
+    item["cover_only_audit_scope"] = scope_path.relative_to(package_root).as_posix()
+    try:
+        validate_cover_only_audit_scope(
+            scope_payload,
+            package_root=package_root,
+            item=item,
+        )
+    except CoverOnlyAuditScopeError as exc:
+        raise ManifestBuildError(
+            f"cover-only audit scope invalid: {candidate_id}: {exc}"
+        ) from exc
+
+
 def build_manifest(
     *,
     package_root: Path,
@@ -645,6 +668,11 @@ def build_manifest(
             "ass_sha256": _sha256(speaker_ass),
             "cover_route_summary": _cover_route_summary(generation),
         }
+        if generation.get("method") == "image_gen.imagegen":
+            provenance = copy_builtin_imagegen_source(
+                generation, package_root / f"{stem}.builtin-imagegen-source"
+            )
+            item["cover_builtin_provenance"] = str(provenance.relative_to(package_root))
         _bind_host_only_v4_package_item(package_root, item, generation, candidate_id)
         item["recovery_publication_authority"] = recovery_publication_authority
         if regression is not None:
@@ -660,20 +688,9 @@ def build_manifest(
         item["redelivery_baseline_status"] = baseline_status
         if baseline is not None:
             item["redelivery_baseline"] = baseline.name
-        scope_entry = scope_payloads.get(candidate_id)
-        if scope_entry is not None:
-            scope_path, scope_payload = scope_entry
-            item["cover_only_audit_scope"] = scope_path.relative_to(package_root).as_posix()
-            try:
-                validate_cover_only_audit_scope(
-                    scope_payload,
-                    package_root=package_root,
-                    item=item,
-                )
-            except CoverOnlyAuditScopeError as exc:
-                raise ManifestBuildError(
-                    f"cover-only audit scope invalid: {candidate_id}: {exc}"
-                ) from exc
+        _bind_cover_only_audit_scope(
+            package_root, item, scope_payloads.get(candidate_id), candidate_id
+        )
         items.append(item)
         attestations.append(
             {

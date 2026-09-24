@@ -34,7 +34,8 @@ FUNCTION_DEBT_LEDGER = {
     # +20：run_mode 白名单纳入 MANUAL_PRODUCE_REVIEW 且强制
     # manual_attestation 署名（手动产线包进审计闭环；维护者 8/2 /goal 授权，
     # 测试 test_manual_review_manifest.py + 二轮真实测试实锤此缺口）。
-    ("scripts/build_recovery_review_manifest.py", "build_manifest"): 343,
+    # Cover-only scope validation moved to a focused helper; lock the lower shape.
+    ("scripts/build_recovery_review_manifest.py", "build_manifest"): 337,
     ("scripts/run_auto_review_shadow_pipeline.py", "_run_live_source"): 316,
     ("src/autoslice/cover_repair.py", "_roll_forward_prepared_cover_transactions"): 346,
     # 净 -16：维护者 8/8 真值法证 synthesis F7——删除无声学
@@ -75,16 +76,15 @@ FUNCTION_DEBT_LEDGER = {
     # pending rescore sidecar 并抛 SOURCE_FACT_REPAIRED_RESCORE_REQUIRED；
     # 新增逻辑的重量已推给 src/autoslice/selection_rescore.py，这里只留
     # 薄调用点。测试 tests/test_selection_rescore.py。
-    ("src/autoslice/producer_package_finalization.py", "_stage_record"): 322,
+    ("src/autoslice/producer_package_finalization.py", "_stage_record"): 307,
     # 净 -6；再把 gift-owner 判定抽成 helper 净 -1，
     # 锁定当前 typed supersession 拆解后的更低上限。
-    ("src/autoslice/producer_text_finalization.py", "verify_chat_authority_final_surfaces"): 305,
     # +40：SC 发送者裁决对 v2 精确重放 redelivery 的 deferral
     # （jyl-r10 案：CPA 宕机/岔听下 UNRESOLVED，而该 cue 终局注定被基线盖回；
     # source_truth 同款 DEFERRED 惯例）。连续吃增长，下次动它先拆。
     # 净 -25：source boundary review 整体抽到
     # producer_source_boundary_review.py；锁定本次拆解收益。
-    ("src/autoslice/producer_text_pipeline.py", "_finalize_text_evidence"): 315,
+    ("src/autoslice/producer_text_pipeline.py", "_finalize_text_evidence"): 314,
     # +6：会话内重述修复接线（维护者 当日指令，
     # 内部设计文档留存 §4）——同上，
     # 重活在 restatement_recall.py，这里只留调用点。
@@ -274,7 +274,7 @@ MODULE_DEBT_LEDGER = {
     # deferred exact-replay receipt 分别收束到窄模块，避免 producer 回涨。
     # net -12: source binding and provenance writes extracted into
     # producer_final_recut_source_binding.py and producer_recut_provenance.py.
-    "src/autoslice/producer_package_finalization.py": 2_598,
+    "src/autoslice/producer_package_finalization.py": 2_583,
     # +40：同上（SC 发送者 deferral）。
     # +7：会话内重述修复接线（维护者 当日指令，
     # 内部设计文档留存 §4）——会话内

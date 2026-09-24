@@ -26,6 +26,11 @@ from src.autoslice.reviewed_exact_source_interval import (
 from src.autoslice.source_subtitle_truth import (
     candidate_boundary_owner_scope,
 )
+from src.autoslice.structured_chat_payoff import (
+    ASSESSMENT_KEY as STRUCTURED_CHAT_PAYOFF_ASSESSMENT_KEY,
+    freeze_assessment as freeze_structured_chat_payoff_assessment,
+    validate_assessment as validate_structured_chat_payoff_assessment,
+)
 
 
 def _canonical_sha256(value: object) -> str:
@@ -137,8 +142,14 @@ def validate_frozen_boundary_owner_contract(
         raise RuntimeError("BOUNDARY_RETRY_OWNER_SET_DRIFT")
     owners = contract.get("owners")
     owner_scope = contract.get("owner_eligibility_scope")
+    payoff_assessment = contract.get(STRUCTURED_CHAT_PAYOFF_ASSESSMENT_KEY)
     try:
         normalized_owners = _normalized_owner_set(owners) if isinstance(owners, list) else None
+        validated_payoff_assessment = (
+            validate_structured_chat_payoff_assessment(payoff_assessment)
+            if payoff_assessment is not None
+            else None
+        )
     except RuntimeError as exc:
         raise RuntimeError("BOUNDARY_RETRY_OWNER_SET_DRIFT") from exc
     if (
@@ -168,10 +179,43 @@ def validate_frozen_boundary_owner_contract(
         != _canonical_sha256(
             {str(key): value for key, value in owner_scope.items() if key != "scope_sha256"}
         )
+        or (
+            validated_payoff_assessment is not None
+            and EXACT_INTERVAL_FROZEN_CONTRACT_KEY not in contract
+            and (
+                not isinstance(contract.get("boundary_search_scope"), Mapping)
+                or contract["boundary_search_scope"].get("structured_payoff_ms")
+                != validated_payoff_assessment.get("scope_ms")
+            )
+        )
         or contract.get("contract_sha256") != frozen_boundary_owner_contract_sha256(contract)
     ):
         raise RuntimeError("BOUNDARY_RETRY_OWNER_SET_DRIFT")
     return dict(contract)
+
+
+def structured_chat_payoff_scope_ms_from_frozen_contract(
+    contract: object,
+) -> int | None:
+    """Consume the frozen SSoT; never rescan mutable chat rows downstream."""
+
+    frozen = validate_frozen_boundary_owner_contract(contract)
+    assessment = frozen.get(STRUCTURED_CHAT_PAYOFF_ASSESSMENT_KEY)
+    if assessment is not None:
+        validated = validate_structured_chat_payoff_assessment(assessment)
+        value = validated.get("scope_ms")
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+    # Immutable historical contracts predate the assessment. Their already
+    # hash-bound search scope remains the authority; do not reclassify rows.
+    search_scope = frozen.get("boundary_search_scope")
+    if not isinstance(search_scope, Mapping):
+        raise RuntimeError("STRUCTURED_CHAT_PAYOFF_LEGACY_SCOPE_INVALID")
+    value = search_scope.get("structured_payoff_ms")
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise RuntimeError("STRUCTURED_CHAT_PAYOFF_LEGACY_SCOPE_INVALID")
+    return value
 
 
 def redelivery_baseline_boundary_owner(
@@ -278,6 +322,7 @@ def _redelivery_baseline_tail_rel_ms(
     return prior_piece_duration_ms + (int(end) - last_piece_start_ms)
 
 
+
 def freeze_required_boundary_owner_contract(
     *,
     spec: dict,
@@ -306,19 +351,6 @@ def freeze_required_boundary_owner_contract(
     published_recall_anchor_ms = (
         given_end_rel_ms if boundary_end_mode == "published_recall_anchor" else None
     )
-    structured_payoff_ms = max(
-        (
-            int(row["matched_end_ms"])
-            for row in chat_authority_audit.get("applied") or []
-            if row.get("kind") in {"danmaku", "superchat"}
-            and int(row.get("source_offset_ms") or 0) <= semantic_target_ms + 1_000
-            and semantic_target_ms
-            < int(row.get("matched_end_ms") or 0)
-            <= semantic_target_ms + 15_000
-            and int(row.get("matched_start_ms") or 0) <= semantic_target_ms + 5_000
-        ),
-        default=None,
-    )
     owner_eligibility_scope = candidate_boundary_owner_scope(
         spec=spec,
         durations=durations,
@@ -332,6 +364,33 @@ def freeze_required_boundary_owner_contract(
             story_end_ms=immutable_story_end_ms,
         )
     )
+    baseline_tail_cap_ms = _redelivery_baseline_tail_rel_ms(
+        spec,
+        last_piece_start_ms=last_piece_start_ms,
+        prior_piece_duration_ms=prior_piece_duration_ms,
+    )
+    exact_interval_authority = exact_interval_authority_from_spec(spec)
+    terminal_projection_scope = None
+    if exact_interval_authority is None:
+        try:
+            terminal_projection_scope = projection_scope_from_spec(spec)
+        except RedeliveryBoundaryProjectionError as exc:
+            raise RuntimeError(str(exc)) from exc
+    payoff_assessment = freeze_structured_chat_payoff_assessment(
+        chat_authority_audit,
+        semantic_target_ms=semantic_target_ms,
+        terminal_authority_clamp=(
+            exact_interval_authority is not None
+            or baseline_tail_cap_ms is not None
+            or terminal_projection_scope is not None
+            or boundary_end_mode == "exact_source_pin"
+        ),
+    )
+    structured_payoff_ms = payoff_assessment.get("scope_ms")
+    if structured_payoff_ms is not None and (
+        isinstance(structured_payoff_ms, bool) or not isinstance(structured_payoff_ms, int)
+    ):
+        raise RuntimeError("STRUCTURED_CHAT_PAYOFF_ASSESSMENT_INVALID")
     spec["required_boundary_owners"] = required_boundary_owners
     required_owner_tail_ms = max(
         (
@@ -341,8 +400,6 @@ def freeze_required_boundary_owner_contract(
         ),
         default=None,
     )
-    exact_interval_authority = exact_interval_authority_from_spec(spec)
-    terminal_projection_scope = None
     if exact_interval_authority is not None:
         # Exclusive exact replay owns the complete interval.  Its fixed scope
         # is derived only from the reviewed source timeline and frozen owners;
@@ -353,10 +410,6 @@ def freeze_required_boundary_owner_contract(
             required_owner_end_ms=required_owner_tail_ms,
         )
     else:
-        try:
-            terminal_projection_scope = projection_scope_from_spec(spec)
-        except RedeliveryBoundaryProjectionError as exc:
-            raise RuntimeError(str(exc)) from exc
         boundary_search_scope = build_boundary_search_scope(
             semantic_target_ms=semantic_target_ms,
             manual_lower_bound_ms=manual_lower_bound_ms,
@@ -367,11 +420,7 @@ def freeze_required_boundary_owner_contract(
             prior_piece_duration_ms=prior_piece_duration_ms,
             boundary_end_mode=boundary_end_mode,
             published_recall_anchor_ms=published_recall_anchor_ms,
-            baseline_tail_cap_ms=_redelivery_baseline_tail_rel_ms(
-                spec,
-                last_piece_start_ms=last_piece_start_ms,
-                prior_piece_duration_ms=prior_piece_duration_ms,
-            ),
+            baseline_tail_cap_ms=baseline_tail_cap_ms,
             semantic_tail_trim_cap_ms=int(spec.get("semantic_tail_trim_cap_ms", 0)),
             reviewed_exact_interval_projection=terminal_projection_scope,
         )
@@ -390,6 +439,7 @@ def freeze_required_boundary_owner_contract(
         "owner_set_sha256": _canonical_sha256(_normalized_owner_set(required_boundary_owners)),
         "deterministic_owner_set_sha256": deterministic_owner_set_sha256(required_boundary_owners),
         "boundary_search_scope": boundary_search_scope,
+        STRUCTURED_CHAT_PAYOFF_ASSESSMENT_KEY: payoff_assessment,
     }
     if exact_interval_authority is not None:
         frozen_contract[EXACT_INTERVAL_FROZEN_CONTRACT_KEY] = exact_interval_authority
@@ -422,6 +472,19 @@ def freeze_required_boundary_owner_contract(
             "retry_owner_set_sha256": frozen_contract["owner_set_sha256"],
             "owner_eligibility_scope_sha256": (owner_eligibility_scope["scope_sha256"]),
             "asr_derived_owner_binding": "per_attempt",
+            "structured_chat_payoff_binding": "per_attempt",
+            "first_attempt_structured_chat_payoff_assessment_sha256": (
+                (expected.get(STRUCTURED_CHAT_PAYOFF_ASSESSMENT_KEY) or {}).get(
+                    "assessment_sha256"
+                )
+                if isinstance(
+                    expected.get(STRUCTURED_CHAT_PAYOFF_ASSESSMENT_KEY), Mapping
+                )
+                else None
+            ),
+            "retry_structured_chat_payoff_assessment_sha256": payoff_assessment[
+                "assessment_sha256"
+            ],
         }
         # The verification receipt is part of the new attempt's contract.
         frozen_contract["contract_sha256"] = frozen_boundary_owner_contract_sha256(frozen_contract)

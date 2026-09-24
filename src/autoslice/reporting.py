@@ -432,10 +432,17 @@ def write_reports(date: str, state: dict) -> None:
     picks = [row for row in state.get("picks", []) if isinstance(row, dict)]
     exact_ids = set(_exact_talk_contract_ids(state))
     songs = state.get("songs", [])
-    published_deliveries = [
+    verified_deliveries = [
         row
         for row in picks
         if publication_row_is_verified(row) and (not exact_ids or _candidate_id(row) in exact_ids)
+    ]
+    published_deliveries = [
+        row for row in verified_deliveries if row.get("status") == "published"
+    ]
+    covered_deliveries = [
+        row for row in verified_deliveries
+        if row.get("status") == "covered_by_publication"
     ]
     historical_stable_packages = [
         row
@@ -444,7 +451,7 @@ def write_reports(date: str, state: dict) -> None:
         and _historical_stable_review_package(row)
         and (not exact_ids or _candidate_id(row) in exact_ids)
     ]
-    display_deliveries = published_deliveries + historical_stable_packages
+    display_deliveries = verified_deliveries + historical_stable_packages
     legacy_deliveries = [
         row
         for row in picks
@@ -504,6 +511,7 @@ def write_reports(date: str, state: dict) -> None:
         "现有 state 没有已验证的当前政策复审证据，故统一显示 "
         "CURRENT_POLICY_AUDIT_UNKNOWN/NOT_REAUDITED",
         f"- 交付实况: 谈话 **{len(published_deliveries)} 已公开事实 + "
+        f"{len(covered_deliveries)} 已有稿件覆盖（不计新稿） + "
         f"{len(historical_stable_packages)} 历史稳定审片包 + "
         f"{len(legacy_deliveries)} 旧版/包状态未知**"
         f"{('（' + '，'.join(talk_notes) + '）') if talk_notes else ''} / "
@@ -524,6 +532,15 @@ def write_reports(date: str, state: dict) -> None:
             projection="VERIFIED_PUBLICATION_FACT",
             current_policy_audit="NOT_INFERRED_FROM_PUBLICATION",
             empty_label="无 reconciliation verified 的谈话公开事实",
+        ),
+        "",
+        "## 已有稿件覆盖的源候选（不计新增公开视频）",
+        "",
+        *_delivery_table_lines(
+            covered_deliveries,
+            projection="COVERED_BY_VERIFIED_PUBLICATION",
+            current_policy_audit="NOT_INFERRED_FROM_PUBLICATION",
+            empty_label="无已验证的合并覆盖源候选",
         ),
         "",
         "## 未公开历史稳定审片包（不代表当前政策合规或可发）",

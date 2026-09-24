@@ -23,6 +23,8 @@ fail-closed：拒绝统一为带 typed ``code`` 的 :class:`PackageImportError`�
 
 from __future__ import annotations
 
+from .package_import_semantics import package_lane, validate_publish_staging_mirror
+
 import copy
 import fcntl
 import hashlib
@@ -37,6 +39,10 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterator, Mapping, Sequence
 
 from src.autoslice import failed_pick_import as _failed_pick
+from src.autoslice.batch_terminal_state import (
+    REVIEWABLE_BATCH_STATUSES,
+    candidate_package_review_allowed,
+)
 from src.autoslice.failed_pick_import import (
     FAILED_PICK_IMPORT_AUTHORITY_SCHEMA_VERSION,  # noqa: F401 - compatibility API
     FAILED_PICK_IMPORT_CONSUMPTION_SCHEMA_VERSION,  # noqa: F401 - compatibility API
@@ -47,11 +53,12 @@ from src.autoslice.failed_pick_import import (
     canonical_json_sha256,  # noqa: F401 - compatibility API
     load_failed_pick_import_authorization,  # noqa: F401 - compatibility API
 )
+from src.autoslice.package_import_capacity import copy_capacity as _copy_capacity
 from src.autoslice.package_import_inventory import iter_source_files, _referenced_locators
 from src.autoslice.review_package_ass_audit import (
     uniform_host_fallback_declared,
 )
-from src.autoslice.surface_canon import CHANNEL_PROFILE
+from src.autoslice.surface_canon import CHANNEL_PROFILE  # noqa: F401 - compatibility API
 from src.autoslice.package_relocation_contract import (
     PUBLISH_PATH_POINTERS,
     RECORD_PATH_POINTERS,
@@ -70,28 +77,14 @@ from src.autoslice.package_relocation_contract import (
 )
 from src.autoslice.package_publish_mirror import (
     PUBLISH_STAGING_LOCAL_KEYS,
-    PublishStagingMirrorError,
-    validate_publish_staging_mirror as _validate_publish_staging_mirror,
+    PublishStagingMirrorError,  # noqa: F401 - retained compatibility symbol
+    validate_publish_staging_mirror as _validate_publish_staging_mirror,  # noqa: F401
 )
 
 
 RELOCATION_SCHEMA_VERSION = "slice-package-relocation.v2"
 IMPORT_RECEIPT_SCHEMA_VERSION = "external-package-import.v1"
 STATE_BINDING_SCHEMA_VERSION = "external-package-state-binding.v1"
-
-# 批级状态白名单必须与 build_daily_review_manifest.build 一致：
-# manifest builder 拒绝的批级状态在这里就要给出 typed 拒绝，而不是等到第 5 步
-# 才崩。`processing` 表示 runner 正在写 picks，永远不可导入。
-REVIEWABLE_BATCH_STATUSES = frozenset(
-    {
-        "review_ready",
-        "review_ready_with_failures",
-        "review_ready_retry_wait",
-        "publication_in_progress",
-        "ready_unpublished",
-        "ready_unpublished_with_failures",
-    }
-)
 
 # 收编时被同名新绑定取代的诊断键：它们指向产它那台机上的旧交付，留着只会让
 # 后续读者把外部包误当 free 自产件。审计链（manifest builder / package audit）
@@ -644,6 +637,13 @@ def read_package_documents(
     record, publish = project_preserved_cover_locators(
         record, publish, package_root=package_root, candidate_id=candidate_id,
     )
+    from src.autoslice.package_import_internal_locators import (
+        project_package_internal_locators,
+    )
+
+    record, publish = project_package_internal_locators(
+        record, publish, package_root=package_root, candidate_id=candidate_id,
+    )
     return PackageDocuments(
         candidate_id=candidate_id,
         record=record,
@@ -654,37 +654,6 @@ def read_package_documents(
         speaker_path=speaker_path if speaker is not None else None,
         uniform_fallback=uniform_fallback,
     )
-
-
-def package_lane(record: Mapping[str, Any], publish: Mapping[str, Any]) -> str:
-    """Mirror ``build_daily_review_manifest._candidate_lane`` exactly.
-
-    A song package whose record omits ``classification`` is still a song — the
-    manifest builder decides by the channel's song title prefix.  Disagreeing
-    here would let a song reach the talk-only bind and land in ``picks``
-    instead of ``songs``.
-    """
-
-    if str(record.get("classification") or "").lower() == "song":
-        return "song"
-    if str(publish.get("title") or "").startswith(
-        CHANNEL_PROFILE.song_title_prefix
-    ):
-        return "song"
-    if isinstance(publish.get("lyrics_proof"), Mapping):
-        return "song"
-    return "talk"
-
-
-def validate_publish_staging_mirror(
-    record: Mapping[str, Any], publish: Mapping[str, Any]
-) -> dict[str, Any]:
-    """Translate the pure mirror validator into this importer's typed error."""
-
-    try:
-        return _validate_publish_staging_mirror(record, publish)
-    except PublishStagingMirrorError as exc:
-        raise PackageImportError(exc.code, exc.detail) from exc
 
 
 # --------------------------------------------------------------------------
@@ -780,9 +749,14 @@ def plan_import(
             # Transaction scratch from an earlier import attempt on the
             # producing host must never travel; the destination writes its own.
             continue
-        if relative == "package_audit.json":
-            # Like the song importer, retain the source-root audit in place.
-            # Only the destination's fresh auditor may create its audit file.
+        if relative in {
+            "package_audit.json",
+            f"{candidate_id}.title-cover-joint-qc.json",
+        }:
+            # Destination-derived evidence must be created against destination bytes.
+            # Preserve the producing package's audit/QC receipts in place; the target
+            # auditor and zero-provider locator successor create their own canonical
+            # files after relocation.  Nested historical evidence still copies.
             skipped_source_artifacts.append(relative)
             continue
         copies.append(
@@ -956,41 +930,48 @@ def execute_copy(
             entry["destination_sha256"] = landed
             entries.append(entry)
             continue
-        if not apply:
-            if _regular_file(item.destination):
-                entry["status"] = (
-                    "ALREADY_IDENTICAL"
-                    if sha256_file(item.destination) == source_digest
-                    else "WOULD_OVERWRITE_DIVERGENT"
-                )
-            else:
-                entry["status"] = "WOULD_COPY"
-            entries.append(entry)
-            continue
-        if _regular_file(item.destination) and (
-            sha256_file(item.destination) == source_digest
-        ):
-            entry["status"] = "ALREADY_IDENTICAL"
-            entries.append(entry)
-            continue
-        atomic_write_bytes(item.destination, item.source.read_bytes())
-        landed = sha256_file(item.destination)
-        if landed != source_digest:
-            raise PackageImportError(
-                "COPY_INTEGRITY_MISMATCH",
-                f"{item.relative}: source={source_digest} destination={landed}",
-                hint="the transport corrupted these bytes; re-stage the package "
-                "and re-run",
+        if _regular_file(item.destination):
+            entry["status"] = (
+                "ALREADY_IDENTICAL"
+                if sha256_file(item.destination) == source_digest
+                else "WOULD_OVERWRITE_DIVERGENT"
             )
-        entry["status"] = "COPIED"
+        else:
+            entry["status"] = "WOULD_COPY"
         entries.append(entry)
+
+    # Inspect the whole copy set before creating even the first destination.
+    # Atomic replacement needs the full new payload alongside the old file.
+    capacity = _copy_capacity(entries)
+    if apply:
+        for entry in entries:
+            if entry["status"] not in {"WOULD_COPY", "WOULD_OVERWRITE_DIVERGENT"}:
+                continue
+            payload = Path(entry["source"]).read_bytes()
+            if hashlib.sha256(payload).hexdigest() != entry["sha256"]:
+                raise PackageImportError(
+                    "COPY_SOURCE_DRIFT", f"{entry['relative']} changed after copy preflight"
+                )
+            destination = Path(entry["destination"])
+            atomic_write_bytes(destination, payload)
+            landed = sha256_file(destination)
+            if landed != entry["sha256"]:
+                raise PackageImportError(
+                    "COPY_INTEGRITY_MISMATCH",
+                    f"{entry['relative']}: source={entry['sha256']} destination={landed}",
+                    hint="the transport corrupted these bytes; re-stage the package "
+                    "and re-run",
+                )
+            entry["status"] = "COPIED"
     divergent = [row for row in entries if row["status"] == "WOULD_OVERWRITE_DIVERGENT"]
     return {
         "file_count": len(entries),
         "total_bytes": sum(int(row["bytes"]) for row in entries),
         "divergent_destination_count": len(divergent),
+        "capacity": capacity,
         "files": entries,
     }
+
 
 
 def verify_declared_artifacts(
@@ -1054,42 +1035,16 @@ def verify_declared_artifacts(
 def _package_internal_cover(
     package_root: Path, cover_generation: Mapping[str, Any]
 ) -> Path:
-    # Canonical V4 packages bind a relative cover; native receipts can retain
-    # absolute producer labels. Both forms resolve only verified package bytes.
-    verification = cover_generation.get("final_host_identity_verification")
-    if isinstance(verification, Mapping) and verification.get("schema_version") == (
-        "lidousha-cover-final-host-identity-verification.v4"
-    ):
-        from src.autoslice.host_only_v4_package_binding import read_package_file_once
+    from src.autoslice.package_import_cover_resolution import (
+        resolve_package_internal_cover,
+    )
 
-        try:
-            locator = verification.get("final_cover_path")
-            if isinstance(locator, str) and PurePosixPath(locator).is_absolute():
-                # Ordinary producer receipts retain historical absolute labels.
-                # Resolve their established local alias, never the external path.
-                declared = cover_generation.get("final_cover")
-                if not isinstance(declared, str) or not declared:
-                    raise ValueError("V4 generation final cover locator is missing")
-                old_path = PurePosixPath(declared)
-                locator = (PurePosixPath(old_path.parent.name) / old_path.name).as_posix()
-            relative, payload = read_package_file_once(
-                package_root, locator, label="V4 package cover",
-            )
-            expected = declared_digest(cover_generation.get("final_cover_sha256"), label="V4 cover hash")
-            if sha256_bytes(payload) != expected:
-                raise ValueError("V4 relative cover hash drift")
-        except (OSError, ValueError, RuntimeError) as exc:
-            raise PackageImportError("DECLARED_ARTIFACT_SHA_DRIFT", str(exc)) from exc
-        return package_root / relative
-    declared = cover_generation.get("final_cover")
-    if not isinstance(declared, str) or not declared:
-        raise PackageImportError(
-            "PACKAGE_DOCUMENT_INVALID",
-            "publish.cover_generation lacks final_cover",
-        )
-    return package_root / PurePosixPath(declared).parent.name / PurePosixPath(
-        declared
-    ).name
+    return resolve_package_internal_cover(
+        package_root,
+        cover_generation,
+        declared_digest=declared_digest,
+        sha256_bytes=sha256_bytes,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -1627,15 +1582,41 @@ def read_bound_package(
     cover_generation = documents.publish.get("cover_generation") or {}
     cover_path = _package_internal_cover(package_root, cover_generation)
     declared_cover = cover_generation.get("final_cover")
-    if str(declared_cover or "") != str(cover_path):
-        raise PackageImportError(
-            "COVER_NOT_PACKAGE_INTERNAL",
-            "publish.cover_generation.final_cover does not name the relocated "
-            f"package copy: declared={declared_cover!r} package={cover_path}",
-            hint="relocation did not project the cover locator; re-run the "
-            "relocation step",
-        )
     same_stem_cover = package_root / f"{documents.upload_stem}.cover.png"
+    # An absolute historical V4 witness may resolve through its old nested
+    # alias. The relocated runtime locator can already name the exact flat
+    # delivery cover; its own regular-file/hash check below still must pass.
+    if str(declared_cover or "") == str(same_stem_cover):
+        cover_path = same_stem_cover
+    if str(declared_cover or "") != str(cover_path):
+        verification = cover_generation.get("final_host_identity_verification")
+        alias = Path(str(declared_cover or ""))
+        # Canonical V4 may name the flat delivery copy while generation keeps
+        # its relocated covers/ alias. Prove BOTH; never open a producer path.
+        canonical_flat_alias = bool(
+            isinstance(verification, Mapping)
+            and verification.get("schema_version")
+            == "lidousha-cover-final-host-identity-verification.v4"
+            and verification.get("final_cover_path") == same_stem_cover.name
+            and cover_path == same_stem_cover
+            and alias.is_absolute()
+            and alias.is_relative_to(package_root)
+            and ".." not in alias.parts
+            and str(alias) == declared_cover
+        )
+        if not canonical_flat_alias:
+            raise PackageImportError(
+                "COVER_NOT_PACKAGE_INTERNAL",
+                "publish.cover_generation.final_cover does not name the relocated "
+                f"package copy: declared={declared_cover!r} package={cover_path}",
+                hint="relocation did not project the cover locator; re-run the "
+                "relocation step",
+            )
+        declared_alias = require_regular_file(alias, label="declared package cover alias")
+        if sha256_file(declared_alias) != verified["final_cover"]:
+            raise PackageImportError(
+                "DECLARED_ARTIFACT_SHA_DRIFT", "declared package cover alias differs from canonical V4 cover"
+            )
     if sha256_file(
         require_regular_file(same_stem_cover, label="same-stem cover")
     ) != verified["final_cover"]:
@@ -1772,14 +1753,14 @@ def check_state_preconditions(
             allow_new_pick=allow_new_pick, project_closure=project_closure,
             authorization=failed_pick_authorization,
         )
-    if batch_status not in REVIEWABLE_BATCH_STATUSES:
+    if not candidate_package_review_allowed(before_state, candidate_id):
         raise PackageImportError(
             "BATCH_STATUS_NOT_REVIEWABLE",
             f"state.status={batch_status!r} is outside the manifest builder's "
             "whitelist " + ",".join(sorted(REVIEWABLE_BATCH_STATUSES)),
             hint="'processing' means the runner tick is currently writing picks "
-            "— wait for the tick to finish; any other status needs the batch to "
-            "reach a reviewable terminal state first",
+            "— wait for the tick to finish; paused_cpa_down admits only an "
+            "existing individually ready, nonqueued candidate without changing the batch",
         )
     state_date = str(before_state.get("date") or "")
     if state_date and state_date != date:
@@ -1971,9 +1952,15 @@ def build_bound_state(
         after_closure=after_closure, candidate_id=package.candidate_id,
         authorization=preconditions.failed_pick_authorization,
     )
-    if str(after_closure.get("status") or "") and str(
-        after_state.get("status") or ""
-    ) not in REVIEWABLE_BATCH_STATUSES:
+    if before_state.get("status") == "paused_cpa_down":
+        for key in set(before_state) | set(after_state):
+            if key not in {"picks", "updated_at"} and after_state.get(key) != before_state.get(key):
+                raise PackageImportError(
+                    "STATE_COLLECTION_MUTATED", f"paused candidate rebind changed {key}"
+                )
+    if str(after_closure.get("status") or "") and not candidate_package_review_allowed(
+        after_state, package.candidate_id
+    ):
         raise PackageImportError(
             "BATCH_STATUS_NOT_REVIEWABLE",
             "the bind would leave state.status="

@@ -121,9 +121,18 @@ def _reconciliation_lock(base: Path):
 
 
 def publication_row_is_verified(row: object) -> bool:
-    if not isinstance(row, Mapping) or row.get("status") != "published":
+    if not isinstance(row, Mapping) or row.get("status") not in {
+        "published", "covered_by_publication"
+    }:
         return False
     publication = row.get("publication_reconciliation")
+    covered = row.get("status") == "covered_by_publication"
+    from .publication_content_coverage import validate_publication_content_coverage
+    try:
+        covered_ids = validate_publication_content_coverage(publication or {})
+    except (OSError, ValueError):
+        return False
+    row_candidate = str(row.get("candidate_id") or row.get("cid") or "")
     structurally_valid = bool(
         isinstance(publication, Mapping)
         and publication.get("schema_version") == RECONCILIATION_SCHEMA
@@ -133,8 +142,10 @@ def publication_row_is_verified(row: object) -> bool:
             "VERIFIED_SAME_BV",
             "VERIFIED_SAME_BV_COVER",
         }
-        and str(publication.get("candidate_id") or "")
-        == str(row.get("candidate_id") or row.get("cid") or "")
+        and (
+            row_candidate in covered_ids if covered else
+            str(publication.get("candidate_id") or "") == row_candidate
+        )
         and str(publication.get("bvid") or "") == str(row.get("bvid") or "")
         and isinstance(publication.get("authority"), Mapping)
     )
@@ -165,6 +176,7 @@ def project_publication_closure(state: Mapping[str, object]) -> dict:
             "schema_version": "daily-publication-closure.v1",
             "status": "NOT_APPLICABLE",
             "published_candidate_ids": [],
+            "covered_candidate_ids": [],
             "ready_unpublished_candidate_ids": [],
             "unresolved_candidate_ids": [],
         }
@@ -199,7 +211,13 @@ def project_publication_closure(state: Mapping[str, object]) -> dict:
     return {
         "schema_version": "daily-publication-closure.v1",
         "status": status,
-        "published_candidate_ids": sorted(candidate(row) for row in published),
+        "published_candidate_ids": sorted(
+            candidate(row) for row in published if row.get("status") == "published"
+        ),
+        "covered_candidate_ids": sorted(
+            candidate(row) for row in published
+            if row.get("status") == "covered_by_publication"
+        ),
         "ready_unpublished_candidate_ids": sorted(candidate(row) for row in ready),
         "unresolved_candidate_ids": sorted(candidate(row) for row in unresolved),
     }
@@ -209,6 +227,11 @@ def _apply_publication_to_state(
     state: dict,
     publication: Mapping[str, object],
 ) -> bool | None:
+    from .publication_content_coverage import validate_publication_content_coverage
+    try:
+        covered_ids = validate_publication_content_coverage(publication)
+    except (OSError, ValueError) as exc:
+        raise PublicationReconciliationError(str(exc)) from exc
     candidate_id = str(publication.get("candidate_id") or "")
     matches: list[dict] = []
     for lane in ("picks", "songs"):
@@ -238,6 +261,23 @@ def _apply_publication_to_state(
             raise PublicationReconciliationError(
                 "daily state publication BVID conflicts with reconciliation"
             )
+    # Reject conflicts before changing even the caller's in-memory state.
+    covered_rows = []
+    for covered_id in covered_ids:
+        found = [
+            item for lane in ("picks", "songs")
+            for item in (state.get(lane) or [])
+            if isinstance(item, dict)
+            and str(item.get("candidate_id") or item.get("cid") or "") == covered_id
+        ]
+        if len(found) > 1:
+            raise PublicationReconciliationError(
+                f"daily state has duplicate covered candidate {covered_id}"
+            )
+        for item in found:
+            if item.get("bvid") and item["bvid"] != publication.get("bvid"):
+                raise PublicationReconciliationError("covered candidate BVID conflict")
+        covered_rows.extend(found)
     changed = False
     if row.get("status") != "published" and "prepublication_status" not in row:
         row["prepublication_status"] = row.get("status")
@@ -254,6 +294,14 @@ def _apply_publication_to_state(
         if row.get(key) != value:
             row[key] = value
             changed = True
+    # Covered content is consumed, but is not another uploaded video.
+    for item in covered_rows:
+        if item.get("status") != "covered_by_publication":
+            item.setdefault("prepublication_status", item.get("status"))
+        for key, value in {**intended, "status": "covered_by_publication"}.items():
+            if item.get(key) != value:
+                item[key] = value
+                changed = True
     closure = project_publication_closure(state)
     if state.get("publication_closure") != closure:
         state["publication_closure"] = closure
@@ -294,6 +342,49 @@ def _update_state_file(
     raise PublicationReconciliationError(
         f"daily state changed concurrently too many times: {state_path}"
     )
+
+
+def _inherit_cover_content_coverage(publication: dict, roots: list[Path]) -> dict:
+    """Read and verify same-CID prior coverage inside the caller's existing lock."""
+    from .publication_content_coverage import validate_publication_content_coverage
+
+    # A cover-only edit retains the exact video CID and therefore its
+    # already verified content coverage. It cannot create new coverage.
+    if publication.get("status") == "VERIFIED_SAME_BV_COVER":
+        inherited = None
+        for root in roots:
+            path = runtime_registry_path(root)
+            if not path.exists():
+                continue
+            entries = _validate_runtime_registry(
+                _load_object(path, "runtime publication registry")
+            )
+            for entry in entries:
+                previous = entry.get("publication_reconciliation") or {}
+                if any(previous.get(key) != publication.get(key)
+                       for key in ("candidate_id", "recording_date")):
+                    continue
+                coverage = previous.get("content_coverage")
+                if coverage is None:
+                    continue
+                validate_runtime_registry_entry(entry)
+                if any(previous.get(key) != publication.get(key)
+                       for key in ("bvid", "cid")):
+                    raise PublicationReconciliationError(
+                        "cover-only publication cannot change covered video identity"
+                    )
+                if inherited is not None and inherited != coverage:
+                    raise PublicationReconciliationError(
+                        "runtime content coverage projections conflict"
+                    )
+                inherited = coverage
+        if inherited is not None:
+            publication = {**publication, "content_coverage": inherited}
+            try:
+                validate_publication_content_coverage(publication)
+            except (OSError, ValueError) as exc:
+                raise PublicationReconciliationError(str(exc)) from exc
+    return publication
 
 
 def _validate_runtime_registry(value: dict) -> list[dict]:
@@ -342,6 +433,11 @@ def validate_runtime_registry_entry(
             "runtime publication registry row is not a verified projection"
         )
     if verify_authority:
+        from .publication_content_coverage import validate_publication_content_coverage
+        try:
+            validate_publication_content_coverage(publication)
+        except (OSError, ValueError) as exc:
+            raise PublicationReconciliationError(str(exc)) from exc
         authority_path = _validate_sha_entry(
             publication.get("authority"),
             "runtime publication reconciliation authority",

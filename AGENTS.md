@@ -16,6 +16,10 @@
    .venv/bin/python -m pytest -q
    ```
 
+   离线测试可在普通用户或 root 容器中运行，但真实 consumer-web adapter 不能以 root
+   身份运行。root 启动器必须把 `ENTITY_AUDIO_GEMINI_WEB_USER` 指向专用非 root 账号；
+   测试夹具模拟该降权边界，不会打开浏览器或读取登录资料。
+
 3. 按 [profiles/README.md](profiles/README.md) 建立自己的频道；词表、人设、标题风格和
    封面身份描述来自频道提供者，不能代为编造。模板资产和真实运营状态必须区分。
 4. 按 `.env.example` 与 [凭据说明](docs/credentials.md) 配置服务，再跑 `preflight.py`。

@@ -63,6 +63,9 @@ from src.autoslice.host_only_v4_package_binding import (  # noqa: E402
     HostOnlyV4PackageBindingError,
     materialize_package_binding,
 )
+from src.autoslice.package_import_builtin_imagegen import (  # noqa: E402
+    builtin_imagegen_manifest_fields,
+)
 from src.autoslice.fastlane_c3_terminal_source_fact_preservation import (  # noqa: E402
     CANDIDATE_ID as C3_SOURCE_FACT_CANDIDATE_ID,
     DECISION as C3_SOURCE_FACT_DECISION,
@@ -70,17 +73,13 @@ from src.autoslice.fastlane_c3_terminal_source_fact_preservation import (  # noq
 )
 
 
-CHANNEL_PROFILE = load_channel_profile(ROOT)
-REVIEWABLE_BATCH_STATUSES = frozenset(
-    {
-        "review_ready",
-        "review_ready_with_failures",
-        "review_ready_retry_wait",
-        "publication_in_progress",
-        "ready_unpublished",
-        "ready_unpublished_with_failures",
-    }
+from src.autoslice.batch_terminal_state import (
+    REVIEWABLE_BATCH_STATUSES as REVIEWABLE_BATCH_STATUSES,
+    candidate_package_review_allowed,
 )
+
+
+CHANNEL_PROFILE = load_channel_profile(ROOT)
 _SPEAKER_EVIDENCE_UNSET = object()
 _MANIFEST_REASON_CODE_RE = re.compile(r"[A-Z][A-Z0-9_]{2,159}\Z")
 
@@ -698,7 +697,7 @@ def build(
     # Codex-F 在未合入的 `wsl/fasttrack-0809` 53dc752c 只补了
     # `publication_in_progress`，仍不够）。`published*` 蕴含没有 ready 行，
     # 逐条 pick 门会照常拒绝，这里不必也不应放行。
-    if batch_status not in REVIEWABLE_BATCH_STATUSES:
+    if not candidate_package_review_allowed(state, candidate_id):
         raise DailyManifestError(f"batch status not reviewable: {batch_status}")
     pick = next(
         (row for row in state.get("picks") or [] if row.get("candidate_id") == candidate_id),
@@ -825,6 +824,12 @@ def build(
 
     cover_pre_overlay = cover_artifact("pre_overlay_path", "pre_overlay_sha256")
     cover_route_background = cover_artifact("ai_background", "ai_background_sha256")
+    try:
+        builtin_cover_fields = builtin_imagegen_manifest_fields(
+            cover_generation, package_root=package_root
+        )
+    except ValueError as exc:
+        raise DailyManifestError(f"builtin image_gen package binding failed: {exc}") from exc
     rendered_text_pixels = cover_generation.get("rendered_text_pixels")
     if not isinstance(rendered_text_pixels, dict):
         raise DailyManifestError("cover generation lacks rendered_text_pixels")
@@ -886,6 +891,7 @@ def build(
         "cover_pre_overlay": cover_pre_overlay,
         "cover_title_mask": mask_rel,
         "cover_route_background": cover_route_background,
+        **builtin_cover_fields,
         "record": f"{upload_stem}.record.json",
         "chat_authority": chat_name,
         "clip_context": clip_context_name,

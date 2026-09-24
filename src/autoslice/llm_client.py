@@ -44,18 +44,119 @@ LLM_TRANSPORT_REASON_CODES = frozenset(
         "LLM_PROVIDER_CAPACITY_UNAVAILABLE",
         "LLM_RUNTIME_CPA_ENV_UNSAFE",
         "LLM_RUNTIME_CPA_ENV_INVALID",
+        "LLM_RUNTIME_CPA_BINDING_REQUIRED",
     }
 )
 
 
-class LlmCallError(RuntimeError):
-    """Transport failure with an optional closed, receipt-safe reason."""
+PROVIDER_DIAGNOSTIC_MARKER = "[autoslice-provider-diagnostic] "
+_PROVIDER_DIAGNOSTIC_KEYS = frozenset(
+    {
+        "provider_transport",
+        "provider_runtime_host",
+        "provider_endpoint_host",
+        "provider_endpoint_path",
+        "provider_credential_source",
+        "provider_http_status",
+        "provider_error_code",
+        "provider_error_message",
+    }
+)
+_PROVIDER_HOST_RX = re.compile(r"[A-Za-z0-9._-]{1,253}\Z")
+_PROVIDER_CODE_RX = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
+_PROVIDER_SECRET_RX = re.compile(
+    r"(?i)(Authorization:\s*Bearer\s+)\S+|"
+    r"((?:api[_ -]?key|token|secret|password)\s*[=:]\s*)\S+"
+)
 
-    def __init__(self, message: str = "", *, safe_reason: str | None = None) -> None:
+
+def _redact_provider_text(
+    value: object,
+    *,
+    limit: int = 512,
+    keep_tail: bool = False,
+) -> str:
+    text = " ".join(str(value or "").split())
+    text = _PROVIDER_SECRET_RX.sub(
+        lambda match: (match.group(1) or match.group(2) or "") + "<redacted>",
+        text,
+    )
+    return text[-limit:] if keep_tail else text[:limit]
+
+
+def sanitize_provider_diagnostics(
+    raw: Mapping[str, object] | None,
+) -> dict[str, object]:
+    """Return only receipt-safe provider routing and failure diagnostics."""
+
+    if not isinstance(raw, Mapping):
+        return {}
+    result: dict[str, object] = {}
+    for key in _PROVIDER_DIAGNOSTIC_KEYS:
+        value = raw.get(key)
+        if value is None:
+            continue
+        if key == "provider_http_status":
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not 100 <= value <= 599
+            ):
+                continue
+            result[key] = value
+            continue
+        if key in {"provider_endpoint_host", "provider_runtime_host"}:
+            normalized = str(value).strip()
+            if _PROVIDER_HOST_RX.fullmatch(normalized):
+                result[key] = normalized
+            continue
+        if key == "provider_endpoint_path":
+            normalized = str(value).strip()
+            if (
+                normalized.startswith("/")
+                and "\n" not in normalized
+                and len(normalized) <= 512
+            ):
+                result[key] = normalized
+            continue
+        if key == "provider_credential_source":
+            normalized = str(value).strip()
+            if normalized == "UNBOUND" or (
+                normalized.startswith("/")
+                and "\n" not in normalized
+                and len(normalized) <= 1024
+            ):
+                result[key] = normalized
+            continue
+        if key in {"provider_error_code", "provider_transport"}:
+            normalized = str(value).strip()
+            if _PROVIDER_CODE_RX.fullmatch(normalized):
+                result[key] = normalized
+            continue
+        if key == "provider_error_message":
+            normalized = _redact_provider_text(value)
+            if normalized:
+                result[key] = normalized
+    return result
+
+
+class LlmCallError(RuntimeError):
+    """Transport failure with closed routing diagnostics and no credentials."""
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        safe_reason: str | None = None,
+        provider_diagnostics: Mapping[str, object] | None = None,
+    ) -> None:
         if safe_reason is not None and safe_reason not in LLM_TRANSPORT_REASON_CODES:
             raise ValueError("unknown LLM transport reason")
         self.safe_reason = safe_reason
-        super().__init__(message)
+        self.provider_diagnostics = sanitize_provider_diagnostics(provider_diagnostics)
+        super().__init__(
+            _redact_provider_text(message, limit=4000, keep_tail=True)
+        )
 
 
 LLM_JSON_PARSE_REASON_CODES = frozenset(
@@ -113,6 +214,14 @@ class LlmConfig:
     # is intentionally excluded from config representation/equality so a key
     # cannot enter logs, receipts, or comparison diagnostics.
     command_child_env: Mapping[str, str] | None = field(default=None, repr=False, compare=False)
+    # Static routing context plus a callback for dynamic, sanitized command
+    # diagnostics.  Neither field can enter config repr/equality or receipts.
+    command_diagnostic_context: Mapping[str, object] | None = field(
+        default=None, repr=False, compare=False
+    )
+    command_diagnostic_sink: Callable[[dict[str, object]], None] | None = field(
+        default=None, repr=False, compare=False
+    )
 
 
 def runtime_cpa_command_environment(
@@ -436,6 +545,50 @@ def _call_direct(prompt: str, config: LlmConfig) -> str:
     return content
 
 
+
+def _command_provider_diagnostics(
+    stderr: str,
+    context: Mapping[str, object] | None,
+) -> dict[str, object]:
+    diagnostics = sanitize_provider_diagnostics(context)
+    for line in str(stderr or "").splitlines():
+        marker_index = line.find(PROVIDER_DIAGNOSTIC_MARKER)
+        if marker_index < 0:
+            continue
+        raw = line[marker_index + len(PROVIDER_DIAGNOSTIC_MARKER) :]
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        diagnostics.update(sanitize_provider_diagnostics(parsed))
+    return diagnostics
+
+
+def _emit_command_provider_diagnostics(
+    config: LlmConfig,
+    diagnostics: Mapping[str, object],
+) -> None:
+    if config.command_diagnostic_sink is not None:
+        config.command_diagnostic_sink(dict(diagnostics))
+
+
+def _diagnostic_failure_message(
+    *,
+    returncode: int,
+    stderr: str,
+    diagnostics: Mapping[str, object],
+) -> str:
+    safe_message = str(diagnostics.get("provider_error_message") or "").strip()
+    safe_code = str(diagnostics.get("provider_error_code") or "").strip()
+    if safe_message:
+        return f"llm command failed rc={returncode}: {safe_message}"
+    if safe_code:
+        return f"llm command failed rc={returncode}: {safe_code}"
+    return (
+        f"llm command failed rc={returncode}: "
+        + _redact_provider_text(str(stderr or "")[-4000:], limit=4000)
+    )
+
 def _call_command(prompt: str, config: LlmConfig) -> str:
     if not config.command_template:
         raise LlmCallError("command transport requires command_template")
@@ -444,7 +597,9 @@ def _call_command(prompt: str, config: LlmConfig) -> str:
         completion_file = Path(tmp) / "completion.txt"
         prompt_file.write_text(prompt, encoding="utf-8")
         command = [
-            part.replace("{prompt_file}", str(prompt_file)).replace("{completion_file}", str(completion_file))
+            part.replace("{prompt_file}", str(prompt_file)).replace(
+                "{completion_file}", str(completion_file)
+            )
             for part in shlex.split(config.command_template)
         ]
         try:
@@ -457,31 +612,68 @@ def _call_command(prompt: str, config: LlmConfig) -> str:
                 env=config.command_child_env,
             )
         except subprocess.TimeoutExpired as exc:
-            # Timeouts must surface as LlmCallError like every other transport
-            # failure — callers are fail-open repair stages; a raw
-            # TimeoutExpired crashed an 11-min clip's produce run .
+            diagnostics = sanitize_provider_diagnostics(
+                {
+                    **dict(config.command_diagnostic_context or {}),
+                    "provider_error_code": "LLM_COMMAND_TIMEOUT",
+                    "provider_error_message": (
+                        f"LLM command timed out after {config.timeout_seconds:.0f}s"
+                    ),
+                }
+            )
+            _emit_command_provider_diagnostics(config, diagnostics)
             raise LlmCallError(
                 f"llm command timed out after {config.timeout_seconds:.0f}s",
                 safe_reason="LLM_COMMAND_TIMEOUT",
+                provider_diagnostics=diagnostics,
             ) from exc
+        diagnostics = _command_provider_diagnostics(
+            completed.stderr,
+            config.command_diagnostic_context,
+        )
         if completed.returncode != 0:
-            # 维护者 工程优化②授权：桥接脚本（llm_via_cpa.sh）在多个
-            # 供应商模型间失败转移时，stderr 是逐模型多行级联；旧的 400 字符
-            # 尾截断只留最后一个模型的信息，早期模型的失败证据永久丢失
-            # （真善美 zsm4 三模型均 400 事故排障时才发现）。留够整条级联。
+            _emit_command_provider_diagnostics(config, diagnostics)
             raise LlmCallError(
-                f"llm command failed rc={completed.returncode}: {completed.stderr.strip()[-4000:]}",
+                _diagnostic_failure_message(
+                    returncode=completed.returncode,
+                    stderr=completed.stderr,
+                    diagnostics=diagnostics,
+                ),
                 safe_reason="LLM_COMMAND_FAILED",
+                provider_diagnostics=diagnostics,
             )
         if not completion_file.is_file():
+            diagnostics.update(
+                sanitize_provider_diagnostics(
+                    {
+                        "provider_error_code": "LLM_COMMAND_COMPLETION_MISSING",
+                        "provider_error_message": (
+                            "LLM command did not write the completion file"
+                        ),
+                    }
+                )
+            )
+            _emit_command_provider_diagnostics(config, diagnostics)
             raise LlmCallError(
                 "llm command did not write the completion file",
                 safe_reason="LLM_COMMAND_COMPLETION_MISSING",
+                provider_diagnostics=diagnostics,
             )
         content = completion_file.read_text(encoding="utf-8")
         if not content.strip():
+            diagnostics.update(
+                sanitize_provider_diagnostics(
+                    {
+                        "provider_error_code": "LLM_COMMAND_COMPLETION_EMPTY",
+                        "provider_error_message": "LLM command wrote an empty completion",
+                    }
+                )
+            )
+            _emit_command_provider_diagnostics(config, diagnostics)
             raise LlmCallError(
                 "llm command wrote an empty completion",
                 safe_reason="LLM_COMMAND_COMPLETION_EMPTY",
+                provider_diagnostics=diagnostics,
             )
+        _emit_command_provider_diagnostics(config, diagnostics)
         return content

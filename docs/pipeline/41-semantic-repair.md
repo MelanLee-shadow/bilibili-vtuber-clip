@@ -14,6 +14,21 @@ Anti Gravity/API 的可靠性和内容一致性，网页暂不纳入该轮比较
 `needs_audio=false` 可沿已有 mutation audit 落字；念弹幕还须通过绑定整句的 CPA 闭集
 判决才能取得整句 owner，不能把一次“像是在念”的检测当成原文照搬权。见 [40](40-subtitle-text.md)。
 
+### 内层媒体声源证据的消费顺序（2026-09-24）
+
+内层播放器字幕归属固定走：**未烧字源帧证据 → caption/SRT 时间与词面投影 → 独立声学
+`source_media/host/overlap/unknown` 裁决 → 私有候选 → 现有文本 authority / final SRT / ASS
+门**。不得把它接到封面 locator、package import 或 `uniform_host` 样式字段上绕过字幕链。
+
+`source_media` 删除仍属于语义 mutation：caption-only、CAM++ 单说话人 `OTHER`、无字幕、
+ASR 近似和屏内第一人称都没有单独删除权。尤其当前 CAM++ 整 cue 二分不能排除较轻的主播
+同时跟读；没有独立 `overlap=ABSENT` 证明时必须 `unknown / KEEP`。合法回执还须绑定同一
+源媒体 SHA、最终 SRT SHA、caption frame SHA 和精确 cue 时间窗；任一漂移 fail closed。
+
+私有 host-track 可以保持原 cue index 以便差异审计，但不是发布字幕、人工真值或 same-BV
+修复授权。只有后续当前规则下的文本 owner、exact-final、ASS/burn、package audit 与发布权限
+全部重新闭合，才可能进入交付；已公开稿的诊断默认只记录，不触发线上修改。
+
 ### 同词面候选去重不能删除来源（2026-09-09）
 
 `candidate_blind_transcript` 的闭集构造中，原始 BCUT 等来源候选若逐字等于 CURRENT，
@@ -82,6 +97,17 @@ revision/self-hash 防止不同 consumer 分目录写出互相覆盖的旧快照
 
 该接口的实现/测试不等于MOSS/MAI已经通过默认推广。冻结音频的新CPA裁决不是新鲜ASR
 速度测试；只覆盖半条BCUT cue的历史裁窗不能拿来替换整条字幕或按字符比例猜时间。
+
+## 结构化文字命中的范围
+
+`closed_set_evidence.closed_set_structured_evidence` 保留原 `surface`、事件数量与来源，
+并生成 `structured_chat_candidate_extent`，区分整句候选字面出现、仅片段出现、
+只有来源声明但没有可比较原文，以及无文字命中。统计只在调用方提供的结构化事件中做
+casefold 字面比较，不去标点、不补角色关系；来源文件本身的有效性仍由上游绑定合同负责。
+多个片段事件命中不证明整句存在，更不证明主播实际念出整句或同音字/音节次数正确。
+CPA 的原闭集 prompt 消费同一范围说明，继续考虑片段词形及其他全部证据；不因片段短
+就删除它，也不为整句改字新增自动通过或否决权。旧回执原字节/哈希保留，缺字段不补造
+整句证明；新证据摘要与 prompt 身份随真实输入变化，不把旧裁决改成已通过新规则。
 
 ## 分层架构
 
@@ -199,7 +225,9 @@ revision/self-hash 防止不同 consumer 分目录写出互相覆盖的旧快照
      调用方仍只使用 `build_local_audio_entity_verifier`；网页传输由 `entity_audio_gemini_web.py`
      封装，不新增 HTTP 服务或另一套客户端协议。
      exact-transcript 与非 witness lane 不得触发 web。web receipt 保留可见 model label，但 backend identity 为
-     `UNVERIFIED`；web 成功不进入跨请求声学缓存，避免复用登录 profile 状态。
+     `UNVERIFIED`；web 成功不进入跨请求声学缓存，避免复用登录 profile 状态。离线测试可在
+     root CI 中通过受控账号夹具覆盖降权分支，但真实 adapter 仍拒绝 root 账号；root 启动器
+     必须显式指定专用非 root `ENTITY_AUDIO_GEMINI_WEB_USER` 与该账号可执行的 Python。
      AGY 或 Gemini API 的成功声学证据都按
      音频字节、完整提示词、模型与适配算法身份做内容寻址缓存；只有全部身份和成功结果哈希
      逐项一致才可在重试中复用，失败或损坏项永不缓存。
@@ -544,3 +572,21 @@ revision/self-hash 防止不同 consumer 分目录写出互相覆盖的旧快照
 - ASR-EC 基准警示：中文裸 prompting 纠错无效甚至有害——印证「LLM 只报不改+声学仲裁」路线。
 - 必剪/剪映黑盒无热词接口；软热词（词表+钩子+弹幕实体注入 prompt）是现实替代，已落地。
 - 长期选项：自建 FunASR SeACo-Paraformer/Qwen3-ASR（方言优先+热词解码），残留错误率压不下去再评估。
+
+## Jev 冻结回包逐项诊断（只读实验入口）
+
+`python scripts/diagnose_jev_responses.py --request <request.json> --response <http.body>
+--expected-model <冻结配置中的精确模型> [--output <新文件>]` 只消费实际保存的请求和
+响应。输入以 no-follow regular-file 读取并绑定原始 SHA，拒绝重复 JSON key；输出
+create-only，不读取凭据、不联网、不重试 provider，也不读取人工标签。
+
+`jev_response_diagnostics.py`逐题披露既有实验数值合同：题目/选项覆盖、真实数值类型、
+有限值与[0,1]范围、argmax、confidence及usage。原严格sum容差0.0001保持不变；
+任何一题失败，整请求的严格结果仍为失败，但其余题的诊断不被连带抹掉。
+“单题数值通过”不等于语义正确、允许单独消费或自动免掉CPA。所有输出固定
+`DIAGNOSTIC_ONLY / semantic_correctness=UNASSESSED / mutation_authorized=false /
+release_authorized=false`。未知primitive不由SDK解析成功升级为已支持；没有归一化
+概率、改变旧评分、放松生产门或默认接入Jev。
+
+官方schema对概率和只写approximately 1，精确舍入容差尚未建立；SDK可解析与
+业务数值/语义验收分开。现有生产调用链、CPA终裁和发布门均不调用此诊断入口。

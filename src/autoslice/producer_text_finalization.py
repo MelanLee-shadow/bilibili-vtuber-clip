@@ -25,6 +25,8 @@ from .fastlane_c10_parallel_subtitle import (
     verify_final_script_surfaces,
 )
 from .final_surface_summary import record_final_authority_summary
+from .gift_correction_supersession import reconcile_gift_correction_supersessions
+from .legacy_final_surface_supersession import _exact_final_cpa_retires_decision_row
 from .jingting_chunker import parse_srt_cues
 from .operator_text_owner_supersession import supersede_legacy_text_owner
 from .redelivery_subtitle_baseline import MIN_ALIGNMENT_OVERLAP_MS
@@ -1504,113 +1506,6 @@ def _verify_redelivery_baseline_owners(
     return not failures, required_count
 
 
-def _exact_final_cpa_retires_decision_row(
-    row: dict,
-    *,
-    expected_text: str,
-    audit: Mapping[str, object],
-    final_text_srt: str,
-    delivery_start_ms: int,
-) -> bool:
-    """Retire an older correction only through an exact CPA receipt chain.
-
-    Older packages predate explicit exact-final surface-owner rows. Their
-    self-heal receipts are still sufficient when the prior owner's text hash,
-    unchanged cue geometry, ordered before->after chain, and final SRT hash all
-    agree. This is intentionally narrower than generic overlap supersession.
-    """
-
-    self_heal = audit.get("exact_final_cpa_self_heal")
-    if (
-        not isinstance(self_heal, Mapping)
-        or self_heal.get("schema_version")
-        != "exact-final-cpa-self-heal-audit.v1"
-        or self_heal.get("status") != "PASS"
-        or self_heal.get("final_srt_sha256")
-        != "sha256:" + hashlib.sha256(final_text_srt.encode("utf-8")).hexdigest()
-        or not expected_text
-    ):
-        return False
-    try:
-        matched_start = int(row["matched_start_ms"])
-        matched_end = int(row["matched_end_ms"])
-    except (KeyError, TypeError, ValueError):
-        return False
-    local_start = matched_start - delivery_start_ms
-    local_end = matched_end - delivery_start_ms
-    cue_matches = [
-        cue
-        for cue in parse_srt_cues(final_text_srt)
-        if cue.start_ms == local_start and cue.end_ms == local_end
-    ]
-    if len(cue_matches) != 1:
-        return False
-    cue = cue_matches[0]
-    chain_hash = "sha256:" + hashlib.sha256(
-        expected_text.encode("utf-8")
-    ).hexdigest()
-    final_hash = "sha256:" + hashlib.sha256(
-        cue.text.encode("utf-8")
-    ).hexdigest()
-    consumed: list[dict[str, object]] = []
-    passes = self_heal.get("passes")
-    if not isinstance(passes, list):
-        return False
-    for pass_row in passes:
-        if not isinstance(pass_row, Mapping):
-            return False
-        repairs = pass_row.get("repairs")
-        if not isinstance(repairs, list):
-            return False
-        for repair in repairs:
-            if not isinstance(repair, Mapping):
-                return False
-            mutation = repair.get("mutation_authority")
-            if (
-                repair.get("schema_version")
-                != "exact-final-cpa-self-heal.v1"
-                or str(repair.get("cue_index")) != str(cue.index)
-                or repair.get("decision_authority") != "CPA_JUDGE"
-                or repair.get("timing_immutable") is not True
-                or not isinstance(mutation, Mapping)
-                or mutation.get("schema_version")
-                != "subtitle-correction-mutation-authority.v1"
-                or mutation.get("status") != "PASS"
-            ):
-                continue
-            before_hash = repair.get("before_sha256")
-            after_hash = repair.get("after_sha256")
-            if (
-                before_hash == chain_hash
-                and isinstance(after_hash, str)
-                and len(after_hash) == 71
-                and after_hash.startswith("sha256:")
-            ):
-                chain_hash = after_hash
-                consumed.append(
-                    {
-                        "pass_index": pass_row.get("pass_index"),
-                        "finding_sha256": repair.get("finding_sha256"),
-                        "request_sha256": repair.get("request_sha256"),
-                        "before_sha256": before_hash,
-                        "after_sha256": after_hash,
-                    }
-                )
-    if not consumed or chain_hash != final_hash:
-        return False
-    row["reconciliation"] = {
-        "schema_version": "exact-final-cpa-receipt-chain-supersession.v1",
-        "status": "SUPERSEDED_BY_EXACT_FINAL_CPA",
-        "cue_index": cue.index,
-        "matched_start_ms": matched_start,
-        "matched_end_ms": matched_end,
-        "final_cue_sha256": final_hash,
-        "receipt_chain": consumed,
-        "timing_immutable": True,
-    }
-    return True
-
-
 _NON_MUTATING_GIFT_REPAIR_OUTCOMES = frozenset(
     {
         "asr_win_no_change",
@@ -1674,15 +1569,11 @@ def _final_authority_decision_rows(audit: dict) -> list[tuple[str, dict, str]]:
     return rows
 
 
-def verify_chat_authority_final_surfaces(
-    audit: dict,
-    *,
-    final_text_srt: str,
-    final_speaker_srt: str, delivery_start_ms: int, delivery_end_ms: int,
-    operator_text_full_ownership: Mapping[str, object] | None = None,
-) -> bool:
-    """Verify every in-delivery authority decision at its original time span."""
-
+def _prepare_final_surface_owners(
+    audit: dict, *, final_text_srt: str, final_speaker_srt: str,
+    delivery_start_ms: int, delivery_end_ms: int,
+):
+    """Run the unchanged source/baseline prerequisites before legacy owners."""
     # Recovery retries reuse the prior chat-authority audit.  A successful
     # verification must not retain the previous attempt's terminal reason
     # (1863 otherwise returned True while still serializing
@@ -1700,7 +1591,7 @@ def verify_chat_authority_final_surfaces(
         final_speaker_srt=final_speaker_srt,
         context=parallel_context,
     ):
-        return False
+        return None
 
     source_owner_ok, source_owner_count = _verify_source_truth_owners(
         audit,
@@ -1713,7 +1604,7 @@ def verify_chat_authority_final_surfaces(
         audit["final_verification_failure"] = (
             "SOURCE_TRUTH_FINAL_OWNER_NOT_VERIFIED"
         )
-        return False
+        return None
     baseline_owner_ok, baseline_owner_count = (
         _verify_redelivery_baseline_owners(
             audit,
@@ -1726,8 +1617,30 @@ def verify_chat_authority_final_surfaces(
         audit["final_verification_failure"] = (
             "REDELIVERY_BASELINE_FINAL_OWNER_NOT_VERIFIED"
         )
-        return False
+        return None
 
+    return parallel_context, source_owner_count, baseline_owner_count
+
+
+def verify_chat_authority_final_surfaces(
+    audit: dict,
+    *,
+    final_text_srt: str,
+    final_speaker_srt: str, delivery_start_ms: int, delivery_end_ms: int,
+    operator_text_full_ownership: Mapping[str, object] | None = None,
+) -> bool:
+    """Verify every in-delivery authority decision at its original time span."""
+
+    prepared = _prepare_final_surface_owners(
+        audit, final_text_srt=final_text_srt, final_speaker_srt=final_speaker_srt,
+        delivery_start_ms=delivery_start_ms, delivery_end_ms=delivery_end_ms,
+    )
+    if prepared is None:
+        return False
+    parallel_context, source_owner_count, baseline_owner_count = prepared
+    correction_gift_count = reconcile_gift_correction_supersessions(
+        audit, final_text_srt, final_speaker_srt, delivery_start_ms=delivery_start_ms,
+    )
     decision_rows = _final_authority_decision_rows(audit)
     if any(
         row.get("reconciliation_status") != "APPLIED_AND_HASH_VERIFIED"
@@ -1744,6 +1657,8 @@ def verify_chat_authority_final_surfaces(
     superseded_by_parallel_subtitle = 0
     required_rows: list[dict] = []
     for kind, row, expected_text in decision_rows:
+        if kind == "gift_name" and row.get("correction_pass_gift_supersession"):
+            continue  # Recomputed above from complete receipts, never a saved PASS flag.
         matched_start, matched_end = int(row["matched_start_ms"]), int(row["matched_end_ms"])
         row["final_verification_kind"], _ = kind, row.pop("expected_value_canon_supersession", None)
         parallel_outcome = consume_parallel_legacy_owner(
@@ -1975,6 +1890,7 @@ def verify_chat_authority_final_surfaces(
         superseded_by_truth=superseded_by_truth,
         superseded_by_redelivery=superseded_by_redelivery,
         superseded_by_exact_final_cpa=superseded_by_exact_final_cpa,
+        superseded_by_correction_pass=correction_gift_count,
         superseded_by_expected_value_canon=superseded_by_expected_value_canon,
         projected_by_parallel_subtitle=projected_by_parallel_subtitle,
         superseded_by_parallel_subtitle=superseded_by_parallel_subtitle,

@@ -17,6 +17,7 @@ from src.autoslice.piece_roles import (
     single_content_piece_index,
 )
 from src.autoslice.producer_boundary_owner_contract import (
+    STRUCTURED_CHAT_PAYOFF_ASSESSMENT_KEY,
     _redelivery_baseline_tail_rel_ms,
     freeze_required_boundary_owner_contract,
 )
@@ -229,6 +230,11 @@ def test_payoff_outside_story_yields_only_to_reachable_reviewed_tail():
     )
     frozen = audit["frozen_boundary_owner_contract"]
     assert frozen["required_owner_count"] == 0
+    assessment = frozen[STRUCTURED_CHAT_PAYOFF_ASSESSMENT_KEY]
+    assert assessment["mode"] == "terminal_authority_clamp_hypothesis"
+    assert assessment["observed_ms"] == 84_240
+    assert assessment["effective_story_ms"] is None
+    assert assessment["scope_ms"] == 84_240
     scope = frozen["boundary_search_scope"]
     assert scope["status"] == "PASS"
     assert scope["structured_payoff_ms"] == 84_240

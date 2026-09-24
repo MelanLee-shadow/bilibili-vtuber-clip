@@ -13,6 +13,34 @@ BCUT→CPA 与按需局部听证、文字/边界/声源/标题封面门负责；
 
 本文件是打包步骤的**分步权威**。入口：`src/autoslice/producer_package_finalization.py`。
 
+### 审计使用实际制作运行环境
+
+封面像素重放依赖 Pillow/FreeType 和 layout engine。运行 canonical auditor 时使用
+已验证的生产/制作 Python 环境，并记录 interpreter、Pillow、FreeType、auditor source
+身份；不能用系统 Python 的失败直接判定既有成品损坏。若出现
+`COVER_RENDERED_TEXT_PIXEL_ARTIFACT_MISMATCH`，先核对同一包的哈希与两端运行环境，
+再用已存在的正确环境重放。保留首次失败和后续结果；不放宽逐像素比较、不修改媒体
+或重抽模型判决来掩盖环境差异。一次成功只关闭该环境下的像素门，完整包审计、身份
+证据、联合 QC、来源去重及发布验收仍分别执行。
+
+## 用户反例与声文分歧诊断
+
+用户指出当前成品存在未知错句时，原机械审计和时间锚点 PASS 不阻止必要内容复查。
+已有 `text_correctness_status=UNASSESSED` 不能解释成逐句文字正确；没有进入时间锚点的
+短句或大幅改写句仍须保留为可调查对象。复查先不提示错误位置或答案，使用原音轨、当前
+字幕和来源上下文发现疑点，再对具体窗口盲听证，回到 CPA 文字裁决；不恢复默认全片 AGY。
+
+`scripts/diagnose_subtitle_audio_disagreements.py` 是显式、只读的辅助入口：先复用现有
+correspondence 的原媒体/见证 SHA 和时间域校验，然后为全部 cue 列出实际时间重叠的见证，
+以最大时间重叠选择比较对象，而不是寻找词面最像的句子。短句、无重叠、并列重叠与未入选
+时间锚点的句子不消失；分歧只列为审查候选，旧时间状态原样保留。ASR 错字、同音字、
+拆合句都可能产生分歧，一致也不能证明正确；相似度不是置信度或自动修订阈值。
+
+该入口始终 `DIAGNOSTIC_ONLY`、`text_correctness_status=UNASSESSED`、不授予改字或发布。
+它不签发或替代 package audit，不改现有 receipt，也不被自动批量 runner 默认调用。
+实际修订仍须有当前输入绑定的 CPA 决定和必要局部音频，保留旧稿及未影响字幕，重新验证
+对应实际视频、片头与音轨。诊断、修订预览、生产接纳及公开交付分别记账。
+
 ## 成片交付原则
 
 快车道、人工定点修复与普通生产都必须交付完整成片：谈话片头仅加一次、字幕实际烧入
@@ -33,6 +61,9 @@ BCUT→CPA 与按需局部听证、文字/边界/声源/标题封面门负责；
 已验证暖缓存仍按原哈希/声文合同复用，不重新抽音、探测或调用BCUT。
 包内保留同 stem 的 `.subtitle-audio-witness.srt`、`.subtitle-audio-provenance.json`、
 `.subtitle-audio-bcut.raw.json` 与 `.subtitle-audio-correspondence.json`，record 同时绑定检查结果。
+四件套均纳入 canonical auditor 的 `audited_inputs` 哈希清单，不能只记录 witness SRT
+而遗漏其余三份 JSON。该输入绑定不代替90步骤的当前声文校验，也不表示包审计已完成
+声文语义/时间检查；修改、丢失或新增这些旁车会使旧审计的输入闭包失效。
 该检查是粗偏移门，不证明所有短句或每条字幕的消失时刻，不授权按 BCUT 改字，也不替代
 CPA 文字裁决及本页规定的最终机械验收/具体异常局部复核。原音轨相关性、文件哈希一致、旧字幕审片
 PASS 均不能代替声文对应检查。
@@ -58,7 +89,14 @@ section 三个 read-only probes 可以并行，但 joint acceptance 是屏障，
 前后hash保持一致才返回原receipt；不加载密钥、不调用模型、不改时间或历史模型身份。
 默认不带flag的创建路径仍create-only。FAIL、漂移、非完整回答或路径不安全均拒绝复用，
 不得换输出名反复抽相同内容来洗成PASS。`import_external_package`在既定receipt路径已存在时
-自动调用同一验证函数，不再把已有正确结果当成必须新建的任务。其他发布门保持不变。
+自动调用同一验证函数，不再把已有正确结果当成必须新建的任务。外部包若只携带通用
+`title-cover-joint-qc.json`，且该回执仍绑定producer绝对路径，importer在COPY/RELOCATE之后、
+新模型调用之前只允许走零调用locator successor：portable回执必须与原authority包内同名回执
+逐字节相同，原authority与最终目标包分别通过现行native QC消费者，标题、candidate、封面及
+source-reference字节/哈希全部一致；随后create-only生成目标candidate-specific回执，再由目标
+包原生复验。任一原路径缺失、回执/像素/参考帧漂移、软链接或既有不同输出均fail closed，
+不得退回“再抽一次”绕过失败。`scripts/project_title_cover_qc_locator_successor.py`只暴露同一
+机制供有界恢复；它不调用provider、不改原模型回答，也不授予上传。其他发布门保持不变。
 
 ## 增量审计与最新记录重绑定
 
@@ -519,6 +557,12 @@ prepare 工作。一个被阻候选不得阻断其它候选。
   → 逐文件 sha256 前后比对的字节搬运 → `slice-package-relocation.v2` 事务化路径规整 →
   持 `runner.lock` 的 state 绑定 → manifest → package audit → 标题+封面联合质检，
   typed 回执落 `<pkg>/<cid>.external-import-receipt.json`；不带 `--apply` 为 dry-run。
+  COPY 在任何目标包写入前按目标文件系统汇总实际待复制字节，并要求可用空间至少为
+  `planned_copy_bytes + AUTOSLICE_MIN_FREE_BYTES`（复用现有非负整数配置，未设为 0）。
+  已有相同文件和已提交 relocation 保护文档不重复计入；原子覆盖按完整新文件计入，
+  不预扣旧文件大小。dry-run 与 apply 都检查，回执披露各文件系统的容量；不足返回
+  `INSUFFICIENT_DISK_SPACE`，容量读取失败或配置非法也拒绝。该前检不预留磁盘，不能保证
+  后续并发占用或完整 audit 的空间；不授权清理、降低 reserve 或跳过既有门。
   dry-run 默认仅向 stdout 输出回执，不因目标包已存在而创建或覆盖包内回执；只有显式
   `--receipt` 才写指定诊断文件。`--apply` 的既有回执保存、失败与状态回滚规则不变。
   源包根的 `package_audit.json` 与歌切导入一样保留在源目录，不复制成目标根审计；
@@ -533,6 +577,17 @@ prepare 工作。一个被阻候选不得阻断其它候选。
   之后由原迁移事务生成目标定位符与真实原件 before-image；不改原图、历史见证或旧 binding。
   历史 `cover_repair_binding` 三面引用保持不可变，不当作可随意重写的运行路径。
   该窄接续不接受任意候选外文件、漂移副本或未验证生成记录，也不豁免当前审计/状态/发布门。
+  已有 identity-card 完整包的封面若仍声明中间 bridge locator，导入预检可复用
+  `package_import_v4_cover.py`：先核唯一候选 manifest、真实三面原记录、完整 V4 判决与
+  四件包内绑定，再核背景/遮罩/pre-overlay/reference 的实际字节。只在内存把既有白名单
+  封面 locator 归一到该 record 声明的媒体 source namespace，后续仍由原迁移事务处理。
+  原文件、历史 witness、source-composition、标题和像素不改写；源包不是该 namespace 的
+  新部署，不能把虚拟路径归一当作物理迁移已经完成。已规范化 V4 的封面使用 canonical
+  receipt 的包内相对路径；普通原生 V4 回执仍保留绝对产出标签时，复用 generation 原有的
+  包内“目录名/文件名”别名，不打开标签所指的外部文件。两种格式都重读包内 no-follow 文件并
+  核实真实哈希；缺失、损坏和非规范相对路径不能通过别名回退放行。
+  `SOURCE_IS_DESTINATION`、根角色检查、
+  原生接纳与90发布门保持；源/目标声明相同的回灌仍须独立、真实、已验证的迁移准备。
   普通 producer 未请求 baseline replay 时原生写出两个显式 null：`redelivery_baseline` 与
   `redelivery_baseline_audit_path`。导入保留这两个 null，不虚构通过的基线；字段缺失、
   声明了 audit path 却缺 audit 对象、非对象值仍拒绝。目标完整审计和其他权威门照常执行。
@@ -542,8 +597,14 @@ prepare 工作。一个被阻候选不得阻断其它候选。
   硬边界：只走 talk 车道；只接受 pick 行缺失（需 `--allow-new-pick`）或已是
   `review_ready`+`rc=0` 的重绑。普通 `candidate_rejected`/`failed` 仍必须先过
   `scripts/revive_rejected_candidates.py`；唯一例外是下述 registry-authorized exact failed-pick
-  adoption。批级状态不在 manifest builder 白名单内时直接
-  typed 拒绝而不修状态；**不做 `authorized_upload make-manifest`**，上传授权仍只走
+  adoption。批级状态与单候选接纳由共享 `candidate_package_review_allowed` 判断：
+  原可评审批次白名单不变；仅 `paused_cpa_down` 可接纳唯一已存在的
+  `review_ready`+整数 `rc=0`、未发布且不在 pending Talk/Song 或 Song 集合中的候选。
+  这不是创建新 pick 或复活失败候选的通道；`processing`、runtime/source 错误状态及未知形态仍拒绝。
+  import 前检、state bind 后检与单候选 manifest 使用同一谓词；真实 runner 锁、整包审计及
+  当前标题—封面联合质检不省略。暂停批的 status、全部待办/重试/源健康信息与其他候选保持，
+  manifest 如实记录原 `batch_status=paused_cpa_down`，只表示这一候选已接纳，不宣布服务恢复或整批完成。
+  其他不符合范围的批级状态仍 typed 拒绝而不修状态；**不做 `authorized_upload make-manifest`**，上传授权仍只走
   [90-publish.md](90-publish.md)。路径投影只动
   `package_relocation_contract.py` 白名单里的运行期定位符，冻结证据（`story_contract`、
   `cover_generation`、`boundary_audit`、`analysis` 等）逐字节保留产出主机的值；改写后的
@@ -679,3 +740,25 @@ frozen contract逐字段相同，并重放旧source-action的hash/范围，再�
 已有geometry检查。非required和晚于boundary的改字仍不取得owner，绝不能复活退役的文字。
 任何行/window/id/声明变化、extra/missing/reorder或source-action漂移仍拒绝。该规则不改原稿、
 不删required owner、不豁免source/final review、raw媒体、package/发布验证，也不是历史人审复写。
+
+
+### 平铺同 stem 封面的原生 state 绑定
+
+旧 absolute V4 人物回执可继续保留历史来源定位，按既有包内别名核其像素 SHA；
+它不等于当前 runtime 的唯一文件定位。`read_bound_package` 在已验迁移 journal 与
+制品哈希后，若 publish 精确声明当前包根的 `<upload_stem>.cover.png`，使用这个实际
+同 stem 普通文件作为绑定封面，并继续核同一 frozen final-cover SHA。不能把历史别名
+多出的一层父目录拼到该 runtime 声明上，误报 `COVER_NOT_PACKAGE_INTERNAL`。
+canonical V4 若已绑定同 stem 成品，而 generation 保留迁移后的 `covers/` 副本，须同时
+验证两个实际包内文件：只接受 canonical absolute、未逃出当前包且无 symlink 的 generation
+别名，并要求它与 canonical V4 成品的 frozen SHA 相同；状态仍绑定 canonical 成品。不打开
+旧 producer 路径、不修改原回执。其余声明仍须与原解析路径一致；missing/symlink/字节漂移、
+旧见证别名漂移和 journal 漂移继续拒绝。该兼容不改变图像、原始回执、人物门、包审计、联合质检或上传授权。
+
+
+### 原生导入 CLI 的私有创建权限
+
+`import_external_package.py` 作为独立 CLI 启动时将本进程创建掩码设为 `077`，使新包目录
+符合既有联合质检的 `0700` 父目录要求，不依赖启动 shell 的默认 umask。导入模块或直接调用
+其函数不会修改调用方进程的 umask；dry-run 仍不创建目标包。该默认不 chmod 已存在目录，
+不放宽 JQC 的身份、路径、权限或 create-only 门；现有不安全目录继续按原门拒绝。

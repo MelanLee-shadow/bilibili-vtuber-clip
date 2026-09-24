@@ -23,11 +23,43 @@ from src.autoslice.cover_route_evidence import (
     validate_cover_route_decision,
 )
 from src.autoslice.cover_source_composition import source_composition_scene_kind
+from src.autoslice.builtin_imagegen_cover import _read_source
+from src.autoslice.review_package_portable_evidence import portable_item_artifact_path
 from src.autoslice.host_only_v4_package_binding import (
     BINDING_ISSUE_CODE,
     HostOnlyV4PackageBindingError,
     validate_package_binding,
 )
+
+
+def validate_package_cover_route(generation, *, root=None, item=None) -> bool:
+    if generation.get("method") != "image_gen.imagegen":
+        return validate_cover_route_decision(generation, allow_legacy_v1=False)
+    if root is None or item is None:
+        return False
+    source = portable_item_artifact_path(root, item, "cover_builtin_provenance")
+    portable = dict(generation)
+    try:
+        if source is None:
+            return False
+        manifest, _ = _read_source(source)
+        portable.update(
+            builtin_imagegen_provenance_path=str(source),
+            reference_image=str(source.parent / manifest["identity_reference"]["path"]),
+            ai_background=str(portable_item_artifact_path(root, item, "cover_route_background")),
+            final_cover=str(portable_item_artifact_path(root, item, "cover")),
+        )
+        return validate_cover_route_decision(portable, allow_legacy_v1=False)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
+def audit_builtin_imagegen_cover(*, root, item, generation, rendered_text_ready,
+                                issues, stem, record_path) -> None:
+    if not (rendered_text_ready and validate_package_cover_route(generation, root=root, item=item)):
+        issues.append({"code": "BUILTIN_IMAGEGEN_COVER_EVIDENCE_INVALID", "severity": "BLOCK", "stem": stem,
+                       "path": str(record_path) if record_path else None,
+                       "detail": "Builtin image_gen requires original tool/source bytes, current identity and glyph evidence"})
 
 
 def host_only_identity_route_blocker_detail(

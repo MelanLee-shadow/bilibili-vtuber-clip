@@ -6,7 +6,10 @@ audio.  This module is the narrow, explicit path for that case:
 
 * validate the complete parent gate closure;
 * extract the successor's audio with the existing default FFmpeg extractor;
-* require the extracted MP3 hash to equal the parent's recorded hash;
+* prefer an exact extracted-MP3 hash match with the parent's recorded hash;
+* when only historical encoder bytes drift, require the current extractor to
+  produce identical parent/successor MP3 bytes and require both complete native
+  PCM and the mono-16-kHz BCUT-input PCM to be byte-identical;
 * carry the parent's raw BCUT result and witness SRT byte-for-byte;
 * write new provenance and correspondence envelopes bound to the successor;
 * run the existing native validator on the returned successor record.
@@ -24,6 +27,8 @@ import copy
 import hashlib
 import json
 import os
+import re
+import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +38,7 @@ from src.autoslice import final_subtitle_audio_gate as gate
 
 
 REUSE_SCHEMA_VERSION = "final-subtitle-audio-audio-reuse.v1"
+PCM_IDENTITY_SCHEMA_VERSION = "final-subtitle-audio-decoded-pcm-identity.v1"
 RECORD_FILENAME = "AUDIO-VERIFIED-RECORD.json"
 PROVIDER_NAME = gate.PROVIDER_NAME
 PROVIDER_ROUTE = "reused-existing-parent-bcut-receipt"
@@ -75,6 +81,73 @@ def _sha256(path: str | Path) -> str:
         return gate.sha256_file(path)
     except (OSError, ValueError) as exc:
         raise FinalSubtitleAudioReuseError("AUDIO_REUSE_INPUT_UNAVAILABLE", str(exc)) from exc
+
+
+def _ffmpeg_pcm_sha256(media: Path, *, mono_16khz: bool) -> str:
+    """Hash the complete decoded PCM stream without retaining audio bytes."""
+
+    command = [
+        "ffmpeg",
+        "-nostdin",
+        "-hide_banner",
+        "-v",
+        "error",
+        "-i",
+        str(media),
+        "-map",
+        "0:a:0",
+        "-vn",
+    ]
+    if mono_16khz:
+        command.extend(["-ac", "1", "-ar", "16000"])
+    command.extend(["-c:a", "pcm_s16le", "-f", "hash", "-hash", "sha256", "-"])
+    try:
+        completed = subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=900,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise FinalSubtitleAudioReuseError("AUDIO_REUSE_PCM_DECODE_FAILED", str(exc)) from exc
+    output = completed.stdout.strip()
+    if (
+        completed.returncode != 0
+        or completed.stderr.strip()
+        or re.fullmatch(r"SHA256=[a-f0-9]{64}", output) is None
+    ):
+        raise FinalSubtitleAudioReuseError(
+            "AUDIO_REUSE_PCM_DECODE_FAILED",
+            f"rc={completed.returncode} stderr={completed.stderr[-500:]!r} stdout={output!r}",
+        )
+    return "sha256:" + output.split("=", 1)[1]
+
+
+def _decoded_pcm_identity(media: Path) -> dict[str, str]:
+    return {
+        "schema_version": PCM_IDENTITY_SCHEMA_VERSION,
+        "native_pcm_s16le_sha256": _ffmpeg_pcm_sha256(media, mono_16khz=False),
+        "bcut_input_mono_16000_pcm_s16le_sha256": _ffmpeg_pcm_sha256(
+            media, mono_16khz=True
+        ),
+    }
+
+
+def _validated_pcm_identity(value: object, *, label: str) -> dict[str, str]:
+    if not isinstance(value, Mapping) or value.get("schema_version") != PCM_IDENTITY_SCHEMA_VERSION:
+        raise FinalSubtitleAudioReuseError("AUDIO_REUSE_PCM_IDENTITY_INVALID", label)
+    return {
+        "schema_version": PCM_IDENTITY_SCHEMA_VERSION,
+        "native_pcm_s16le_sha256": _canonical_sha(
+            value.get("native_pcm_s16le_sha256"), label=f"{label}_native_pcm"
+        ),
+        "bcut_input_mono_16000_pcm_s16le_sha256": _canonical_sha(
+            value.get("bcut_input_mono_16000_pcm_s16le_sha256"),
+            label=f"{label}_bcut_input_pcm",
+        ),
+    }
 
 
 def _regular_file(value: str | Path, *, label: str) -> Path:
@@ -317,6 +390,103 @@ def _write_json_bytes(document: Mapping[str, object]) -> bytes:
     return (json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
+def _prove_audio_reuse_identity(
+    *,
+    parent_media: Path,
+    current_media: Path,
+    parent_audio: str,
+    candidate_id: str,
+    temp_parent: Path,
+    extractor: Callable[[Path, Path], None],
+    custom_extractor: bool,
+    decoded_audio_identity: Callable[[Path], Mapping[str, object]] | None,
+) -> tuple[str, str, dict[str, object]]:
+    """Prove byte identity or the existing extractor/PCM equivalence contract."""
+    parent_replay_audio: str | None = None
+    parent_pcm_identity: dict[str, str] | None = None
+    current_pcm_identity: dict[str, str] | None = None
+    try:
+        with tempfile.TemporaryDirectory(prefix=f".{candidate_id}.audio-reuse-extract-", dir=temp_parent) as temp_name:
+            temp_root = Path(temp_name)
+            extracted = temp_root / "successor.mp3"
+            extractor(current_media, extracted)
+            extracted = _regular_file(extracted, label="successor_extracted_audio")
+            current_audio = _sha256(extracted)
+            if current_audio != parent_audio:
+                # A custom extractor without a matching PCM seam is a unit-test
+                # mismatch, never implicit permission to take the production
+                # fallback.  Production omits both private seams.
+                if custom_extractor and decoded_audio_identity is None:
+                    raise FinalSubtitleAudioReuseError(
+                        "AUDIO_REUSE_AUDIO_HASH_MISMATCH",
+                        f"parent_recorded={parent_audio} successor_extracted={current_audio}",
+                    )
+                replayed_parent = temp_root / "parent-replay.mp3"
+                extractor(parent_media, replayed_parent)
+                replayed_parent = _regular_file(
+                    replayed_parent, label="parent_replayed_extracted_audio"
+                )
+                parent_replay_audio = _sha256(replayed_parent)
+                if parent_replay_audio != current_audio:
+                    raise FinalSubtitleAudioReuseError(
+                        "AUDIO_REUSE_CURRENT_EXTRACTOR_REPLAY_MISMATCH",
+                        f"parent_replayed={parent_replay_audio} successor_extracted={current_audio}",
+                    )
+                identity_reader = decoded_audio_identity or _decoded_pcm_identity
+                parent_pcm_identity = _validated_pcm_identity(
+                    identity_reader(parent_media), label="parent"
+                )
+                current_pcm_identity = _validated_pcm_identity(
+                    identity_reader(current_media), label="current"
+                )
+                if parent_pcm_identity != current_pcm_identity:
+                    raise FinalSubtitleAudioReuseError(
+                        "AUDIO_REUSE_DECODED_PCM_MISMATCH",
+                        f"parent={parent_pcm_identity} current={current_pcm_identity}",
+                    )
+    except FinalSubtitleAudioReuseError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise FinalSubtitleAudioReuseError("AUDIO_REUSE_EXTRACTION_FAILED", str(exc)) from exc
+
+    exact_recorded_audio_match = current_audio == parent_audio
+    reuse_mode = (
+        "EXACT_EXTRACTED_AUDIO_HASH_REUSE"
+        if exact_recorded_audio_match
+        else "CURRENT_EXTRACTOR_REPLAY_AND_DECODED_PCM_EQUIVALENCE_REUSE"
+    )
+    proof: dict[str, object] = {
+        "extractor": "src.autoslice.final_subtitle_audio_gate._default_extract_audio",
+        "successor_audio_bytes_hashed": True,
+        "recorded_parent_audio_hash_match": exact_recorded_audio_match,
+    }
+    if not exact_recorded_audio_match:
+        assert parent_replay_audio is not None
+        assert parent_pcm_identity is not None
+        assert current_pcm_identity is not None
+        proof["current_extractor_replay"] = {
+            "parent_audio_sha256": parent_replay_audio,
+            "current_audio_sha256": current_audio,
+            "byte_identical": parent_replay_audio == current_audio,
+        }
+        proof["decoded_pcm_equivalence"] = {
+            "schema_version": "final-subtitle-audio-decoded-pcm-equivalence.v1",
+            "status": "PASS",
+            "parent": parent_pcm_identity,
+            "current": current_pcm_identity,
+            "native_pcm_byte_identical": (
+                parent_pcm_identity["native_pcm_s16le_sha256"]
+                == current_pcm_identity["native_pcm_s16le_sha256"]
+            ),
+            "bcut_input_pcm_byte_identical": (
+                parent_pcm_identity["bcut_input_mono_16000_pcm_s16le_sha256"]
+                == current_pcm_identity["bcut_input_mono_16000_pcm_s16le_sha256"]
+            ),
+        }
+
+    return current_audio, reuse_mode, proof
+
+
 def reuse_final_subtitle_audio_check(
     parent_record: Mapping[str, object],
     current_record: Mapping[str, object],
@@ -328,6 +498,7 @@ def reuse_final_subtitle_audio_check(
     parent_record_path: str | Path | None = None,
     current_record_path: str | Path | None = None,
     _extract_audio: Callable[[Path, Path], None] | None = None,
+    _decoded_audio_identity: Callable[[Path], Mapping[str, object]] | None = None,
 ) -> FinalSubtitleAudioReuseResult:
     """Build and validate a hash-bound same-audio successor evidence record.
 
@@ -339,9 +510,10 @@ def reuse_final_subtitle_audio_check(
     callers should pass the actual parent/current record paths for durable
     provenance.
 
-    The private ``_extract_audio`` argument exists solely for unit tests.  In
-    production it must be omitted so the default extractor performs real
-    FFmpeg/ffprobe validation.  No argument can inject a transcriber.
+    The private ``_extract_audio`` and ``_decoded_audio_identity`` arguments
+    exist solely for unit tests.  In production they must be omitted so the
+    default extractor and full FFmpeg PCM decoders perform the identity proof.
+    No argument can inject a transcriber.
     """
 
     if not isinstance(parent_record, Mapping) or not isinstance(current_record, Mapping):
@@ -361,6 +533,11 @@ def reuse_final_subtitle_audio_check(
         parent_evidence_dir=parent_dir,
         candidate_id=candidate_id,
     )
+    try:
+        parent_media = gate._validated_burned_artifact(dict(parent_record))
+    except Exception as exc:
+        raise FinalSubtitleAudioReuseError("AUDIO_REUSE_PARENT_BURN_INVALID", str(exc)) from exc
+    parent_media = _regular_file(parent_media, label="parent_burned_media")
 
     try:
         current_media = gate._validated_burned_artifact(current_copy)
@@ -392,26 +569,20 @@ def reuse_final_subtitle_audio_check(
     temp_parent = output.parent
     if not temp_parent.is_dir() or temp_parent.is_symlink():
         raise FinalSubtitleAudioReuseError("AUDIO_REUSE_DIRECTORY_UNAVAILABLE", str(temp_parent))
-    try:
-        with tempfile.TemporaryDirectory(prefix=f".{candidate_id}.audio-reuse-extract-", dir=temp_parent) as temp_name:
-            extracted = Path(temp_name) / "successor.mp3"
-            extractor(current_media, extracted)
-            extracted = _regular_file(extracted, label="successor_extracted_audio")
-            extracted_bytes = extracted.read_bytes()
-    except FinalSubtitleAudioReuseError:
-        raise
-    except (OSError, RuntimeError, ValueError) as exc:
-        raise FinalSubtitleAudioReuseError("AUDIO_REUSE_EXTRACTION_FAILED", str(exc)) from exc
-    current_audio = _hash_bytes(extracted_bytes)
-    if current_audio != parent_audio:
-        raise FinalSubtitleAudioReuseError(
-            "AUDIO_REUSE_AUDIO_HASH_MISMATCH",
-            f"parent_recorded={parent_audio} successor_extracted={current_audio}",
-        )
+    current_audio, reuse_mode, proof = _prove_audio_reuse_identity(
+        parent_media=parent_media,
+        current_media=current_media,
+        parent_audio=parent_audio,
+        candidate_id=candidate_id,
+        temp_parent=temp_parent,
+        extractor=extractor,
+        custom_extractor=_extract_audio is not None,
+        decoded_audio_identity=_decoded_audio_identity,
+    )
 
     audio_reuse = {
         "schema_version": REUSE_SCHEMA_VERSION,
-        "mode": "EXACT_EXTRACTED_AUDIO_HASH_REUSE",
+        "mode": reuse_mode,
         "source_provider": PROVIDER_NAME,
         "provider_route": PROVIDER_ROUTE,
         "new_provider_calls": 0,
@@ -434,11 +605,7 @@ def reuse_final_subtitle_audio_check(
             "audio_sha256": current_audio,
             "intro_offset_ms": current_intro_ms,
         },
-        "proof": {
-            "extractor": "src.autoslice.final_subtitle_audio_gate._default_extract_audio",
-            "successor_audio_bytes_hashed": True,
-            "recorded_parent_audio_hash_match": current_audio == parent_audio,
-        },
+        "proof": proof,
     }
 
     artifact_paths = _artifact_paths(output, candidate_id)

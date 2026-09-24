@@ -309,6 +309,7 @@ def run_import(
                 title=title,
                 same_stem_cover=bound.same_stem_cover_path,
                 skip_qc=skip_qc,
+                source_package_root=source,
             )
             _step_make_manifest_hint(
                 receipt=receipt,
@@ -512,6 +513,7 @@ def _step_copy(
         "PASS" if apply else "PLANNED",
         file_count=summary["file_count"],
         total_bytes=summary["total_bytes"],
+        capacity=summary["capacity"],
         # 逐文件 sha256 前后比对是"字节没在传输中损坏"的唯一证明。
         files=summary["files"],
     )
@@ -1008,6 +1010,7 @@ def _step_title_cover_qc(
     title: str,
     same_stem_cover: Path,
     skip_qc: bool,
+    source_package_root: Path | None = None,
 ) -> None:
     if skip_qc:
         receipt.add(
@@ -1035,6 +1038,56 @@ def _step_title_cover_qc(
                     cover_path=qc["cover_path"], cover_sha256=qc["cover_sha256"],
                     reused_existing=True, provider_calls=0)
         return
+    if source_package_root is not None:
+        from src.autoslice.title_cover_qc_locator_successor import (
+            TitleCoverQcSuccessorError,
+            create_title_cover_qc_locator_successor,
+            resolve_portable_qc_authority,
+        )
+
+        try:
+            authority = resolve_portable_qc_authority(
+                portable_package_root=source_package_root,
+                title=title,
+                candidate_id=candidate_id,
+            )
+            if authority is not None:
+                authority_root, authority_receipt = authority
+                qc = create_title_cover_qc_locator_successor(
+                    source_package_root=authority_root,
+                    source_receipt_path=authority_receipt,
+                    destination_package_root=destination_package_root,
+                    output_path=out_path,
+                    title=title,
+                )
+                if qc.get("cover_path") != str(same_stem_cover.resolve()):
+                    raise ValueError(
+                        "projected QC does not bind the current delivery cover"
+                    )
+                receipt.add(
+                    "TITLE_COVER_QC",
+                    "PASS",
+                    path=str(out_path),
+                    sha256=pi.sha256_file(out_path),
+                    title_sha256=qc["title_sha256"],
+                    cover_path=qc["cover_path"],
+                    cover_sha256=qc["cover_sha256"],
+                    reused_existing=True,
+                    projected_locator_successor=True,
+                    provider_calls=0,
+                )
+                return
+        except (TitleCoverQcSuccessorError, ValueError, OSError) as error:
+            raise _refuse(
+                "TITLE_COVER_QC",
+                "JOINT_QC_SUCCESSOR_FAILED",
+                str(error),
+                hint=(
+                    "preserve both receipts and packages; repair the exact locator "
+                    "or byte binding instead of re-running the model"
+                ),
+            ) from error
+
     # 标题**必须**程序化地从 review_manifest 取：手抄会把全角引号打成 ASCII，
     # QC 回执的 title_sha256 就与 manifest 不符（rerun1 实拒）。
     result = gate_runner.run(
@@ -1223,4 +1276,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # The native QC writer requires a private parent. Set the CLI process
+    # creation mask only; never chmod an existing package or affect importers.
+    os.umask(0o077)
     raise SystemExit(main())

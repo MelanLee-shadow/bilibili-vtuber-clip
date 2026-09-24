@@ -710,6 +710,72 @@ def test_build_attaches_native_host_only_v4_binding(
     assert manifest["items"][0]["host_only_v4_binding"] == expected
 
 
+def test_build_preserves_builtin_imagegen_provenance_mapping(
+    tmp_path: Path,
+) -> None:
+    package_root, state_path, deployed_commit_file, candidate_id = _build_daily_talk_package(
+        tmp_path, speaker_finalized=False
+    )
+    source_dir = package_root / "builtin_imagegen_source"
+    source_dir.mkdir()
+    provenance = source_dir / "source.json"
+    provenance.write_text(
+        json.dumps(
+            {
+                "schema_version": "builtin-imagegen-cover-source.v1",
+                "candidate_id": candidate_id,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    publish_path = package_root / f"{candidate_id}.recut.publish.json"
+    publish = json.loads(publish_path.read_text(encoding="utf-8"))
+    generation = publish["cover_generation"]
+    generation.update(
+        {
+            "method": "image_gen.imagegen",
+            "builtin_imagegen_provenance_path": str(provenance),
+            "builtin_imagegen_provenance_sha256": "sha256:" + _sha256(provenance),
+        }
+    )
+    publish_path.write_text(json.dumps(publish, ensure_ascii=False), encoding="utf-8")
+
+    manifest = build(package_root, state_path, deployed_commit_file, candidate_id)
+
+    item = manifest["items"][0]
+    assert item["cover_builtin_provenance"] == "builtin_imagegen_source/source.json"
+    assert _sha256(package_root / item["cover_builtin_provenance"]) == _sha256(provenance)
+
+
+def test_build_rejects_builtin_imagegen_provenance_hash_drift(
+    tmp_path: Path,
+) -> None:
+    package_root, state_path, deployed_commit_file, candidate_id = _build_daily_talk_package(
+        tmp_path, speaker_finalized=False
+    )
+    source_dir = package_root / "builtin_imagegen_source"
+    source_dir.mkdir()
+    provenance = source_dir / "source.json"
+    provenance.write_text("{}\n", encoding="utf-8")
+    publish_path = package_root / f"{candidate_id}.recut.publish.json"
+    publish = json.loads(publish_path.read_text(encoding="utf-8"))
+    publish["cover_generation"].update(
+        {
+            "method": "image_gen.imagegen",
+            "builtin_imagegen_provenance_path": str(provenance),
+            "builtin_imagegen_provenance_sha256": "sha256:" + "0" * 64,
+        }
+    )
+    publish_path.write_text(json.dumps(publish, ensure_ascii=False), encoding="utf-8")
+
+    with pytest.raises(
+        DailyManifestError,
+        match="builtin image_gen package binding failed",
+    ):
+        build(package_root, state_path, deployed_commit_file, candidate_id)
+
+
 def test_build_speaker_finalized_package_uses_speaker_artifact_family(
     tmp_path: Path,
 ) -> None:

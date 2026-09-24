@@ -11,7 +11,10 @@ from datetime import datetime
 from pathlib import Path
 
 from scripts import authorized_upload
-from src.autoslice.publication_registry import load_publication_registry
+from src.autoslice.publication_registry import (
+    _candidate_ids as _verified_publication_candidate_ids,
+    load_publication_registry,
+)
 from src.autoslice import selection_support_override
 
 READY_TO_PREPARE = "READY_TO_PREPARE"
@@ -637,6 +640,42 @@ def _category(reasons: set[str], *, serial: bool) -> str:
     return READY_TO_PREPARE
 
 
+def _covered_publication_exclusions(
+    registry_rows: list,
+    *,
+    recording_dates: frozenset[str] | None,
+    candidate_ids: frozenset[str] | None,
+) -> dict[tuple[str, str], dict[str, str]]:
+    """Expand validated coverage before applying the child-ID request filter.
+
+    This only classifies existing publication evidence. It creates neither a
+    second registry row nor a publication grant, and never trusts a state label.
+    """
+    covered: dict[tuple[str, str], dict[str, str]] = {}
+    for row in registry_rows:
+        if not isinstance(row, Mapping) or row.get("status") != "published":
+            continue
+        date = str(row.get("recording_date") or "")
+        if recording_dates is not None and date not in recording_dates:
+            continue
+        parent = str(row.get("candidate_id") or "")
+        # The same resolver used by upload/cover guards replays the original
+        # hash-bound coverage; do not trust an unverified list of child IDs.
+        for child in _verified_publication_candidate_ids(row) - {parent}:
+            if candidate_ids is not None and child not in candidate_ids:
+                continue
+            exclusion = {
+                "candidate_id": child, "recording_date": date,
+                "parent_candidate_id": parent, "bvid": str(row.get("bvid") or ""),
+                "reason_code": "COVERED_BY_PUBLICATION_EXCLUDED",
+            }
+            key = (child, date)
+            if key in covered and covered[key] != exclusion:
+                raise ValueError("conflicting verified publication coverage")
+            covered[key] = exclusion
+    return covered
+
+
 def build_readiness_graph(*, repository_root: Path, runtime_root: Path,
                           recording_dates: frozenset[str] | None = None,
                           candidate_ids: frozenset[str] | None = None,
@@ -651,9 +690,13 @@ def build_readiness_graph(*, repository_root: Path, runtime_root: Path,
     try:
         registry = registry_loader(registry_path, runtime_path=runtime_root / "state/publication_registry.runtime.v1.json")
         registry_rows = registry.get("entries", []) if isinstance(registry, Mapping) else []
+        covered_index = _covered_publication_exclusions(
+            registry_rows, recording_dates=recording_dates, candidate_ids=candidate_ids,
+        )
         registry_valid = True
     except Exception:
         registry_rows = []
+        covered_index = {}
         registry_valid = False
         graph_problems.append(_reason("PUBLICATION_REGISTRY_INVALID", "publication_registry"))
     indexed = {
@@ -689,6 +732,8 @@ def build_readiness_graph(*, repository_root: Path, runtime_root: Path,
         registry_row = indexed.get((candidate_id, date))
         if registry_row and registry_row.get("status") == "published":
             continue
+        if (candidate_id, date) in covered_index:
+            continue  # Do not inspect/requeue an already consumed source package.
         reasons: set[str] = set()
         source_collections = list(dict.fromkeys(source[1] for source in sources))
         state_sources = [
@@ -807,4 +852,9 @@ def build_readiness_graph(*, repository_root: Path, runtime_root: Path,
                 "observational_only": True,
             }
         )
-    return {"schema_version": "publication-readiness-graph.v1", "observational_only": True, "precedence": list(_PRECEDENCE), "graph_blockers": graph_problems, "rows": rows, "excluded_published": excluded}
+    return {
+        "schema_version": "publication-readiness-graph.v1", "observational_only": True,
+        "precedence": list(_PRECEDENCE), "graph_blockers": graph_problems, "rows": rows,
+        "excluded_published": excluded,
+        "excluded_covered": [covered_index[key] for key in sorted(covered_index)],
+    }

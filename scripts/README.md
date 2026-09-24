@@ -81,6 +81,14 @@
 `swap_video_p.py` 是历史兼容工具，不是允许直接运行的修复入口；同 BV 修复仍只走
 `authorized_upload.py repair-plan / repair-run / repair-verify-live`。
 
+## 独立 ASR 对照实验
+
+`evaluate_doubao_flash_holdout.py` 提供 `freeze / preflight / run / score`。默认输入在
+`data/flash-evaluation/`，须自行准备历史输入说明与人工参考；默认输出在
+`reports/flash-evaluation/`。`run --execute-provider-calls` 才请求真实 Flash 服务，
+需先确认凭据与预算。参考稿与生成输入分开，已有派发账本不会把未知结果当成成功。
+该工具不接管生产 ASR，也不提供私有样本或准确率承诺；参数先查看 `--help`。
+
 ## 发布 / 稿件维护
 
 | 脚本 | 用途 |

@@ -59,6 +59,83 @@ def test_bound_v4_paths_project_without_touching_inputs(package):
     assert rec == rec_before and pub == pub_before and _inventory(root) == before
 
 
+def _strip_identity_card_marker(root: Path) -> tuple[dict, dict, dict]:
+    manifest_path = root / "review_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    item = manifest["items"][0]
+    for kind in ("evidence_json", "record", "publish_json"):
+        path = root / item[kind]
+        document = json.loads(path.read_text(encoding="utf-8"))
+        generation = (
+            document.get("cover_generation")
+            if kind == "publish_json"
+            else document.get("publish_staging", {}).get("cover_generation")
+        )
+        assert isinstance(generation, dict)
+        generation.pop("identity_card_pixel_successor", None)
+        path.write_text(
+            json.dumps(document, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        if kind in item.get("sha256", {}):
+            item["sha256"][kind] = pi.sha256_file(path)
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    record = json.loads((root / item["evidence_json"]).read_text(encoding="utf-8"))
+    publish = json.loads((root / item["publish_json"]).read_text(encoding="utf-8"))
+    return item, record, publish
+
+
+def test_generic_host_only_v4_dispatches_without_identity_card_marker(package):
+    root, _item, _record, _publish, old_root, cid = package
+    before = _inventory(root)
+    item, record, publish = _strip_identity_card_marker(root)
+    normalized_before = _inventory(root)
+    record_before, publish_before = copy.deepcopy(record), copy.deepcopy(publish)
+
+    projected_record, projected_publish = project_preserved_cover_locators(
+        record,
+        publish,
+        package_root=root,
+        candidate_id=cid,
+    )
+
+    assert projected_publish["cover_generation"]["final_cover"] == str(
+        old_root / item["cover"]
+    )
+    assert projected_publish["cover_generation"]["ai_background"] == str(
+        old_root / item["cover_route_background"]
+    )
+    assert projected_record["publish_staging"]["cover_generation"] == (
+        projected_publish["cover_generation"]
+    )
+    assert record == record_before and publish == publish_before
+    assert _inventory(root) == normalized_before
+    assert before != normalized_before  # Test setup changed only the package JSON bytes.
+
+
+def test_generic_host_only_v4_without_package_binding_fails_closed(package):
+    root, _item, _record, _publish, _old_root, cid = package
+    item, record, publish = _strip_identity_card_marker(root)
+    manifest_path = root / "review_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["items"][0].pop("host_only_v4_binding")
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(pi.PackageImportError, match="SOURCE_ROOT_INCONSISTENT"):
+        project_preserved_cover_locators(
+            record,
+            publish,
+            package_root=root,
+            candidate_id=cid,
+        )
+
+
 def test_native_cover_resolver_uses_v4_relative_cover_not_parent_basename(package):
     root, item, rec, pub, old_root, cid = package
     g = pub["cover_generation"]
@@ -168,3 +245,22 @@ def test_input_drift_during_final_readback_is_rejected(package, monkeypatch):
     monkeypatch.setattr(projection, "read_package_file_once", changing_read)
     with pytest.raises(pi.PackageImportError, match="changed during normalization"):
         project_preserved_cover_locators(rec, pub, package_root=root, candidate_id=cid)
+
+
+def test_projected_v4_source_namespace_resolves_flat_package_alias(tmp_path):
+    cover_name = "auto_010203_4_5.recut.burned-final-sapphire72.cover.png"
+    cover = tmp_path / cover_name
+    cover.write_bytes(b"flat package cover bytes")
+    generation = {
+        "final_cover": (
+            "/producer/out/2026-08-22/auto_010203_4_5/"
+            f"replacement_recuts/{cover_name}"
+        ),
+        "final_cover_sha256": "sha256:" + pi.sha256_file(cover),
+        "final_host_identity_verification": {
+            "schema_version": "lidousha-cover-final-host-identity-verification.v4",
+            "final_cover_path": "/producer/design/B2-cover.png",
+        },
+    }
+
+    assert pi._package_internal_cover(tmp_path, generation) == cover

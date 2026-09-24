@@ -35,6 +35,7 @@ from .publication_state_projection import (
     PublicationReconciliationError,
     _DATE_RX,
     _apply_publication_to_state,
+    _inherit_cover_content_coverage,
     _reconciliation_lock,
     _state_candidate_count,
     _state_roots,
@@ -1192,6 +1193,10 @@ def _upsert_static_registry(
         "authority": publication.get("authority"),
         "reconciled_at": publication.get("reconciled_at"),
     }
+    # Compound deliveries retain their one publication identity, plus the
+    # complete verified tuple needed to resolve covered source candidates.
+    if publication.get("content_coverage") is not None:
+        row["publication_reconciliation"] = dict(publication)
     row.setdefault(
         "note", "post-publish reconciliation; public authority hash-bound"
     )
@@ -1678,8 +1683,21 @@ def _commit_projection(
     base: Path,
     registry_path: Path,
 ) -> dict:
+    from .publication_content_coverage import (
+        derive_publication_content_coverage,
+        validate_publication_content_coverage,
+    )
+
+    try:
+        coverage = derive_publication_content_coverage(manifest, publication)
+        if coverage is not None:
+            publication = {**publication, "content_coverage": coverage}
+        validate_publication_content_coverage(publication)
+    except (OSError, ValueError) as exc:
+        raise PublicationReconciliationError(str(exc)) from exc
     with _reconciliation_lock(base):
         roots = _state_roots(manifest, base)
+        publication = _inherit_cover_content_coverage(publication, roots)
         for root in roots:
             _assert_runtime_registry_compatible(
                 runtime_registry_path(root), publication

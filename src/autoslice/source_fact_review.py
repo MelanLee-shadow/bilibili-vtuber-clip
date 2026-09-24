@@ -1753,9 +1753,8 @@ def _validate_receipt_speaker_evidence(
     ):
         return False
     if not top_level_fields_present and not pass_evidence_fields_present:
-        # Historical receipts bind only the transcript hash.  A package may
-        # keep using one only when its freshly rebuilt present/absent state
-        # reproduces that exact nullable hash across every pass.
+        # Historical receipts bind only the transcript hash; keep one only when
+        # freshly rebuilt present/absent state reproduces it across every pass.
         return True
     if not top_level_fields_present or not pass_evidence_fields_present:
         return False
@@ -1970,9 +1969,7 @@ def validate_source_fact_rescore_candidate_receipt(
     if not isinstance(passes, list) or not passes or not isinstance(passes[-1], Mapping):
         return False
     last_pass = passes[-1]
-    if last_pass.get("status") != "REPAIR" or last_pass.get(
-        "selection_scorecard_sha256"
-    ) != _sha256_json(selection_scorecard):
+    if last_pass.get("status") != "REPAIR" or last_pass.get("selection_scorecard_sha256") != _sha256_json(selection_scorecard):
         return False
     block = review.get("rescore_candidate")
     if not isinstance(block, Mapping):

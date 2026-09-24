@@ -768,7 +768,9 @@ def validate_final_subtitle_audio_check(
     final_path = _regular_file(final_srt, label="FINAL_SUBTITLE_AUDIO_FINAL_SRT")
     explicit_package = package_root is not None
     package = Path(package_root) if explicit_package else None
-    package_stem: str | None = final_path.stem if explicit_package else None
+    package_stem: str | None = (
+        str(candidate_id) if explicit_package and candidate_id else final_path.stem
+    ) if explicit_package else None
     if package is None:
         evidence = record.get("subtitle_audio_correspondence")
         if isinstance(evidence, Mapping):

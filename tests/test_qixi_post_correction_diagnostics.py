@@ -115,8 +115,22 @@ def test_pending_source_swap_never_becomes_a_trusted_receipt(
     assert pending.read_bytes() == b"foreign pending bytes"
     target = root / f"diagnostic-{digest}.json"
     assert not target.exists()
+
+    # Force the order observed on filesystems that return the damaged pending
+    # before the foreign inventory entry.  Classification must not depend on it.
+    original_listdir = diagnostics.os.listdir
+
+    def pending_first(path: object) -> list[str]:
+        names = list(original_listdir(path))
+        return sorted(
+            names,
+            key=lambda name: (not name.endswith(".pending"), name),
+        )
+
+    monkeypatch.setattr(diagnostics.os, "listdir", pending_first)
     with pytest.raises(RuntimeError, match="inventory"):
         _write(root, {**body, "deployed_commit": "c" * 40})
+    assert pending.read_bytes() == b"foreign pending bytes"
 
 
 def test_root_path_swap_refuses_to_return_a_receipt_in_replacement_directory(

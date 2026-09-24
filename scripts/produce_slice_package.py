@@ -73,7 +73,6 @@ from scripts.gemini_slice_jingting import (
 )
 from scripts.suggest_upload_tags import generate_upload_tags
 from src.autoslice.channel_profile import load_channel_profile
-from src.autoslice.piece_roles import last_content_piece_index
 from src.autoslice.speaker_finalizer import (
     finalize_fast_solo_subtitles,
 )
@@ -146,6 +145,9 @@ from src.autoslice.producer_boundary_resolution import (
     BoundaryResolutionAdapters,
     resolve_producer_boundary,
 )
+from src.autoslice.producer_boundary_owner_contract import (
+    structured_chat_payoff_scope_ms_from_frozen_contract,
+)
 
 
 from src.autoslice.producer_chat_input import (
@@ -189,6 +191,10 @@ from src.autoslice.producer_package_finalization import (
     finalize_producer_package,
 )
 from src.autoslice.producer_finalization_options import finalization_options_from_args
+from src.autoslice.existing_final_recut import select_accurate_recut_command
+from src.autoslice.existing_subtitle_surface import (
+    select_nonaggregate_transcriber_builder,
+)
 from src.autoslice.producer_request import (
     load_producer_request,
     parse_producer_args,
@@ -351,7 +357,13 @@ def main(argv: list[str] | None = None) -> int:
         screen_text=args.screen_text,
         adapters=TextPipelineAdapters(
             build_aggregate_transcriber=_build_aggregate_asr_transcriber,
-            build_agy_transcriber=_build_ssh_agy_transcribe_runner,
+            build_agy_transcriber=select_nonaggregate_transcriber_builder(
+                args.substrate,
+                spec=spec,
+                padded=padded,
+                padded_duration_ms=padded_dur,
+                legacy_builder=_build_ssh_agy_transcribe_runner,
+            ),
             load_term_boundary_surfaces=_load_term_boundary_surfaces,
             profile_asset_file=profile_asset_file,
             review_glossary=_review_glossary,
@@ -365,33 +377,19 @@ def main(argv: list[str] | None = None) -> int:
     cues = text_result.cues
     chat_authority_audit = text_result.chat_authority_audit
     chat_authority_path = text_result.chat_authority_path
+    surface_receipt = spec.get("existing_subtitle_surface_receipt")
+    if isinstance(surface_receipt, dict):
+        chat_authority_audit["transcription_substrate_receipt"] = dict(surface_receipt)
     # The same immutable context digest must reach subtitle adjudication,
     # StoryContract, title, and cover.  Keep it on the in-memory spec only;
     # the full artifact is already persisted beside the producer evidence.
     spec["clip_context"] = text_result.clip_context
     spec["clip_context_path"] = str(text_result.clip_context_path)
 
-    # 4a. Sentence-snap the START (the clip must open on a sentence).
-    # A boundary-witness-reserve piece (cross-segment, appended only to
-    # satisfy the forward-context requirement) never carries semantic_end_ms
-    # — it always trails the real last content piece, never replaces it.
-    content_index = last_content_piece_index(spec["pieces"])
-    last_piece = spec["pieces"][content_index]
-    semantic_target_rel = sum(durations[:content_index]) + (
-        spec["semantic_end_ms"] - last_piece["start_ms"]
-    )
-    required_tail_end_ms = max(
-        (
-            int(row["matched_end_ms"])
-            for row in chat_authority_audit.get("applied") or []
-            if row.get("kind") in {"danmaku", "superchat"}
-            and int(row.get("source_offset_ms") or 0) <= semantic_target_rel + 1_000
-            and semantic_target_rel
-            < int(row.get("matched_end_ms") or 0)
-            <= semantic_target_rel + 15_000
-            and int(row.get("matched_start_ms") or 0) <= semantic_target_rel + 5_000
-        ),
-        default=None,
+    # The text pipeline already classified and froze structured payoff identity.
+    # Media production consumes that exact value; it must not rescan mutable rows.
+    required_tail_end_ms = structured_chat_payoff_scope_ms_from_frozen_contract(
+        chat_authority_audit.get("frozen_boundary_owner_contract")
     )
     final_review_audit = chat_authority_audit.get("final_review_audit") or {}
     if isinstance(final_review_audit, dict):
@@ -478,7 +476,10 @@ def main(argv: list[str] | None = None) -> int:
         branding_intro=branding_intro,
         talk_filler_audit_path=talk_filler_audit_path,
         adapters=ProducerFinalizationAdapters(
-            accurate_recut_command=_accurate_reencode_recut_command,
+            accurate_recut_command=select_accurate_recut_command(
+                spec=spec, padded=padded, chat_authority_audit=chat_authority_audit,
+                legacy_command=_accurate_reencode_recut_command,
+            ),
             run_command=run,
             write_source_range_srt=_write_source_range_srt,
             apply_text_override_document=apply_text_override_document,

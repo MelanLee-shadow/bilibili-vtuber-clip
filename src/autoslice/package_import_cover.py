@@ -17,11 +17,34 @@ def project_preserved_cover_locators(
     before-images, while the existing relocation only rewrites approved locators.
     """
     generation = publish.get("cover_generation")
-    if isinstance(generation, dict) and "identity_card_pixel_successor" in generation:
-        from src.autoslice.package_import_v4_cover import project_v4_cover_locators
+    verification = (
+        generation.get("final_host_identity_verification")
+        if isinstance(generation, dict)
+        else None
+    )
+    if isinstance(verification, dict):
+        from src.autoslice.cover_host_identity_gate import HOST_ONLY_SCHEMA_VERSION
 
-        return project_v4_cover_locators(
-            record, publish, package_root=package_root, candidate_id=candidate_id,
+        if verification.get("schema_version") == HOST_ONLY_SCHEMA_VERSION:
+            from src.autoslice.package_import_v4_cover import project_v4_cover_locators
+
+            record, publish = project_v4_cover_locators(
+                record,
+                publish,
+                package_root=package_root,
+                candidate_id=candidate_id,
+            )
+            generation = publish.get("cover_generation")
+    if isinstance(generation, dict) and generation.get("method") == "image_gen.imagegen":
+        from src.autoslice.package_import_builtin_imagegen import (
+            project_builtin_imagegen_locators,
+        )
+
+        return project_builtin_imagegen_locators(
+            record,
+            publish,
+            package_root=package_root,
+            candidate_id=candidate_id,
         )
     if not isinstance(generation, dict) or "pixel_preserving_successor" not in generation:
         return record, publish

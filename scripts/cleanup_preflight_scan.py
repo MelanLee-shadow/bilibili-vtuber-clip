@@ -39,7 +39,9 @@ import json
 import os
 import re
 import subprocess
+import stat
 
+from _cleanup_appledouble import metadata_reference_text
 from _cleanup_file_identity import capture_preimage
 
 TEXT_EXT = {".json", ".jsonl", ".md", ".txt", ".srt", ".ass", ".log",
@@ -131,28 +133,158 @@ def quiet_window(base: str) -> list[str]:
     return problems
 
 
+MAX_AUTHORITY_BYTES = 20 * 2**20
+
+
+class AuthorityScanError(ValueError):
+    """An incomplete authority scan cannot establish that a target is unreferenced."""
+
+
+def _scan_identity(info: os.stat_result) -> tuple[int, ...]:
+    # Ignore read-induced atime, but retain namespace/content/permission identity.
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_size,
+            info.st_mtime_ns, info.st_ctime_ns, info.st_uid, info.st_gid)
+
+
+def _authority_text(path: str, expected: os.stat_result) -> tuple[str, str | None]:
+    """Read bounded stable bytes; return text and an optional metadata companion."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        before = os.fstat(fd)
+        if (not stat.S_ISREG(before.st_mode)
+                or _scan_identity(before) != _scan_identity(expected)):
+            raise AuthorityScanError(f"authority file is unsafe or changed: {path}")
+        if before.st_size > MAX_AUTHORITY_BYTES:
+            raise AuthorityScanError(f"authority file exceeds scan limit: {path}")
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(fd, min(1024 * 1024, MAX_AUTHORITY_BYTES + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > MAX_AUTHORITY_BYTES:
+                raise AuthorityScanError(f"authority file exceeds scan limit: {path}")
+        after = os.fstat(fd)
+        if total != before.st_size or _scan_identity(after) != _scan_identity(before):
+            raise AuthorityScanError(f"authority file changed during scan: {path}")
+        raw = b"".join(chunks)
+        try:
+            metadata = metadata_reference_text(raw, os.path.basename(path))
+        except ValueError as exc:
+            raise AuthorityScanError(f"unsupported AppleDouble authority sidecar: {path}: {exc}") from exc
+        if metadata is not None:
+            return metadata
+        try:
+            return raw.decode("utf-8"), None
+        except UnicodeDecodeError as exc:
+            # Include only the locator, never private document contents.
+            raise AuthorityScanError(f"authority file is not valid UTF-8: {path}") from exc
+    finally:
+        os.close(fd)
+
+
 def authority_references(base: str) -> tuple[set[str], set[str]]:
-    """(exact paths, specific directories) cited by Tier A sources."""
+    """Return cited paths/dirs only after every in-scope document was checked.
+
+    Missing optional Tier A roots remain valid. A directory alias may name only
+    an ordinary sibling directory that this same walk actually scans. Other
+    links, unreadable inputs, oversized text, invalid UTF-8 or observed drift
+    abort the scan. This is a quiet-window check, not same-user isolation.
+    """
+    base = os.path.abspath(base)
+    out_root = os.path.join(base, "out")
+    pattern = re.compile(re.escape(out_root) + r"/[^\"'\s,\]\}<>()]+")
     refs: set[str] = set()
+    observed: dict[str, tuple[int, ...] | None] = {}
+    aliases: dict[str, tuple[str, str]] = {}
+    visited_directories: set[str] = set()
+
+    def remember(path: str, *, directory: bool) -> os.stat_result:
+        info = os.lstat(path)
+        expected_type = stat.S_ISDIR if directory else stat.S_ISREG
+        if not expected_type(info.st_mode):
+            raise AuthorityScanError(f"authority path has an unsafe type: {path}")
+        identity = _scan_identity(info)
+        if path in observed and observed[path] != identity:
+            raise AuthorityScanError(f"authority path changed during scan: {path}")
+        observed[path] = identity
+        return info
+
+    def remember_directory_entry(root: str, name: str, siblings: set[str]) -> bool:
+        """Record an entry; True means a verified alias, never a skipped subtree."""
+        path = os.path.join(root, name)
+        info = os.lstat(path)
+        if not stat.S_ISLNK(info.st_mode):
+            remember(path, directory=True)
+            return False
+        raw_target = os.readlink(path)
+        if (info.st_nlink != 1 or not raw_target
+                or raw_target in {".", "..", name}
+                or os.path.basename(raw_target) != raw_target
+                or raw_target not in siblings):
+            raise AuthorityScanError(f"authority directory alias is not a direct sibling: {path}")
+        target = os.path.join(root, raw_target)
+        # Reject chains/escapes. The ordinary target must remain in this same
+        # walk; a stat or a familiar venv name alone is not a completeness proof.
+        remember(target, directory=True)
+        identity = _scan_identity(info)
+        if path in observed and observed[path] != identity:
+            raise AuthorityScanError(f"authority alias changed during scan: {path}")
+        observed[path] = identity
+        aliases[path] = (target, raw_target)
+        if (_scan_identity(os.lstat(path)) != identity
+                or os.readlink(path) != raw_target):
+            raise AuthorityScanError(f"authority alias changed during scan: {path}")
+        return True
+
+    def walk_error(exc: OSError) -> None:
+        raise AuthorityScanError(f"authority directory is unreadable: {exc.filename}") from exc
+
+    remember(base, directory=True)
     for top in TIER_A:
         root0 = os.path.join(base, top)
-        if not os.path.isdir(root0):
+        try:
+            remember(root0, directory=True)
+        except FileNotFoundError:
+            observed[root0] = None  # Optional absence is rechecked at the end.
             continue
-        for root, _, files in os.walk(root0):
+        for root, directories, files in os.walk(root0, onerror=walk_error, followlinks=False):
+            remember(root, directory=True)
+            visited_directories.add(root)
+            siblings = set(directories)
+            # Never follow the alias. Scan its ordinary sibling once and bind
+            # both names into the final namespace/identity closure instead.
+            directories[:] = [name for name in directories
+                              if not remember_directory_entry(root, name, siblings)]
             for name in files:
                 if os.path.splitext(name)[1].lower() not in TEXT_EXT:
                     continue
                 path = os.path.join(root, name)
-                try:
-                    if os.path.getsize(path) > 20 * 2**20:
-                        continue
-                    with open(path, encoding="utf-8", errors="ignore") as fh:
-                        text = fh.read()
-                except OSError:
-                    continue
-                for hit in OUT_PATH.findall(text):
-                    refs.add(hit.rstrip(".,;:/"))
-    out_root = f"{base}/out"
+                info = remember(path, directory=False)
+                text, companion = _authority_text(path, info)
+                if companion is not None:
+                    # Bind the data fork into the SAME namespace/stat closure.
+                    # Its own normal iteration still performs strict UTF-8 reading.
+                    if companion not in files:
+                        raise AuthorityScanError(f"AppleDouble data companion is missing: {path}")
+                    remember(os.path.join(root, companion), directory=False)
+                refs.update(hit.rstrip(".,;:/") for hit in pattern.findall(text))
+    for alias, (target, raw_target) in aliases.items():
+        if target not in visited_directories:
+            raise AuthorityScanError(f"authority alias target was not scanned: {alias}")
+        if os.readlink(alias) != raw_target or os.lstat(alias).st_nlink != 1:
+            raise AuthorityScanError(f"authority alias changed during scan: {alias}")
+    # A later read must not conceal an earlier file/namespace change. The
+    # caller still has to hold the existing quiet-window/runner lock.
+    for path, expected in observed.items():
+        try:
+            actual = _scan_identity(os.lstat(path))
+        except FileNotFoundError:
+            actual = None
+        if actual != expected:
+            raise AuthorityScanError(f"authority path changed during scan: {path}")
     dirs = {r for r in refs
             if not os.path.splitext(r)[1]
             and len(os.path.relpath(r, out_root).split(os.sep)) >= 3}
@@ -234,7 +366,12 @@ def main() -> int:
     if args.allow_source_extractions:
         allowed |= SOURCE_EXTRACTION_CLASSES
 
-    refs, refdirs = authority_references(base)
+    try:
+        refs, refdirs = authority_references(base)
+    except (OSError, ValueError) as exc:
+        print(f"GATE 2 authority: BLOCKED — incomplete reference scan: {exc}")
+        print("No cleanup plan emitted; existing plan files were not refreshed.")
+        return 2
     status, pending = candidate_states(base)
     in_flight = in_flight_candidates(base)
     print(f"GATE 2 authority: {len(refs)} out/ paths cited, {len(refdirs)} specific dirs")

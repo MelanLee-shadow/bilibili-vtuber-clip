@@ -17,6 +17,27 @@
 `AUTOSLICE_SPEAKER_MODE`。打包按 [80](80-package-delivery.md) 核对真实 ASS 事件与最终
 视频；不能靠把 record 字段改成 `uniform_host` 来掩盖实际双色烧录。
 
+### 被观看媒体字幕与声源归属（2026-09-24）
+
+直播画面中被观看视频自带的字幕可作为 `source_media` 证据，但**不是自动删句规则**。
+`nested_media_caption_attribution.py` 只消费 hash-bound 的未烧字源帧、当前最终 SRT 和独立
+声学回执，并输出 `source_media / host / overlap / unknown` 四态：
+
+- 画面字幕与 cue 精确、规范化、模糊或跨 cue 对齐，只证明内层媒体存在对应文字；若尚未排除
+  主播跟读或同时说话，状态仍为 `unknown / KEEP`。
+- 没看见字幕、字幕字面不一致或播放器换镜头，都不能反推该句属于主播；这些输入缺口默认
+  `unknown / KEEP`。
+- 只有声学回执同时证明 `source_media=PRESENT`、`host=ABSENT`、`overlap=ABSENT`，并绑定
+  同一 source media、最终 SRT、源帧与时间窗时，才允许在**私有诊断 host-track** 中删除该 cue。
+- `host` 和 `overlap` 必须保留；`overlap` 可在后续取得精确 host-only transcript 后再走既有
+  CPA/人工 authority，不得把内层字幕直接复制成主播口播，也不得把混合音频机械拆字。
+- 流水线自己烧入的字幕、弹幕、游戏 UI 和无关屏幕文字不构成独立内层媒体字幕证据。观察帧
+  必须显式声明 `pipeline_burned_subtitle=false` 并逐字节绑定。
+
+该消费者当前只产生 private diagnostic artifact，`upload_allowed=false`、无 publication
+权威；已公开稿件不得因这类后验诊断自动替换或重传。`uniform_host` 继续只决定显示样式，
+不参与上述四态裁决。
+
 ## 普通谈话的音频分工
 
 普通字幕链为 **BCUT 草稿/时间轴 → 已授权词形与词边界规范 → CPA 整片文字校正**，然后由
@@ -817,3 +838,17 @@ source、action、CPA请求/完成/裁决，最终字幕必须等于投影原始
 `ffmpeg`退出0、文件存在或只有MP4 header不构成可用听证输入。坏附件复用既有
 `ENTITY_AUDIO_CROP_FAILED`，不调用provider、不伪造见证或改字。静音是合法证据，
 不能以无语音/能量为零替代媒体结构检查；局部窗口和CPA最终文字权威保持不变。
+
+
+### 局部听证进程与后备配置的诊断记录
+
+现有原生听证在AGY进程返回后，补记 `agy.execution.json` 的退出码、选择了
+`verdict.json`还是stdout、各段字节数与SHA；不把“退出0”或空文件改判为有效听证。
+实际走到Gemini ladder后另记 `gemini-api-route.json` 的已载入免费key数量、
+接纳层级/序号、是否返回观察与paid gate原因。只保存数量/身份，不记录凭据值；
+这不是HTTP尝试计数、费用或语义正确性证明。未出现该记录不能反推配置/调用状态。
+诊断旁车写入失败不新增质量门，原日志、provider顺序、缓存和CPA终裁不变。
+
+独立实测进程不能假设SSH/sudo继承生产provider环境；应复用当前运行入口的
+`load_gemini_credentials`，仅在被授权主机的本进程中载入，并独立设置本轮费用帽。
+不得用“未加载”声称host没有凭据或服务不可用，也不为了补记录重跑已完成provider请求。

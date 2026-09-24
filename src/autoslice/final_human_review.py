@@ -26,6 +26,7 @@ from .final_human_review_evidence import (
 )
 from .final_human_review_evidence import validate_bound_review_evidence
 from .cover_route_evidence import validate_cover_route_decision
+from .review_package_cover_diagnostics import validate_package_cover_route
 from .channel_profile import load_channel_profile as _load_channel_profile
 from .story_contract import cover_story_contract_binding_matches
 from .qixi_corrected_package_finalization import (
@@ -930,6 +931,8 @@ def _cover_story_claim_authority(
     record: Mapping[str, object],
     *,
     candidate_id: str,
+    package_root: Path | None = None,
+    item: Mapping[str, object] | None = None,
 ) -> tuple[tuple[str, str], ...]:
     """Project only cover claims that the immutable record can authorize.
 
@@ -1088,6 +1091,16 @@ def _cover_story_claim_authority(
                 and generation.get("method") == "images.edit"
                 and generation.get("model") == "gpt-image-2"
                 and generation.get("image_gen_model") == "cpa"
+            )
+            or (
+                actual_treatment == "builtin_imagegen_redraw"
+                and generation.get("cover_origin") == "BUILTIN_AI_REDRAW"
+                and generation.get("method") == "image_gen.imagegen"
+                and (
+                    validate_package_cover_route(generation, root=package_root, item=item)
+                    if package_root is not None and item is not None
+                    else validate_cover_route_decision(generation, allow_legacy_v1=False)
+                )
             )
         )
     )
@@ -1326,6 +1339,8 @@ def _manifest_items(
             _cover_story_claim_authority(
                 record,
                 candidate_id=candidate_id,
+                package_root=package_root,
+                item=raw_item,
             )
         )
         burned_preview = record.get("burned_preview")

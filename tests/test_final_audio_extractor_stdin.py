@@ -84,8 +84,16 @@ def test_real_final_audio_extraction_cannot_quit_on_parent_input(
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         start_new_session=True,
     )
+    # This deadline bounds only the test-owned process cleanup, not the product
+    # contract.  FFmpeg 8 on macOS can exceed the original eight seconds for a
+    # three-second ``-readrate 1`` fixture while the full suite is spawning
+    # subprocesses.  Keep a strict but scheduler-tolerant cap; exact completion
+    # and full source duration are still asserted below.
+    test_deadline_seconds = 20
     try:
-        _stdout, stderr = process.communicate(parent_input, timeout=8)
+        _stdout, stderr = process.communicate(
+            parent_input, timeout=test_deadline_seconds
+        )
     except subprocess.TimeoutExpired:
         # Reap only this test-owned process group, including its FFmpeg child.
         os.killpg(process.pid, signal.SIGKILL)

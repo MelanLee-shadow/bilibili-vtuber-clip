@@ -125,6 +125,7 @@ from src.autoslice.foreign_span_witness import (
     adjudicate_foreign_script_audit,
     retranscribe_foreign_script_cluster,
 )
+from src.autoslice import foreign_audit_story_scope as _foreign_scope
 from src.autoslice.self_reference_absorption import absorb_host_self_references
 from src.autoslice.session_topic_authority import (
     absorb_session_topic_entities,
@@ -146,9 +147,7 @@ from src.autoslice.subtitle_timing_qa import build_ssh_silero_vad_provider
 from src.autoslice.subtitle_fidelity import (
     apply_numeric_fact_provenance_guard,
     apply_impossible_punctuation_guard,
-    apply_source_language_preservation_guard,
     apply_title_mark_balance_guard,
-    audit_foreign_script_consistency,
     defer_truth_owned_mixed_latin_cues,
     defer_unproven_foreign_introductions_to_late_authority,
     valid_redelivery_baseline_config as _valid_redelivery_baseline_config,
@@ -1404,9 +1403,8 @@ def _finalize_text_evidence(
     padded: Path | None = None,
     clip_context: Mapping[str, object] | None = None,
 ) -> TextEvidenceResult:
-    srt_text, final_source_language_audit = apply_source_language_preservation_guard(
-        source_language_witness_srt,
-        srt_text,
+    srt_text, final_source_language_audit = _foreign_scope.guard_source_language(
+        source_language_witness_srt, srt_text, spec, durations,
         structured_chat_names=_structured_chat_names(clip_context),
     )
     chat_authority_audit["final_source_language_preservation_audit"] = final_source_language_audit
@@ -1446,7 +1444,7 @@ def _finalize_text_evidence(
         source_truth_windows=source_truth_local_windows,
         redelivery_baseline_config=spec.get("subtitle_redelivery_baseline"),
     )
-    foreign_script_audit = audit_foreign_script_consistency(srt_text)
+    foreign_script_audit = _foreign_scope.audit_foreign(srt_text, spec, durations)
     # 742_887 案：真值窗口完整覆盖的 mixed-latin cue 让位给
     # 稍后必然接管的 SOURCE_INTERVAL_TRUTH，早期门不得在乱码上否决更高权威。
     defer_truth_owned_mixed_latin_cues(
@@ -1489,7 +1487,7 @@ def _finalize_text_evidence(
             cid=cid,
         )
         if cluster_repair_audit.get("replaced_count"):
-            foreign_script_audit = audit_foreign_script_consistency(srt_text)
+            foreign_script_audit = _foreign_scope.audit_foreign(srt_text, spec, durations)
         foreign_script_audit["cluster_retranscription"] = cluster_repair_audit
     if padded is not None:
         srt_text, foreign_script_audit = _adjudicate_final_language(
@@ -1595,7 +1593,7 @@ def _finalize_text_evidence(
     )
     # 让位给真值的 mixed-latin 门必须闭环：接管后的文本重审，没洗净就硬拦。
     if foreign_script_audit.get("status") == "DEFERRED_TO_SOURCE_SUBTITLE_TRUTH":
-        post_truth_foreign = audit_foreign_script_consistency(srt_text)
+        post_truth_foreign = _foreign_scope.audit_foreign(srt_text, spec, durations)
         foreign_script_audit["post_truth_reaudit"] = post_truth_foreign
         if str(post_truth_foreign["status"]).startswith("BLOCKED_"):
             raise SystemExit(

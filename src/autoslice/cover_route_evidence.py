@@ -11,6 +11,12 @@ from __future__ import annotations
 import re
 from typing import Mapping
 
+from src.autoslice.builtin_imagegen_cover import (
+    METHOD as BUILTIN_IMAGEGEN_METHOD,
+    TREATMENT as BUILTIN_IMAGEGEN_TREATMENT,
+    validate_builtin_imagegen_provenance,
+)
+
 from src.autoslice.cover_source_composition import (
     TALK_SCENE,
     source_composition_scene_kind,
@@ -659,6 +665,17 @@ def _alternatives(
     selected_rationale: str,
     per_frame_evidence: str = "",
 ) -> list[dict[str, object]]:
+    if selected_treatment == BUILTIN_IMAGEGEN_TREATMENT:
+        return [{
+            "treatment": treatment,
+            "status": "SELECTED" if treatment == selected_treatment else "REJECTED",
+            "rationale": selected_rationale,
+            "rejected_reason": None if treatment == selected_treatment else (
+                "Reviewed existing builtin image_gen artwork selected; no new generation required. "
+                + selected_rationale
+            ),
+            "per_frame_evidence": per_frame_evidence or None,
+        } for treatment in (*ROUTE_TREATMENTS, BUILTIN_IMAGEGEN_TREATMENT)]
     selected_explanations = {
         "screenshot_direct": (
             "the selected source frame is strong enough to preserve as the final "
@@ -747,7 +764,7 @@ def build_cover_route_decision(
     cover_text: str = "",
     source_composition_verification: object = None,
 ) -> dict[str, object]:
-    if selected_treatment not in ROUTE_TREATMENTS:
+    if selected_treatment not in (*ROUTE_TREATMENTS, BUILTIN_IMAGEGEN_TREATMENT):
         raise ValueError(f"unsupported cover treatment: {selected_treatment}")
     rationale = str(selected_rationale or "").strip()
     if not rationale:
@@ -762,6 +779,7 @@ def build_cover_route_decision(
     generation_planned = selected_treatment in {
         "screenshot_polish",
         "cpa_redraw",
+        BUILTIN_IMAGEGEN_TREATMENT,
     }
     semantic_evidence = relationship_semantic_evidence(
         story_contract,
@@ -822,7 +840,7 @@ def build_cover_route_decision(
         "image_generation_used": False,
         "execution_status": "PENDING",
         "actual_treatment": None,
-        "alternatives_considered": list(ROUTE_TREATMENTS),
+        "alternatives_considered": [row["treatment"] for row in alternatives],
         "alternatives": alternatives,
         "rejected_alternatives": [
             {
@@ -885,9 +903,12 @@ def record_cover_route_execution(
 
 
 def _valid_alternatives(route: Mapping[str, object]) -> bool:
+    treatments = (*ROUTE_TREATMENTS, BUILTIN_IMAGEGEN_TREATMENT) if route.get(
+        "selected_treatment"
+    ) == BUILTIN_IMAGEGEN_TREATMENT else ROUTE_TREATMENTS
     alternatives = route.get("alternatives")
     if not isinstance(alternatives, list) or len(alternatives) != len(
-        ROUTE_TREATMENTS
+        treatments
     ):
         return False
     by_treatment: dict[str, Mapping[str, object]] = {}
@@ -898,7 +919,7 @@ def _valid_alternatives(route: Mapping[str, object]) -> bool:
         if treatment in by_treatment:
             return False
         by_treatment[treatment] = row
-    if set(by_treatment) != set(ROUTE_TREATMENTS):
+    if set(by_treatment) != set(treatments):
         return False
     selected = str(route.get("selected_treatment") or "")
     for treatment, row in by_treatment.items():
@@ -912,7 +933,7 @@ def _valid_alternatives(route: Mapping[str, object]) -> bool:
         ).strip():
             return False
     rejected = route.get("rejected_alternatives")
-    if not isinstance(rejected, list) or len(rejected) != 2:
+    if not isinstance(rejected, list) or len(rejected) != len(treatments) - 1:
         return False
     rejected_treatments = {
         str(row.get("treatment") or "")
@@ -920,7 +941,7 @@ def _valid_alternatives(route: Mapping[str, object]) -> bool:
         if isinstance(row, Mapping)
         and str(row.get("rejected_reason") or "").strip()
     }
-    return rejected_treatments == set(ROUTE_TREATMENTS) - {selected}
+    return rejected_treatments == set(treatments) - {selected}
 
 
 def validate_cover_route_decision(
@@ -934,6 +955,9 @@ def validate_cover_route_decision(
     schema = route.get("schema_version")
     selected = str(route.get("selected_treatment") or "")
     reason = str(route.get("reason") or "").strip()
+    if ("builtin_imagegen_provenance_path" in cover_generation
+            and selected != BUILTIN_IMAGEGEN_TREATMENT):
+        return False
     if schema == ROUTE_SCHEMA_V1:
         return bool(
             allow_legacy_v1 and selected in ROUTE_TREATMENTS and reason
@@ -941,7 +965,7 @@ def validate_cover_route_decision(
     if schema != ROUTE_SCHEMA_V2:
         return False
     if (
-        selected not in ROUTE_TREATMENTS
+        selected not in (*ROUTE_TREATMENTS, BUILTIN_IMAGEGEN_TREATMENT)
         or not reason
         or str(route.get("selected_rationale") or "").strip() != reason
         or route.get("selection_policy") != "lidousha-cover-treatment-router.v2"
@@ -994,7 +1018,7 @@ def validate_cover_route_decision(
         and not source_subject_verified
     ):
         return False
-    expected_planned = selected in {"screenshot_polish", "cpa_redraw"}
+    expected_planned = selected in {"screenshot_polish", "cpa_redraw", BUILTIN_IMAGEGEN_TREATMENT}
     if route.get("image_generation_planned") is not expected_planned:
         return False
     if (
@@ -1149,6 +1173,19 @@ def validate_cover_route_decision(
         )
     ):
         return False
+    if actual == BUILTIN_IMAGEGEN_TREATMENT:
+        return bool(
+            selected == BUILTIN_IMAGEGEN_TREATMENT and execution_status == "READY"
+            and method == BUILTIN_IMAGEGEN_METHOD and origin == "BUILTIN_AI_REDRAW"
+            and used and validate_source_composition_verification(
+                source_composition,
+                reference_sha256=str(cover_generation.get("reference_sha256") or ""),
+            )
+            # Redrawing needs an identifiable reference, not a usable 16:9 crop.
+            and source_composition["verdict"].get("source_face_complete") is True
+            and validate_final_host_identity_verification(cover_generation)
+            and validate_builtin_imagegen_provenance(cover_generation)
+        )
     if actual == "cpa_redraw":
         if method != "images.edit" or origin != "AI_REDRAW" or not used:
             return False

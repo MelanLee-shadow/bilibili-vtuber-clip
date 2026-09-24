@@ -71,7 +71,7 @@ from src.autoslice.final_review_contract import (
     validate_final_review_release,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
-from src.autoslice.llm_client import LlmConfig, build_llm_call
+from src.autoslice.producer_final_review_transport import build_publication_llm_call
 from src.autoslice.producer_media import (
     _resolved_optional_path,
     _validated_burned_ass_artifact,
@@ -2056,24 +2056,9 @@ def _stage_record(
     # Cover art direction remains independent of title authorship and uses the
     # current configured adapter plus deterministic fallback; do not pin model
     # names here because runtime/provider selection is live configuration.
-    title_llm = None
-    if not given_title:
-        title_llm = build_llm_call(
-            LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-astra' high", timeout_seconds=600.0)
-        )
-    art_direction_llm = None if options.reuse_cover else build_llm_call(
-        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-astra' medium", timeout_seconds=600.0)
-    )
-    source_fact_llm = build_llm_call(
-        LlmConfig(
-            transport="command",
-            command_template=(
-                "bash scripts/llm_via_cpa.sh {prompt_file} "
-                "{completion_file} 'gpt-6-astra' high"
-            ),
-            timeout_seconds=600.0,
-        )
-    )
+    title_llm = None if given_title else build_publication_llm_call(effort="high")
+    art_direction_llm = None if options.reuse_cover else build_publication_llm_call(effort="medium")
+    source_fact_llm = build_publication_llm_call(effort="high")
     final_title_cues = [
         SourceCue(
             f"text_final_{index:04d}", cue.start_ms, cue.end_ms, cue.text.strip(),

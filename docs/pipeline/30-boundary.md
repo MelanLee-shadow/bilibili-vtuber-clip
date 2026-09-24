@@ -157,6 +157,18 @@ scope 缺失、SHA 漂移、resolver 重算不一致、source window 没覆盖 r
 越过绝对 ceiling，都必须 fail closed；不得用旧的 `semantic_target + 60s` 或
 `candidate end + 90s` 近似替代。
 
+structured chat payoff 必须在 owner scope 分类之后一次性冻结为
+`structured-chat-payoff-assessment.v1`。它同时保存分类前的 `observed_ms` 和分类后仍属于
+故事的 `effective_story_ms`：普通候选只把后者作为 `scope_ms`；reviewed baseline、
+reviewed terminal projection、exact interval 或 `exact_source_pin` 只保留 `observed_ms`
+作为既有 terminal clamp 的假设输入，不能借此越过人工/已审终点。已明确标为
+`OUTSIDE_IMMUTABLE_STORY_SCOPE` 的整条 context read 因而不会在普通候选中重新成为
+硬下界；跨越原尾锚的 read 仍保留 payoff 保护。assessment、稳定 row refs 和 canonical
+SHA 必须进入本次 frozen owner contract，source reviewer 与媒体 producer 只消费同一冻结值，
+禁止再次扫描可变 `audit.applied` 重算。ASR 派生 assessment 在 widened retry 中按 attempt
+重新冻结并分别留 hash；确定性 owner/scope 仍须一致。旧 frozen contract 继续使用它已绑定的
+`boundary_search_scope.structured_payoff_ms`，不追溯重分类。
+
 调用 source reviewer 前必须先落
 `talk-boundary-source-context-coverage.v1`，逐字绑定 scope SHA、实际/必需 local source
 context end 与 deficit。覆盖不足时**不得调用 LLM 自证**，而是返回 typed

@@ -16,7 +16,9 @@ from src.autoslice.acoustic_witness_adjudication import (
 from src.autoslice.boundary_semantic_review import (
     boundary_search_scope_is_valid,
 )
+from src.autoslice.gift_correction_supersession import audit_package_gift_corrections
 from src.autoslice.exact_final_cpa_history import repair_history
+from src.autoslice.exact_final_boundary_owner import exact_final_superseded_boundary_owner_valid
 from src.autoslice.channel_profile import (
     load_channel_profile as _load_channel_profile,
 )
@@ -41,6 +43,10 @@ from src.autoslice.redelivery_boundary_projection import (
 from src.autoslice.source_subtitle_truth import (
     BOUNDARY_OWNER_LEAD_TOLERANCE_MS,
     source_truth_owner_windows,
+)
+from src.autoslice.source_language_preservation_supersession import (
+    receipt_routes_to_source_language_supersession,
+    reconciled_boundary_owner_valid as source_language_reconciled_boundary_owner_valid,
 )
 from src.autoslice.reviewed_exact_source_interval import (
     FROZEN_CONTRACT_KEY as EXACT_INTERVAL_FROZEN_CONTRACT_KEY,
@@ -655,13 +661,16 @@ def _story_owner_set_valid(
                 # narrow split only through the hash-bound successor ledger;
                 # every other reconciliation remains excluded as before.
                 if (
-                    owner_kind == "entity_repair"
-                    and isinstance(reconciliation, Mapping)
-                    and reconciliation.get("schema_version") == "exact-final-cpa-supersession.v1"
+                    isinstance(reconciliation, Mapping)
+                    and (owner_kind, reconciliation.get("schema_version")) in {
+                        ("entity_repair", "exact-final-cpa-supersession.v1"),
+                        ("exact_read", "exact-final-cpa-exact-read-supersession.v1"),
+                    }
                 ):
                     valid = valid and (
-                        _exact_final_superseded_boundary_owner_valid(
-                            row=row,
+                        exact_final_superseded_boundary_owner_valid(
+                            validate_successor=_post_boundary_freeze_surface_owner_valid,
+                            owner_kind=owner_kind, row=row,
                             row_index=ordinal - 1,
                             chat_authority=chat_authority,
                             chat_authority_path=chat_authority_path,
@@ -681,6 +690,23 @@ def _story_owner_set_valid(
                             delivery_start_ms=qixi_delivery_start_ms,
                         )
                     )
+                elif (
+                    owner_kind == "entity_repair"
+                    and isinstance(reconciliation, Mapping)
+                    and receipt_routes_to_source_language_supersession(reconciliation)
+                ):
+                    if not source_language_reconciled_boundary_owner_valid(
+                        row=row,
+                        row_index=ordinal - 1,
+                        chat_authority=chat_authority,
+                        chat_authority_path=chat_authority_path,
+                    ):
+                        return False
+                    if row.get("boundary_required") is not True:
+                        continue
+                    # The repository-sealed language guard retires only the
+                    # rejected text surface.  Continue through ordinary owner
+                    # identity/window checks for the surviving media owner.
                 elif (
                     owner_kind == "entity_repair"
                     and isinstance(reconciliation, Mapping)
@@ -789,91 +815,6 @@ def _story_owner_set_valid(
     return valid and set(expected) == frozen
 
 
-def _exact_final_superseded_boundary_owner_valid(
-    *,
-    row: Mapping[str, object],
-    row_index: int,
-    chat_authority: Mapping[str, object],
-    chat_authority_path: Path | None = None,
-) -> bool:
-    """Keep one frozen boundary owner after an exact same-window CPA edit."""
-
-    reconciliation = row.get("reconciliation")
-    if not isinstance(reconciliation, Mapping):
-        return False
-    repair_sha256 = reconciliation.get("exact_final_repair_sha256")
-    if not (
-        reconciliation.get("schema_version") == "exact-final-cpa-supersession.v1"
-        and reconciliation.get("status") == "SUPERSEDED_BY_EXACT_FINAL_CPA"
-        and reconciliation.get("timing_immutable") is True
-        and _is_sha256(repair_sha256)
-        and reconciliation.get("before_sha256")
-        and reconciliation.get("after_sha256")
-    ):
-        return False
-
-    registrations = chat_authority.get("exact_final_cpa_surface_registrations")
-    entity_rows = chat_authority.get("entity_repairs")
-    if not isinstance(registrations, list) or not isinstance(entity_rows, list):
-        return False
-    matching = [
-        registration
-        for registration in registrations
-        if isinstance(registration, Mapping)
-        and registration.get("schema_version") == "exact-final-cpa-surface-registration.v1"
-        and registration.get("status") == "REGISTERED"
-        and registration.get("exact_final_repair_sha256") == repair_sha256
-        and isinstance(registration.get("superseded_entity_repair_indexes"), list)
-        and row_index in registration["superseded_entity_repair_indexes"]
-    ]
-    if len(matching) != 1:
-        return False
-    successor_index = matching[0].get("owner_entity_repair_index")
-    if (
-        isinstance(successor_index, bool)
-        or not isinstance(successor_index, int)
-        or not 0 <= successor_index < len(entity_rows)
-    ):
-        return False
-    successor = entity_rows[successor_index]
-    predecessor_text = row.get("structured_exact_text")
-    if not isinstance(predecessor_text, str) or not predecessor_text:
-        predecessor_after = row.get("after")
-        predecessor_text = (
-            predecessor_after[0]
-            if isinstance(predecessor_after, list)
-            and len(predecessor_after) == 1
-            and isinstance(predecessor_after[0], str)
-            else predecessor_after
-        )
-    successor_text = (
-        successor.get("structured_exact_text") if isinstance(successor, Mapping) else None
-    )
-    successor_is_typed_drop = bool(
-        isinstance(successor, Mapping)
-        and successor.get("mode") == "exact_final_cpa_self_heal"
-        and valid_inaudible_drop_repair(successor)
-    )
-    return bool(
-        isinstance(successor, Mapping)
-        and isinstance(predecessor_text, str)
-        and predecessor_text
-        and isinstance(successor_text, str)
-        and (successor_text or successor_is_typed_drop)
-        and reconciliation.get("before_sha256")
-        == "sha256:" + hashlib.sha256(predecessor_text.encode("utf-8")).hexdigest()
-        and reconciliation.get("after_sha256")
-        == "sha256:" + hashlib.sha256(successor_text.encode("utf-8")).hexdigest()
-        and successor.get("matched_start_ms") == row.get("matched_start_ms")
-        and successor.get("matched_end_ms") == row.get("matched_end_ms")
-        and successor.get("exact_final_repair_sha256") == repair_sha256
-        and _post_boundary_freeze_surface_owner_valid(
-            row=successor,
-            row_index=successor_index,
-            chat_authority=chat_authority,
-            chat_authority_path=chat_authority_path,
-        )
-    )
 
 
 _NON_MUTATING_GIFT_REPAIR_OUTCOMES = frozenset(
@@ -1600,6 +1541,13 @@ def audit_source_truth_owner_attestations(
 ) -> None:
     """Audit final text ownership separately from boundary ownership."""
 
+    audit_package_gift_corrections(
+        audit=chat_authority, record=record, subtitle_path=subtitle_path,
+        report_invalid=lambda: issue_adder(
+            issues, "CHAT_AUTHORITY_CORRECTION_GIFT_SUPERSESSION_INVALID",
+            stem=stem, path=chat_authority_path,
+        ),
+    )
     truth_audit_raw = chat_authority.get("source_subtitle_truth_audit")
     truth_audit = truth_audit_raw if isinstance(truth_audit_raw, dict) else {}
     truth_audit_valid = _source_truth_audit_valid(

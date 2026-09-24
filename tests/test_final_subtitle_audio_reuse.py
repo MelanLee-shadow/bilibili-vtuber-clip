@@ -186,6 +186,96 @@ def test_reuse_copies_parent_witness_and_rebinds_current_receipt(tmp_path: Path)
     )["status"] == "PASS"
 
 
+def test_explicit_package_root_uses_candidate_stem_for_suffixed_final_srt(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    parent_srt = fixture["parent_srt"]
+    assert isinstance(parent_srt, Path)
+    suffixed_srt = parent_srt.with_name(f"{CID}.recut.burned-final-sapphire72.srt")
+    parent_srt.rename(suffixed_srt)
+
+    receipt = gate.validate_final_subtitle_audio_check(
+        fixture["parent_record"],  # type: ignore[arg-type]
+        final_srt=suffixed_srt,
+        actual_media=fixture["parent_media"],  # type: ignore[arg-type]
+        package_root=fixture["parent_dir"],  # type: ignore[arg-type]
+        candidate_id=CID,
+    )
+
+    assert receipt["status"] == "PASS"
+    assert receipt["timing_status"] == "PASS"
+
+
+def _pcm_identity(seed: str) -> dict[str, str]:
+    return {
+        "schema_version": "final-subtitle-audio-decoded-pcm-identity.v1",
+        "native_pcm_s16le_sha256": "sha256:" + hashlib.sha256(
+            f"native:{seed}".encode()
+        ).hexdigest(),
+        "bcut_input_mono_16000_pcm_s16le_sha256": "sha256:" + hashlib.sha256(
+            f"bcut:{seed}".encode()
+        ).hexdigest(),
+    }
+
+
+def test_pcm_equivalent_successor_reuses_witness_across_historical_mp3_drift(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    calls: list[Path] = []
+
+    def extract(media: Path, output: Path) -> None:
+        calls.append(media)
+        output.write_bytes(b"current ffmpeg encoding")
+
+    result = reuse_final_subtitle_audio_check(
+        fixture["parent_record"],  # type: ignore[arg-type]
+        fixture["current_record"],  # type: ignore[arg-type]
+        parent_final_srt=fixture["parent_srt"],  # type: ignore[arg-type]
+        current_final_srt=fixture["current_srt"],  # type: ignore[arg-type]
+        parent_evidence_dir=fixture["parent_dir"],  # type: ignore[arg-type]
+        output_dir=fixture["output_dir"],  # type: ignore[arg-type]
+        parent_record_path=fixture["parent_record_path"],  # type: ignore[arg-type]
+        current_record_path=fixture["current_record_path"],  # type: ignore[arg-type]
+        _extract_audio=extract,
+        _decoded_audio_identity=lambda _media: _pcm_identity("same"),
+    )
+
+    assert calls == [fixture["current_media"], fixture["parent_media"]]
+    assert result.status == "PASS"
+    assert result.audio_sha256 != result.parent_audio_sha256
+    reuse = result.record["subtitle_audio_correspondence"]["audio_reuse"]
+    assert reuse["mode"] == "CURRENT_EXTRACTOR_REPLAY_AND_DECODED_PCM_EQUIVALENCE_REUSE"
+    assert reuse["new_provider_calls"] == 0
+    assert reuse["new_asr_calls"] == 0
+    assert reuse["proof"]["recorded_parent_audio_hash_match"] is False
+    assert reuse["proof"]["current_extractor_replay"]["byte_identical"] is True
+    assert reuse["proof"]["decoded_pcm_equivalence"]["native_pcm_byte_identical"] is True
+    assert reuse["proof"]["decoded_pcm_equivalence"]["bcut_input_pcm_byte_identical"] is True
+
+
+def test_pcm_fallback_blocks_when_decoded_audio_differs(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+
+    def extract(_media: Path, output: Path) -> None:
+        output.write_bytes(b"current ffmpeg encoding")
+
+    def identity(media: Path) -> dict[str, str]:
+        return _pcm_identity("parent" if media == fixture["parent_media"] else "current")
+
+    with pytest.raises(FinalSubtitleAudioReuseError, match="AUDIO_REUSE_DECODED_PCM_MISMATCH"):
+        reuse_final_subtitle_audio_check(
+            fixture["parent_record"],  # type: ignore[arg-type]
+            fixture["current_record"],  # type: ignore[arg-type]
+            parent_final_srt=fixture["parent_srt"],  # type: ignore[arg-type]
+            current_final_srt=fixture["current_srt"],  # type: ignore[arg-type]
+            parent_evidence_dir=fixture["parent_dir"],  # type: ignore[arg-type]
+            output_dir=fixture["output_dir"],  # type: ignore[arg-type]
+            _extract_audio=extract,
+            _decoded_audio_identity=identity,
+        )
+    assert not fixture["output_dir"].exists()  # type: ignore[union-attr]
+
+
 def test_parent_evidence_drift_blocks_before_extraction(tmp_path: Path) -> None:
     fixture = _fixture(tmp_path)
     witness = fixture["parent_dir"] / f"{CID}.subtitle-audio-witness.srt"  # type: ignore[operator]

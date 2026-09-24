@@ -334,6 +334,62 @@ def _bound_chat_support(
     }
 
 
+
+def _structured_chat_candidate_extent(
+    binding: Mapping[str, object], *, candidate_text: str,
+    clip_context: Mapping[str, object] | None,
+) -> dict[str, object]:
+    """Describe literal support extent without judging speech or discarding fragments.
+
+    Existing bound_event_count counts occurrences of the selected surface, not
+    the whole candidate. Match the same surface/source hashes against available
+    event text; declared provenance without that text cannot prove a full cue.
+    """
+    surface = str(binding.get("surface") or "")
+    hashes = set(binding.get("source_sha256s") or [])
+    rows = clip_context.get("structured_chat") if isinstance(clip_context, Mapping) else None
+    matches = []
+    if surface and hashes and isinstance(rows, list):
+        for row in rows:
+            if (
+                not isinstance(row, Mapping)
+                or not _valid_digest(row.get("source_sha256"))
+                or row["source_sha256"] not in hashes
+            ):
+                continue
+            text = str(row.get("text") or row.get("message") or "")
+            if surface.casefold() in text.casefold():
+                matches.append(row)
+    whole = [
+        row for row in matches
+        if candidate_text and candidate_text.casefold()
+        in str(row.get("text") or row.get("message") or "").casefold()
+    ]
+    if whole:
+        scope = "WHOLE_CANDIDATE_LITERAL_PRESENT"
+    elif matches:
+        scope = "FRAGMENT_LITERAL_ONLY"
+    elif binding.get("bound_event_count"):
+        scope = "DECLARED_SURFACE_ONLY"
+    else:
+        scope = "NO_SOURCE_TEXT_MATCH"
+    return {
+        "candidate": binding.get("candidate"),
+        "candidate_text_sha256": "sha256:" + hashlib.sha256(candidate_text.encode("utf-8")).hexdigest(),
+        "matched_surface": surface,
+        "scope": scope,
+        "raw_matching_event_count": len(matches),
+        "whole_candidate_literal_event_count": len(whole),
+        "whole_candidate_source_event_ids": sorted({
+            str(row["source_event_id"]) for row in whole if row.get("source_event_id")
+        }),
+        "whole_candidate_source_sha256s": sorted({str(row["source_sha256"]) for row in whole}),
+        "matching_rule": "casefold_literal_substring_no_punctuation_removal",
+        "spoken_text_verified": False,
+        "mutation_authorized": False,
+    }
+
+
 def closed_set_structured_evidence(
     srt_text: str,
     finding: Mapping[str, Any],
@@ -466,6 +522,11 @@ def closed_set_structured_evidence(
             "source_event_ids": [],
         },
     }
+    payload["structured_chat_candidate_extent"] = _structured_chat_candidate_extent(
+        payload["structured_chat_binding"],
+        candidate_text=current_cue if evidence_candidate == "CURRENT" else proposed_cue,
+        clip_context=clip_context,
+    )
     payload["evidence_sha256"] = "sha256:" + hashlib.sha256(
         json.dumps(
             payload,

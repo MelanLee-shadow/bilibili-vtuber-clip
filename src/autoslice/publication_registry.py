@@ -51,6 +51,21 @@ _VALID_STATUSES = {
 _BLOCKING_STATUSES = {"published", "hold_pending_review"}
 
 
+def _candidate_ids(row: Mapping) -> set[str]:
+    """One upload may have consumed several source candidates."""
+    from .publication_content_coverage import validate_publication_content_coverage
+
+    publication = row.get("publication_reconciliation") or {}
+    covered = validate_publication_content_coverage(publication)
+    if covered and (
+        row.get("status") != "published"
+        or any(row.get(key) != publication.get(key)
+               for key in ("candidate_id", "recording_date", "bvid"))
+    ):
+        raise ValueError("PUBLICATION_CONTENT_COVERAGE_ROW_BINDING_MISMATCH")
+    return {str(row.get("candidate_id") or ""), *covered}
+
+
 def _runtime_registry_path() -> Path:
     return (
         Path(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice"))
@@ -134,6 +149,7 @@ def load_publication_registry(
             raise ValueError("PUBLICATION_REGISTRY_ROW_STATUS_INVALID")
         if status == "published" and not str(row.get("bvid") or "").strip():
             raise ValueError("PUBLICATION_REGISTRY_ROW_BVID_MISSING")
+        _candidate_ids(row)
     selected_runtime = runtime_path
     if selected_runtime is None and path is None:
         selected_runtime = _runtime_registry_path()
@@ -164,7 +180,11 @@ def upload_block_reason(
         except (OSError, ValueError) as exc:
             return f"publication registry unreadable ({exc}); refusing new upload fail-closed"
     for row in registry.get("entries", []):
-        if str(row.get("candidate_id") or "") != cid:
+        try:
+            matches = cid in _candidate_ids(row)
+        except (OSError, ValueError) as exc:
+            return f"publication content coverage invalid ({exc}); refusing new upload fail-closed"
+        if not matches:
             continue
         row_date = str(row.get("recording_date") or "")
         if recording_date and row_date and row_date != recording_date:
@@ -223,7 +243,11 @@ def cover_maintenance_block_reason(
                 "cover maintenance fail-closed"
             )
     for row in registry.get("entries", []):
-        if str(row.get("candidate_id") or "") != cid:
+        try:
+            matches = cid in _candidate_ids(row)
+        except (OSError, ValueError) as exc:
+            return f"publication content coverage invalid ({exc}); refusing cover maintenance fail-closed"
+        if not matches:
             continue
         row_date = str(row.get("recording_date") or "")
         if recording_date and row_date and row_date != recording_date:

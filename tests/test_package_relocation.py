@@ -14,6 +14,7 @@ from src.autoslice.package_relocation import (
     PackageRelocationError,
     relocate_slice_package,
 )
+from src.autoslice.package_relocation_contract import reject_unknown_wsl_paths
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.source_fact_review import (
     review_and_repair_source_facts,
@@ -1443,3 +1444,136 @@ def test_existing_evidence_symlink_never_overwrites_target(tmp_path: Path) -> No
         fixture.relocate()
 
     assert outside.read_bytes() == b"outside-canary"
+
+
+def test_private_successor_binding_is_frozen_provenance_not_runtime_locator() -> None:
+    binding = {
+        "schema_version": "e278-private-publish-binding.v1",
+        "candidate_id": CID,
+        "final_media_path": _source_package_path(f"{CID}.recut.burned.mp4"),
+        "final_media_sha256": "sha256:" + "1" * 64,
+        "final_srt_sha256": "sha256:" + "2" * 64,
+        "final_ass_sha256": "sha256:" + "3" * 64,
+        "upload_allowed": False,
+    }
+    publish = {"private_successor_binding": binding}
+    record = {
+        "publish_staging": {"private_successor_binding": binding},
+        "burned_preview": {
+            "successor_materialization": {
+                "method": "hardlink_or_copy",
+                "source_path": _source_package_path(
+                    f"{CID}.recut.burned.mp4"
+                ),
+                "source_sha256": "sha256:" + "1" * 64,
+            }
+        },
+        "successor_media_binding": {
+            "schema_version": "e278-daynight-existing-media-successor.v1",
+            "candidate_id": CID,
+            "e267_media_root": str(Path(SOURCE_WORKSPACE) / "e267/daynight"),
+            "presentation_package": str(
+                Path(SOURCE_WORKSPACE) / "e201/package"
+            ),
+            "text_parent_package": str(
+                Path(SOURCE_WORKSPACE) / "text-parent/package"
+            ),
+            "final_media_sha256": "sha256:" + "1" * 64,
+            "final_srt_sha256": "sha256:" + "2" * 64,
+            "final_ass_sha256": "sha256:" + "3" * 64,
+            "new_render": False,
+            "upload_allowed": False,
+        },
+    }
+
+    reject_unknown_wsl_paths(
+        publish, kind="publish", source_workspace_root=SOURCE_WORKSPACE
+    )
+    reject_unknown_wsl_paths(
+        record, kind="record", source_workspace_root=SOURCE_WORKSPACE
+    )
+
+    with pytest.raises(PackageRelocationError, match="unknown external-host path"):
+        reject_unknown_wsl_paths(
+            {"operator_note": _source_package_path("scratch/note.txt")},
+            kind="publish",
+            source_workspace_root=SOURCE_WORKSPACE,
+        )
+
+def test_psp_final_review_successor_evidence_refs_are_frozen_provenance() -> None:
+    historical_path = str(
+        Path(SOURCE_WORKSPACE)
+        / "vtuber-slice"
+        / "e266"
+        / "E266-ADJUDICATION.json"
+    )
+    successor = {
+        "schema_version": "psp-e266-final-review-successor.v1",
+        "e266_adjudication": {
+            "decisions": [{"evidence_refs": [historical_path]}]
+        },
+    }
+    publish = {
+        "story_contract": {
+            "source_fact_review": {"final_review_successor": successor}
+        }
+    }
+    record = {
+        "publish_staging": {
+            "story_contract": {
+                "source_fact_review": {"final_review_successor": successor}
+            }
+        }
+    }
+
+    reject_unknown_wsl_paths(
+        publish, kind="publish", source_workspace_root=SOURCE_WORKSPACE
+    )
+    reject_unknown_wsl_paths(
+        record, kind="record", source_workspace_root=SOURCE_WORKSPACE
+    )
+
+    assert (
+        publish["story_contract"]["source_fact_review"]
+        ["final_review_successor"]["e266_adjudication"]["decisions"][0]
+        ["evidence_refs"][0]
+        == historical_path
+    )
+    assert (
+        record["publish_staging"]["story_contract"]["source_fact_review"]
+        ["final_review_successor"]["e266_adjudication"]["decisions"][0]
+        ["evidence_refs"][0]
+        == historical_path
+    )
+
+
+def test_neighboring_story_contract_runtime_locator_still_refuses() -> None:
+    runtime_path = str(Path(SOURCE_WORKSPACE) / "secret" / "runtime.json")
+
+    with pytest.raises(PackageRelocationError, match="unknown external-host path"):
+        reject_unknown_wsl_paths(
+            {
+                "story_contract": {
+                    "source_fact_review": {
+                        "final_review_successor_runtime_path": runtime_path
+                    }
+                }
+            },
+            kind="publish",
+            source_workspace_root=SOURCE_WORKSPACE,
+        )
+
+    with pytest.raises(PackageRelocationError, match="unknown external-host path"):
+        reject_unknown_wsl_paths(
+            {
+                "publish_staging": {
+                    "story_contract": {
+                        "source_fact_review": {
+                            "final_review_successor_runtime_path": runtime_path
+                        }
+                    }
+                }
+            },
+            kind="record",
+            source_workspace_root=SOURCE_WORKSPACE,
+        )

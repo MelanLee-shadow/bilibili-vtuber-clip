@@ -9,6 +9,8 @@ Every result is hash-bound; uncertainty fails closed in the caller.
 
 from __future__ import annotations
 
+from .entity_audio_uncertainty import _uncertain, WITNESS_REQUEST_SCHEMA
+
 import datetime as dt
 import hashlib
 import json
@@ -106,7 +108,6 @@ _terminate_web_process_group = _gemini_web.terminate_web_process_group
 # model is a WITNESS, not a judge. In witness mode it never sees any
 # candidate text — it dictates suspected pinyin syllables only; hanzi
 # word-choice reasoning belongs to the CPA judge downstream.
-WITNESS_REQUEST_SCHEMA = "subtitle-span-acoustic-witness-request.v1"
 # The prompt contract is part of the acoustic-cache identity.  A
 # production incident proved why: the old prompt embedded one valid pinyin
 # example and AGY copied it verbatim for unrelated audio.  Audio bytes alone
@@ -126,43 +127,6 @@ def _json_sha256(value: Mapping[str, Any]) -> str:
     return hashlib.sha256(
         json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-
-
-def _uncertain(request: Mapping[str, Any], reason: str, detail: str = "") -> dict[str, Any]:
-    if request.get("schema_version") == EXACT_SOURCE_REQUEST_SCHEMA:
-        return {
-            "schema_version": EXACT_SOURCE_OBSERVATION_SCHEMA,
-            "request_sha256": request.get("request_sha256"),
-            "status": "INVALID",
-            "candidate_blind": True,
-            "reason_code": reason,
-            "mutation_authorized": False,
-            **({"detail": detail[-500:]} if detail else {}),
-        }
-    if request.get("schema_version") == WITNESS_REQUEST_SCHEMA:
-        return {
-            "schema_version": WITNESS_SCHEMA,
-            "witness_protocol": BLIND_PINYIN_PROTOCOL,
-            "request_sha256": request.get("request_sha256"),
-            "status": "UNCERTAIN",
-            "reason_code": reason,
-            **({"detail": detail[-500:]} if detail else {}),
-        }
-    if request.get("schema_version") == "subtitle-span-acoustic-check-request.v1":
-        return {
-            "schema_version": "subtitle-span-acoustic-check-verdict.v1",
-            "request_sha256": request.get("request_sha256"),
-            "status": "UNCERTAIN",
-            "reason_code": reason,
-            **({"detail": detail[-500:]} if detail else {}),
-        }
-    return {
-        "schema_version": "chat-entity-verdict.v1",
-        "request_sha256": request.get("request_sha256"),
-        "status": "UNCERTAIN",
-        "reason_code": reason,
-        **({"detail": detail[-500:]} if detail else {}),
-    }
 
 
 def _witness_prompt(
@@ -811,6 +775,24 @@ def _entity_observation_prompt(
     return prompt, witness_mode, exact_transcript_mode
 
 
+def _write_execution_diagnostic(path: Path, payload: Mapping[str, Any]) -> None:
+    """Best-effort metadata only; never a new provider or quality gate."""
+    import stat
+
+    try:
+        raw = (json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode()
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            st = os.fstat(stream.fileno())
+            if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+                return
+            stream.truncate(0)
+            stream.write(raw)
+    except (OSError, ValueError):
+        # Original raw logs and acceptance still follow their existing contracts.
+        return
+
+
 def _observe_entity_audio(
     *,
     request: Mapping[str, Any],
@@ -932,11 +914,26 @@ def _observe_entity_audio(
         elif completed is not None:
             (job_dir / "agy.stdout").write_text(completed.stdout, encoding="utf-8")
             (job_dir / "agy.stderr").write_text(completed.stderr, encoding="utf-8")
+            verdict_file_present = verdict_path.is_file()
             raw_response = (
                 verdict_path.read_text(encoding="utf-8", errors="replace")
-                if verdict_path.is_file()
+                if verdict_file_present
                 else completed.stdout
             )
+            _write_execution_diagnostic(job_dir / "agy.execution.json", {
+                "schema_version": "entity-audio-process-diagnostic.v1",
+                "provider": "agy",
+                "returncode": completed.returncode,
+                "verdict_file_present": verdict_file_present,
+                "response_source": "verdict_file" if verdict_file_present else "stdout",
+                "response_bytes": len(raw_response.encode("utf-8")),
+                "response_sha256": hashlib.sha256(raw_response.encode("utf-8")).hexdigest(),
+                "stdout_bytes": len(completed.stdout.encode("utf-8")),
+                "stderr_bytes": len(completed.stderr.encode("utf-8")),
+                "stdout_sha256": hashlib.sha256(completed.stdout.encode("utf-8")).hexdigest(),
+                "stderr_sha256": hashlib.sha256(completed.stderr.encode("utf-8")).hexdigest(),
+                "authority": "DIAGNOSTIC_ONLY",
+            })
             response_path.write_text(raw_response, encoding="utf-8")
             failure_category = _classify_agy_failure(
                 completed.returncode, completed.stdout, completed.stderr
@@ -1070,6 +1067,16 @@ def _observe_entity_audio(
             accepted_key_ordinal = ladder.accepted_key_ordinal
             configured_key_count = ladder.configured_key_count
             paid_policy_stamp = ladder.paid_policy_stamp
+            _write_execution_diagnostic(job_dir / "gemini-api-route.json", {
+                "schema_version": "entity-audio-fallback-diagnostic.v1",
+                "configured_free_key_count": ladder.configured_key_count,
+                "accepted_key_tier": ladder.accepted_key_tier,
+                "accepted_key_ordinal": ladder.accepted_key_ordinal,
+                "observation_returned": ladder.observed is not None,
+                "paid_gate_reason": ladder.paid_gate_reason,
+                "authority": "DIAGNOSTIC_ONLY",
+                "credential_values_recorded": False,
+            })
         if observed is not None:
             response_path = api_response_path
             prompt_path = api_prompt_path

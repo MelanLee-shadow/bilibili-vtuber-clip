@@ -68,9 +68,9 @@ def parse_producer_args(
     parser.add_argument("--ssh-host", default="localhost")
     parser.add_argument(
         "--substrate",
-        choices=("aggregate_asr", "agy_fresh"),
+        choices=("aggregate_asr", "agy_fresh", "existing_srt"),
         default="aggregate_asr",
-        help="subtitle substrate: aggregate_asr = free ASR (bcut/jianying, accurate ms timeline) + text-only correction (default); agy_fresh = legacy agy whole-window transcription.",
+        help="subtitle substrate: aggregate_asr = free ASR (bcut/jianying, accurate ms timeline) + text-only correction (default); agy_fresh = legacy agy whole-window transcription; existing_srt = hash-bound padded-timeline subtitle input with no ASR.",
     )
     parser.add_argument(
         "--speaker-mode",

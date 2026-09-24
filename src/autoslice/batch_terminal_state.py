@@ -12,6 +12,46 @@ from src.autoslice.publication_reconciliation import (
 )
 
 
+# Batch-terminal states retain their original meaning. A paused provider is
+# handled separately and only for one already completed, nonqueued candidate.
+REVIEWABLE_BATCH_STATUSES = frozenset(
+    {
+        "review_ready", "review_ready_with_failures", "review_ready_retry_wait",
+        "publication_in_progress", "ready_unpublished", "ready_unpublished_with_failures",
+    }
+)
+
+
+def candidate_package_review_allowed(state: Mapping[str, object], candidate_id: str) -> bool:
+    """Admission only; never resume a provider, change state or authorize upload."""
+    status = str(state.get("status") or "")
+    if status in REVIEWABLE_BATCH_STATUSES:
+        return True
+    if status != "paused_cpa_down" or not candidate_id:
+        return False
+    picks = state.get("picks")
+    if not isinstance(picks, list) or any(not isinstance(row, Mapping) for row in picks):
+        return False
+    matches = [row for row in picks if row.get("candidate_id") == candidate_id]
+    if len(matches) != 1:
+        return False
+    pick = matches[0]
+    if (
+        pick.get("status") != "review_ready"
+        or type(pick.get("rc")) is not int
+        or pick["rc"] != 0
+        or publication_row_is_verified(pick)
+    ):
+        return False
+    for collection in ("pending_talk", "pending_song", "songs"):
+        rows = state.get(collection, [])
+        if not isinstance(rows, list) or any(not isinstance(row, Mapping) for row in rows):
+            return False
+        if any(candidate_id in (row.get("candidate_id"), row.get("cid")) for row in rows):
+            return False
+    return True
+
+
 SONG_TERMINAL_DISPOSITION_SCHEMA_VERSION = "song-terminal-disposition.v1"
 SONG_DETERMINISTIC_PROOF_REJECTION_CODES = frozenset(
     {

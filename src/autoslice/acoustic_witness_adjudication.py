@@ -651,7 +651,13 @@ _JUDGE_CHOICES = """\
 
 ## 证据边界与姓名切分
 reviewer_reason 是另一轮模型的提案理由，不是平台事件原文。邻句词面命中只说明
-语境；bound_event_count=0 时不得称“已绑定用户名/礼物/弹幕”。整句更顺或
+语境；bound_event_count=0 时不得称“已绑定用户名/礼物/弹幕”。bound_event_count>0
+也只统计 surface 的事件命中，不证明 CURRENT/PROPOSED 整句存在。
+structured_chat_candidate_extent 区分整句字面出现、片段出现和仅有来源声明；
+whole_candidate_literal_event_count=0 时不得把片段命中说成“整句有弹幕原文支持”。
+旧证据缺少此范围字段时按已有 surface 的范围理解，不补造整句证明。
+即使整句字面出现，也不证明主播实际念出、音节次数或人物指代关系。
+片段仍可提供词形候选，不自动否决或认可整句；CPA 继续比较全部证据。整句更顺或
 更像致谢，不能证明致谢词与随后用户名的分界，也不能据此删改疑似称呼。
 草稿保真曾保留 CURRENT 是既有处理记录，不等于 CURRENT 必然正确；须和其他证据
 一起比较。明确区分“这里在感谢”与“被感谢者具体怎样写”。若候选闭集本身

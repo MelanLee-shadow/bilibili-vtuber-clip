@@ -534,6 +534,27 @@ def _run_authorized_failed_pick(
     )
 
 
+def test_import_plan_preserves_source_qc_but_reserves_destination_canonical_name(
+    tmp_path: Path,
+) -> None:
+    fixture = _build_external_package(tmp_path)
+    source_qc = fixture.staging_package / f"{CANDIDATE}.title-cover-joint-qc.json"
+    source_qc.write_bytes(b"frozen source qc receipt")
+    before = source_qc.read_bytes()
+
+    plan = pi.plan_import(
+        source_package_dir=fixture.staging_package,
+        destination_package_root=fixture.destination_package,
+        destination_repo_root=fixture.repo_root,
+        candidate_id=CANDIDATE,
+    )
+
+    canonical_name = source_qc.name
+    assert canonical_name in plan.skipped_source_artifacts
+    assert canonical_name not in {item.relative for item in plan.copies}
+    assert source_qc.read_bytes() == before
+
+
 # ---------------------------------------------------------------- path regularization
 
 
@@ -1597,3 +1618,112 @@ def test_explicit_source_repo_root_projects_repo_locators(
         row for row in receipt["steps"] if row["step"] == "PREFLIGHT" and "roots" in row
     )
     assert preflight["roots"]["source_repo_root"] == SRC_REPO
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_copy_capacity_refuses_before_any_package_or_state_write(
+    tmp_path: Path, monkeypatch, apply: bool
+) -> None:
+    from types import SimpleNamespace
+    import shutil
+
+    fixture = _build_external_package(tmp_path)
+    before = fixture.state_path.read_bytes()
+    monkeypatch.setattr(shutil, "disk_usage", lambda path: SimpleNamespace(free=1))
+    receipt, code = _run(fixture, apply=apply)
+    assert code == 2
+    assert _step(receipt, "COPY")["code"] == "INSUFFICIENT_DISK_SPACE"
+    assert not fixture.destination_package.exists()
+    assert fixture.state_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("free, succeeds", [(11, False), (12, True)])
+def test_copy_capacity_counts_atomic_replacement_bytes_and_reserve(
+    tmp_path: Path, monkeypatch, free: int, succeeds: bool
+) -> None:
+    from types import SimpleNamespace
+    import shutil
+
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.write_bytes(b"1234567")
+    destination.write_bytes(b"old")
+    plan = SimpleNamespace(copies=(pi.CopyItem(source, destination, "file", "package"),))
+    monkeypatch.setenv("AUTOSLICE_MIN_FREE_BYTES", "5")
+    monkeypatch.setattr(shutil, "disk_usage", lambda path: SimpleNamespace(free=free))
+    if succeeds:
+        result = pi.execute_copy(plan, apply=True)
+        assert result["files"][0]["status"] == "COPIED"
+        assert destination.read_bytes() == source.read_bytes()
+        assert result["capacity"][0]["required_bytes"] == 12
+    else:
+        with pytest.raises(pi.PackageImportError, match="INSUFFICIENT_DISK_SPACE"):
+            pi.execute_copy(plan, apply=True)
+        assert destination.read_bytes() == b"old"
+
+
+def test_copy_capacity_aggregates_files_and_skips_identical_bytes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from types import SimpleNamespace
+    import shutil
+
+    source = tmp_path / "source"
+    source.write_bytes(b"1234567")
+    same = tmp_path / "same"
+    same.write_bytes(source.read_bytes())
+    a, b = tmp_path / "new" / "a", tmp_path / "new" / "b"
+    plan = SimpleNamespace(copies=tuple(
+        pi.CopyItem(source, dest, str(i), "package")
+        for i, dest in enumerate((same, a, b))
+    ))
+    monkeypatch.delenv("AUTOSLICE_MIN_FREE_BYTES", raising=False)
+    monkeypatch.setattr(shutil, "disk_usage", lambda path: SimpleNamespace(free=13))
+    with pytest.raises(pi.PackageImportError, match="INSUFFICIENT_DISK_SPACE"):
+        pi.execute_copy(plan, apply=True)
+    assert not a.parent.exists()
+    monkeypatch.setattr(shutil, "disk_usage", lambda path: SimpleNamespace(free=14))
+    result = pi.execute_copy(plan, apply=True)
+    assert result["capacity"][0]["planned_copy_bytes"] == 14
+    assert result["files"][0]["status"] == "ALREADY_IDENTICAL"
+    assert a.read_bytes() == b.read_bytes() == source.read_bytes()
+
+
+def test_copy_capacity_probe_failure_refuses_without_writes(tmp_path: Path, monkeypatch) -> None:
+    import shutil
+
+    fixture = _build_external_package(tmp_path)
+    def unavailable(path):
+        raise OSError("capacity unavailable")
+    monkeypatch.setattr(shutil, "disk_usage", unavailable)
+    receipt, code = _run(fixture)
+    assert code == 2
+    assert _step(receipt, "COPY")["code"] == "DISK_CAPACITY_UNAVAILABLE"
+    assert not fixture.destination_package.exists()
+
+
+def test_copy_capacity_invalid_existing_reserve_refuses(tmp_path: Path, monkeypatch) -> None:
+    fixture = _build_external_package(tmp_path)
+    monkeypatch.setenv("AUTOSLICE_MIN_FREE_BYTES", "-1")
+    receipt, code = _run(fixture)
+    assert code == 2
+    assert _step(receipt, "COPY")["code"] == "DISK_CAPACITY_POLICY_INVALID"
+    assert not fixture.destination_package.exists()
+
+
+def test_copy_source_change_after_capacity_probe_refuses_before_write(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from types import SimpleNamespace
+    import shutil
+
+    source, destination = tmp_path / "source", tmp_path / "new" / "file"
+    source.write_bytes(b"original")
+    plan = SimpleNamespace(copies=(pi.CopyItem(source, destination, "file", "package"),))
+    def changed_source(path):
+        source.write_bytes(b"larger unplanned payload")
+        return SimpleNamespace(free=10**9)
+    monkeypatch.setattr(shutil, "disk_usage", changed_source)
+    with pytest.raises(pi.PackageImportError, match="COPY_SOURCE_DRIFT"):
+        pi.execute_copy(plan, apply=True)
+    assert not destination.parent.exists()
