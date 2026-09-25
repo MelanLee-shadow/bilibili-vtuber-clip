@@ -8,6 +8,16 @@
   候选实际绑定的 source pieces；不是任意同名文件。
 - 录制服务与源账本：参考 `ops/recording/`，按自己的部署核对 compose、
   录播姬配置和 `recording/status.json`。
+Mac 上的 `scripts/slice_monitor.py` 只作报告与窄安全制动，不是 runtime authority。
+production profile 默认使用 `oci3` SSH alias，以宿主只读 `record_health_audit.py`、normalized
+`status.json`/`adapter-state.json` 和 autoslice heartbeat 为输入，不再读取旧 `/app/Videos` 容器布局；
+SSH 固定 `BatchMode=yes` 与
+`StrictHostKeyChecking=yes`；历史拓扑必须显式选择 `legacy` profile 并显式给 host，不能因旧
+launchd/报告仍写 `free` 就把退役主机当成当前生产面。监控默认不重启录播姬；只有显式
+`AUTOSLICE_MONITOR_ALLOW_RECORDER_RESTART=1` 才允许该动作。检测到旧自动上传进程时的
+安全停机由独立开关控制，不能扩成发布或其他远端维护权限。监控源码提交不等于 LaunchAgent
+已切换，实际报告仍须核其运行路径、profile、host 与现场 authority。
+
 ## 本地成品与录像目录初始化
 
 `gemini_slice_jingting.py` 的模块导入、离线文字校验/CLI help 与显式单文件处理不探测

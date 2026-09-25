@@ -2,9 +2,10 @@
 """
 李豆沙 自动切片监控 (lidousha auto-slice monitor)
 
-Runs locally on 维护者's Mac (cron), SSHes into the recording host, and checks the
-health of the bilive auto-slice pipeline for room 22966160 (李豆沙). A former
-secondary test-room probe was removed with the recorder migration.
+Runs locally on 维护者's Mac (launchd), SSHes into the configured production
+recording host, and checks the health of the bilive auto-slice pipeline for room
+22966160 (李豆沙). The production profile defaults to the current OCI3 SSH alias;
+legacy topology must be selected explicitly and must name its host.
 
 What it watches
   - bilive_record container reachable
@@ -16,11 +17,12 @@ What it watches
   - scan log error bursts
   - disk headroom + recorder quality/IPv4/source-retention policy
 
-Safe auto-rescue ("能自动救的就救")
-  - kill any running `src.upload.upload`  (publishing is explicitly forbidden)
-  - restart a CRASHED scan loop that the monitor had previously blessed
-  - cold-start scan when 22966160 is live AND no dirty backlog would be reswept
-Everything else -> alert with a diagnosis + suggested manual fix, no auto-change.
+Mutation policy
+  - stop a detected legacy `src.upload.upload` process by default because
+    publishing is explicitly forbidden; this safety stop can be disabled
+  - NEVER restart the recorder unless AUTOSLICE_MONITOR_ALLOW_RECORDER_RESTART=1
+  - never revive retired scan/local-prepare/shadow daemons
+Everything else -> report a diagnosis and suggested manual fix, with no change.
 
 Alerts: report file (always) + Apple Mail (iCloud) on problem/recovery transitions.
 
@@ -39,10 +41,49 @@ from datetime import datetime, timezone, timedelta
 # ----------------------------------------------------------------------------
 # Config
 # ----------------------------------------------------------------------------
-SSH_HOST = os.environ.get("AUTOSLICE_MONITOR_SSH_HOST", "localhost")
-CONTAINER = os.environ.get("AUTOSLICE_MONITOR_CONTAINER", "bilive_record")
-PRIMARY_ROOM = os.environ.get("AUTOSLICE_MONITOR_ROOM", "22966160")  # 参考部署房间号
+def _env_bool(name: str, *, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(f"{name} must be a boolean value")
+
+
+MONITOR_PROFILE = os.environ.get("AUTOSLICE_MONITOR_PROFILE", "production").strip().lower()
+if MONITOR_PROFILE not in {"production", "legacy"}:
+    raise RuntimeError("AUTOSLICE_MONITOR_PROFILE must be production or legacy")
+if MONITOR_PROFILE == "legacy" and not os.environ.get("AUTOSLICE_MONITOR_SSH_HOST", "").strip():
+    raise RuntimeError("legacy monitor profile requires AUTOSLICE_MONITOR_SSH_HOST")
+_DEFAULT_SSH_HOST = "localhost"
+SSH_HOST = os.environ.get("AUTOSLICE_MONITOR_SSH_HOST", _DEFAULT_SSH_HOST).strip()
+if not SSH_HOST:
+    raise RuntimeError("AUTOSLICE_MONITOR_SSH_HOST must not be empty")
+_DEFAULT_CONTAINER = "bililive_recorder" if MONITOR_PROFILE == "production" else "bilive_record"
+CONTAINER = os.environ.get("AUTOSLICE_MONITOR_CONTAINER", _DEFAULT_CONTAINER).strip()
+PRIMARY_ROOM = os.environ.get("AUTOSLICE_MONITOR_ROOM", "22966160").strip()
 ROOMS = [PRIMARY_ROOM]
+ALLOW_RECORDER_RESTART = _env_bool(
+    "AUTOSLICE_MONITOR_ALLOW_RECORDER_RESTART", default=False
+)
+ALLOW_UPLOAD_KILL = _env_bool("AUTOSLICE_MONITOR_ALLOW_UPLOAD_KILL", default=True)
+
+
+def _ssh_argv(*remote_args: str) -> list[str]:
+    return [
+        "ssh",
+        "-o",
+        "ConnectTimeout=15",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=yes",
+        SSH_HOST,
+        *remote_args,
+    ]
 
 REPORT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
                           "reports", "slice_monitor")
@@ -356,15 +397,202 @@ print(json.dumps({
 '''.replace("__ROOMS__", '", "'.join(ROOMS))
 
 
+PRODUCTION_PROBE_PY = r'''
+import json, re, shutil, subprocess, time
+
+STATUS_PATH = "/opt/bilive/recording/status.json"
+AUDIT_PATH = "/opt/bilive/autoslice/repo/ops/recording/record_health_audit.py"
+ROOM = "__ROOM__"
+
+
+def read_object(path):
+    with open(path, "r", encoding="utf-8") as handle:
+        value = json.load(handle)
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must contain an object")
+    return value
+
+
+def process_count(needle):
+    try:
+        output = subprocess.check_output(
+            ["ps", "-eo", "args"], text=True, errors="replace"
+        )
+    except Exception:
+        return 0
+    return sum(1 for line in output.splitlines() if needle in line and "grep" not in line)
+
+
+def last_json_line(text):
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+try:
+    status = read_object(STATUS_PATH)
+    if status.get("schema_version") != "recorder-neutral-status.v1":
+        raise ValueError("recorder status schema mismatch")
+    audit_run = subprocess.run(
+        ["/usr/bin/sudo", "-n", "/usr/bin/python3", AUDIT_PATH, "--lookback-hours", "96"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    audit = last_json_line(audit_run.stdout)
+    if audit is None:
+        audit = {
+            "schema_version": "record-health-audit.v1",
+            "status": "FAIL",
+            "healthy": False,
+            "service_reachable": status.get("service_reachable"),
+            "unresolved": [
+                f"record_health_audit rc={audit_run.returncode}: "
+                + (audit_run.stderr.strip()[-240:] or "no JSON output")
+            ],
+        }
+    latest = status.get("latest_source")
+    if not isinstance(latest, dict):
+        latest = {}
+    relative = str(
+        latest.get("relative_path")
+        or latest.get("path")
+        or latest.get("file")
+        or ""
+    )
+    date_match = re.search(r"(?:^|/)(20\d{2}-\d{2}-\d{2})(?:/|$)", relative)
+    latest_date = date_match.group(1) if date_match else None
+    media = latest.get("media") if isinstance(latest.get("media"), dict) else {}
+    source_mtime = latest.get("mtime_epoch")
+    if isinstance(source_mtime, bool) or not isinstance(source_mtime, (int, float)):
+        source_mtime = status.get("generated_at_epoch")
+    source_size = latest.get("size_bytes")
+    if isinstance(source_size, bool) or not isinstance(source_size, (int, float)):
+        source_size = None
+    try:
+        free_bytes = shutil.disk_usage("/opt/bilive").free
+    except OSError:
+        free_bytes = None
+    recording = status.get("recording") is True
+    streaming = status.get("streaming") is True
+    service = status.get("service_reachable") is True
+    payload = {
+        "ok": True,
+        "now": time.time(),
+        "procs": {
+            "recorder": 1 if service else 0,
+            "scan": process_count("session_autoslice.py"),
+            "local_prepare": process_count("local_prepare"),
+            "upload": process_count("src.upload.upload"),
+            "auto_review_shadow": process_count("lidousha_auto_review_shadow"),
+        },
+        "rooms": {
+            ROOM: {
+                "latest_date_dir": latest_date,
+                "recording": {
+                    "active": recording or streaming,
+                    "mtime": source_mtime,
+                    "age_sec": (
+                        None
+                        if not isinstance(source_mtime, (int, float))
+                        else max(0, int(time.time() - float(source_mtime)))
+                    ),
+                    "latest_file": relative or None,
+                },
+                "slices": {
+                    "age_sec": None,
+                    "count_latest_dir": None,
+                    "cover_count_latest_dir": None,
+                    "publish_json_latest_dir": None,
+                },
+                "dirty_backlog": [],
+                "recorder_status": {
+                    "live_status": 1 if streaming else 0,
+                    "finalizing": status.get("finalizing") is True,
+                    "running_status": 1 if service else 0,
+                    "total_output_bytes": source_size,
+                    "real_stream_format": status.get("real_stream_format"),
+                    "requested_quality_number": status.get("requested_quality_number"),
+                    "active_media": media,
+                    "cookie_login_valid": status.get("cookie_login_valid"),
+                    "cookie_health_error": status.get("cookie_health_error"),
+                },
+            }
+        },
+        "flags": {"delete_source": "never"},
+        "disk": {"free": free_bytes},
+        "audio": {},
+        "auto_review_shadow": {},
+        "record_health": audit,
+    }
+    print(json.dumps(payload, ensure_ascii=False))
+except Exception as exc:
+    print(json.dumps({
+        "ok": False,
+        "fatal": f"production probe: {type(exc).__name__}: {exc}",
+    }, ensure_ascii=False))
+'''.replace("__ROOM__", PRIMARY_ROOM)
+
+
+def run_production_probe():
+    """Read normalized recorder health on the configured production host."""
+    try:
+        completed = subprocess.run(
+            _ssh_argv("/usr/bin/python3", "-"),
+            input=PRODUCTION_PROBE_PY,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "fatal": "production ssh/probe timeout"}
+    except Exception as exc:
+        return {"ok": False, "fatal": f"production ssh error: {exc}"}
+    if completed.returncode != 0:
+        return {
+            "ok": False,
+            "fatal": (
+                f"production probe rc={completed.returncode}: "
+                f"{completed.stderr.strip()[-400:]}"
+            ),
+        }
+    for line in reversed(completed.stdout.splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return value
+    return {
+        "ok": False,
+        "fatal": f"unparseable production probe output: {completed.stdout[:400]}",
+    }
+
+
 # ----------------------------------------------------------------------------
 # Remote helpers
 # ----------------------------------------------------------------------------
 def run_probe(last_audio_file=""):
+    """Run the retired container-layout probe in explicit legacy mode only."""
+    if MONITOR_PROFILE != "legacy":
+        raise RuntimeError("legacy container probe requested outside legacy profile")
     probe_src = PROBE_PY.replace("__LAST_AUDIO__", last_audio_file or "")
     try:
         p = subprocess.run(
-            ["ssh", "-o", "ConnectTimeout=15", "-o", "BatchMode=yes", SSH_HOST,
-             "docker", "exec", "-i", CONTAINER, "python3", "-"],
+            _ssh_argv("docker", "exec", "-i", CONTAINER, "python3", "-"),
             input=probe_src, capture_output=True, text=True, timeout=120)
     except subprocess.TimeoutExpired:
         return {"ok": False, "fatal": "ssh/probe timeout"}
@@ -385,11 +613,13 @@ def run_probe(last_audio_file=""):
 
 
 def run_jingting_probe():
-    """Probe the host-side Antigravity fine-transcription daemon.
-
-    This runs on the free host, not inside the bilive container, because agy is
-    authenticated under root on the host.
-    """
+    """Probe the retired host-side fine-transcription lane only in legacy mode."""
+    if MONITOR_PROFILE != "legacy":
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "legacy host-side jingting lane is not part of the production profile",
+        }
     remote_py = r'''
 import json, os, re, subprocess, time
 
@@ -466,8 +696,7 @@ print(json.dumps({
 '''
     try:
         p = subprocess.run(
-            ["ssh", "-o", "ConnectTimeout=15", "-o", "BatchMode=yes", SSH_HOST,
-             "python3", "-"],
+            _ssh_argv("python3", "-"),
             input=remote_py, capture_output=True, text=True, timeout=60)
     except Exception as e:
         return {"ok": False, "fatal": f"jingting probe ssh error: {e}"}
@@ -480,16 +709,16 @@ print(json.dumps({
 
 
 def run_autoslice_probe():
-    """Health of the NEW control plane: the autoslice runner on the free host
-    (heartbeat freshness, SOURCE_UNAVAILABLE, recent ALERT_* files)."""
+    """Health of the autoslice runner on the configured production host."""
     cmd = (
         "cat /opt/bilive/autoslice/reports/heartbeat.txt 2>/dev/null; echo __SEP__; "
         "for f in /opt/bilive/autoslice/reports/ALERT_*.txt; do "
         "[ -f \"$f\" ] && echo \"$f|$(stat -c %Y \"$f\")|$(tail -1 \"$f\")\"; done 2>/dev/null; true"
     )
     try:
-        p = subprocess.run(["ssh", "-o", "ConnectTimeout=15", "-o", "BatchMode=yes", SSH_HOST, cmd],
-                           capture_output=True, text=True, timeout=40)
+        p = subprocess.run(
+            _ssh_argv(cmd), capture_output=True, text=True, timeout=40
+        )
     except Exception as e:
         return {"fatal": f"ssh error: {e}"}
     if p.returncode != 0:
@@ -530,7 +759,7 @@ def ssh_exec(cmd_inside_container, detached=False):
     import shlex
     dflag = "-d " if detached else ""
     remote = f"docker exec {dflag}{CONTAINER} bash -lc {shlex.quote(cmd_inside_container)}"
-    base = ["ssh", "-o", "ConnectTimeout=15", "-o", "BatchMode=yes", SSH_HOST, remote]
+    base = _ssh_argv(remote)
     try:
         p = subprocess.run(base, capture_output=True, text=True, timeout=60)
         return p.returncode, p.stdout.strip(), p.stderr.strip()
@@ -539,7 +768,19 @@ def ssh_exec(cmd_inside_container, detached=False):
 
 
 def kill_upload():
-    rc, out, err = ssh_exec("pkill -9 -f 'src.upload.upload'; sleep 1; echo done")
+    if MONITOR_PROFILE == "production":
+        try:
+            completed = subprocess.run(
+                _ssh_argv("pkill", "-9", "-f", "src.upload.upload"),
+                capture_output=True,
+                text=True,
+                timeout=40,
+                check=False,
+            )
+        except Exception:
+            return False
+        return completed.returncode == 0
+    rc, _out, _err = ssh_exec("pkill -9 -f 'src.upload.upload'; sleep 1; echo done")
     return rc == 0
 
 
@@ -549,17 +790,7 @@ def restart_recorder(room):
         return False
     try:
         p = subprocess.run(
-            [
-                "ssh",
-                "-o",
-                "ConnectTimeout=15",
-                "-o",
-                "BatchMode=yes",
-                SSH_HOST,
-                "docker",
-                "restart",
-                "bililive_recorder",
-            ],
+            _ssh_argv("docker", "restart", "bililive_recorder"),
             capture_output=True, text=True, timeout=40)
         return p.returncode == 0
     except Exception:
@@ -584,8 +815,8 @@ def evaluate(probe, state):
 
     if not probe.get("ok"):
         problems.append({"id": "probe", "sev": "DOWN",
-                         "msg": f"无法探测 free/容器: {probe.get('fatal')}",
-                         "fix": "检查 `ssh recording-host` 可达性与 `docker ps` 里 bilive_record 是否在运行。"})
+                         "msg": f"无法探测 {SSH_HOST}/容器: {probe.get('fatal')}",
+                         "fix": f"检查 `ssh {SSH_HOST}` 可达性、主机身份和 bilive_record 容器。"})
         return "DOWN", problems, actions, notes
 
     procs = probe["procs"]
@@ -613,6 +844,11 @@ def evaluate(probe, state):
     if live and latest_dir:
         dirty = [d for d in dirty if d.get("dir") != latest_dir]
 
+    notes.append(
+        f"monitor profile={MONITOR_PROFILE} host={SSH_HOST} "
+        f"recorder_restart={'enabled' if ALLOW_RECORDER_RESTART else 'disabled'} "
+        f"upload_safety_stop={'enabled' if ALLOW_UPLOAD_KILL else 'disabled'}"
+    )
     notes.append(f"recorder={procs['recorder']} scan={procs['scan']} "
                  f"local_prepare={procs.get('local_prepare', 0)} upload={procs['upload']} "
                  f"auto_review_shadow={procs.get('auto_review_shadow', 0)}")
@@ -622,8 +858,36 @@ def evaluate(probe, state):
     notes.append(f"切片最新 age={fmt_age(sl.get('age_sec'))} "
                  f"count={sl.get('count_latest_dir')} covers={sl.get('cover_count_latest_dir')} "
                  f"publish.json={sl.get('publish_json_latest_dir')}")
+    record_health = probe.get("record_health")
+    if isinstance(record_health, dict):
+        unresolved = list(record_health.get("unresolved") or [])
+        notes.append(
+            "record-health "
+            f"status={record_health.get('status')} "
+            f"status_age={record_health.get('status_age_seconds')}s "
+            f"state_age={record_health.get('adapter_state_age_seconds')}s "
+            f"unresolved={len(unresolved)}"
+        )
+        if record_health.get("healthy") is not True:
+            down = (
+                record_health.get("service_reachable") is False
+                or any(str(item).startswith("status stale:") for item in unresolved)
+                or any("missing or not a regular file" in str(item) for item in unresolved)
+            )
+            problems.append({
+                "id": "record_health_audit",
+                "sev": "DOWN" if down else "DEGRADED",
+                "msg": "OCI3 normalized recorder-health audit failed.",
+                "fix": (
+                    f"Inspect {SSH_HOST}:/opt/bilive/recording/status.json, "
+                    "adapter-state.json and the deployed record_health_audit.py result."
+                ),
+                "detail": [str(item) for item in unresolved[:6]],
+            })
     jt = probe.get("jingting") or {}
-    if jt.get("ok"):
+    if jt.get("skipped"):
+        notes.append(f"jingting skipped: {jt.get('reason')}")
+    elif jt.get("ok"):
         notes.append(f"jingting agy daemon={jt.get('daemon_count')} agy={jt.get('agy_count')} "
                      f"latest={jt.get('latest_date')} pending={jt.get('pending_latest')} "
                      f"done={jt.get('done_latest')} review_required={jt.get('review_required_latest', 0)} "
@@ -673,7 +937,7 @@ def evaluate(probe, state):
                 "id": "recorder_cookie_not_logged_in",
                 "sev": "WARN",
                 "msg": "录播姬的 B 站 Cookie 未登录，10000 仍会优先请求但实际可能只能取得较低画质。",
-                "fix": "更新 free 上权限 0600 的录播姬 Cookie；不要把 Cookie 写进仓库或日志。"
+                "fix": f"更新 {SSH_HOST} 上权限 0600 的录播姬 Cookie；不要把 Cookie 写进仓库或日志。"
             })
         elif api.get("cookie_health_error"):
             problems.append({
@@ -692,26 +956,40 @@ def evaluate(probe, state):
         # exactly equal => no new bytes since last check (stuck). A DROP means a new
         # segment/recording started (rec_total resets), which is NOT stuck.
         if rec_total == rec_seen[key]:
-            ok = restart_recorder(PRIMARY_ROOM)
-            actions.append(("restarted_recorder",
-                            f"李豆沙在播但录制无增长(上轮 {rec_seen[key]} → 本轮 {rec_total} 字节)，"
-                            f"已{'成功' if ok else '尝试'}重启官方录播姬。"))
+            detail = (
+                f"李豆沙在播但录制无增长(上轮 {rec_seen[key]} → 本轮 {rec_total} 字节)"
+            )
+            if ALLOW_RECORDER_RESTART:
+                ok = restart_recorder(PRIMARY_ROOM)
+                actions.append((
+                    "restarted_recorder",
+                    detail + f"，已{'成功' if ok else '尝试'}重启官方录播姬。",
+                ))
+                message = "李豆沙在播但录播姬两轮无字节增长——已按显式配置尝试重启录制器。"
+            else:
+                message = (
+                    "李豆沙在播但录播姬两轮无字节增长；监控默认不重启生产录播姬。"
+                )
             problems.append({"id": "live_not_recording", "sev": "DOWN",
-                             "msg": "李豆沙在播但录播姬两轮无字节增长——已自动重启录制器。",
-                             "fix": "检查录播姬日志中的 CDN/画质回退；生产配置已强制 IPv4，"
-                                    "若仍反复发生则保留原始 FLV 并人工检查源端可用性。"})
+                             "msg": message,
+                             "fix": f"检查 {SSH_HOST} 录播姬日志中的 CDN/画质回退；"
+                                    "确认当前主机、录制状态和维护窗口后再人工恢复，保留原始 FLV。"})
     if rec_total is not None:
         rec_seen[key] = rec_total
     state["rec_total_seen"] = rec_seen
 
     # ---- publish guard (irreversible; explicitly forbidden) ----
     if procs.get("upload", 0) > 0:
-        ok = kill_upload()
-        actions.append(("killed_upload",
-                        f"检测到 src.upload.upload 在运行(会自动投稿)，已{'成功' if ok else '尝试'}终止。"))
+        if ALLOW_UPLOAD_KILL:
+            ok = kill_upload()
+            actions.append(("killed_upload",
+                            f"检测到 src.upload.upload 在运行(会自动投稿)，已{'成功' if ok else '尝试'}终止。"))
+            message = "发布进程 upload 在运行——已执行配置允许的安全停机。"
+        else:
+            message = "发布进程 upload 在运行；安全停机被配置禁用，监控未作远端修改。"
         problems.append({"id": "upload_running", "sev": "DEGRADED",
-                         "msg": "发布进程 upload 在运行——已自动杀掉以防投稿。",
-                         "fix": "确认没有人/脚本启动 upload.sh；只跑 scan。"})
+                         "msg": message,
+                         "fix": f"检查 {SSH_HOST} 上谁启动了 upload；没有当前发布授权时立即停止。"})
 
     # ---- recorder config regression ----
     # The dangerous setting is source deletion: a bad remux must never remove
@@ -725,11 +1003,11 @@ def evaluate(probe, state):
     if procs.get("recorder", 0) == 0:
         problems.append({"id": "recorder_down", "sev": "DOWN",
                          "msg": "官方录播姬状态缺失、过期或不可达。",
-                         "fix": "检查 free 上 bililive_recorder 容器、"
+                         "fix": f"检查 {SSH_HOST} 上 bililive_recorder 容器、"
                                 "/opt/bilive/recording/status.json 与 bililive_adapter 服务。"})
 
     # ---- OLD control plane RETIRED (维护者) ----
-    # BililiveRecorder records; the autoslice runner (free cron, /opt/bilive/autoslice)
+    # BililiveRecorder records; the autoslice runner lives on the configured production host.
     # slices.  scan/local_prepare/shadow-daemon must NOT run: they double-
     # produce, burn AI-cover money on full segments, and their full-tree FUSE
     # rescans destabilized the CloudDrive mount (the 7/9 outage).  This monitor
@@ -743,23 +1021,23 @@ def evaluate(probe, state):
                              "fix": "旧管线 2026-07-10 已退役。若无人在调试，"
                                     "进容器 pkill 对应模块；勿恢复 compose 旧 command。"})
 
-    # ---- NEW plane health: autoslice runner heartbeat + alerts (free host) ----
+    # ---- NEW plane health: autoslice runner heartbeat + alerts (configured host) ----
     hb = probe.get("autoslice") or {}
     if hb.get("fatal"):
         problems.append({"id": "autoslice_probe_failed", "sev": "DEGRADED",
                          "msg": f"autoslice 健康探测失败: {hb['fatal']}",
-                         "fix": "检查 ssh recording-host 与 /opt/bilive/autoslice/reports/。"})
+                         "fix": f"检查 ssh {SSH_HOST} 与 /opt/bilive/autoslice/reports/。"})
     if hb.get("heartbeat"):
         notes.append(f"autoslice 心跳: {hb['heartbeat'][:140]}")
     if not hb.get("fatal"):
         if hb.get("age_sec") is None:
             problems.append({"id": "autoslice_heartbeat_missing", "sev": "DEGRADED",
                              "msg": "读不到 autoslice runner 心跳（heartbeat.txt 缺失/无时间戳）。",
-                             "fix": "查 free crontab 的 */10 tick 与 /opt/bilive/autoslice/logs/runner.log。"})
+                             "fix": f"查 {SSH_HOST} crontab 的 */10 tick 与 /opt/bilive/autoslice/logs/runner.log。"})
         elif hb["age_sec"] > 30 * 60:
             problems.append({"id": "autoslice_heartbeat_stale", "sev": "DEGRADED",
                              "msg": f"autoslice 心跳已 {fmt_age(int(hb['age_sec']))} 未更新（cron 每 10 分钟应一跳）。",
-                             "fix": "查 free crontab 与 runner.log；确认 DISABLED 杀开关没被误留。"})
+                             "fix": f"查 {SSH_HOST} crontab 与 runner.log；确认 DISABLED 杀开关状态符合当前运行计划。"})
     if "SOURCE_UNAVAILABLE" in (hb.get("heartbeat") or ""):
         problems.append({"id": "autoslice_source_unavailable", "sev": "DOWN",
                          "msg": "autoslice 心跳报 SOURCE_UNAVAILABLE——录播挂载不可读（录制写入路径可能同断）。",
@@ -779,7 +1057,7 @@ def evaluate(probe, state):
             problems.append({"id": "autoslice_not_concluded", "sev": "DEGRADED",
                              "msg": f"最近一场已结束 {fmt_age(int(ended_ago))}，autoslice 该日期状态仍为 "
                                     f"{latest_state or '未知'}（应到 review_ready/no_delivery/paused_cpa_down）。",
-                             "fix": "看 free runner.log 与 state/<date>.json；CPA 断供会显示 paused_cpa_down（属正常等待）。"})
+                             "fix": f"看 {SSH_HOST} runner.log 与 state/<date>.json；CPA 断供会显示 paused_cpa_down（属正常等待）。"})
 
     # ---- disk ----
     free = probe["disk"].get("free")
@@ -960,7 +1238,11 @@ def main():
             pass
 
     state = load_state()
-    probe = run_probe(state.get("last_audio_file", ""))
+    probe = (
+        run_production_probe()
+        if MONITOR_PROFILE == "production"
+        else run_probe(state.get("last_audio_file", ""))
+    )
     probe["jingting"] = run_jingting_probe()
     probe["autoslice"] = run_autoslice_probe()
     verdict, problems, actions, notes = evaluate(probe, state)
