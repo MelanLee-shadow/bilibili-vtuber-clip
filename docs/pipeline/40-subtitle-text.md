@@ -38,6 +38,21 @@
 权威；已公开稿件不得因这类后验诊断自动替换或重传。`uniform_host` 继续只决定显示样式，
 不参与上述四态裁决。
 
+批量声学复核必须先用 `scripts/nested_media_acoustic_review.py plan` 绑定
+`nested-media-observation-manifest.v1` 的文件 SHA。manifest 必须声明
+`COMPLETE_OBSERVATION_SET`、期望 observation 数量并逐文件绑定上游视觉证据；plan 再冻结
+其中的**精确 observation 集合**、源媒体/SRT/原帧哈希与逐条时间窗。receipt 必须回绑
+`plan_sha256` 且使用计划中的 exact interval。`consume` 可以保存
+partial batch，但只要缺任一 observation，`evidence_supported_source_only_cue_indexes` 必须
+为空；完整 batch 也仍是 evidence-only，不能自行修改字幕、成片或公开状态。
+
+中断的 CPA 视觉批次只能通过 `scripts/cpa_visual_batch_resume.py` 的 create-only supplemental
+namespace 续跑：计划必须逐 SHA 绑定原 manifest 与原 batch result，已 `OBSERVED` 的 sheet 永远
+不得再次派发；计划必须一次覆盖全部失败/未派发 sheet，并固定先跑未派发、后跑显式可重试失败。
+每个 sheet 恰好一次 probe，单项失败不得让后续 sheet 饥饿，旧失败回执也不得覆盖。补齐视觉批次
+仍只产生像素证据；后续完整 observation manifest、exact acoustic plan、逐条声学 receipt 和私有
+最终 authority 缺一不可，不能由 visual resume 直接删字幕、渲染或发布。
+
 ## 普通谈话的音频分工
 
 普通字幕链为 **BCUT 草稿/时间轴 → 已授权词形与词边界规范 → CPA 整片文字校正**，然后由

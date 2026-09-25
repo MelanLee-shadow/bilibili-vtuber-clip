@@ -400,6 +400,14 @@ FOCUSED_MODULE_LINE_BUDGETS = {
     # 实证——source/final 两层 review 穿透与相邻 carry audit 汇总。
     Path("src/autoslice/producer_boundary_review_stage.py"): 252,
     Path("src/autoslice/review_package_boundary_contract.py"): 350,
+    # Exact observation-set planning and partial-batch fail-closed convergence
+    # stay separate from the per-observation visual/acoustic classifier.
+    Path("src/autoslice/nested_media_acoustic_review.py"): 420,
+    Path("src/autoslice/nested_media_observation_manifest.py"): 180,
+    # Supplemental visual resumption keeps hash-bound planning separate from
+    # provider execution and create-only receipt persistence.
+    Path("src/autoslice/cpa_visual_batch_resume_plan.py"): 380,
+    Path("src/autoslice/cpa_visual_batch_resume.py"): 220,
 }
 
 
