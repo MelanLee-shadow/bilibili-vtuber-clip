@@ -12,6 +12,7 @@ import hashlib
 import json
 import subprocess
 import tempfile
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -24,6 +25,24 @@ _UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
 
 def _sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
+
+
+def _safe_retry_after(error: urllib.error.HTTPError) -> str | None:
+    """Return one log-safe Retry-After value without reading provider bytes."""
+
+    if error.headers is None:
+        return None
+    raw = error.headers.get("Retry-After")
+    if raw is None:
+        return None
+    value = str(raw).strip()
+    if (
+        not value
+        or len(value) > 128
+        or any(character in "\r\n" or not character.isprintable() for character in value)
+    ):
+        return None
+    return value
 
 
 def _extract_frame_jpeg(
@@ -258,6 +277,25 @@ def _vision_qa(
             reason_code="VISION_PROVIDER_CAPACITY",
             error="provider capacity wait timed out",
         )
+        return receipt
+    except urllib.error.HTTPError as exc:
+        receipt.update(
+            status="UNAVAILABLE",
+            reason_code=(
+                "VISION_PROVIDER_CAPACITY"
+                if exc.code == 429
+                else "VISION_CALL_FAILED"
+            ),
+            http_status=int(exc.code),
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        retry_after = _safe_retry_after(exc)
+        if retry_after is not None:
+            receipt["retry_after"] = retry_after
+        try:
+            exc.close()
+        except Exception:
+            pass
         return receipt
     except Exception as exc:
         receipt.update(

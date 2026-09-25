@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+from email.message import Message
+import io
 import json
 from pathlib import Path
+import urllib.error
 
 from src.autoslice import agy_frame_witness
 from src.autoslice import cpa_frame_witness
@@ -57,6 +61,94 @@ def test_cpa_observed_receipt_binds_frame_prompt_response(
     assert content[1]["image_url"].startswith("data:image/jpeg;base64,")
     for key in ("frame_sha256", "prompt_sha256", "response_sha256"):
         assert len(str(receipt[key])) == 64
+
+
+def _http_error(code: int, *, retry_after: str | None = None):
+    headers = Message()
+    if retry_after is not None:
+        headers["Retry-After"] = retry_after
+    return urllib.error.HTTPError(
+        "https://cpa.example/v1/responses",
+        code,
+        "Too Many Requests" if code == 429 else "Internal Server Error",
+        headers,
+        io.BytesIO(b"provider response body must not enter the receipt"),
+    )
+
+
+def test_cpa_http_429_is_capacity_without_persisting_provider_body(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(
+        cpa_frame_witness,
+        "_extract_frame_jpeg",
+        lambda *args, **kwargs: b"jpegbytes",
+    )
+    monkeypatch.setattr(
+        cpa_frame_witness,
+        "runtime_provider_slot",
+        lambda **_kwargs: nullcontext(),
+    )
+    error = _http_error(429, retry_after="120")
+    monkeypatch.setattr(
+        cpa_frame_witness.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
+    )
+
+    receipt = cpa_frame_witness.frame_vision_probe(
+        tmp_path / "x.mp4",
+        0,
+        "q",
+        api_base="https://cpa.example/v1",
+        api_key="secret-not-for-receipts",
+    )
+
+    assert receipt["status"] == "UNAVAILABLE"
+    assert receipt["reason_code"] == "VISION_PROVIDER_CAPACITY"
+    assert receipt["http_status"] == 429
+    assert receipt["retry_after"] == "120"
+    serialized = json.dumps(receipt, ensure_ascii=False)
+    assert "provider response body" not in serialized
+    assert "secret-not-for-receipts" not in serialized
+    assert "response_sha256" not in receipt
+    assert error.closed is True
+
+
+def test_cpa_non_capacity_http_error_keeps_call_failed_contract(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(
+        cpa_frame_witness,
+        "_extract_frame_jpeg",
+        lambda *args, **kwargs: b"jpegbytes",
+    )
+    monkeypatch.setattr(
+        cpa_frame_witness,
+        "runtime_provider_slot",
+        lambda **_kwargs: nullcontext(),
+    )
+    monkeypatch.setattr(
+        cpa_frame_witness.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(_http_error(500)),
+    )
+
+    receipt = cpa_frame_witness.frame_vision_probe(
+        tmp_path / "x.mp4",
+        0,
+        "q",
+        api_base="https://cpa.example/v1",
+        api_key="secret-not-for-receipts",
+    )
+
+    assert receipt["status"] == "UNAVAILABLE"
+    assert receipt["reason_code"] == "VISION_CALL_FAILED"
+    assert receipt["http_status"] == 500
+    assert "retry_after" not in receipt
+    assert "provider response body" not in json.dumps(receipt, ensure_ascii=False)
 
 
 def test_cpa_missing_credentials_fails_closed_without_extract(
