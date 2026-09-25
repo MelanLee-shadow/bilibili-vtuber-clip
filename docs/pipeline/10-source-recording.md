@@ -9,7 +9,8 @@
 - 录制服务与源账本：参考 `ops/recording/`，按自己的部署核对 compose、
   录播姬配置和 `recording/status.json`。
 Mac 上的 `scripts/slice_monitor.py` 只作报告与窄安全制动，不是 runtime authority。
-production profile 默认使用 `oci3` SSH alias，以宿主只读 `record_health_audit.py`、normalized
+公开版 production profile 默认使用 `localhost` 作为同机 quickstart；远端录制主机必须通过
+`AUTOSLICE_MONITOR_SSH_HOST` 显式配置。它以目标主机的只读 `record_health_audit.py`、normalized
 `status.json`/`adapter-state.json` 和 autoslice heartbeat 为输入，不再读取旧 `/app/Videos` 容器布局；
 SSH 固定 `BatchMode=yes` 与
 `StrictHostKeyChecking=yes`；历史拓扑必须显式选择 `legacy` profile 并显式给 host，不能因旧

@@ -4,8 +4,10 @@
 
 Runs locally on 维护者's Mac (launchd), SSHes into the configured production
 recording host, and checks the health of the bilive auto-slice pipeline for room
-22966160 (李豆沙). The production profile defaults to the current OCI3 SSH alias;
-legacy topology must be selected explicitly and must name its host.
+22966160 (李豆沙). In the public snapshot, the production profile
+defaults to localhost for the same-host quickstart; set AUTOSLICE_MONITOR_SSH_HOST
+for a remote recording host. Legacy topology must still be selected explicitly and
+must name its host.
 
 What it watches
   - bilive_record container reachable
