@@ -330,3 +330,34 @@ VAD 只描述物理连续性：通过 source/语义闭环后，“切点后仍�
 
 选择 scorecard 与边界 reviewer 当前都来自 CPA gpt-5.6 模型族，必须共享同一
 `independence_group`，只算一个相关语义证人；“分开调用”不等于两票。
+
+## 包内私有正式边界权威
+
+诊断预览只有在另行签发并通过机械重放的包内权威后，才可晋升为**私有边界消费者输入**。
+当前 v1 合同由 `surgery-formal-boundary-result.v1`、
+`surgery-boundary-package-authority.v1`、`surgery-boundary-package-consumer.v1` 与
+`surgery-private-boundary-package.v1` 四面组成，并由
+`src/autoslice/private_boundary_package.py` / `scripts/verify_private_boundary_package.py`
+统一验证；候选专属脚本、DAG 行或自报 `PASS` 不能替代该消费者。
+
+四面内部自洽不能充当来源身份证明。调用方必须显式提供已自封的 `.clip-context.json` 作为
+包外身份根；验证器按包内 `candidate_id`、`recording_date` 校验 context self-seal 和每个
+source piece，再构造 `private-boundary-source-identity.v1`。authority 的 `artifacts.clip_context`
+与 `source_identity`、formal result 的 `inputs.clip_context`、manifest 的身份 seal，以及 consumer
+的 source/context 三项 verified seal 必须同时指向同一当前字节。缺任一面、路径/SHA/日期/候选
+漂移，或旧包只在多份内部 JSON 重复同一错误日期，均 fail closed；不自动猜测或回退到包内日期。
+
+验证器必须复用现有 `frozen-boundary-owner-contract.v1`、
+`talk-boundary-search-scope.v1`、`structured-chat-payoff-assessment.v1` 与严格 SRT 门，
+并从包内当前字节重算 authority self-seal、result/consumer/manifest 互绑、required owner 数量
+和终点、source-local 到 package-local 的时间映射、双流媒体时长及 400ms 尾垫。声明为
+`OUTSIDE_IMMUTABLE_STORY_SCOPE` 的 chat payoff 仍须保持无 effective scope；owner、scope、
+SRT 终点或媒体终点任一漂移均 fail closed。v1 的 `large_media_copied=false` 还要求 manifest
+声明的原件与包内媒体/SRT 继续是同 inode、同字节的 hardlink；路径越界、symlink、普通副本
+或来源消失均不能补签。
+
+`PASS_PRIVATE_BOUNDARY_PACKAGE_VERIFIED` 只证明正式 source-local endpoint 已被一个私有
+media/subtitle pair 实际消费；它不生成或替代普通包要求的 source/full-window 与
+final-delivery 两层语义回执、StoryContract、最终音轨见证、标题封面联合质检、canonical
+package audit、生产接纳或发布授权。后续若要进入 ordinary review-package chain，仍须按本页
+及 [80](80-package-delivery.md) 从该已验 pair 构造完整当前包，不能把诊断预览改名冒充成片。

@@ -41,6 +41,36 @@ correspondence 的原媒体/见证 SHA 和时间域校验，然后为全部 cue 
 实际修订仍须有当前输入绑定的 CPA 决定和必要局部音频，保留旧稿及未影响字幕，重新验证
 对应实际视频、片头与音轨。诊断、修订预览、生产接纳及公开交付分别记账。
 
+## 私有边界包的机械验真
+
+`scripts/verify_private_boundary_package.py` 是只读验证入口；除显式 `--output` 创建一份
+0600、create-only receipt 外，不修改 package、媒体、字幕、state、registry 或发布面。调用必须
+同时给出 `--package-root` 与 `--clip-context`；后者是强制的包外来源身份根，不从包内日期或路径
+自动推断。需要覆盖父级 formal result 时再显式给 `--result`：
+
+```bash
+python scripts/verify_private_boundary_package.py \
+  --package-root /path/to/private-package \
+  --result /path/to/RESULT.json \
+  --clip-context /path/to/candidate.clip-context.json \
+  --output /path/to/verification.json
+```
+
+验证器只接受包根内的 authority/consumer/manifest 与父级 formal result，拒绝 symlink、路径
+穿越、非普通文件和读期间身份漂移；clip-context 必须通过 candidate/date、自封 digest 与 source
+pieces 校验，并在 authority/result/manifest/consumer 五个表面形成同一 canonical source identity。
+所有其他外部 evidence 与 hardlink source 也必须按声明的 SHA/size/current inode 重新闭合。旧包
+缺少来源身份绑定时直接阻断，不提供 legacy bypass。媒体只在此层重验当前 bytes、ffprobe 双流
+与精确时长；完整解码、最终音轨见证及成片视觉验收仍由本页其他门分别执行。
+
+验证成功的 `private-boundary-package-verification.v1` 必须明确保持
+`canonical_review_package_integrated=false`、`canonical_package_audit_passed=false`、
+`title_cover_joint_qc_passed=false`、`production_adopted=false`、`upload_authorized=false` 与
+`public=false`。它可以关闭“正式边界 authority 从未被真实媒体/字幕消费”的缺口，但不能把
+private package、`review_ready`、canonical audit 或 publication 混成同一状态。普通打包器后续
+仍须物化 record/story/chat/ASS/speaker/cover/title/final-audio 等完整表面，并使用当前 auditor
+重新验收；任何 provider/media/subtitle mutation 或 release flag 出现在该私有合同中都直接拒绝。
+
 ## 成片交付原则
 
 快车道、人工定点修复与普通生产都必须交付完整成片：谈话片头仅加一次、字幕实际烧入
