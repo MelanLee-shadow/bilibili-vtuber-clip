@@ -6,6 +6,14 @@
 - 链路：`source_context_planner.py`（计划扩窗）→ `source_context_executor.py`（执行）→ `boundary_resolver.py` / `producer_boundary_resolution.py`（定稿）→ `live_source_review.py`（含 song_boundary 专线）。
 - `semantic_start/end` 对准真实语音起止读 `padded.fresh.srt`；候选 start 包含必要前置铺垫。
 - 边界红旗 → quarantine（runner 规则），不许带伤交付。
+- `--resume-text-checkpoint` 只复用已验哈希的完成阶段，并重试缺失的边界通信调用。
+  入口复用 `provider_failure.transport_unavailable_reason` 分类；权限错误、明确的
+  provider rejection 或 401/403 不得签发续跑输入回执。429 只说明尚无内容裁决，
+  不表示立即重试许可；应遵守原服务的恢复/退避条件，不改凭据或模型绕过限制。
+- 恢复入口对旧输出根只允许严格只读地消费 hash-bound piece/padded 缓存
+  （`require_existing_cache=true`）。任一缓存或 provenance 缺失/漂移必须在 recut、
+  unlink、concat 和 provenance 写入前阻断；不得原地修复旧 checkpoint，也不得借
+  恢复路径重新转码。
 - CPA 判官的 `context_expand_before/after_ms` 扩窗建议在本步消费（自动扩窗后重审）。
 - 为保护开头音素而保留的 pre-roll 可以有声无字；若上一 cue 只因裁切重叠而露出
   `<=300ms` 的不可读字幕残片，保留音频但删除该闪字。该判断必须发生在最短可读时长

@@ -384,3 +384,159 @@ def test_prepare_source_media_does_not_reuse_ineligible_or_corrupt_cache(
             out_root=out_root,
             host="localhost",
         )
+
+
+def _install_checkpoint_source_cache(
+    tmp_path, *, tamper_piece: bool = False, tamper_padded: bool = False
+):
+    out_root = tmp_path / "checkpoint"
+    out_root.mkdir()
+    source_sha256 = "a" * 64
+    source_path = "/recordings/official-replay.mp4"
+    piece = out_root / "piece_0_1000_5000.mp4"
+    piece.write_bytes(b"tampered" if tamper_piece else b"checkpoint piece")
+    piece_provenance = {
+        "source_path": source_path,
+        "source_sha256": source_sha256,
+        "source_media_binding": "sha256:" + source_sha256,
+        "start_ms": 1_000,
+        "end_ms": 5_000,
+        "output_path": str(piece.resolve()),
+        "output_sha256": hashlib.sha256(b"checkpoint piece").hexdigest(),
+    }
+    piece.with_suffix(".provenance.json").write_text(
+        json.dumps(piece_provenance),
+        encoding="utf-8",
+    )
+    padded = out_root / "padded_1000_5000.mp4"
+    padded.write_bytes(
+        b"tampered padded" if tamper_padded else b"checkpoint padded"
+    )
+    padded_provenance = {
+        "inputs": [
+            {
+                "path": str(piece.resolve()),
+                "sha256": hashlib.sha256(piece.read_bytes()).hexdigest(),
+            }
+        ],
+        "output_path": str(padded.resolve()),
+        "output_sha256": hashlib.sha256(b"checkpoint padded").hexdigest(),
+    }
+    padded.with_suffix(".provenance.json").write_text(
+        json.dumps(padded_provenance),
+        encoding="utf-8",
+    )
+    spec = {
+        "candidate_id": "checkpoint-resume",
+        "pieces": [
+            {
+                "remote_media": source_path,
+                "start_ms": 1_000,
+                "end_ms": 5_000,
+            }
+        ],
+    }
+    return out_root, spec, piece, padded
+
+
+def test_checkpoint_source_media_cache_is_consumed_read_only(
+    monkeypatch, tmp_path
+):
+    out_root, spec, piece, padded = _install_checkpoint_source_cache(tmp_path)
+    before = {
+        path.relative_to(out_root): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in out_root.iterdir()
+        if path.is_file()
+    }
+    monkeypatch.setattr(
+        producer_source_media,
+        "_source_media_sha256",
+        lambda *_args: pytest.fail("checkpoint resume must not rehash the source root"),
+    )
+    monkeypatch.setattr(
+        producer_source_media,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail(
+            "checkpoint resume must not recut, copy, or concatenate media"
+        ),
+    )
+    monkeypatch.setattr(
+        producer_source_media,
+        "ffprobe_duration_ms",
+        lambda _path: 4_000,
+    )
+
+    prepared = producer_source_media.prepare_source_media(
+        spec=spec,
+        cid="checkpoint-resume",
+        out_root=out_root,
+        host="oci3",
+        require_existing_cache=True,
+    )
+
+    after = {
+        path.relative_to(out_root): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in out_root.iterdir()
+        if path.is_file()
+    }
+    assert after == before
+    assert prepared.padded == padded
+    assert prepared.piece_provenance_rows[0]["source_revalidation_status"] == (
+        "HASH_BOUND_CHECKPOINT_CACHE_REUSED_READ_ONLY"
+    )
+    assert spec["pieces"][0]["source_media_sha256"] == "sha256:" + "a" * 64
+
+
+@pytest.mark.parametrize(
+    ("tamper_piece", "tamper_padded", "reason"),
+    [
+        (True, False, "SOURCE_MEDIA_CHECKPOINT_CACHE_MISSING_OR_INVALID"),
+        (False, True, "SOURCE_MEDIA_CHECKPOINT_PADDED_CACHE_MISSING_OR_INVALID"),
+    ],
+)
+def test_checkpoint_source_media_cache_drift_blocks_without_mutation(
+    monkeypatch, tmp_path, tamper_piece, tamper_padded, reason
+):
+    out_root, spec, _piece, _padded = _install_checkpoint_source_cache(
+        tmp_path,
+        tamper_piece=tamper_piece,
+        tamper_padded=tamper_padded,
+    )
+    before = {
+        path.relative_to(out_root): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in out_root.iterdir()
+        if path.is_file()
+    }
+    monkeypatch.setattr(
+        producer_source_media,
+        "_source_media_sha256",
+        lambda *_args: pytest.fail("invalid checkpoint cache must fail before source I/O"),
+    )
+    monkeypatch.setattr(
+        producer_source_media,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail(
+            "invalid checkpoint cache must not be repaired in place"
+        ),
+    )
+    monkeypatch.setattr(
+        producer_source_media,
+        "ffprobe_duration_ms",
+        lambda _path: 4_000,
+    )
+
+    with pytest.raises(RuntimeError, match=reason):
+        producer_source_media.prepare_source_media(
+            spec=spec,
+            cid="checkpoint-resume",
+            out_root=out_root,
+            host="oci3",
+            require_existing_cache=True,
+        )
+
+    after = {
+        path.relative_to(out_root): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in out_root.iterdir()
+        if path.is_file()
+    }
+    assert after == before

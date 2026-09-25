@@ -92,8 +92,10 @@ from src.autoslice.producer_final_review_transport import (
     build_pronoun_audit_llm_call as _build_pronoun_audit_llm_call,
 )
 from src.autoslice.producer_native_witness import (
-    ensure_local_native_audio_budget as _ensure_local_native_audio_budget,
+    build_routed_local_audio_entity_verifier,
+    finish_audio_witness_routing,
     native_foreign_script_kwargs as _native_foreign_script_kwargs,
+    start_audio_witness_routing,
 )
 from src.autoslice.pronoun_consistency import (
     CandidatePronounAuditError,
@@ -114,6 +116,9 @@ from src.autoslice.producer_boundary_owner_contract import (
 )
 from src.autoslice.producer_text_finalization import _render_cues_to_srt
 from src.autoslice.producer_text_checkpoint import retain_post_transcript_text
+from src.autoslice.producer_boundary_resume_checkpoint import (
+    load_or_compute_vad_spans,
+)
 from src.autoslice.producer_source_truth_authority import (
     reconcile_required_source_truth_chat_authority,
     verify_source_truth_preview_formal_binding,
@@ -166,6 +171,7 @@ from src.autoslice.topic_entity_graph import (
     resolve_topic_context,
 )
 
+_DEFERRED_FOREIGN_OVERRIDE_REASON = "every un-witnessed foreign-language cue has a timeline-bound reviewed repair"  # noqa: E501
 
 @dataclass(frozen=True)
 class TextPipelineAdapters:
@@ -180,7 +186,6 @@ class TextPipelineAdapters:
     topic_graph_path: Callable[[], Path]
     topic_graph_expected_sha256: Callable[[], str]
 
-
 @dataclass(frozen=True)
 class TextPipelineResult:
     srt_text: str
@@ -192,7 +197,6 @@ class TextPipelineResult:
     clip_context: dict
     clip_context_path: Path
     review_exact_final_srt: Callable[[str, Mapping[str, object], int, int], dict[str, object]]
-
 
 @dataclass(frozen=True)
 class TranscriptionDraft:
@@ -206,14 +210,13 @@ class TranscriptionDraft:
     session_topic_authorities: tuple[dict[str, Any], ...]
     session_topic_absorption_audits: list[dict[str, Any]]
     source_language_witness_srt: str
-
+    vad_span_consumption: dict[str, object]
 
 @dataclass(frozen=True)
 class EntityVerificationContext:
     verify_confusable_entity: Callable
     referent_groups: list[ReferentGroup]
     topic_resolution_audit: dict[str, object]
-
 
 @dataclass(frozen=True)
 class EntityAuthorityResult:
@@ -222,13 +225,11 @@ class EntityAuthorityResult:
     transcript_entity_audit: dict
     handled_entity_cues: set[int]
 
-
 @dataclass(frozen=True)
 class TextEvidenceResult:
     srt_text: str
     cues: list[object]
     chat_authority_path: Path
-
 
 def _collect_timeline_chat(
     spec: dict, durations: list[int]
@@ -275,13 +276,14 @@ def _collect_timeline_chat(
     merged.sort(key=lambda item: item.offset_ms)
     return merged, authoritative_chat
 
-
 def _transcribe_draft(
     *,
     spec: dict,
     padded: Path,
     padded_dur: int,
     host: str,
+    cid: str,
+    out_root: Path,
     substrate: str,
     correct: str,
     screen_text: bool,
@@ -315,7 +317,15 @@ def _transcribe_draft(
             host, danmaku_items=merged or None, window_start_ms=0
         )
     vad = build_ssh_silero_vad_provider(host)
-    spans = vad(padded, 0, padded_dur)
+    spans, vad_span_consumption = load_or_compute_vad_spans(
+        candidate_id=cid,
+        out_root=out_root,
+        padded=padded,
+        padded_duration_ms=padded_dur,
+        provider=vad,
+        allow_recompute_if_missing=True,
+        recompute_reason="NORMAL_TEXT_PIPELINE_INITIAL_VAD",
+    )
     srt_text = transcriber(padded, [(s.start_ms, s.end_ms) for s in spans])
     srt_text, code_switch_audit = normalize_code_switch_surfaces(srt_text)
     srt_text, session_topic_absorption_audit = absorb_session_topic_entities(
@@ -350,6 +360,7 @@ def _transcribe_draft(
         session_topic_authorities=session_topic_authorities,
         session_topic_absorption_audits=[session_topic_absorption_audit],
         source_language_witness_srt=source_language_witness_srt,
+        vad_span_consumption=vad_span_consumption,
     )
 
 
@@ -365,32 +376,19 @@ def _build_entity_verification_context(
     srt_text: str,
     authoritative_chat: list[ChatEvidence],
     adapters: TextPipelineAdapters,
+    audio_witness_routing: Mapping[str, object] | None = None,
 ) -> EntityVerificationContext:
     human_entity_verifier = (
         build_human_text_entity_verifier(text_override_path, candidate_id=cid)
         if text_override_path is not None
         else None
     )
-    audio_entity_verifier = None
-    native_provider = _ensure_local_native_audio_budget(spec, padded)
-    if witness_audio_locally_resolvable(padded, host=host):  # F21：音频窗可解析门，不再是 host 门
-        from src.autoslice.entity_audio_verifier import build_local_audio_entity_verifier
-
-        audio_entity_verifier = build_local_audio_entity_verifier(
-            source_media=padded,
-            output_dir=out_root,
-            recording_date=str(spec.get("date") or ""),
-            source_duration_ms=padded_dur,
-        )
-        if native_provider in {"moss", "mai"}:
-            from src.autoslice.native_context_witness import build_native_context_verifier
-
-            audio_entity_verifier = build_native_context_verifier(
-                fallback=audio_entity_verifier,
-                source_media=padded,
-                output_dir=out_root,
-                provider=native_provider, **(spec.get("local_audio_witness_budget") or {}),
-            )
+    audio_entity_verifier = build_routed_local_audio_entity_verifier(
+        spec=spec, source_media=padded, output_dir=out_root,
+        recording_date=str(spec.get("date") or ""), source_duration_ms=padded_dur,
+        host=host, routing=audio_witness_routing,
+        audio_is_locally_resolvable=witness_audio_locally_resolvable,
+    )
 
     # Read-aloud (danmaku/SC) arbitration is a pure-context judgment, so route it
     # through a general LLM on CPA *before* the audio verifier: this keeps
@@ -1402,6 +1400,7 @@ def _finalize_text_evidence(
     cid: str,
     padded: Path | None = None,
     clip_context: Mapping[str, object] | None = None,
+    audio_witness_routing: Mapping[str, object] | None = None,
 ) -> TextEvidenceResult:
     srt_text, final_source_language_audit = _foreign_scope.guard_source_language(
         source_language_witness_srt, srt_text, spec, durations,
@@ -1416,9 +1415,8 @@ def _finalize_text_evidence(
         override_document,
     ):
         final_source_language_audit["status"] = "DEFERRED_TO_BOUND_TEXT_OVERRIDE"
-        final_source_language_audit["deferred_reason"] = (
-            "every un-witnessed foreign-language cue has a timeline-bound reviewed repair"
-        )
+        # Preserve historical receipt bytes for downstream comparisons.
+        final_source_language_audit["deferred_reason"] = _DEFERRED_FOREIGN_OVERRIDE_REASON
     if padded is not None:
         # AGY listens candidate-blind; mismatches go to the text-only CPA judge.
         srt_text, final_source_language_audit = _adjudicate_final_language(
@@ -1494,7 +1492,7 @@ def _finalize_text_evidence(
             padded, srt_text, foreign_script_audit, out_root, cid, chat_authority_audit,
             source_srt=source_language_witness_srt,
             source_language=False,
-            **_native_foreign_script_kwargs(spec),
+            **_native_foreign_script_kwargs(spec, routing=audio_witness_routing),
         )
     chat_authority_audit["foreign_script_consistency_audit"] = foreign_script_audit
     srt_text, title_mark_balance_audit = apply_title_mark_balance_guard(srt_text)
@@ -1715,12 +1713,16 @@ def run_text_pipeline(
     adapters: TextPipelineAdapters,
 ) -> TextPipelineResult:
     merged, authoritative_chat = _collect_timeline_chat(spec, durations)
+    audio_witness_routing, audio_witness_routing_path = start_audio_witness_routing(
+        spec, candidate_id=cid, source_media=padded, out_root=out_root)
     screen_read_probe = build_env_screen_read_probe(padded)
     draft = _transcribe_draft(
         spec=spec,
         padded=padded,
         padded_dur=padded_dur,
         host=host,
+        cid=cid,
+        out_root=out_root,
         substrate=substrate,
         correct=correct,
         screen_text=screen_text,
@@ -1754,6 +1756,7 @@ def run_text_pipeline(
         srt_text=draft.srt_text,
         authoritative_chat=authoritative_chat,
         adapters=adapters,
+        audio_witness_routing=audio_witness_routing,
     )
     clip_context = build_clip_context(
         candidate_id=cid,
@@ -1794,8 +1797,8 @@ def run_text_pipeline(
         truth_full_ownership=truth_ownership,
     )
     authority.chat_authority_audit["source_truth_preview_receipts"] = {
-        "pre_entity_arbitration": draft_source_truth_preview,
-    }
+        "pre_entity_arbitration": draft_source_truth_preview}
+    authority.chat_authority_audit["vad_span_consumption"] = dict(draft.vad_span_consumption)
     authority.chat_authority_audit["structured_chat_binding_audit"] = (
         build_structured_chat_binding_audit(spec, authoritative_chat)
     )
@@ -1866,7 +1869,10 @@ def run_text_pipeline(
         cid=cid,
         padded=padded,
         clip_context=clip_context,
+        audio_witness_routing=audio_witness_routing,
     )
+    finish_audio_witness_routing(
+        audio_witness_routing, audio_witness_routing_path, authority.chat_authority_audit)
     # 带伤交付闸：provider 失败且后续确定性 pass 未修掉的提案拒绝交付；
     # provenance 已落盘，runner 按 provider_transient 有界重试。
     # 未修 suspect 不得继续进入交付面。
@@ -1923,7 +1929,6 @@ def run_text_pipeline(
         + "\n",
         encoding="utf-8",
     )
-
     def review_exact_final_srt(
         final_srt_text: str,
         verified_authority_audit: Mapping[str, object],

@@ -79,10 +79,11 @@ def _load_hash_bound_cached_piece(
     local: Path,
     provenance_path: Path,
     host: str,
+    allow_nonlocal_host: bool = False,
 ) -> dict | None:
-    """Return an exact cached cut when only the source root is unavailable."""
+    """Return an exact cached cut when its provenance still binds every byte."""
 
-    if host not in {"localhost", "127.0.0.1", "::1"}:
+    if not allow_nonlocal_host and host not in {"localhost", "127.0.0.1", "::1"}:
         return None
     try:
         document = json.loads(provenance_path.read_text(encoding="utf-8"))
@@ -230,7 +231,15 @@ def prepare_source_media(
     out_root: Path,
     host: str,
     spec_parent: Path | None = None,
+    require_existing_cache: bool = False,
 ) -> PreparedSourceMedia:
+    """Prepare source media, or consume a checkpoint cache without mutating it.
+
+    ``require_existing_cache`` is the boundary-resume contract.  Every piece
+    and the padded concat must already have valid hash-bound provenance; any
+    miss or drift blocks the resume before recut, unlink, concat, or provenance
+    writes can touch the checkpoint namespace.
+    """
     piece_paths: list[Path] = []
     piece_provenance_rows: list[dict] = []
     for index, piece in enumerate(spec["pieces"]):
@@ -241,7 +250,28 @@ def prepare_source_media(
             local=local,
             provenance_path=piece_provenance_path,
             host=host,
+            allow_nonlocal_host=require_existing_cache,
         )
+        if require_existing_cache:
+            if cached_piece is None:
+                raise RuntimeError(
+                    "SOURCE_MEDIA_CHECKPOINT_CACHE_MISSING_OR_INVALID:"
+                    f"{local}"
+                )
+            _bind_piece_source_media_sha256(
+                piece,
+                source_sha256=str(cached_piece["source_sha256"]),
+            )
+            piece_paths.append(local)
+            piece_provenance_rows.append(
+                {
+                    **cached_piece,
+                    "source_revalidation_status": (
+                        "HASH_BOUND_CHECKPOINT_CACHE_REUSED_READ_ONLY"
+                    ),
+                }
+            )
+            continue
         if cached_piece is not None:
             try:
                 cached_source_present = Path(piece["remote_media"]).is_file()
@@ -362,6 +392,11 @@ def prepare_source_media(
         expected_without_output_hash=expected_padded,
         output=padded,
     )
+    if require_existing_cache and not padded_cache_valid:
+        raise RuntimeError(
+            "SOURCE_MEDIA_CHECKPOINT_PADDED_CACHE_MISSING_OR_INVALID:"
+            f"{padded}"
+        )
     if not padded_cache_valid:
         padded.unlink(missing_ok=True)
         padded_provenance_path.unlink(missing_ok=True)

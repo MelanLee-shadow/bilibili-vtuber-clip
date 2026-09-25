@@ -44,7 +44,7 @@ Spec JSON:
 
 from __future__ import annotations
 
-import datetime as dt
+from copy import deepcopy
 import os
 import subprocess  # compatibility seam: speaker tests and callers patch this module object
 import sys
@@ -73,6 +73,8 @@ from scripts.gemini_slice_jingting import (
 )
 from scripts.suggest_upload_tags import generate_upload_tags
 from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.producer_fast_media_adapter import derive_fresh_fast_media
+from src.autoslice.producer_term_boundary_surfaces import load_term_boundary_surfaces
 from src.autoslice.speaker_finalizer import (
     finalize_fast_solo_subtitles,
 )
@@ -80,7 +82,6 @@ from src.autoslice.speaker_session_router import (
     verify_speaker_routing_claim,
     verify_speaker_routing_claim_for_candidate,
 )
-from src.autoslice.topic_entity_graph import load_topic_entity_graph
 
 CHANNEL_PROFILE = load_channel_profile(ROOT)
 
@@ -213,16 +214,12 @@ def _derive_fresh_fast_media(
 ) -> dict[str, object]:
     """Compatibility seam for patched media command adapters."""
 
-    return _derive_fresh_fast_media_impl(
-        host=host,
-        media_path=media_path,
-        claimed_segment_path=claimed_segment_path,
+    return derive_fresh_fast_media(
+        host=host, media_path=media_path, claimed_segment_path=claimed_segment_path,
         expected_segment_sha256=expected_segment_sha256,
-        final_source_start_ms=final_source_start_ms,
-        final_source_end_ms=final_source_end_ms,
-        accurate_command_builder=_accurate_reencode_recut_command,
-        run_command=run,
-        duration_probe=ffprobe_duration_ms,
+        final_source_start_ms=final_source_start_ms, final_source_end_ms=final_source_end_ms,
+        implementation=_derive_fresh_fast_media_impl,
+        adapters=(_accurate_reencode_recut_command, run, ffprobe_duration_ms),
     )
 
 
@@ -233,49 +230,18 @@ from src.autoslice.producer_text_pipeline import (
     TextPipelineAdapters,
     run_text_pipeline,
 )
+from src.autoslice.producer_text_resume import (
+    run_boundary_resume_text_pipeline,
+)
 from src.autoslice.talk_filler import write_final_filler_audit
 
 
 def _load_term_boundary_surfaces(spec: dict) -> list[str]:
-    """Known-proper-noun surfaces for cross-cue boundary unification.
-
-    Starts with shared permanent glossary/referent surfaces, then reuses the
-    already-gated timely-terms snapshot and
-    topic_entity_graph paths session_autoslice.py substitutes per
-    AUTOSLICE_BLIND_TIMELY_TERMS / AUTOSLICE_BLIND_TOPIC_ENTITY_GRAPH before
-    invoking this script — the same env vars ``approved_timely_terms`` and
-    the topic-resolution block below already trust.  No reviewed asset path
-    is read directly here.
-    """
-
-    # Permanent host names/aliases must not vanish when the timely or topic
-    # snapshot is empty. Spelling protection is not acoustic authority.
-    from src.autoslice.term_authority import protected_terms
-
-    surfaces: list[str] = sorted(protected_terms())
-    for record in approved_timely_terms():
-        surfaces.append(str(record.get("canonical") or ""))
-        surfaces.extend(str(value) for value in record.get("readings") or [])
-        surfaces.extend(str(value) for value in record.get("aliases") or [])
-    if not _topic_graph_disabled():
-        graph_path = _topic_graph_path()
-        if graph_path.is_file() and not graph_path.is_symlink():
-            try:
-                graph, _graph_sha = load_topic_entity_graph(
-                    graph_path,
-                    expected_sha256=_topic_graph_expected_sha256(),
-                )
-                if dt.datetime.now(dt.timezone.utc) <= dt.datetime.fromisoformat(graph["expires_at"]):
-                    # Full graph, not topic-resolved: resolution below scopes
-                    # entities using this very transcript as evidence, so it
-                    # cannot run before the boundary fix that repairs it.
-                    for entity in graph.get("entities") or []:
-                        surfaces.append(str(entity.get("canonical_zh") or ""))
-                        surfaces.extend(str(value) for value in entity.get("native_names") or [])
-                        surfaces.extend(str(value) for value in entity.get("aliases") or [])
-            except (OSError, ValueError):
-                pass
-    return surfaces
+    return load_term_boundary_surfaces(
+        spec, approved_timely_terms=approved_timely_terms,
+        topic_graph_disabled=_topic_graph_disabled, topic_graph_path=_topic_graph_path,
+        topic_graph_expected_sha256=_topic_graph_expected_sha256,
+    )
 
 
 from src.autoslice.producer_speaker import (
@@ -321,10 +287,12 @@ def main(argv: list[str] | None = None) -> int:
         profile_asset_file=profile_asset_file,
     )
     spec = request.spec
+    checkpoint_spec = spec
     boundary_repair_extend_cap_ms = request.boundary_repair_extend_cap_ms
     branding_intro = request.branding_intro
     cid = request.cid
     out_root = request.out_root
+    checkpoint_root = out_root
     host = request.host
     text_override_path = request.text_override_path
     subtitle_regression_path = request.subtitle_regression_path
@@ -335,43 +303,78 @@ def main(argv: list[str] | None = None) -> int:
         cid=cid,
         out_root=out_root,
         host=host,
-        spec_parent=args.spec.parent,
+        spec_parent=args.spec.parent, require_existing_cache=args.resume_text_checkpoint,
     )
     durations = source_media.durations
     padded = source_media.padded
     padded_dur = source_media.padded_duration_ms
     padded_provenance_path = source_media.padded_provenance_path
     piece_provenance_rows = source_media.piece_provenance_rows
+    if args.resume_text_checkpoint:
+        namespace = args.resume_output_namespace.expanduser()
+        if not namespace.is_absolute():
+            raise ValueError("resume output namespace must be absolute")
+        if namespace.exists() or namespace.is_symlink():
+            raise FileExistsError(
+                "resume output namespace must be new and must not be a symlink"
+            )
+        parent = namespace.parent
+        if not parent.is_dir() or parent.is_symlink():
+            raise ValueError("resume output namespace parent must be a regular directory")
+        namespace.mkdir(mode=0o700)
+        out_root = namespace / cid
+        out_root.mkdir(mode=0o700)
+        spec = deepcopy(spec)
+        spec["output_root"] = str(namespace)
     # 2. Danmaku + on-screen SUPER_CHATs merged onto the concat timeline.
-    text_result = run_text_pipeline(
-        spec=spec,
-        durations=durations,
-        padded=padded,
-        padded_dur=padded_dur,
-        host=host,
-        text_override_path=text_override_path,
-        cid=cid,
-        out_root=out_root,
-        substrate=args.substrate,
-        correct=args.correct,
-        screen_text=args.screen_text,
-        adapters=TextPipelineAdapters(
-            build_aggregate_transcriber=_build_aggregate_asr_transcriber,
-            build_agy_transcriber=select_nonaggregate_transcriber_builder(
-                args.substrate,
-                spec=spec,
-                padded=padded,
-                padded_duration_ms=padded_dur,
-                legacy_builder=_build_ssh_agy_transcribe_runner,
-            ),
-            load_term_boundary_surfaces=_load_term_boundary_surfaces,
-            profile_asset_file=profile_asset_file,
-            review_glossary=_review_glossary,
-            topic_graph_disabled=_topic_graph_disabled,
-            topic_graph_path=_topic_graph_path,
-            topic_graph_expected_sha256=_topic_graph_expected_sha256,
+    text_adapters = TextPipelineAdapters(
+        build_aggregate_transcriber=_build_aggregate_asr_transcriber,
+        build_agy_transcriber=select_nonaggregate_transcriber_builder(
+            args.substrate,
+            spec=spec,
+            padded=padded,
+            padded_duration_ms=padded_dur,
+            legacy_builder=_build_ssh_agy_transcribe_runner,
         ),
+        load_term_boundary_surfaces=_load_term_boundary_surfaces,
+        profile_asset_file=profile_asset_file,
+        review_glossary=_review_glossary,
+        topic_graph_disabled=_topic_graph_disabled,
+        topic_graph_path=_topic_graph_path,
+        topic_graph_expected_sha256=_topic_graph_expected_sha256,
     )
+    if args.resume_text_checkpoint:
+        text_result = run_boundary_resume_text_pipeline(
+            spec=spec,
+            checkpoint_spec=checkpoint_spec,
+            durations=durations,
+            padded=padded,
+            padded_dur=padded_dur,
+            host=host,
+            text_override_path=text_override_path,
+            cid=cid,
+            checkpoint_root=checkpoint_root,
+            out_root=out_root,
+            adapters=text_adapters,
+            allow_vad_recompute_if_missing=(
+                args.allow_resume_vad_recompute
+            ),
+        )
+    else:
+        text_result = run_text_pipeline(
+            spec=spec,
+            durations=durations,
+            padded=padded,
+            padded_dur=padded_dur,
+            host=host,
+            text_override_path=text_override_path,
+            cid=cid,
+            out_root=out_root,
+            substrate=args.substrate,
+            correct=args.correct,
+            screen_text=args.screen_text,
+            adapters=text_adapters,
+        )
     transcriber = text_result.transcriber
     spans = text_result.spans
     cues = text_result.cues

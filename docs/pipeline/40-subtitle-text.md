@@ -291,8 +291,31 @@ FLAGGED/失效 receipt。最终 materialize 后仍必须重算 exact-final SRT�
   未知输入时长保持原拒绝。MOSS 全零时标仍是不可用时间证据，不按文本比例补时间。
 - MAI 凭据只在实际调用时从 `AZURE_ENDPOINT` 与进程 `AZURE_API_KEY` 或 owner-only
   `AUTOSLICE_MAI_API_KEY_FILE` 读取；MOSS 沿用上一条私密入口。两者禁止重定向、无隐式重试、
-  secret 不写日志/receipt/fingerprint。当前普通生产默认仍为 `--correct cpa`；是否把这些
-  primitives 接到 CPA 的疑点索证由独立配对真值实验决定，不能因 provider 可连通就上线。
+  secret 不写日志/receipt/fingerprint。普通生产仍以 `--correct cpa` 保留 CPA 文字终裁；
+  `producer_text_pipeline.run_text_pipeline` 的结构化补证路由从当前配置的 `MAI → MOSS` 顺序中
+  选择**一家**，禁止两家全调或在 native provider 间隐式 fallback。local entity/read-aloud 只有
+  hash-bound 的调用前 CPA 决定（`text_first_judge.needs_audio=true`，或弱 read-aloud 的 typed
+  `audio_dispatch_decision / CPA_CONTEXT_POLICY`）可以调度候选盲时窗；调用后的 CPA judge 不能倒过来
+  冒充调度许可。foreign-script 路径则由同 cue 的 deterministic mixed-script detector 绑定精确几何，
+  native 证词之后仍交 CPA 终裁。Jev 当前为 `NOT_PROMOTED`：离线评测、decision PASS 或研究回执
+  均不是生产调度权；只有另有明确 promotion 合同和真实普通消费者后才可改变该状态。
+- 旧 `local_audio_witness_provider` / `foreign_script_witness_provider` 仅作为显式覆盖；普通入口在调用前
+  写 `<candidate>.audio-witness-routing.json`。完成后的 `CONSUMED` 必须同时绑定：(1) 实际
+  `OBSERVED` 的 MAI/MOSS candidate-blind evidence，含 provider/model、精确时窗、source/audio/response
+  hash、cache/fresh 状态、`EVIDENCE_ONLY` 且 `mutation_authorized=false`；(2) 上述调用前 CPA 决定或
+  foreign detector；(3) 实际 provider 与计划路线一致；(4) 调用后的 local CPA final verdict，或
+  foreign `cpa_adjudication_rows`，均明确由 `CPA_JUDGE` 解决。缺任一项为
+  `INVALID_NATIVE_CONSUMPTION`；回执先原子落盘，普通 producer 随即以
+  `INVALID_NATIVE_AUDIO_WITNESS_CONSUMPTION` fail-closed，不能继续边界/交付链。
+  只有配置/计划而无 native evidence 为正常的 `NO_NATIVE_CALL_CONSUMED`，不会因本片不需要补听而
+  失败。`served_from_cache=true` 明确记为 `CACHE_REUSE`，不是本轮 fresh provider call。兼容字段
+  `cpa_*` 指向调用前决定，不再指向调用后裁决。native verifier 回包时另在内存路由中保留
+  去文本化的 `runtime_native_attempts`；若后续 CPA/audit 丢失，该 attempt 不会消失成
+  `NO_NATIVE_CALL_CONSUMED`，而会因缺少 dispatch/final binding 明确 INVALID。provider 异常只记录
+  计划路线与 `provider_call_observed=false`，不伪造 model、response 或调用成功。
+- 该接线不赋予 MOSS/MAI 改字或 speaker 身份权限，`uniform_host` 也不是声源证明。只有受管 runtime
+  配置、真实普通入口调用、最终字幕/声源质量和完整流程时间/成本都通过，才可宣称生产自动化已
+  生效；provider 可连通、专项脚本成功、配置 PASS 或 routing receipt 存在都不够。
 
 - 谈话切片中的歌名候选（包括可能其实是 franchise/企划名的字符串）在
   `song_name_pin.py` 改字前必须先有 `song-name-semantic-verification.v1`：回执绑定 pin 前
