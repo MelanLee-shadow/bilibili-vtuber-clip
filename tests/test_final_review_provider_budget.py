@@ -36,7 +36,7 @@ def _witness(request, heard):
 
 
 def _identified(call):
-    call.cpa_cache_identity = {"models": ["gpt-6-astra"], "effort": "medium"}
+    call.cpa_cache_identity = {"models": ["gpt-6-sol"], "effort": "medium"}
     return call
 
 
@@ -78,7 +78,7 @@ def test_budget_cache_replay_binds_actual_model_effort(tmp_path, monkeypatch, ef
     def forbidden(_prompt):
         raise AssertionError("no fresh CPA after cap")
 
-    forbidden.cpa_cache_identity = {"models": ["gpt-6-astra"], "effort": effort}
+    forbidden.cpa_cache_identity = {"models": ["gpt-6-sol"], "effort": effort}
     unresolved, resolved = adjudicate_exact_release_findings(
         source, [finding], entity_verifier=Verifier(), judge_llm_call=forbidden
     )

@@ -83,7 +83,7 @@ def image_vision_probe(
     *,
     api_base: str,
     api_key: str,
-    model: str = "gpt-6-astra",
+    model: str = "gpt-6-sol",
     timeout_seconds: float = 90.0,
     max_tokens: int = 1024,
     max_width: int = 1280,
@@ -158,7 +158,7 @@ def frame_vision_probe(
     *,
     api_base: str,
     api_key: str,
-    model: str = "gpt-6-astra",
+    model: str = "gpt-6-sol",
     timeout_seconds: float = 90.0,
     max_tokens: int = 1024,
 ) -> dict[str, object]:

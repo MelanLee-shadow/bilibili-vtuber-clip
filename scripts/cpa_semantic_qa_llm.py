@@ -254,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--fallback-model",
         help="direct transport only: an explicitly authorized second model. "
-        "The production GPT-6 Astra factory configures no GPT-5 downgrade.",
+        "The production GPT-6 Sol factory configures no GPT-5 downgrade or automatic Astra escalation.",
     )
     args = parser.parse_args(argv)
 

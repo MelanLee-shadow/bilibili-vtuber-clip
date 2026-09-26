@@ -408,10 +408,10 @@ PIPELINE_FINGERPRINT_EXCLUSIONS = {
 # Luna carries cover art direction: a structured pick with a known good shape,
 # high volume, deterministic fallback + judge guardrails — the doc-exact luna
 # lane.  Every chain falls back gpt-5.5 → gpt-5.4.
-CPA_CMD_DEEP = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-astra' medium"
-CPA_CMD_TITLE = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-astra' high"
-CPA_CMD_STANDARD = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-astra' medium"
-CPA_CMD_STRUCTURED = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-astra' medium"
+CPA_CMD_DEEP = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-sol' medium"
+CPA_CMD_TITLE = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-sol' high"
+CPA_CMD_STANDARD = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-sol' medium"
+CPA_CMD_STRUCTURED = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-sol' medium"
 # The selector's --cpa-command is the semantic-QA JUDGE lane (request/response
 # JSON contract), NOT a prompt/completion LLM template — canonical validated
 # command per the retired live-e2e runbook.  The selector

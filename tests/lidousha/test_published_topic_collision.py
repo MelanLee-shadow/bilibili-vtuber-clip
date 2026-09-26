@@ -351,7 +351,7 @@ def _refreshed_candidate(candidate: dict) -> dict:
         "schema_version": "semantic-evidence-scorecard-refresh-provider.v1",
         "transport": "command",
         "command": "scripts/llm_via_cpa.sh",
-        "model_chain": ["gpt-6-astra"],
+        "model_chain": ["gpt-6-sol"],
         "reasoning_effort": "medium",
         "timeout_seconds": 600,
         "prompt_schema": "semantic-evidence-scorecard-refresh-prompt.v1",

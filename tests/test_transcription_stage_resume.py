@@ -30,7 +30,7 @@ def fixture(tmp_path, monkeypatch):
     config = {
         "audio": b"mp3",
         "answer": json.dumps({"cues": [{"n": 1, "text": TEXT}]}),
-        "model": "gpt-6-astra",
+        "model": "gpt-6-sol",
         "effort": "low",
         "identity": True,
         "result": copy.deepcopy(ASR),
@@ -184,7 +184,7 @@ def test_same_prompt_but_millisecond_grid_change_invalidates_review(tmp_path, mo
         calls.append(1)
         return json.dumps({"cues": [{"n": 1, "text": TEXT}]})
 
-    call.cpa_cache_identity = {"models": ["gpt-6-astra"], "effort": "low"}
+    call.cpa_cache_identity = {"models": ["gpt-6-sol"], "effort": "low"}
     cache = TranscriptionStageCache(tmp_path / "input.mp4", b"same audio")
     for source in (DRAFT, DRAFT, DRAFT.replace("00:00:00,000", "00:00:00,001")):
         assert _required_cpa_cues(

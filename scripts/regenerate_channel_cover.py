@@ -58,8 +58,8 @@ from scripts.run_auto_review_shadow_pipeline import (
 )
 
 # Art direction is a structured pick with a known good shape (deterministic
-# fallback + judge guardrails) → gpt-5.6-luna, the doc-exact luna lane.
-_CPA_ART_DIRECTION_LLM = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-astra' medium"
+# fallback + judge guardrails) → GPT-6 Sol, the quality-default lane.
+_CPA_ART_DIRECTION_LLM = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-sol' medium"
 
 
 def _extract_reference_frame(media: Path, out: Path) -> None:

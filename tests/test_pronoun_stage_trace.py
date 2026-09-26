@@ -46,7 +46,7 @@ def test_aggregate_records_each_pronoun_run_even_when_upstream_cache_hits(tmp_pa
             pronoun_calls.append(prompt)
             return CHANGE if len(pronoun_calls) == 1 else KEEP
 
-        call.cpa_cache_identity = {"transport": "cpa_command", "models": ["gpt-6-astra"], "effort": "low"}
+        call.cpa_cache_identity = {"transport": "cpa_command", "models": ["gpt-6-sol"], "effort": "low"}
         return call
 
     monkeypatch.setattr(llm_client, "build_llm_call", builder)
@@ -65,7 +65,7 @@ def test_aggregate_records_each_pronoun_run_even_when_upstream_cache_hits(tmp_pa
         assert record["release_authorized"] is False
         assert record["served_from_cache"] is False
         assert len(record["calls"]) == 1
-        assert record["model_identity"]["models"] == ["gpt-6-astra"]
+        assert record["model_identity"]["models"] == ["gpt-6-sol"]
         assert record["input_srt"]["sha256"] == hashlib.sha256(SRT.encode()).hexdigest()
         assert record["calls"][0]["prompt"]["text"] == pronoun_calls[0]
         assert record["calls"][0]["completion"]["text"] in {KEEP, CHANGE}
@@ -215,7 +215,7 @@ def test_trace_reports_requested_configuration_not_attested_model_or_endpoint(tm
         return KEEP
 
     provider.cpa_cache_identity = {
-        "transport": "cpa_command", "models": ["gpt-6-astra"], "effort": "low",
+        "transport": "cpa_command", "models": ["gpt-6-sol"], "effort": "low",
         "endpoint": "https://private.invalid", "child_env": {"key": "never-copy"},
     }
     assert _run(media, provider) == SRT

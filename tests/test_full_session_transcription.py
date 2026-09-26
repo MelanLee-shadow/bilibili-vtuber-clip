@@ -387,10 +387,10 @@ def test_pronoun_pass_gets_its_own_low_effort_config_not_the_reconcile_one(
     assert len(command_configs) == 2
 
     reconcile_cfg, pronoun_cfg = command_configs
-    assert "gpt-6-astra" in reconcile_cfg.command_template
+    assert "gpt-6-sol" in reconcile_cfg.command_template
     assert reconcile_cfg.command_template.strip().endswith("medium")
 
-    assert "gpt-6-astra" in pronoun_cfg.command_template
+    assert "gpt-6-sol" in pronoun_cfg.command_template
     assert pronoun_cfg.command_template.strip().endswith("low")
     # Model chain must be byte-identical between the two configs; only the
     # trailing effort token differs.

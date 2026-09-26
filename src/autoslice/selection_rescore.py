@@ -255,7 +255,7 @@ def build_rescore_llm_call() -> Callable[[str], str]:
             transport="command",
             command_template=(
                 "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} "
-                "'gpt-6-astra' medium"
+                "'gpt-6-sol' medium"
             ),
             timeout_seconds=180.0,
         )

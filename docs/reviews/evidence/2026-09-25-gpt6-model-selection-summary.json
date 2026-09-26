@@ -1,0 +1,461 @@
+{
+  "schema": "gpt6-model-selection-summary-v1",
+  "date_utc": "2026-09-26",
+  "decision": {
+    "quality_default": "gpt-6-sol",
+    "ordinary_subtitle_effort": "low",
+    "health_probe_model": "gpt-6-luna",
+    "health_probe_effort": "low",
+    "astra_policy": "explicit-one-off-only; never default or automatic fallback",
+    "preserve_stage_efforts": true
+  },
+  "official_price_usd_per_million_tokens": {
+    "gpt-6-astra": {
+      "input": 10.0,
+      "cached_input": 1.0,
+      "output": 50.0
+    },
+    "gpt-6-sol": {
+      "input": 2.0,
+      "cached_input": 0.2,
+      "output": 10.0
+    },
+    "gpt-6-luna": {
+      "input": 0.1,
+      "cached_input": 0.01,
+      "output": 0.5
+    }
+  },
+  "method": {
+    "frozen_cases": 6,
+    "generation_gold_exposure": false,
+    "same_frozen_prompts": true,
+    "production_wrapper": true,
+    "rotated_execution_order": true,
+    "astra_live_rerun": false,
+    "astra_baseline_reason": "reuse prior same-prompt frozen receipts; avoid a redundant expensive call while Astra was already in usage-limit backoff",
+    "dkeep_definition": "Levenshtein distance to the human-approved reference; lower is better",
+    "source_intent_sha256": "902cff1bea82edc6505cba910c4cd5444cd2fb70702fd67ef6595930778caffe"
+  },
+  "aggregates": {
+    "gpt-6-astra@low": {
+      "model": "gpt-6-astra",
+      "effort": "low",
+      "cases": 6,
+      "complete": 6,
+      "contract_failures": 0,
+      "dkeep_total": 502,
+      "reference_chars_total": 3141,
+      "dkeep_ratio_micro": 0.159822,
+      "wall_seconds_total": 302.249,
+      "wall_seconds_mean": 50.375,
+      "input_tokens": 13742,
+      "output_tokens": 9501,
+      "estimated_api_usd": 0.61247,
+      "source": "historical-frozen-baseline"
+    },
+    "gpt-6-astra@medium": {
+      "model": "gpt-6-astra",
+      "effort": "medium",
+      "cases": 6,
+      "complete": 6,
+      "contract_failures": 0,
+      "dkeep_total": 502,
+      "reference_chars_total": 3141,
+      "dkeep_ratio_micro": 0.159822,
+      "wall_seconds_total": 335.397,
+      "wall_seconds_mean": 55.9,
+      "input_tokens": 13742,
+      "output_tokens": 10760,
+      "estimated_api_usd": 0.67542,
+      "source": "historical-frozen-baseline"
+    },
+    "gpt-6-luna@high": {
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "cases": 6,
+      "complete": 6,
+      "contract_failures": 0,
+      "failed_requests_retried": 1,
+      "dkeep_total": 501,
+      "reference_chars_total": 3141,
+      "dkeep_ratio_micro": 0.159503,
+      "wall_seconds_total": 401.143,
+      "wall_seconds_mean": 66.857,
+      "input_tokens": 11966,
+      "output_tokens": 17591,
+      "reasoning_tokens": 10315,
+      "cached_tokens": 2816,
+      "estimated_api_usd": 0.009739,
+      "source": "live-production-wrapper-replay"
+    },
+    "gpt-6-sol@low": {
+      "model": "gpt-6-sol",
+      "effort": "low",
+      "cases": 6,
+      "complete": 6,
+      "contract_failures": 0,
+      "failed_requests_retried": 0,
+      "dkeep_total": 491,
+      "reference_chars_total": 3141,
+      "dkeep_ratio_micro": 0.15632,
+      "wall_seconds_total": 172.078,
+      "wall_seconds_mean": 28.68,
+      "input_tokens": 13742,
+      "output_tokens": 8605,
+      "reasoning_tokens": 918,
+      "cached_tokens": 0,
+      "estimated_api_usd": 0.113534,
+      "source": "live-production-wrapper-replay"
+    },
+    "gpt-6-sol@medium": {
+      "model": "gpt-6-sol",
+      "effort": "medium",
+      "cases": 6,
+      "complete": 6,
+      "contract_failures": 0,
+      "failed_requests_retried": 0,
+      "dkeep_total": 495,
+      "reference_chars_total": 3141,
+      "dkeep_ratio_micro": 0.157593,
+      "wall_seconds_total": 236.518,
+      "wall_seconds_mean": 39.42,
+      "input_tokens": 13742,
+      "output_tokens": 11731,
+      "reasoning_tokens": 4458,
+      "cached_tokens": 0,
+      "estimated_api_usd": 0.144794,
+      "source": "live-production-wrapper-replay"
+    }
+  },
+  "per_case": [
+    {
+      "candidate_id": "auto_113022_354_496",
+      "model": "gpt-6-astra",
+      "effort": "low",
+      "dkeep": 31,
+      "reference_chars": 572,
+      "wall_seconds": 46.658,
+      "status": "COMPLETE"
+    },
+    {
+      "candidate_id": "auto_113022_354_496",
+      "model": "gpt-6-astra",
+      "effort": "medium",
+      "dkeep": 31,
+      "reference_chars": 572,
+      "wall_seconds": 43.175,
+      "status": "COMPLETE"
+    },
+    {
+      "candidate_id": "auto_113022_354_496",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "dkeep": 37,
+      "reference_chars": 572,
+      "wall_seconds": 58.797,
+      "status": "COMPLETE",
+      "explicit_detected": 1,
+      "explicit_n": 3,
+      "explicit_exact": 0
+    },
+    {
+      "candidate_id": "auto_113022_354_496",
+      "model": "gpt-6-sol",
+      "effort": "low",
+      "dkeep": 32,
+      "reference_chars": 572,
+      "wall_seconds": 28.681,
+      "status": "COMPLETE",
+      "explicit_detected": 1,
+      "explicit_n": 3,
+      "explicit_exact": 0
+    },
+    {
+      "candidate_id": "auto_113022_354_496",
+      "model": "gpt-6-sol",
+      "effort": "medium",
+      "dkeep": 31,
+      "reference_chars": 572,
+      "wall_seconds": 40.148,
+      "status": "COMPLETE",
+      "explicit_detected": 1,
+      "explicit_n": 3,
+      "explicit_exact": 0
+    },
+    {
+      "candidate_id": "auto_113028_1602_1698",
+      "model": "gpt-6-astra",
+      "effort": "low",
+      "dkeep": 9,
+      "reference_chars": 142,
+      "wall_seconds": 23.045,
+      "status": "COMPLETE"
+    },
+    {
+      "candidate_id": "auto_113028_1602_1698",
+      "model": "gpt-6-astra",
+      "effort": "medium",
+      "dkeep": 9,
+      "reference_chars": 142,
+      "wall_seconds": 29.587,
+      "status": "COMPLETE"
+    },
+    {
+      "candidate_id": "auto_113028_1602_1698",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "dkeep": 11,
+      "reference_chars": 142,
+      "wall_seconds": 35.11,
+      "status": "COMPLETE",
+      "explicit_detected": 1,
+      "explicit_n": 1,
+      "explicit_exact": 0
+    },
+    {
+      "candidate_id": "auto_113028_1602_1698",
+      "model": "gpt-6-sol",
+      "effort": "low",
+      "dkeep": 11,
+      "reference_chars": 142,
+      "wall_seconds": 14.013,
+      "status": "COMPLETE",
+      "explicit_detected": 1,
+      "explicit_n": 1,
+      "explicit_exact": 0
+    },
+    {
+      "candidate_id": "auto_113028_1602_1698",
+      "model": "gpt-6-sol",
+      "effort": "medium",
+      "dkeep": 11,
+      "reference_chars": 142,
+      "wall_seconds": 19.84,
+      "status": "COMPLETE",
+      "explicit_detected": 1,
+      "explicit_n": 1,
+      "explicit_exact": 0
+    },
+    {
+      "candidate_id": "auto_200130_1323_1603",
+      "model": "gpt-6-astra",
+      "effort": "low",
+      "dkeep": 209,
+      "reference_chars": 1221,
+      "wall_seconds": 120.523,
+      "status": "COMPLETE"
+    },
+    {
+      "candidate_id": "auto_200130_1323_1603",
+      "model": "gpt-6-astra",
+      "effort": "medium",
+      "dkeep": 209,
+      "reference_chars": 1221,
+      "wall_seconds": 123.831,
+      "status": "COMPLETE"
+    },
+    {
+      "candidate_id": "auto_200130_1323_1603",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "dkeep": 196,
+      "reference_chars": 1221,
+      "wall_seconds": 144.877,
+      "status": "COMPLETE",
+      "explicit_detected": 0,
+      "explicit_n": 0,
+      "explicit_exact": 0
+    },
+    {
+      "candidate_id": "auto_200130_1323_1603",
+      "model": "gpt-6-sol",
+      "effort": "low",
+      "dkeep": 195,
+      "reference_chars": 1221,
+      "wall_seconds": 61.352,
+      "status": "COMPLETE",
+      "explicit_detected": 0,
+      "explicit_n": 0,
+      "explicit_exact": 0
+    },
+    {
+      "candidate_id": "auto_200130_1323_1603",
+      "model": "gpt-6-sol",
+      "effort": "medium",
+      "dkeep": 198,
+      "reference_chars": 1221,
+      "wall_seconds": 71.33,
+      "status": "COMPLETE",
+      "explicit_detected": 0,
+      "explicit_n": 0,
+      "explicit_exact": 0
+    },
+    {
+      "candidate_id": "auto_203011_328_389",
+      "model": "gpt-6-astra",
+      "effort": "low",
+      "dkeep": 31,
+      "reference_chars": 355,
+      "wall_seconds": 42.485,
+      "status": "COMPLETE"
+    },
+    {
+      "candidate_id": "auto_203011_328_389",
+      "model": "gpt-6-astra",
+      "effort": "medium",
+      "dkeep": 31,
+      "reference_chars": 355,
+      "wall_seconds": 56.302,
+      "status": "COMPLETE"
+    },
+    {
+      "candidate_id": "auto_203011_328_389",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "dkeep": 33,
+      "reference_chars": 355,
+      "wall_seconds": 64.83,
+      "status": "COMPLETE",
+      "explicit_detected": 1,
+      "explicit_n": 2,
+      "explicit_exact": 0
+    },
+    {
+      "candidate_id": "auto_203011_328_389",
+      "model": "gpt-6-sol",
+      "effort": "low",
+      "dkeep": 32,
+      "reference_chars": 355,
+      "wall_seconds": 23.456,
+      "status": "COMPLETE",
+      "explicit_detected": 1,
+      "explicit_n": 2,
+      "explicit_exact": 0
+    },
+    {
+      "candidate_id": "auto_203011_328_389",
+      "model": "gpt-6-sol",
+      "effort": "medium",
+      "dkeep": 33,
+      "reference_chars": 355,
+      "wall_seconds": 35.932,
+      "status": "COMPLETE",
+      "explicit_detected": 2,
+      "explicit_n": 2,
+      "explicit_exact": 0
+    },
+    {
+      "candidate_id": "auto_230125_1157_1229",
+      "model": "gpt-6-astra",
+      "effort": "low",
+      "dkeep": 35,
+      "reference_chars": 287,
+      "wall_seconds": 33.989,
+      "status": "COMPLETE"
+    },
+    {
+      "candidate_id": "auto_230125_1157_1229",
+      "model": "gpt-6-astra",
+      "effort": "medium",
+      "dkeep": 35,
+      "reference_chars": 287,
+      "wall_seconds": 39.191,
+      "status": "COMPLETE"
+    },
+    {
+      "candidate_id": "auto_230125_1157_1229",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "dkeep": 36,
+      "reference_chars": 287,
+      "wall_seconds": 47.485,
+      "status": "COMPLETE",
+      "explicit_detected": 0,
+      "explicit_n": 0,
+      "explicit_exact": 0
+    },
+    {
+      "candidate_id": "auto_230125_1157_1229",
+      "model": "gpt-6-sol",
+      "effort": "low",
+      "dkeep": 34,
+      "reference_chars": 287,
+      "wall_seconds": 20.13,
+      "status": "COMPLETE",
+      "explicit_detected": 0,
+      "explicit_n": 0,
+      "explicit_exact": 0
+    },
+    {
+      "candidate_id": "auto_230125_1157_1229",
+      "model": "gpt-6-sol",
+      "effort": "medium",
+      "dkeep": 34,
+      "reference_chars": 287,
+      "wall_seconds": 33.576,
+      "status": "COMPLETE",
+      "explicit_detected": 0,
+      "explicit_n": 0,
+      "explicit_exact": 0
+    },
+    {
+      "candidate_id": "auto_230125_960_1072",
+      "model": "gpt-6-astra",
+      "effort": "low",
+      "dkeep": 187,
+      "reference_chars": 564,
+      "wall_seconds": 35.548,
+      "status": "COMPLETE"
+    },
+    {
+      "candidate_id": "auto_230125_960_1072",
+      "model": "gpt-6-astra",
+      "effort": "medium",
+      "dkeep": 187,
+      "reference_chars": 564,
+      "wall_seconds": 43.312,
+      "status": "COMPLETE"
+    },
+    {
+      "candidate_id": "auto_230125_960_1072",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "dkeep": 188,
+      "reference_chars": 564,
+      "wall_seconds": 50.045,
+      "status": "COMPLETE",
+      "explicit_detected": 0,
+      "explicit_n": 0,
+      "explicit_exact": 0
+    },
+    {
+      "candidate_id": "auto_230125_960_1072",
+      "model": "gpt-6-sol",
+      "effort": "low",
+      "dkeep": 187,
+      "reference_chars": 564,
+      "wall_seconds": 24.447,
+      "status": "COMPLETE",
+      "explicit_detected": 0,
+      "explicit_n": 0,
+      "explicit_exact": 0
+    },
+    {
+      "candidate_id": "auto_230125_960_1072",
+      "model": "gpt-6-sol",
+      "effort": "medium",
+      "dkeep": 188,
+      "reference_chars": 564,
+      "wall_seconds": 35.693,
+      "status": "COMPLETE",
+      "explicit_detected": 0,
+      "explicit_n": 0,
+      "explicit_exact": 0
+    }
+  ],
+  "evidence": {
+    "reconciled_summary_sha256": "ecb506ff65067fd04bdeb1559e08d51c26126be7d8092b103c2682f4c17c65c2",
+    "raw_prompts_and_responses_committed": false
+  }
+}

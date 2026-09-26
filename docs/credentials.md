@@ -18,7 +18,8 @@ set +a
 
 ## CPA：真实文字与视觉流程
 
-`CPA_BASE_URL` 和 `CPA_API_KEY` 指向自己的网关。包装器默认模型为 `gpt-6-astra`；
+`CPA_BASE_URL` 和 `CPA_API_KEY` 指向自己的网关。包装器和内容质量阶段默认
+`gpt-6-sol`，健康探针使用 `gpt-6-luna`；`gpt-6-astra` 不作默认或自动回退。
 部分调用点显式指定模型和 effort，不全部服从包装器环境覆盖。
 文字校对和图像裁判需要相应能力，单次文字请求成功不证明图像请求也可用。
 

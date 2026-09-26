@@ -67,7 +67,7 @@ def package(tmp_path):
             "schema_version": "cpa-frame-witness.v1",
             "provider": "cpa",
             "status": "OBSERVED",
-            "model": "gpt-6-astra",
+            "model": "gpt-6-sol",
             "image_path": str(path),
             "image_sha256": "sha256:" + sha(path.read_bytes()),
             "answer": json.dumps(verdict),

@@ -42,16 +42,16 @@ def test_final_review_builder_keeps_medium_effort(monkeypatch):
     config = _captured_config(monkeypatch, transport.build_final_review_llm_call)
 
     assert config.transport == "command"
-    assert "'gpt-6-astra'" in config.command_template
+    assert "'gpt-6-sol'" in config.command_template
     assert config.command_template.split()[-2] == "medium"
     assert config.timeout_seconds == 600.0
 
 
-def test_pronoun_audit_builder_uses_astra_head_and_low_effort(monkeypatch):
+def test_pronoun_audit_builder_uses_sol_head_and_low_effort(monkeypatch):
     config = _captured_config(monkeypatch, transport.build_pronoun_audit_llm_call)
 
     assert config.transport == "command"
-    assert "'gpt-6-astra'" in config.command_template
+    assert "'gpt-6-sol'" in config.command_template
     assert config.command_template.split()[-2] == "low"
     assert config.timeout_seconds == 600.0
 

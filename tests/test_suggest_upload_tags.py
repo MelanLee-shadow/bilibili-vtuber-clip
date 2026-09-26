@@ -125,7 +125,7 @@ def test_cpa_command_effort_is_low_same_model_chain():
     dropping medium -> low is zero-blast-radius.  Pin the model chain too so
     a future edit can't silently widen it while touching effort."""
 
-    assert "'gpt-6-astra'" in st.CPA_COMMAND
+    assert "'gpt-6-sol'" in st.CPA_COMMAND
     assert st.CPA_COMMAND.split()[-1] == "low"
 
 

@@ -175,8 +175,9 @@ spec 结构以该入口的文档和 `--help` 为准。不要给不支持的入�
 | 配置 / 调用点 | 本版代码默认值 | 注意事项 |
 |---|---|---|
 | `AUTOSLICE_PROFILE` | `lidousha` | 在进程导入时读取；换频道要重新启动进程 |
-| CPA 包装器模型 | `gpt-6-astra` | `CPA_CHAT_MODEL` / `CPA_CHAT_MODELS` 可供包装器读取；部分调用点显式指定模型，不能假设一处变量覆盖全部流程 |
-| 普通 `correct=cpa` 转写校对 | `gpt-6-astra`、`low` effort | 选题、标题等入口有各自 effort；转写缓存不会降低它们的要求 |
+| CPA 包装器模型 | `gpt-6-sol` | `CPA_CHAT_MODEL` / `CPA_CHAT_MODELS` 可供包装器读取；部分调用点显式指定模型，不能假设一处变量覆盖全部流程 |
+| 普通 `correct=cpa` 转写校对 | `gpt-6-sol`、`low` effort | 选题、标题等入口有各自 effort；转写缓存不会降低它们的要求 |
+| CPA 健康探针 | `gpt-6-luna`、`low` effort | 只验证服务可用性，不参与字幕、标题或封面裁决；不会自动升级 Astra |
 | 实体局部 AGY 听音 | `Gemini 3.6 Flash (High)` | 可由 `ENTITY_AUDIO_AGY_MODEL` 覆盖；客户端标识与 API 模型 ID 不是同一字符串 |
 | 实体 Gemini API 后备 | `gemini-3.6-flash` | `ENTITY_AUDIO_GEMINI_API_MODEL`；配额和允许后备的条件仍需满足 |
 

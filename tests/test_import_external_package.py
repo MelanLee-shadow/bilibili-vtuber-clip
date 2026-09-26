@@ -477,7 +477,7 @@ class StubGateRunner:
                     "selected_provider": "cpa", "preferred_provider": "cpa",
                     "witness": {
                         "schema_version": "cpa-frame-witness.v1", "provider": "cpa",
-                        "status": "OBSERVED", "model": "gpt-6-astra",
+                        "status": "OBSERVED", "model": "gpt-6-sol",
                         "image_path": cover,
                         "image_sha256": "sha256:" + _sha256(b"final-cover-bytes"),
                         "answer": json.dumps(verdict),

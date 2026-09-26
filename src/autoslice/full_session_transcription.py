@@ -944,7 +944,7 @@ def _build_aggregate_asr_transcriber(
             transport="command",
             command_template=(
                 "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} "
-                f"'gpt-6-astra' {cpa_effort}"
+                f"'gpt-6-sol' {cpa_effort}"
             ),
             timeout_seconds=600.0,
         )
@@ -960,7 +960,7 @@ def _build_aggregate_asr_transcriber(
     # shrinking it here would not track this pass's actually-smaller prompt
     # and risks starving a legitimate retry cascade.
     pronoun_llm_call = build_llm_call(
-        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-astra' low", timeout_seconds=600.0)
+        LlmConfig(transport="command", command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-sol' low", timeout_seconds=600.0)
     )
     topic_context_state = {"value": ""}
     session_topic_context = ""
