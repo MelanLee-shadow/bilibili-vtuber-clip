@@ -403,7 +403,7 @@ def test_judge_verdict_cache_round_trip(tmp_path, monkeypatch):
         calls["n"] += 1
         return json.dumps({"choice": "PROPOSED", "reason": "r"})
 
-    counting_llm.cpa_cache_identity = {"models": ["gpt-6-astra"], "effort": "medium"}
+    counting_llm.cpa_cache_identity = {"models": ["gpt-6-sol"], "effort": "medium"}
     kwargs = dict(
         check_request=CHECK_REQUEST,
         witness=_witness("hai mei you ge zhai ne"),

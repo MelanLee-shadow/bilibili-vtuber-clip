@@ -363,7 +363,7 @@ def _cpa_cache_identity(config: LlmConfig) -> dict[str, object] | None:
         return None
     rest = parts[indexes[0] + 1:]
     env = config.command_child_env if config.command_child_env is not None else os.environ
-    models = rest[2] if len(rest) > 2 else env.get("CPA_CHAT_MODELS") or env.get("CPA_CHAT_MODEL") or "gpt-6-astra"
+    models = rest[2] if len(rest) > 2 else env.get("CPA_CHAT_MODELS") or env.get("CPA_CHAT_MODEL") or "gpt-6-sol"
     effort = rest[3] if len(rest) > 3 else env.get("CPA_REASONING_EFFORT") or "medium"
     if not models.strip() or not effort.strip():
         return None

@@ -43,7 +43,7 @@ def test_runtime_cpa_ssh_bridge_writes_completion_and_safe_diagnostics(
         completion_file=completion,
         ssh_host="oci3",
         runtime_root=Path("/opt/bilive/autoslice"),
-        model="gpt-6-astra",
+        model="gpt-6-sol",
         effort="medium",
         attempts=1,
     )
@@ -64,7 +64,7 @@ def test_runtime_cpa_ssh_bridge_writes_completion_and_safe_diagnostics(
     assert request == {
         "attempts": 1,
         "effort": "medium",
-        "model": "gpt-6-astra",
+        "model": "gpt-6-sol",
         "prompt": "review fixture",
         "runtime_root": "/opt/bilive/autoslice",
     }
@@ -109,7 +109,7 @@ def test_runtime_cpa_ssh_bridge_preserves_only_redacted_failure_diagnostics(
             completion_file=completion,
             ssh_host="oci3",
             runtime_root=Path("/opt/bilive/autoslice"),
-            model="gpt-6-astra",
+            model="gpt-6-sol",
             effort="medium",
             attempts=1,
         )

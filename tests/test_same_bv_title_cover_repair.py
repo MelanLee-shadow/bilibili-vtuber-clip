@@ -183,7 +183,7 @@ def _materialize_authority(tmp_path: Path) -> tuple[dict, Path]:
         "schema_version": "cpa-frame-witness.v1",
         "status": "OBSERVED",
         "provider": "cpa",
-        "model": "gpt-6-astra",
+        "model": "gpt-6-sol",
         "image_sha256": _sha(cover),
         "answer": json.dumps(
             {
@@ -210,7 +210,7 @@ def _materialize_authority(tmp_path: Path) -> tuple[dict, Path]:
     completion_path = _write(tmp_path / "title-completion.json", decision)
     title_review_path = _write(tmp_path / "title-review.json", {
         "schema_version": "synthetic-title-cpa-review.v1", "status": "PASS",
-        "provider": "cpa", "model": "gpt-6-astra", "fallback_used": False,
+        "provider": "cpa", "model": "gpt-6-sol", "fallback_used": False,
         "candidate_id": "sample-title-cover",
         "public_target": {"bvid": BVID, "same_bv_only": True},
         "source_bindings": {"final_srt_sha256": "s" * 64},
@@ -513,7 +513,7 @@ def test_fullres_observed_text_must_be_nonempty_strings(tmp_path):
 def test_fullres_claims_freeze_receipt_model_and_text(tmp_path):
     value, _ = _materialize_authority(tmp_path)
     claims = value["quality_evidence"]["fullres_claims"]
-    assert claims["model"] == "gpt-6-astra"
+    assert claims["model"] == "gpt-6-sol"
     assert claims["observed_text_lines"] == ["主标题", "副标题"]
 
 

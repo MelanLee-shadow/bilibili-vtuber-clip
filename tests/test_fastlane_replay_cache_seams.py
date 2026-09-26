@@ -35,7 +35,7 @@ def test_actual_replay_consumer_keeps_model_cache_and_object_method_probes(tmp_p
     monkeypatch.setattr("src.autoslice.clip_context.clip_context_prompt_text", lambda _: "context")
     attempts = []
     cache_reads = []
-    model = {"models": ["gpt-6-astra"], "effort": "medium"}
+    model = {"models": ["gpt-6-sol"], "effort": "medium"}
 
     class Verifier:
         def __call__(self, request):

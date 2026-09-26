@@ -7,7 +7,7 @@
 # Optional argv 3/4 (维护者): pin a per-stage model chain + reasoning
 # effort at the call site (callers shlex-split the template, so a quoted chain
 # stays one argument).  Precedence: explicit arg > CPA_CHAT_MODELS env > default.
-# Current model policy (维护者,): use GPT-6 Astra, not GPT-5.6.
+# Current model policy: GPT-6 Sol is the quality default; probes use GPT-6 Luna.
 # Explicit stage effort remains separate and must be tested before lowering it.
 # Older dated incident comments below are historical evidence, not current routing.
 #
@@ -23,20 +23,20 @@ umask 077
 
 PROMPT_FILE="$1"
 COMPLETION_FILE="$2"
-# No implicit downgrade to GPT-5.6/5.5/5.4. Astra failures follow the existing
-# bounded transient retry path; unavailable Astra does not authorize an old model.
-MODELS="${3:-${CPA_CHAT_MODELS:-${CPA_CHAT_MODEL:-gpt-6-astra}}}"
+# No implicit downgrade to GPT-5.6/5.5/5.4 and no automatic Astra escalation.
+# The default is one GPT-6 Sol lane; explicit model chains remain caller-owned.
+MODELS="${3:-${CPA_CHAT_MODELS:-${CPA_CHAT_MODEL:-gpt-6-sol}}}"
 EFFORT="${4:-${CPA_REASONING_EFFORT:-medium}}"
 ATTEMPTS_PER_MODEL="${5:-3}"
 
 # Reject stale pinned GPT-5 routes before credentials, files or network are used.
 for requested_model in $MODELS; do
   case "$requested_model" in
-    gpt-5|gpt-5.*|gpt-5-*) echo "CPA model policy requires GPT-6 Astra; stale GPT-5 route rejected" >&2; exit 2 ;;
+    gpt-5|gpt-5.*|gpt-5-*) echo "CPA model policy requires GPT-6; stale GPT-5 route rejected" >&2; exit 2 ;;
   esac
 done
-if [[ "$MODELS" == *gpt-6-astra* ]]; then
-  case "$EFFORT" in low|medium|high|xhigh|max) ;; *) echo "GPT-6 Astra effort must be low/medium/high/xhigh/max" >&2; exit 2 ;; esac
+if [[ "$MODELS" == *gpt-6-* ]]; then
+  case "$EFFORT" in low|medium|high|xhigh|max) ;; *) echo "GPT-6 effort must be low/medium/high/xhigh/max" >&2; exit 2 ;; esac
 fi
 
 # 事故：上游 ChatGPT OAuth 三把凭据同时 usage_limit_reached，流量落到

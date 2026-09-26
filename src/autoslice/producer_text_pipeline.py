@@ -412,7 +412,7 @@ def _build_entity_verification_context(
                 transport="command",
                 command_template=(
                     "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} "
-                    "'gpt-6-astra' medium"
+                    "'gpt-6-sol' medium"
                 ),
                 timeout_seconds=180.0,
             )

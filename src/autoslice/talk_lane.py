@@ -284,7 +284,7 @@ def recall_candidates(srt_path: Path, hints: str | None, danmaku_xml: Path | Non
         LlmConfig(
             transport="command",
             # Talk semantic recall = deep open-ended lane → gpt-5.6-sol medium.
-            command_template=f"bash {_runner.REPO_ROOT}/scripts/llm_via_cpa.sh {{prompt_file}} {{completion_file}} 'gpt-6-astra' medium",
+            command_template=f"bash {_runner.REPO_ROOT}/scripts/llm_via_cpa.sh {{prompt_file}} {{completion_file}} 'gpt-6-sol' medium",
             timeout_seconds=600.0,
         )
     )
@@ -1163,7 +1163,7 @@ def _prepare_talk_filler_plan(item: dict) -> dict[str, object]:
             command_template=(
                 f"bash {_runner.REPO_ROOT}/scripts/llm_via_cpa.sh "
                 "{prompt_file} {completion_file} "
-                "'gpt-6-astra' medium"
+                "'gpt-6-sol' medium"
             ),
             timeout_seconds=600.0,
         )

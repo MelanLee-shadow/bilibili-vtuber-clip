@@ -830,7 +830,7 @@ def _production_llm_call(*, runtime_root: Path, effort: str) -> Callable[[str], 
         transport="command",
         command_template=(
             f"bash {shlex.quote(str(bridge))} {{prompt_file}} {{completion_file}} "
-            f"'gpt-6-astra' {effort} 1"
+            f"'gpt-6-sol' {effort} 1"
         ),
         timeout_seconds=600.0,
         runtime_root=str(runtime),

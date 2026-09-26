@@ -119,7 +119,7 @@ def _local_runtime_call(
             command_template=(
                 f"bash {shlex.quote(str(script))} "
                 "{prompt_file} {completion_file} "
-                f"'gpt-6-astra' {effort} 1"
+                f"'gpt-6-sol' {effort} 1"
             ),
             timeout_seconds=600.0,
             runtime_root=str(runtime),
@@ -149,7 +149,7 @@ def _remote_runtime_call(
                 "{prompt_file} {completion_file} "
                 f"--ssh-host {shlex.quote(ssh_host)} "
                 f"--runtime-root {shlex.quote(str(runtime))} "
-                f"--model gpt-6-astra --effort {effort} --attempts 1"
+                f"--model gpt-6-sol --effort {effort} --attempts 1"
             ),
             timeout_seconds=720.0,
             command_child_env=_without_ambient_cpa_environment(),

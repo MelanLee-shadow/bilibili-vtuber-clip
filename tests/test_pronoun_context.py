@@ -37,7 +37,7 @@ def _aggregate(tmp_path, monkeypatch, *, hook="", rows=(), topics=(), reply=KEEP
             return '{"cues":[{"n":1,"text":"为什么TA先到"}]}' if stage == 0 else reply
 
         call.cpa_cache_identity = {
-            "transport": "cpa_command", "models": ["gpt-6-astra"], "effort": "low",
+            "transport": "cpa_command", "models": ["gpt-6-sol"], "effort": "low",
         }
         return call
 
@@ -67,7 +67,7 @@ def test_real_aggregate_forwards_existing_hook_chat_and_topic_to_pronouns(tmp_pa
     assert "不是逐字真值" in prompt
     assert "不能照抄弹幕中的他/她" in prompt
     assert len(calls) == 2
-    assert all("gpt-6-astra" in c.command_template for c in configs)
+    assert all("gpt-6-sol" in c.command_template for c in configs)
     assert all(c.command_template.endswith("low") for c in configs)
     assert output == SRT.replace("TA", "她")
     records = [json.loads(p.read_text()) for p in media.with_suffix(".pronoun-trace").glob("*.json")]
