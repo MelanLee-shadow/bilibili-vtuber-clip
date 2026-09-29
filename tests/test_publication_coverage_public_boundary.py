@@ -4,12 +4,32 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import sys
+import types
 
 import pytest
 
 from src.autoslice import publication_content_coverage as coverage
 from src.autoslice import publication_registry as registry
 from src.autoslice.publication_readiness import build_readiness_graph
+
+
+@pytest.fixture
+def public_coverage(monkeypatch: pytest.MonkeyPatch):
+    """Exercise the exported stub even when collected in the private repo."""
+    if not hasattr(coverage, "COVERAGE_TYPE"):
+        return coverage
+    from scripts._export_oss_stubs import STUB_FILES
+
+    module = types.ModuleType("src.autoslice.publication_content_coverage")
+    module.__file__ = "<public publication_content_coverage stub>"
+    module.__package__ = "src.autoslice"
+    exec(compile(
+        STUB_FILES["src/autoslice/publication_content_coverage.py"],
+        module.__file__, "exec",
+    ), module.__dict__)
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    return module
 
 
 def _manifest(tmp_path: Path, record: object) -> dict:
@@ -22,36 +42,36 @@ def _manifest(tmp_path: Path, record: object) -> dict:
 
 
 @pytest.mark.parametrize("document", [{}, {"content_coverage": None}])
-def test_absent_coverage_is_the_ordinary_single_candidate_case(document):
-    assert coverage.validate_publication_content_coverage(document) == []
-    assert coverage.derive_publication_content_coverage({}, document) is None
+def test_absent_coverage_is_the_ordinary_single_candidate_case(document, public_coverage):
+    assert public_coverage.validate_publication_content_coverage(document) == []
+    assert public_coverage.derive_publication_content_coverage({}, document) is None
 
 
 @pytest.mark.parametrize("claim", [{}, [], "", False, 0, {"status": "PASS", "covered_candidate_ids": ["synthetic-child"]}])
-def test_any_declared_coverage_is_unavailable_not_silently_accepted(claim):
+def test_any_declared_coverage_is_unavailable_not_silently_accepted(claim, public_coverage):
     with pytest.raises(ValueError, match="PUBLICATION_CONTENT_COVERAGE_ADAPTER_UNAVAILABLE"):
-        coverage.validate_publication_content_coverage({"content_coverage": claim})
+        public_coverage.validate_publication_content_coverage({"content_coverage": claim})
     with pytest.raises(ValueError, match="PUBLICATION_CONTENT_COVERAGE_ADAPTER_UNAVAILABLE"):
-        coverage.derive_publication_content_coverage({"content_coverage": claim}, {})
+        public_coverage.derive_publication_content_coverage({"content_coverage": claim}, {})
 
 
 @pytest.mark.parametrize("record", [{}, {"story_contract": {}}, {"story_contract": {"source_fact_review": {}}}])
-def test_ordinary_bound_records_do_not_require_private_adapter(tmp_path, record):
+def test_ordinary_bound_records_do_not_require_private_adapter(tmp_path, record, public_coverage):
     manifest = _manifest(tmp_path, record)
     before = Path(manifest["package_attestation"]["record"]["path"]).read_bytes()
-    assert coverage.derive_publication_content_coverage(manifest, {}) is None
+    assert public_coverage.derive_publication_content_coverage(manifest, {}) is None
     assert Path(manifest["package_attestation"]["record"]["path"]).read_bytes() == before
 
 
 @pytest.mark.parametrize("successor", [{}, False, "", {"schema_version": "synthetic-merged-proof.v1", "status": "PASS"}])
-def test_source_successor_claim_is_not_discarded(tmp_path, successor):
+def test_source_successor_claim_is_not_discarded(tmp_path, successor, public_coverage):
     manifest = _manifest(tmp_path, {"story_contract": {"source_fact_review": {"final_review_successor": successor}}})
     with pytest.raises(ValueError, match="PUBLICATION_CONTENT_COVERAGE_ADAPTER_UNAVAILABLE"):
-        coverage.derive_publication_content_coverage(manifest, {})
+        public_coverage.derive_publication_content_coverage(manifest, {})
 
 
 @pytest.mark.parametrize("damage", ["hash", "size", "symlink", "nonobject"])
-def test_malformed_record_binding_is_rejected(tmp_path, damage):
+def test_malformed_record_binding_is_rejected(tmp_path, damage, public_coverage):
     manifest = _manifest(tmp_path, [] if damage == "nonobject" else {})
     binding = manifest["package_attestation"]["record"]
     if damage == "hash":
@@ -63,10 +83,10 @@ def test_malformed_record_binding_is_rejected(tmp_path, damage):
         alias.symlink_to(binding["path"])
         binding["path"] = str(alias)
     with pytest.raises((OSError, ValueError)):
-        coverage.derive_publication_content_coverage(manifest, {})
+        public_coverage.derive_publication_content_coverage(manifest, {})
 
 
-def test_unavailable_proof_blocks_native_registry_and_cannot_hide_a_child(tmp_path):
+def test_unavailable_proof_blocks_native_registry_and_cannot_hide_a_child(tmp_path, public_coverage):
     repo, runtime = tmp_path / "repo", tmp_path / "runtime"
     (repo / "assets/lidousha").mkdir(parents=True)
     (runtime / "state").mkdir(parents=True)
