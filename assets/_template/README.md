@@ -61,3 +61,10 @@ cp -r assets/_template "assets/<your-profile-id>"
   schema：改成 `<你的profile-id>-…`。
 - 测试套件以**默认 profile** 为基准：跑 `pytest` 时不要设置
   `AUTOSLICE_PROFILE`（约 11 个用例直接断言示例 profile 的资产内容）。
+
+## 终审合同示例
+
+完整的带标注示例见
+[`final_media_review_contracts.example.v1.json`](../lidousha/final_media_review_contracts.example.v1.json)。
+`_example` 是说明用标记，不属于运行时合同 schema；填入自己的
+`final_media_review_contracts.v1.json` 时按示例内容填写，并去掉 `_example`。
