@@ -211,11 +211,24 @@ def write_failure_receipt(
         if pending in existing_names:
             _repair_current_pending(root_fd, pending, payload)
             existing_names = os.listdir(root_fd)
+
+        # Classify the complete namespace before recovering any pending file.
+        # Filesystem enumeration order is unspecified; without this first pass,
+        # a foreign entry plus a damaged pending could report either inventory
+        # drift or pending-payload drift depending on the host filesystem.
+        pending_names: list[str] = []
+        receipt_names: list[str] = []
         for existing in existing_names:
             if re.fullmatch(r"\.[0-9a-f]{64}\.pending", existing):
-                _recover_pending(root_fd, existing)
-                continue
+                pending_names.append(existing)
+            elif re.fullmatch(r"diagnostic-[0-9a-f]{64}\.json", existing):
+                receipt_names.append(existing)
+            else:
+                raise RuntimeError("diagnostic receipt inventory is unsafe")
+        for existing in sorted(receipt_names):
             _require_receipt_entry(root_fd, existing)
+        for existing in sorted(pending_names):
+            _recover_pending(root_fd, existing)
         if filename in os.listdir(root_fd):
             if _read_regular(root_fd, filename) != payload:
                 raise RuntimeError("diagnostic receipt collision")

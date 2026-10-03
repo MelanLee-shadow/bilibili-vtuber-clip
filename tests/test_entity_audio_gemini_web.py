@@ -448,3 +448,30 @@ def _generated_media_probe_isolated_from_transport_tests(monkeypatch):
         entity_audio_verifier, "_validate_cropped_audio_media",
         lambda *_args, **_kwargs: (True, ""),
     )
+
+
+def test_root_web_handoff_rejects_root_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job = tmp_path / "job"
+    job.mkdir()
+    audio = tmp_path / "input.webm"
+    audio.write_bytes(b"webm")
+    root_account = pwd.struct_passwd(
+        ("root", "x", 0, 0, "root", str(tmp_path), "/bin/sh")
+    )
+    monkeypatch.setattr(verifier._gemini_web.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(
+        verifier._gemini_web.pwd,
+        "getpwnam",
+        lambda _name: root_account,
+    )
+
+    with pytest.raises(ValueError, match="web adapter must not run as root"):
+        verifier._gemini_web._prepare_web_handoff(
+            job_dir=job,
+            audio_path=audio,
+            prompt="blind witness",
+            user_name="root",
+        )
+    assert not (job / "gemini-web" / "receipt.json").exists()
