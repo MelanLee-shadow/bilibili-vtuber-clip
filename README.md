@@ -92,6 +92,8 @@ CI 先安装 CPU 版 PyTorch，以免下载 CUDA 依赖。
 按 [profiles/README.md](profiles/README.md) 从 `profiles/_template/` 与
 `assets/_template/` 建立自己的频道。先填写词表、人物设定、标题风格和封面身份描述；
 不要把示例频道的资料或账号合集 ID 当成自己的配置。
+详细问卷和李豆沙真例保留在模板中；知识与运行记录的区别、近期开发的资产落点见
+[频道资产同步说明](docs/channel-assets.md)。
 
 ```bash
 cp .env.example .env

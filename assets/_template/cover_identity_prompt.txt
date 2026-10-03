@@ -10,5 +10,7 @@ agent 首次配置时问频道主人：发色？标志性特征（耳朵/角/尾
 her chibi/derivative form is '[衍生形象名]'. Faithfully preserve her
 [关键特征] from the reference image."
 
-（真例，李豆沙）Li Dousha is a cute anime VTuber whose signature look is a white PANDA hood with PANDA EARS over WHITE hair; her chibi/derivative form is '小李' (little Li).
-（真例续）Faithfully preserve her panda-hood/panda-ear and white-hair face features from the reference image.
+把默认设定与当场外观分开写：源图可见的发型、服装、配饰和头戴物优先；
+不要把默认耳朵或头饰写成所有场次都必须存在，也不要删除源图实际可见的头戴物。
+
+（真例，李豆沙）Li Dousha is a cute anime VTuber. The source image is authoritative for her visible appearance: preserve the actual hairstyle, head and face features, clothing, accessories, and any headwear shown there. Her default identity is WHITE hair with small PANDA EARS growing from the top of her head, not a fixed panda hood or hat; use those ears only when they are visible in the source. Never add a panda hood, hat, headwear, or accessory that the source does not show, and never remove or forbid headwear that the source actually shows. Her chibi/derivative form is '小李' (little Li).

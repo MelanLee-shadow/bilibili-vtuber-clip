@@ -11,6 +11,8 @@ cp -r assets/_template "assets/<your-profile-id>"
   fail-closed 原则告诉你缺什么内容。
 - 逐文件语义见 `profiles/README.md` 的对照表；参考实例见 `assets/lidousha/`
   （另一个频道的实战沉淀，只作 schema/风格参考，不要继承其专名）。
+- 八、九月开发如何进入知识资产、模板与运行记录，见
+  [频道资产同步说明](../../docs/channel-assets.md)；文件日期旧不等于可以清空其判例。
 - `fonts/` 需要你自备可再分发的 CJK 字体（默认 profile 用 ZCOOL 快乐体 +
   得意黑，见其 fonts 目录与许可）。
 - `voiceprint_profile.v1.json` 是 UNCONFIGURED 占位：声纹属于生物特征，须
