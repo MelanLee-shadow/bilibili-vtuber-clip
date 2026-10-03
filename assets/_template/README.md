@@ -18,7 +18,7 @@ cp -r assets/_template "assets/<your-profile-id>"
 
 ## 分层：谁在什么时候填什么
 
-- **层 0 · 默认给全（自动化或手工均可使用）**：`fonts/` 两个开源字体
+- **层 0 · 默认给全（agent 独立完成，开箱即用）**：`fonts/` 两个开源字体
   （直接用）、`title_policy.json`、`upload_tag_policy.json`、
   `subtitle_correction_principles.md`（示例频道完整口径，可改）、
   `bilibili_gift_names.v1.json`（B站平台礼物专名，直接用）、`intro/`（默认关）、
@@ -28,18 +28,20 @@ cp -r assets/_template "assets/<your-profile-id>"
   七维算术通用，但**第一层「频道命脉题材」的定义必须换成你频道自己的**；
   该文件会注入选题 prompt，判例人名已全部占位化——把占位角色换成你
   频道的真实对应者即可。
-- **层 1 · 先确认后写（使用者按问题清单填写）**：
+- **层 1 · 先问后写（agent 拿问题清单问频道主人，答完代写）**：
   `glossary.txt`、`persona.md`、`title_style.md`、`cover_identity_prompt.txt`
   ——每个文件内已写好该问的问题与示例；先写 3–5 条就能开跑，之后边用
-  边攒，**不要求一次写完**。需要外部资料时核对公开来源和真实素材，
-  并记录来源与不确定项；不要凭空补写身份事实。
+  边攒，**不要求一次写完**。频道主人不在旁边时的代查证据源：
+  B 站 `live_user/v1/Master/info?uid=` 免签给 room_id/粉丝勋章名（粉丝团
+  称呼）；萌娘百科条目；**抽真实直播帧取证**（外貌/装饰以帧为准，文字
+  资料常错）。代填的条目标注待频道主人拍板。
   **封面外貌事实三处必须同步改**：`profile.json` 的 `identity.cover_identity`
   九键、`persona.md`、`cover_identity_prompt.txt`——只改其一，封面身份
   终检会按不一致的那份把成品拦下（先抽帧、后写、三处一起写）。
-- **层 2 · 提供种子，crawler 可选**：`timely_term_seeds/sources` →
+- **层 2 · 你给种子，crawler 代填**：`timely_term_seeds/sources` →
   `timely_terms`、`psplive_roster_sources` → `psplive_roster`、
   `topic_entity_graph`（参考部署默认装 cron；不走 deploy 就手动跑或自配）。
-- **层 3 · 运行时记录**：`subtitle_truth_ledger`、
+- **层 3 · 运行时/人工裁定自己长出来**：`subtitle_truth_ledger`、
   `session_relation_ledger`、`published_songs`、`speech_memory_ledger`、
   `selection_score_calibration`（随运营积累标定锚点）、各 manual/cover
   override（`manual_title_overrides`/`manual_archive_metadata`/

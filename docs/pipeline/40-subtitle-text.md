@@ -1,25 +1,903 @@
 # 40 字幕文本链
 
-入口是 `src/autoslice/producer_text_pipeline.py::run_text_pipeline`。字幕链以绑定的
-源媒体和时间轴为起点：BCUT/SRT 提供当前文字，声学或语言模型只提供证据和候选，
-CPA 或等价的最终语义审查决定是否采用改字。
+本文件是字幕文本步骤的**分步权威**。入口：`src/autoslice/producer_text_pipeline.py::run_text_pipeline`
+（生产唯一调用方 `scripts/produce_slice_package.py`）。
+
+## 当前默认与说话人样式
+
+谈话交付默认 `speaker_mode=uniform_host`：所有字幕使用同一主播样式（Sapphire72 白字蓝描边），
+不因旧 speaker manifest、声纹猜测或历史 GUEST 标签重新染成两色。单色是呈现策略，不是
+“音频中每个人都已被声纹证实为李豆沙”的事实声明；不能据此虚构说话人归属。
+
+维护者 在 2026-09-06 00:41 UTC 再次明确“现在全都是默认 Uniform Host”。因此，本文末尾
+2026-08-07 的 `required/default GUEST` **已不再是日常默认**；其余声纹、混说和人工标注
+合同仅在后来明确点名的说话人分析/重放任务中适用。普通快车道同样遵循此默认。
+
+实现入口是 `producer_request.py`、`producer_speaker.py` 和运行 launcher 的
+`AUTOSLICE_SPEAKER_MODE`。打包按 [80](80-package-delivery.md) 核对真实 ASS 事件与最终
+视频；不能靠把 record 字段改成 `uniform_host` 来掩盖实际双色烧录。
+
+### 被观看媒体字幕与声源归属（2026-09-24）
+
+直播画面中被观看视频自带的字幕可作为 `source_media` 证据，但**不是自动删句规则**。
+`nested_media_caption_attribution.py` 只消费 hash-bound 的未烧字源帧、当前最终 SRT 和独立
+声学回执，并输出 `source_media / host / overlap / unknown` 四态：
+
+- 画面字幕与 cue 精确、规范化、模糊或跨 cue 对齐，只证明内层媒体存在对应文字；若尚未排除
+  主播跟读或同时说话，状态仍为 `unknown / KEEP`。
+- 没看见字幕、字幕字面不一致或播放器换镜头，都不能反推该句属于主播；这些输入缺口默认
+  `unknown / KEEP`。
+- 只有声学回执同时证明 `source_media=PRESENT`、`host=ABSENT`、`overlap=ABSENT`，并绑定
+  同一 source media、最终 SRT、源帧与时间窗时，才允许在**私有诊断 host-track** 中删除该 cue。
+- `host` 和 `overlap` 必须保留；`overlap` 可在后续取得精确 host-only transcript 后再走既有
+  CPA/人工 authority，不得把内层字幕直接复制成主播口播，也不得把混合音频机械拆字。
+- 流水线自己烧入的字幕、弹幕、游戏 UI 和无关屏幕文字不构成独立内层媒体字幕证据。观察帧
+  必须显式声明 `pipeline_burned_subtitle=false` 并逐字节绑定。
+
+该消费者当前只产生 private diagnostic artifact，`upload_allowed=false`、无 publication
+权威；已公开稿件不得因这类后验诊断自动替换或重传。`uniform_host` 继续只决定显示样式，
+不参与上述四态裁决。
+
+批量声学复核必须先用 `scripts/nested_media_acoustic_review.py plan` 绑定
+`nested-media-observation-manifest.v1` 的文件 SHA。manifest 必须声明
+`COMPLETE_OBSERVATION_SET`、期望 observation 数量并逐文件绑定上游视觉证据；plan 再冻结
+其中的**精确 observation 集合**、源媒体/SRT/原帧哈希与逐条时间窗。receipt 必须回绑
+`plan_sha256` 且使用计划中的 exact interval。`consume` 可以保存
+partial batch，但只要缺任一 observation，`evidence_supported_source_only_cue_indexes` 必须
+为空；完整 batch 也仍是 evidence-only，不能自行修改字幕、成片或公开状态。
+
+中断的 CPA 视觉批次只能通过 `scripts/cpa_visual_batch_resume.py` 的 create-only supplemental
+namespace 续跑：计划必须逐 SHA 绑定原 manifest 与原 batch result，已 `OBSERVED` 的 sheet 永远
+不得再次派发；计划必须一次覆盖全部失败/未派发 sheet，并固定先跑未派发、后跑显式可重试失败。
+每个 sheet 恰好一次 probe，单项失败不得让后续 sheet 饥饿，旧失败回执也不得覆盖。补齐视觉批次
+仍只产生像素证据；后续完整 observation manifest、exact acoustic plan、逐条声学 receipt 和私有
+最终 authority 缺一不可，不能由 visual resume 直接删字幕、渲染或发布。
+
+## 普通谈话的音频分工
+
+普通字幕链为 **BCUT 草稿/时间轴 → 已授权词形与词边界规范 → CPA 整片文字校正**，然后由
+实体核验、终审发现的疑难点触发局部听证，再交 CPA 裁决。AGY 只听带明确目标的短窗，
+不能在普通 correction 阶段默认整片精听；整片文字语境仍应提供给 CPA。既有
+`bcut_agy_cpa` 整片音频校正模式保留为历史兼容/显式诊断入口，不能因为名字里有 BCUT/CPA
+就继续当作正确的日常默认。适用生产默认为 `--correct cpa`；是否已部署须读运行入口。
+
+局部听证也不预先批量调用。实体/念弹幕闭集与一般终审发现先由 CPA 结合文字证据裁决；
+CPA 明确 `needs_audio=false` 时直接消费同一判决，`true` 或未能形成合法判决才请求局部音频。
+记录 `CPA_TEXT_FIRST_NOT_REQUESTED` 表示本轮尚未要求听音，不能冒称 provider 不可用、
+听音失败或已取得声学证明。无声整 cue 删除、缺失候选收敛与具体 recurrence 的
+独立声学要求继续执行；旧 `force_acoustic` 只让候选退出确定性旁路，不能跳过 CPA 文字先判；按需听证后仍回到 CPA 终裁。普通 producer 不再预热全部终审音频窗。
+
+BCUT 始终保留为免费草稿与对照基线；MOSS/MAI/Gemini 是可叠加的音频证据能力，不能把
+旧低/中/高分歧示例写成互斥架构。第二模型的常驻选择或按需升级由同源真实测试决定，
+其转写不能自动替代 BCUT 时间轴或取得最终落字权。
+比较“增加一路”和“替换 AGY”应使用同一音频、同一旧人工真值和实际耗时/错误，不能只测
+加法就宣称替换方案不可行，也不能把新近未人听的机器输出当真值。歌切的完整音轨/LRC
+证明属于 [50](50-song-lane.md) 独立任务；本条不取消歌切所需的歌曲完整性验证。
+
+## 普通转写的成功阶段重试复用（2026-09-09）
+
+`correct=cpa`的aggregate transcriber可使用同一私有候选目录下的
+`.transcription-stage-cache`：实际MP3字节、BCUT模型/客户端身份相同，才复用已成功的
+BCUT原始utterance/word观察；其它auto后备提供者不缓存成BCUT。历史`.asr_draft.srt`、
+`.cpa-reviewed.srt`没有新绑定时不自动升级为可复用回执。
+
+完整CPA首轮只在现行`_required_cpa_cues`解析成功后保存原回答。复用键包含同一实际音频、
+带毫秒时间的完整输入SRT、完整prompt（含词表/上下文）、请求模型/思考档、传输端点摘要与
+解析/调用代码身份；每次cache hit再运行当前完整cue合同。缺行、重复、全空、服务失败、
+未知模型身份、文件漂移或不安全路径不能成为命中；坏cache保留，按原调用路径重新获取，
+不覆盖坏证据来掩盖问题。每个键有同一用户下的advisory lock及原子成功文件，跨线程/进程
+的合作调用不重复请求同一阶段；这不是阻止同UID任意恶意编辑的沙箱。
+
+`.transcription-reuse.json`只记录逻辑stage调用/命中与耗时，既有client内部重试不因此
+冒称只有一次HTTP请求；cache不是人工真值或最终PASS。前置规则与context重新构造，
+保真/语言保持/代词专项/实体和exact-final/实际成片音轨检查仍按原流程执行。
+这优化后续失败后的重试，不提升首次识别准确率，也不把warm时延当成首次制作耗时。
+原稿快车道及显式诊断路线不被此普通转写缓存替换。
+
+aggregate转写的后置代词专项另在同媒体stem的`.pronoun-trace/`内保存每次调用独立的
+owner-only诊断：实际输入SRT、完整prompt、返回文本及SHA、逐次逻辑请求和输出SRT。
+追踪层包装现有解析/重试函数，不缓存代词、不自行改prompt/模型/档位、不合成裁决；`RETURNED`
+只表示原函数正常返回，`release_authorized=false`始终不变。失败只记异常类型，不保存
+transport错误正文；凭据回声在hash前省略，超长文本明确记未保留原文。目录不安全/落盘失败
+只披露`PRONOUN_STAGE_TRACE_UNAVAILABLE`，不改变原字幕结果或异常。中断时RUNNING/STARTED
+不等于成功；逻辑请求计数也不代替客户端内部HTTP重试次数。此诊断不接管exact-final的
+候选级代词审计或原稿快车道。记录的模型身份仅是调用对象声明的请求配置，不冒称已核验服务后端。
+
+aggregate后置代词专项须接收本次调用已经提供的selection hook、场次topic context及同一份
+格式化弹幕，不能在完整CPA之后退化为只看可能误写人名的字幕。`pronoun_context.py`只保留
+上游传入的数据，不重新检索、扩窗、筛取支持某个词面的行或静默增加截断；这些语境不是
+逐字真值、性别证明或修改授权，不能照抄弹幕的他/她。实际prompt含该块并由同一trace记录；
+无语境参数时旧prompt保持原字节。CPA仍只通过原occurrence合同改变单数代词，其他文字与
+时间轴不变；后续exact-final/音轨/包门保持。此接线不保证随机模型重试同字节，也不把一次
+返回或与旧机器稿一致当成人工真值。
+
+## 中断时保留原生中间字幕
+
+在现有 `post_transcript_entity_output_srt_sha256` 检查点，producer 同时把当时完整、未规范化的
+字幕字符串保存为 chat audit 的 `post_transcript_entity_output_srt`。即使随后语言门阻断、
+`padded.fresh.srt` 尚未产生，恢复时也无需从较早 `.cpa-reviewed.srt` 猜测当前稿。
+`producer_text_checkpoint.load_post_transcript_text` 只重算已有 UTF-8 SHA 并返回精确原文；
+旧版只有 hash 时返回缺失，显式坏类型或字节漂移拒绝，不读取近似文件名或重新请求模型。
+这份中间文字仍可能 PARTIAL/BLOCK，不代表最终审查、正确字幕或发布许可；候选/源/context、
+原修改回执及后续原生门必须分别验真。该字段不自动触发重试，也不替代最终 raw-byte SHA。
+
+## 阶段顺序（真实调用序）
+
+| # | 子阶段 | 模块 | 作用 |
+|---|---|---|---|
+| 1 | `_collect_timeline_chat` | `producer_chat_input.py` | 弹幕/SC/礼物/上舰证据装载（XML 与显式绑定 JSONL 各守其权威） |
+| 2 | `_transcribe_draft` | ASR 适配器 + `session_topic_authority.py` + `term_boundary.py` | 转写草稿 + 场级话题实体吸收 + 词边界统一 |
+| 3 | `_build_entity_verification_context` | `read_aloud_llm_verifier.py`、`entity_audio_verifier.py` | 实体仲裁闭包（人工 override → CPA 文字 → 按需音频 → CPA 终裁） |
+| 4 | `_apply_entity_authority` | `self_reference_absorption.py`、`chat_proposals.py`、`subtitle_fidelity.py`、`chat_repair.py` | 自称吸收、弹幕权威修复、数字事实门、音频实体落地 |
+| 5 | `_run_final_review` | `final_review_auditor.py` | correction pass：发现问题、路由修复和逐条声学复核；产物为 `final-review-audit.v1`，不是放行回执 |
+| 6 | `_finalize_text_evidence` | `subtitle_fidelity.py` 各 guard、`surface_canon.py`、`song_name_semantic_verification.py`、`song_name_pin.py`、`source_subtitle_truth.py` | 语言保持/书名号/标点门、梗词定形、歌词语义验证后的歌名钉、源真值投影（FAILED 即 SystemExit） |
+| 7 | `review_final_boundary_semantics` | `producer_boundary_review_stage.py`、`boundary_semantic_review.py` | 对 resolver 前的 source full-window cue grid 评审四命题并保留 post-end witness，签发 `review_scope=source_full_window` 回执 |
+| 8 | boundary resolver + `_materialize_final_recut` | `producer_boundary_resolution.py`、`producer_package_finalization.py` | snap/cut 后恢复最终边界对应的 reviewed baseline、重放 source truth 与其他 materialize authority，写出实际交付 SRT |
+| 9 | `exact_delivery_correction_audit` | `producer_boundary_review_stage.py`、`boundary_semantic_review.py` | 从实际交付 SRT 重新解析 delivery-local grid，借 hash-bound source separation witness 复审并签发 `review_scope=final_delivery` 回执 |
+| 10 | `_run_exact_final_release_review` / `_run_exact_final_review_gate` | `final_review_auditor.py`、`final_review_contract.py`、`producer_package_finalization.py` | 对 materialize 后的**精确最终 SRT raw bytes**重新发现问题，签发并按原始字节 SHA 校验 `final-review-audit.v2` |
+
+候选具备有效 `operator-reviewed-exact-source-interval.v1` 时，第 7–9 阶段使用同一独占分支：
+第 7 阶段不把 fresh ASR grid 送给 frozen/live reviewer，而在 canonical reviewed SRT source
+timeline 上重放已绑定的 semantic verdict；第 8 阶段直接物化 authority 的半开 source interval，
+并恢复其 52-cue reviewed SRT 与独立 speaker segments；第 9 阶段仍从 materialize 后的最终 SRT
+重算 delivery grid/source witness。final exact review 与其余确定性字幕/说话人/包审计门不跳过。
+任一精确 authority 失败都在本候选内 fail closed，不得把 disposable ASR 文字、closure cue
+近似匹配或另一轮随机好网格提升为人工真值。
+
+
+### 快车道以实际受审原稿为起点（2026-09-08）
+
+用户在已存在稿件上逐点审定时，快车道发布轨是 **受审原始 SRT + 明确点名/有依据的局部补丁**，
+不是重新 ASR/全片润色后再称“已审”。原稿的路径、raw SHA、cue 及时间域必须先固定；
+未列文字、编号与时间戳逐字保留。已确认正确的原词不得被后继机器稿或同音“规范”替换。
+广泛的“自行修小错”许可不等于用户逐句提供了 exact text；定点上下文修复与 维护者 逐字裁定分别记账。
+
+`prepare_fastlane_original_patch.py` 从候选 canonical `.original-fastlane-patch.v1.json` 及其
+仓库封存原稿进行确定性补丁，不调用模型、不重做诊断。配方明确列出每项 before/after/cue/time/
+证据；其余字节必须不变。candidate 有该原稿绑定时，canonical package auditor 独立重新加载并
+逐字核最终 SRT，不能以 record 未配置 baseline 或另有机器 PASS 取消绑定。
+
+原稿逻辑上的“就地修正”仍以保留不可变前像、私有 staging 和既有原子提交保护实际文件；
+本工具仅产字幕准备件，不取消必要的烧录、实际声文检查或同 BV 发布步骤。既有原稿保留
+不依赖新模型诊断先成功；普通流水线的诊断输出另存为非发布产物，独立找错、改机制、验证。
+若标题/封面未被点名，不借字幕修复重做；点名标题修改仍按60/70，公开修改仍按90。
+
+### 原稿快车道的独立接续入口（2026-09-09）
+
+`prepare_fastlane_original_patch.py --candidate <id> --out <new-dir>`继续只准备
+仓库封存原稿+局部补丁；显式`--reuse-existing`只接受同一目录完整的两份同字节输出，
+不覆盖partial、外来文件或不同配方。其成功不授予上传许可，也不重新转写/烧录。
+`--check-package <existing-package>`是互斥的只读入口：只接受同candidate的
+`original-reviewed-fastlane-package.v1`，先重放原稿绑定，再调用当前canonical package
+审计，实际验证现存视频/音轨/ASS/片头与全部既有证据。普通新稿、源范围已改变或未注册原稿
+不能自动落到这个快车道；必须保留其现有处理路径，不合成审批、不重新要求维护者看片。
+
+### 修改点完整性与增量复核
+
+用户明确声明“问题已经列全/只修这些点”时，该显式范围优先，不受问题数量影响；每个
+实际 changed cue 必须映射到报告点，未覆盖的变化不得混入定点交付。未声明穷尽时，既有
+默认为 1–2 个点整片复核、3 个及以上按穷尽报告处理（维护者 2026-07-28 原话）。旧文档把
+“3 个及以上”误抄为“超过 3 个”，该误差已纠正。不能把计数启发式
+拿来推翻明确的穷尽声明，也不能借定点修复遗漏用户指出的问题。
+明确说“还有其他小错、继续找错”同样优先：`only_these_errors=False` 表示非穷尽，
+`None` 才是未声明；计数再多也不能把明确非穷尽改成穷尽。两种相反的显式声明同时传入
+必须拒绝。CLI 用 `--no-only-these-errors` 保留该区别，不把缺省 flag 当作明确否定。
+数量启发式仅决定修复范围，不证明整份机器转写已被逐句认可。新编译完整文本冻结基线时，
+`materialize_operator_reviewed_subtitle_baseline.py --operator-correction-plan` 必须消费并重算
+同候选的显式穷尽计划；不能以“允许发布”、机器实际改了三句、或 ledger 自报 EXHAUSTIVE
+签发 `OPERATOR_UNCHANGED_FREEZE`。新基线及编译回执保存该计划，loader/fast-path 重验它；
+旧已签发基线不据缺少新字段自动失效，但发现原话与冻结矛盾时须撤出当前发现入口、保留
+原字节作历史证据，不能只去掉快路径 pin 而仍让全量 baseline 在后面复写错误。
+此策略由 `src/autoslice/operator_correction_policy.py` 强制；本批快车道的点名范围见
+[80](80-package-delivery.md)，不追加 维护者 二次看片要求。
+
+字幕-only 的新交付可使用 `incremental-artifact-audit.v2` 只复核 changed cue/window；未变的
+视频、封面、boundary 和 title 只能继承上一份**已通过且 hash-bound**证据，不能继承旧的
+FLAGGED/失效 receipt。最终 materialize 后仍必须重算 exact-final SRT、source separation、
+说话人和 package gates；增量 receipt 不是最终放行。
+
+语义修复引擎（专名/方言/语境不合适度）的设计与规则见
+[41-semantic-repair.md](41-semantic-repair.md)——那是本步的核心子权威。
+
+## 硬约束
+
+- reviewed SRT 的 `PIECE_LOCAL` / `DELIVERY_LOCAL` 必须依据它实际对应的音频时钟确定，
+  不能从所在目录、旧 record 的 padded interval 或文件名推断。已经按主片计时的字幕不得
+  再减 `final_start_ms`；片头偏移只在主片与最终成片之间应用一次。C7b 在 2026-09-06
+  发生的 9.750 秒整体提前来自旧 baseline 误标 `PIECE_LOCAL`；原 36-cue 链保留为历史证据，
+  当前 54.170 秒主片只消费对应的 21-cue `DELIVERY_LOCAL` 前缀。旧时间域配置必须拒绝，
+  新时间域字段本身仍不是声文同步证据，最终成片须通过 [80](80-package-delivery.md) 的实际音频检查。
+
+- 普通谈话默认 `--correct cpa`：BCUT 时间轴/草稿 → 前置规范 → CPA 整片文字校正。
+  AGY 不再对整个 padded media 做前端精听；后续实体、外语与终审的局部疑点听音仍按
+  第 41 步调用。`bcut_agy_cpa` 保留为显式旧链对照，不是普通生产默认。
+- aggregate ASR 的 CPA 路线必须完成整片校正；空补全、缺失/重复 cue、非法字段和全空文本
+  不能降级成“已校正的原稿”。服务不可用为 `CPA_CORRECTION_UNAVAILABLE`，坏合同为
+  `CPA_CORRECTION_INVALID_OUTPUT`；前者按既有 provider-transient 有界重试，后者阻断。
+  有代词时专项 CPA 同样须返回合法结果；显式合法零改动仍可通过。
+- 首次 CPA 前复用 `term_boundary.py`、已授权 `canonical_surface_rules` 和
+  `normalize_expected_value_surfaces`。词边界移动不得改变整段字符流、cue 数或时间戳；MOSS
+  的匿名 speaker 切换/缺失边界不得跨越。词形规范不等于独立听音证据，登记词冲突仍交 CPA。
+  原始 `.asr_draft.srt` 不覆盖；`.pre-cpa.srt` 与 `.pre-cpa-audit.json` 保存前置结果及规则来源，
+  非平凡词形差异的原稿也给 CPA。晚期 hard/expected/native canon、source truth、fidelity、
+  entity 与 exact-final 门保持不变；前置不能取得新的语义改字权限。
+- 历史独立草稿候选可显式试跑 `--correct moss_cpa`，同时保留 BCUT 对照；这不是取消 BCUT
+  常驻基线的生产授权。该诊断入口为 MOSS Pro 无热词原生草稿 → 前置规范 →
+  必经 CPA，疑难项仍走既有实体/终审局部声学证据和 CPA 裁决。不按未经验证的 ASR 差异阈值
+  选模型。MOSS 超时、无凭据、坏响应、重叠或越界时间轴须回到 BCUT→CPA 草稿校正及后续局部听证，
+  不能静默丢段或按编号套进 BCUT 时间轴。`.asr-source.json` 记录实际路线、模型、音频/响应
+  hash 及回退原因；匿名 speaker 不是 HOST/GUEST 身份证据。
+  `AUTOSLICE_CORRECTION_MODE` 只允许 `bcut_agy_cpa/moss_cpa/cpa`；普通生产选择 `cpa`，
+  MOSS 默认推广须先完成配对全链和时间轴验收。`agy/none` 仅保留为显式 CLI 诊断，不能由
+  生产环境默认开关取消 CPA。MOSS key 只从私密 `AUTOSLICE_MOSS_API_KEY_FILE` 或进程
+  `AUTOSLICE_MOSS_API_KEY` 读取，禁止进源码、日志和 fingerprint。
+
+- **MOSS/MAI 局部补证基础层（2026-09-09）**：`diarized_transcription.transcribe_evidence`
+  只返回 provider-native evidence，不生成发布字幕；`provider=mai|moss` 必须显式选择，禁止
+  隐式互相 fallback。MAI 固定 `MAI-Transcribe-2` 的 verbatim/word timestamps/diarization，
+  MOSS 固定 Pro diarized JSON；两者都保存输入音频 SHA、响应 SHA、原生 segment/匿名 speaker、
+  时间轴资格和 typed diagnostics。原生重叠、乱序、缺词级时间可以保留为证据，但不能通过
+  排序/clamp/drop 伪造成单轨 SRT。`speaker` 仅是单次响应 cluster，不是 HOST/GUEST 身份。
+- `subtitle_audio_evidence.observe_secondary` 以
+  `candidate-free-native-secondary-v1` 绑定 provider/model/input audio/duration；成功 cache 必须
+  精确命中同一 binding 和 evidence SHA。`evidence_table` 只按真实时间重叠引用 BCUT cue，只有
+  provider 的整段或词级时间真正落在 cue 内才生成 `cue_spans`；未覆盖语音只能披露 alignment gap，
+  不得按序号、长度或语义猜测塞进邻句。secondary 失败不能取代 BCUT；这些接口本身没有
+  mutation authority，也不构成新的生产 correction mode。
+- `secondary_audio_observer.build_secondary_audio_observer` 只消费现行
+  `subtitle-span-acoustic-witness-request.v1` 的 candidate-free 几何，并复用与 blind-pinyin
+  相同的 source offset 与目标±400ms裁窗；请求中出现候选/当前句/提案/上下文文字即在裁剪前
+  拒绝。MOSS/MAI 原生 segment 只平移回同一 source timeline，另列真正与 target 相交的观察；
+  receipt 固定 `EVIDENCE_ONLY / mutation_authorized=false`。该 seam 只是供后续 text-first
+  `needs_audio=true` 路线显式调用的能力，本身不让普通 producer 自动增加第二 provider。
+- 补证调用只有在上游已经形成**具体疑点窗口**时才允许。共享
+  `supplement_audio_budget` 默认最多 3 个不同窗口、每窗 20 秒、总提交 60 秒。预算在 provider
+  client 的 `before_request`、也就是实际 HTTP dispatch 前扣除；provider 失败、timeout 或切换
+  另一 provider 的实际提交照样计费，绑定完整的精确 cache 命中只披露、不扣费。窗口数/总时长
+  cap 的拒绝单列为 typed `refusals`，但不伪装成已经发出的 attempt；裁窗几何本身非法也不能
+  写成 provider 失败。这个预算是防止把“局部补证”退化成整片多 ASR，不是质量阈值。
+  MOSS/MAI 与 Gemini/AGY 的结果不能多数表决；
+  相互冲突时必须保留各自 raw/hash provenance 并交既有 CPA/源语言门裁决，任何由某一路文本
+  派生的拼音或摘要不得冒充第二个独立声学证人。
+- 私有 producer 若已明确选择 `local_audio_witness_provider=moss|mai`，可在 spec 中显式给出
+  `local_audio_witness_budget` 的 `max_windows`/`max_audio_ms`；每个精确窗口仍固定不超过 20
+  秒。显式预算在局部音频可解析门之前注册；同一 producer 的 context 与外国脚本消费者必须
+  复用同一 source budget，不因分目录或换 provider 重置额度，不同上限也不得静默覆盖。该对象
+  是本次实验的局部配置，不是用户提供的付款或全片 ASR 上限；未配置时仍为默认 3/60，文档或
+  测试中的 24 窗/180 秒不是生产默认。
+- 同一 producer/source 的 canonical 私有回执固定为 `out_root/native-audio-budget.json`，当前
+  schema 为 `native-audio-budget.v2`。回执以单调 `revision` 和 self-hash 绑定 source SHA、
+  provider 集合、实际 `attempts`、`cache_hits` 与 cap `refusals`；attempt 从 `DISPATCHED`
+  只能一次封存为 `OBSERVED / TEXT_UNLOCATED / FAILED / RESPONSE_REJECTED`。同 revision 内容冲突、
+  旧 revision 覆盖新 revision、坏 self-hash 或旧 v1 证据不得静默补签。回执不保存凭据或 raw
+  provider 文本；它证明预算记账，不证明字幕正确、CPA 已裁决或最终包已放行。
+- 共享同一回执的合作进程，在观察器构造、每次观察及直接回执写入时，共用
+  `native-audio-budget.json.lock` 的非阻塞排他锁；先持 source 的进程内锁，再持该文件锁，
+  同线程嵌套写回复用原描述符。忙锁或不安全锁文件沿既有
+  `LOCAL_AUDIO_BUDGET_RECEIPT_PERSIST_FAILED` 拒绝，不能先抽音/派发再报错；锁文件须为
+  当前用户的0600、单链接、空普通文件，并核对路径/FD inode，结束时不删除锁inode。
+  fork 子进程不继承父进程的逻辑所有权。此互斥只覆盖使用同一回执入口的合作执行器，
+  不把旧回执当新预算；跨进程恢复只继承已消费历史与剩余额度，按下面的恢复规则处理。
+  任意不合作的同UID文件替换仍不在隔离保证内。原结构、历史连续性、预算上限及CPA权限不变。
+- native exact-cue 的 canonical 观察器在真实 `before_request` 回调中，先扣除本次预算并
+  持久化 `DISPATCHED` 预留，再允许 provider 发送请求。回执临时文件 flush/fsync 后原子
+  替换，再 fsync 父目录；任一步失败必须在 HTTP 前停止，不能把该错误封成 provider FAILED。
+  既有 v2 的未决 `DISPATCHED` 在中断场景只证明持久化派发预留，不证明服务端已收到/计费：
+  预留成功后、实际发出前崩溃也可能留下它。没有新的网络确认字段或虚构完成回执。
+  硬退出后该预留仍保留，但不再把“结果未知”作为永久停工理由。2026-09-14 维护者 明确要求
+  先尝试取回结果，无法取回则有界重发。canonical observer
+  通过 `resume_native_audio_budget` 在同一 source/receipt 锁内验证 self-hash、完整事件历史、
+  source SHA 与配置上限，然后恢复已有账本；不清账、不返还旧预留、不提高原总预算。
+  若同一进程只是末次落盘失败，则先持久化已有的合法历史后继，再继续。
+  后续先用当前音频/provider/model/时长精确绑定的缓存取回结果；命中不新增预留，即使剩余额度
+  为零也可复用。当前 MOSS/MAI 同步 POST 客户端没有持久化可供远端查询的任务编号，因此
+  不虚构 retrieve API；缓存无法恢复时，由同一正常观察入口重新派发。
+  同 provider/model/精确窗口最多三次累计尝试（含最初请求），每次均计入原音频总预算；
+  旧未知 attempt 保留 DISPATCHED，新尝试独立追加，不伪造旧请求已收到/已计费/已失败。
+  不同窗口不因别处存在未知 attempt 被一律阻断，仍受共同预算、来源与并发锁约束。
+  有真实可查询 ID 的其他 provider 路线应先有界 retrieve；进行中按原退避/冷却恢复，不能
+  通过循环重发规避限流或权限拒绝。这里不新增模型调用、模型切换或真实额度授权。
+  正常结果仍沿原单向终态封存；未接 canonical 入口的旧消费者不据此宣称已获得恢复能力。
+  此计算请求重试规则不适用于上传、同 BV append/edit、付款等外部变更。
+- MAI 原生证据允许保留既有 `ENCODER_TOLERANCE_MS` 内的尾部时标误差，但必须有
+  独立输入时长，且原生终点同时处于声明/输入时长的容差内。原始字节与时间不改，
+  `MAI_NATIVE_ENCODER_TAIL_OVERHANG` 显式披露超出毫秒数；该结果
+  `one_track_srt_eligible=false`，不能转成伪造的合法单轨字幕。严格 SRT 路线、超容差、
+  未知输入时长保持原拒绝。MOSS 全零时标仍是不可用时间证据，不按文本比例补时间。
+- MAI 凭据只在实际调用时从 `AZURE_ENDPOINT` 与进程 `AZURE_API_KEY` 或 owner-only
+  `AUTOSLICE_MAI_API_KEY_FILE` 读取；MOSS 沿用上一条私密入口。两者禁止重定向、无隐式重试、
+  secret 不写日志/receipt/fingerprint。普通生产仍以 `--correct cpa` 保留 CPA 文字终裁；
+  `producer_text_pipeline.run_text_pipeline` 的结构化补证路由从当前配置的 `MAI → MOSS` 顺序中
+  选择**一家**，禁止两家全调或在 native provider 间隐式 fallback。local entity/read-aloud 只有
+  hash-bound 的调用前 CPA 决定（`text_first_judge.needs_audio=true`，或弱 read-aloud 的 typed
+  `audio_dispatch_decision / CPA_CONTEXT_POLICY`）可以调度候选盲时窗；调用后的 CPA judge 不能倒过来
+  冒充调度许可。foreign-script 路径则由同 cue 的 deterministic mixed-script detector 绑定精确几何，
+  native 证词之后仍交 CPA 终裁。Jev 当前为 `NOT_PROMOTED`：离线评测、decision PASS 或研究回执
+  均不是生产调度权；只有另有明确 promotion 合同和真实普通消费者后才可改变该状态。
+- 旧 `local_audio_witness_provider` / `foreign_script_witness_provider` 仅作为显式覆盖；普通入口在调用前
+  写 `<candidate>.audio-witness-routing.json`。完成后的 `CONSUMED` 必须同时绑定：(1) 实际
+  `OBSERVED` 的 MAI/MOSS candidate-blind evidence，含 provider/model、精确时窗、source/audio/response
+  hash、cache/fresh 状态、`EVIDENCE_ONLY` 且 `mutation_authorized=false`；(2) 上述调用前 CPA 决定或
+  foreign detector；(3) 实际 provider 与计划路线一致；(4) 调用后的 local CPA final verdict，或
+  foreign `cpa_adjudication_rows`，均明确由 `CPA_JUDGE` 解决。缺任一项为
+  `INVALID_NATIVE_CONSUMPTION`；回执先原子落盘，普通 producer 随即以
+  `INVALID_NATIVE_AUDIO_WITNESS_CONSUMPTION` fail-closed，不能继续边界/交付链。
+  只有配置/计划而无 native evidence 为正常的 `NO_NATIVE_CALL_CONSUMED`，不会因本片不需要补听而
+  失败。`served_from_cache=true` 明确记为 `CACHE_REUSE`，不是本轮 fresh provider call。兼容字段
+  `cpa_*` 指向调用前决定，不再指向调用后裁决。native verifier 回包时另在内存路由中保留
+  去文本化的 `runtime_native_attempts`；若后续 CPA/audit 丢失，该 attempt 不会消失成
+  `NO_NATIVE_CALL_CONSUMED`，而会因缺少 dispatch/final binding 明确 INVALID。provider 异常只记录
+  计划路线与 `provider_call_observed=false`，不伪造 model、response 或调用成功。
+- 该接线不赋予 MOSS/MAI 改字或 speaker 身份权限，`uniform_host` 也不是声源证明。只有受管 runtime
+  配置、真实普通入口调用、最终字幕/声源质量和完整流程时间/成本都通过，才可宣称生产自动化已
+  生效；provider 可连通、专项脚本成功、配置 PASS 或 routing receipt 存在都不够。
+
+- 谈话切片中的歌名候选（包括可能其实是 franchise/企划名的字符串）在
+  `song_name_pin.py` 改字前必须先有 `song-name-semantic-verification.v1`：回执绑定 pin 前
+  SRT、完整候选集合、标题引语/selection hook/歌名语境邻近 cue、逐候选歌词来源与 hash、
+  命中面、分数和 `MATCH / DISPUTED / LYRICS_UNAVAILABLE / INSUFFICIENT_EVIDENCE` 判定。
+  只有唯一 `MATCH` 可以进入 pin；语义证据可在另一个候选拥有强字面/近音表面时纠正误选，
+  但不能在尾句根本不像任何候选歌名时凭大意生造。缺回执、同分、多匹配、歌词缺失或不一致
+  都不得改字。产物分别为 `<candidate>.song-name-semantic-verification.json` 与
+  `<candidate>.song-name-pin.json`。
+- 歌词检索严格 local-first：默认只读 profile `known_songs` 的本地 fingerprint/LRC 缓存。
+  外部歌词 provider 只有 typed `SongLyricsProvider` 注入位，生产默认不注入、不启用；本地缺失
+  时只落 `song-name-lyrics-verification-request.v1 / DISABLED_BY_DEFAULT`，禁止临时裸调未审接口。
+- 上传语义修复只允许三类非 CPA mutation：维护者 operator truth、纯机械规范化和有完整
+  `glossary-expected-value-gate.v1` 的高先验 canon。expected-value 只接受未登记近音误听面
+  到登记 glossary/roster 词面；两边都是登记词面时专名平等，必须交 CPA。其余词面、语义、
+  插入或局部删除变化都必须由 CPA 明确选择 `PROPOSED`；整 cue 删除则须在
+  `target_audible=false` 时进入显式 `CURRENT / PROPOSED / DROP` 三选一，只有 CPA 明选
+  `DROP` 才可置空。AGY/声学与拼音只作证据和冲突诊断，不拥有对 CPA 明确裁决的第二张否决票。
+- 官方主播 registry 与社区称呼 snapshot 都是 occurrence-neutral 候选，但权限不同：低频
+  `streamer_registry` 只确认官方实体/词面存在；每日 `community_names` 中的 `alias_of`、
+  `fan_name_of`、`meme_of`、`associated_with` 只确认社区映射达到证据门。社区关系不得伪装成
+  `official_roster`、不得进入零 CPA expected-value 表、不得生成机械 `surface → canonical`
+  替换；当前 cue 仍须由音频、结构化弹幕/SC 和话题独立见证。事件/形象梗（例如某次事件产生
+  的形象称呼，以及观众动物化/物件化主播的互动行为模式）必须保留为 `meme_of`，不能扁平化成
+  主播永久别名。关系类型由 CPA 基于已落地证据作语义判断；机械语法只作为特征，不能独自把昵称
+  判成粉丝名。profile 的版本化 `reviewed_relations` 只可纠正已发现关系的 owner/type，并须重新
+  满足目标类型的证据门；不得凭人工表创建或直接接受关系。相同证据哈希和 prompt 版本不得重复
+  调 CPA，版本或证据变化才触发旧关系复判。
+- glossary 中“一个明确 canonical + 明列误听面”的三字及以上变体自动进入零 CPA
+  expected-value 表，并在所有 mutable 文本阶段之后重新规范化；括号中的事故日期/说明不是
+  词面。两字日常词（如“小时/留下”）无条件替换的误伤先验过高，除非 profile 单独显式提升，
+  否则仍交 CPA。这样“下斗里→沙豆李”可机械覆盖整片所有出现，而“专名A→专名B”仍被
+  registered-term guard 拦截。
+- glossary 的普通例句和引号没有 mutation authority。只有独立 bullet 以
+  `[exact-cue]` 显式登记的整句源真值，才能签发 `exact-cue-canon-authority.v1`，在当前
+  完整 cue 通过单次局部替换精确等于该真值时机械恢复。它的权限只覆盖整句，不把句中
+  `礼墨/礼豆沙/李墨` 等专名提升为彼此不平等的全局替换规则；因此合法专名子串不能再冻结
+  同一 finding 的其余错误字节，普通专名冲突仍交 CPA。
+- B 站固定礼物名属于同一高先验车道：profile 明列的
+  `粉丝灯牌/粉团灯牌 → 粉丝团灯牌` 在最终 mutable 文本阶段之后机械复写并落
+  `EXPECTED_VALUE_CANON` 收据，不再依赖终审 LLM 恰好发现漏字。当前词面若也被登记为合法
+  专名，仍触发 registered-name equality guard，转交 CPA。
+- 实体上下文构建完成后必须生成同一份 hash-bound `.clip-context.json`：绑定 candidate/date、
+  官方源 SHA、整片 draft、selection hook、relation/topic、结构化弹幕/SC 与 scoped speech
+  memory。终审、声学请求、StoryContract、record 和交付包只能引用验证过的同一 digest；
+  payload、candidate、日期、源 hash 或 ledger hash 漂移立即阻断。
+- `.clip-context.json` 必须保存未截断的整片 draft，硬上限 60,000 字；超过即阻断，不能用
+  “前后各一段”伪装整片语境。给模型的 supplemental prompt 另有 18,000 字硬上限：它从整片
+  cue、优先保留的 SC/礼物/上舰与按时间均匀采样的普通弹幕中做 cue-aware 选取，并显式标出
+  omitted blocks。StoryContract 保存的 `clip_context_prompt` 必须由当前 sidecar 重新渲染后
+  逐字相等；boundary/final reviewer 必须收到这份 hash-bound prompt 的完整字节，不能再把
+  合法的 18,000 字输入静默截成 12,000 字。超过 18,000 字必须以
+  `CLIP_CONTEXT_PROMPT_BUDGET_EXCEEDED` /
+  `BOUNDARY_SEMANTIC_REVIEW_CANDIDATE_CONTEXT_OVERFLOW` 阻断；context、预算或 renderer 漂移
+  一律 `CLIP_CONTEXT_PROMPT_BINDING_DRIFT`。
+- 话题图只负责把当前日期/作品/活动节点和其子实体缩成候选闭集：
+  `topic-resolution.v1` 必须披露 `RESOLVED`、`NO_MATCH`、`AMBIGUOUS`、`NO_GRAPH`、
+  `GRAPH_EXPIRED` 或 `GRAPH_INVALID` 及 graph SHA（若已读取）。它不能直接授权改字；最终
+  专名仍须音频、画面、结构化聊天或 source truth 见证。topic resolution 与 scoped graph
+  context 一并进入 clip-context digest，不能在终审后偷换。
+- 会话游戏语境是场级候选通道：runner 按日从录制元数据/全场弹幕/选片草稿确定性解析
+  当前游戏（`session-game-context.v1`，规则见
+  ../workflows/session-game-context.md（`../workflows/session-game-context.md`；历史引用，未随公开仓分发）），RESOLVED 时该游戏
+  的审定词表随 `glossary()` 注入为候选闭集。它与 roster/社区称呼同级：只扩大候选与解释
+  空间，不证明本句出现，无机械改字权限；NO_MATCH/AMBIGUOUS/失败一律不注入且不阻断。
+  同级还有会话主题提示（不是所有直播都是游戏，主播近期 B 站动态命中会话日窗口时同样作为
+  候选闭集注入，规则见
+  ../workflows/session-theme-hints.md（`../workflows/session-theme-hints.md`；历史引用，未随公开仓分发））。
+- “语境”默认是**整个切片和当前场次**，不是争议 cue 前后几句。clip-context 必须让审片员
+  看见片内开头到结尾的 callback/复述/调侃链，也可携带与该日期和话题直接相关的结构化
+  直播标题、联动对象、游戏/活动/公告实体；这些只能扩大候选与解释空间，不能在没有音频/
+  画面/弹幕/source truth 见证时直接改字。前句说“姐感的妹妹”、后句拿同一句调侃，属于同一
+  语义链；逐 cue 独立校正会丢掉这种证据，禁止作为生产默认。
+- speech memory 只生成候选闭集，`mutation_authorized=false`；必须按 candidate/relation/date
+  scope 检索并携带 `candidate_memory_id`。它不能冒充 source_surface，不能进入 glossary，
+  即使与误听同音也必须走声学仲裁。片内另一个由同一 ASR 派生的 cue 同样只是相关候选，
+  不得作为独立文字证人直接改字。上下文展示用的 `id=` 不是 ID 本体；终审只可在去掉
+  **一个**该固定展示前缀后精确命中哈希绑定 ledger 时受控规范化，未知 ID 禁止模糊匹配。
+- fidelity guard 的 `reverted[].kept` 不得在后续 correction 漂移后丢失：只有 audit v2、原始
+  `.asr_draft.srt` cue 文本和时间三者精确绑定时，才以
+  `candidate_provenance.kind=draft_fidelity_kept` 进入 CURRENT/PROPOSED 闭集。kept 在哪一侧
+  必须显式记录；法官 request 与 `JUDGE_KEEPS_CURRENT` / `KEEP_EXISTING` 回执同时保存可复算的
+  kept 贴合度、目标 cue±2 的候选词面命中、`structured_chat_bound` 绑定事件/cue 数及证据摘要。
+  三路都只是候选证据，不增加 mutation authority。
+- 原始 `.asr_draft.srt` 在同场邻近窗中把同一汉字词面写在至少两个不同 cue 时，可生成
+  session-only 候选 `session_transcript_recurrence`；provenance 必须绑定 raw/current SRT SHA、
+  每次出现的 cue/时间/字位和 `global_glossary_authorized=false`。它只证明该词面在本场出现，
+  每个待改目标仍须新鲜 `blind_pinyin`、`OBSERVED`、`target_audible=true` 且贴音后再交 CPA；
+  `UNCERTAIN` 不得靠纯文字 CPA 落字。该通道永不读取、追加或回写全局 glossary/profile。
+- 音频二听只证明读音，不证明任何同音/近同音/字母写法；人名形态守卫还会特别检查带
+  「小/老/阿」前缀或「神/老师/姐/哥/酱/桑/君/总/宝」后缀的跨度。没有文字权威就只回退
+  该换字跨度，同 cue 其余有见证修复仍保留。守卫同时检查 draft 改写跨度本身的人名形态，
+  并只额外容忍 `-n/-ng` 鼻音尾漂移来识别近同音（如 `毁神→绘声`）；不得因改写把「神」
+  一起吃掉就逃过相邻后缀检查。`什么/怎么/为什么/谁/哪里/多少` 等疑问意图族发生变化则
+  整 cue 回退，禁止把逐字字幕改成解释性提问。
+- 字母昵称的规范词面与口播读音必须分层：已有 source-backed entity provenance、建议包含
+  字母、且**整条 current/proposed 的去标点拼音在折叠相邻口语重启后完全相同**时，声学层
+  听到字母名（如 `N→恩`）不得以 grapheme 不同否决 `大N`。该窄门不提供 provenance，
+  不适用于普通语义改写、未知专名或发音不等价候选。
+- 源真值支持 `replace_cue` / `replace_substring` / `drop_cue`；`drop_cue` 只允许删除被 source-timeline 真值半开区间完整包含的 cue（仅容忍 120ms 编码/SRT 边界漂移）。任何实质性跨界均记 `DROP_CUE_STRADDLES_TRUTH_INTERVAL` 并 fail closed，禁止按“有重叠”整条删除。
+- 操作员只确认某个候选的少数字幕文字、且明确没有授予上传权时，使用
+  `subtitle text override schema_version=4`。该版本顶层只允许
+  `schema_version/candidate_id/upload/source_cue_witness_sha256/decision_output_witness_sha256/overrides`
+  六个键，并强制 `upload=false`；不得放入没有运行时消费者的旧成品/源媒体装饰性哈希来制造
+  假绑定。producer 在创建输出目录前核对 candidate，最终边界重放时再次以当前 `cid` 核对；
+  cue source witness 与 decision witness 仍绑定被人工审定的精确时间、原文与输出。该候选资产
+  同时进入 `subtitle_authority` 失败恢复指纹，新增/修改只唤醒同一候选；withheld 模式完全隐藏
+  该资产，不得因人工真值字节变化唤醒盲测。
+- boundary semantic receipt 分两层。resolver 前的 `source_full_window` 回执只能绑定当时完整
+  source grid，并用 endpoint 后 cue 证明下一话题；它不是最终交付字幕回执。resolver 与
+  `_materialize_final_recut` 完成全部实际交付改写后，必须从精确最终 SRT 重新解析 grid 并签发
+  独立的 `final_delivery` 回执。后者可用
+  `talk-boundary-source-separation-witness.v1` 继承 source 层的 post-end 分离证明，但仍须按
+  当前最终文本重新判断 syntax/story。两层 request、cue ordinal、grid SHA 与坐标分别绑定，
+  不得要求相等，也不得因 endpoint ms/text 碰巧相同而平移复用。
+- 源真值的 `local_windows` 是容忍 fresh-ASR 时间漂移的**发现窗口**，不是最终 cue ownership。
+  在实体仲裁与 `_run_final_review` 前，流水线先对当前 draft 做确定性 source-truth preview：
+  `applied/satisfied` row 只按校验通过的
+  `source-truth-resolved-target-projection.v1` 精确 cue index 进入保护集；宽窗仅擦到的邻 cue
+  不得被豁免。只有仍失败的 `required=true` truth 才可在 preview 中退回原始窗口作保守保护，
+  并须留下 typed unresolved-fallback receipt；`required:false` 不得成为最终 owner。源真值
+  随后仍在正式阶段重放并复验，因此 preview 不是“提前应用后跳过验证”，而是禁止低权威阶段
+  抢写已确定的最高权威目标。projection 缺失/非法、cue index/timing 不一致或 required truth
+  最终未满足均 fail closed。
+- 两条 required `REVIEWER_OPERATOR_TRUTH / replace_cue` 在同一源录像上首尾精确相接，而 fresh
+  ASR 的一条 cue 跨过该公共边界时，禁止让后写 truth 复用并覆盖前写 owner。流水线只在两边
+  源区间均完整保留、前窗唯一拥有骑界 cue、后条审定文本可唯一拆成“新前缀 + 已正确后缀”时，
+  按绝对源边界拆分 cue，并写 `source-truth-adjacent-cue-partition.v1` 收据；preview 把拆后
+  owner 映回原 cue 保护，正式落地保留拆后精确时间轴。任何不唯一或后缀漂移都 fail closed。
+- 宽 `replace_substring` 窗若同一专名出现多次，必须用 `mention_postconditions` 为每一次
+  绑定绝对 source interval、required text 与 forbidden tokens；窗口内“某一次写对”不能
+  掩盖另一 mention 仍错误。全部 mention 必须先独立解析、隔离并通过；这些 mention 对应 cue
+  的并集同时是**实际 mutation target**和最终 exact owner projection。即使 fresh ASR 已经写对、
+  本轮没有发生 replacement，也不得退回宽 `local_windows` 或“所有含 required text 的 cue”
+  取得 ownership。fresh ASR 把两个 mention 合进同一 cue、任一 mention 缺失或无法分别归因时，
+  必须在改字前 fail closed；未审的父窗口 cue 绝不能先被改写后再从审计 projection 中消失。
+- `replace_cue` 可附带经人工/黑屏纯音频听证确认的绝对源时间轴 `spoken_start_ms`：用于删除幻听前缀后把保留口播的字幕起点同步收紧。目标必须唯一；真值宽窗擦到的前句仅在其结束早于审定起点时排除，fresh ASR 的目标 cue 起点最多可比审定起点晚 500ms（随后回钉到绝对起点），若仍有后续重叠 cue、前句跨过起点、越界或非整型则 fail closed。VAD 未检出本身仍不得推导这个起点。
+- 已审字幕是独立于封面的文本权威。候选级资产放在 profile 的 `reviewed_subtitle_baselines`
+  目录，由 runner 自动发现并写入候选指纹/spec；不得再以 `--reuse-cover` 作为是否保留人工字幕的
+  条件。`subtitle-redelivery-baseline.v2` 同时绑定 SRT 哈希、源录像 basename/SHA-256 与绝对
+  source coverage：本轮 BCUT 时间保留，文本按绝对源时间逐 cue 恢复旧版，再统一重放更高权威
+  的全部源真值；新切点可在干净 cue 边界裁短或扩展，未审扩展区明确记账。哈希/源 identity
+  漂移、覆盖边界切半 cue、漏 cue、合并/拆分、歧义映射或二次真值失败一律拒发，禁止靠重掷
+  模型碰运气。只有已由 `drop_cue` 删除、无法与旧稿一一配对的静音窗会从两边同时排除；不能
+  因宽真值窗内“任一 cue 已出现 required_text”就掩盖同窗其他新误听。
+- `scripts/replay_reviewed_subtitle_baseline.py` 可对 failed rerun 的 old-record/current-recut
+  drift 构造 read-only predicate matrix，并只在 candidate-private stage 重建 old-record video、
+  reviewed SRT 与 baseline audit。该 stage 不是 package apply：speaker/ASS/burn、title/cover、
+  final review 和 package audit 仍须从完整 after-image 通过，之后才可经 state-last transaction
+  安装；不得用单独 SRT/MP4 或 private stage 覆盖 live package。
+- `operator-reviewed-text-full-ownership-pin.v3` 的 reviewed SRT 必须显式声明唯一时间域：
+  `DELIVERY_LOCAL` 表示 cue 0 已对应最终主片 source 起点，manifest 的绝对区间必须逐毫秒等于
+  `[piece_start + final_start, piece_start + final_end)`，重放是 identity，禁止再减一次 crop；
+  `PIECE_LOCAL` 表示 cue 0 对应完整 content piece 起点，只允许在 full-window 重放后按最终边界裁
+  **一次**。缺字段、未知值、domain/区间/record/media boundary 不一致或 delivery-local cue 越过最终
+  媒体时长均 fail closed。piece-local baseline 不能把媒体开场强制为 source-local 0；
+  delivery-local head 若与 semantic start 的受控 lead 几何矛盾也必须拒绝。历史 C3 仅因已有独立
+  deploy-sealed exact-final authority，可按其原 manifest bytes 合成 `DELIVERY_LOCAL`；不得扩展成
+  通用兼容默认。
+- reviewed-baseline replay 的 `--plan` 只读取 sealed baseline/old-record/source 绑定，不能报成
+  full preflight；`--readiness-graph` 只读指定 date/CID 的 state discovery，不审计其它日期的
+  package。只有 `--full-dry-run` 才在 candidate-private namespace 完整重建 speaker/ASS/burn、
+  fresh exact-final/source-fact、frozen title/cover carry、record/publish/chat mirrors 和 package
+  audit，并输出逐 predicate 的 `PASS / FAIL / NOT_EVALUATED / NEEDS_PROVIDER` matrix。它不得写
+  formal record/state/journal/delivery/upload，私有 stage 在成功或失败后都必须安全清理。
+- `--apply` 仍先在 runner lease 外并行完成上述 private prepare；每个 candidate 随后按输入顺序
+  在短 `runner.lock` lease 下重新从最新 state bytes 投影**自己的** state-after，并 CAS/检查
+  已封口 artifact preimage、installed checkpoint 与 deployment authority 后 state-last commit。
+  前一 candidate 的 state 成功不得使后一 candidate 复用 stale whole-state image；任一 drift
+  在正式 target/state 写前拒绝。这个 no-upload transaction 不获取 `upload.lock`，也不创建
+  `AUTO_UPLOAD` 或 upload manifest；投稿仍只走 90 的 single-uploader 显式授权闭环。
+- 已发布候选不得伪造 `candidate_rejected` state 来调用上一路径。只有显式
+  `--published-recovery-bvid` 可进入 package-only recovery：PLAN 逐字绑定 committed same-BV
+  publication authority 与当前唯一 `published` state row；full-dry-run 只在私有 stage 验证；
+  apply 还必须给 create-only `--recovery-package-root`，只落 operator-private package，并声明
+  `state_transition=none / same_bv_only=true / upload_allowed=false`。最终 package 内的
+  `<cid>.published-recovery-preflight.json` 必须进入 canonical audit，绑定当时 production state SHA、
+  BVID/AID/CID/title、authority 与 source record；state 在 prepare、落包前后任一点漂移均拒绝。
+  该窄门不写 production state、正式 package、delivery、ledger 或 upload surface，正常 replay 的
+  `candidate_rejected` invariant 继续保持不变。
+- redelivery v2 在 coverage prefix/tail 唯一允许保留的 edge straddler，必须与**每一条**
+  retained reviewed cue 都按半开区间零重叠；恰好边界相接的 0ms overlap 可披露为
+  `BOUNDARY_STRADDLE_WITHOUT_REVIEWED_CUE_OVERLAP`。任何正重叠，包括 1ms，仍须报
+  `REDELIVERY_CURRENT_CUE_STRADDLES_REVIEWED_COVERAGE` 并拒发，不能把“边缘 cue”当宽松豁免。
+- v2 manifest 只有显式声明 `exact_interval_replay=true`，且源文件 basename、SHA-256、绝对
+  起止区间全部逐字相同时，整份人工审定 SRT（含 cue 时间）才可直接重放。这防止同源重跑因
+  ASR 随机漏 cue 而删除已审字幕；随后仍必须重放 source-truth。只要区间发生裁切或扩展，就
+  回到上面的逐 cue 绝对时间映射，缺失、合并、拆分或漂移继续 fail closed，不能把审定时间轴
+  宽松套用到另一段素材。fresh cue 形状导致的
+  `replace_cue / REPLACE_CUE_TARGET_NOT_UNIQUE` 只能在这条 exact 路径延后。另一个同样窄的
+  例外是 required `replace_substring` 的 mention postcondition：只在每个 failure 都是
+  `MENTION_REQUIRED_TEXT_MISSING` 或 `MENTION_FORBIDDEN_TOKEN_SURVIVED`、`local_windows`
+  非空、`mention_owner_resolution.status=PASS`，且 v2 source binding 完整有效时，才可延后到
+  exact replay；缺 mention、无法隔离、owner BLOCK、混合 failure、timing pin 或无 exact
+  authority 仍立即阻断。finalizer 还必须证明实际 replay/restore authority 有效，并把所有仍
+  与最终交付区间重叠的 deferred `truth_id` 在重放后的 `applied+satisfied` 中逐个复证，不能只
+  看总状态非 FAILED。完全位于最终交付区间外的 deferred truth 不应在裁掉后的成片中复现，
+  但必须以 `context_only_truth_ids` 和逐窗 interval evidence 明示排除；跨过终点或同时包含
+  inside/outside windows 的 truth 仍须阻断。边界角色与半开区间定义见
+  [30-boundary.md](30-boundary.md)。
+- 最终裁决顺序固定为：**先按最终边界恢复 reviewed baseline → 再重放更高权威 source truth
+  → 对每个 baseline mapping 与 source-truth declared output 在最终 clean SRT 和 speaker SRT
+  上逐项验活 → 才允许低权威 repair 记为 `SUPERSEDED_*`**。候选专属 materializer/projection 若
+  自己封印 source rows，也必须在 output row 与最终 SRT hash 生成前消费晚到的
+  `REVIEWER_OPERATOR_TRUTH`；不得先用旧 reviewed baseline 生成并封印输出，再让 operator truth 无处落地。
+  该 overlay 必须绑定 candidate、source row/cue、不可变时窗、整行前像 SHA、精确字符 span、用户
+  truth receipt 与局部 occurrence receipt。用户决定规范专名，短窗只决定这次口播出现一遍还是两遍；
+  二者不能合并成无条件全局谐音替换。任一前像、时钟、span 或证据 hash 漂移都 fail closed，最终
+  clean/speaker SRT、ASS 与 burn 必须消费同一 effective source text。owner 自己未通过时，不能用
+  “低权威项已被覆盖”制造 `final_required_decision_count=0` 的假绿。审计字段
+  `final_source_truth_owner_verification` 与
+  `final_redelivery_baseline_owner_verification` 在对应 owner 存在时必须为 PASS，且该类
+  required count 非零。若最终稿已按 `JAPANESE_NATIVE_SCRIPT_CANON` 把普通日语罗马音
+  改写为假名，baseline owner 的期望文本必须经过同一确定性 canon 后再比较 clean 与
+  speaker SRT，并逐 mapping 记录改写 receipt；不得拿旧罗马音误判正确假名稿，也不得借此
+  放宽其他文字差异。
+- required source truth 仍在完整 padded context 上应用，但 boundary owner 资格只属于完整
+  落在 candidate-relative immutable story scope 的 truth；该 scope 仅在开场容忍并冻结
+  `semantic_start` 前最多 500ms 的 cue 时间抖动，使完整开场 cue 可把最终 start 拉回自身
+  起点。更早 lead/post context truth 修字但不抬高边界，超过容差的开场跨界、尾部跨界及其他
+  scope straddle 均 fail closed。具备对应 typed ownership contract 的 applied
+  story-chat owner 也须完整落在同一 scope，随后在裁切前冻结并由最终边界完整覆盖。
+  `boundary_role=next_topic_witness` 只负责证明分离，必须以 context-only 留证，不得取得
+  boundary owner。reviewed baseline 仍须在最终 clean/speaker SRT 逐 mapping 验活，但它是文字
+  权威，不进入 boundary owner 列表，不能冻结旧切片尾部。整句 `exact_read`
+  必须由 whole-line gate 明示 `owner_eligible=true`；sender/gift/coreference/entity 等窄槽
+  则按各自 slot contract，不借用整句字段。`required:false` truth、partial/proxy chat support
+  与 context-only verdict 不能进入 owner 列表。finalizer 发现任一真实 owner 被裁掉或只剩
+  残片时必须记
+  `BOUNDARY_REQUIRED_OWNER_EXCLUDED` 并拒发，不能因成片外已“不可见”就把它降级为
+  `NOT_REQUIRED` / `OUTSIDE_DELIVERY`。完整边界契约见 [30-boundary.md](30-boundary.md)。
+- 两条相邻 required `REVIEWER_OPERATOR_TRUTH / replace_cue` 的共同源边界若落进同一个 fresh
+  ASR cue，先按该绝对源边界拆 cue，再把后一条人工真值按其**完整精确所有区间**重分到新
+  prefix 与后续 cue；不得要求后续 ASR 文本碰巧已经等于拆分后缀，也不得把 ASR 重复带入
+  成片。该窄路只在前后真值区间完整保留、目标 cue 连续且两端与人工区间精确对齐时启用，
+  否则 fail closed。
+- final owner verifier 以 resolver 的最终半开区间
+  `[delivery_start_ms, delivery_end_ms)` 重新分类全部 required source truth：完全在成片外的
+  任意 truth（不只 `next_topic_witness`）必须显式记为 context-only；完全在成片内的 truth
+  必须在 clean/speaker SRT 上逐窗验活；跨过任一终点或同一 truth 同时含 inside/outside
+  windows 一律 fail closed。若一个 `replace_cue` 的有效 projection 含两个以上首尾连续窗口，
+  release hygiene 后续可合法合并/重切这些 cue；verifier 必须对连续窗口并集只读一次最终
+  owner payload，并要求 clean/speaker 两面都与 declared exact text 完全相等。并集含邻句、
+  窗口不连续或任一字不同仍 fail closed，禁止逐旧窗重复读取同一 merged cue 后制造假失败，
+  也禁止用模糊包含关系制造假绿。这里的最终可见性分类不反向授予成片外 truth 边界 ownership。
+- padded context 中的低权威修复若已由 boundary owner 合约以
+  `STRADDLES_IMMUTABLE_STORY_SCOPE` 明确拒绝，resolver 又只在成片边缘留下
+  `≤500ms` 且 `≤15%` 的小片段，则 final surface verifier 把该片段记为
+  `SCOPE_REJECTED_EDGE_FRAGMENT_OUTSIDE_OWNER`，不要求整句修复词面挤进残片。该窄门同时要求
+  `boundary_required=false` 与真实跨越最终边缘；实质保留的修复或任何 story owner 仍必须在
+  clean/speaker SRT 双面验活。
+- 已登记 source alias 的结构化聊天必须显式绑定：官方源 basename/SHA-256、canonical sidecar
+  path/SHA-256、JSONL 自身 origin epoch、alias timeline offset 与 `source_alias_id` 缺一不可；
+  JSONL 的事件时钟不得从另一份官方媒体 basename 猜。已知 alias 但 sidecar 缺失、哈希漂移、
+  无可解析事件时必须阻断，不能退化成误导性的 `evidence_considered=0 / NO_MATCH`。仅没有 alias
+  authority 的旧录播可显式 `structured_chat_required=false`。`GUARD_BUY` 是独立 `guard`
+  证据，按 username/uid/guard level 装载，并使用 300 秒上舰答谢因果窗；多事件无法唯一对应时
+  保留原字幕而非猜名。
+- producer 装载显式 JSONL/XML 时，每个源只能通过 `read_source_bytes_isolated` 读取一次；SHA、
+  原路径和解析都绑定该次返回的同一份字节，JSONL/XML parser 只能消费内存字节，不得再打开
+  CloudFS 原路径。隔离读超时、并发孤儿上限、本地 spool 失效或 source binding 不一致必须以
+  typed `StructuredChatEvidenceError` 在 screen probe、ffmpeg、AGY/其他转写 provider 之前阻断；
+  禁止超时后退化成无聊天证据继续生产。
+- 结构化 SC 跨 cue 对齐时，只有 SC 从开头到当前 internal gap 的**完整规范化前缀**逐字包含
+  在上一 cue，才可声明该前缀由上一 cue ownership 并从当前 span 去重。`0.8` fuzzy coverage
+  只能辅助判断 gap 是否曾读过，不能替代完整前缀 exact containment；少了 `不/不是/没` 等
+  极性词时必须拒绝 rebase，禁止用高相似度把反向语义当成重复前缀丢掉。
+- 结构化 SC/弹幕整句复制必须另过 typed whole-line support gate。gate 要逐项保存每一路
+  support 的 score、coverage、precision、匹配范围和 unsupported head/interior/tail；主
+  transcript fuzzy 命中、partial span、context-only audio verdict 或只见证实体槽都不能把
+  未说出的前后缀补进字幕。只有 full-span hash-bound raw audio、owner-eligible 的近完整独立
+  transcript，或现行明示 strong-thread-anchor 窄例外，才可令 applied row
+  `owner_eligible=true`；失败时整句保持原口播，仅允许已独立见证的 entity/source-truth 槽位
+  修复。
+- whole-line 结构检查判定 head/tail 支持前必须剥离**边界借字**：authority 边界侧 ≤2 字的
+  孤立匹配块，若与相邻匹配块之间隔着 ≥3 字的 observed 侧插入 run，视为从转录相邻句借来的
+  同形字（剥离结果披露在 `borrowed_boundary_blocks_stripped`）。典型失败模式：尾字实际未
+  念出但被独立转录接续进下一句时，子序列对齐可能借邻句同形字伪造出 near-complete
+  逐字朗读，SC 整行改写 applied 后又被 redelivery baseline 拉回，导致对应 exact_read 快照
+  永久失配。非逐字朗读（加字/漏字）一律保持已审口播文本，不注入 SC 原文。
+- 书名号结构门在所有文本 authority（含源真值）之后再跑一次；合法跨 cue 配对单独记账，真正的 `UNRESOLVED_COMPLEX_IMBALANCE` 必须阻断 `review_ready`。
+- 最终 clean/speaker SRT 在 burn 前必须经过
+  `src/autoslice/subtitle_validation.py::validate_srt_file`：每个非空 block 都必须被消费，
+  cue 编号连续、时间戳合法、`end > start`、最短 300ms、单调且无重叠、文本非空、不以孤立
+  标点或单个汉字充当 cue、不得越过媒体尾部。解析器静默跳过坏 block 一律视为失败。
+  package audit 与 authorized upload 会各自重新运行同一 validator，不能信 producer 自报。
+- 能确认是日语的普通词、自称和短句在最终可见字幕中使用假名/惯用日文原形，不用罗马音：
+  `boku/ore/atashi/wakuwaku` 必须规范成 `ぼく/おれ/あたし/ワクワク`。该规范在 source
+  truth 与 release hygiene 之后重放，并由 final owner verifier 同时检查 clean/speaker SRT；
+  hash-bound 审定基线本身已有的假名（例如 `おら`、`わたくし`）也是该精确 cue 的正向
+  所有权证据，不能只承认由罗马音替换产生的假名。真正英语和已登记官方拉丁专名
+  （如 Hime/Hina）保持原样。
+- 发布级短 cue 合并必须在**所有**文本 authority 之后再跑：文本终审后执行一次，并在
+  `subtitle-redelivery-baseline` 与 source-truth replay 完成后的最终成片出口再次执行。
+  合并器只消费上述校验器实际拒绝的 `<300ms` / 非豁免单汉字 cue，且只并入 150ms 内最近
+  邻居并写审计；尾随 `，。！？` 不得把单个实词汉字伪装成多字 cue。旧人工基线不得在
+  后写阶段复活已被合并的「哦」「行」「切，」等碎片。
+- `final-review-audit.v1` 只描述 correction pass 的发现、路由与修复结果；即使它显示
+  `CLEAN`/`APPLIED`，也不能证明后续 source truth、baseline 或 finalizer 没有引入回归。
+  放行只认 `final-review-audit.v2`：它的 `reviewed_srt_sha256` 必须绑定包内 SRT 的原始
+  `read_bytes()`，不得先按文本模式或换行符规范化；discovery 明确
+  `COMPLETE`，`findings` 是合法列表且 validated count 精确相等，状态 `CLEAN`、
+  `release_gate=PASS`、零 finding，并携带 PASS 的 correction-mutation audit、`final_delivery`
+  boundary semantic review、source separation witness 与 delivery-local endpoint binding。
+  source `source_full_window` 回执仍须独立保留在 boundary audit，package 再重算 witness 对它的
+  规范 SHA 绑定；它不能塞进 v2 冒充最终回执。provider/JSON 失败、缺失或 null/non-list
+  findings、全部 finding 无效、任何剩余 finding、raw-byte SRT hash 漂移或任一 typed receipt
+  非 PASS 都阻断。
+- correction pass 对 SRT 与 chat authority audit 是原子事务：所有 mutation 先 staged；任一
+  discovery/routing/provider 异常必须恢复原始 SRT 字节且不提交 staged audit，并输出 typed
+  `final-review-audit.v1 status=AUDITOR_UNAVAILABLE`、`release_gate=BLOCK`、原始
+  `reason_code/detail`、`findings=[]`、`applied_count=0`。exact-final 后续空 rescan 不能洗白
+  该失败；mutation audit 必须报 `CORRECTION_DISCOVERY_INCOMPLETE`。只有 typed
+  `AUDITOR_UNAVAILABLE` 可按有界
+  `provider_transient / final_review_correction_discovery` 重试；非法合同/状态仍是终态错误。
+- exact-final 中 AGY/声学层是证人，不是法官：它只给出目标是否可闻、疑似拼音及
+  current/proposed 发音兼容度，CPA 结合文字 provenance 与整片语境作最终
+  CURRENT/PROPOSED 裁决；若两个候选都与拼音明显冲突，CPA 可返回 `NEITHER`
+  拒绝这个坏闭集。`NEITHER` 不等于保留 CURRENT、不授权 mutation，必须退回提案层重建候选。
+  提案层只可在同一 cue 内生成一个有界第三候选，保留候选盲声学窗口并签发
+  `candidate-free-witness-reuse.v1`；第三候选随后必须重新进入 CURRENT/PROPOSED CPA 闭集，
+  只有第二次 CPA 明选 `PROPOSED` 且 typed mutation receipt PASS 才能落字。提案调用与结果按
+  prompt SHA 缓存；它自身永远是 `CPA_PROPOSAL_ONLY / mutation_authorized=false`。
+  代码必须记录拼音/不可闻证据与 CPA 选择的冲突，但不得用 AGY
+  或兼容度阈值推翻 CPA 明确的 `PROPOSED`；CPA 未明确选边或调用失败才是未决。声音不能
+  单独选择两个同音正字法；同音或规范发音键相同（如 `大恩→大N`）须有绑定文字证据，或
+  满足可重算的严格同音闭集并由 CPA 明确作语义 tie-break，否则记录
+  `ORTHOGRAPHY_NOT_DECIDABLE_FROM_AUDIO` 并阻断。
+- AGY 纯听写 prompt 不得内嵌任何可被复制的合法拼音示例。声学缓存除音频
+  SHA 外还必须精确绑定当前 witness prompt contract；contract 升级后旧缓存自动失效。
+  已知 prompt 示例的原样回声必须报 `WITNESS_PROMPT_COPY_DETECTED`、不得入缓存，
+  也不得作为 CPA 裁决证据。
+- 上述 choke point 同样覆盖早期 chat-authority 的**近失念读**和**已注册专名冲突**：
+  AGY 请求必须先物理剥离 `candidate_entities/current/proposed`，只回候选盲拼音；
+  CPA 再看全部闭集、结构化弹幕/SC 与前后文，给全部候选概率排序并采用最高者。CPA
+  可以只凭文字语境确认/否决念读；一旦需要音频辅助，AGY 仍只作 witness。不得再把
+  `entity-audio-observation` 的 `canonical_entity`、旧黑帧二选一或 CPA 失败后的 AGY
+  fallback 当最终 mutation authority；CPA 不可用时保持未决，不允许声学模型接管。
+- exact-final SRT 使用**交付局部时间轴**，而声学 verifier 绑定的通常是带前后 padding 的源
+  media。每个 `subtitle-span-acoustic-check-request.v1` 必须显式携带非负
+  `source_media_timeline_offset_ms`，并把它纳入 evidence/request hash；实际裁剪必须执行
+  `source_media_ms = delivery_local_ms + offset`。verdict/manifest 必须以
+  `subtitle-audio-timeline-binding.v1` 同时记录 delivery-local target/context 和 source-media
+  target/crop。字段缺失、负数、类型错误、请求重算 hash 不符、target 越界或旧 cache 未绑定
+  offset 都 fail closed；branding intro 不参与这个 pre-burn 时间轴。
+- correction pass 的同音/近同音/字母 mutation 必须携带 CPA `PROPOSED`，或同时携带可重算的
+  `glossary-expected-value-gate.v1` 与 `expected-value-canon-authority.v1`。后者要求 glossary/
+  official roster provenance、拼音相容、current 未登记、proposed 已登记；两边已登记立即失效。
+  raw glossary prose、纯 acoustic、同片 transcript recurrence、宽泛 context 和 speech-memory
+  只能召回。维护者 operator truth 另由 governed late source-truth 精确绑定。
+- `final-review-audit.v2` 必须携带 PASS 的
+  `subtitle-correction-mutation-audit.v1`，把 correction pass 的 `applied_count` 与所有实际
+  applied mutation 逐条对齐，并验证每条 typed authority receipt。缺回执或计数漂移均报
+  `FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID`；第二遍 exact discovery 即使返回空
+  findings，也不能洗白第一遍已经发生的无权 mutation。
+- exact-final 扫描先审最终字节。若 finding 已由 CPA 明确选择 `PROPOSED`，并且 cue ordinal、
+  当前 cue SHA、request 的 current/proposed 整句、不可变时间轴、CPA judge 回执和 typed
+  mutation receipt 全部可重算一致，`_run_exact_final_review_gate` 必须在同一 producer run
+  原地落字并重新跑 exact-final；最多五轮自愈（再加一次强制 clean 扫描），最终仍只接受零 finding 且 raw-byte hash
+  绑定的 v2 PASS。任何字段不一致、CPA 未选边、提案为空或复审仍有问题时不得猜测，才回退到
+  `final-review-carryover.v1`，由下一轮 correction pass 走同一套裁决/落字门。自愈历史须写
+  `exact-final-cpa-self-heal-audit.v1`，并在存在 redelivery baseline 时同时绑定到 baseline
+  audit 的 post-exact-final 输出 SHA。
+- 纯文字终审无法发现“文字上通顺、声学上错误”的短促近音句。exact-final 因此对不超过
+  1.3 秒、2–12 个汉字且非纯语气词的 cue 追加候选盲声学巡检：证人只接收时间窗并输出
+  无调拼音，不得看到现稿或候选。代码只在拼音显著冲突时产生**无文字候选** finding；
+  CPA 随后只负责生成一个有界候选，再经一次候选盲声学见证与 CPA CURRENT/PROPOSED
+  闭集裁决。巡检层没有落字权，provider 暂态只在收据中披露，不冻结其他切片。
+  runner 只有在 chat audit 声明计数、sidecar schema/行数，以及每条
+  `(cue, suspect, proposed_full_cue)` 与 exact 审计中的 `repaired=true` finding 全部一致时，
+  才把该失败列为 recoverable；每个新的 failure fingerprint 自动获得恰好一次下一轮
+  correction pass，消费过的同一 fingerprint 不得再次自旋，单候选最多消费 8 个不同
+  carryover fingerprint。correction 或 exact discovery 为 `AUDITOR_UNAVAILABLE` /
+  `CORRECTION_DISCOVERY_INCOMPLETE` 时，不得把空 findings 当 clean 而删除未消费的旧
+  sidecar；无新行就原字节保留，有新行则按 `(cue, suspect, proposed_full_cue)` 合并
+  去重。只有 discovery 完整时才允许以本轮 exact 结果替换或清空 sidecar。缺文件、
+  计数漂移或内容不符仍 terminal fail closed。normalized finding 写入 raw carryover 时必须把
+  `suggestion → replacement`，并把 glossary/roster `candidate_provenance.surface →
+  source_surface`；尤其 `suspect=""` 的零长度专名插入不能丢掉这两项，否则下一轮会把已由
+  CPA 定案的高先验规范词误判为无 provenance，形成永久重试。
+- 幻听删除是一等声学动作：局部无声前缀用 `acoustic_delete`，只有“保留后的完整 cue =
+  SUPPORTED 且原 cue = INCOMPATIBLE”才应用；整 cue 只有 `target_audible=false` 才可
+  提名 `acoustic_drop_cue`。此时 CPA 必须显式裁决 `CURRENT / PROPOSED / DROP`：`DROP`
+  是唯一整 cue 删除权；空的 `PROPOSED` 不得冒充 `DROP`。CPA 看过不可听证据后仍明选非空
+  `PROPOSED` 时保留最终裁判权，但必须落
+  `CPA_EXPLICIT_OVERRIDE_INAUDIBLE_WITNESS` typed receipt。局部静音绝不授权删除后半段真实
+  口播；不确定时保留/留空并阻断，不为语句顺滑补词。语义校正模型漏掉 cue 或返回空 cue
+  **不构成**删除证据：fidelity 层必须
+  恢复 draft 并记 `CUE_DELETION_REQUIRES_ACOUSTIC_AUTHORITY`；即使没有第二路 ASR 也不能
+  静默删除，有同时间键 AGY/独立听写非空时还要把该反证写入审计。
+- source-language 门区分“模型凭空引入外语口播”与“高权威专名含外文字形”。只有
+  `VERIFIED_ACTIVE` 且 entry hash 合法的 source-truth 声明输出可以正向见证其精确 kana run；
+  不能从整条 post-edit `after` 循环自证。`replace_substring` 仅在 canonical 实际应用，或显式
+  `required_text` postcondition 已满足时可见证；部分窗口、部分 surface、generic redelivery
+  baseline 继续拒发。
+- 逐字取自本候选**已绑定结构化弹幕记录**的 sender / gift 名（`clip_context.structured_chat`）
+  同样正向见证其自身 kana，见证类型 `structured_chat_name`。用户名的字形归平台记录所有，
+  不由主播读音决定——她用中文腔念日文假名 ID 是常态，音频 `kana_similarity=0` 不构成反证。
+  该豁免精确且完全：
+  cue 内**每一个**假名都必须落在这类名字里，名字旁边掺入任何臆造日语仍 fail-closed。此门
+  正是为了让"原版弹幕名字必须复制过来"成立，不得反过来惩罚正确复制。
+- source-language 整 cue 回退只适用于无中文的 Latin-language cue；中文口播里的 NN/L、NNLL、
+  LLNNHHB 等 CP 顺序公式以及大写 `TA` 代词是标签/中文代词，不是外语段落，不得触发
+  mixed-language 拒发，也不得因 token 数下降把已删除的跨 cue 回声整句恢复。
+  `_SAFE_CODE_SWITCH_WORDS` 只登记已有多路转写证据支持、在中文口播中作为普通借词使用的
+  词项（例如技术语境的 `staff`、`bug`）；它不是整句外语白名单，未登记的多词 Latin 组合
+  仍须精确音频见证或更高文本权威。
+- 交付 `.srt`/`.ass` 走内容时间轴；片头偏移只记录在 `burned_preview.branding_intro.intro_offset_ms`（见 [80-package-delivery.md](80-package-delivery.md)）。
+## 可选说话人分析：历史合同，不能覆盖当前单色默认
+
+以下保留 2026-08-07 至 08-09 的声纹分析合同及历史验证结果，只供明确启用说话人分析的
+任务使用。日常交付按本文开头的 `uniform_host`；这些历史条款不再自动触发分离或双色烧录。
+
+- 显式 `speaker_mode=required` 分支内，二分默认连线（GUEST）；证据源按质量分层，判李豆沙
+  （HOST）先看 CAM++ 声纹硬 margin，不得因 cue 短于 `short_cue_ms` 就把已硬通过的声学
+  结论降入 whole-clip context 可否决池；另一路硬证据是响度（同场次相对 host-anchor
+  响度基线的硬 margin，
+  `talk_speaker_policy.host_loudness_required_margin_db`，当前只在
+  `src/autoslice/speaker_host_evidence.py` 的代码默认里，未写回共享
+  `voiceprint_profile.v1.json`——该文件被多份历史 session anchor 按 sha256 绑定，写回
+  会级联使那些锚点document 的 `profile_sha256` 失配，需要单独一轮迁移；实测本机麦克风
+  更响的经验假设在 auto_203735_555_680 一场未成立，margin 因此保守校准到基本不触发，等
+  更强的单人响度特征）。语义（整段 whole-clip context judge）不是独立证据：只有 CAM++
+  `margin-threshold` 位于 HOST 侧半个临界带（`0 <= delta < ambiguity_band`）时，语义才可
+  佐证 HOST；声学缺席或 delta 位于 GUEST 侧时，语义 HOST 票不得反向翻案。语义仍可确认
+  连线（cue43 证明朴素语义启发式两个方向都错过）。8/8 法证的单候选分源测距为 whole-clip
+  context `6/59=10.2%` 错、CAM++ `2/69=2.9%` 错（后两处均属句内混说颗粒度），只用于说明
+  证据层级，不据此发明新数值阈值；61/40/12 真值材料也只作离线对照，绝不进入生产决策。
+  说话人不确定（临界带
+  内无声学/响度硬通过、也无佐证）直接判连线可交付，不再进 `speaker_review_required` /
+  `speaker_evidence_insufficient`；该 fail-closed hold 只留给基础设施故障（模型不可用/
+  judge 连续报错取不到任何回应），不再用于"标签不确定"（2026-08-07 的历史分析口径；
+  它关于生产默认的部分已被后来的 uniform_host 要求取代；混合 cue v1：
+  同一 cue 内声学证据不一致时整句判连线，除非每个证据窗口都支持李豆沙——
+  `src/autoslice/speaker_host_evidence.py`，v1 无真实子 cue 音频分窗，见该模块与
+  `tests/lidousha/test_speaker_host_evidence.py` 的落地范围说明）。歌切不进入 talk
+  speaker 链。
+- **句内混说/重叠证据（F5，2026-08-09）**：`mixed_overlap_evidence` 此前在生产上恒为
+  `null`，不是阈值死区也不是标志位算成假——**产出侧根本不存在**：`overlap_detected` /
+  `mixed_speaker_within_unit_detected` 全仓库只有校验方与消费方，唯一产出面是
+  `AUTOSLICE_SPEAKER_ROUTING_PROVIDER_COMMAND_JSON` 指向的外部密封 provider；该 env 从未
+  在任何部署面配置，而且 `speaker_session_router.AUDITED_PROVIDER_BUNDLES` 是空 dict，
+  `validate_provider_authority(require_audited=True)` 必然判 "not repo-audited"。三重断路
+  使 `producer_speaker.py` 的 `mixed_or_overlap_detected is True` 分支结构性不可达
+  （manifest 侧表现为 `speaker_routing.reason=ROUTING_CLAIM_MISSING`）。
+  现由 `src/autoslice/speaker_overlap_evidence.py` 在终定阶段补上产出者：按时长（**不按
+  margin**，否则会在 8/7 假李豆沙 cue33/37 那类 0.43/0.34 高置信案上重建死区）把够长的 cue
+  等分成 ≤4 个 ≥700ms 子窗，复用同一套 host/guest 打分与 `acoustic_hard_pass`，仅当同一 cue
+  的子窗出现**互相冲突的确信标签**时记 `CUE_MIXED_SPEAKER`。产物是
+  `work_dir/detected-mixed-overlap-evidence.json`（schema 与
+  `validate_mixed_overlap_evidence_document` 完全一致）+ READY manifest 的
+  `analysis.subcue_mixed_overlap` 披露块。**只披露不改标签**：不做句内切分、不动二分语义，
+  也没有任何代码把它自动喂回 `_evaluate_mixed_overlap_gate`——提升成阻断输入需要显式把该
+  文件作为 `--mixed-overlap-evidence` 传入，是运维/维护者 的开关。检测器故障一律降级成
+  `status=UNAVAILABLE` 披露，绝不把披露通道变成新阻断；`AUTOSLICE_SPEAKER_SUBCUE_OVERLAP=0`
+  可关。已知 v1 盲区：短于两个最小窗的 cue 不分窗；真正的同时重叠只会让子窗落进模糊带，
+  v1 不据此断言 `CUE_OVERLAPPING_SPEECH`；远程终定分支会 `rm -rf` 远端 work_dir，sidecar
+  只在本机（free-local）落得下，manifest 内的披露块两种路径都在。
+- 竖屏单人先验按**候选源 segment**绑定，而不是按可能坍缩的 recording session ID
+  绑定：所有当前 source pieces 必须来自同一源 segment，且 hash-bound
+  `speaker-session-context.v1` 的 orientation 为 `portrait` 才可激活；横屏、unknown、
+  读探针失败、跨 segment pieces 和显式人工 speaker override 全部保持现行路径。裁定出处
+  （维护者 2026-08-09 竖屏定律）：「竖屏直播 ⇒ 99% 单人直播。从录制分辨率纵横比直接判
+  session/场级 solo 先验(比任何音频分析都便宜),再叠 roster/语境佐证」。
+- 注入点位于 provider mixed/overlap gate 与现有 CAM++ 分析之后、speaker label
+  materialize 之前；只在身份不可判或仍含 unresolved cue 时把全部 cue 归 HOST，并在
+  READY manifest 写 `solo_prior=portrait` 与可复算 receipt。模型/资产/IO 漂移等一般故障
+  继续阻断，既有二分本身不重写。
+- 1% 逃生口保守沿用 speaker-work 的现有 `ambiguity_band`：双簇中心差至少
+  `2 * ambiguity_band`（当前 band 0.10，即 0.20），并同时至少有 2 条 hard HOST、2 条
+  hard GUEST 和 2 个 guest anchors，才算 CAM++ 强反证；受治理 relation authority 确认
+  多人/冲突，或已接受的高置信 GUEST whole-clip context，也会 veto 先验并维持 unresolved
+  拒绝。实现见 `src/autoslice/speaker_solo_prior.py` 与 `src/autoslice/speaker_finalizer.py`。
+- 已由 维护者 完成逐 cue 说话人标注的交付重产可在现有 speaker override 内携带
+  `reviewed-speaker-baseline.v1/v2`，但它只在 delivery truth mode 使用。baseline 必须绑定
+  candidate、最终媒体/clean SRT、真值输入文件 SHA、非空 authority、完整连续 cue 分区，
+  并逐 cue 精确绑定最终位置、时间和去注记后的文字。只有 reviewed、单说话人、整段覆盖的
+  李豆沙 cue 可作 CAM++ 同片 host anchor；混说、重叠、drop、无人声注记或未裁定 cue 禁止
+  充当 anchor。分析器仍对全部 cue 运行，reviewed cue 最后由 override 覆盖；明确留给机器的
+  cue 必须保留原 acoustic/context 决策，若机器证据本身 unresolved 仍阻断，绝不能因真值
+  文件漏标而默认为连线。合并 cue 先按最终 clean SRT 连续重编号，再建立 override；真值工作表
+  只作成品交付输入，机制回归必须使用合成 fixture。v1 继续严格绑定本次分析产生的完整
+  automatic SRT SHA；v2 则额外绑定 repo-relative、禁止 symlink 且逐字节 canonical 的
+  `automatic-labelled.srt` 路径/SHA，并要求其完整 cue/time/text grid 与最终 clean SRT 一致、
+  每个 machine cue 的二元标签与声明一致。v2 仍执行 fresh 分析和 unresolved 门，但最终只从
+  冻结基线继承显式 machine cue；fresh 与 frozen 的机器标签漂移写入
+  `reviewed-machine-baseline-replay.v1` 披露，不得改变交付归属。冻结文件解析后重写的实际 SHA
+  必须仍等于绑定 SHA，非 canonical 换行/字节形态直接拒发。
+  维护者 只确认说话人、没有确认字幕文字时，truth input 必须使用
+  `operator-reviewed-speaker-truth.v1 / scope=speaker_only`，并同时声明
+  `subtitle_text_authorized=false`、`upload_authorized=false`。它仍须逐 cue 绑定当前时间、文字、
+  recut media/SRT/automatic-labelled SRT、源录播身份与绝对区间，但这些文字只作防漂移键，
+  不能据此生成 reviewed subtitle baseline、覆盖字幕或取得发布权限；任一 cue/hash/区间漂移
+  即拒绝整份 speaker authority。`operator_review_binding` 还必须指向仓库内 hash-bound 的
+  `operator-reviewed-speaker-delivery-binding.v1`：它封存人工实际观看的 exact delivery hash
+  与当时 current record hash；运行时将它与 truth 的 delivery hash、当前 recut/SRT/automatic
+  hashes 逐项比对。源录播 basename/hash/绝对区间则必须由 producer 当前已校验的单 piece
+  `spec` 与 final recut interval 注入；缺字段、多 piece、越界或任一漂移全部 fail closed。普通
+  load 不为此重哈希 CloudFS 大录像，使用的是 producer 先前已建立的 current source binding。
+
+### 跨cue断词：先修输入接线，不做整句合并（2026-09-09 UTC）
+
+`free_asr_client.to_srt`逐一沿用provider utterance时段，并不证明它是完整语义句。
+新生产必须在转SRT前保存归一化ASR raw utterances/已有word times及SHA，不能只留下处理后
+的稿而无法区分云端分段与本地改写。`_load_term_boundary_surfaces`复用共享term_authority的
+常驻称呼/词表，再加既有合法timely/topic输入；时效表空不应使“小李”等常驻词从提前修复消失。
+复用`unify_terms_across_cues`在CPA前做小片段归位，保留cue/time/全文，禁止跨明显间隙/重叠。
+CPA已有文字校对/仲裁prompt同时检查相邻2–3条的普通词与紧密搭配，不限专名；禁止将两条
+合成长行，不能通过分段任务重写听写稿。较大的语义重排只披露、按真实声学边界另查。
+快车道原稿在发布轨保持封存，显示层小范围移字由80投影；普通ASR/CPA新稿不是旧原稿替身。
+
+### C9 来源分离稿的原文保护（2026-09-09 UTC）
+
+C9 的66→37句是已有逐cue来源分离决定的投影，不得伪标成维护者新一次逐句完整听写。
+现有canonical原稿检查必须同时消费这一分离稿：由`fastlane_c9_private_replay`重放已封存
+source、action、CPA请求/完成/裁决，最终字幕必须等于投影原始字节；后继机器稿对未列的
+第5句改写不能因record未配置generic baseline而跳过检查。有更新的明确原稿补丁则按
+既有仓库封存patch契约验证，不依赖文件日期选择版本。
+这只是已有文本消费者的接线，不把private source-action签成已交付，不豁免raw media、
+说话人/owner、两层边界、实际烧录和90发布门；诊断建议与旧失败证据保留，不能覆写原稿。
+
+### 已审来源分离稿：未点名改字是诊断，不得成为新增发布条件（2026-09-09）
+
+依据line947及2026-08-24/09-08的明确穷尽范围，C9要求是移除被观看视频的台词，未点名的
+原主播词面须保持。不能一边在原稿门禁止改字，一边要求这些同音猜测必须定案才准发布。
+`scope_original_fastlane_review.py`复用已验证66→37来源投影，只对RETAIN_HOST且原文/时段
+精确未变的context phonetic建议生成`original-preserved-final-review.v1`；scope builder与
+`final_review_contract`的实际消费都独立重验repo-sealed原稿/action/原授权及原始诊断hash。
+
+该独立schema记`ORIGINAL_SCOPE_CONFORMANT`，内嵌的机器结果仍是原FLAGGED/BLOCK/NEITHER，
+不修改原文件、不伪造CLEAN/CURRENT、不声称听清或新增人审。完整来源分离仍按原CPA/action
+证明；REPLACE_HOST_ONLY、新字、时间变化、源/owner/边界finding不享有这份文字保持范围。
+完整discovery、零实际非授权改字、两层边界及源分离/timebase仍复用现有验证代码；provider
+失败或独立非文字失败不能被该scope隐藏。普通自动稿保持原v2零未决准入，不新增默认豁免。
+
+这只修原稿交付文本终验的适用范围，其他80/90机器/像素/声文/来源/授权/公开对账照常，
+不授新BV或sameBV权限。其他候选不能靠复制candidate字段或旧scope receipt获取该范围。
+
+### 局部听音附件的实际媒体前置检查（2026-09-09）
+
+候选盲听的短窗先经现行`_crop_black_frame_audio`生成；该函数必须禁用FFmpeg stdin，
+并在provider之前验证附件的真实音视频流、正可解码帧数、有限正时长与目标裁剪时长。
+`ffmpeg`退出0、文件存在或只有MP4 header不构成可用听证输入。坏附件复用既有
+`ENTITY_AUDIO_CROP_FAILED`，不调用provider、不伪造见证或改字。静音是合法证据，
+不能以无语音/能量为零替代媒体结构检查；局部窗口和CPA最终文字权威保持不变。
+
+
+### 局部听证进程与后备配置的诊断记录
+
+现有原生听证在AGY进程返回后，补记 `agy.execution.json` 的退出码、选择了
+`verdict.json`还是stdout、各段字节数与SHA；不把“退出0”或空文件改判为有效听证。
+实际走到Gemini ladder后另记 `gemini-api-route.json` 的已载入免费key数量、
+接纳层级/序号、是否返回观察与paid gate原因。只保存数量/身份，不记录凭据值；
+这不是HTTP尝试计数、费用或语义正确性证明。未出现该记录不能反推配置/调用状态。
+诊断旁车写入失败不新增质量门，原日志、provider顺序、缓存和CPA终裁不变。
+
+独立实测进程不能假设SSH/sudo继承生产provider环境；应复用当前运行入口的
+`load_gemini_credentials`，仅在被授权主机的本进程中载入，并独立设置本轮费用帽。
+不得用“未加载”声称host没有凭据或服务不可用，也不为了补记录重跑已完成provider请求。
+
+## 2026-10-02 软件更新补充
 
 CPA 同时决定哪些疑点需要局部补听。每个切片累计记录实际调用，以软目标表达
 资源压力；达到软目标不能直接拒绝必要裁决。相同输入没有新证据时复用已有结果，
 提示使用稳定的压力档位，准确累计数保留在记录中，避免计数增长使相同证据失去缓存。
 文字不变或出现循环时保留未解决项并停止重复修复。补听遵守独立的来源、时间窗
 和资源约束；软目标不能代替内容审查，也不能把未解决疑点变成通过。
-
-普通 Talk 默认使用统一主播样式；只有存在可靠、绑定的说话人证据时才引入其他
-说话人样式。未知说话人、未知词面和来源冲突应保留 UNKNOWN 或当前文本，不能凭
-模型自信度编造名字、关系或事件。
-
-任何文字修复都必须逐 cue 绑定原始文本、修改后的文本、绝对时间、来源证据和
-审查结果。时间轴只在有明确边界授权时改变；不能为了排版或字幕数量静默合并、
-移动或删除内容。
-
-最终 SRT、ASS 与源媒体分别计算哈希。字幕内容、时间、样式或说话人状态有任何
-未审查的漂移，打包和发布步骤都应阻断。
 
 烧录后复用已绑定当前成片音轨的 BCUT 见证，通过正常 CPA 文字审查核对最终 SRT。
 先重验媒体、字幕、见证、原始响应、时间偏移和回执哈希，再绑定当前上下文和运行时
