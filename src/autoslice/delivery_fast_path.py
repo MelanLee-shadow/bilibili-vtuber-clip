@@ -3,22 +3,22 @@
 这里只住「谁拥有最终词面」的判定和它授权跳过的阶段包装，两条：
 
 1. ``pinned_replay_reviewed_text_ownership``（提速②，commit
-   6261842）——已发布件的钉死重放修复：v2 精确区间重放拥有全部文本，
-   ``verified_public_exact`` 拥有标题。
-2. ``resolve_truth_full_ownership``（F20，维护者 立项）——人工真值
-   交付车道：``materialize_reviewed_speaker_truth_delivery`` 把 hash-bound
-   的 维护者 真值编译成 reviewed 基线，并在基线 manifest 上盖一张
-   ``truth-full-ownership-pin.v1``。pin 证明这份基线的**每一条**交付 cue 都
-   由真值拥有词面（维护者 复核的 override + 他留给机器判说话人但有正面人声
-   仲裁的 cue），基线又以 exact_interval_replay 逐字节重放回交付面。
+ 6261842）——已发布件的钉死重放修复：v2 精确区间重放拥有全部文本，
+ ``verified_public_exact`` 拥有标题。
+2. ``resolve_truth_full_ownership``（F20，公开规则立项）——人工真值
+ 交付车道：``materialize_reviewed_speaker_truth_delivery`` 把 hash-bound
+ 的 公开规则真值编译成 reviewed 基线，并在基线 manifest 上盖一张
+ ``truth-full-ownership-pin.v1``。pin 证明这份基线的**每一条**交付 cue 都
+ 由真值拥有词面（公开规则复核的 override + 他留给机器判说话人但有正面人声
+ 仲裁的 cue），基线又以 exact_interval_replay 逐字节重放回交付面。
 
 两条的共同论证形状是一样的：被跳过阶段的产出**注定被覆盖**，所以它只是
 纯等待，不是安全边际。fail-closed 因此不受影响，也**不允许**顺手扩大：
 
 - 跳过的都是「发现/改写」侧（审片员、声学证人、微 cue 候选盲声学发现）；
 - 保留的都是「把关」侧：重放自身的基线 sha 校验、exact-final 终审
-  （discovery=COMPLETE 硬门）、边界语义评审、终局 owner 逐字节校验、
-  说话人定稿、渲染/烧录与上传前硬门。
+ （discovery=COMPLETE 硬门）、边界语义评审、终局 owner 逐字节校验、
+ 说话人定稿、渲染/烧录与上传前硬门。
 
 判定失败（pin 缺失、形状不符、sha 不自洽）一律返回 ``None``，整条候选回落
 正常全链——不做「按 cue 混合跳过」这种新语义。

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import errno
 import shutil
+import stat
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -30,9 +32,21 @@ def copy_capacity(entries: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
             if entry["status"] not in _PLANNED_WRITE_STATUSES:
                 continue
             ancestor = Path(entry["destination"]).parent
-            while not ancestor.exists():
-                ancestor = ancestor.parent
-            device = ancestor.stat().st_dev
+            while True:
+                try:
+                    ancestor_stat = ancestor.stat()
+                except FileNotFoundError:
+                    # Only an actually missing path may fall back to its parent.
+                    # exists() can hide permission/I/O errors and select the
+                    # wrong filesystem. Stop if even the root cannot be found.
+                    if ancestor.parent == ancestor:
+                        raise
+                    ancestor = ancestor.parent
+                else:
+                    break
+            if not stat.S_ISDIR(ancestor_stat.st_mode):
+                raise NotADirectoryError(errno.ENOTDIR, "capacity ancestor is not a directory", str(ancestor))
+            device = ancestor_stat.st_dev
             volume = volumes.setdefault(
                 device,
                 {

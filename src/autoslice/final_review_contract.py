@@ -7,9 +7,11 @@ import re
 from typing import Mapping
 
 from src.autoslice.acoustic_witness_adjudication import (
+    REQUIRE_COMPLETE_UTTERANCE_SUPPORT,
     WITNESS_CONFLICT_UNSUPPORTED_PROPOSED,
     valid_inaudible_drop_repair,
     valid_inaudible_override_repair,
+    valid_current_utterance_support,
 )
 from src.autoslice.acoustic_witness_protocol import BLIND_PINYIN_PROTOCOL
 from src.autoslice.exact_final_witness_authority import (
@@ -22,7 +24,9 @@ from src.autoslice.unreadable_span_policy import (
 )
 
 SCHEMA_VERSION = "final-review-audit.v2"
-EXACT_FINAL_CPA_SELF_HEAL_MAX_REPAIR_PASSES = 5
+EXACT_FINAL_CPA_SELF_HEAL_SOFT_REPAIR_PASSES = 5
+# Compatibility for historical callers; this number is no longer a cutoff.
+EXACT_FINAL_CPA_SELF_HEAL_MAX_REPAIR_PASSES = EXACT_FINAL_CPA_SELF_HEAL_SOFT_REPAIR_PASSES
 _SHA256_RX = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
@@ -63,13 +67,13 @@ def _validate_exact_final_cpa_self_heal(
     passes = receipt.get("passes")
     if (
         not isinstance(passes, list)
-        or not 1 <= len(passes)
-        <= EXACT_FINAL_CPA_SELF_HEAL_MAX_REPAIR_PASSES
+        or not passes
     ):
         raise FinalReviewContractError(
             "EXACT_FINAL_CPA_SELF_HEAL_AUDIT_INVALID"
         )
     previous_output: str | None = None
+    seen_inputs: set[str] = set()
     for expected_index, pass_receipt in enumerate(passes, start=1):
         if (
             not isinstance(pass_receipt, Mapping)
@@ -91,6 +95,7 @@ def _validate_exact_final_cpa_self_heal(
             _SHA256_RX.fullmatch(input_sha256) is None
             or _SHA256_RX.fullmatch(output_sha256) is None
             or input_sha256 == output_sha256
+            or output_sha256 in seen_inputs
             or (
                 previous_output is not None
                 and input_sha256 != previous_output
@@ -101,6 +106,7 @@ def _validate_exact_final_cpa_self_heal(
             raise FinalReviewContractError(
                 "EXACT_FINAL_CPA_SELF_HEAL_AUDIT_INVALID"
             )
+        seen_inputs.add(input_sha256)
         for repair in repairs:
             mutation = (
                 repair.get("mutation_authority")
@@ -325,11 +331,11 @@ def _validate_review_geometry(audit, *, expected_srt_sha256):
         audit,
         expected_srt_sha256=expected_srt_sha256,
     )
-    # 不可读窗删除是**独立**的第二条自愈通道，与 CPA 自愈互不放松：CPA 那条
-    # 要求 decision_authority == CPA_JUDGE 且 mutation PASS（判官做了决定），
-    # 本条恰恰是「判官做不了决定、耳朵说这段物理上听不出来」，授权来自 维护者
-    # 的裁定而不是判官。缺省（None）时本函数什么都不做，既有交付
-    # 一个字节不受影响。
+
+
+
+
+
     unreadable_problem = unreadable_cue_drop_audit_problem(
         audit.get("unreadable_cue_drops"),
         expected_srt_sha256=expected_srt_sha256,
@@ -344,6 +350,33 @@ def validate_final_review_release(
     expected_srt_sha256: str | None = None,
 ) -> dict[str, object]:
     """Validate a positive receipt; every other state is a release block."""
+
+    if isinstance(audit, Mapping) and audit.get("schema_version") == "b2-caption-final-review-successor.v1":
+        from src.autoslice.b2_caption_formal_successor import (
+            B2CaptionFormalSuccessorError,
+            validate_final_review_successor,
+        )
+        try:
+            return validate_final_review_successor(audit, expected_srt_sha256=expected_srt_sha256)
+        except B2CaptionFormalSuccessorError as exc:
+            raise FinalReviewContractError(exc.reason_code) from exc
+
+    if (
+        isinstance(audit, Mapping)
+        and audit.get("schema_version")
+        == "e353-content-final-review-successor.v1"
+    ):
+        from src.autoslice.e353_content_formal_successor import (
+            E353ContentFormalSuccessorError,
+            validate_final_review_successor,
+        )
+
+        try:
+            return validate_final_review_successor(
+                audit, expected_srt_sha256=expected_srt_sha256
+            )
+        except E353ContentFormalSuccessorError as exc:
+            raise FinalReviewContractError(exc.reason_code) from exc
 
     if isinstance(audit, Mapping) and audit.get("schema_version") == "c10-operator-final-review-successor.v1":
         from src.autoslice.c10_operator_review_successor import (
@@ -373,9 +406,9 @@ def validate_final_review_release(
         raise FinalReviewContractError("FINAL_REVIEW_FINDINGS_CONTRACT_INVALID")
     if findings:
         raise FinalReviewContractError("FINAL_REVIEW_UNRESOLVED_FINDINGS")
-    # 维护者（无人值守裁定）：`unresolved_findings_disclosed` 只允许
-    # 完整走完闭集裁决且策略分支为 KEEP_CURRENT 的条目——它们随包披露、不
-    # 阻断交付；混入任何非该形态的条目仍视为合同违规。
+
+
+
     disclosed = audit.get("unresolved_findings_disclosed")
     if disclosed is not None:
         if not isinstance(disclosed, list):
@@ -393,35 +426,35 @@ def validate_final_review_release(
     return dict(audit)
 
 
-# 维护者T17:45Z 逐字（已核 raw transcript，userType=external、
-# isSidechain=false，b533569f-161f-4656-bec9-a512bd639042.jsonl:1223）：
-# 「流水线最终是无人值守的，不能因为没有人工参与就fail……生产阶段是没有
-#   人工真值的，最多就是发出去了我检查有问题了再修，而不是一直不发。」
-# 该裁定管的是「已决定的 keep-current 必须随包披露发出去，不许无限期阻断」，
-# **没有**枚举任何分支名。下面这张表只是「引擎当时吐哪些 decided-keep 名字」
-# 的快照，不是 维护者 划的政策线——引擎改名/新增出口时必须同步，否则一条已裁
-# 的 keep-current 会因为名字没登记而永远回不到 resolved（谈话切
-# 4/4 全灭即此病）。
-#
-# 收录门槛（三条全中才可加）：
-#   1. 分支返回 repaired=False（本条 finding 一个字节都没改）；
-#   2. mutation_authority.status == NOT_APPLIED（没有任何变更授权被行使）；
-#   3. 结论是「机器已经决定保留原文」，不是「机器没能决定」——基础设施未
-#      走完（witness/judge/后端不可用、stale base、预算跳过、响应非法）
-#      一律留在 blocker 侧。
-# 注意：``HISTORY_CONVERGENCE_DOWNGRADED_TO_DISCLOSURE_ONLY`` **不要**加进这张
-# 表。它的 adjudication status 是 UNCERTAIN，只有携带 OBSERVED 声学证词的那一
-# 半才算已决；整支放进白名单会把「耳朵没听清」也一起放出去。它走
-# ``decided_history_convergence_disclosure`` 那条逐字段核对的独立出口。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 _DECIDED_KEEP_CURRENT_BRANCHES = frozenset(
     {
         # judge 明确选 CURRENT。
         "JUDGE_KEEPS_CURRENT",
-        # judge 选了 PROPOSED 但代码级证据门否决——门本身就是决定。
-        # 这条出口 d71e856（CPA 成为终审声学判官）起改由
-        # 「贴音优先 + 三逃生口」实现，5a43ea3（维护者 8/8 卡1
-        # 结案）落为 typed 分支 WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_
-        # CURRENT。直接引用引擎常量，避免再次改名后白名单静默失配。
+
+
+
+
+
         WITNESS_CONFLICT_UNSUPPORTED_PROPOSED,
         # 以下两个是 0a97deb(7/27) 写表当时的引擎名字，d71e856(7/28) 已把
         # 产出点删除——src 中再无任何代码吐出它们。保留仅为兼容那之前落盘
@@ -604,11 +637,43 @@ def decided_keep_current_adjudication(
     """Shared terminal predicate for a fully decided CURRENT outcome."""
 
     mutation = adjudication.get("mutation_authority")
-    return bool(
+    base = bool(
         adjudication.get("status") == "OBSERVED"
         and adjudication.get("policy_branch") in _DECIDED_KEEP_CURRENT_BRANCHES
         and adjudication.get("repaired") is False
         and timing_immutable
         and isinstance(mutation, Mapping)
         and mutation.get("status") == "NOT_APPLIED"
+    )
+    if not base:
+        return False
+    request = adjudication.get("request")
+    if not isinstance(request, Mapping):
+        # Historical ordinary/context receipts predate the request binding;
+        # retain their validity unless they explicitly opt into the new exact
+        # final support contract.
+        return True
+    # The stronger proof is scoped to the acoustic relative-CURRENT branch.
+    # Other exact branches (for example witness-conflict or target-inaudible
+    # KEEP_CURRENT) already carry their own typed decision contract.
+    if (
+        request.get(REQUIRE_COMPLETE_UTTERANCE_SUPPORT) is not True
+        or adjudication.get("policy_branch") != "JUDGE_KEEPS_CURRENT"
+    ):
+        # Historical ordinary/context adjudications retain their old contract.
+        return True
+    witness_judge = adjudication.get("witness_judge")
+    judge = (
+        witness_judge.get("judge")
+        if isinstance(witness_judge, Mapping)
+        else None
+    )
+    return bool(
+        isinstance(witness_judge, Mapping)
+        and isinstance(judge, Mapping)
+        and valid_current_utterance_support(
+            check_request=request,
+            judge=judge,
+            witness_judge=witness_judge,
+        )
     )

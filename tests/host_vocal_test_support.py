@@ -337,7 +337,6 @@ def make_ready_audio_alignment_run(
                 **READY_LYRIC_VOCAL_ASSERTIONS,
             }
         )
-    first_ms = int(observations[0]["live_start_ms"])
     last_ms = int(observations[-1]["live_end_ms"])
     if last_ms + 6_000 > source_duration_ms:
         raise ValueError("strict audio-alignment fixture leaves no post-song host anchor")

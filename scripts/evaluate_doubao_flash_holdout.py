@@ -48,11 +48,11 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.autoslice.content_bound_request_ledger import (  # noqa: E402
+from src.autoslice.content_bound_request_ledger import (
     ContentBoundRequestLedger,
     RequestLedgerError,
 )
-from src.autoslice.doubao_transcription import (  # noqa: E402
+from src.autoslice.doubao_transcription import (
     DOUBAO_FLASH_ENDPOINT,
     DOUBAO_FLASH_MODEL,
     DOUBAO_FLASH_RESOURCE,

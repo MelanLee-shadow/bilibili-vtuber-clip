@@ -103,9 +103,9 @@ def write_pending_rescore_sidecar(
         "schema_version": RESCORE_RECEIPT_SCHEMA,
         "candidate_id": candidate_id,
         "review_receipt_sha256": source_fact_review.get("receipt_sha256"),
-        # 闭环接线（维护者 狍哥案实施指令）：重评分执行位需要
-        # hash 校验它重读的最终字幕/clip-context 就是当初判 STALE 那一份，
-        # 而不是信任任意一次同名文件重读。
+
+
+
         "final_transcript_sha256": last_pass.get("final_transcript_sha256"),
         "clip_context_prompt_sha256": last_pass.get("clip_context_prompt_sha256"),
         "repaired_hook": block.get("repaired_selection_hook"),
@@ -227,17 +227,17 @@ def unconsumed_rescore_fingerprint(record: Mapping[str, object]) -> str | None:
     return fingerprint
 
 
-# --- Bounded rescore execution (维护者 狍哥案实施指令：闭环接线) ---
-#
-# Closes the gap the design left open: a requeued rescore_pending item used
-# to re-enter pending_talk with a cleared scorecard and nothing ever
-# regenerated it.  This section is the runner-side executor: it re-derives
-# the clip-scoped cues and clip context that were in scope inside the
-# producer subprocess (from the same deterministic on-disk paths that
-# ``read_publish_meta``/the sidecar reader already use), hash-checks them
-# against ``final_transcript_sha256``/``clip_context_prompt_sha256`` in the
-# receipt (persisted above), and calls the single-candidate rescore
-# primitive in ``semantic_candidate_selector.py``.
+
+
+
+
+
+
+
+
+
+
+
 
 
 def build_rescore_llm_call() -> Callable[[str], str]:

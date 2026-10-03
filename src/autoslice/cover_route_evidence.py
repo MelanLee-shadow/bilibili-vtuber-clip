@@ -615,8 +615,8 @@ def _per_frame_rejection_evidence(
     scene = source_composition_scene_kind(source_composition_verification)
     if scene != TALK_SCENE:
         parts.append(f"scene={scene}")
-    # 竖屏源是**路线判据**，不是画面质量差评。模板串会说「证据不够强」，那对一张
-    # 完全合格但太高的帧是错的归因，所以真实判据必须前置（维护者）。
+
+
     if decision_inputs.get("vertical_source_redraw") is True:
         ratio = decision_inputs.get("source_frame_aspect_ratio")
         parts.append(
@@ -1181,8 +1181,8 @@ def validate_cover_route_decision(
                 source_composition,
                 reference_sha256=str(cover_generation.get("reference_sha256") or ""),
             )
-            # Redrawing needs an identifiable reference, not a usable 16:9 crop.
-            and source_composition["verdict"].get("source_face_complete") is True
+            # Source-face completeness governs screenshot feasibility. Redraw
+            # identity is established by the bound source/final identity witness.
             and validate_final_host_identity_verification(cover_generation)
             and validate_builtin_imagegen_provenance(cover_generation)
         )

@@ -92,7 +92,7 @@ def _healthy_probe(module, *, upload: int = 0, rec_total: int = 200) -> dict[str
 
 def test_production_defaults_use_oci3_and_pinned_host_key_check(monkeypatch):
     monitor = _load(monkeypatch)
-    expected_host = "localhost" if SCRIPT.name == "slice_monitor.py" else "oci3"
+    expected_host = "localhost" if SCRIPT.name == "slice_monitor.py" else "runtime-host"
     assert monitor.MONITOR_PROFILE == "production"
     assert monitor._DEFAULT_SSH_HOST == expected_host
     assert monitor.SSH_HOST == expected_host

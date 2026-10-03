@@ -35,31 +35,31 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.autoslice.cover_generation import (  # noqa: E402
+from src.autoslice.cover_generation import (
     LidoushaCoverArtDirection,
     _overlay_cover_title,
 )
-from src.autoslice.cover_screenshot_poster import (  # noqa: E402
+from src.autoslice.cover_screenshot_poster import (
     _compose_screenshot_poster_background,
     _source_frame_layout,
 )
-from src.autoslice.cover_polish_gate import (  # noqa: E402
+from src.autoslice.cover_polish_gate import (
     _polish_face_binding_failure,
 )
-from src.autoslice.cover_host_identity_gate import (  # noqa: E402
+from src.autoslice.cover_host_identity_gate import (
     verify_final_host_identity,
 )
-from src.autoslice.cover_scene_binding import run_final_host_identity_witness  # noqa: E402
-from src.autoslice.publish_staging import _verify_polish_face_integrity  # noqa: E402
-from src.autoslice.cover_route_evidence import (  # noqa: E402
+from src.autoslice.cover_scene_binding import run_final_host_identity_witness
+from src.autoslice.publish_staging import _verify_polish_face_integrity
+from src.autoslice.cover_route_evidence import (
     record_cover_route_execution,
     validate_cover_route_decision,
 )
-from src.autoslice.cover_repair_route_lineage import (  # noqa: E402
+from src.autoslice.cover_repair_route_lineage import (
     screenshot_polish_source_input_sha256,
 )
-from src.autoslice.shadow_review import _sha256  # noqa: E402
-from src.autoslice.verified_io import _matches_sha256  # noqa: E402
+from src.autoslice.shadow_review import _sha256
+from src.autoslice.verified_io import _matches_sha256
 
 
 def _art_direction_from_record(payload: dict) -> LidoushaCoverArtDirection:

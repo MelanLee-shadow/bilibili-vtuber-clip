@@ -128,7 +128,7 @@ def test_f3_prompt_states_reviewer_pinyin_first_evidence_fallback_duty():
 
     assert "优先在与证人听写拼音相容的候选内选择" in prompts[0]
     assert "PROPOSED 与听写明显不相容且无独立结构化证据时选择 CURRENT" in prompts[0]
-    assert "维护者 2026-08-08" in prompts[0]
+    assert '公开规则' in prompts[0]
 
 
 def test_f1_nantian_transcript_repeat_is_marked_as_suspected_echo():

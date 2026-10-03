@@ -16,7 +16,10 @@ import time
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
-from src.autoslice.host_only_v4_package_binding import read_package_file_once
+from src.autoslice.host_only_v4_package_binding import (
+    HostOnlyV4PackageBindingError,
+    read_package_file_once,
+)
 from src.autoslice.original_patch_package import json_file, sha_file
 
 
@@ -163,24 +166,43 @@ def _reference_binding(
     return projected, (relative, source_bytes)
 
 
+def _source_receipt_file(source_root: Path, receipt_path: Path) -> Path:
+    """Accept a source receipt anywhere safely contained inside its package.
+
+    This is a locator change only. The caller still replays the unmodified
+    native QC authority and checks the source before and after target creation.
+    """
+    absolute = receipt_path.absolute()
+    try:
+        relative = absolute.relative_to(source_root).as_posix()
+    except ValueError as exc:
+        raise TitleCoverQcSuccessorError("source QC receipt escapes its package") from exc
+    if ".." in absolute.parts or "." in absolute.parts:
+        raise TitleCoverQcSuccessorError("source QC receipt has unsafe path components")
+    try:
+        canonical, _raw = read_package_file_once(
+            source_root, relative, label="source title/cover QC receipt"
+        )
+    except HostOnlyV4PackageBindingError as exc:
+        raise TitleCoverQcSuccessorError(
+            "source QC receipt is not a regular file safely inside its package"
+        ) from exc
+    return source_root / canonical
+
+
 def build_title_cover_qc_locator_successor(
     *,
     source_package_root: Path,
     source_receipt_path: Path,
     destination_package_root: Path,
     title: str,
+    projected_at: str | None = None,
 ) -> dict:
     """Return an in-memory locator successor after source/target byte validation."""
 
     source_root = _root(source_package_root, label="source package root")
     destination_root = _root(destination_package_root, label="destination package root")
-    source_receipt_absolute = source_receipt_path.absolute()
-    source_receipt_info = os.lstat(source_receipt_absolute)
-    if stat.S_ISLNK(source_receipt_info.st_mode) or not stat.S_ISREG(source_receipt_info.st_mode):
-        raise TitleCoverQcSuccessorError("source QC receipt is not a regular file")
-    source_receipt_path = source_receipt_absolute.resolve(strict=True)
-    if source_receipt_path.parent != source_root:
-        raise TitleCoverQcSuccessorError("source QC receipt is not a package-root file")
+    source_receipt_path = _source_receipt_file(source_root, source_receipt_path)
 
     source_receipt_sha = sha_file(source_receipt_path)
     try:
@@ -232,7 +254,7 @@ def build_title_cover_qc_locator_successor(
         projected_witness["reference_image"] = projected_reference
     projected["locator_successor"] = {
         "schema_version": SUCCESSOR_SCHEMA,
-        "source_receipt_name": source_receipt_path.name,
+        "source_receipt_name": source_receipt_path.relative_to(source_root).as_posix(),
         "source_receipt_sha256": "sha256:" + source_receipt_sha,
         "destination_cover_name": destination_cover.name,
         "cover_sha256": "sha256:" + source_cover_sha,
@@ -242,7 +264,11 @@ def build_title_cover_qc_locator_successor(
             else None
         ),
         "provider_calls": 0,
-        "projected_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "projected_at": (
+            projected_at
+            if isinstance(projected_at, str) and projected_at
+            else time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        ),
     }
     changed = _changed_paths(source_receipt, projected)
     if any(path and path[0] == "locator_successor" for path in changed):
@@ -377,13 +403,7 @@ def _replay_source_authority_unchanged(
     """Replay the source gate and prove its authority bytes stayed frozen."""
 
     source_root = _root(source_package_root, label="source package root")
-    source_receipt_absolute = source_receipt_path.absolute()
-    source_receipt_info = os.lstat(source_receipt_absolute)
-    if stat.S_ISLNK(source_receipt_info.st_mode) or not stat.S_ISREG(source_receipt_info.st_mode):
-        raise TitleCoverQcSuccessorError("source QC authority changed after projection")
-    source_receipt = source_receipt_absolute.resolve(strict=True)
-    if source_receipt.parent != source_root:
-        raise TitleCoverQcSuccessorError("source QC authority changed after projection")
+    source_receipt = _source_receipt_file(source_root, source_receipt_path)
     if sha_file(source_receipt) != expected_sha256:
         raise TitleCoverQcSuccessorError("source QC authority changed after projection")
     replayed = _reuse_valid_qc(source_root, title, source_receipt)

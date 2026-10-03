@@ -5,9 +5,9 @@
 
 用法（在 free 的部署仓库根目录下跑）：
 
-    python3 scripts/import_external_song_package.py \\
-        --source /opt/bilive/autoslice/incoming/song_210131_1210-r1 \\
-        --date --candidate song_210131_1210 --apply
+ python3 scripts/import_external_song_package.py \\
+ --source /opt/bilive/autoslice/incoming/song_210131_1210-r1 \\
+ --date --candidate song_210131_1210 --apply
 
 不带 ``--apply`` 是 dry-run：验证包内整条歌切证据链、算出要搬的字节、并在**持
 runner.lock 只读**的前提下预判 state 能不能绑——一个字节都不写。
@@ -15,10 +15,10 @@ runner.lock 只读**的前提下预判 state 能不能绑——一个字节都�
 做了什么 / 没做什么：
 
 - ①两处落地（评审包根 + ``repo/lidousha/{date}/`` 扁平交付）、②落地字节复核、
-  ③目的地重跑 canonical 审计器、④按上传面自己的判据做平价核验、⑤state 绑
-  ``songs`` 行 —— 做；
-- ⑥``authorized_upload make-manifest`` —— **不做**（上传授权面，需要 维护者 的逐
-  字引语 + 仓内出版登记）。回执里给出该跑的命令。
+ ③目的地重跑 canonical 审计器、④按上传面自己的判据做平价核验、⑤state 绑
+ ``songs`` 行 —— 做；
+- ⑥``authorized_upload make-manifest`` —— **不做**（上传授权面，需要 公开规则的逐
+ 字引语 + 仓内出版登记）。回执里给出该跑的命令。
 
 导入后这条片**默认仍不可上传**：``songs`` 行是 ``delivery_upload_enabled=false``，
 包自己是 ``upload_allowed=false``，上传唯一授权仍是仓内
@@ -41,16 +41,16 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.autoslice import package_import as pi  # noqa: E402
-from src.autoslice import song_package_import as spi  # noqa: E402
-from src.autoslice.publication_reconciliation import (  # noqa: E402
+from src.autoslice import package_import as pi
+from src.autoslice import song_package_import as spi
+from src.autoslice.publication_reconciliation import (
     project_publication_closure,
 )
-from src.autoslice.runner_state_writeback import (  # noqa: E402
+from src.autoslice.runner_state_writeback import (
     RunnerStateWritebackError,
     write_state,
 )
-from src.autoslice.qixi_transaction_core import exclusive_runner_commit  # noqa: E402
+from src.autoslice.qixi_transaction_core import exclusive_runner_commit
 
 
 DEFAULT_BASE = Path("/opt/bilive/autoslice")
@@ -360,7 +360,7 @@ def run_song_import(
         receipt.add(refusal.step, "REFUSE", **refusal.error.as_dict())
         return receipt.as_dict(status="REFUSED"), 2
     receipt.head["next_step"] = {
-        "detail": "上传授权面不在本脚本内：需要 维护者 的逐字放行 + 仓内出版登记",
+        "detail": '上传授权面不在本脚本内：需要 公开规则的逐字放行 + 仓内出版登记',
         "upload_authority": "assets/lidousha/publication_registry.v1.json",
         "command": (
             "python3 scripts/authorized_upload.py make-manifest "

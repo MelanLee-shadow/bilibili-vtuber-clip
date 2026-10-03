@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.autoslice.host_only_identity_card_trial import (  # noqa: E402
+from src.autoslice.host_only_identity_card_trial import (
     HostOnlyIdentityCardTrialError,
     build_host_only_identity_card_trial,
 )

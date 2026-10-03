@@ -33,13 +33,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.run_auto_review_shadow_pipeline import _parse_srt, run_shadow_pipeline  # noqa: E402
-from src.autoslice.full_session_candidate_selector import (  # noqa: E402
+from scripts.run_auto_review_shadow_pipeline import _parse_srt, run_shadow_pipeline
+from src.autoslice.full_session_candidate_selector import (
     select_fallback_session_candidates,
     select_full_session_candidates,
 )
-from src.autoslice.term_lexicon import load_discovered_term_lexicon  # noqa: E402
-from src.autoslice.source_integrity import MediaSegmentObservation, build_source_range_ledger, plan_bilibili_replay_compensation  # noqa: E402
+from src.autoslice.term_lexicon import load_discovered_term_lexicon
+from src.autoslice.source_integrity import MediaSegmentObservation, build_source_range_ledger, plan_bilibili_replay_compensation
 
 DEFAULT_ROOM = "22966160"
 DEFAULT_VIDEOS_ROOT = Path("/app/Videos")

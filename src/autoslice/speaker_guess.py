@@ -1,13 +1,13 @@
 """证据不足时的 best-effort 说话人分离（"猜"），而不是不产出。
 
-维护者 两句逐字，缺一不可：
+公开规则两句逐字，缺一不可：
 
 1. 「它必须无论如何至少先猜一个说话人，我才能审查，不能猜都不猜」——
-   ``b4d4000`` 把证据不足从"判死"改成了"停泊等人审阅"，但**停泊件根本没有产物**
-   （producer rc=1，没有成品视频、没有烧字幕），于是"等人工审阅"是空话。
+ ``b4d4000`` 把证据不足从"判死"改成了"停泊等人审阅"，但**停泊件根本没有产物**
+ （producer rc=1，没有成品视频、没有烧字幕），于是"等人工审阅"是空话。
 2. 「我说的猜不是全片统一李豆沙，这样的话我要修正的工作量太大了，**我要的就是
-   正常分离两说话人，尽最大努力分开，然后再由我改正**」——统一色会把所有归属
-   抹平，他要逐句重标；一个"尽力而为但可能有错"的分离，他只改错的那几句。
+ 正常分离两说话人，尽最大努力分开，然后再由我改正**」——统一色会把所有归属
+ 抹平，他要逐句重标；一个"尽力而为但可能有错"的分离，他只改错的那几句。
 
 **为什么技术上做得到**（不是把不合格证据判成合格）：两条真实受害者
 ``auto_220747_1271_1323``/``auto_213135_62_138`` 的死因都是
@@ -18,7 +18,7 @@
 下游的客人锚点挖掘、two-means 边界、模糊带、语境投票整条链都还没跑。把
 seed 分最高的 N 条 cue 提名成主播锚点，整条既有链照常跑完，产出的就是**真正
 的逐句双人分离**，而且每条 cue 都带 ``seed_score``/``host_score``/
-``guest_score``/``margin``——正好是 维护者 定位"该改哪几句"要的东西。
+``guest_score``/``margin``——正好是 公开规则定位"该改哪几句"要的东西。
 
 **阈值一字未动**。回落是**明示的降级**，不是放宽门：``host_session_seed_min``
 的数值没改，提名件逐条记录自己**没有**清过它（``clears_host_session_seed_min``
@@ -26,17 +26,17 @@ seed 分最高的 N 条 cue 提名成主播锚点，整条既有链照常跑完�
 ``status="READY"`` 那条路，猜出来的走 ``status="SPEAKER_GUESS"``，两者在
 manifest、包内文件名与运行时状态上全程可分。
 
-**梯子有底**（维护者「无论如何」的落地）。三级，逐级降级、逐级可区分：
+**梯子有底**（公开规则：无论如何的落地）。三级，逐级降级、逐级可区分：
 
 ``GUESSED_CLIP_ANCHORS``
-    锚点银行不足 → 提名 seed 分 top-N 当主播锚点，**完整双人分离照跑**。
+ 锚点银行不足 → 提名 seed 分 top-N 当主播锚点，**完整双人分离照跑**。
 ``UNRESOLVED_CONTEXT_DELIVERED``
-    分离跑完了，只是若干 cue 的语境没定（原本会 ``SPEAKER_REVIEW_REQUIRED``
-    删掉产物）→ 照常交付自动标注，把未定 cue 逐条标出来。
+ 分离跑完了，只是若干 cue 的语境没定（原本会 ``SPEAKER_REVIEW_REQUIRED``
+ 删掉产物）→ 照常交付自动标注，把未定 cue 逐条标出来。
 ``IDENTITY_INDETERMINATE_UNIFORM_HOST``
-    连提名锚点都救不回来（第二次 indeterminate）→ 最后兜底才用全片统一主播色。
-    这一级 维护者 明说修正成本高，所以它**只是兜底**，receipt 的 ``rung`` 与报表
-    都明写"分离没跑成"，绝不与上面两级混为一谈。
+ 连提名锚点都救不回来（第二次 indeterminate）→ 最后兜底才用全片统一主播色。
+ 这一级 公开规则明说修正成本高，所以它**只是兜底**，receipt 的 ``rung`` 与报表
+ 都明写"分离没跑成"，绝不与上面两级混为一谈。
 
 **fail-closed 不因为有产物而松动**：``SPEAKER_GUESS`` 的 manifest
 ``production_ready`` 恒 False；producer 只在 ``speaker_mode=="auto"`` 且自己
@@ -71,7 +71,7 @@ RUNG_LABELS = {
     RUNG_UNIFORM_HOST: "分离没跑成，兜底全片统一主播色",
 }
 
-#: 每条 cue 的证据缺口码。维护者 要的是"改哪几句"，所以缺口逐 cue 记，不是整片一个标记。
+
 GAP_HOST_ANCHOR_GUESSED = "HOST_ANCHOR_GUESSED"
 GAP_CONTEXT_UNRESOLVED = "CONTEXT_UNRESOLVED"
 GAP_AMBIGUOUS_MARGIN = "AMBIGUOUS_ACOUSTIC_MARGIN"
@@ -279,9 +279,9 @@ def build_guess_receipt(
         "host_anchor_cues": analysis.get("host_anchor_cues"),
         "clip_host_anchor_candidates": analysis.get("clip_host_anchor_candidates"),
         "host_session_seed_min": policy.get("host_session_seed_min"),
-        # 猜锚点这一级最要命的失败模式不是"某几句标错"，而是**整体极性反了**：
-        # 被提名成主播的那簇其实是客人。维护者 改一次极性就能翻回来，但他得先知道
-        # 有这个可能——所以写在回执里，不让他从 seed 分自己推。
+
+
+
         "host_guest_polarity": (
             "GUESSED_FROM_TOP_SEED_CUES_MAY_BE_INVERTED"
             if rung == RUNG_GUESSED_ANCHORS
@@ -550,16 +550,16 @@ def finalize_delivered_talk_status(
 ) -> str:
     """produce 成功收尾时**唯一**决定终态的地方；停泊优先级高于封面待定。
 
-    次序不是随手排的：``media_ready_cover_pending`` 有自己的修复车道，封面一旦
-    绑定成功那条车道会**直接**把状态提成 ``review_ready``（``cover_maintenance``
-    里 ``rec["status"] = "review_ready"``），根本不重跑 produce。如果猜出来的成品
-    先掉进封面待定，它就会绕过停泊、经封面车道升进日审清单并变成可上传——正是
-    fail-closed 要挡的那条路。所以先判停泊：停泊件不许被封面车道认领。
+ 次序不是随手排的：``media_ready_cover_pending`` 有自己的修复车道，封面一旦
+ 绑定成功那条车道会**直接**把状态提成 ``review_ready``（``cover_maintenance``
+ 里 ``rec["status"] = "review_ready"``），根本不重跑 produce。如果猜出来的成品
+ 先掉进封面待定，它就会绕过停泊、经封面车道升进日审清单并变成可上传——正是
+ fail-closed 要挡的那条路。所以先判停泊：停泊件不许被封面车道认领。
 
-    第二类停泊（维护者「不可读窗」裁定）同理接在这里：produce 删过
-    字幕的成品一律不许进 ``review_ready``。回执**无论如何都盖**——即使这条已
-    经因说话人证据不足停泊，维护者 也必须看到「这里还少了一句话」。
-    """
+ 第二类停泊（公开规则：不可读窗裁定）同理接在这里：produce 删过
+ 字幕的成品一律不许进 ``review_ready``。回执**无论如何都盖**——即使这条已
+ 经因说话人证据不足停泊，公开规则也必须看到「这里还少了一句话」。
+ """
 
     status = delivered_talk_status(
         result, candidate_id=candidate_id, work_dir=work_dir

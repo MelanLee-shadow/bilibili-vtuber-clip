@@ -376,11 +376,11 @@ def _gemini_api_observe(*, audio_path: Path, prompt: str, key: str) -> str:
     text or request objects.
     """
 
-    # AGY-parity thinking budget (维护者: the subscription lane runs
-    # this same model in High thinking mode, and the tiers differ only in call
-    # order — without an explicit budget the API skims multi-minute audio and
-    # returns sparse observations that still pass shape validation).  -1 keeps
-    # provider-side dynamic thinking.
+
+
+
+
+
     try:
         thinking_budget = int(os.environ.get("SONG_GEMINI_API_THINKING_BUDGET", "24576"))
     except ValueError:
@@ -1083,15 +1083,15 @@ def run_agy_audio_lrc_alignment(
                         }
                     )
 
-                # 维护者: the PAID backup key fires only after the
-                # free chain failed >= 3 recorded rounds for this exact audio
-                # and only under the daily cap.  pure quota-class
-                # failure rounds may complete back-to-back within one run
-                # (gemini_backup_policy.quota_exhausted_round) — 429 against an
-                # exhausted chain is a deterministic fast-fail, and one strike
-                # per run made the >=3 policy unreachable while wrong text
-                # shipped.  Non-quota failures still stop after one round.
-                # 阶梯本体在 agy_gemini_client；本 lane 只留 attempt 体与回执行形。
+
+
+
+
+
+
+
+
+
                 ladder = agy_gemini_client.run_gemini_key_ladder(
                     item_key=api_audio_sha,
                     observe=_observe_and_validate,

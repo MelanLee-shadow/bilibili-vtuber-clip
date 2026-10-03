@@ -12,6 +12,7 @@ The verdict is the exact parsed CPA answer (validator replays this bond);
 any gate the model fails leaves status=FAIL and the upload chain stops.
 """
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -40,6 +41,40 @@ def resolve_candidate_id(record: dict, review: dict) -> str:
     if not isinstance(root_id, str) or not root_id or not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict) or items[0].get("candidate_id") != root_id:
         raise ValueError("C2 legacy record candidate is absent or conflicts with review item")
     return root_id
+
+
+def package_identity_context(*, root: Path, item: dict, generation: dict,
+                             cover_path: Path, candidate_id: str) -> dict | None:
+    """Reuse the canonical bound source/final proof as context, not a verdict."""
+    from src.autoslice.cover_host_identity_gate import (
+        HOST_ONLY_SCHEMA_VERSION, validate_final_host_identity_verification,
+    )
+    from src.autoslice.host_only_v4_package_binding import (
+        BINDING_ITEM_KEY, validate_package_binding,
+    )
+
+    proof = generation.get("final_host_identity_verification")
+    binding = item.get(BINDING_ITEM_KEY)
+    is_v4 = isinstance(proof, dict) and proof.get("schema_version") == HOST_ONLY_SCHEMA_VERSION
+    if binding is None and not is_v4:
+        return None
+    validate_package_binding(root=root, item=item, generation=generation)
+    if not validate_final_host_identity_verification(generation):
+        raise ValueError("package source/final identity verdict is invalid")
+    if (item.get("candidate_id") or item.get("id")) != candidate_id:
+        raise ValueError("package identity candidate differs from current candidate")
+    if cover_path != (root / binding["final_cover_path"]).resolve(strict=True):
+        raise ValueError("package identity final cover differs from current cover")
+    witness = proof["witness"]
+    return copy.deepcopy({
+        "candidate_id": candidate_id,
+        "package_binding": binding,
+        "source_final_identity_verdict": proof["verdict"],
+        "source_final_identity_witness": {
+            key: witness.get(key)
+            for key in ("provider", "model", "status", "answer", "image_sha256", "response_sha256")
+        },
+    })
 
 
 def preflight_create_only_output(path: Path) -> tuple[int, str]:
@@ -166,18 +201,32 @@ def run_qc(
     """Create a new receipt, or explicitly revalidate an unchanged existing PASS."""
     if reuse_existing and os.path.lexists(out_path):
         return reuse_valid_qc(package_root, title, out_path)
-    record, _publish, cover_path = resolve_package_inputs(package_root, title)
+    record, publish, cover_path = resolve_package_inputs(package_root, title)
     review_path = package_root.absolute() / "review_manifest.json"
     review = json.loads(review_path.read_text(encoding="utf-8"))
     parent_fd, output_name = preflight_create_only_output(out_path)
     try:
         candidate_id = resolve_candidate_id(record, review)
+        identity_context = package_identity_context(
+            root=package_root.resolve(strict=True), item=review["items"][0],
+            generation=publish["cover_generation"], cover_path=cover_path,
+            candidate_id=candidate_id,
+        )
         receipt = build_joint_qc_receipt(
             cover_path=cover_path,
             title=title,
             candidate_id=candidate_id,
             image_probe=image_probe,
+            identity_context=identity_context,
         )
+        if identity_context is not None:
+            current = package_identity_context(
+                root=package_root.resolve(strict=True), item=review["items"][0],
+                generation=publish["cover_generation"], cover_path=cover_path,
+                candidate_id=candidate_id,
+            )
+            if current != identity_context:
+                raise ValueError("package identity context changed during probe")
         write_receipt_create_only(parent_fd, output_name, receipt)
         return receipt
     finally:
@@ -321,6 +370,7 @@ def build_joint_qc_receipt(
     candidate_id: str,
     image_probe,
     logical_cover_path: str | None = None,
+    identity_context: dict | None = None,
 ) -> dict:
     """Probe staged cover bytes and return a receipt without writing it.
 
@@ -348,6 +398,19 @@ def build_joint_qc_receipt(
         '"reason": str 一句话理由,'
         '"pass": bool 综合是否通过}\n如实判断,不要迎合。'
     )
+    if identity_context is not None:
+        binding = identity_context.get("package_binding", {})
+        if (identity_context.get("candidate_id") != candidate_id
+                or binding.get("final_cover_sha256") != "sha256:" + cover_sha):
+            raise ValueError("source identity context differs from current candidate/cover")
+        question += (
+            "\n以下是当前包已重验哈希与原始裁决的独立源图—成品身份对比证据；"
+            "它提供当场主播身份参考，避免只凭发色、熊猫元素或标题猜测。"
+            "这份旧身份裁决不预设本次结果：仍须观察当前成品的身份、构图、文字和图文一致性；"
+            "如当前可见内容与证据矛盾，指出具体冲突并返回false/FAIL。"
+            "本次lidousha_primary与pass仍由你裁决。\n"
+            + json.dumps(identity_context, ensure_ascii=False, sort_keys=True)
+        )
     witness = image_probe(cover_path, question)
     if isinstance(witness, dict) and logical_cover_path is not None:
         # The probe observed private staged bytes, but the hash below binds
@@ -381,7 +444,7 @@ def build_joint_qc_receipt(
         and bool(verdict.get("reason").strip())
         and verdict.get("pass") is True
     )
-    return {
+    receipt = {
         "schema_version": "lidousha-title-cover-joint-qc.v1",
         "candidate_id": candidate_id,
         "title": title,
@@ -393,6 +456,9 @@ def build_joint_qc_receipt(
         "status": "PASS" if ok else "FAIL", "pass": bool(ok),
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+    if identity_context is not None:
+        receipt["source_identity_context"] = copy.deepcopy(identity_context)
+    return receipt
 
 
 def main() -> int:

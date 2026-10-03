@@ -78,9 +78,9 @@ def parse_producer_args(
         default=default_speaker_mode,
         help=(
             "uniform_host = no speaker separation: every cue keeps the single host "
-            f"({speaker_display_name}) style and speaker uncertainty can never reject a delivery "
-            "(维护者 2026-07-13 data-accumulation policy; evidence capture stays passive); "
-            "required = always run binary finalizer; auto = verified FAST_SOLO else binary fallback"
+ f"({speaker_display_name}) style and speaker uncertainty can never reject a delivery "
+ "(公开规则data-accumulation policy; evidence capture stays passive); "
+ "required = always run binary finalizer; auto = verified FAST_SOLO else binary fallback"
         ),
     )
     parser.add_argument(

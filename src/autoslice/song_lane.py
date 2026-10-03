@@ -576,14 +576,14 @@ def _published_song_delivery_allowed(result: dict, summary_record: dict) -> bool
 
 
 def _apply_canonical_song_title(result: dict, *, summary_record: dict, cid: str) -> None:
-    """维护者 歌切标题铁律：边界/LRC 验证过的《歌名》是唯一标题权威，
-    标题固定为「【李豆沙】豆沙歌，《歌名》」——staged/LLM 标题带任何 hook 尾巴
-    或不同拼写时在这里最终定形，覆盖记录留审计。
+    """公开规则歌切标题铁律：边界/LRC 验证过的《歌名》是唯一标题权威，
+ 标题固定为「【李豆沙】豆沙歌，《歌名》」——staged/LLM 标题带任何 hook 尾巴
+ 或不同拼写时在这里最终定形，覆盖记录留审计。
 
-    维护者：这个「验证过」明确收窄为**听音频那条链**证过的身份。纯
-    文本 LRC 对齐同样会写出 FULL_SONG_READY 边界，但它归根到底是 BCUT 中文
-    ASR 的匹配结果，分不开《心型病毒》/《新型病毒》这种同音对。音频没证成
-    时正确行为是**没有权威名**（维持既有保守处置），不是回落到垃圾名。"""
+ 公开规则：这个「验证过」明确收窄为**听音频那条链**证过的身份。纯
+ 文本 LRC 对齐同样会写出 FULL_SONG_READY 边界，但它归根到底是 BCUT 中文
+ ASR 的匹配结果，分不开《心型病毒》/《新型病毒》这种同音对。音频没证成
+ 时正确行为是**没有权威名**（维持既有保守处置），不是回落到垃圾名。"""
 
     authority = extract_audio_song_name_authority(summary_record)
     canonical_title = _runner.verified_song_fallback_title(
@@ -787,15 +787,15 @@ def produce_song(date: str, item: dict, *, prepare_only: bool = False) -> dict:
         elif transient_code is None and "AGY_SOURCE_CONTEXT_RUNNER_FAILED" in reason_set:
             transient_code = "AGY_SOURCE_CONTEXT_RUNNER_FAILED"
         elif transient_code is None:
-            # 维护者 歌lane provider门修复: JINGTING_PROVIDER_NOT_AGY
-            # and siblings were never recognized here, so a Jingting-chain
-            # outage (with its cascading SONG_*_MISSING/INVALID artifacts)
-            # left transient_failure_code unset and got terminally rejected
-            # by project_terminal_song_disposition instead of waiting
-            # (song_230754_1118 recurrence).  Any remaining
-            # SONG_INFRA_TRANSIENT_REASON_CODES member from THIS attempt
-            # wins per 50-song-lane.md's "同一 attempt 有明确 typed transient
-            # 则 transient 优先".
+
+
+
+
+
+
+
+
+
             remaining_infra = reason_set & _runner.SONG_INFRA_TRANSIENT_REASON_CODES
             if remaining_infra:
                 transient_code = min(remaining_infra)

@@ -1,15 +1,15 @@
 """歌名命名权威：判定「可能是歌」之后，命名权归听音频那条链。
 
-维护者 逐字：「之前难道不是 gemini 听音频识别歌曲吗？如果意识到了
-可能是歌再从 BCUT 切换过来」。
+公开规则：之前难道不是 gemini 听音频识别歌曲吗？如果意识到了
+可能是歌再从 BCUT 切换过来。
 
 真数据背景 ——`song_210131_1210`：
 * BCUT 中文 ASR 派生的 hook 写着《新型病毒》（与真名《心型病毒》同音，
-  ``pypinyin`` 实测都是 ``xin xing bing du``，纯文本侧不可分）；
+ ``pypinyin`` 实测都是 ``xin xing bing du``，纯文本侧不可分）；
 * 同一条候选的音频链其实已经证成：``netease://song/536937431``、
-  ``matched_line_ratio=1.0``、``FULL_SONG_READY``；
+ ``matched_line_ratio=1.0``、``FULL_SONG_READY``；
 * 但这行最终被 host-vocal 判否（``NO_LIDOUSHA_VOCAL_DETECTED``），旧代码只在
-  整条交付门全过时才扶正歌名，于是 state 里只剩 BCUT 的错名。
+ 整条交付门全过时才扶正歌名，于是 state 里只剩 BCUT 的错名。
 """
 
 import hashlib

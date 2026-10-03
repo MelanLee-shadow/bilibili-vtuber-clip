@@ -1,20 +1,20 @@
 """候选级 Target Host Occupancy Estimator + 两段式争席次序。
 
 ChatGPT Pro 的方案（内部证据留存·chatgpt-pro-
-ordering-and-rubric.txt`，维护者 已批准）解决的是这个次序矛盾：`prioritize()` 在
+ordering-and-rubric.txt`，公开规则已批准）解决的是这个次序矛盾：`prioritize()` 在
 说话人路由**之前**跑，召回侧纯文本零说话人标注，于是 `lidousha_centrality`
-在物理上判不了主角——维护者 盲审四条 tier-1 的真值证明它与真值**反相关**
+在物理上判不了主角——公开规则盲审四条 tier-1 的真值证明它与真值**反相关**
 （内部盲评真值文档留存）。
 
-    召回打分（不打 centrality）
-      → 用其余六维排序，取前 N 争席
-      → 对这 N 条各跑轻量主播占比检测
-      → 得三态 + 主播占比档
-      → 定 centrality → 重排 → produce
+ 召回打分（不打 centrality）
+ → 用其余六维排序，取前 N 争席
+ → 对这 N 条各跑轻量主播占比检测
+ → 得三态 + 主播占比档
+ → 定 centrality → 重排 → produce
 
 ## 「单人」是检测结果，不是跳过检测的输入假设
 
-维护者 对 Pro 这条纠正的逐字裁定是「可以」。所以本模块**对进入争席的
+公开规则对 Pro 这条纠正的逐字裁定是「可以」。所以本模块**对进入争席的
 所有候选都跑检测**，没有"整场单人就豁免"的入口：名义单人场可能有 NPC / 连麦 /
 视频素材 / TTS / 临时嘉宾，而多人场里某条候选也可能只有她独白。
 
@@ -23,18 +23,18 @@ ordering-and-rubric.txt`，维护者 已批准）解决的是这个次序矛盾�
 ``SOLO_VERIFIED`` / ``MULTI_VERIFIED`` / ``UNKNOWN``。``acoustic_diversity_low``
 **不能**推出"一定是主播一个人"（Pro §2）：BGM、游戏角色语音、变声、压缩失真都
 会制造多样性，而音色相近的多人也可能看起来同质。检测不出来 → ``UNKNOWN`` →
-停泊转人工（维护者「说话人存疑都要直接给人工审阅」），**不许猜成 SOLO 放行**。
+停泊转人工（公开规则：说话人存疑都要直接给人工审阅），**不许猜成 SOLO 放行**。
 
 ## 与既有接口的关系
 
 - 声纹前向复用 ``campp_embed_once``（embed-once 内容寻址缓存）。重叠候选先求
-  区间**并集**、窗口落在**全局固定栅格**上，于是两条重叠候选共用的窗口是逐字节
-  相同的文件，缓存天然命中，不重复推理。
+ 区间**并集**、窗口落在**全局固定栅格**上，于是两条重叠候选共用的窗口是逐字节
+ 相同的文件，缓存天然命中，不重复推理。
 - 归属状态映射到 ``selection_metric_v2`` 既有的 ``attribution_status`` 词汇，
-  不造第三套命名。**唯一的扩展**见 `map_attribution_status` 的 docstring：
-  「已分离且主播不是主体」在旧词汇里没有名字，而把它塞进
-  ``VERIFIED_HOST_DOMINANT`` 是**事实错误**（维护者 说的正是"主要发言人不是李豆沙"），
-  塞进 ``UNVERIFIED`` 又会把一条**归属已确定**的候选送去人工——两条都不能做。
+ 不造第三套命名。**唯一的扩展**见 `map_attribution_status` 的 docstring：
+ 「已分离且主播不是主体」在旧词汇里没有名字，而把它塞进
+ ``VERIFIED_HOST_DOMINANT`` 是**事实错误**（公开规则说的正是"主要发言人不是李豆沙"），
+ 塞进 ``UNVERIFIED`` 又会把一条**归属已确定**的候选送去人工——两条都不能做。
 - ``UNVERIFIED`` → ``speaker_manual_review`` 停泊，不是扣分不是猜。
 
 ## ⚠️ 标定状态
@@ -47,7 +47,7 @@ Pro 建议的分位数法 ``t_H = Q_0.995(s | non-host)`` / ``t_O = Q_0.005(s | 
 本模块不改 ``DIMENSION_WEIGHTS``、不改 ``selection_scorecard.py`` 的既有算术、
 不动 ``assets/lidousha/selection_score_calibration.v1.json``。centrality 仍留在
 v1 七维卡里（``selection_scorecard_is_valid`` 硬要求维度集合逐字相等），本模块
-只是在**争席排序**时不看它——它怎么从 v1 评分卡退出是下一步，要 维护者 单独裁。
+只是在**争席排序**时不看它——它怎么从 v1 评分卡退出是下一步，要 公开规则单独裁。
 """
 
 from __future__ import annotations
@@ -99,7 +99,7 @@ LABEL_OTHER = "OTHER"
 LABEL_UNKNOWN = "UNKNOWN"
 LABEL_NON_SPEECH = "NON_SPEECH"
 
-# --- 争席次序（维护者 逐字：「N 可以选 10 个，不够了再补上」） ---
+
 CONTENTION_SET_SIZE = 10
 # 「不够了再补上」的补位必须有界，否则一场里所有候选都会被拉进音频检测。
 # 上限＝N 的两倍：一轮全灭也只再补一轮，不做无限补。
@@ -721,21 +721,21 @@ def aggregate_occupancy(
 def map_attribution_status(occupancy: Mapping[str, object]) -> str:
     """本模块三态 → ``selection_metric_v2`` 的 ``attribution_status`` 词汇。
 
-    ``SOLO_VERIFIED`` → ``VERIFIED_SOLO``；``UNKNOWN`` → ``UNVERIFIED``（停泊）。
+ ``SOLO_VERIFIED`` → ``VERIFIED_SOLO``；``UNKNOWN`` → ``UNVERIFIED``（停泊）。
 
-    ``MULTI_VERIFIED`` **不是**一对一：它只说"归属已确定"，没说谁是主体。
-    按主播占比分岔——
+ ``MULTI_VERIFIED`` **不是**一对一：它只说"归属已确定"，没说谁是主体。
+ 按主播占比分岔——
 
-    - ``>= HOST_DOMINANT_MIN_SHARE`` → ``VERIFIED_HOST_DOMINANT``
-    - 否则 → ``VERIFIED_HOST_MINOR``
+ - ``>= HOST_DOMINANT_MIN_SHARE`` → ``VERIFIED_HOST_DOMINANT``
+ - 否则 → ``VERIFIED_HOST_MINOR``
 
-    为什么必须分岔：把"主要发言人不是李豆沙"的候选叫 ``VERIFIED_HOST_DOMINANT``
-    是**事实错误**（那正是 维护者 盲审对两条候选的原话）；而把它叫 ``UNVERIFIED``
-    会把一条**归属已经确定**的候选送去人工，既淹没人工队列（Pro §5：能靠其他
-    独立条件安全淘汰的候选不必送审），也违反 维护者「最好是能够自然给出低分，
-    而不是强制压低」——自然的低分来自 centrality 看见 ``[其他]`` 标签，不来自
-    把它伪装成存疑。停泊只留给 ``UNKNOWN``。
-    """
+ 为什么必须分岔：把"主要发言人不是李豆沙"的候选叫 ``VERIFIED_HOST_DOMINANT``
+ 是**事实错误**（那正是 公开规则盲审对两条候选的原话）；而把它叫 ``UNVERIFIED``
+ 会把一条**归属已经确定**的候选送去人工，既淹没人工队列（Pro §5：能靠其他
+ 独立条件安全淘汰的候选不必送审），也违反 公开规则：最好是能够自然给出低分，
+ 而不是强制压低——自然的低分来自 centrality 看见 ``[其他]`` 标签，不来自
+ 把它伪装成存疑。停泊只留给 ``UNKNOWN``。
+ """
 
     state = occupancy.get("state")
     if state == SOLO_VERIFIED:
@@ -1012,11 +1012,11 @@ def backfill_contention_set(
     vacated: Sequence[str],
     publish_threshold: float | None = None,
 ) -> ContentionSet:
-    """维护者「不够了再补上」：空出多少席就补多少，且**有界**。
+    """公开规则：不够了再补上：空出多少席就补多少，且**有界**。
 
-    补位只从 ``previous.deferred`` 里按同一排序取，绝不回收已剪枝的候选
-    （它们的上界本来就过不了线），也绝不越过 ``CONTENTION_DETECTION_CAP``。
-    """
+ 补位只从 ``previous.deferred`` 里按同一排序取，绝不回收已剪枝的候选
+ （它们的上界本来就过不了线），也绝不越过 ``CONTENTION_DETECTION_CAP``。
+ """
 
     vacated_ids = {str(value) for value in vacated}
     if not vacated_ids <= set(previous.admitted):

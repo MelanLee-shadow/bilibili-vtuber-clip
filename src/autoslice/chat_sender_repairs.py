@@ -1,6 +1,6 @@
 """Sender-name authority repairs for thanks lines.
 
-平台记录里的发送者名是强权威（维护者 复制人名令：「直接复制
+平台记录里的发送者名是强权威（公开规则复制人名令：「直接复制
 人名，根本不用听」）。三条通道：体锚（念了 SC 正文）、舰长守卫锚、
 时间锚（只谢不念，1209 唐琳韵案）。歧义绝不落刀，出 verdict。
 """
@@ -178,10 +178,10 @@ def _cpa_resolve_ambiguous_sender(
 def _thanks_sender_pinyin_ratio(alias: str, heard: str) -> float:
     """Toneless-pinyin similarity for thanks-name compatibility.
 
-    1209 唐琳韵案（维护者 复制人名令）：ASR 把「唐琳韵」听成
-    「桃林」，字符共通只有一个「林」（coverage 0.33 过不了字符门），但
-    tao-lin vs tang-lin-yun 语音上明显同源。时间锚通道必须能看见读音。
-    """
+ 1209 唐琳韵案（公开规则复制人名令）：ASR 把「唐琳韵」听成
+ 「桃林」，字符共通只有一个「林」（coverage 0.33 过不了字符门），但
+ tao-lin vs tang-lin-yun 语音上明显同源。时间锚通道必须能看见读音。
+ """
 
     try:
         from pypinyin import lazy_pinyin
@@ -238,13 +238,13 @@ def audit_named_thanks_record_coverage(
 ) -> list[dict[str, Any]]:
     """Disclose every remaining named thanks line's record-channel status.
 
-    自审计面（维护者 复盘令：「有记录没用上」不许静默）。三态：
-    - RECORD_CHANNEL_ABSENT：窗口内无任何带名事件（录播/备份双缺时才会
-      出现——听是唯一通道，诚实说明）；
-    - RECORD_PRESENT_NAME_INCOMPATIBLE：有事件但读音/字符两门都不认
-      （她谢的可能不是这单，或名字听错得离谱——需要耳裁的真实残余）；
-    - 已修的 cue 不出行（修复行自身就是披露）。
-    """
+ 自审计面（公开规则复盘令：「有记录没用上」不许静默）。三态：
+ - RECORD_CHANNEL_ABSENT：窗口内无任何带名事件（录播/备份双缺时才会
+ 出现——听是唯一通道，诚实说明）；
+ - RECORD_PRESENT_NAME_INCOMPATIBLE：有事件但读音/字符两门都不认
+ （她谢的可能不是这单，或名字听错得离谱——需要耳裁的真实残余）；
+ - 已修的 cue 不出行（修复行自身就是披露）。
+ """
 
     rows: list[dict[str, Any]] = []
     window_events = [
@@ -569,9 +569,9 @@ def _apply_sc_sender_repairs(
 
 _TIME_ANCHORED_THANKS_WINDOW_MS = 90_000
 _TIME_ANCHORED_EVENT_LOOKBACK_MS = 60_000
-# 因果下界（维护者 追问补全，沿用舰长锚/念读锚既有纪律）：
-# 事件发生到她看见弹窗并开口至少要 2s——同帧或更早的「感谢」物理不可能
-# 是在谢这单，绝不匹配。
+
+
+
 _TIME_ANCHORED_CAUSAL_FLOOR_MS = 2_000
 
 
@@ -584,13 +584,13 @@ def _apply_time_anchored_thanks_sender_repairs(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Copy platform sender names into thanks lines by TIME anchor alone.
 
-    1209 唐琳韵案（维护者 复制人名令：「这种东西应该来自弹幕
-    记录…直接复制人名，根本不用听」）：她只答谢不念正文时，既有的
-    matched-superchat-body 锚失败，具名感谢线全靠硬听。本通道以事件
-    时刻为锚：SC/舰长事件后 90s 内的 谢谢X的{钢镚|SC|…} 线，heard 名与
-    平台名过字符门或读音门即复制精确名；同窗多个不同 sender 兼容时不
-    落刀、出 verdict（绝不猜人）。
-    """
+ 1209 唐琳韵案（公开规则复制人名令：「这种东西应该来自弹幕
+ 记录…直接复制人名，根本不用听」）：她只答谢不念正文时，既有的
+ matched-superchat-body 锚失败，具名感谢线全靠硬听。本通道以事件
+ 时刻为锚：SC/舰长事件后 90s 内的 谢谢X的{钢镚|SC|…} 线，heard 名与
+ 平台名过字符门或读音门即复制精确名；同窗多个不同 sender 兼容时不
+ 落刀、出 verdict（绝不猜人）。
+ """
 
     repairs: list[dict[str, Any]] = []
     verdict_required: list[dict[str, Any]] = []

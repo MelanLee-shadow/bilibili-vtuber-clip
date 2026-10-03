@@ -61,6 +61,7 @@ from src.autoslice.llm_client import extract_json_object
 WITNESS_REQUEST_SCHEMA = "subtitle-span-acoustic-witness-request.v1"
 ADJUDICATION_SCHEMA = "acoustic-witness-adjudication.v1"
 INAUDIBLE_DECISION_CONTRACT = "inaudible-current-proposed-drop.v1"
+REQUIRE_COMPLETE_UTTERANCE_SUPPORT = "require_complete_utterance_support"
 WITNESS_CONFLICT_UNSUPPORTED_PROPOSED = (
     "WITNESS_CONFLICT_UNSUPPORTED_PROPOSED_KEPT_CURRENT"
 )
@@ -68,10 +69,10 @@ WITNESS_CONFLICT_UNSUPPORTED_PROPOSED = (
 # Retained as a diagnostic threshold; CPA, not the witness, owns the decision.
 MIN_CHOICE_COMPATIBILITY = 0.55
 
-# 维护者 工程优化②授权：judge 供应商瞬断自动重试，不再整轮报废
-# （真善美 zsm4 三模型均短暂 400 事故）。同一 judge_word_choice 调用内，一次
-# provider-shaped 失败（HTTP 4xx/5xx/超时/连接类）允许一次同轮重试；语义性
-# 失败（JSON 解析、非法 choice）不重试——那是模型已应答，不是供应商抖动。
+
+
+
+
 JUDGE_MAX_PROVIDER_RETRIES = 1
 _JUDGE_CALL_PROVIDER_MARKERS = (
     "HTTPERROR",
@@ -563,48 +564,78 @@ def valid_witness_evidence(
     )
 
 
-# 维护者「贴音优先、证据兜底」裁定（卡1结案，synthesis 文档）。
-_PINYIN_JUDGE_EVIDENCE = """# 字幕选字裁决（闭集）
+def valid_current_utterance_support(
+    *,
+    check_request: Mapping[str, Any],
+    judge: Mapping[str, Any],
+    witness_judge: Mapping[str, Any] | None = None,
+) -> bool:
+    """Validate the explicit exact-final proof that CURRENT is complete.
 
-你是字幕修复的最终选字法官。一名听写证人已经把目标区间的音节按拼音记录如下；
-证人从未见过任何候选文本。你的任务：结合语篇推理，从闭集中选出最符合
-「拼音证据 + 语境」的候选。铁律：
+    A relative CURRENT-vs-PROPOSED win is insufficient for exact-final
+    disclosure.  This receipt is deliberately bound to the full adjudication
+    request and its candidate-free witness geometry so a support decision
+    cannot be carried across a changed cue or audio window.
+    Ordinary word-choice requests do not set the flag and keep their historic
+    contract.
+    """
 
-1. {choice_rule}
-2. 依据 维护者 2026-08-08 裁定，裁决必须优先在与证人听写拼音相容的候选内选择；PROPOSED 与听写明显不相容且无独立结构化证据时选择 CURRENT。
-3. 拼音证据是高可信辅助，不单独拥有最终裁决权。先判断这串拼音是否真的覆盖目标
-   整句；若它明显只听到邻句、半句或错位片段，必须在理由中披露错位，并由你
-   结合完整语境在闭集内定夺，不能因为 AGY 与两个候选都不齐就机械选 NEITHER。
-4. 语境（前后句、弹幕、平行句）在拼音无法区分候选、听写证据被标记为
-   受污染/不可用、或拼音与两个候选都显示窗口错位时，可以在闭集内定夺。
-   只有两个候选本身都不完整/不通顺，确实需要第三个候选时才选 NEITHER。
-5. 目标区间外出现过相同词语，本身不证明目标区间内说了它；但相邻句对同一
-   词的重复、呼应或应答，可作为闭集内选择的佐证——仍绝不引入闭集外新字。
-6. 真实的中英/中日混杂是存在的（维护者 2026-07-26）：外语候选若在语境中
-   **语义通顺**，应正常参与裁决、可以当选；只有当外语读法在语境里根本
-   不通顺、而拼音证据又与中文候选相容时，才判定为中文被拉丁化误转写、
-   选择中文候选。分辨的根本理由是语义，不是文字系统。
-7. 「绑定文字证据」只证明候选的规范写法，不单独证明目标区间说了它。若
-   拼音/语篇确认目标指向该实体或原文，必须采用其规范写法；AGY、ASR、
-   glossary、roster、弹幕、OCR 都只是证据，最终闭集选择仍由你作出。
-8. 证人状态为 UNCERTAIN 时表示 AGY 本轮没有提供可用听音；这不剥夺你的
-   最终裁决权。必须忽略缺失的拼音、仅根据闭集、完整语境和绑定文字证据
-   排序 CURRENT / PROPOSED / NEITHER，不得因为 AGY 不可用而拒绝裁决。
+    if check_request.get(REQUIRE_COMPLETE_UTTERANCE_SUPPORT) is not True:
+        return False
+    # This receipt is consumed only for an explicit KEEP-CURRENT decision.  A
+    # support claim attached to another choice, or to a non-terminal/error
+    # payload, must never be enough to manufacture an exact-final disclosure.
+    if judge.get("status") != "JUDGED" or judge.get("choice") != "CURRENT":
+        return False
+    reason = judge.get("current_utterance_support_reason")
+    if not isinstance(reason, str) or not reason.strip():
+        return False
+    if judge.get("current_utterance_supported") is not True:
+        return False
+    request_sha = str(check_request.get("request_sha256") or "").removeprefix(
+        "sha256:"
+    )
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", request_sha):
+        return False
+    canonical = {
+        key: value
+        for key, value in check_request.items()
+        if key != "request_sha256"
+    }
+    try:
+        canonical_sha = hashlib.sha256(
+            json.dumps(
+                canonical,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+    except (TypeError, ValueError):
+        return False
+    if canonical_sha != request_sha.lower():
+        return False
+    if (
+        str(judge.get("check_request_sha256") or "").removeprefix("sha256:")
+        != request_sha.lower()
+    ):
+        return False
+    if not isinstance(witness_judge, Mapping):
+        return False
+    witness_request_sha = str(
+        witness_judge.get("witness_request_sha256") or ""
+    ).removeprefix("sha256:")
+    try:
+        expected_witness_sha = build_witness_request(check_request)[
+            "request_sha256"
+        ]
+    except (KeyError, TypeError, ValueError):
+        return False
+    return witness_request_sha == expected_witness_sha
 
-## 听写证人报告（未见候选）
-- 证人状态: {witness_status}
-- 不可用原因: {witness_unavailable_reason}
-- 目标区间可闻人声: {target_audible}
-- 疑似拼音: {heard_pinyin}
-- 音节数: {syllable_count}
-- 不确定位置: {uncertain_positions}
-- 证人置信: {confidence}
 
-## 代码计算的双候选拼音贴合（由盲听 heard_pinyin 得出）
-- CURRENT: {current_pinyin_similarity}
-- PROPOSED: {proposed_pinyin_similarity}
 
-"""
+_PINYIN_JUDGE_EVIDENCE = '# 字幕选字裁决（闭集）\n\n你是字幕修复的最终选字法官。一名听写证人已经把目标区间的音节按拼音记录如下；\n证人从未见过任何候选文本。你的任务：结合语篇推理，从闭集中选出最符合\n「拼音证据 + 语境」的候选。铁律：\n\n1. {choice_rule}\n2. 依据 公开规则裁定，裁决必须优先在与证人听写拼音相容的候选内选择；PROPOSED 与听写明显不相容且无独立结构化证据时选择 CURRENT。\n3. 拼音证据是高可信辅助，不单独拥有最终裁决权。先判断这串拼音是否真的覆盖目标\n 整句；若它明显只听到邻句、半句或错位片段，必须在理由中披露错位，并由你\n 结合完整语境在闭集内定夺，不能因为 AGY 与两个候选都不齐就机械选 NEITHER。\n4. 语境（前后句、弹幕、平行句）在拼音无法区分候选、听写证据被标记为\n 受污染/不可用、或拼音与两个候选都显示窗口错位时，可以在闭集内定夺。\n 只有两个候选本身都不完整/不通顺，确实需要第三个候选时才选 NEITHER。\n5. 目标区间外出现过相同词语，本身不证明目标区间内说了它；但相邻句对同一\n 词的重复、呼应或应答，可作为闭集内选择的佐证——仍绝不引入闭集外新字。\n6. 真实的中英/中日混杂是存在的（公开规则）：外语候选若在语境中\n **语义通顺**，应正常参与裁决、可以当选；只有当外语读法在语境里根本\n 不通顺、而拼音证据又与中文候选相容时，才判定为中文被拉丁化误转写、\n 选择中文候选。分辨的根本理由是语义，不是文字系统。\n7. 「绑定文字证据」只证明候选的规范写法，不单独证明目标区间说了它。若\n 拼音/语篇确认目标指向该实体或原文，必须采用其规范写法；AGY、ASR、\n glossary、roster、弹幕、OCR 都只是证据，最终闭集选择仍由你作出。\n8. 证人状态为 UNCERTAIN 时表示 AGY 本轮没有提供可用听音；这不剥夺你的\n 最终裁决权。必须忽略缺失的拼音、仅根据闭集、完整语境和绑定文字证据\n 排序 CURRENT / PROPOSED / NEITHER，不得因为 AGY 不可用而拒绝裁决。\n\n## 听写证人报告（未见候选）\n- 证人状态: {witness_status}\n- 不可用原因: {witness_unavailable_reason}\n- 目标区间可闻人声: {target_audible}\n- 疑似拼音: {heard_pinyin}\n- 音节数: {syllable_count}\n- 不确定位置: {uncertain_positions}\n- 证人置信: {confidence}\n\n## 代码计算的双候选拼音贴合（由盲听 heard_pinyin 得出）\n- CURRENT: {current_pinyin_similarity}\n- PROPOSED: {proposed_pinyin_similarity}\n\n'
 
 _TRANSCRIPT_JUDGE_EVIDENCE = """# 字幕选字裁决（闭集）
 
@@ -629,50 +660,7 @@ _TRANSCRIPT_JUDGE_EVIDENCE = """# 字幕选字裁决（闭集）
 
 """
 
-_JUDGE_CHOICES = """\
-## 闭集候选
-- CURRENT（现字幕整句）: {current_cue}
-- PROPOSED（提案整句）: {proposed_cue}
-{drop_candidate}{candidate_choice_rule}
-（差异点：suspect={suspect!r} → replacement={replacement!r}；repair_class={repair_class}）
-
-## 语境（转写自同一音频；是语境不是文本权威）
-前文:
-{context_before}
-目标句: <待裁决>
-后文:
-{context_after}
-
-## 绑定文字证据（证据，不是先行裁决）
-{text_evidence}
-
-## 三路结构化保真证据（均为候选证据，不单独授权改字）
-{closed_set_structured_evidence}
-
-## 证据边界与姓名切分
-reviewer_reason 是另一轮模型的提案理由，不是平台事件原文。邻句词面命中只说明
-语境；bound_event_count=0 时不得称“已绑定用户名/礼物/弹幕”。bound_event_count>0
-也只统计 surface 的事件命中，不证明 CURRENT/PROPOSED 整句存在。
-structured_chat_candidate_extent 区分整句字面出现、片段出现和仅有来源声明；
-whole_candidate_literal_event_count=0 时不得把片段命中说成“整句有弹幕原文支持”。
-旧证据缺少此范围字段时按已有 surface 的范围理解，不补造整句证明。
-即使整句字面出现，也不证明主播实际念出、音节次数或人物指代关系。
-片段仍可提供词形候选，不自动否决或认可整句；CPA 继续比较全部证据。整句更顺或
-更像致谢，不能证明致谢词与随后用户名的分界，也不能据此删改疑似称呼。
-草稿保真曾保留 CURRENT 是既有处理记录，不等于 CURRENT 必然正确；须和其他证据
-一起比较。明确区分“这里在感谢”与“被感谢者具体怎样写”。若候选闭集本身
-切错名字边界，可选 NEITHER 交给既有重建；若具体听音可消歧，按当前轮合同
-请求局部音频。仍依全部证据给候选排序，不自动保留 CURRENT，不要求已有音频
-才允许正式 CPA 选择 PROPOSED，也不得虚构尚不存在的姓名绑定。
-
-{structured_chat_block}
-按概率排序并**必须选概率最高者**（维护者 2026-07-27：不许拿不准就保持原样——
-原样可能是最差的；把 {ranking_description} 的概率
-全部写出来，选最高）。
-只回一个 JSON 对象（无 markdown 围栏、无其他文字）:
-{{"ranking": [{{"choice": {choice_json}, "p": 0.0到1.0}}, ...全部候选],
- "choice": "排序第一的那个",{candidate_id_json} "reason": "引用{reason_basis}证据的一句话理由"}}
-"""
+_JUDGE_CHOICES = '## 闭集候选\n- CURRENT（现字幕整句）: {current_cue}\n- PROPOSED（提案整句）: {proposed_cue}\n{drop_candidate}{candidate_choice_rule}\n（差异点：suspect={suspect!r} → replacement={replacement!r}；repair_class={repair_class}）\n\n## 语境（转写自同一音频；是语境不是文本权威）\n前文:\n{context_before}\n目标句: <待裁决>\n后文:\n{context_after}\n\n## 绑定文字证据（证据，不是先行裁决）\n{text_evidence}\n\n## 三路结构化保真证据（均为候选证据，不单独授权改字）\n{closed_set_structured_evidence}\n\n## 证据边界与姓名切分\nreviewer_reason 是另一轮模型的提案理由，不是平台事件原文。邻句词面命中只说明\n语境；bound_event_count=0 时不得称“已绑定用户名/礼物/弹幕”。bound_event_count>0\n也只统计 surface 的事件命中，不证明 CURRENT/PROPOSED 整句存在。\nstructured_chat_candidate_extent 区分整句字面出现、片段出现和仅有来源声明；\nwhole_candidate_literal_event_count=0 时不得把片段命中说成“整句有弹幕原文支持”。\n旧证据缺少此范围字段时按已有 surface 的范围理解，不补造整句证明。\n即使整句字面出现，也不证明主播实际念出、音节次数或人物指代关系。\n片段仍可提供词形候选，不自动否决或认可整句；CPA 继续比较全部证据。整句更顺或\n更像致谢，不能证明致谢词与随后用户名的分界，也不能据此删改疑似称呼。\n草稿保真曾保留 CURRENT 是既有处理记录，不等于 CURRENT 必然正确；须和其他证据\n一起比较。明确区分“这里在感谢”与“被感谢者具体怎样写”。若候选闭集本身\n切错名字边界，可选 NEITHER 交给既有重建；若具体听音可消歧，按当前轮合同\n请求局部音频。仍依全部证据给候选排序，不自动保留 CURRENT，不要求已有音频\n才允许正式 CPA 选择 PROPOSED，也不得虚构尚不存在的姓名绑定。\n\n{structured_chat_block}\n按概率排序并**必须选概率最高者**（公开规则：不许拿不准就保持原样——\n原样可能是最差的；把 {ranking_description} 的概率\n全部写出来，选最高）。\n只回一个 JSON 对象（无 markdown 围栏、无其他文字）:\n{{"ranking": [{{"choice": {choice_json}, "p": 0.0到1.0}}, ...全部候选],\n "choice": "排序第一的那个",{candidate_id_json} "reason": "引用{reason_basis}证据的一句话理由"}}\n'
 
 
 _JUDGE_CACHE_SCHEMA = "judge-verdict-cache.v2"
@@ -894,6 +882,19 @@ def _word_choice_prompt(
             else '"CURRENT"或"PROPOSED"或"NEITHER"'
         ),
     )
+    if check_request.get(REQUIRE_COMPLETE_UTTERANCE_SUPPORT) is True:
+        prompt += (
+            "\n## exact-final CURRENT 整句闭合要求\n"
+            "本轮是终审放行裁决。除了比较 CURRENT 与 PROPOSED，必须单独评估 CURRENT"
+            "完整文字是否忠实于原音频目标区间和完整语境；CURRENT 只是相对更像，不能算整句"
+            "得到支持。原音本身的犹豫、复读、回扣、停顿和未说完的话应保留，不要求语法完整"
+            "或流畅，也不能为求通顺补写。若 CURRENT 有原音不支持的错音、实体或插字，"
+            "或错误断句改变原意，返回 false，并说明具体缺口；"
+            "只有有明确原音与语境依据时才返回 true。若选择 CURRENT，JSON 必须额外包含："
+            '"current_utterance_supported": true 或 false，以及'
+            '"current_utterance_support_reason": "对该布尔判断的具体理由"。'
+            "选择 PROPOSED 或 NEITHER 时没有 CURRENT 保留声明，可以省略这两个字段。\n"
+        )
     current_sources = _transcript_current_sources(check_request) if transcript_mode else []
     if current_sources:
         prompt += (
@@ -939,7 +940,20 @@ def judge_word_choice(
         context_before=context_before, context_after=context_after,
         structured_chat_context=structured_chat_context,
     )
+    pressure = getattr(llm_call, "cpa_resource_pressure", None)
+    if isinstance(pressure, Mapping):
+        prompt += (
+            "\n## 单片软资源压力（次数信息，不是事实证据或硬上限）\n"
+            + json.dumps(dict(pressure), ensure_ascii=False, sort_keys=True)
+            + "\n调用越多，越优先复用已绑定证据并在本次解决具体疑点；"
+            "不要为风格或顺口重复制造修复，也不要重复索取相同信息。"
+            "只有新增声学信息可能改变裁决时才请求补听，并说明缺少什么；"
+            "必要的原话准确性问题仍须裁决，不能因次数多将未决冒充正确。\n"
+        )
     prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    require_complete_support = (
+        check_request.get(REQUIRE_COMPLETE_UTTERANCE_SUPPORT) is True
+    )
     model_identity = getattr(llm_call, "cpa_cache_identity", None)
     cache_key = hashlib.sha256(json.dumps(
         {"prompt_sha256": prompt_sha256, "model_identity": model_identity},
@@ -956,6 +970,26 @@ def judge_word_choice(
                 and entry.get("model_identity") == model_identity
                 and isinstance(stored, dict)
                 and stored.get("status") == "JUDGED"
+                and (
+                    not require_complete_support
+                    or (
+                        stored.get("choice") in allowed_choices
+                        and stored.get("choice") != "CURRENT"
+                    )
+                    or (
+                        isinstance(
+                            stored.get("current_utterance_supported"), bool
+                        )
+                        and isinstance(
+                            stored.get("current_utterance_support_reason"),
+                            str,
+                        )
+                        and bool(
+                            stored.get("current_utterance_support_reason", "")
+                            .strip()
+                        )
+                    )
+                )
             ):
                 served = dict(stored)
                 served["served_from_cache"] = True
@@ -1019,8 +1053,8 @@ def judge_word_choice(
                 probability
             ) <= 1.0:
                 ranking.append({"choice": row_choice, "p": float(probability)})
-    # 维护者：必须按概率排序选最高——排序有效时它就是裁决；
-    # UNCERTAIN 不再是合法终点（模型仍拒绝时以排序第一顶上）。
+
+
     if ranking:
         top = max(ranking, key=lambda row: row["p"])
         if choice not in allowed_choices or (
@@ -1035,6 +1069,26 @@ def judge_word_choice(
             "choice": "UNCERTAIN",
             "reason_code": "JUDGE_CHOICE_OUT_OF_SET",
             "raw_choice": choice[:80],
+            "prompt_sha256": prompt_sha256,
+            "decision_contract": decision_contract,
+            "choice_set": sorted(allowed_choices),
+            "provider_retry_attempted": bool(call_errors),
+        }
+    current_utterance_supported = payload.get("current_utterance_supported")
+    current_utterance_support_reason = payload.get(
+        "current_utterance_support_reason"
+    )
+    current_support_claim = require_complete_support and choice == "CURRENT"
+    if current_support_claim and (
+        not isinstance(current_utterance_supported, bool)
+        or not isinstance(current_utterance_support_reason, str)
+        or not current_utterance_support_reason.strip()
+    ):
+        return {
+            "schema_version": ADJUDICATION_SCHEMA,
+            "status": "JUDGE_OUT_OF_SET",
+            "choice": "UNCERTAIN",
+            "reason_code": "CURRENT_UTTERANCE_SUPPORT_REQUIRED",
             "prompt_sha256": prompt_sha256,
             "decision_contract": decision_contract,
             "choice_set": sorted(allowed_choices),
@@ -1073,16 +1127,29 @@ def judge_word_choice(
         "check_request_sha256": str(
             check_request.get("request_sha256") or ""
         ).removeprefix("sha256:"),
-        # 维护者 工程优化②授权：MAX_PROVIDER_RETRIES_PER_PASS 同款
-        # house pattern（source_fact_review.py）——"每次重试都进回执披露"；
-        # 一个二次尝试才拿到的 JUDGED 终态不得看起来和首次成功一模一样，
-        # 尤其它还会被写入 judge-verdict-cache 原样回放。
+
+
+
+
         "provider_retry_attempted": bool(call_errors),
         "candidate_pinyin_similarity": similarities,
         "closed_set_structured_evidence": check_request.get(
             "closed_set_structured_evidence"
         ),
     }
+    if require_complete_support and (
+        isinstance(current_utterance_supported, bool)
+        and isinstance(current_utterance_support_reason, str)
+        and current_utterance_support_reason.strip()
+    ):
+        verdict.update(
+            {
+                "current_utterance_supported": current_utterance_supported,
+                "current_utterance_support_reason": (
+                    current_utterance_support_reason[:400]
+                ),
+            }
+        )
     if cache_path is not None:
         # 只缓存 JUDGED 终态；写失败绝不影响生产（与声学缓存同约定）。
         try:
@@ -1189,13 +1256,13 @@ def adjudicate_with_witness(
                 else "JUDGE_UNCERTAIN_KEEP_CURRENT"
             )
             return False, branch, audit
-        # F21 张力封口（维护者 立项时点名，默认关死待复裁）：
-        # 无声学改字路 ``CPA_JUDGE_APPLY_PROPOSED_WITHOUT_AUDIO_WITNESS`` 是
-        # 7/25 起就存在的既有出口，语义是「provider 真的被调用过、真的失败了，
-        # 语境证据仍可定夺」。F21 新开的 ``AUDIO_VERIFIER_UNAVAILABLE`` 是另一
-        # 回事：证人链**从未听过**这段音频（host 门降级 / 根本没有 provider）。
-        # 让这类证词继承既有改字权，等于让「接线缺陷」自动升级成「声学豁免」，
-        # 与 8/8 F7 方向直接冲突。默认只许 KEEP_CURRENT + 披露，等 维护者 复裁。
+
+
+
+
+
+
+
         if witness_unavailable_reason == AUDIO_VERIFIER_UNAVAILABLE:
             audit["acoustic_witness_never_attempted"] = True
             return (

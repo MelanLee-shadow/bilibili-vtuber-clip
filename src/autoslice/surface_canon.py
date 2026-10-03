@@ -335,8 +335,8 @@ def normalize_japanese_native_script_surfaces(
     }
 
 
-# ---------------------------------------------------------------------------
-# 称呼串等价类（维护者 立项，kmx 称呼串 2:29 妈妈→吗 案）
+
+
 
 ADDRESS_FORMULA_MEMBERS = ("姐姐", "妈妈", "宝宝", "老公", "主人", "宝贝")
 _ADDRESS_SINGLE_TO_MEMBER = {"吗": "妈妈", "嘛": "妈妈", "妈": "妈妈"}

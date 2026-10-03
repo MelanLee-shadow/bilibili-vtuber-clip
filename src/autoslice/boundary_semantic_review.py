@@ -420,18 +420,18 @@ def build_boundary_search_scope(
             - prior_piece_duration
         )
 
-    # 精确复核区间重播：
-    # reviewed_exact_interval_projection 在场 = 交付必须逐字节重播 维护者 已复核
-    # 的那一段源区间，语义回剪车道在这个模式下没有裁量权——终点只能是复核终点。
-    # 旧写法把下限留在 bounded semantic-tail trim 的 delivery_lower_bound 上，
-    # 于是只有「structured payoff 恰好被尾锚钳制」时下限才等于终点，projection
-    # 才够得着（terminal_projection_relaxation 要求 min==cap==endpoint）；没有
-    # payoff 的复核重播（本案 payoff=None，下限 65570 vs 终点 67760）会让评审
-    # 选中终点前 90ms 的机器闭合 cue，成片短 90ms，随后被 redelivery baseline
-    # 的 REDELIVERY_BASELINE_CUE_CUT_BY_NEW_BOUNDARY 硬拦——机制在、接线断。
-    # 钉死下限后：栅格上恰好有 cue 收在复核终点则正常入选；没有则 positions 空、
-    # 由 projection 以「闭合 cue + 跨越终点的下一话题 cue」证据桥接（漂移帽
-    # 250ms 内），两者都不成立才 fail-closed——比事后被 baseline 门拦更早、更准。
+
+
+
+
+
+
+
+
+
+
+
+
     reviewed_endpoint_floor_ms: int | None = None
     if (
         terminal_projection is not None

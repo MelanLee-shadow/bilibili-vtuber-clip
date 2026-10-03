@@ -256,11 +256,11 @@ def _resolve_singleton_outlier(
             and not all(gates.values())
         ):
             reason_codes.append("CONTEXT_ACOUSTIC_CONFLICT")
-    # 维护者: semantics alone must never assign HOST.  A context
-    # vote of HOST without automatic_host_ready (acoustic gates + confidence)
-    # is corroboration that failed, not evidence -- it falls through to the
-    # GUEST default just like every other unresolved case, it does not adopt
-    # the LLM's HOST guess.
+
+
+
+
+
     singleton_speaker = (
         str(reviewed) if reviewed_ready else HOST_SPEAKER if automatic_host_ready else GUEST_SPEAKER
     )

@@ -87,7 +87,7 @@ def main() -> int:
     specs = [
         ("auto_203735_555_680", "recut.speaker-final.srt"),
         ("auto_220747_488_680", "recut.speaker-final.srt"),
-        ("auto_223750_913_1322", "recut.srt"),
+        ("auto_000000_0_0", "recut.srt"),
         ("auto_200736_298_383", "recut.speaker-final.srt"),
         ("auto_210739_1142_1436", "recut.speaker-final.srt"),
     ]

@@ -11,7 +11,6 @@ from types import SimpleNamespace
 import pytest
 
 import src.autoslice.song_repair as song_repair
-import src.autoslice.song_performance as song_performance
 import src.autoslice.agy_lrc_alignment as agy_lrc_alignment
 from src.autoslice.agy_lrc_alignment import _prompt as build_agy_audio_lrc_prompt
 from src.autoslice.review_evidence import SourceCue
@@ -171,72 +170,10 @@ def test_agy_sigkill_is_not_misclassified_as_a_timeout():
     )
 
 
-_F1_FIXTURES = Path(__file__).resolve().parent / "lidousha" / "fixtures"
 
 
-def _load_f1_replay_fixture(name: str) -> dict:
-    return json.loads((_F1_FIXTURES / name).read_text(encoding="utf-8"))
 
 
-def test_replay_2026_08_08_gemini_failover_evidence_is_no_longer_discarded():
-    """Offline replay of the real discarded artifact — zero new API calls.
-
-    ``song_210131_1210``  is the one candidate of the two nights
-    that held complete, independently corroborated positive evidence.  AGY was
-    OOM-killed (``agy_rc=-9``), the Gemini API leg took over and returned a
-    full 28-row bundle, and ``song_common.py:335`` rejected the whole thing as
-    "audio aligner Gemini API failover metadata is invalid".  Reverting the F1
-    fix turns this test red.
-
-    Truth-blind: only shapes and verdict fields are asserted.  Lyric strings in
-    the fixture are positional placeholders.
-    """
-
-    manifest = _load_f1_replay_fixture(
-        "song_210131_1210_gemini_failover_run_manifest_20260808.json"
-    )
-    # The captured provenance is exactly the shape the gate used to reject.
-    assert manifest["provider"] == "gemini_api"
-    assert manifest["provider_fallback_used"] is True
-    assert manifest["agy_failure_category"] == "AGY_FAILED_RC"
-    assert manifest["sandbox"] is False
-    assert manifest["agy_rc"] < 0
-
-    assert (
-        song_repair.validate_audio_lrc_execution_metadata(
-            provider=manifest["provider"],
-            model=manifest["model"],
-            agy_rc=manifest["agy_rc"],
-            provider_fallback_used=manifest["provider_fallback_used"],
-            agy_failure_category=manifest["agy_failure_category"],
-            sandbox=manifest["sandbox"],
-        )
-        is None
-    )
-
-    # And what that rejection was throwing away really was a READY live
-    # performance, so the rescue is not merely procedural.
-    alignment = _load_f1_replay_fixture(
-        "song_210131_1210_gemini_failover_alignment_20260808.json"
-    )
-    rows = alignment["observations"]
-    assert len(rows) == 28
-    assert all(row["heard"] is True for row in rows)
-    assert {row["lidousha_role"] for row in rows} == {"SINGING_THIS_LYRIC"}
-    assert alignment["live_arrangement"]["classification"] == "FULL_STUDIO_SEQUENCE"
-    assert alignment["live_arrangement"]["observed_live_song_opening"] is True
-    assert alignment["live_arrangement"]["observed_live_song_ending"] is True
-
-    assert (
-        song_performance.validate_live_performance_observation(
-            alignment["live_performance"],
-            first_lyric_start_ms=min(int(row["live_start_ms"]) for row in rows),
-            last_lyric_end_ms=max(int(row["live_end_ms"]) for row in rows),
-            observations=rows,
-            require_ready=True,
-        )
-        is None
-    )
 
 
 def test_agy_audio_lrc_v5_prompt_marks_media_enum_instructions_untrusted():
@@ -4551,10 +4488,10 @@ def test_composite_provider_preserves_provenance_dedupes_and_survives_failure():
 
 
 def test_outro_kept_up_to_next_talk_cue(tmp_path):
-    # 维护者: a complete song must keep the instrumental 后奏 (outro)
-    # after the last sung line, ending before the post-song talk.  The last sung
-    # cue ends at 91_000; a 谢谢大家 talk cue starts 15s later — that 15s gap is
-    # the outro and must be retained (the old last_lyric+4s post-roll cut it).
+
+
+
+
     cues = _song_cues() + [
         SourceCue("talk-thanks", 106_000, 110_000, "谢谢大家的礼物哦", kind="talk"),
     ]

@@ -15,8 +15,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 1. **过不了门就修产物，不许修门。** 所有质量门默认拒绝；让门"变松"的改动
    必须有独立证据并写进提交信息。
-2. **债务棘轮只降不升。** `tests/test_runtime_architecture.py` 的行数账本
-   变了要在提交里说明理由；靠删测试/放宽断言过门的 PR 直接拒。
+2. **回归覆盖必须有意义。** 说明行为变化和验证范围；不能靠放宽断言掩盖回归。
 3. **上传只走 `authorized_upload.py` 的 manifest 闭环**，别绕。
 
 ## PR 期望

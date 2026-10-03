@@ -1,8 +1,8 @@
 """运维范围通道：显式点名某天进处理窗口，出处缺一不生效，干完自动出圈。
 
 背景：`list_dates()` 只取最新三个录制日期，加两个例外（`source_incomplete`、
-`historical_source_recovery_in_progress`）。维护者 逐字「**把 tier1 的 4
-条做了**」「**87 现在需要纳入处理范围**」，但 早已滑出窗口，且它的
+`historical_source_recovery_in_progress`）。公开规则：**把 tier1 的 4
+条做了**「**87 现在需要纳入处理范围**」，但 早已滑出窗口，且它的
 `source_recoveries` 是空的——两个例外一个都不成立，仓里此前没有第三条路。伪造
 `source_recoveries` 骗它进窗口是编造证据，绝不允许。
 
@@ -53,7 +53,7 @@ from src.autoslice.selection_scorecard import normalize_selection_scorecard
 RECORDING_DATE = "2026-08-07"
 SESSION_ID = "live-20260807T190000+0800"
 NOW = datetime(2026, 8, 10, 16, 0, tzinfo=timezone.utc)
-# 维护者 逐字（本通道的授权出处，也是本文件所有 fixture 的引文来源）。
+
 REVIEWER_QUOTE = "把 tier1 的 4 条做了；87 现在需要纳入处理范围"
 # 8/7 talk_backlog 里真实排在最前的四条 tier-1。
 TIER1_IDS = (
@@ -1729,7 +1729,7 @@ def _selection_state(grant: dict | None) -> dict:
 
 
 def test_without_a_grant_the_higher_scored_reserves_take_the_seats(hermetic_quota):
-    """对照组：不加限定时，坐席的是高分的 tier-2，不是 维护者 点名的四条。"""
+    """对照组：不加限定时，坐席的是高分的 tier-2，不是 公开规则点名的四条。"""
 
     state = _selection_state(None)
     prioritize(state)
@@ -1740,7 +1740,7 @@ def test_without_a_grant_the_higher_scored_reserves_take_the_seats(hermetic_quot
 
 
 def test_grant_seats_only_the_named_candidates(hermetic_quota):
-    """维护者「tier1 的 4 条做了，其他不用管了」——只有那四条进准入池。"""
+    """公开规则：tier1 的 4 条做了，其他不用管了——只有那四条进准入池。"""
 
     state = _selection_state(_grant())
     prioritize(state)

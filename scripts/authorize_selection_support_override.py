@@ -12,8 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.autoslice.producer_delivery_transaction import deployment_authority_binding  # noqa: E402
-from src.autoslice.selection_support_override import (  # noqa: E402
+from src.autoslice.producer_delivery_transaction import deployment_authority_binding
+from src.autoslice.selection_support_override import (
     SelectionSupportOverrideError,
     _safe_document,
     create_or_apply_selection_support_override,

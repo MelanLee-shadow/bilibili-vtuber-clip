@@ -28,6 +28,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -178,9 +179,9 @@ def sanitize_cue_timing(
             if "flash_extended" not in reasons:
                 reasons.append("flash_extended")
 
-        # 维护者/root typed-DROP repair authorization: a validated
-        # whole-cue blank is a hard subtitle boundary for generated extension
-        # only.  Never shorten an original cue that already overlaps it.
+
+
+
         for blank_start_ms, _blank_end_ms in protected_blanks:
             if (
                 end_ms <= blank_start_ms
@@ -275,24 +276,36 @@ def build_ssh_silero_vad_provider(
     Extracts the [start_ms, end_ms) window of the source video as 16k mono WAV
     locally, ships it over, and maps the returned clip-relative spans back to
     source-timeline milliseconds.  Provisioning: scripts/silero_vad_spans.py +
-    assets/vad/silero_vad.onnx（随仓分发；参考部署放 <host>:/opt/bilive/vad/）。
-    脚本路径可用 ``AUTOSLICE_VAD_SCRIPT`` 覆盖，默认为参考部署路径。
+    assets/vad/silero_vad.onnx（随仓分发，不要求额外复制到旧 VAD 目录）。
+    脚本路径可用 ``AUTOSLICE_VAD_SCRIPT`` 覆盖。localhost/127.0.0.1
+    默认使用当前 repo 的随仓脚本和当前解释器；SSH 主机默认使用正常部署的
+    /opt/bilive/autoslice/repo/scripts/silero_vad_spans.py 与
+    /opt/bilive/autoslice/venv-main/bin/python。
 
     Raises RuntimeError on any failure — the caller decides whether timing QA
     is best-effort (record and skip) or mandatory.
     """
 
+    local_host = host in {"localhost", "127.0.0.1"}
     if remote_script is None:
-        remote_script = os.environ.get("AUTOSLICE_VAD_SCRIPT") or str(
-            Path(__file__).resolve().parents[2]
-            / "scripts"
-            / "silero_vad_spans.py"
+        remote_script = os.environ.get("AUTOSLICE_VAD_SCRIPT")
+        if remote_script is None:
+            if local_host:
+                remote_script = str(
+                    Path(__file__).resolve().parents[2]
+                    / "scripts"
+                    / "silero_vad_spans.py"
+                )
+            else:
+                remote_script = "/opt/bilive/autoslice/repo/scripts/silero_vad_spans.py"
+    vad_python = os.environ.get("AUTOSLICE_VAD_PYTHON")
+    if vad_python is None:
+        vad_python = (
+            sys.executable if local_host else "/opt/bilive/autoslice/venv-main/bin/python"
         )
-    vad_python = os.environ.get("AUTOSLICE_VAD_PYTHON") or "python3"
 
     def provider(source_video: Path, start_ms: int, end_ms: int) -> list[SpeechSpan]:
         duration_ms = max(1, end_ms - start_ms)
-        local_host = host in {"localhost", "127.0.0.1"}
         remote_wav = f"/tmp/vad_{start_ms}_{end_ms}_{Path(source_video).stem[:24]}.wav"
         with tempfile.TemporaryDirectory(prefix="vad_wav_") as tmp:
             wav_path = Path(tmp) / "window.wav"

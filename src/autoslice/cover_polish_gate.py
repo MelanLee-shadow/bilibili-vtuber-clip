@@ -24,7 +24,10 @@ POLISH_FACE_AUTHORITY = "CPA_PRIMARY_HASH_BOUND_FINAL_FACE_CHECK"
 
 _POLISH_FACE_QUESTION = (
     "这是一张视频封面成品。请只判断画面中人物的脸部是否完整可见："
-    "双眼、嘴巴、下巴都必须在画面内，且没有被画面边缘或卡片边框切断。"
+    "若人物佩戴眼罩，眼罩遮住一只眼睛本身不算脸部缺失，"
+    "也不要要求画出眼罩下的眼睛；眼罩是否符合源图由身份核验另行判断。"
+    "可见的眼睛、眼罩、嘴巴、下巴和头脸轮廓"
+    "不得被画面边缘、卡片边框、已渲染文字或新增遮挡物切断或盖住。"
     "同时报告人物是否吐舌头。只输出 JSON："
     '{"face_complete": true|false, "missing": ["eyes"|"mouth"|"chin"], '
     '"tongue_out": true|false, "reason": "简短中文说明"}'
@@ -202,8 +205,8 @@ def _compose_screenshot_cover_with_face_gate(
         isinstance(crop_evidence, Mapping)
         and crop_evidence.get("camera_window_crop")
     )
-    # 游戏截图（维护者：主体本来就是游戏）与关系型 no-crop 证明一样，
-    # 整幅进卡：fit_crop 会把她的面捕小窗从边角切掉，正好毁掉唯一的身份证据。
+
+
     preserve_full_frame = bool(
         relationship_visual_required
         or (

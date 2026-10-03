@@ -24,18 +24,18 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import scripts.session_autoslice as runner  # noqa: E402
-from src.autoslice.qixi_transaction_core import exclusive_runner_commit  # noqa: E402
-from src.autoslice.runner_state_writeback import (  # noqa: E402
+import scripts.session_autoslice as runner
+from src.autoslice.qixi_transaction_core import exclusive_runner_commit
+from src.autoslice.runner_state_writeback import (
     read_exact_state_preimage,
     state_bytes,
     write_exact_state_under_lease,
 )
-from src.autoslice.selected_final_review_recovery import (  # noqa: E402
+from src.autoslice.selected_final_review_recovery import (
     RECOVERY_RECEIPT_FIELD,
     validate_selected_final_review_recovery_receipt,
 )
-from src.autoslice.selected_final_review_recovery_authority import (  # noqa: E402
+from src.autoslice.selected_final_review_recovery_authority import (
     SelectedFinalReviewRecoveryAuthorityError,
     build_authorized_selected_final_review_recovery_receipt,
     load_selected_final_review_recovery_authority,

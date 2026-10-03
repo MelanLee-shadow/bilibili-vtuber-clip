@@ -30,21 +30,21 @@ from typing import Mapping
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from scripts.run_auto_review_shadow_pipeline import _burn_preview_subtitles  # noqa: E402
-from scripts.run_auto_review_shadow_pipeline import _sha256  # noqa: E402
-from scripts.produce_slice_package import run_speaker_finalizer  # noqa: E402
-from scripts.apply_subtitle_text_overrides import (  # noqa: E402
+from scripts.run_auto_review_shadow_pipeline import _burn_preview_subtitles
+from scripts.run_auto_review_shadow_pipeline import _sha256
+from scripts.produce_slice_package import run_speaker_finalizer
+from scripts.apply_subtitle_text_overrides import (
     apply_document as apply_text_override_document,
 )
-from scripts.apply_speaker_turn_overrides import SPEAKER_SUBTITLE_STYLE_ID  # noqa: E402
-from scripts.suggest_upload_tags import generate_upload_tags  # noqa: E402
-from src.autoslice.branding_intro import (  # noqa: E402
+from scripts.apply_speaker_turn_overrides import SPEAKER_SUBTITLE_STYLE_ID
+from scripts.suggest_upload_tags import generate_upload_tags
+from src.autoslice.branding_intro import (
     BrandingIntroError,
     pin_existing_delivery_intro,
     require_branding_intro,
 )
-from src.autoslice.jingting_chunker import parse_srt_cues  # noqa: E402
-from src.autoslice.repository_asset_authority import (  # noqa: E402
+from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.repository_asset_authority import (
     RepositoryAssetAuthorityError,
     require_repository_asset_authority,
 )

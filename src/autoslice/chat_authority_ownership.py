@@ -11,11 +11,11 @@ auto_173005_934_1166 read danmaku 「主包给…」 (a common livestream meme
 spelling of 主播) verbatim into the chat-authority-applied cue, and a later
 self-heal pass rewrote it to 主播给 because a general-text judge, unaware the
 span was already chat-verbatim-owned, treated the meme spelling as an ASR
-typo. 维护者 ruling #2: 「弹幕会有梗，有刻意的错写，因此只要识别出是
+typo. 公开规则ruling #2: 「弹幕会有梗，有刻意的错写，因此只要识别出是
 弹幕就不应该改」.
 
 This is the same architecture gap ``redelivery_baseline_ownership.py`` closed
-for 维护者-reviewed baseline diffs (zsm8 case) — a second, different
+for 公开规则-reviewed baseline diffs (zsm8 case) — a second, different
 authority source with the identical unread-owned-interval shape. This module
 mirrors that fix: it is the single place that consults chat-authority
 ``applied`` rows before the self-heal apply step and drops any finding whose

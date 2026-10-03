@@ -28,6 +28,10 @@ from .final_human_review_evidence import validate_bound_review_evidence
 from .cover_route_evidence import validate_cover_route_decision
 from .review_package_cover_diagnostics import validate_package_cover_route
 from .channel_profile import load_channel_profile as _load_channel_profile
+from .final_media_duration_binding import (
+    FinalMediaDurationBindingError,
+    final_burn_duration_binding,
+)
 from .story_contract import cover_story_contract_binding_matches
 from .qixi_corrected_package_finalization import (
     QixiCorrectedPackageError,
@@ -882,12 +886,23 @@ def _publication_target(
     def _authority_title_binding_ok(
         authority: Mapping[str, object], title: str
     ) -> bool:
+        if authority.get("schema_version") == "new-bv-same-bv-publication-authority.v1":
+            from src.autoslice.recovery_title_authority import (
+                RecoveryTitleAuthorityError, validate_recovery_publication_authority,
+            )
+            try:
+                validate_recovery_publication_authority(
+                    authority, candidate_id=candidate_id, expected_final_title=title,
+                )
+            except RecoveryTitleAuthorityError:
+                return False
+            return True
         observed = authority.get("observed_public_title")
         if observed == title:
             return True
-        # 3573/672 case (维护者-planned prefix repair): the live title was a
-        # manual override missing the 【李豆沙】 prefix; the repair publishes
-        # the canonicalized form. Only that exact relationship may differ.
+
+
+
         if authority.get("title_mode") != "reviewer_manual_override":
             return False
         if not isinstance(observed, str) or not observed:
@@ -1344,30 +1359,12 @@ def _manifest_items(
             )
         )
         burned_preview = record.get("burned_preview")
-        branding_intro = (
-            burned_preview.get("branding_intro")
-            if isinstance(burned_preview, Mapping)
-            else None
-        )
-        verification = (
-            branding_intro.get("verification")
-            if isinstance(branding_intro, Mapping)
-            else None
-        )
-        final_duration_ms = (
-            verification.get("duration_ms")
-            if isinstance(verification, Mapping)
-            else None
-        )
-        if (
-            not isinstance(final_duration_ms, int)
-            or isinstance(final_duration_ms, bool)
-            or final_duration_ms <= 0
-        ):
+        try:
+            duration_binding = final_burn_duration_binding(burned_preview)
+        except FinalMediaDurationBindingError as exc:
             raise FinalHumanReviewError(
-                "FINAL_HUMAN_REVIEW_FINAL_DURATION_INVALID",
-                candidate_id,
-            )
+                "FINAL_HUMAN_REVIEW_FINAL_DURATION_INVALID", candidate_id
+            ) from exc
         order.append(candidate_id)
         closure_by_candidate[candidate_id] = {
             "title": title,
@@ -1375,15 +1372,15 @@ def _manifest_items(
             "record_path": record_path,
             "publication_target": publication_target,
             "expected_cover_claims": expected_cover_claims,
-            "final_duration_ms": final_duration_ms,
+            **duration_binding,
         }
 
     exact_ids = _declared_candidate_list(
         review_manifest.get("exact_candidate_ids")
     )
-    # 维护者 per-BV ruling: a release-scoped manifest carries only
-    # the scoped items; the exact contract identity stays intact and the
-    # scope must be its subset.
+
+
+
     scope = review_manifest.get("partial_release_scope")
     scoped_ids = (
         _declared_candidate_list(scope.get("candidates"))

@@ -36,23 +36,17 @@ SCHEMA_VERSION = "lidousha-candidate-public-text-surface-authority.v1"
 ALGORITHM_ID = "exact-candidate-generated-surface-resolution.v1"
 MANUAL_TITLE_ALGORITHM_ID = "exact-candidate-manual-title-resolution.v1"
 ROOT_REVIEWED_ALGORITHM_ID = "exact-candidate-root-reviewed-public-surface-resolution.v1"
-ROOT_REVIEWED_CANDIDATE_ID = "auto_120032_753_816"
-ROOT_REVIEWED_RECORDING_DATE = "2026-08-14"
-ROOT_REVIEWED_CONTEXT_SHA256 = "sha256:edf26d3d7cf0eeea0e94c8d3a0006b7a323441ed11bdb701818bb65da619100a"
-ROOT_REVIEWED_STORY_SHA256 = "sha256:94b52484061524ce7d3865d9a8939b84773fcb87015b14287aa4e9f6794dcfd6"
-ROOT_REVIEWED_PROMPT_SHA256 = "sha256:ff0a633cdd9eb853d25278b24d71e939cfe35fac00d94c51617295164f07c4d8"
-ROOT_REVIEWED_INTERVAL = {"absolute_start_ms": 753000, "absolute_end_ms": 816000}
-ROOT_REVIEWED_SOURCE_PIECES = ({"recording_basename": "22966160_20260814-12-00-32.mp4", "source_media_sha256": "sha256:0f0770a9426c48fee5457cf9639a77e5a477f41ec806f4e4789e19c336e1aae5", "start_ms": 743770, "end_ms": 864000},)
-ROOT_REVIEWED_RULING_SHA256 = "sha256:c2ffd0721739334257c468f0756b3e647c62ffb8c32e2cab4a0ae2bc6ee38fac"
-ROOT_REVIEWED_RULING_LOCATOR = (
-    "/Users/op/.claude/projects/-Users-维护者-Project-vtuber-slice/"
-    "0df2296b-500a-4681-ab5e-6fb46dc39579.jsonl:947"
-)
-ROOT_REVIEWED_RULING_QUOTE = (
-    "她提醒开车的观众别发弹幕后，把弹幕里的“坏结果”听成“大结果”这个切片，"
-    "1:01插了一句naruhodo ne的日语，中文字幕错了，而且不是听错了，是弹幕本身发错了。重做标题封面。"
-)
-ROOT_REVIEWED_RULING_TIMESTAMP = "2026-08-19T00:08:52.249Z"
+ROOT_REVIEWED_CANDIDATE_ID = "__private_authority_unavailable__"
+ROOT_REVIEWED_RECORDING_DATE = "__private_authority_unavailable__"
+ROOT_REVIEWED_CONTEXT_SHA256 = "__private_authority_unavailable__"
+ROOT_REVIEWED_STORY_SHA256 = "__private_authority_unavailable__"
+ROOT_REVIEWED_PROMPT_SHA256 = "__private_authority_unavailable__"
+ROOT_REVIEWED_INTERVAL = "__private_authority_unavailable__"
+ROOT_REVIEWED_SOURCE_PIECES = "__private_authority_unavailable__"
+ROOT_REVIEWED_RULING_SHA256 = "__private_authority_unavailable__"
+ROOT_REVIEWED_RULING_LOCATOR = "__private_authority_unavailable__"
+ROOT_REVIEWED_RULING_QUOTE = "__private_authority_unavailable__"
+ROOT_REVIEWED_RULING_TIMESTAMP = "__private_authority_unavailable__"
 CONSUMPTION_SCHEMA_VERSION = "candidate-public-text-surface-consumption.v1"
 AUTHORITY_DIRECTORY = "candidate_public_text_surface_authorities"
 AUTHORITY_SUFFIX = ".public-text-surface-authority.v1.json"
@@ -422,70 +416,8 @@ def _freeze_authority(document: dict[str, object]) -> CandidatePublicTextSurface
     )
 
 
-def _freeze_root_reviewed_authority(document: dict[str, object]) -> CandidatePublicTextSurfaceAuthority:
-    """Freeze a root decision derived from, but never impersonating, 维护者 text.
-
-    This variant is intentionally candidate-specific.  It permits an exact
-    public hook/title replacement after a requested redo while retaining the
-    original chat ruling as evidence; it never grants transcript, speaker,
-    state, registry, upload, or provider authority.
-    """
-    candidate = _required_object(document["candidate_binding"], _MANUAL_TITLE_CANDIDATE_FIELDS, "PUBLIC_TEXT_ROOT_BINDING_INVALID")
-    inputs = _required_object(document["input_surface_binding"], _INPUT_FIELDS, "PUBLIC_TEXT_INPUT_INVALID")
-    resolved = _required_object(document["resolved_surfaces"], _ROOT_REVIEWED_RESOLVED_FIELDS, "PUBLIC_TEXT_RESOLUTION_INVALID")
-    scope = _required_object(document["scope"], _SCOPE_FIELDS, "PUBLIC_TEXT_SCOPE_INVALID")
-    ruling = _required_object(document["user_authorization"], {"quote", "timestamp"}, "PUBLIC_TEXT_USER_AUTHORITY_INVALID")
-    decision = _required_object(document["decision_authorization"], {"decision_owner", "source_scope", "ruling_sha256", "ruling_locator"}, "PUBLIC_TEXT_ROOT_DECISION_INVALID")
-    candidate_id = _required_text(candidate["candidate_id"], "PUBLIC_TEXT_CANDIDATE_INVALID")
-    selected = _required_object(candidate["selected_interval"], _SELECTED_INTERVAL_FIELDS, "PUBLIC_TEXT_SELECTED_INTERVAL_INVALID")
-    pieces = _validate_source_pieces(candidate["clip_context_source_pieces"])
-    input_hook = _required_text(inputs["selection_hook"], "PUBLIC_TEXT_INPUT_INVALID")
-    old_title = _required_text(inputs["superseded_title"], "PUBLIC_TEXT_INPUT_INVALID")
-    resolved_hook = _required_text(resolved["selection_hook"], "PUBLIC_TEXT_RESOLUTION_INVALID")
-    resolved_title = _required_text(resolved["title"], "PUBLIC_TEXT_RESOLUTION_INVALID")
-    cover_lines = resolved["cover_lines"]
-    if not (
-        _CANDIDATE_RX.fullmatch(candidate_id) and Path(candidate_id).name == candidate_id
-        and _SHA_RX.fullmatch(str(candidate["clip_context_sha256"] or ""))
-        and _SHA_RX.fullmatch(str(candidate["story_contract_sha256"] or ""))
-        and _SHA_RX.fullmatch(str(candidate["clip_context_prompt_sha256"] or ""))
-        and isinstance(selected["absolute_start_ms"], int) and isinstance(selected["absolute_end_ms"], int)
-        and 0 <= selected["absolute_start_ms"] < selected["absolute_end_ms"]
-        and candidate_id == ROOT_REVIEWED_CANDIDATE_ID
-        and candidate["recording_date"] == ROOT_REVIEWED_RECORDING_DATE
-        and candidate["clip_context_sha256"] == ROOT_REVIEWED_CONTEXT_SHA256
-        and candidate["story_contract_sha256"] == ROOT_REVIEWED_STORY_SHA256
-        and candidate["clip_context_prompt_sha256"] == ROOT_REVIEWED_PROMPT_SHA256
-        and selected == ROOT_REVIEWED_INTERVAL
-        and pieces == ROOT_REVIEWED_SOURCE_PIECES
-        and decision == {
-            "decision_owner": "Codex root", "source_scope": "REVIEWER_REQUESTED_REDO",
-            "ruling_sha256": ROOT_REVIEWED_RULING_SHA256,
-            "ruling_locator": ROOT_REVIEWED_RULING_LOCATOR,
-        }
-        and ruling == {"quote": ROOT_REVIEWED_RULING_QUOTE, "timestamp": ROOT_REVIEWED_RULING_TIMESTAMP}
-        and scope == {"artifact_kinds": list(PUBLIC_ARTIFACT_KINDS), "subtitle_text_mutation_authorized": False, "speaker_label_mutation_authorized": False, "upload_authorized": False, "registry_hold_released": False}
-        and isinstance(cover_lines, list) and len(cover_lines) in (1, 2)
-        and all(isinstance(line, str) and line and len(line) <= 9 for line in cover_lines)
-        and resolved["cover_lines_sha256"] == _sha256_json(cover_lines)
-        and any(int(p["start_ms"]) <= selected["absolute_start_ms"] and selected["absolute_end_ms"] <= int(p["end_ms"]) for p in pieces)
-    ):
-        raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_ROOT_DECISION_INVALID")
-    for text, declared in ((input_hook, inputs["selection_hook_sha256"]), (old_title, inputs["superseded_title_sha256"]), (resolved_hook, resolved["selection_hook_sha256"]), (resolved_title, resolved["title_sha256"])):
-        if declared != _sha256_text(text):
-            raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_SURFACE_HASH_MISMATCH")
-    return CandidatePublicTextSurfaceAuthority(
-        candidate_id=candidate_id, recording_date=_required_text(candidate["recording_date"], "PUBLIC_TEXT_ROOT_BINDING_INVALID"),
-        clip_context_sha256=str(candidate["clip_context_sha256"]), source_pieces=pieces,
-        selected_start_ms=int(selected["absolute_start_ms"]), selected_end_ms=int(selected["absolute_end_ms"]),
-        input_selection_hook=input_hook, superseded_title=old_title, resolved_selection_hook=resolved_hook,
-        resolved_title=resolved_title, entity_id="root-reviewed-public-surface", equivalent_surfaces=(),
-        required_public_surface=resolved_title, forbidden_public_surfaces=(old_title,),
-        authority_sha256=str(document["authority_sha256"]), user_authorization=ruling,
-        algorithm_id=ROOT_REVIEWED_ALGORITHM_ID, story_contract_sha256=str(candidate["story_contract_sha256"]),
-        clip_context_prompt_sha256=str(candidate["clip_context_prompt_sha256"]), decision_authorization=decision,
-        resolved_cover_lines=tuple(cover_lines),
-    )
+def _freeze_root_reviewed_authority(document):
+    raise CandidatePublicTextSurfaceAuthorityError("PRIVATE_CANDIDATE_AUTHORITY_UNAVAILABLE")
 
 
 def _freeze_manual_title_authority(
@@ -999,9 +931,9 @@ def resolve_candidate_public_text_staging(
         story_contract=story_contract,
     )
     if authority.is_manual_title_resolution:
-        # This authority is deliberately title-only.  Its hash-bound contract
-        # proves that neither the selection hook nor any source/subtitle
-        # surface may be rebuilt as a side effect of accepting 维护者's title.
+
+
+
         return CandidatePublicTextStagingResolution(
             selection_hook=authority.resolved_selection_hook,
             title=authority.resolved_title,

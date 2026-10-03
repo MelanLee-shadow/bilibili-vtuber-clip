@@ -35,11 +35,11 @@ from src.autoslice.exact_source_transcript_authority import (
 )
 
 SCHEMA_VERSION = "final-review-carryover.v1"
-# 硬退出侧车（维护者 15:05Z 交棒清单第 7 项「硬退出丢 carryover
-# (超时/崩溃跳过侧车落盘)」）：exact 终审的确证行只在**整轮结束**时才落盘，
-# 中间被 SIGKILL（runner `subprocess.run(timeout=5400)` 超时即 kill）或被非
-# `SystemExit` 异常打断，这一轮算出来的行就没了。checkpoint 是同一批行的
-# 「算出来就写」副本，与封存件同源同谓词、同样零特权。
+
+
+
+
+
 CHECKPOINT_SCHEMA_VERSION = "final-review-carryover-checkpoint.v1"
 INTEGRITY_SCHEMA_VERSION = "final-review-carryover-integrity.v1"
 _ROW_KEYS = (

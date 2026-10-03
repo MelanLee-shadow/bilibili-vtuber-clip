@@ -32,19 +32,19 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.apply_subtitle_text_overrides import (  # noqa: E402
+from scripts.apply_subtitle_text_overrides import (
     apply_document as apply_text_override_document,
 )
-from scripts.authorized_upload import (  # noqa: E402
+from scripts.authorized_upload import (
     DEFAULT_UPLOAD_LOCK,
     UploadLockBusy,
     exclusive_upload_lock,
 )
-from src.autoslice.qixi_transaction_core import (  # noqa: E402
+from src.autoslice.qixi_transaction_core import (
     QixiTransactionCoreError,
     exclusive_runner_commit,
 )
-from scripts.session_autoslice import (  # noqa: E402
+from scripts.session_autoslice import (
     BASE,
     _atomic_write_bytes_file,
     _atomic_write_json_file,
@@ -59,7 +59,7 @@ from scripts.session_autoslice import (  # noqa: E402
     write_reports,
     write_state,
 )
-from scripts.produce_slice_package import (  # noqa: E402
+from scripts.produce_slice_package import (
     _burn_preview_subtitles,
     _sha256,
     _stage_publish_draft,
@@ -67,12 +67,12 @@ from scripts.produce_slice_package import (  # noqa: E402
     run_speaker_finalizer,
     verify_chat_authority_final_surfaces,
 )
-from scripts.apply_speaker_turn_overrides import SPEAKER_SUBTITLE_STYLE_ID  # noqa: E402
-from src.autoslice.branding_intro import BrandingIntroError, require_branding_intro  # noqa: E402
-from src.autoslice.chat_authority import reconcile_pending_text_overrides  # noqa: E402
-from src.autoslice.jingting_chunker import parse_srt_cues  # noqa: E402
-from src.autoslice.review_evidence import SourceCue  # noqa: E402
-from src.autoslice.subtitle_regression import (  # noqa: E402
+from scripts.apply_speaker_turn_overrides import SPEAKER_SUBTITLE_STYLE_ID
+from src.autoslice.branding_intro import BrandingIntroError, require_branding_intro
+from src.autoslice.chat_authority import reconcile_pending_text_overrides
+from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.review_evidence import SourceCue
+from src.autoslice.subtitle_regression import (
     verify_subtitle_regression_surfaces,
 )
 

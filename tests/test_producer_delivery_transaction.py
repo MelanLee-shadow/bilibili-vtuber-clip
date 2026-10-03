@@ -66,7 +66,9 @@ def _prepared(tmp_path: Path):
     return root, source, target, prepared
 
 
-def _talk_preparation_fixture(tmp_path: Path) -> dict[str, object]:
+def _talk_preparation_fixture(
+    tmp_path: Path, *, nested_output: bool = False,
+) -> dict[str, object]:
     """Build an eleven-artifact Talk prepare with ten stable old targets."""
 
     from src.autoslice import producer_delivery_prepare as prepare
@@ -77,7 +79,10 @@ def _talk_preparation_fixture(tmp_path: Path) -> dict[str, object]:
     date = "2026-08-22"
     candidate_id = "cid-1"
     basename = "same.hook__cid-1"
-    output_root = root / "out" / date
+    output_root = (
+        root / "private-runs" / "candidate-run" / "output"
+        if nested_output else root / "out" / date
+    )
     output_root.mkdir(parents=True)
     source_payloads = {
         "video": b"new-video",
@@ -145,8 +150,11 @@ def _talk_preparation_fixture(tmp_path: Path) -> dict[str, object]:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(f"old-{role}".encode("utf-8"))
 
+    spec = {"output_root": str(output_root), "date": date, "delivery_name": basename}
+    if nested_output:
+        spec["runtime_root"] = str(root)
     kwargs = {
-        "spec": {"output_root": str(output_root), "date": date, "delivery_name": basename},
+        "spec": spec,
         "candidate_id": candidate_id,
         "record": record,
         "staging": staging,
@@ -176,6 +184,47 @@ def _talk_preparation_fixture(tmp_path: Path) -> dict[str, object]:
         "kwargs": kwargs,
         "handle": handle,
     }
+
+
+def test_talk_prepare_uses_explicit_runtime_root_for_nested_private_output(
+    tmp_path: Path,
+):
+    fixture = _talk_preparation_fixture(tmp_path, nested_output=True)
+    handle = fixture["handle"]
+    assert handle.runtime_root == fixture["root"]
+    document = _read_document(handle)
+    video = next(row for row in document["artifacts"] if row["role"] == "video")
+    assert Path(video["source_path"]).is_relative_to(
+        fixture["root"] / "private-runs"
+    )
+
+
+def test_talk_prepare_keeps_legacy_runtime_root_derivation_without_explicit_root(
+    tmp_path: Path,
+):
+    fixture = _talk_preparation_fixture(tmp_path)
+    assert "runtime_root" not in fixture["kwargs"]["spec"]
+    assert fixture["handle"].runtime_root == fixture["root"]
+
+
+def test_talk_prepare_rejects_invalid_explicit_runtime_root(tmp_path: Path):
+    from src.autoslice import producer_delivery_prepare as prepare
+
+    fixture = _talk_preparation_fixture(tmp_path, nested_output=True)
+    invalid_root = tmp_path / "foreign-runtime"
+    invalid_root.mkdir()
+    fixture["kwargs"]["spec"]["runtime_root"] = str(invalid_root)
+    with pytest.raises(ProducerDeliveryTransactionError, match="private directory unavailable"):
+        prepare.prepare_talk_delivery(**fixture["kwargs"])
+
+    sealed_root = tmp_path / "sealed-runtime"
+    sealed_root.mkdir()
+    _seal(sealed_root)
+    symlink_root = tmp_path / "runtime-link"
+    symlink_root.symlink_to(sealed_root, target_is_directory=True)
+    fixture["kwargs"]["spec"]["runtime_root"] = str(symlink_root)
+    with pytest.raises(ProducerDeliveryTransactionError, match="private directory ancestor unsafe"):
+        prepare.prepare_talk_delivery(**fixture["kwargs"])
 
 
 def _prepared_retry_prefix(handle) -> str:

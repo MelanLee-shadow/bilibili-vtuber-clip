@@ -541,11 +541,11 @@ def _baseline_retires_decision_row(
 ) -> bool:
     """两类有因果证据的 baseline 退位（无证据的有据修复保持 fail-closed）。
 
-    1) 边界 owner 行被 replay 的 before→after 记录证明"曾在字幕、被已验证
-       baseline 有意替换"（1863 SC 案）。
-    2) correction pass 的声学裁决修正被同窗逐字验证的 baseline 文本收回
-       （672 礼墨/看外案）——修正输给 维护者 已审 baseline 是既定层级，提案
-       与 verdict 留在审计里，修订 baseline 的唯一正道是 ledger 真值。"""
+ 1) 边界 owner 行被 replay 的 before→after 记录证明"曾在字幕、被已验证
+ baseline 有意替换"（1863 SC 案）。
+ 2) correction pass 的声学裁决修正被同窗逐字验证的 baseline 文本收回
+ （672 礼墨/看外案）——修正输给 公开规则已审 baseline 是既定层级，提案
+ 与 verdict 留在审计里，修订 baseline 的唯一正道是 ledger 真值。"""
 
     if not baseline_overlap:
         return False
@@ -1757,12 +1757,12 @@ def verify_chat_authority_final_surfaces(
             )
             superseded_by_redelivery += 1
             continue
-        # 边界 owner 行只有拿到因果证据才可退位给 baseline：replay audit
-        # 的 before→after 记录证明修复文本曾在字幕里、被已验证的 维护者 已审
-        # baseline 有意替换（672 礼墨/1863 SC 案），此时行文本不再是终稿
-        # 要求，否则 repair-vs-replay 永久死锁。无替换记录的有据修复维持
-        # fail-closed（baseline 不得静默压制）。边界几何仍由 frozen owner
-        # contract 的 local_windows 约束，与文本存活无关。
+
+
+
+
+
+
         if _baseline_retires_decision_row(
             row,
             expected_text=expected_text,

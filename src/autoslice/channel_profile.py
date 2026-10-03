@@ -188,9 +188,9 @@ class ChannelProfile:
         return self._rebase_repo_path(path, repo_root)
 
     def format_song_title(self, song_title: str, *, hook: str | None = None) -> str:
-        # 维护者: 歌切标题是固定目录式「前缀《歌名》」，
-        # 《歌名》后不允许任何字符（含「｜副标题」/hook 尾巴）。hook 参数仅为
-        # 兼容旧调用点保留，永远被忽略。
+
+
+
         return self.song_plain_template.format(song_title=song_title)
 
     def fingerprint_paths(self, *, repo_root: Path | None = None) -> tuple[Path, ...]:
@@ -548,10 +548,10 @@ def load_channel_profile(
         raise ChannelProfileError(f"invalid song title template: {exc}") from exc
     if "SONG" not in plain_probe:
         raise ChannelProfileError("song title templates must preserve their declared fields")
-    # 维护者 铁律：歌切标题固定为「前缀《歌名》」，
-    # 前缀与《歌名》之间、《歌名》之后都不允许任何字符（含「｜副标题」/hook
-    # 尾巴/「直播间唱」类衬词）。schema 层直接拒绝违规模板，让规则无法再被
-    # 单点资产/prompt 悄悄绕开。
+
+
+
+
     if song_plain_template != song_title_prefix + "《{song_title}》":
         raise ChannelProfileError(
             "titles.song_plain_template must be exactly song_prefix + 《{song_title}》 — "

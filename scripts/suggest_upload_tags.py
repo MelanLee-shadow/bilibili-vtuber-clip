@@ -2,29 +2,29 @@
 """Suggest B站 upload tags for delivered slices (快速原型,).
 
 当前上传链路 (部署宿主的 do_upload.sh) 的 tag 是写死的 6 个基础位:
-    虚拟UP主,VTuber,直播切片,李豆沙,虚拟主播,VUP
+ 虚拟UP主,VTuber,直播切片,李豆沙,虚拟主播,VUP
 本原型为每条切片自动补充内容相关 tag, 两层来源:
 
 * Layer A 确定性专名层 — 所选 profile 的 ``upload_tag_policy`` 资产中
-  手工整理的「口播表面形式 → 可搜索 tag」规则表（可由 glossary/roster
-  和频道编辑裁定构建）
-  (侄女→侄女/百合/女同, 142→伊索尔, lmsm→礼墨Sumi, 大N老师→南町, 梦限大→
-  梦限大/日文名/BanG Dream …)。专名只走这一层, 绝不让 LLM 发明专名。
+ 手工整理的「口播表面形式 → 可搜索 tag」规则表（可由 glossary/roster
+ 和频道编辑裁定构建）
+ (侄女→侄女/百合/女同, 142→伊索尔, lmsm→礼墨Sumi, 大N老师→南町, 梦限大→
+ 梦限大/日文名/BanG Dream …)。专名只走这一层, 绝不让 LLM 发明专名。
 * Layer B LLM 内容层 — 经 CPA (llm_via_cpa.sh, 与标题/精听同一链路) 从标题+
-  字幕全文提出 3~6 个通用内容词 (可爱/撒娇/破防/吐槽…)。输出过校验:
-  长度、去重、且不得撞已知专名表面形式 (防幻觉专名混入)。
+ 字幕全文提出 3~6 个通用内容词 (可爱/撒娇/破防/吐槽…)。输出过校验:
+ 长度、去重、且不得撞已知专名表面形式 (防幻觉专名混入)。
 
 合并: 基础位 > 人工裁定 > 专名/IP(标题命中优先, 次数排序) > 内容；固定 4 个基础位+
 最多 6 个 dynamic 位，默认封顶 10 个，单 tag ≤20 字符、无逗号。
 
-维护者 审查拍板的口径(已固化):
+公开规则审查拍板的口径(已固化):
 * 基础位砍成 4 个(李豆沙/虚拟主播/虚拟UP主/直播切片), 其余给内容位。
 * 专名 tag 只出可搜索正主名(南町), 梗形态(大N老师/豆町)只作触发面。
 * 内容词必须"贴内容 × 足够通用可搜"; 过专一没人搜的词(彩排/宠粉/玩梗/
-  热情邀约/初次登场/脑补剧情/粉丝互动/线下合照 类)硬毙。
+ 热情邀约/初次登场/脑补剧情/粉丝互动/线下合照 类)硬毙。
 * 坏女人/宿敌恋人 这类半梗半内容词放行。
 * tag 必须按最终成品字幕出——字幕修复(换源)后 tag 要重算重审; 对已知
-  字幕误听的临时裁定走 batch 条目的 suppress_tags/add_tags 人工通道。
+ 字幕误听的临时裁定走 batch 条目的 suppress_tags/add_tags 人工通道。
 
 原型只产出建议(JSON + markdown 审查表), 不改上传链路; 接入 authorized_upload/
 do_upload 是下一步。
@@ -42,7 +42,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.autoslice.llm_client import (  # noqa: E402
+from src.autoslice.llm_client import (
     LlmCallError,
     LlmConfig,
     build_llm_call,
@@ -52,7 +52,7 @@ from src.autoslice.llm_client import (  # noqa: E402
 # Channel names, proper-noun mappings, and prompt policy are selected through
 # the active profile. Keep these compatibility constants so existing callers
 # do not need to know where the policy bytes live.
-from src.autoslice.upload_tag_policy import (  # noqa: E402
+from src.autoslice.upload_tag_policy import (
     TermRule,
     load_selected_upload_tag_policy,
 )
@@ -238,10 +238,10 @@ def suggest_for_slice(
 ) -> dict:
     """suppress_tags/add_tags: 人工裁定通道 {tag: 理由}。
 
-    用于成品字幕尚未修复、但 维护者 已裁定事实的场合(例: 03 全片"安晚"=
-    大N老师误听且安晚未出场 → suppress 安晚awa + add 南町)。裁定记录进
-    输出; 字幕修复换源后应去掉裁定重算。
-    """
+ 用于成品字幕尚未修复、但 公开规则已裁定事实的场合(例: 03 全片"安晚"=
+ 大N老师误听且安晚未出场 → suppress 安晚awa + add 南町)。裁定记录进
+ 输出; 字幕修复换源后应去掉裁定重算。
+ """
     suppress_tags = suppress_tags or {}
     add_tags = add_tags or {}
     # 早期已发布切片可能没有字幕存档(成品字幕只烧在视频里) — title-only 模式:
@@ -357,9 +357,9 @@ def generate_upload_tags(
 
 def render_markdown(results: list[dict]) -> str:
     lines = [
-        "# 切片 tag 建议 — 维护者 2026-07-13 口径",
+        '# 切片 tag 建议 — 公开规则口径',
         "",
-        f"- 基础位(维护者 拍板 4 个; free:do_upload.sh 仍是旧 6 位, 接入时改): `{','.join(BASE_TAGS)}`",
+        f"- 基础位(公开规则拍板 4 个; free:do_upload.sh 仍是旧 6 位, 接入时改): `{','.join(BASE_TAGS)}`",
         "- 专名层=确定性规则(glossary/roster, 只出可搜索正主名), 内容层=CPA LLM(贴内容×通用可搜); 专名绝不由 LLM 产出。",
         f"- 封顶 {MAX_TAGS_DEFAULT} 个: 基础位占 {len(BASE_TAGS)}, 内容位 {MAX_TAGS_DEFAULT - len(BASE_TAGS)} 个。",
         "- tag 以最终成品字幕为准; 字幕待修条目的人工裁定见各条「人工裁定」标注, 换源后去裁定重算。",

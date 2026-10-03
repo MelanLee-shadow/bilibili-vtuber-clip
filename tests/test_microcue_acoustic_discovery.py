@@ -139,6 +139,121 @@ def test_inaudible_microcue_nominates_empty_drop_but_does_not_mutate():
     assert audit["mutation_authorized"] is False
 
 
+def test_functional_prefix_tail_mismatch_survives_whole_cue_dilution():
+    srt = "1\n00:00:00,000 --> 00:00:01,600\n谢谢你呀蓝莓星\n"
+
+    findings, audit = discover_microcue_findings(
+        srt,
+        timeline_offset_ms=0,
+        entity_verifier=_witness("xie xie ni ya lan mei dao"),
+    )
+
+    row = audit["eligible"][0]
+    assert audit["eligible_count"] == 1
+    assert row["eligibility_scope"] == "functional_prefix_extended"
+    assert row["functional_prefix"] == "谢谢你呀"
+    assert row["comparison_scope"] == "functional_prefix_tail"
+    assert row["whole_cue_pinyin_similarity"] > (
+        microcue_module.MAX_PINYIN_SIMILARITY_FOR_FINDING
+    )
+    assert row["tail_pinyin_similarity"] < (
+        microcue_module.MAX_PINYIN_SIMILARITY_FOR_FINDING
+    )
+    assert audit["finding_count"] == 1
+    assert findings[0]["comparison_scope"] == "functional_prefix_tail"
+    assert findings[0]["suspect"] == "蓝莓星"
+    assert findings[0]["whole_cue_pinyin_similarity"] == row[
+        "whole_cue_pinyin_similarity"
+    ]
+    assert findings[0]["tail_pinyin_similarity"] == row[
+        "tail_pinyin_similarity"
+    ]
+
+
+def test_matching_functional_tail_and_pure_thanks_do_not_report():
+    srt = """1
+00:00:00,000 --> 00:00:01,600
+谢谢你呀蓝莓星
+
+2
+00:00:03,000 --> 00:00:04,600
+谢谢大家
+"""
+
+    def verify(request):
+        heard = (
+            "xie xie ni ya lan mei xing"
+            if _cue_index_from_request(request) == 1
+            else "xie xie da jia"
+        )
+        return _witness(heard)(request)
+
+    findings, audit = discover_microcue_findings(
+        srt,
+        timeline_offset_ms=0,
+        entity_verifier=verify,
+    )
+
+    assert findings == []
+    assert audit["finding_count"] == 0
+    matching_row = next(
+        row for row in audit["eligible"] if row["cue_index"] == 1
+    )
+    pure_thanks_row = next(
+        row for row in audit["eligible"] if row["cue_index"] == 2
+    )
+    assert matching_row["comparison_scope"] == "functional_prefix_tail"
+    assert matching_row["tail_pinyin_similarity"] == 1.0
+    assert pure_thanks_row["functional_prefix"] == "谢谢大家"
+    assert pure_thanks_row["comparison_scope"] == "whole_cue"
+    assert pure_thanks_row["tail_pinyin_similarity"] is None
+
+
+def test_functional_prefix_mismatch_keeps_whole_cue_rule():
+    srt = "1\n00:00:00,000 --> 00:00:01,600\n谢谢你呀蓝莓星\n"
+
+    findings, audit = discover_microcue_findings(
+        srt,
+        timeline_offset_ms=0,
+        entity_verifier=_witness("xie xie ta ya lan mei xing"),
+    )
+
+    row = audit["eligible"][0]
+    assert findings == []
+    assert row["functional_prefix"] == "谢谢你呀"
+    assert row["functional_prefix_aligned"] is False
+    assert row["comparison_scope"] == "whole_cue"
+    assert row["tail_pinyin_similarity"] is None
+    assert row["whole_cue_pinyin_similarity"] > (
+        microcue_module.MAX_PINYIN_SIMILARITY_FOR_FINDING
+    )
+
+
+def test_functional_duration_extension_is_bounded_and_total_budget_is_unchanged():
+    assert microcue_module._eligible(
+        "谢谢你呀蓝莓星", microcue_module.FUNCTIONAL_MAX_DURATION_MS
+    )
+    assert not microcue_module._eligible(
+        "谢谢你呀蓝莓星", microcue_module.FUNCTIONAL_MAX_DURATION_MS + 1
+    )
+    assert not microcue_module._eligible("普通长句内容", 2_000)
+
+    srt = (
+        _multi_cue_srt(microcue_module.MAX_CUES)
+        + "\n13\n00:00:24,000 --> 00:00:26,000\n普通长句内容\n"
+    )
+    findings, audit = discover_microcue_findings(
+        srt,
+        timeline_offset_ms=0,
+        entity_verifier=_witness("hao kai xin"),
+    )
+
+    assert len(findings) <= microcue_module.MAX_CUES
+    assert audit["eligible_count"] == microcue_module.MAX_CUES
+    assert len(audit["eligible"]) == microcue_module.MAX_CUES
+    assert all(row["cue_index"] != 13 for row in audit["eligible"])
+
+
 # --------------------------------------------------------------------------
 # Bounded concurrency for independent per-cue witness calls
 # --------------------------------------------------------------------------

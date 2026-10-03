@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.autoslice.subtitle_audio_correspondence import (  # noqa: E402
+from src.autoslice.subtitle_audio_correspondence import (
     check_subtitle_audio_correspondence,
     parse_timed_srt,
     sha256_file,

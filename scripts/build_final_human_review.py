@@ -29,12 +29,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.audit_review_package import (  # noqa: E402
+from scripts.audit_review_package import (
     AUDIT_POLICY_EPOCH,
     AUDIT_SCHEMA_VERSION,
     audit_package,
 )
-from src.autoslice import final_human_review as human_review  # noqa: E402
+from src.autoslice import final_human_review as human_review
 
 
 EVIDENCE_SCHEMA_VERSION = human_review.REVIEW_EVIDENCE_SCHEMA_VERSION
@@ -546,9 +546,15 @@ def build_evidence_template(
     assert isinstance(manifest_order, list)
     assert isinstance(manifest_closure, Mapping)
     assert isinstance(review_contracts, Mapping)
+    review_manifest = authority["review_manifest"]
+    assert isinstance(review_manifest, Mapping)
+    raw_manifest_items = review_manifest.get("items")
+    assert isinstance(raw_manifest_items, list)
     items: list[dict[str, object]] = []
-    for candidate_id in manifest_order:
+    for index, candidate_id in enumerate(manifest_order):
         closure = manifest_closure[candidate_id]
+        raw_item = raw_manifest_items[index]
+        assert isinstance(raw_item, Mapping)
         assert isinstance(closure, Mapping)
         record = _load_json_object(
             root / str(closure["record_path"]),
@@ -582,7 +588,10 @@ def build_evidence_template(
                     f"duration={final_duration_ms}"
                 )
         expected_claims = _ordered_cover_claims(
-            record, candidate_id=candidate_id
+            record,
+            candidate_id=candidate_id,
+            package_root=root,
+            item=raw_item,
         )
         items.append(
             {
@@ -879,12 +888,18 @@ def _subtitle_points(
 
 
 def _ordered_cover_claims(
-    record: Mapping[str, object], *, candidate_id: str
+    record: Mapping[str, object],
+    *,
+    candidate_id: str,
+    package_root: Path,
+    item: Mapping[str, object],
 ) -> list[tuple[str, str]]:
     try:
         claims = human_review._cover_story_claim_authority(  # noqa: SLF001
             record,
             candidate_id=candidate_id,
+            package_root=package_root,
+            item=item,
         )
     except human_review.FinalHumanReviewError as exc:
         raise FinalHumanReviewBuildError(
@@ -995,9 +1010,13 @@ def build_receipt(
     evidence_by_candidate = _evidence_items(evidence, manifest_order)
     evidence_seen: list[tuple[str, str]] = []
 
+    raw_manifest_items = review_manifest.get("items")
+    assert isinstance(raw_manifest_items, list)
     receipt_items: list[dict[str, Any]] = []
-    for candidate_id in manifest_order:
+    for index, candidate_id in enumerate(manifest_order):
         closure = manifest_closure[candidate_id]
+        raw_item = raw_manifest_items[index]
+        assert isinstance(raw_item, Mapping)
         raw_evidence = evidence_by_candidate[candidate_id]
         artifacts = closure["artifacts"]
         if not isinstance(artifacts, Mapping):
@@ -1018,7 +1037,12 @@ def build_receipt(
             raise FinalHumanReviewBuildError(
                 f"committed review contract has no candidate: {candidate_id}"
             )
-        expected_claims = _ordered_cover_claims(record, candidate_id=candidate_id)
+        expected_claims = _ordered_cover_claims(
+            record,
+            candidate_id=candidate_id,
+            package_root=root,
+            item=raw_item,
+        )
         if set(expected_claims) != set(closure.get("expected_cover_claims") or set()):
             raise FinalHumanReviewBuildError(
                 f"{candidate_id} cover claim projection drifted from canonical manifest closure"

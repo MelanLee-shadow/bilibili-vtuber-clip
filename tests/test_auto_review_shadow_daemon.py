@@ -496,7 +496,7 @@ def test_full_session_routes_fall_back_to_recall_and_stamp_glossary(tmp_path, mo
 
         blocks.append(f"{index + 1}\n{_ts(start)} --> {_ts(end)}\n江湖难测侠骨柔情红颜梦第{index}句\n")
         cursor += 6_200
-    source_srt = _write(date_dir / "sources" / "s.srt", "\n".join(blocks))
+    _write(date_dir / "sources" / "s.srt", "\n".join(blocks))
     lexicon_path = _write(
         tmp_path / "term_lexicon.json",
         json.dumps({"schema_version": "lidousha-term-lexicon.v1", "overrides": [{"canonical": "甲甲", "aliases": ["阿呆熊"]}]}),

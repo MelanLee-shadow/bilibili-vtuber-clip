@@ -119,9 +119,9 @@ class ReferentGroup:
 EntityVerifier = Callable[[Mapping[str, Any]], Mapping[str, Any] | None]
 
 
-# 念读因果下界（维护者）：事件时间戳＝发送时刻，经 渲染→看到→
-# 开口→推流 每环只加正延迟（繁忙房渲染实测 ~15s）。cue 早于发送+2s 的
-# "念读"物理不可能，确定性排除；弱界宁松勿枉，非渲染延迟估计。
+
+
+
 READ_ALOUD_MIN_DELAY_MS = 2_000
 _event_epoch_ms = event_epoch_ms
 
@@ -691,6 +691,104 @@ def _valid_sha256(value: object) -> bool:
     return bool(re.fullmatch(r"[0-9a-f]{64}", str(value or "")))
 
 
+def _entity_slot_binding(
+    *,
+    input_srt_sha256: str,
+    cue_index: int,
+    matched_start_ms: int,
+    matched_end_ms: int,
+    full_cue: str,
+    character_start: int,
+    character_end: int,
+    exact_surface: str,
+    mapped_canonical: str,
+) -> dict[str, Any]:
+    """Return the deterministic binding for one transcript entity slot.
+
+    This is deliberately a small pure helper shared by request construction and
+    validation.  The slot is a character-bound slice of one cue; it is not a new
+    multi-cue authority abstraction.
+    """
+
+    full_cue_sha256 = hashlib.sha256(full_cue.encode("utf-8")).hexdigest()
+    material = {
+        "input_srt_sha256": str(input_srt_sha256),
+        "cue_index": int(cue_index),
+        "matched_start_ms": int(matched_start_ms),
+        "matched_end_ms": int(matched_end_ms),
+        "full_cue_sha256": full_cue_sha256,
+        "character_start": int(character_start),
+        "character_end": int(character_end),
+        "exact_surface": str(exact_surface),
+        "mapped_canonical": str(mapped_canonical),
+    }
+    slot_id = hashlib.sha256(
+        json.dumps(
+            material, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    return {
+        **material,
+        "slot_id": slot_id,
+        "full_cue": full_cue,
+        "full_cue_sha": full_cue_sha256,
+    }
+
+
+def _entity_slot_choices(
+    target_slot: Mapping[str, Any],
+    group: ReferentGroup,
+) -> list[dict[str, Any]] | None:
+    """Build the closed choices for one bound occurrence.
+
+    CURRENT is explicit and retains the full cue byte-for-byte.  Each group
+    canonical receives one stable choice which replaces only the target span.
+    """
+
+    try:
+        full_cue = str(target_slot["full_cue"])
+        start = int(target_slot["character_start"])
+        end = int(target_slot["character_end"])
+        current_surface = str(target_slot["exact_surface"])
+        mapped = str(target_slot["mapped_canonical"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if start < 0 or end <= start or full_cue[start:end] != current_surface:
+        return None
+    canonicals: list[str] = []
+    for entity in group.entities:
+        canonical = str(entity.canonical)
+        if canonical and canonical not in canonicals:
+            canonicals.append(canonical)
+    if not canonicals or mapped not in canonicals:
+        return None
+    choices: list[dict[str, Any]] = [
+        {
+            "choice_id": "CURRENT",
+            "action": "CURRENT",
+            "slot_text": current_surface,
+            "full_cue": full_cue,
+            "full_cue_sha256": hashlib.sha256(full_cue.encode("utf-8")).hexdigest(),
+        }
+    ]
+    for canonical in canonicals:
+        selected_cue = full_cue[:start] + canonical + full_cue[end:]
+        canonical_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        choices.append(
+            {
+                "choice_id": f"CANONICAL:{canonical_hash}",
+                "action": "CANONICAL",
+                "canonical_entity": canonical,
+                "slot_text": canonical,
+                "full_cue": selected_cue,
+                "full_cue_sha256": hashlib.sha256(
+                    selected_cue.encode("utf-8")
+                ).hexdigest(),
+            }
+        )
+    return choices
+
+
 def build_human_text_entity_verifier(
     document_path: str | Path,
     *,
@@ -959,14 +1057,14 @@ def reconcile_pending_text_overrides(
             )
             == after
         )
-        # A read-chat cue can legitimately combine two independent authorities:
-        # the exact platform text owns the sentence scaffold, while 维护者's
-        # hash-bound listening verdict owns only the confusable entity slot.
-        # Example: ASR ``是Mujica的风险`` + danmaku ``有母鸡卡的风险``
-        # becomes ``有梦限大的风险``.  This is not an arbitrary whole-cue
-        # override: replacing the decided entity in the output with the exact
-        # chat surface must reconstruct a contiguous substring of the platform
-        # message, and every surface must belong to the same declared group.
+
+
+
+
+
+
+
+
         after_occurrences = _entity_occurrences(after, decision_group)
         exact_chat = str(pending_row.get("exact_text") or "")
         chat_occurrences = _entity_occurrences(exact_chat, decision_group)
@@ -1086,6 +1184,187 @@ def _validated_read_aloud_verdict(
     return row
 
 
+def _validated_entity_slot_verdict(
+    row: Mapping[str, Any],
+    *,
+    request: Mapping[str, Any],
+    group: ReferentGroup,
+) -> bool:
+    """Validate the optional one-occurrence transcript slot contract."""
+
+    target = request.get("target_slot")
+    raw_choices = request.get("slot_choices")
+    if not isinstance(target, Mapping) or not isinstance(raw_choices, list):
+        return False
+    if request.get("schema_version") != "transcript-entity-verification-request.v1":
+        return False
+    # The caller's request binding is part of the authority.  Recompute it
+    # before looking at any selected choice so stale or edited nested data
+    # cannot be smuggled through an otherwise valid-looking verdict.
+    if request.get("request_sha256") != _request_sha256(request):
+        return False
+    input_sha = request.get("input_srt_sha256")
+    if not _valid_sha256(input_sha):
+        return False
+    try:
+        cue_indexes = request.get("cue_indexes")
+        cue_index = target["cue_index"]
+        matched_start = target["matched_start_ms"]
+        matched_end = target["matched_end_ms"]
+        full_cue = target["full_cue"]
+        character_start = target["character_start"]
+        character_end = target["character_end"]
+        exact_surface = target["exact_surface"]
+        mapped_canonical = target["mapped_canonical"]
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            for value in (cue_index, matched_start, matched_end, character_start, character_end)
+        ):
+            return False
+        if (
+            not isinstance(cue_indexes, list)
+            or len(cue_indexes) != 1
+            or isinstance(cue_indexes[0], bool)
+            or not isinstance(cue_indexes[0], int)
+            or cue_indexes[0] != cue_index
+            or matched_start < 0
+            or matched_end <= matched_start
+            or not isinstance(full_cue, str)
+            or not isinstance(exact_surface, str)
+            or not isinstance(mapped_canonical, str)
+            or character_start < 0
+            or character_end <= character_start
+            or character_end > len(full_cue)
+            or full_cue[character_start:character_end] != exact_surface
+        ):
+            return False
+        if (
+            request.get("input_srt_sha256") != target.get("input_srt_sha256")
+            or request.get("matched_start_ms") != matched_start
+            or request.get("matched_end_ms") != matched_end
+            or request.get("matched_audio_text") != full_cue
+            or request.get("transcript_surface") != exact_surface
+            or request.get("transcript_canonical") != mapped_canonical
+        ):
+            return False
+        expected_target = _entity_slot_binding(
+            input_srt_sha256=str(input_sha),
+            cue_index=cue_index,
+            matched_start_ms=matched_start,
+            matched_end_ms=matched_end,
+            full_cue=full_cue,
+            character_start=character_start,
+            character_end=character_end,
+            exact_surface=exact_surface,
+            mapped_canonical=mapped_canonical,
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
+    for key, expected in expected_target.items():
+        if target.get(key) != expected:
+            return False
+    if not _valid_sha256(target.get("full_cue_sha256")) or not _valid_sha256(
+        target.get("full_cue_sha")
+    ):
+        return False
+    canonicals = []
+    for entity in group.entities:
+        canonical = str(entity.canonical)
+        if canonical and canonical not in canonicals:
+            canonicals.append(canonical)
+    if mapped_canonical not in canonicals:
+        return False
+    occurrences = _entity_occurrences(full_cue, group)
+    if not any(
+        int(occurrence["start"]) == character_start
+        and int(occurrence["end"]) == character_end
+        and str(occurrence["surface"]) == exact_surface
+        and str(occurrence["canonical"]) == mapped_canonical
+        for occurrence in occurrences
+    ):
+        return False
+    expected_choices = _entity_slot_choices(expected_target, group)
+    if expected_choices is None or raw_choices != expected_choices:
+        return False
+    choice_ids = [str(choice.get("choice_id") or "") for choice in raw_choices]
+    if len(choice_ids) != len(set(choice_ids)) or any(not value for value in choice_ids):
+        return False
+    if (
+        row.get("status") != "RESOLVED"
+        or row.get("authority_kind")
+        not in {
+            "cpa_witness_adjudication",
+            "cpa_context_only_closed_set_adjudication",
+        }
+        or not valid_cpa_witness_adjudication(row)
+        or row.get("target_slot_id") != target.get("slot_id")
+    ):
+        return False
+    selected_id = row.get("slot_choice_id")
+    if selected_id not in choice_ids:
+        return False
+    selected = next(choice for choice in raw_choices if choice["choice_id"] == selected_id)
+    ranking = row.get("ranking")
+    if not isinstance(ranking, list) or len(ranking) != len(raw_choices):
+        return False
+    normalized_ranking: list[tuple[str, float]] = []
+    for ranking_row in ranking:
+        if not isinstance(ranking_row, Mapping):
+            return False
+        choice_id = ranking_row.get("choice_id")
+        probability = ranking_row.get("p")
+        if (
+            choice_id not in choice_ids
+            or isinstance(probability, bool)
+            or not isinstance(probability, (int, float))
+            or not (0.0 <= float(probability) <= 1.0)
+        ):
+            return False
+        normalized_ranking.append((str(choice_id), float(probability)))
+    ranked_ids = [choice_id for choice_id, _ in normalized_ranking]
+    if set(ranked_ids) != set(choice_ids) or len(ranked_ids) != len(set(ranked_ids)):
+        return False
+    highest = max(probability for _, probability in normalized_ranking)
+    highest_ids = [choice_id for choice_id, probability in normalized_ranking if probability == highest]
+    if len(highest_ids) != 1 or selected_id != highest_ids[0]:
+        return False
+    selected_full_cue = selected.get("full_cue")
+    selected_full_cue_sha = selected.get("full_cue_sha256")
+    if (
+        row.get("selected_slot_text") != selected.get("slot_text")
+        or row.get("selected_full_cue_sha") != selected_full_cue_sha
+        or (
+            "selected_full_cue" in row
+            and row.get("selected_full_cue") != selected_full_cue
+        )
+        or (
+            "selected_full_cue_sha256" in row
+            and row.get("selected_full_cue_sha256") != selected_full_cue_sha
+        )
+    ):
+        return False
+    if selected.get("action") == "CURRENT":
+        # CURRENT is an explicit action.  It cannot carry a fake canonical
+        # identity and must preserve the original target slice and full cue.
+        if (
+            "canonical_entity" in row
+            or selected.get("slot_text") != exact_surface
+            or selected.get("full_cue") != full_cue
+        ):
+            return False
+    elif selected.get("action") == "CANONICAL":
+        if (
+            row.get("canonical_entity") != selected.get("canonical_entity")
+            or selected.get("canonical_entity") not in canonicals
+            or selected.get("slot_text") != selected.get("canonical_entity")
+        ):
+            return False
+    else:
+        return False
+    return True
+
+
 def _validated_entity_verdict(
     verdict: Mapping[str, Any] | None,
     *,
@@ -1102,6 +1381,10 @@ def _validated_entity_verdict(
     if row.get("status") not in {"RESOLVED", "UNCERTAIN"}:
         return None
     if row.get("status") == "UNCERTAIN":
+        return row
+    if "target_slot" in request or "slot_choices" in request:
+        if not _validated_entity_slot_verdict(row, request=request, group=group):
+            return None
         return row
     canonicals = {entity.canonical for entity in group.entities}
     if row.get("canonical_entity") not in canonicals:

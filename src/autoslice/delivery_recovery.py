@@ -344,20 +344,20 @@ def _repair_budget_charge(
 ) -> int:
     """这次 requeue 要不要吃掉一格终生修复预算。
 
-    ``TALK_REPAIR_LIFETIME_RETRY_CAP`` 计的是"真修复尝试"，可此前 requeue 无条件
-    ``+1``：于是纯基础设施抖动（CPA 挂了、挂载掉了、配额窗口没开）光靠定时唤醒就
-    能把额度烧光，等真修复部署下来时预算已经被噪声吃完（A1，维护者 逐字
-    「就按 A1 走吧」「A1 要做」）。
+ ``TALK_REPAIR_LIFETIME_RETRY_CAP`` 计的是"真修复尝试"，可此前 requeue 无条件
+ ``+1``：于是纯基础设施抖动（CPA 挂了、挂载掉了、配额窗口没开）光靠定时唤醒就
+ 能把额度烧光，等真修复部署下来时预算已经被噪声吃完（A1，公开规则逐字
+ 「就按 A1 走吧」「A1 要做」）。
 
-    判据照抄写回处 ``talk_transient_retry_count`` 已有的那串路线判据（同一组标志
-    位），只把 ``transient`` 换成 ``infrastructure_retry``——等价于"当且仅当本次
-    ``retry_reason`` 解析成 ``transient_infrastructure_failure`` 才不收费"。
+ 判据照抄写回处 ``talk_transient_retry_count`` 已有的那串路线判据（同一组标志
+ 位），只把 ``transient`` 换成 ``infrastructure_retry``——等价于"当且仅当本次
+ ``retry_reason`` 解析成 ``transient_infrastructure_failure`` 才不收费"。
 
-    两个刻意保留的性质：``changed`` 在 ``retry_reason`` 阶梯上压着
-    ``infrastructure_retry``，所以"infra 失败 + 相关部署落地"那一次仍算真修复、
-    照常收费；``talk_transient_retry_count`` 一字未动，infra 退避曲线
-    （``infra_retry_policy``）读的仍是它。存量计数不追溯重算，单调不回退。
-    """
+ 两个刻意保留的性质：``changed`` 在 ``retry_reason`` 阶梯上压着
+ ``infrastructure_retry``，所以"infra 失败 + 相关部署落地"那一次仍算真修复、
+ 照常收费；``talk_transient_retry_count`` 一字未动，infra 退避曲线
+ （``infra_retry_policy``）读的仍是它。存量计数不追溯重算，单调不回退。
+ """
     if (
         decision.infrastructure_retry
         and not decision.changed
@@ -466,10 +466,10 @@ def apply_talk_backfill_rejection_policy(
     if backfill_rejection is None:
         return result.get("status") == "candidate_rejected"
     rejected_status, rejection_reason = backfill_rejection
-    # 维护者：「说话人证据不足应该转人工审阅，不是判死」——说话人分离
-    # 是刚开的功能（生产 8/7 才翻到 AUTOSLICE_SPEAKER_MODE=auto），不许拿它的
-    # 不成熟去毙内容。处置与下面 exact 分支的既有范式同款：保留候选自己的说话
-    # 人状态，不铸 candidate_rejected 化石；exact/普通两条路都盖同一份停泊回执。
+
+
+
+
     speaker_hold = rejected_status in SPEAKER_MANUAL_REVIEW_STATUSES
     if speaker_hold:
         park_for_manual_review(result, reason=rejection_reason)
@@ -1398,11 +1398,11 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
             "hook": record.get("hook", ""),
             "preview": record.get("preview", ""),
             "danmaku": int(record.get("danmaku") or 0),
-            # Visual title evidence is a first-class song identity hint.  A
-            # retry that drops it is weaker than the failed attempt and can
-            # repeat the same LRC ambiguity forever (for example 群青 variants
-            # or a wide frame window that attached the next song title).  维护者
-            # 2026-08-10 起同理带走音频已证出的命名权威：不带＝每次重试都退回 BCUT 错名重检索。
+
+
+
+
+
             "lane": record.get("discovery_lane") or record.get("lane"),
             **song_name_authority.carry_song_identity_evidence(record),
             "transient_retry_count": retry_count + (1 if transient else 0),
@@ -1662,7 +1662,7 @@ def bind_song_delivery_recovery_authority(
         completion,
     ):
         raise _runner.SongDeliveryError("song recovery backfill proof chain is not delivery-ready")
-    # 命名权威只认听音频那条链（维护者）；hook 是 BCUT 中文 ASR 的派生物，不是名字。
+
     verified_name = song_name_authority.extract_audio_song_name_authority(summary_record) or {}
     title = _runner.verified_song_fallback_title(verified_name.get("song_title"))
     if title is None:

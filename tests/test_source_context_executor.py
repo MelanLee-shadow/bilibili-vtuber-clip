@@ -230,17 +230,17 @@ def test_agy_retry_after_is_persisted_for_autonomous_resume(tmp_path):
 
 def test_gemini_api_fallback_without_recorded_agy_outcome_is_rejected(tmp_path):
     """改判：拒绝理由从「provider 不是 agy」改成「没记录 AGY 那条腿
-    怎么退出的」。
+ 怎么退出的」。
 
-    旧断言是一个**按 provider 层拒证据的门**。维护者 拍板（项目
-    memory）：AGY 订阅 / 免费 3key / 付费 backup 是同一个 Gemini 模型的配额
-    顺序，「按 provider 层拒证据的门 = 过度限制」，处方是「任一层证据有效 +
-    按层钉模型串」。歌lane 的音频/LRC 证明链
-    （``song_common.validate_audio_lrc_execution_metadata``）早就是这么做的，
-    source-context 这一层是唯一还没跟上的。
+ 旧断言是一个**按 provider 层拒证据的门**。公开规则拍板（项目
+ memory）：AGY 订阅 / 免费 3key / 付费 backup 是同一个 Gemini 模型的配额
+ 顺序，「按 provider 层拒证据的门 = 过度限制」，处方是「任一层证据有效 +
+ 按层钉模型串」。歌lane 的音频/LRC 证明链
+ （``song_common.validate_audio_lrc_execution_metadata``）早就是这么做的，
+ source-context 这一层是唯一还没跟上的。
 
-    ``agy_rc=None`` 仍然 RETRY_INFRA —— fail-closed 保留，理由变准确。
-    """
+ ``agy_rc=None`` 仍然 RETRY_INFRA —— fail-closed 保留，理由变准确。
+ """
 
     source = tmp_path / "source.mp4"
     source.write_bytes(b"source bytes")

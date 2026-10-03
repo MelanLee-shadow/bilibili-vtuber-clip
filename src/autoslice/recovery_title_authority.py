@@ -478,6 +478,8 @@ def expected_recovery_publish_title(
 
     if authority.get("schema_version") == "fastlane-c1-authorized-same-bv-projection.v1":
         return str(authority["title"])
+    if authority.get("schema_version") == "new-bv-same-bv-publication-authority.v1":
+        return str(authority["title"])
 
     title = str(authority["observed_public_title"])
     if authority["title_mode"] == "reviewer_manual_override":
@@ -493,6 +495,15 @@ def validate_recovery_publication_authority(
     repo_root: Path = ROOT,
 ) -> dict[str, object]:
     """Replay one committed registry entry and bind title plus BV identity."""
+
+    if isinstance(value, Mapping) and value.get("schema_version") == "new-bv-same-bv-publication-authority.v1":
+        from src.autoslice.new_bv_repair_authority import validate_new_bv_repair_authority
+        try:
+            return validate_new_bv_repair_authority(
+                value, candidate_id=candidate_id, expected_final_title=expected_final_title,
+            )
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            raise RecoveryTitleAuthorityError(str(exc)) from exc
 
     if isinstance(value, Mapping) and value.get("schema_version") == "original-fastlane-authorized-same-bv.v1":
         from src.autoslice.original_patch_package import validate_publication

@@ -116,6 +116,38 @@ def test_review_builders_bind_explicit_runtime_cpa_environment(
     assert os.environ["CPA_API_KEY"] == "ambient-secret"
 
 
+def test_review_builder_exposes_actual_command_identity(
+    tmp_path, monkeypatch
+):
+    runtime = tmp_path / "runtime"
+    captured: list = []
+
+    def capture(config):
+        captured.append(config)
+        return lambda _prompt: "{}"
+
+    monkeypatch.setattr(transport, "build_llm_call", capture)
+    monkeypatch.setattr(
+        transport,
+        "runtime_cpa_command_environment",
+        lambda _path: {
+            "CPA_BASE_URL": "https://runtime.example.test/v1",
+            "CPA_API_KEY": "runtime-secret",
+        },
+    )
+    call = transport.build_final_review_llm_call(runtime_root=runtime)
+
+    assert call("fixture") == "{}"
+    assert call.cpa_cache_identity == {
+        "transport": "cpa_command",
+        "models": ["gpt-6-sol"],
+        "effort": "medium",
+    }
+    assert call.provider_runtime_binding["provider_call_transport"] == "cpa_command"
+    assert call.provider_runtime_binding["provider_model"] == ["gpt-6-sol"]
+    assert call.provider_runtime_binding["provider_effort"] == "medium"
+
+
 @pytest.mark.parametrize(
     "build_fn",
     (
@@ -178,7 +210,7 @@ def test_review_builder_remote_runtime_strips_stale_ambient(
 
     call = build_fn(
         runtime_root="/opt/bilive/autoslice",
-        runtime_ssh_host="oci3",
+        runtime_ssh_host="runtime-host",
     )
 
     assert call("fixture") == "{}"
@@ -187,7 +219,7 @@ def test_review_builder_remote_runtime_strips_stale_ambient(
     parts = shlex.split(config.command_template)
     assert parts[0] == "python3"
     assert Path(parts[1]).name == "llm_via_runtime_cpa_ssh.py"
-    assert parts[parts.index("--ssh-host") + 1] == "oci3"
+    assert parts[parts.index("--ssh-host") + 1] == "runtime-host"
     assert parts[parts.index("--runtime-root") + 1] == "/opt/bilive/autoslice"
     assert parts[parts.index("--effort") + 1] == effort
     assert config.command_child_env is not None
@@ -195,6 +227,46 @@ def test_review_builder_remote_runtime_strips_stale_ambient(
     assert "CPA_API_KEY" not in config.command_child_env
     assert config.command_diagnostic_context == {
         "provider_transport": "ssh_runtime_cpa",
-        "provider_runtime_host": "oci3",
+        "provider_runtime_host": "runtime-host",
         "provider_credential_source": "/opt/bilive/autoslice/cpa.env",
     }
+    assert call.cpa_cache_identity == {
+        "transport": "ssh_runtime_cpa",
+        "models": ["gpt-6-sol"],
+        "effort": effort,
+    }
+    assert call.provider_runtime_binding["provider_call_transport"] == "ssh_runtime_cpa"
+    assert call.provider_runtime_binding["provider_model"] == ["gpt-6-sol"]
+    assert call.provider_runtime_binding["provider_effort"] == effort
+
+
+@pytest.mark.parametrize("host", ("localhost", "127.0.0.1", "LOCALHOST"))
+@pytest.mark.parametrize("effort", ("low", "medium", "high"))
+def test_native_loopback_uses_canonical_local_runtime(monkeypatch, host, effort):
+    captured = []
+    monkeypatch.setenv("AUTOSLICE_FINAL_REVIEW_RUNTIME_ROOT", "/opt/bilive/autoslice")
+    monkeypatch.setenv("AUTOSLICE_FINAL_REVIEW_SSH_HOST", host)
+    monkeypatch.setenv("CPA_API_KEY", "stale-ambient-secret")
+    monkeypatch.setattr(
+        transport, "runtime_cpa_command_environment",
+        lambda _runtime: {
+            "CPA_BASE_URL": "https://runtime.example.test/v1",
+            "CPA_API_KEY": "runtime-secret",
+        },
+    )
+    monkeypatch.setattr(
+        transport, "build_llm_call",
+        lambda config: captured.append(config) or (lambda _prompt: "{}"),
+    )
+
+    call = transport._build_review_llm_call(
+        effort=effort, runtime_root=None, runtime_ssh_host=None,
+    )
+
+    assert call("fixture") == "{}"
+    config = captured[0]
+    assert shlex.split(config.command_template)[1] == "/opt/bilive/autoslice/repo/scripts/llm_via_cpa.sh"
+    assert shlex.split(config.command_template)[-2] == effort
+    assert config.command_child_env["CPA_API_KEY"] == "runtime-secret"
+    assert call.provider_runtime_binding["provider_transport"] == "runtime_cpa"
+    assert os.environ["CPA_API_KEY"] == "stale-ambient-secret"

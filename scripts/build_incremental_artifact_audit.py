@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.autoslice.incremental_artifact_audit import (  # noqa: E402
+from src.autoslice.incremental_artifact_audit import (
     ARTIFACT_ROLES,
     ArtifactPaths,
     IncrementalArtifactAuditError,

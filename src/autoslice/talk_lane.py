@@ -312,7 +312,7 @@ def recall_candidates(srt_path: Path, hints: str | None, danmaku_xml: Path | Non
                 ),
                 "filler_proposals": list(filler_proposals.get(cid) or []),
                 "filler_proposal_srt_sha256": source_srt_sha256,
-                # 同主题合并跳切缝隙（event_key 确定性合并，维护者）。
+
                 "merge_gap_removals": list(merge_gap_plans.get(cid) or []),
             }
         # Deterministic song supplement: recall's candidate cap squeezes songs
@@ -757,12 +757,12 @@ def _classify_final_review_release(
         boundary_status == "BLOCK"
         or "FINAL_REVIEW_BOUNDARY_SEMANTIC_BLOCKED" in reason_codes
     ):
-        # 维护者 #9：一个 CPA 请求失败不该让整条候选判死。provider
-        # 打不通时边界复核同样落 status=BLOCK，reason 是
-        # BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:<Exc>——那是"没人给出裁决"，
-        # 不是"裁决为不合格"。只有 transport 类异常名改道；TypeError 之流仍
-        # 终态（确定性缺陷进无界等待车道 = 每 tick 空转，delivery_recovery 明
-        # 文警告过）。内容门一个字没放松：BLOCK 依旧拒绝交付。
+
+
+
+
+
+
         if isinstance(boundary, dict) and _provider_failure.transport_unavailable_reason(
             boundary.get("reason_codes")
         ):
@@ -889,7 +889,10 @@ def classify_talk_failure(attempt_output: str) -> dict:
             "boundary_retry_owner_contract",
             False,
         )
-    elif "TALK_EFFECTIVE_DURATION_NOT_OVER_45S_AFTER_BOUNDARY" in tail:
+    elif (
+        "TALK_EFFECTIVE_DURATION_NOT_OVER_60S_AFTER_BOUNDARY" in tail
+        or "TALK_EFFECTIVE_DURATION_NOT_OVER_45S_AFTER_BOUNDARY" in tail
+    ):
         kind, stage, recoverable = "content_duration", "boundary_resolution", False
     elif "BOUNDARY_CONTEXT_EXHAUSTED" in tail:
         failure_evidence = _boundary_context_failure_evidence(tail)
@@ -1125,6 +1128,22 @@ def _prepare_talk_filler_plan(item: dict) -> dict[str, object]:
         for row in (item.get("reviewed_filler_removals") or [])
         if isinstance(row, dict)
     ]
+    structured_chat_binding_fields = (
+        "chat_jsonl",
+        "chat_jsonl_sha256",
+        "chat_origin_epoch_ms",
+        "chat_timeline_offset_ms",
+        "structured_chat_required",
+        "chat_binding_status",
+        "chat_binding_authority",
+        "chat_source_alias_id",
+        "chat_canonical_recording_basename",
+    )
+    structured_chat_binding = {
+        field: item[field]
+        for field in structured_chat_binding_fields
+        if field in item
+    }
     cues = []
     if source_srt_path is not None and source_srt_path.is_file():
         from scripts.run_auto_review_shadow_pipeline import _parse_srt
@@ -1145,6 +1164,7 @@ def _prepare_talk_filler_plan(item: dict) -> dict[str, object]:
             for row in (item.get("merge_gap_removals") or [])
             if isinstance(row, dict)
         ],
+        structured_chat_binding=structured_chat_binding or None,
     )
     automatic_removals = [
         row
@@ -1272,6 +1292,11 @@ def _apply_optional_talk_spec_fields(
     spec: dict[str, object],
     item: dict,
 ) -> None:
+    # Preserve declared watched-media ownership at the ordinary spec handoff.
+    # The materializer validates the binding; missing evidence must still block.
+    for key in ("watched_media", "nested_media_caption_dedup"):
+        if key in item:
+            spec[key] = copy.deepcopy(item[key])
     slot = item.get("cover_diversity_slot")
     if (
         isinstance(slot, int)
@@ -1283,6 +1308,15 @@ def _apply_optional_talk_spec_fields(
     if song_names:
         # Screen songlist + 点歌 + known-songs evidence for deterministic pin.
         spec["song_name_candidates"] = list(song_names)
+    config_reader = getattr(_runner, "local_audio_witness_config", None)
+    if callable(config_reader):
+        local_audio = config_reader()
+        provider = local_audio.get("provider")
+        budget = local_audio.get("budget")
+        if provider is not None:
+            spec["local_audio_witness_provider"] = provider
+        if budget is not None:
+            spec["local_audio_witness_budget"] = budget
 
 
 def _apply_recovery_authorities_to_talk_spec(
@@ -1391,7 +1425,7 @@ def _talk_filler_rejection(
         "rc": 0,
         "status": "candidate_rejected",
         "rejection_reason": "talk_effective_duration_too_short",
-        "reason_codes": ["TALK_EFFECTIVE_DURATION_NOT_OVER_45S"],
+        "reason_codes": ["TALK_EFFECTIVE_DURATION_NOT_OVER_60S"],
         "pipeline_fingerprint": _runner.talk_pipeline_fingerprint(
             candidate_id
         ),
@@ -1948,11 +1982,18 @@ def produce_talk(
         if _runner._speaker_evidence_insufficient_failure(tail):
             result["status"] = "speaker_evidence_insufficient"
             return _carry_talk_recovery_result(item, result)
-        if "TALK_EFFECTIVE_DURATION_NOT_OVER_45S_AFTER_BOUNDARY" in tail:
+        if (
+            "TALK_EFFECTIVE_DURATION_NOT_OVER_60S_AFTER_BOUNDARY" in tail
+            or "TALK_EFFECTIVE_DURATION_NOT_OVER_45S_AFTER_BOUNDARY" in tail
+        ):
             result["status"] = "candidate_rejected"
             result["rejection_reason"] = "talk_effective_duration_too_short"
             result["reason_codes"] = [
-                "TALK_EFFECTIVE_DURATION_NOT_OVER_45S_AFTER_BOUNDARY"
+                (
+                    "TALK_EFFECTIVE_DURATION_NOT_OVER_60S_AFTER_BOUNDARY"
+                    if "TALK_EFFECTIVE_DURATION_NOT_OVER_60S_AFTER_BOUNDARY" in tail
+                    else "TALK_EFFECTIVE_DURATION_NOT_OVER_45S_AFTER_BOUNDARY"
+                )
             ]
             return _carry_talk_recovery_result(item, result)
         if "SOURCE_MEDIA_MISSING" in tail:
@@ -1978,9 +2019,9 @@ def produce_talk(
         remove_candidate_private_recuts(out_root, cid)
         result["status"] = "title_failed"
         return _carry_talk_recovery_result(item, result)
-    # Boundary self-repair (维护者) replaced quarantine: a delivered
-    # clip is clean by construction — red flags either got repaired (trail in
-    # boundary_repairs) or the produce exited non-zero above (no delivery).
+
+
+
     summary = result.get("summary") or {}
     if prepare_only:
         return _carry_talk_recovery_result(item, prepared_talk_result(result))

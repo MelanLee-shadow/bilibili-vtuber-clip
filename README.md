@@ -4,7 +4,7 @@
   欢迎关注侄女小李，<a href="https://space.bilibili.com/1703797642">关注李豆沙</a>谢谢喵
 </p>
 
-# bilibili-vtuber-clip — 无人值守的直播录播切片流水线
+# bilibili-vtuber-clip — 自托管的直播录播切片流水线
 
 [![CI](https://github.com/MelanLee-shadow/bilibili-vtuber-clip/actions/workflows/ci.yml/badge.svg)](https://github.com/MelanLee-shadow/bilibili-vtuber-clip/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
@@ -17,13 +17,11 @@
 > Producing a review package and authorizing publication are separate operations.
 
 > [!IMPORTANT]
-> **不推荐人类手动配置本项目——请直接把整个仓库交给你的 AI agent 去配置。**
-> [AGENTS.md](AGENTS.md) 是它的操作入口：先验证环境，再依据模板询问频道信息，
-> 由 agent 完成配置与验证。人类负责提供真实频道资料、素材授权和发布决定；
-> 不需要先读完整仓库，也不能让 agent 编造这些事实。
+> 本项目提供可复现的配置与验证流程。开始时请先阅读 [AGENTS.md](AGENTS.md)，
+> 按模板填写频道信息，并由使用者确认素材授权与发布决定；工具不会猜测这些事实。
 
-这是工程项目，不是双击即用的视频编辑器。下面的命令同时供 agent 执行和维护者核验；
-愿意手工配置时也可以按同一流程操作。
+这是工程项目，不是双击即用的视频编辑器。下面的命令适合自动化和手工运行，
+并可用于核验配置与阶段结果。
 
 ## 能做什么，不能替你做什么
 
@@ -81,11 +79,7 @@ CI 先安装 CPU 版 PyTorch，以免下载 CUDA 依赖。
 示例检查返回 `status=READY`、`voiceprint_status=ABSENT`，并列出缺失的配额授权与声纹文件。
 这是配置检查的预期结果：**配置可读不等于已具备声纹或全部生产前提**。
 测试套件使用合成数据和模型替身；运行测试前不要设置 `AUTOSLICE_PROFILE`。
-测试成功不证明外部服务、真实音频质量或账号发布权限正常。完整离线测试可在普通用户
-或 root 容器中运行；consumer-web 单元测试使用受控的非 root 账号夹具，不会打开真实
-浏览器、登录账号或调用模型。实际 web adapter 仍禁止以 root 身份运行：若服务启动器
-本身是 root，须将 `ENTITY_AUDIO_GEMINI_WEB_USER` 显式指向专用非 root 账号并配置该
-账号可执行的 Python；把它指向 root 会按安全契约 fail closed。
+测试成功不证明外部服务、真实音频质量或账号发布权限正常。
 
 ### 3. 配置自己的频道和服务
 
@@ -146,6 +140,9 @@ spec 结构以该入口的文档和 `--help` 为准。不要给不支持的入�
 
 检查的是最终 MP4 中**真正可见的字幕、片头和画面**，不是旁边恰好有一份 SRT。
 声文对应检查从最终视频音轨重新取证，但它只是粗偏移门，不能证明每个短句都逐字正确。
+烧录后的检查还将已验证的 BCUT 见证文字送入正常 CPA 文字审查，绑定当前媒体、最终 SRT、
+时间偏移、上下文和提供者身份；复用有效证据不会重复转写或重新渲染。发现问题时阻断交付，
+保留审查结果供修复；这一步尚不自动完成修字、重烧录和再次验收的闭环。
 见证字幕、来源说明、原始 ASR 回答及对应检查结果均纳入审计输入哈希；
 输入绑定只证明材料未变，不代替当前声文校验或发布授权。
 机械烧录流程及本次输入/输出检查已验证、没有具体异常时，不要求每条视频再完整观看一遍；
@@ -177,7 +174,6 @@ spec 结构以该入口的文档和 `--help` 为准。不要给不支持的入�
 | `AUTOSLICE_PROFILE` | `lidousha` | 在进程导入时读取；换频道要重新启动进程 |
 | CPA 包装器模型 | `gpt-6-sol` | `CPA_CHAT_MODEL` / `CPA_CHAT_MODELS` 可供包装器读取；部分调用点显式指定模型，不能假设一处变量覆盖全部流程 |
 | 普通 `correct=cpa` 转写校对 | `gpt-6-sol`、`low` effort | 选题、标题等入口有各自 effort；转写缓存不会降低它们的要求 |
-| CPA 健康探针 | `gpt-6-luna`、`low` effort | 只验证服务可用性，不参与字幕、标题或封面裁决；不会自动升级 Astra |
 | 实体局部 AGY 听音 | `Gemini 3.6 Flash (High)` | 可由 `ENTITY_AUDIO_AGY_MODEL` 覆盖；客户端标识与 API 模型 ID 不是同一字符串 |
 | 实体 Gemini API 后备 | `gemini-3.6-flash` | `ENTITY_AUDIO_GEMINI_API_MODEL`；配额和允许后备的条件仍需满足 |
 
@@ -192,7 +188,7 @@ AGY CLI 与 Gemini API 是不同接入方式，模型名称、能力、配额与
 已审原稿的快车道复用合法底稿和未变化的制品；它不重新选片、不任意润色整片，
 也不跳过实际烧录、成片审计和发布授权。公开版通用入口见
 [脚本地图](scripts/README.md) 与 [打包步骤](docs/pipeline/80-package-delivery.md)。
-私有的候选专属授权与回执不随仓分发，因此不能直接重放维护者的历史任务。
+候选专属授权与回执不随仓分发，因此不能直接重放未随仓库提供的历史任务。
 
 普通转写的内容寻址缓存可以复用**已成功且验证通过**的 BCUT 结果与完整 CPA 校对结果。
 音频、完整上下文、模型配置、提示词或代码身份改变时不能盲目复用；坏缓存按未命中处理。

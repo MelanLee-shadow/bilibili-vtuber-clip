@@ -264,7 +264,7 @@ def adjudicate_routed_findings(
     srt_text: str,
     findings: Sequence[dict[str, Any]],
     *,
-    max_adjudications: int,
+    max_adjudications: int | None,
     adjudicate: Callable[[str, dict[str, Any]], tuple[str, dict[str, Any]]],
     original_srt_text: str | None = None,
 ) -> tuple[str, int, bool, int, list[dict[str, Any]]]:
@@ -342,7 +342,7 @@ def adjudicate_routed_findings(
             row["cue_index"] = finding_cue
         if window not in admitted_windows and window not in rejected_windows:
             required = group_sizes.get(window, 1)
-            if reserved_calls + required <= max_adjudications:
+            if max_adjudications is None or reserved_calls + required <= max_adjudications:
                 admitted_windows.add(window)
                 reserved_calls += required
             else:

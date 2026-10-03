@@ -12,6 +12,12 @@ from src.autoslice.boundary_semantic_review import (
 from src.autoslice.redelivery_boundary_projection import (
     stored_projection_endpoint_is_valid,
 )
+from src.autoslice.human_explicit_boundary import (
+    MANUAL_END_MODE as HUMAN_EXPLICIT_ENDPOINT_MODE,
+    PACKAGE_BOUNDARY_AUTHORITY as HUMAN_EXPLICIT_PACKAGE_AUTHORITY,
+    human_explicit_endpoint_authority_sha256,
+    valid_human_explicit_endpoint,
+)
 
 
 _SHA256_RX = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -98,6 +104,14 @@ def semantic_boundary_review_is_valid(
     endpoint = review.get("final_endpoint_binding")
     reviewed_grid = str(review.get("cue_grid_sha256") or "")
     evidence = review.get("evidence_cue_indexes")
+    transition_witness_valid = bool(
+        review.get("next_topic_separated") is True
+        and review.get("next_topic_witness_valid") is True
+    )
+    human_endpoint_valid = valid_human_explicit_endpoint(
+        review.get("human_explicit_endpoint_override"),
+        review=review,
+    )
     return bool(
         review.get("schema_version") == "talk-boundary-semantic-review.v1"
         and review.get("status") == "PASS"
@@ -107,11 +121,10 @@ def semantic_boundary_review_is_valid(
             for field in (
                 "syntax_complete",
                 "story_closed",
-                "next_topic_separated",
                 "content_anchor_covered",
-                "next_topic_witness_valid",
             )
         )
+        and (transition_witness_valid or human_endpoint_valid)
         and is_boundary_int(review.get("recommended_end_ms"))
         and is_boundary_int(review.get("recommended_end_cue_index"))
         and isinstance(evidence, list)
@@ -176,6 +189,21 @@ def expected_boundary_authority(
     *,
     human_authority: str,
 ) -> tuple[str, bool]:
+    source_review = audit.get("boundary_semantic_review")
+    explicit_authority_sha256 = human_explicit_endpoint_authority_sha256(
+        source_review
+    )
+    if explicit_authority_sha256 is not None:
+        return (
+            HUMAN_EXPLICIT_PACKAGE_AUTHORITY,
+            bool(
+                human_authority == explicit_authority_sha256
+                and audit.get("manual_end_mode")
+                == HUMAN_EXPLICIT_ENDPOINT_MODE
+                and audit.get("manual_end_authority")
+                == explicit_authority_sha256
+            ),
+        )
     exact_authority = audit.get("reviewed_exact_source_interval_authority")
     if isinstance(exact_authority, dict):
         return (

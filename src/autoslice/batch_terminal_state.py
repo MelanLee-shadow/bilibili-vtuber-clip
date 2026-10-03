@@ -72,7 +72,7 @@ def song_infra_transient_is_active(
     """Whether this song attempt still counts as a waitable provider transient.
 
     An explicitly typed transient emitted by ``song_lane`` normally outranks
-    stale/partial negative reasons (``4af4a88``).  That veto was
+    stale/partial negative reasons (``PUBLIC_CASE_ID``).  That veto was
     unbounded, and combined with the song lane's JINGTING provenance false
     positives it produced an immortal candidate: ``refill_songs`` gives
     ``selected_repair`` items first claim on ``song_delivery_budget`` (one per
@@ -91,7 +91,7 @@ def song_infra_transient_is_active(
     reasons = {str(code) for code in reason_codes or ()}
     explicit = str(record.get("transient_failure_code") or "")
     if not explicit:
-        # Pre-``4af4a88`` records have no typed field.  Only the requeue caller
+        # Pre-``PUBLIC_CASE_ID`` records have no typed field.  Only the requeue caller
         # opts into the reason-code fallback; terminal projection deliberately
         # honours the typed field alone, so an untyped record with a confirmed
         # non-host performance still terminalizes exactly as it did before.

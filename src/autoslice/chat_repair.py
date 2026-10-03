@@ -27,6 +27,8 @@ from src.autoslice.chat_evidence import (
     _QUESTION_TAIL,
     _coerce_referent_groups,
     _entity_occurrences,
+    _entity_slot_binding,
+    _entity_slot_choices,
     _render_srt,
     _request_sha256,
     _validated_entity_verdict,
@@ -235,13 +237,13 @@ def _best_text_split(authority: str, cue_texts: Sequence[str]) -> list[str]:
 
 def _strip_unrenderable_for_subtitle(text: str) -> str:
     """SC/弹幕原文里的颜文字用生僻区字符渲染成乱码。
-    拼进字幕前剥离 Symbol/emoji/私有区及 BMP 外非 CJK 字符。证据匹配仍用原文
-    （本函数只作用于写入字幕的文本）。
+ 拼进字幕前剥离 Symbol/emoji/私有区及 BMP 外非 CJK 字符。证据匹配仍用原文
+ （本函数只作用于写入字幕的文本）。
 
-    「；；」不在剥离范围内：维护者 审片裁定新增专名——「；；」（读
-    "分号分号"）是模拟哭哭表情梗，SC/弹幕带它时必须保真进字幕，不能被当成
-    占位乱码顿号化或丢弃（此前版本会折叠成逗号，属于「弹幕不修正」要拦的改写）。
-    """
+ 「；；」不在剥离范围内：公开规则审片裁定新增专名——「；；」（读
+ "分号分号"）是模拟哭哭表情梗，SC/弹幕带它时必须保真进字幕，不能被当成
+ 占位乱码顿号化或丢弃（此前版本会折叠成逗号，属于「弹幕不修正」要拦的改写）。
+ """
     import unicodedata
 
     out_chars: list[str] = []
@@ -816,6 +818,7 @@ def apply_audio_entity_verification(
     groups = _coerce_referent_groups(referent_groups)
     cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
     texts = [cue.text for cue in cues]
+    input_srt_sha256 = hashlib.sha256(srt_text.encode("utf-8")).hexdigest()
     excluded = {int(value) for value in excluded_cue_indexes}
     confirmed: list[dict[str, Any]] = []
     repairs: list[dict[str, Any]] = []
@@ -878,15 +881,221 @@ def apply_audio_entity_verification(
                         }
                     )
                 else:
-                    required.append(
+                    # A mixed cue is narrowly eligible for a bound target-slot
+                    # hearing only when exactly one occurrence is a
+                    # non-canonical surface and every other occurrence is the
+                    # same canonical identity.  Multiple suspects or
+                    # competing identities remain the historical ambiguous
+                    # branch and must not call a verifier.
+                    suspects = [
+                        row
+                        for row in occurrences
+                        if str(row["surface"]).lower()
+                        != str(row["canonical"]).lower()
+                    ]
+                    identities = {str(row["canonical"]) for row in occurrences}
+                    if len(suspects) != 1 or len(identities) != 1:
+                        required.append(
+                            {
+                                "cue_index": cue_index,
+                                "matched_start_ms": cue.start_ms,
+                                "matched_end_ms": cue.end_ms,
+                                "reason_code": "TRANSCRIPT_ENTITY_SLOT_AMBIGUOUS",
+                                # 取证：无面无由的歧义行没法排障。
+                                "surfaces": [str(row["surface"]) for row in occurrences],
+                                "canonicals": [str(row["canonical"]) for row in occurrences],
+                            }
+                        )
+                        continue
+
+                    occurrence = suspects[0]
+                    target_slot = _entity_slot_binding(
+                        input_srt_sha256=input_srt_sha256,
+                        cue_index=cue_index,
+                        matched_start_ms=cue.start_ms,
+                        matched_end_ms=cue.end_ms,
+                        full_cue=texts[cue_offset],
+                        character_start=int(occurrence["start"]),
+                        character_end=int(occurrence["end"]),
+                        exact_surface=str(occurrence["surface"]),
+                        mapped_canonical=str(occurrence["canonical"]),
+                    )
+                    slot_choices = _entity_slot_choices(target_slot, group)
+                    if slot_choices is None:
+                        required.append(
+                            {
+                                "cue_index": cue_index,
+                                "matched_start_ms": cue.start_ms,
+                                "matched_end_ms": cue.end_ms,
+                                "reason_code": "TRANSCRIPT_ENTITY_SLOT_AMBIGUOUS",
+                                "surfaces": [str(row["surface"]) for row in occurrences],
+                                "canonicals": [str(row["canonical"]) for row in occurrences],
+                            }
+                        )
+                        continue
+                    evidence_id = hashlib.sha256(
+                        (
+                            f"transcript-entity-slot\0{input_srt_sha256}\0"
+                            f"{cue_index}\0{cue.start_ms}\0{cue.end_ms}\0"
+                            f"{target_slot['slot_id']}"
+                        ).encode("utf-8")
+                    ).hexdigest()
+                    request: dict[str, Any] = {
+                        "schema_version": "transcript-entity-verification-request.v1",
+                        "evidence_id": evidence_id,
+                        "kind": "transcript_entity",
+                        "cue_indexes": [cue_index],
+                        "matched_start_ms": cue.start_ms,
+                        "matched_end_ms": cue.end_ms,
+                        "matched_audio_text": texts[cue_offset],
+                        "input_srt_sha256": input_srt_sha256,
+                        "transcript_canonical": occurrence["canonical"],
+                        "transcript_surface": occurrence["surface"],
+                        "context_before": "\n".join(
+                            texts[max(0, cue_offset - 3) : cue_offset]
+                        ),
+                        "context_after": "\n".join(
+                            texts[cue_offset + 1 : cue_offset + 4]
+                        ),
+                        "whole_clip_context": [
+                            {
+                                "cue_index": index + 1,
+                                "start_ms": context_cue.start_ms,
+                                "end_ms": context_cue.end_ms,
+                                "text": texts[index],
+                            }
+                            for index, context_cue in enumerate(cues)
+                        ],
+                        "candidate_provenance": {
+                            "kind": "registered_transcript_entity_group",
+                            "group_reason": group.reason,
+                        },
+                        # Keep the historical candidate_entities closure byte
+                        # for the verifier; slot_choices is the new, local
+                        # full-cue choice set.
+                        "candidate_entities": [
+                            {
+                                "canonical": entity.canonical,
+                                "surfaces": list(entity.surfaces),
+                                "readings": list(entity.readings),
+                            }
+                            for entity in group.entities
+                        ],
+                        "target_slot": target_slot,
+                        "slot_choices": slot_choices,
+                        "reason": group.reason,
+                    }
+                    request["request_sha256"] = _request_sha256(request)
+                    try:
+                        raw_verdict = (
+                            entity_verifier(request)
+                            if entity_verifier is not None
+                            else None
+                        )
+                    except Exception as exc:
+                        raw_verdict = {
+                            "schema_version": "chat-entity-verdict.v1",
+                            "request_sha256": request["request_sha256"],
+                            "status": "UNCERTAIN",
+                            "reason_code": "ENTITY_VERIFIER_ERROR",
+                            "error": f"{type(exc).__name__}: {exc}",
+                        }
+                    verdict = _validated_entity_verdict(
+                        raw_verdict, request=request, group=group
+                    )
+                    if verdict is None or verdict.get("status") != "RESOLVED":
+                        # The static keep/alias shortcuts intentionally do not
+                        # apply to this optional slot: an invalid, stale or
+                        # uncertain CPA result leaves the complete cue and an
+                        # auditable ambiguity row untouched.
+                        required.append(
+                            {
+                                "cue_index": cue_index,
+                                "matched_start_ms": cue.start_ms,
+                                "matched_end_ms": cue.end_ms,
+                                "request": request,
+                                "verdict": verdict or raw_verdict,
+                                "reason_code": "TRANSCRIPT_ENTITY_SLOT_AMBIGUOUS",
+                                "surfaces": [str(row["surface"]) for row in occurrences],
+                                "canonicals": [str(row["canonical"]) for row in occurrences],
+                            }
+                        )
+                        continue
+
+                    choice_id = str(verdict.get("slot_choice_id") or "")
+                    choice = next(
+                        (
+                            row
+                            for row in slot_choices
+                            if row.get("choice_id") == choice_id
+                        ),
+                        None,
+                    )
+                    if choice is None:
+                        required.append(
+                            {
+                                "cue_index": cue_index,
+                                "matched_start_ms": cue.start_ms,
+                                "matched_end_ms": cue.end_ms,
+                                "request": request,
+                                "verdict": verdict,
+                                "reason_code": "TRANSCRIPT_ENTITY_SLOT_AMBIGUOUS",
+                            }
+                        )
+                        continue
+                    claimed_strings.update(
+                        str(row["surface"]).lower() for row in occurrences
+                    )
+                    if choice.get("action") == "CURRENT":
+                        confirmed.append(
+                            {
+                                "cue_index": cue_index,
+                                "matched_start_ms": cue.start_ms,
+                                "matched_end_ms": cue.end_ms,
+                                "target_slot": target_slot,
+                                "slot_choice_id": choice_id,
+                                "reason_code": "ENTITY_SLOT_CURRENT_CONFIRMED",
+                                "verdict": verdict,
+                            }
+                        )
+                        continue
+                    before = texts[cue_offset]
+                    after = str(choice["full_cue"])
+                    if before == after or after != (
+                        before[: int(target_slot["character_start"])]
+                        + str(choice["slot_text"])
+                        + before[int(target_slot["character_end"]) :]
+                    ):
+                        required.append(
+                            {
+                                "cue_index": cue_index,
+                                "matched_start_ms": cue.start_ms,
+                                "matched_end_ms": cue.end_ms,
+                                "request": request,
+                                "verdict": verdict,
+                                "reason_code": "TRANSCRIPT_ENTITY_SLOT_AMBIGUOUS",
+                            }
+                        )
+                        continue
+                    texts[cue_offset] = after
+                    repairs.append(
                         {
-                            "cue_index": cue_index,
+                            "evidence_id": evidence_id,
+                            "request_sha256": request["request_sha256"],
+                            "cue_indexes": [cue_index],
                             "matched_start_ms": cue.start_ms,
                             "matched_end_ms": cue.end_ms,
-                            "reason_code": "TRANSCRIPT_ENTITY_SLOT_AMBIGUOUS",
-                            # 取证：无面无由的歧义行没法排障。
-                            "surfaces": [str(row["surface"]) for row in occurrences],
-                            "canonicals": [str(row["canonical"]) for row in occurrences],
+                            "transcript_canonical": occurrence["canonical"],
+                            "transcript_surface": occurrence["surface"],
+                            "resolved_canonical": choice.get("canonical_entity"),
+                            "mode": "transcript_entity_slot_only",
+                            "expected_entity": choice.get("canonical_entity"),
+                            "before": [before],
+                            "after": [after],
+                            "target_slot": target_slot,
+                            "slot_choice_id": choice_id,
+                            "verdict": verdict,
+                            "survived": str(choice["slot_text"]) in after,
                         }
                     )
                 continue

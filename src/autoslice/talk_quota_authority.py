@@ -1,6 +1,6 @@
 """按录制日期的话题配额授权面——cap 与额外席位分数门的唯一政策来源。
 
-`4af4a88` 事故：维护者「8.8切片配额到20条，分数在85分以上即可」是一条
+`PUBLIC_CASE_ID` 事故：公开规则：8.8切片配额到20条，分数在85分以上即可是一条
 **按日期**的裁定，却被写进了游戏 lane 的全局常量（`GAME_SESSION_TALK_PICK_CAP`
 10→20、`GAME_SESSION_EXTRA_SLOT_MIN_SCORE` 90→85）。8/8 的 session_game_context
 是 NO_MATCH，游戏 lane 根本不触发——那次改动**没管到 8/8**，却把全库唯一
@@ -12,7 +12,7 @@ RESOLVED 的游戏日 **8/7 回溯放宽了**，四条 89.0/87.25/86.75/86.0 因
 日子的合法性，且无人察觉。
 
 治法两件，缺一不可：
-1. 本资产：按 `recording_date` + `scope` 的显式授权条目，每条自带 维护者 逐字出处；
+1. 本资产：按 `recording_date` + `scope` 的显式授权条目，每条自带 公开规则逐字出处；
 2. `talk_quota_freeze`：候选拿到席位时冻结当时生效的政策，后续 tick 复用冻结值。
 
 **fail-closed**：资产缺该日期条目 → 回落代码默认（5 席 / 无额外席），
@@ -105,10 +105,10 @@ def _policy_body(payload: Mapping[str, object], *, label: str) -> tuple[int, flo
 def _default_policy_body(payload: Mapping[str, object]) -> tuple[int, float | None]:
     """The document default may only ever be the base seats, never a widening.
 
-    A dateless knob that can widen the whole library is the disease this asset
-    exists to cure; ``default_policy`` carries 维护者「日常还是5，并没有
-    分数限制」as authority for the code default, and nothing more.
-    """
+ A dateless knob that can widen the whole library is the disease this asset
+ exists to cure; ``default_policy`` carries 公开规则：日常还是5，并没有
+ 分数限制as authority for the code default, and nothing more.
+ """
 
     cap, gate = _policy_body(payload, label="default_policy")
     if cap > BASE_TALK_PICK_CAP or gate is not None:

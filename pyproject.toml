@@ -1,5 +1,5 @@
 [tool.ruff]
-# The dedicated speaker/diarization runtime on free is Python 3.11.
+# Reference speaker/diarization deployments support Python 3.11.
 target-version = "py311"
 line-length = 100
 

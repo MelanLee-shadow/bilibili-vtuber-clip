@@ -31,10 +31,8 @@ SRC_REPO = "/home/维护者/Project/repo-87"
 SRC_CANDIDATE = f"/home/维护者/Project/vtuber-reproduce/out/{DATE}/{CANDIDATE}"
 SRC_PACKAGE = f"{SRC_CANDIDATE}/replacement_recuts"
 TITLE = "【李豆沙】她说“熊猫头”那句，我笑了半天"
-RELEASE_QUOTE = (
-    "说起来刚刚通过的这两个可以发布了，只要你根据我的人工真值改完后，"
-    "可以直接去快车道发布，和你的通用车道修复并行进行"
-)
+RELEASE_QUOTE = "synthetic explicit release authorization"
+
 OTHER_FAILED_CANDIDATE = "auto_other_failed"
 DEPLOYED_TEST_COMMIT = "a" * 40
 
@@ -221,6 +219,7 @@ def _build_external_package(tmp_path: Path) -> Fixture:
             "path": f"{SRC_PACKAGE}/{STEM}.mp4",
             "ass_path": f"{SRC_PACKAGE}/{CANDIDATE}.recut.speaker-final.ass",
             "command": ["ffmpeg", "-i", f"{SRC_PACKAGE}/{CANDIDATE}.recut.mp4"],
+            "verification": {"duration_ms": 192000},
         },
         "boundary_audit": {
             "verdict": "CLEAN",
@@ -999,7 +998,7 @@ def test_failed_pick_release_quote_must_match_registry_exactly(
     before = fixture.state_path.read_bytes()
 
     receipt, code = _run_authorized_failed_pick(
-        fixture, quote=RELEASE_QUOTE.removeprefix("说起来")
+        fixture, quote=RELEASE_QUOTE.removeprefix("synthetic ")
     )
 
     assert code == 2

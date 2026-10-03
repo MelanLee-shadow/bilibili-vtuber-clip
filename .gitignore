@@ -33,6 +33,11 @@ lidousha/**
 *.part
 *.ts
 *.mov
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.ogg
 
 # Secrets
 .env
@@ -46,7 +51,6 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .cache/
-.codex-tmp/
 
 # OS/编辑器噪音
 .DS_Store

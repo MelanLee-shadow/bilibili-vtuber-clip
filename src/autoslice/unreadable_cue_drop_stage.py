@@ -1,4 +1,4 @@
-"""不可读窗删除在终审自愈循环里的事务落盘（维护者 裁定的接线层）。
+"""不可读窗删除在终审自愈循环里的事务落盘（公开规则裁定的接线层）。
 
 判据、守卫与回执形状全部在 ``unreadable_span_policy``；本模块只做两件事，
 且刻意住在 ``producer_package_finalization`` 外面 —— 那个 god-file 的行数账本
@@ -6,9 +6,9 @@
 调用点只留薄的一层」：
 
 * ``stage_unreadable_cue_drop_pass`` —— 与 CPA 自愈**同款**的事务：账本先齐、
-  活的 SRT 字节最后换，任何异常整组回滚到进 pass 前的精确字节；
+ 活的 SRT 字节最后换，任何异常整组回滚到进 pass 前的精确字节；
 * ``seal_unreadable_cue_drops`` —— 干净收尾时把删除审计封成 PASS、重跑一遍
-  终审合同校验、落旁车回执（runner 只信落盘文件，不信 4000 字节 summary 尾窗）。
+ 终审合同校验、落旁车回执（runner 只信落盘文件，不信 4000 字节 summary 尾窗）。
 
 次序是刻意的：调用点把它排在 CPA 自愈**之后**，且只在「判官这一轮什么都改不动」
 时才轮到本路 —— 删字幕是有损操作，永远是最后手段。
@@ -184,8 +184,8 @@ def seal_unreadable_cue_drops(
         audit, expected_srt_sha256=expected_srt_sha256
     )
     persist_review_audit(review_audit_path, audit)
-    # 旁车回执同时是 维护者 的审阅入口和 free 容量清理的引用锚点：produce 成功
-    # 收尾时 summary 尾窗会截断，runner 只信落盘文件（speaker_guess 同款理由）。
+
+
     drop_sidecar_path(recut.subtitle_path.parent, cid).write_text(
         _json_text(sealed), encoding="utf-8"
     )

@@ -39,7 +39,7 @@ from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
     validate_recovery_publication_authority,
 )
-from scripts.build_daily_review_manifest import (  # noqa: E402
+from scripts.build_daily_review_manifest import (
     DailyManifestError,
     _rebuild_package_speaker_evidence,
     _validate_source_fact_receipts,
@@ -386,26 +386,37 @@ def _bind_host_only_v4_package_item(
         item[BINDING_ITEM_KEY] = binding
 
 
-def _bind_cover_only_audit_scope(
+def _load_cover_only_audit_scopes(
+    *,
     package_root: Path,
-    item: dict[str, Any],
-    scope_entry: tuple[Path, dict[str, Any]] | None,
-    candidate_id: str,
-) -> None:
-    if scope_entry is None:
-        return
-    scope_path, scope_payload = scope_entry
-    item["cover_only_audit_scope"] = scope_path.relative_to(package_root).as_posix()
-    try:
-        validate_cover_only_audit_scope(
-            scope_payload,
-            package_root=package_root,
-            item=item,
-        )
-    except CoverOnlyAuditScopeError as exc:
-        raise ManifestBuildError(
-            f"cover-only audit scope invalid: {candidate_id}: {exc}"
-        ) from exc
+    candidate_ids: list[str],
+    release_scope: list[str] | None,
+    scope_paths: list[Path],
+) -> dict[str, tuple[Path, dict[str, Any]]]:
+    allowed_candidates = set(release_scope or candidate_ids)
+    payloads: dict[str, tuple[Path, dict[str, Any]]] = {}
+    for raw_scope_path in scope_paths:
+        if raw_scope_path.is_symlink():
+            raise ManifestBuildError(
+                f"cover-only audit scope may not be a symlink: {raw_scope_path}"
+            )
+        scope_path = raw_scope_path.resolve()
+        try:
+            scope_path.relative_to(package_root)
+        except ValueError as exc:
+            raise ManifestBuildError(
+                f"cover-only audit scope must be inside package root: {scope_path}"
+            ) from exc
+        if not scope_path.is_file() or scope_path.is_symlink():
+            raise ManifestBuildError(f"cover-only audit scope missing or unsafe: {scope_path}")
+        payload = _load_json(scope_path)
+        candidate_id = str(payload.get("candidate_id") or "")
+        if candidate_id not in allowed_candidates or candidate_id in payloads:
+            raise ManifestBuildError(
+                f"cover-only audit scope candidate is unknown or duplicated: {candidate_id!r}"
+            )
+        payloads[candidate_id] = (scope_path, payload)
+    return payloads
 
 
 def build_manifest(
@@ -424,10 +435,10 @@ def build_manifest(
     if COMMIT_RE.fullmatch(commit) is None:
         raise ManifestBuildError("deployed commit must be a full 40-hex commit")
     if state.get("status") != "review_ready":
-        # 维护者 per-BV ruling: 「没有任何纪律要求必须5个全complete
-        # 才能动BV，修复时哪个好了就可以改哪个」。An explicit release scope
-        # unlocks per-candidate freezing while the batch is still incomplete;
-        # every scoped candidate must itself be a delivered compliant pick.
+
+
+
+
         if not (release_scope and state.get("status") == "recovery_incomplete"):
             raise ManifestBuildError(f"state is not review_ready: {state.get('status')}")
     if state.get("run_mode") != "RECOVERY_REVIEW":
@@ -448,31 +459,12 @@ def build_manifest(
     normalized_publication_authorities = _normalized_release_authorities(
         state, candidate_ids, release_scope
     )
-    scope_payloads: dict[str, tuple[Path, dict[str, Any]]] = {}
-    for raw_scope_path in cover_only_audit_scopes or []:
-        if raw_scope_path.is_symlink():
-            raise ManifestBuildError(
-                f"cover-only audit scope may not be a symlink: {raw_scope_path}"
-            )
-        scope_path = raw_scope_path.resolve()
-        try:
-            scope_path.relative_to(package_root)
-        except ValueError as exc:
-            raise ManifestBuildError(
-                f"cover-only audit scope must be inside package root: {scope_path}"
-            ) from exc
-        if not scope_path.is_file() or scope_path.is_symlink():
-            raise ManifestBuildError(f"cover-only audit scope missing or unsafe: {scope_path}")
-        payload = _load_json(scope_path)
-        scope_candidate = str(payload.get("candidate_id") or "")
-        if (
-            scope_candidate not in set(release_scope or candidate_ids)
-            or scope_candidate in scope_payloads
-        ):
-            raise ManifestBuildError(
-                f"cover-only audit scope candidate is unknown or duplicated: {scope_candidate!r}"
-            )
-        scope_payloads[scope_candidate] = (scope_path, payload)
+    scope_payloads = _load_cover_only_audit_scopes(
+        package_root=package_root,
+        candidate_ids=candidate_ids,
+        release_scope=release_scope,
+        scope_paths=cover_only_audit_scopes or [],
+    )
     picks = state.get("picks")
     if not isinstance(picks, list):
         raise ManifestBuildError("state picks missing")
@@ -688,9 +680,20 @@ def build_manifest(
         item["redelivery_baseline_status"] = baseline_status
         if baseline is not None:
             item["redelivery_baseline"] = baseline.name
-        _bind_cover_only_audit_scope(
-            package_root, item, scope_payloads.get(candidate_id), candidate_id
-        )
+        scope_entry = scope_payloads.get(candidate_id)
+        if scope_entry is not None:
+            scope_path, scope_payload = scope_entry
+            item["cover_only_audit_scope"] = scope_path.relative_to(package_root).as_posix()
+            try:
+                validate_cover_only_audit_scope(
+                    scope_payload,
+                    package_root=package_root,
+                    item=item,
+                )
+            except CoverOnlyAuditScopeError as exc:
+                raise ManifestBuildError(
+                    f"cover-only audit scope invalid: {candidate_id}: {exc}"
+                ) from exc
         items.append(item)
         attestations.append(
             {
@@ -728,8 +731,7 @@ def build_manifest(
                     "candidates": sorted(release_scope),
                     "batch_status": str(state.get("status")),
                     "authority": (
-                        "维护者 2026-07-26: 没有任何纪律要求必须5个全complete"
-                        "才能动BV，修复时哪个好了就可以改哪个"
+                        '公开规则: 没有任何纪律要求必须5个全complete才能动BV，修复时哪个好了就可以改哪个'
                     ),
                 }
             }
@@ -769,7 +771,7 @@ def main() -> int:
         "--release-candidate",
         action="append",
         default=None,
-        help="per-BV partial release scope (repeatable; 维护者 2026-07-26 ruling)",
+        help='per-BV partial release scope (repeatable; 公开规则ruling)',
     )
     parser.add_argument(
         "--cover-only-audit-scope",

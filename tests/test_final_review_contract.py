@@ -42,6 +42,127 @@ def test_keep_current_disclosed_classifier():
     assert _is_keep_current_disclosed(real_auditor_shape) is True
 
 
+def test_exact_keep_current_contract_requires_complete_support_and_bound_receipts():
+    """Exact-final disclosure rejects support, request, and witness drift."""
+
+    import copy
+
+    from src.autoslice.acoustic_witness_adjudication import (
+        REQUIRE_COMPLETE_UTTERANCE_SUPPORT,
+        build_witness_request,
+    )
+    from src.autoslice.final_review_auditor import (
+        build_context_adjudication_request,
+    )
+    from src.autoslice.final_review_contract import (
+        is_keep_current_disclosed as _is_keep_current_disclosed,
+    )
+
+    source = "1\n00:00:01,000 --> 00:00:03,000\n当前整句\n"
+    request = build_context_adjudication_request(
+        source,
+        {
+            "cue_index": 1,
+            "suspect": "句",
+            "suggestion": "完整句",
+            "proposed_full_cue": "当前整完整句",
+            "repair_class": "phonetic",
+        },
+        require_complete_utterance_support=True,
+    )
+    witness_request = build_witness_request(request)
+    judge = {
+        "status": "JUDGED",
+        "choice": "CURRENT",
+        "check_request_sha256": request["request_sha256"],
+        "current_utterance_supported": True,
+        "current_utterance_support_reason": "The complete current utterance is supported.",
+    }
+    adjudication = {
+        "status": "OBSERVED",
+        "policy_branch": "JUDGE_KEEPS_CURRENT",
+        "repaired": False,
+        "timing_immutable": True,
+        "request": request,
+        "witness_judge": {
+            "witness_request_sha256": witness_request["request_sha256"],
+            "judge": judge,
+        },
+        "mutation_authority": {"status": "NOT_APPLIED"},
+    }
+    row = {"cue_index": 1, "exact_release_adjudication": adjudication}
+
+    assert _is_keep_current_disclosed(row) is True
+
+    def mutate_support_false(candidate):
+        candidate["exact_release_adjudication"]["witness_judge"]["judge"][
+            "current_utterance_supported"
+        ] = False
+
+    def mutate_support_missing(candidate):
+        candidate["exact_release_adjudication"]["witness_judge"]["judge"].pop(
+            "current_utterance_supported"
+        )
+        candidate["exact_release_adjudication"]["witness_judge"]["judge"].pop(
+            "current_utterance_support_reason"
+        )
+
+    def mutate_choice(candidate):
+        candidate["exact_release_adjudication"]["witness_judge"]["judge"][
+            "choice"
+        ] = "PROPOSED"
+
+    def mutate_current(candidate):
+        candidate["exact_release_adjudication"]["request"]["current_cue"] = (
+            "漂移后的整句"
+        )
+
+    def mutate_window(candidate):
+        candidate["exact_release_adjudication"]["request"]["matched_start_ms"] += 1
+
+    def mutate_request_sha(candidate):
+        candidate["exact_release_adjudication"]["request"]["request_sha256"] = (
+            "0" * 64
+        )
+
+    def mutate_judge_sha(candidate):
+        candidate["exact_release_adjudication"]["witness_judge"]["judge"][
+            "check_request_sha256"
+        ] = "1" * 64
+
+    def mutate_witness_sha(candidate):
+        candidate["exact_release_adjudication"]["witness_judge"][
+            "witness_request_sha256"
+        ] = "2" * 64
+
+    for mutate in (
+        mutate_support_false,
+        mutate_support_missing,
+        mutate_choice,
+        mutate_current,
+        mutate_window,
+        mutate_request_sha,
+        mutate_judge_sha,
+        mutate_witness_sha,
+    ):
+        candidate = {
+            "cue_index": row["cue_index"],
+            "exact_release_adjudication": copy.deepcopy(
+                row["exact_release_adjudication"]
+            ),
+        }
+        mutate(candidate)
+        assert _is_keep_current_disclosed(candidate) is False
+
+    # A historical ordinary/context receipt has no stronger flag and keeps its
+    # pre-existing disclosure contract.
+    legacy = copy.deepcopy(row)
+    legacy["exact_release_adjudication"]["request"].pop(
+        REQUIRE_COMPLETE_UTTERANCE_SUPPORT
+    )
+    assert _is_keep_current_disclosed(legacy) is True
+
+
 def test_decided_keep_current_branches_disclose_and_infra_branches_block():
     """CPA 明确保留、拼音门否决和不可闻证据门可披露。
 

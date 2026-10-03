@@ -60,24 +60,23 @@ UNAVAILABLE_REASON_CODES = frozenset(
 # 缺席等于给自己开一条"矛盾即降级发原图"的侧门。
 SELF_INCONSISTENT_REASON_CODE = "FINAL_HOST_IDENTITY_WITNESS_SELF_INCONSISTENT"
 
-# 维护者 逐字裁定（本机制的唯一授权来源）。
+
 REVIEWER_SELF_INCONSISTENT_RULING = (
-    "维护者 2026-08-10 逐字裁定：「只要自相矛盾，当然就认为这个完全没有否决权，"
-    "完全不可信就完事了。」"
+    '公开规则逐字裁定：「只要自相矛盾，当然就认为这个完全没有否决权，完全不可信就完事了。」'
 )
-# 先例：7/27 BV1ec3A6bEWF 事故轮已立同名机制（R-裁定-06「自不一致的测量没有
-# 否决权」，当时给的是出版登记/听写门）。本次是 维护者 亲口把它扩到封面身份门。
+
+
 SELF_INCONSISTENT_PRECEDENT = (
-    "R-裁定-06 自不一致的测量没有否决权（2026-07-27 刘若莎案 / BV1ec3A6bEWF）"
+    "R-裁定-06 自不一致的测量没有否决权（2026-07-27 刘若莎案 / BV1PUBLIC000）"
 )
 SELF_INCONSISTENT_SCHEMA_VERSION = (
     "lidousha-cover-host-identity-self-inconsistent-witness.v1"
 )
 SELF_INCONSISTENT_DISREGARDED_STATUS = "SELF_INCONSISTENT_WITNESS_DISREGARDED"
 SELF_INCONSISTENT_REFUSED_STATUS = "SELF_INCONSISTENT_DISREGARD_REFUSED"
-# 承接证据只认这一族回执，且只认本模块知道怎么逐条重放的世代。维护者 的裁定写的
-# 是 `lidousha-title-cover-joint-qc.*`；新增一个世代必须同时补它的重放规则，
-# 否则未知世代按 fail-closed 拒绝，而不是靠前缀通配放行。
+
+
+
 JOINT_QC_SCHEMA_VERSIONS = frozenset({"lidousha-title-cover-joint-qc.v1"})
 JOINT_QC_WITNESS_SCHEMA_VERSION = "cpa-frame-witness.v1"
 
@@ -94,19 +93,19 @@ class _Contradiction(NamedTuple):
 def _protagonist_is_host_and_other_participant(verdict: Mapping[str, object]) -> bool:
     """主角同时"是李豆沙"和"是另一位参与者"，且自称零冲突特征。
 
-    互斥理由：见证问卷把 `primary_subject_matches_other_source_participant`
-    定义为"右图主角其实延续的是左图**其他**参与者，而不是李豆沙"。它与
-    `primary_subject_is_lidousha` 是同一命题的正反两面——A 与 ¬A。第三个合取项
-    `identity_conflicts == []` 是 维护者 的护栏：见证一旦列出了冲突特征，那是
-    **明确否定**（"我看到她带着别人的特征"），是可读的反对意见，必须保留完整
-    否决权；只有连一条冲突都举不出来、却仍勾上反面断言时，才是纯粹的自相矛盾。
-    第四个合取项 `source_lidousha_located is True` 同理：源图定位失败是身份轴上
-    的明确否定，不是矛盾，照样有否决权。
+ 互斥理由：见证问卷把 `primary_subject_matches_other_source_participant`
+ 定义为"右图主角其实延续的是左图**其他**参与者，而不是李豆沙"。它与
+ `primary_subject_is_lidousha` 是同一命题的正反两面——A 与 ¬A。第三个合取项
+ `identity_conflicts == []` 是 公开规则的护栏：见证一旦列出了冲突特征，那是
+ **明确否定**（"我看到她带着别人的特征"），是可读的反对意见，必须保留完整
+ 否决权；只有连一条冲突都举不出来、却仍勾上反面断言时，才是纯粹的自相矛盾。
+ 第四个合取项 `source_lidousha_located is True` 同理：源图定位失败是身份轴上
+ 的明确否定，不是矛盾，照样有否决权。
 
-    这正是 1323 打歌服置换封面 v4D 的形状：同一份回答里
-    `primary_subject_is_lidousha: true` + `identity_conflicts: []` + 文字描述
-    明确认出李豆沙，却又 `primary_subject_matches_other_source_participant: true`。
-    """
+ 这正是 1323 打歌服置换封面 v4D 的形状：同一份回答里
+ `primary_subject_is_lidousha: true` + `identity_conflicts: []` + 文字描述
+ 明确认出李豆沙，却又 `primary_subject_matches_other_source_participant: true`。
+ """
 
     return (
         verdict.get("source_lidousha_located") is True
@@ -117,24 +116,24 @@ def _protagonist_is_host_and_other_participant(verdict: Mapping[str, object]) ->
     )
 
 
-# 全 schema 扫描结论：`_QUESTION` 契约里只有身份轴存在严格的 A ∧ ¬A 对。
-# 逐条记下被考虑并**排除**的候选，免得后人以为是漏扫：
-#
-# * `source_lidousha_located=False` ∧ `primary_subject_is_lidousha=True`
-#   —— 跨轴张力，不是同一命题的正反面。"我在左图找不到她"与"右图主角是她"可以
-#   同时成立（凭外形认人而非凭源图延续），而且前者本身就是身份轴上的明确否定。
-#   纳入它等于把"源图定位失败"洗成可放行，正面击穿反混种设计。
-# * `primary_subject_is_lidousha=False` ∧ `..._matches_other_source_participant=False`
-#   —— 不互斥：主角可以既不是她也不是任何源图参与者（凭空捏的人）。而且这是
-#   明确否定，维护者 的护栏 4 直接禁止本机制放行它。
-# * `composition_conflicts` 非空 ∧ 六个构图布尔全绿
-#   —— 构图布尔是分项判断，conflicts 是自由文本清单；列出"字略挤"之类的次要
-#   意见并不构成对任一布尔的反面断言。且构图轴没有一对互为否定的字段，纳入它
-#   只会把"机器说构图有问题"洗掉，属于扩权。
-# * `excessive_dead_space=True` ∧ `primary_subject_is_visually_dominant=True`
-#   —— 大留白与主体显眼可以并存（干净文字区就是刻意留白，问卷明说这合理）。
-# * `thumbnail_has_clear_click_hook=True` ∧ `primary_subject_carries_story_reaction=False`
-#   —— 钩子可以由文案/场景承担而非表情，不是同一命题。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 _SELF_CONTRADICTIONS: tuple[_Contradiction, ...] = (
     _Contradiction(
         name="PROTAGONIST_IS_HOST_AND_OTHER_PARTICIPANT",
@@ -207,11 +206,11 @@ _BOOLEAN_VERDICT_FIELDS = (
 )
 
 
-# 游戏场终检字段（维护者 02:20）。身份底线由「小窗里可见 + 小窗里是她」
-# 承担，取代「她必须是画面最大最显眼的主角」；`primary_subject_is_visually_dominant`
-# 仍然照问、照落盘，但降为**披露项**，不再是 PASS 前置。反垃圾三项一条不少：
-# 空面板/加载页（7/22 案）由 `frame_is_interesting` + `excessive_dead_space` 拦，
-# 无意义装饰压过内容由 `meaningless_dominant_decoration` 拦。
+
+
+
+
+
 _GAME_BOOLEAN_VERDICT_FIELDS = (
     "source_lidousha_located",
     "host_window_visible_in_final",
@@ -336,6 +335,14 @@ def _build_comparison(
     canvas.save(output_path, format="PNG", optimize=False)
 
 
+_SOURCE_CONSISTENT_EYEPATCH_VISIBILITY_RULE = (
+    "角色原有眼罩是身份特征和 intentional occlusion：若左图当场造型戴眼罩，"
+    "右图必须保留同一眼罩，不得补画被遮住的眼；眼罩本身不算脸部缺失、裁切或遮挡失败。"
+    "只有画面边缘、卡片、已渲染文字或新加物体裁掉或盖住可见眼、眼罩、嘴、下巴或"
+    "脸部轮廓，或这些部位糊到无法判断时，才算脸部不完整或不清楚。"
+)
+
+
 _QUESTION = (
     "左侧是同一切片的 SOURCE REFERENCE，右侧是待发布 FINAL COVER。"
     f"请先在左图用可见名牌、服装和外形定位{CHANNEL_PROFILE.display_name}；若名牌可见，必须以名牌为准。"
@@ -344,7 +351,9 @@ _QUESTION = (
     f"{CHANNEL_PROFILE.cover_identity.gate_imitation_zh}也不算身份正确。再判断右图最大、最显眼、承担故事反应的主角是否确实"
     f"延续左图{CHANNEL_PROFILE.display_name}，而不是其他参与者。次要人物可以存在，但主角必须是{CHANNEL_PROFILE.display_name}。"
     f"这是信息流缩略图终检，不只验身份：{CHANNEL_PROFILE.display_name}不能缩在角落或小到需要寻找；脸部必须"
-    "足够大、完整、清楚。primary_subject_carries_story_reaction 判断她的可见表情、动作或"
+    "足够大、完整、清楚。"
+    + _SOURCE_CONSISTENT_EYEPATCH_VISIBILITY_RULE
+    + "primary_subject_carries_story_reaction 判断她的可见表情、动作或"
     "状态是否与标题所讲故事有关：平静、温柔或笑容也可以是相关状态，不要求一帧演出"
     "全部台词、动作、反转和结尾，也不能仅因没有夸张表情或字面动作而判 false。结合"
     "右图中的人物状态、互动对象、场景细节和已渲染文字判断关联。杂谈截图的叙事可以是"
@@ -380,12 +389,12 @@ _QUESTION = (
 )
 
 
-# 游戏截图封面的终检问卷（维护者 02:20 逐字裁定的落地面）：
-# 「如果是截图封面的话，当然不要求李豆沙在画面里占主要部分，毕竟是游戏截图，
-# 只要截图足够有趣就行，主体肯定会会是游戏。」
-# 因此身份轴改问小窗，构图轴改问"这张游戏画面是否值得点"。**没有放松的是**：
-# 小窗里必须确实是她（多人场冒名仍然拦）、画面不能是空面板/加载页（7/22 案）、
-# 不得有无意义装饰压过内容、必须有明确点击钩子。
+
+
+
+
+
+
 _GAME_QUESTION = (
     "左侧是同一切片的 SOURCE REFERENCE，右侧是待发布 FINAL COVER。"
     "本条是**游戏直播截图封面**：画面主体本来就是游戏，"
@@ -397,7 +406,9 @@ _GAME_QUESTION = (
     f"然后判断右图里她的面捕小窗/立绘是否仍然可见（host_window_visible_in_final），"
     f"以及那个小窗里的人是否确实是{CHANNEL_PROFILE.display_name}本人而不是别的参与者"
     "（host_window_identity_matches）；小窗被裁掉、被文字完全盖住、糊到认不出或换成了"
-    "别人，这两项就为 false。primary_subject_is_visually_dominant 仍然如实回答，"
+    "别人，这两项就为 false。"
+    + _SOURCE_CONSISTENT_EYEPATCH_VISIBILITY_RULE
+    + "primary_subject_is_visually_dominant 仍然如实回答，"
     "但它只是披露，不影响本场景的通过判断。"
     "构图上判断这张游戏画面本身是否承载一个看得出来的事件（frame_is_interesting："
     "战况、结算、道具、失误、名场面或可读的关键 UI 文字）；空面板、加载页、菜单、"
@@ -790,16 +801,16 @@ def disregard_self_inconsistent_host_identity_witness(
 ) -> dict[str, object]:
     """Attach the successor evidence that carries a disregarded witness's job.
 
-    维护者 亲裁：自相矛盾的见证「完全没有否决权、完全不可信」。它既不
-    否决也不放行，门的结论改由其余独立证据承担——同包的 title+cover 联合 QC
-    回执。两者都缺就仍然 fail-closed。
+ 公开规则亲裁：自相矛盾的见证「完全没有否决权、完全不可信」。它既不
+ 否决也不放行，门的结论改由其余独立证据承担——同包的 title+cover 联合 QC
+ 回执。两者都缺就仍然 fail-closed。
 
-    这是 integrator 的**显式**一步：不接进 publish_staging，也不接进 runner。
-    生成时刻根本没有联合 QC 回执，自动挂载只会变成"矛盾即自动放行"。
+ 这是 integrator 的**显式**一步：不接进 publish_staging，也不接进 runner。
+ 生成时刻根本没有联合 QC 回执，自动挂载只会变成"矛盾即自动放行"。
 
-    磁盘 I/O 在这里做（读回执、核对成品封面真实字节）；`validate_final_host_
-    identity_verification` 保持纯函数，对内嵌副本逐条重放同样的绑定。
-    """
+ 磁盘 I/O 在这里做（读回执、核对成品封面真实字节）；`validate_final_host_
+ identity_verification` 保持纯函数，对内嵌副本逐条重放同样的绑定。
+ """
 
     verification = cover_generation.get("final_host_identity_verification")
     receipt_path = Path(joint_qc_receipt_path)
@@ -918,11 +929,11 @@ def _self_inconsistent_disregard_valid(
 ) -> bool:
     """Pure replay of the disregard branch: contradiction + successor evidence."""
 
-    # 本豁免只对**当前 v3 世代**的见证成立，绝不搭冻结出版结转（v2）那条线：
-    # ①矛盾对的互斥性是从 v3 `_QUESTION` 的字段定义推出来的，v2 世代从没承诺
-    # 过同一套语义；②结转条款的全部理由是"发布时点那份见证 PASS 过，对这串
-    # 字节是既成证据"——一份结转过来的 FAIL/自不一致回执什么都没证成，让它进
-    # 豁免通道等于把机制扩到 维护者 没裁过的世代上。
+
+
+
+
+
     if (
         verification.get("schema_version") != SCHEMA_VERSION
         or verification.get("authority") != AUTHORITY
@@ -1034,11 +1045,11 @@ def validate_final_host_identity_verification(
             == PUBLISHED_CARRY_SCHEMA_VERSION
             and verification.get("authority") == PUBLISHED_CARRY_AUTHORITY
         )
-    # 结论面二选一：①见证自己给出 PASS；②见证自相矛盾被整体作废，结论由
-    # 第三方承接证据承担（维护者 亲裁）。除这一项外，其余每条合取
-    # ——世代锁、成品字节绑定、对比图哈希绑定、provider 路由——一律照旧。
-    # 否则一份"矛盾形状"但根本没打过见证的回执就能只凭联合 QC 放行，正是
-    # 维护者 禁的"没有 witness 也能过"的侧门。
+
+
+
+
+
     verdict_lane_valid = verification.get("status") == "PASS"
     if not host_only_required:
         verdict_lane_valid = verdict_lane_valid or _self_inconsistent_disregard_valid(

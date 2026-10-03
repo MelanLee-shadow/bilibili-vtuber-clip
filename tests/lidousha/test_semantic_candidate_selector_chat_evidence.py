@@ -327,7 +327,7 @@ def test_scorecard_persists_chat_policy_and_evidence_fingerprints(tmp_path) -> N
                 "candidates": [
                     {
                         "start_cue": 1,
-                        "end_cue": 12,
+                        "end_cue": 13,
                         "kind": "talk",
                         "event_key": "动作互动",
                         "hook": "观众让她现场做动作",
@@ -356,7 +356,7 @@ def test_scorecard_persists_chat_policy_and_evidence_fingerprints(tmp_path) -> N
         )
 
     selected, diagnostics = select_semantic_session_candidates_covered(
-        _cues(0, 60_000),
+        _cues(0, 61_000),
         llm_call=llm,
         max_candidates=5,
         danmaku_xml=xml_path,

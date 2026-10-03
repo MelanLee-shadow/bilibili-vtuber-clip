@@ -12,8 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.audit_review_package import audit_package  # noqa: E402
-from src.autoslice.host_only_v4_successor import (  # noqa: E402
+from scripts.audit_review_package import audit_package
+from src.autoslice.host_only_v4_successor import (
     HostOnlyV4SuccessorError,
     build_host_only_v4_successor,
 )

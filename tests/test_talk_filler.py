@@ -20,7 +20,7 @@ def cue(position: int, start_ms: int, end_ms: int, text: str):
     )
 
 
-def test_reviewed_july18_talk05_plan_reproduces_all_three_jumps():
+def test_reviewed_three_approved_jumps_plan_reproduces_all_three_jumps():
     plan = build_talk_filler_plan(
         start_ms=527_500,
         end_ms=695_400,
@@ -30,19 +30,19 @@ def test_reviewed_july18_talk05_plan_reproduces_all_three_jumps():
                 "start_ms": 559_670,
                 "end_ms": 569_730,
                 "reason": "gift_thanks",
-                "authority": "reviewer_reviewed_2026-07-18",
+                "authority": "user_reviewed_2026-07-18",
             },
             {
                 "start_ms": 603_170,
                 "end_ms": 611_530,
                 "reason": "gift_thanks",
-                "authority": "reviewer_reviewed_2026-07-18",
+                "authority": "user_reviewed_2026-07-18",
             },
             {
                 "start_ms": 638_270,
                 "end_ms": 650_250,
                 "reason": "gift_thanks",
-                "authority": "reviewer_reviewed_2026-07-18",
+                "authority": "user_reviewed_2026-07-18",
             },
         ],
     )
@@ -58,6 +58,30 @@ def test_reviewed_july18_talk05_plan_reproduces_all_three_jumps():
         {"start_ms": 611_530, "end_ms": 638_270},
         {"start_ms": 650_250, "end_ms": 695_400},
     ]
+
+
+def test_reviewed_removal_requires_explicit_nondefault_authority():
+    for authority in (None, "", "user_reviewed", "cpa_semantic_pass", "auto_reviewed"):
+        reviewed = {
+            "start_ms": 10_000,
+            "end_ms": 15_000,
+            "reason": "gift_thanks",
+        }
+        if authority is not None:
+            reviewed["authority"] = authority
+        plan = build_talk_filler_plan(
+            start_ms=0,
+            end_ms=70_000,
+            cues=[],
+            reviewed_removals=[reviewed],
+        )
+
+        assert plan["status"] == "contiguous_fallback"
+        assert plan["removals"] == []
+        assert any(
+            row.get("reason_code") == "CONSERVATIVE_POLICY_REQUIRES_USER_APPROVAL"
+            for row in plan["rejected_proposals"]
+        )
 
 
 def test_automatic_gift_thanks_requires_bound_srt_and_safe_bridge(tmp_path: Path):
@@ -87,7 +111,7 @@ def test_automatic_gift_thanks_requires_bound_srt_and_safe_bridge(tmp_path: Path
                 "reason": "gift_thanks",
                 "bridge_coherent": True,
                 "bridge": "左右都在讲同一件事",
-                "topic_relation": "incidental",
+                "topic_relation": "unrelated",
                 "contains_setup": False,
                 "contains_cause": False,
                 "contains_answer": False,
@@ -106,13 +130,64 @@ def test_automatic_gift_thanks_requires_bound_srt_and_safe_bridge(tmp_path: Path
     )
 
     assert plan["status"] == "active"
-    assert plan["removals"][0]["source_start_ms"] == 10_000
-    assert plan["removals"][0]["source_end_ms"] == 16_000
+    assert plan["removals"][0]["source_start_ms"] == 10_500
+    assert plan["removals"][0]["source_end_ms"] == 14_000
+    assert plan["retained_intervals"] == [
+        {"start_ms": 0, "end_ms": 10_500},
+        {"start_ms": 14_000, "end_ms": 70_000},
+    ]
     assert plan["removals"][0]["left_retained_context"]["text"] == "前面的话题"
     assert plan["removals"][0]["right_retained_context"]["text"] == "继续刚才的话题"
 
 
-def test_unrelated_aside_and_srt_mismatch_fail_back_to_contiguous(tmp_path: Path):
+def test_gift_thanks_without_specific_gift_is_kept(tmp_path: Path):
+    srt = tmp_path / "source.srt"
+    srt.write_text("bound transcript\n", encoding="utf-8")
+    import hashlib
+
+    digest = "sha256:" + hashlib.sha256(srt.read_bytes()).hexdigest()
+    plan = build_talk_filler_plan(
+        start_ms=0,
+        end_ms=70_000,
+        cues=[
+            cue(1, 0, 10_000, "主题开头"),
+            cue(2, 11_000, 14_000, "谢谢你呀"),
+            cue(3, 16_000, 70_000, "主题继续到结尾"),
+        ],
+        proposals=[
+            {
+                "proposal_id": "generic-thanks",
+                "mode": "remove_cues",
+                "start_cue": 2,
+                "end_cue": 2,
+                "reason": "gift_thanks",
+                "bridge_coherent": True,
+                "bridge": "两侧继续同一主题",
+                "topic_relation": "unrelated",
+                "contains_setup": False,
+                "contains_cause": False,
+                "contains_answer": False,
+                "contains_punchline": False,
+                "contains_referent_intro": False,
+                "contains_correction": False,
+                "contains_resolution": False,
+                "later_dependency": False,
+                "interaction_relevant": False,
+                "meaning_or_stance_changed": False,
+                "confidence": 0.99,
+            }
+        ],
+        proposal_srt_sha256=digest,
+        source_srt_path=srt,
+    )
+    assert plan["status"] == "contiguous_fallback"
+    assert plan["removals"] == []
+    assert plan["rejected_proposals"][0]["reason_code"] == (
+        "gift_thanks_has_no_specific_gift_witness"
+    )
+
+
+def test_unsupported_generic_aside_is_kept_even_with_explicit_semantics(tmp_path: Path):
     srt = tmp_path / "source.srt"
     srt.write_text("actual\n", encoding="utf-8")
     cues = [
@@ -153,8 +228,557 @@ def test_unrelated_aside_and_srt_mismatch_fail_back_to_contiguous(tmp_path: Path
     )
     assert unsupported["status"] == "contiguous_fallback"
     assert unsupported["rejected_proposals"][0]["reason_code"] == (
-        "unrelated_aside_requires_later_semantic_authorizer"
+        "automatic_reason_not_allowed"
     )
+
+    semantic_deny_fields = {
+        "contains_setup": False,
+        "contains_cause": False,
+        "contains_answer": False,
+        "contains_punchline": False,
+        "contains_referent_intro": False,
+        "contains_correction": False,
+        "contains_resolution": False,
+        "later_dependency": False,
+        "interaction_relevant": False,
+        "meaning_or_stance_changed": False,
+    }
+    approved = build_talk_filler_plan(
+        start_ms=0,
+        end_ms=70_000,
+        cues=cues,
+        proposals=[
+            {
+                **proposal,
+                "topic_relation": "unrelated",
+                **semantic_deny_fields,
+            }
+        ],
+        proposal_srt_sha256=digest,
+        source_srt_path=srt,
+    )
+    assert approved["status"] == "contiguous_fallback"
+    assert approved["removals"] == []
+    assert approved["rejected_proposals"][0]["reason_code"] == (
+        "automatic_reason_not_allowed"
+    )
+
+    denied = build_talk_filler_plan(
+        start_ms=0,
+        end_ms=70_000,
+        cues=cues,
+        proposals=[
+            {
+                **proposal,
+                "topic_relation": "incidental",
+                **semantic_deny_fields,
+            }
+        ],
+        proposal_srt_sha256=digest,
+        source_srt_path=srt,
+    )
+    assert denied["status"] == "contiguous_fallback"
+    assert denied["rejected_proposals"][0]["reason_code"] == (
+        "automatic_reason_not_allowed"
+    )
+
+
+def test_housekeeping_with_no_topic_content_can_be_removed(tmp_path: Path):
+    srt = tmp_path / "source.srt"
+    srt.write_text("bound transcript\n", encoding="utf-8")
+    import hashlib
+
+    digest = "sha256:" + hashlib.sha256(srt.read_bytes()).hexdigest()
+    deny = {
+        "contains_setup": False,
+        "contains_cause": False,
+        "contains_answer": False,
+        "contains_punchline": False,
+        "contains_referent_intro": False,
+        "contains_correction": False,
+        "contains_resolution": False,
+        "later_dependency": False,
+        "interaction_relevant": False,
+        "meaning_or_stance_changed": False,
+    }
+    plan = build_talk_filler_plan(
+        start_ms=0,
+        end_ms=70_000,
+        cues=[
+            cue(1, 0, 10_000, "主题开头"),
+            cue(2, 11_000, 14_000, "我去喝口水回来"),
+            cue(3, 16_000, 70_000, "主题继续到结尾"),
+        ],
+        proposals=[
+            {
+                "proposal_id": "water",
+                "mode": "remove_cues",
+                "start_cue": 2,
+                "end_cue": 2,
+                "reason": "housekeeping",
+                "bridge_coherent": True,
+                "bridge": "两侧继续同一主题",
+                "topic_relation": "unrelated",
+                **deny,
+                "confidence": 0.99,
+            }
+        ],
+        proposal_srt_sha256=digest,
+        source_srt_path=srt,
+    )
+    assert plan["status"] == "active"
+    assert plan["removals"][0]["reason"] == "housekeeping"
+
+
+def test_housekeeping_common_water_and_toilet_phrases_are_recognized(tmp_path: Path):
+    srt = tmp_path / "source.srt"
+    srt.write_text("bound transcript\n", encoding="utf-8")
+    import hashlib
+
+    digest = "sha256:" + hashlib.sha256(srt.read_bytes()).hexdigest()
+    deny = {
+        "contains_setup": False,
+        "contains_cause": False,
+        "contains_answer": False,
+        "contains_punchline": False,
+        "contains_referent_intro": False,
+        "contains_correction": False,
+        "contains_resolution": False,
+        "later_dependency": False,
+        "interaction_relevant": False,
+        "meaning_or_stance_changed": False,
+    }
+    for index, phrase in enumerate(("我去喝杯水", "我去喝一杯水", "我去上个厕所")):
+        plan = build_talk_filler_plan(
+            start_ms=0,
+            end_ms=70_000,
+            cues=[
+                cue(1, 0, 10_000, "主题开头"),
+                cue(2, 11_000, 14_000, phrase),
+                cue(3, 16_000, 70_000, "主题继续到结尾"),
+            ],
+            proposals=[
+                {
+                    "proposal_id": f"housekeeping-{index}",
+                    "mode": "remove_cues",
+                    "start_cue": 2,
+                    "end_cue": 2,
+                    "reason": "housekeeping",
+                    "bridge_coherent": True,
+                    "bridge": "两侧继续同一主题",
+                    "topic_relation": "unrelated",
+                    **deny,
+                    "confidence": 0.99,
+                }
+            ],
+            proposal_srt_sha256=digest,
+            source_srt_path=srt,
+        )
+        assert plan["status"] == "active"
+        assert plan["removals"][0]["reason"] == "housekeeping"
+
+
+def test_unrelated_sc_without_bound_original_evidence_is_kept(tmp_path: Path):
+    srt = tmp_path / "source.srt"
+    srt.write_text("bound transcript\n", encoding="utf-8")
+    import hashlib
+
+    digest = "sha256:" + hashlib.sha256(srt.read_bytes()).hexdigest()
+    deny = {
+        "contains_setup": False,
+        "contains_cause": False,
+        "contains_answer": False,
+        "contains_punchline": False,
+        "contains_referent_intro": False,
+        "contains_correction": False,
+        "contains_resolution": False,
+        "later_dependency": False,
+        "interaction_relevant": False,
+        "meaning_or_stance_changed": False,
+    }
+    plan = build_talk_filler_plan(
+        start_ms=0,
+        end_ms=70_000,
+        cues=[
+            cue(1, 0, 10_000, "主题开头"),
+            cue(2, 11_000, 14_000, "请问能不能聊一下别的事"),
+            cue(3, 16_000, 70_000, "主题继续到结尾"),
+        ],
+        proposals=[
+            {
+                "proposal_id": "sc-without-source",
+                "mode": "remove_cues",
+                "start_cue": 2,
+                "end_cue": 2,
+                "reason": "unrelated_sc",
+                "bridge_coherent": True,
+                "bridge": "两侧继续同一主题",
+                "topic_relation": "unrelated",
+                **deny,
+                "confidence": 0.99,
+            }
+        ],
+        proposal_srt_sha256=digest,
+        source_srt_path=srt,
+    )
+    assert plan["status"] == "contiguous_fallback"
+    assert plan["removals"] == []
+    assert plan["rejected_proposals"][0]["reason_code"] == (
+        "structured_chat_binding_missing"
+    )
+
+
+def test_unrelated_sc_uses_hash_bound_superchat_witness(tmp_path: Path):
+    srt = tmp_path / "source.srt"
+    srt.write_text("bound transcript\n", encoding="utf-8")
+    origin = 1_700_000_000_000
+    jsonl = tmp_path / "source.jsonl"
+    jsonl.write_text(
+        json.dumps(
+            {
+                "cmd": "SUPER_CHAT_MESSAGE",
+                "send_time": origin + 12_000,
+                "data": {
+                    "id": "sc-1",
+                    "message": "请问能不能聊一下别的事",
+                    "user_info": {"uname": "viewer"},
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    import hashlib
+
+    digest = "sha256:" + hashlib.sha256(srt.read_bytes()).hexdigest()
+    chat_digest = "sha256:" + hashlib.sha256(jsonl.read_bytes()).hexdigest()
+    deny = {
+        "contains_setup": False,
+        "contains_cause": False,
+        "contains_answer": False,
+        "contains_punchline": False,
+        "contains_referent_intro": False,
+        "contains_correction": False,
+        "contains_resolution": False,
+        "later_dependency": False,
+        "interaction_relevant": False,
+        "meaning_or_stance_changed": False,
+    }
+    plan = build_talk_filler_plan(
+        start_ms=0,
+        end_ms=70_000,
+        cues=[
+            cue(1, 0, 10_000, "主题开头"),
+            cue(2, 11_000, 14_000, "请问能不能聊一下别的事"),
+            cue(3, 16_000, 70_000, "主题继续到结尾"),
+        ],
+        proposals=[
+            {
+                "proposal_id": "sc-with-source",
+                "mode": "remove_cues",
+                "start_cue": 2,
+                "end_cue": 2,
+                "reason": "unrelated_sc",
+                "bridge_coherent": True,
+                "bridge": "两侧继续同一主题",
+                "topic_relation": "unrelated",
+                **deny,
+                "confidence": 0.99,
+            }
+        ],
+        proposal_srt_sha256=digest,
+        source_srt_path=srt,
+        structured_chat_binding={
+            "chat_jsonl": str(jsonl),
+            "chat_jsonl_sha256": chat_digest,
+            "chat_origin_epoch_ms": origin,
+            "chat_timeline_offset_ms": 0,
+            "structured_chat_required": True,
+            "chat_binding_status": "BOUND_DIRECT",
+            "chat_binding_authority": "test",
+        },
+    )
+    assert plan["status"] == "active"
+    assert plan["removals"][0]["structured_chat_witness"][0]["text"].startswith(
+        "请问能不能"
+    )
+    assert plan["removals"][0]["structured_chat_witness"][0][
+        "removed_text_match"
+    ] is True
+
+
+def test_unrelated_sc_nearby_but_not_read_in_removed_text_is_kept(tmp_path: Path):
+    srt = tmp_path / "source.srt"
+    srt.write_text("bound transcript\n", encoding="utf-8")
+    origin = 1_700_000_000_000
+    jsonl = tmp_path / "source.jsonl"
+    jsonl.write_text(
+        json.dumps(
+            {
+                "cmd": "SUPER_CHAT_MESSAGE",
+                "send_time": origin + 12_000,
+                "data": {
+                    "id": "sc-nearby",
+                    "message": "请问能不能聊一下别的事",
+                    "user_info": {"uname": "viewer"},
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    import hashlib
+
+    digest = "sha256:" + hashlib.sha256(srt.read_bytes()).hexdigest()
+    chat_digest = "sha256:" + hashlib.sha256(jsonl.read_bytes()).hexdigest()
+    deny = {
+        "contains_setup": False,
+        "contains_cause": False,
+        "contains_answer": False,
+        "contains_punchline": False,
+        "contains_referent_intro": False,
+        "contains_correction": False,
+        "contains_resolution": False,
+        "later_dependency": False,
+        "interaction_relevant": False,
+        "meaning_or_stance_changed": False,
+    }
+    plan = build_talk_filler_plan(
+        start_ms=0,
+        end_ms=70_000,
+        cues=[
+            cue(1, 0, 10_000, "主题开头"),
+            cue(2, 11_000, 14_000, "我读到另一个问题"),
+            cue(3, 16_000, 70_000, "主题继续到结尾"),
+        ],
+        proposals=[
+            {
+                "proposal_id": "sc-nearby-not-read",
+                "mode": "remove_cues",
+                "start_cue": 2,
+                "end_cue": 2,
+                "reason": "unrelated_sc",
+                "bridge_coherent": True,
+                "bridge": "两侧继续同一主题",
+                "topic_relation": "unrelated",
+                **deny,
+                "confidence": 0.99,
+            }
+        ],
+        proposal_srt_sha256=digest,
+        source_srt_path=srt,
+        structured_chat_binding={
+            "chat_jsonl": str(jsonl),
+            "chat_jsonl_sha256": chat_digest,
+            "chat_origin_epoch_ms": origin,
+            "chat_timeline_offset_ms": 0,
+            "structured_chat_required": True,
+            "chat_binding_status": "BOUND_DIRECT",
+            "chat_binding_authority": "test",
+        },
+    )
+    assert plan["status"] == "contiguous_fallback"
+    assert plan["removals"] == []
+    assert plan["rejected_proposals"][0]["reason_code"] == (
+        "structured_chat_sc_not_read_in_removed_text"
+    )
+
+
+def test_automatic_trim_at_or_below_60500ms_falls_back_to_contiguous(tmp_path: Path):
+    srt = tmp_path / "source.srt"
+    srt.write_text("bound transcript\n", encoding="utf-8")
+    import hashlib
+
+    digest = "sha256:" + hashlib.sha256(srt.read_bytes()).hexdigest()
+    deny = {
+        "contains_setup": False,
+        "contains_cause": False,
+        "contains_answer": False,
+        "contains_punchline": False,
+        "contains_referent_intro": False,
+        "contains_correction": False,
+        "contains_resolution": False,
+        "later_dependency": False,
+        "interaction_relevant": False,
+        "meaning_or_stance_changed": False,
+    }
+    plan = build_talk_filler_plan(
+        start_ms=0,
+        end_ms=63_500,
+        cues=[
+            cue(1, 0, 10_000, "主题开头"),
+            cue(2, 11_000, 14_000, "谢谢阿甲的粉丝灯牌"),
+            cue(3, 16_000, 63_500, "主题继续到结尾"),
+        ],
+        proposals=[
+            {
+                "proposal_id": "short-after-trim",
+                "mode": "remove_cues",
+                "start_cue": 2,
+                "end_cue": 2,
+                "reason": "gift_thanks",
+                "bridge_coherent": True,
+                "bridge": "两侧继续同一主题",
+                "topic_relation": "unrelated",
+                **deny,
+                "confidence": 0.99,
+            }
+        ],
+        proposal_srt_sha256=digest,
+        source_srt_path=srt,
+    )
+    assert plan["status"] == "contiguous_fallback"
+    assert plan["effective_duration_ms"] == 63_500
+    assert any(
+        row["reason_code"] == "EFFECTIVE_DURATION_NOT_OVER_60S"
+        for row in plan["rejected_proposals"]
+    )
+
+
+def test_housekeeping_still_requires_existing_global_semantic_pass():
+    cues = [
+        cue(1, 0, 10_000, "主题开始，先说明问题"),
+        cue(2, 20_000, 25_000, "完全无关的插话"),
+        cue(3, 30_000, 70_000, "主题继续并完成笑点"),
+    ]
+    plan = {
+        "retained_intervals": [
+            {"start_ms": 0, "end_ms": 10_000},
+            {"start_ms": 25_000, "end_ms": 70_000},
+        ],
+        "removals": [
+            {
+                "proposal_id": "aside",
+                "source_start_ms": 10_000,
+                "source_end_ms": 25_000,
+                "authorization_kind": "automatic",
+                "reason": "housekeeping",
+            }
+        ],
+    }
+    complete = {
+        "topic_complete": True,
+        "cause_answer_chain_complete": True,
+        "referents_resolved": True,
+        "corrections_preserved": True,
+        "punchline_preserved": True,
+        "closing_resolution_preserved": True,
+        "audience_interactions_consistent": True,
+        "audience_feedback_preserved": True,
+        "meaningful_repeats_preserved": True,
+        "meaning_or_stance_changed": False,
+        "pass": True,
+        "reason": "删除后主题、笑点和衔接完整",
+    }
+
+    passed = verify_automatic_filler_plan(
+        cues=cues,
+        plan=plan,
+        llm_call=lambda prompt: json.dumps(complete, ensure_ascii=False),
+    )
+    assert passed["status"] == "PASS"
+
+    denied = dict(complete)
+    denied["referents_resolved"] = False
+    denied["pass"] = False
+    failed = verify_automatic_filler_plan(
+        cues=cues,
+        plan=plan,
+        llm_call=lambda prompt: json.dumps(denied, ensure_ascii=False),
+    )
+    assert failed["status"] == "FAIL"
+
+
+def test_global_verifier_prompt_contains_original_source_and_removed_cues():
+    cues = [
+        cue(1, 0, 5_000, "主题开头和上下文"),
+        cue(2, 5_000, 10_000, "相关SC实质回答：我来解释这个主题"),
+        cue(3, 10_000, 15_000, "笑点铺垫：先这样再反转"),
+        cue(4, 15_000, 40_000, "保留的主题收束和笑点结论"),
+    ]
+    plan = {
+        "source_start_ms": 0,
+        "source_end_ms": 40_000,
+        "retained_intervals": [
+            {"start_ms": 0, "end_ms": 5_000},
+            {"start_ms": 15_000, "end_ms": 40_000},
+        ],
+        "removals": [
+            {
+                "proposal_id": "aside",
+                "source_start_ms": 5_000,
+                "source_end_ms": 15_000,
+                "reason": "housekeeping",
+                "authorization_kind": "automatic",
+            }
+        ],
+    }
+    payload = {
+        "topic_complete": True,
+        "cause_answer_chain_complete": True,
+        "referents_resolved": True,
+        "corrections_preserved": True,
+        "punchline_preserved": True,
+        "closing_resolution_preserved": True,
+        "audience_interactions_consistent": True,
+        "audience_feedback_preserved": True,
+        "meaningful_repeats_preserved": True,
+        "meaning_or_stance_changed": False,
+        "pass": True,
+        "reason": "完整",
+    }
+    prompts: list[str] = []
+
+    result = verify_automatic_filler_plan(
+        cues=cues,
+        plan=plan,
+        llm_call=lambda prompt: prompts.append(prompt)
+        or json.dumps(payload, ensure_ascii=False),
+    )
+
+    assert result["status"] == "PASS"
+    assert len(prompts) == 1
+    prompt = prompts[0]
+    assert "<SOURCE 0-40000ms>" in prompt
+    assert "保留的主题收束和笑点结论" in prompt
+    removed_start = prompt.index("<REMOVED aside 5000-15000ms")
+    removed_end = prompt.index("</REMOVED>", removed_start)
+    removed_text = prompt[removed_start:removed_end]
+    assert "相关SC实质回答" in removed_text
+    assert "笑点铺垫" in removed_text
+    assert "原始完整选中区间" in prompt
+    assert "固定删除区间及删除前原话" in prompt
+    assert "观众反馈是否完整保留" in prompt
+    assert "audience_feedback_preserved" in prompt
+    assert "有意义的重复回应" in prompt
+    assert "meaningful_repeats_preserved" in prompt
+    assert "removed_text_match=true" in prompt
+
+
+def test_automatic_missing_original_text_never_reaches_model():
+    plan = {
+        "source_start_ms": 0,
+        "source_end_ms": 70_000,
+        "retained_intervals": [
+            {"start_ms": 0, "end_ms": 10_000},
+            {"start_ms": 25_000, "end_ms": 70_000},
+        ],
+        "removals": [{
+            "proposal_id": "missing-original",
+            "source_start_ms": 10_000,
+            "source_end_ms": 25_000,
+            "authorization_kind": "automatic",
+            "reason": "housekeeping",
+        }],
+    }
+    def forbidden_call(prompt):
+        raise AssertionError("missing original text must fail before model dispatch")
+    result = verify_automatic_filler_plan(
+        cues=[cue(1, 0, 10_000, "保留主题开头"), cue(2, 30_000, 70_000, "保留主题结尾")],
+        plan=plan,
+        llm_call=forbidden_call,
+    )
+    assert result == {"status": "FAIL", "reason_code": "REMOVED_TRANSCRIPT_MISSING"}
 
 
 def test_piece_specs_preserve_order_and_only_add_outer_context():
@@ -227,7 +851,8 @@ def test_piece_specs_preserve_explicit_optional_absent_chat_state():
 def test_global_verifier_requires_every_invariant_to_be_explicitly_true():
     cues = [
         cue(1, 0, 10_000, "前半段"),
-        cue(2, 20_000, 70_000, "后半段"),
+        cue(2, 12_000, 15_000, "可删除的事务话语"),
+        cue(3, 20_000, 70_000, "后半段"),
     ]
     plan = {
         "retained_intervals": [
@@ -251,26 +876,39 @@ def test_global_verifier_requires_every_invariant_to_be_explicitly_true():
         "punchline_preserved": True,
         "closing_resolution_preserved": True,
         "audience_interactions_consistent": True,
+        "audience_feedback_preserved": True,
+        "meaningful_repeats_preserved": True,
         "meaning_or_stance_changed": False,
         "pass": True,
         "reason": "完整",
     }
+    captured_prompts: list[str] = []
 
     passed = verify_automatic_filler_plan(
         cues=cues,
         plan=plan,
-        llm_call=lambda prompt: __import__("json").dumps(passed_payload),
+        llm_call=lambda prompt: captured_prompts.append(prompt)
+        or __import__("json").dumps(passed_payload),
     )
     assert passed["status"] == "PASS"
+    assert "<SOURCE 0-70000ms>" in captured_prompts[0]
 
     missing_field = dict(passed_payload)
-    missing_field.pop("referents_resolved")
+    missing_field.pop("audience_feedback_preserved")
     failed = verify_automatic_filler_plan(
         cues=cues,
         plan=plan,
         llm_call=lambda prompt: __import__("json").dumps(missing_field),
     )
     assert failed["status"] == "FAIL"
+    false_field = dict(passed_payload)
+    false_field["audience_feedback_preserved"] = False
+    failed_false = verify_automatic_filler_plan(
+        cues=cues,
+        plan=plan,
+        llm_call=lambda prompt: __import__("json").dumps(false_field),
+    )
+    assert failed_false["status"] == "FAIL"
 
 
 def test_final_audit_records_content_and_delivered_jump_times(tmp_path: Path):
@@ -434,11 +1072,8 @@ def test_final_audit_rebinds_jump_times_to_actual_burned_intro(tmp_path: Path):
     assert audit["removals"][1]["delivered_output_jump_ms"] is None
 
 
-def test_merge_gap_removal_produces_two_piece_plan():
-    """同主题合并跳切：merge_gap 车道不受 15s 微剪上限约束，
-    产出两段 retained intervals（→ 两个 pieces 拼接）。"""
-    from src.autoslice.talk_filler import build_talk_filler_plan
-
+def test_merge_gap_removal_requires_explicit_user_approval():
+    """旧 selector merge_gap 输入不能绕过连续内容和用户批准门。"""
     plan = build_talk_filler_plan(
         start_ms=0,
         end_ms=660_000,
@@ -448,16 +1083,14 @@ def test_merge_gap_removal_produces_two_piece_plan():
         ],
     )
 
-    assert plan["status"] == "active"
-    removals = plan["removals"]
-    assert len(removals) == 1
-    assert removals[0]["authorization_kind"] == "merge_gap"
-    assert removals[0]["reason"] == "same_topic_merge_gap"
-    assert plan["retained_intervals"] == [
-        {"start_ms": 0, "end_ms": 60_000},
-        {"start_ms": 565_000, "end_ms": 660_000},
-    ]
-    assert plan["effective_duration_ms"] == 155_000
+    assert plan["status"] == "contiguous_fallback"
+    assert plan["removals"] == []
+    assert plan["retained_intervals"] == [{"start_ms": 0, "end_ms": 660_000}]
+    assert plan["effective_duration_ms"] == 660_000
+    assert any(
+        row.get("reason_code") == "CONSERVATIVE_POLICY_REQUIRES_USER_APPROVAL"
+        for row in plan["rejected_proposals"]
+    )
 
 
 def test_merge_gap_over_cap_is_rejected():
@@ -477,7 +1110,9 @@ def test_merge_gap_over_cap_is_rejected():
         for row in (plan.get("removals") or [])
         if row.get("authorization_kind") == "merge_gap"
     ]
+    assert plan["status"] == "contiguous_fallback"
+    assert plan["retained_intervals"] == [{"start_ms": 0, "end_ms": 1_500_000}]
     assert any(
-        row.get("reason_code") == "MERGE_GAP_TOO_LARGE"
+        row.get("reason_code") == "CONSERVATIVE_POLICY_REQUIRES_USER_APPROVAL"
         for row in plan.get("rejected_proposals") or []
     )

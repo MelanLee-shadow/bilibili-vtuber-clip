@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterator, Mapping, Sequence
 
+from src.autoslice.package_publish_mirror import publish_staging_field_sets
 from src.autoslice.package_relocation_contract import (
     ROOT_ROLES as _ROOT_ROLES,
     PUBLISH_PATH_POINTERS as _PUBLISH_PATH_POINTERS,
@@ -53,10 +54,6 @@ _COMMIT_ORDER = (
     "pre_relocation_publish",
     "pre_relocation_record",
     *_DOCUMENT_COMMIT_ORDER,
-)
-_PUBLISH_STAGING_LOCAL_KEYS = frozenset({"publish_json_path", "status"})
-_PUBLISH_NON_STAGING_KEYS = frozenset(
-    {"artifact_hashes", "candidate_id", "schema_version", "video_path"}
 )
 
 
@@ -275,16 +272,13 @@ def _transform_record(
     publish_staging = result.get("publish_staging")
     if not isinstance(publish_staging, dict):
         raise PackageRelocationError("record: publish_staging is not an object")
-    expected_staging_keys = (
-        set(publish) - _PUBLISH_NON_STAGING_KEYS
-    ) | set(_PUBLISH_STAGING_LOCAL_KEYS)
-    if set(publish_staging) != expected_staging_keys:
+    mirrored_keys, required_keys, allowed_keys = publish_staging_field_sets(
+        publish
+    )
+    actual_keys = set(publish_staging)
+    if required_keys - actual_keys or actual_keys - allowed_keys:
         raise PackageRelocationError("record/publish: staging field set differs")
-    for key in publish_staging:
-        if key in _PUBLISH_STAGING_LOCAL_KEYS:
-            continue
-        if key not in publish:
-            raise PackageRelocationError(f"publish: missing mirrored field {key}")
+    for key in mirrored_keys:
         publish_staging[key] = copy.deepcopy(publish[key])
 
     changed = _changed_pointers(source, result)
@@ -647,15 +641,14 @@ def _validate_graph(
     publish_staging = record.get("publish_staging")
     if not isinstance(publish_staging, Mapping):
         raise PackageRelocationError("record: publish_staging missing")
-    expected_staging_keys = (
-        set(publish) - _PUBLISH_NON_STAGING_KEYS
-    ) | set(_PUBLISH_STAGING_LOCAL_KEYS)
-    if set(publish_staging) != expected_staging_keys:
+    mirrored_keys, required_keys, allowed_keys = publish_staging_field_sets(
+        publish
+    )
+    actual_keys = set(publish_staging)
+    if required_keys - actual_keys or actual_keys - allowed_keys:
         raise PackageRelocationError("record/publish: staging field set differs")
-    for key, value in publish_staging.items():
-        if key in _PUBLISH_STAGING_LOCAL_KEYS:
-            continue
-        if key not in publish or value != publish[key]:
+    for key in mirrored_keys:
+        if publish_staging[key] != publish[key]:
             raise PackageRelocationError(
                 f"record/publish: mirrored field {key} differs"
             )

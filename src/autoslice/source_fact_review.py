@@ -63,6 +63,9 @@ from src.autoslice.qixi_source_fact_terminal_preservation import (
     DECISION as QIXI_TERMINAL_TEXT_PRESERVATION_DECISION,
     validate_terminal_preservation_source_fact_review,
 )
+from src.autoslice.source_fact_rescore_candidate_validation import (
+    source_fact_rescore_candidate_shape_is_valid,
+)
 from src.autoslice.source_fact_review_shape import source_fact_review_passes_shape
 from src.autoslice.surface_canon import (
     CHANNEL_PROFILE, _hard_meme_canon_prompt_block,
@@ -1753,8 +1756,9 @@ def _validate_receipt_speaker_evidence(
     ):
         return False
     if not top_level_fields_present and not pass_evidence_fields_present:
-        # Historical receipts bind only the transcript hash; keep one only when
-        # freshly rebuilt present/absent state reproduces it across every pass.
+        # Historical receipts bind only the transcript hash.  A package may
+        # keep using one only when its freshly rebuilt present/absent state
+        # reproduces that exact nullable hash across every pass.
         return True
     if not top_level_fields_present or not pass_evidence_fields_present:
         return False
@@ -1783,6 +1787,9 @@ def validate_source_fact_review(
     story_contract: Mapping[str, object] | None = None,
 ) -> bool:
     """Recheck the persisted receipt without trusting selected top-level fields."""
+    if isinstance(review, Mapping) and review.get("schema_version") == "b2-caption-source-fact-successor.v1":
+        from src.autoslice.b2_caption_formal_successor import validate_source_fact_from_scope
+        return bool(validate_source_fact_from_scope(locals()))
     if not source_fact_review_passes(review) or not isinstance(review, Mapping):
         return False
     receipt = dict(review)
@@ -1931,59 +1938,27 @@ def validate_source_fact_rescore_candidate_receipt(
     candidate_id: str | None = None,
     final_reviewed_srt_path: Path | None = None,
 ) -> bool:
-    """Recheck a REPAIR_SCORECARD_STALE receipt's ``rescore_candidate`` block.
-
-    Deliberately a sibling of ``validate_source_fact_review`` rather than an
-    extension of it: that function's every existing call site treats a
-    ``True`` result as "this receipt is a deliverable PASS", gated by
-    ``source_fact_review_passes`` (status == "PASS").  A FAILED/
-    REPAIR_SCORECARD_STALE receipt must never validate as deliverable through
-    that gate, so the bounded rescore lane gets its own narrow verifier
-    instead of widening the shared one's contract.
-    """
+    """Recheck the bounded rescore receipt without treating it as a PASS."""
 
     if not isinstance(review, Mapping):
         return False
     receipt = dict(review)
     declared_receipt_sha256 = receipt.pop("receipt_sha256", None)
-    if not isinstance(declared_receipt_sha256, str):
-        return False
-    if _finalize_receipt(receipt).get("receipt_sha256") != declared_receipt_sha256:
-        return False
-    if not _validate_receipt_entity_context(
-        review,
-        candidate_id=candidate_id,
-        final_reviewed_srt_path=final_reviewed_srt_path,
-    ):
-        return False
     if (
-        review.get("schema_version") != SCHEMA_VERSION
-        or review.get("status") != "FAILED"
-        or review.get("decision") != "REPAIR_SCORECARD_STALE"
-        or review.get("reason_code") != "SOURCE_FACT_REPAIRED_HOOK_SCORECARD_STALE"
-        or review.get("final_selection_hook") != selection_hook
-        or review.get("final_title") != title
+        not isinstance(declared_receipt_sha256, str)
+        or _finalize_receipt(receipt).get("receipt_sha256") != declared_receipt_sha256
+        or not _validate_receipt_entity_context(
+            review,
+            candidate_id=candidate_id,
+            final_reviewed_srt_path=final_reviewed_srt_path,
+        )
     ):
         return False
-    passes = review.get("passes")
-    if not isinstance(passes, list) or not passes or not isinstance(passes[-1], Mapping):
-        return False
-    last_pass = passes[-1]
-    if last_pass.get("status") != "REPAIR" or last_pass.get("selection_scorecard_sha256") != _sha256_json(selection_scorecard):
-        return False
-    block = review.get("rescore_candidate")
-    if not isinstance(block, Mapping):
-        return False
-    repaired_hook = last_pass.get("final_selection_hook")
-    repaired_title = last_pass.get("final_title")
-    return bool(
-        block.get("schema_version") == RESCORE_CANDIDATE_SCHEMA_VERSION
-        and isinstance(repaired_hook, str)
-        and block.get("repaired_selection_hook") == repaired_hook
-        and block.get("repaired_selection_hook_sha256") == _sha256_text(repaired_hook)
-        and isinstance(repaired_title, str)
-        and block.get("repaired_title") == repaired_title
-        and block.get("repaired_title_sha256") == _sha256_text(repaired_title)
-        and block.get("stale_selection_scorecard_sha256") == _sha256_json(selection_scorecard)
-        and block.get("selection_scorecard_review") == last_pass.get("selection_scorecard_review")
+    return source_fact_rescore_candidate_shape_is_valid(
+        review,
+        selection_hook=selection_hook,
+        title=title,
+        selection_scorecard_sha256=_sha256_json(selection_scorecard),
+        schema_version=SCHEMA_VERSION,
+        rescore_candidate_schema_version=RESCORE_CANDIDATE_SCHEMA_VERSION,
     )

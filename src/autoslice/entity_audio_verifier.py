@@ -86,11 +86,11 @@ GEMINI_API_URL = agy_gemini_client.GEMINI_API_URL
 ENTITY_AUDIO_API_MODEL_ENV = "ENTITY_AUDIO_GEMINI_API_MODEL"
 ENTITY_AUDIO_API_MODEL_DEFAULT = "gemini-3.6-flash"
 ENTITY_AUDIO_API_REQUEST_MAX_BYTES = 20_000_000
-# F21（维护者）：显式关掉 AGY 那一环时的开关。默认不设 = AGY 仍是
-# 首选（启用 web 时排在 web 后）；设为 1 时仅跳过 AGY。key 顺序仍为
-# AGY 订阅 →
-# 免费 3 key 轮换 → 政策门控付费 backup（7/19 裁定，同一 Gemini 模型的配额
-# 顺序，不是不同 provider 的证据等级）。
+
+
+
+
+
 ENTITY_AUDIO_DISABLE_AGY_ENV = "ENTITY_AUDIO_DISABLE_AGY"
 
 ENTITY_AUDIO_GEMINI_WEB_ENABLED_ENV = _gemini_web.ENTITY_AUDIO_GEMINI_WEB_ENABLED_ENV
@@ -104,14 +104,14 @@ ENTITY_AUDIO_GEMINI_WEB_USER_ENV = _gemini_web.ENTITY_AUDIO_GEMINI_WEB_USER_ENV
 ENTITY_AUDIO_GEMINI_WEB_TIMEOUT_ENV = _gemini_web.ENTITY_AUDIO_GEMINI_WEB_TIMEOUT_ENV
 _terminate_web_process_group = _gemini_web.terminate_web_process_group
 
-# Phase 1 acoustic-witness architecture (维护者 ruling): the audio
-# model is a WITNESS, not a judge. In witness mode it never sees any
-# candidate text — it dictates suspected pinyin syllables only; hanzi
-# word-choice reasoning belongs to the CPA judge downstream.
-# The prompt contract is part of the acoustic-cache identity.  A
-# production incident proved why: the old prompt embedded one valid pinyin
-# example and AGY copied it verbatim for unrelated audio.  Audio bytes alone
-# are not a sufficient cache key when the dictation instructions change.
+
+
+
+
+
+
+
+
 WITNESS_PROMPT_CONTRACT = "candidate-free-toneless-pinyin-neutral-length.v3"
 
 
@@ -504,14 +504,14 @@ def _witness_acoustic_cache_path(
 ) -> Path:
     """Global content-addressed cache entry for one witness audio clip.
 
-    成本裁定（维护者，3 天 $40 案）：付费声学证人 88% 的消耗来自
-    重产轮次对**同一段音频**的重复听写——witness 请求按设计不携带候选
-    （纯听写），答案只由音频决定，request_sha 里的文本漂移不改变问题本身。
-    键严格绑定音频片 sha256、完整 prompt sha、provider 和 model；中性
-    音节提示、问题 markers、provider 或 model 任一漂移都必须 miss。
-    BASE 从候选包目录上溯（out/<date>/<cid> → BASE），主树与 V15
-    恢复树各自命中自己的缓存。
-    """
+ 成本裁定（公开规则，3 天 $40 案）：付费声学证人 88% 的消耗来自
+ 重产轮次对**同一段音频**的重复听写——witness 请求按设计不携带候选
+ （纯听写），答案只由音频决定，request_sha 里的文本漂移不改变问题本身。
+ 键严格绑定音频片 sha256、完整 prompt sha、provider 和 model；中性
+ 音节提示、问题 markers、provider 或 model 任一漂移都必须 miss。
+ BASE 从候选包目录上溯（out/<date>/<cid> → BASE），主树与 V15
+ 恢复树各自命中自己的缓存。
+ """
 
     cache_identity = _json_sha256(
         {
@@ -1320,15 +1320,15 @@ def _prepare_audio_span(
                 delivery_context_end_ms + source_media_timeline_offset_ms
             )
             if witness_mode:
-                # The dictation witness hears ONLY the target (±400ms onset/
-                # offset pad). Feeding it the whole context window makes it
-                # transcribe past the markers (1.12s target, 14
-                # heard syllables) and poisons the judge. Context stays a
-                # text-side input to the judge, never witness audio.
-                # 裁剪边界量化到 100ms 网格（维护者 成本追问）：
-                # cue 边界几十毫秒的轮间漂移会让裁剪字节不同、声学缓存
-                # 失配重付费。松垫本就 400ms，±50ms 的格点吸附无实质影响，
-                # 换来漂移轮的缓存命中。向外取整：起点下取、终点上取。
+
+
+
+
+
+
+
+
+
                 crop_start_ms = max(0, (target_start_ms - 400) // 100 * 100)
                 crop_end_ms = min(
                     source_duration_ms,

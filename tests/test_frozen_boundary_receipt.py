@@ -5,6 +5,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from src.autoslice.boundary_endpoint_binding import bind_final_semantic_endpoint
 from src.autoslice.boundary_semantic_review import (
     build_boundary_search_scope,
@@ -751,7 +753,8 @@ def test_source_identity_or_terminal_anchor_mismatch_uses_fresh_review(
     assert replay == {}
 
 
-def test_final_srt_one_byte_tamper_uses_fresh_review(tmp_path: Path):
+@pytest.mark.parametrize("changed_text", ["故事开场铺垫", "故事完整收束"])
+def test_final_srt_one_byte_tamper_uses_fresh_review(tmp_path: Path, changed_text):
     spec, _record_path, final_srt, source_review = _build_spec_and_record(tmp_path)
     receipt = load_frozen_boundary_receipt(spec, candidate_id=CID)
     assert receipt is not None
@@ -763,7 +766,7 @@ def test_final_srt_one_byte_tamper_uses_fresh_review(tmp_path: Path):
         return _pass_response(2, [1, 2])
 
     result = exact_delivery_correction_audit(
-        final_srt_text=final_srt.replace("故事开场铺垫", "故事开场铺垫呀", 1),
+        final_srt_text=final_srt.replace(changed_text, changed_text + "呀", 1),
         correction_audit={"boundary_semantic_review": source_review},
         source_final_start_ms=1_000,
         source_final_end_ms=6_000,

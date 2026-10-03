@@ -127,7 +127,7 @@ def _fixture(tmp_path: Path) -> tuple[dict, Path, Path]:
         "schema_version": MIGRATION_SCHEMA_VERSION,
         "tool_commit": "981bc4ab",
         "reason": REASON,
-        "operator_authority": {"operator": "fixture-operator", "ticket": "OCI3-1"},
+        "operator_authority": {"operator": "fixture-operator", "ticket": "runtime host-1"},
         "old_state_snapshot": {"path": str(state_path), "sha256": hashlib.sha256(state_path.read_bytes()).hexdigest()},
         "old_disposition_relative": row["source_relative_path"],
         "old_row_canonical_sha256": row["canonical_integrity"]["canonical_json_sha256"],

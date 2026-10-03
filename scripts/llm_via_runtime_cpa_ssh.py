@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.autoslice.llm_client import (  # noqa: E402
+from src.autoslice.llm_client import (
     PROVIDER_DIAGNOSTIC_MARKER,
     sanitize_provider_diagnostics,
 )

@@ -942,12 +942,12 @@ def apply_authoritative_chat_evidence(
     read question missing only its final particle with the reply in one cue.
     """
 
-    # Normalize every caller, not only JSONL ingestion: XML, fixtures, and
-    # future adapters must not be able to inject SRT blocks/control sequences
-    # into the output even when their spoken words genuinely match the audio.
-    # 梗词硬规范同样作用于证据文本（维护者：观众弹幕原文写「直女」
-    # 也是同一个梗，逐字注入前先回正为「侄女」——否则 verbatim 权威会把草稿里
-    # 已规范化的写法改回去）。
+
+
+
+
+
+
     evidence = [
         ChatEvidence(
             item.kind,

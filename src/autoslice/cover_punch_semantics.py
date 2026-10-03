@@ -11,14 +11,14 @@ from src.autoslice.llm_client import LlmCall, extract_json_object
 from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
-# v2（维护者 逐字裁定）：「梗字从来没有要求过必须是标题的连续子串吧，
-# 我不记得我要求过，事实上很多高播放量的切片，封面字块里的梗字和标题不一致，
-# 反而可能承接了一些解释原因或者补充说明的感觉，不需要与标题一致重复。」
-# 抽取式（连续子串）硬约束因此退役——它从来不是 维护者 的要求，是
-# 实现梗字模式时为「防 LLM 编造封面字」自造的机械代理（`409e22f`，docstring
-# 自述「防的是 LLM 编造封面字」），`e35b74a` 又在终审层复制加固。
-# 那个防编造动机**仍然成立**，只是改由判官的 `no_fabricated_fact` 承担：梗字
-# 可以改写、解释原因、补充说明，但不得断言片中没有的事。
+
+
+
+
+
+
+
+
 SCHEMA_VERSION = "lidousha-cover-punch-semantic-review.v2"
 LEGACY_SCHEMA_VERSIONS = ("lidousha-cover-punch-semantic-review.v1",)
 FULL_TEXT_COVER_CONTRACT_SCHEMA = "lidousha-full-text-cover-contract.v1"
@@ -243,10 +243,10 @@ def _validated_punch_lines(
             not (2 <= len(canonical) <= 12)
             or punch_line_em_width(fragment) > PUNCH_LINE_MAX_EM
             or "\n" in fragment
-            # 合并说明：ft 分支仍带「canonical not in haystack 直接毙」的抽取式强制,
-            # 主线 3301e4e 已按 维护者 裁定撤销(见上方 docstring)。不恢复
-            # 子串强制;ft 新增的 whitespace 守卫留下,并与 extractive 守卫同域——
-            # 只对确实是原文子串的片段成立。
+
+
+
+
             or (
                 is_extractive
                 and (
@@ -368,55 +368,55 @@ def _review_prompt(
 ) -> str:
     return (
         f"你是{CHANNEL_PROFILE.display_name}切片封面的最终文字语义裁决者。你没有音频或图像输入，"
-        "只裁决封面梗字；不要声称听见或看见任何内容。\n"
-        "陌生观众在信息流里只会先看到通用主播主体和下面 1-2 行梗字。"
-        "梗字必须让他理解一件具体发生了什么的事、冲突/反差/荒诞因果，以及"
-        "为什么值得点开；不能只是两个各自来自标题、合起来却不成事件的关键词。"
-        "例如“生豆角 / 熊猫头下播”含具象名词但没有说明她要拉谁一起中招，"
-        "必须 REVISE。不要把背景可能会画出的道具当作文字语义缺口的补丁。\n"
-        "条件和宾语也不能被截掉后生成新因果。例如完整故事是“转发这条生日消息"
-        "能拿菲尔兹奖”，梗字若只写“生日能拿菲尔兹奖”就把生日误写成获奖原因，"
-        "必须 REVISE 为同时保留“转发”和“消息/信息”的文字原子。\n"
-        f"完整投稿标题: {title}\n"
-        f"完整封面文案: {cover_text}\n"
-        f"StoryContract selection_hook: {story_hook or '(未提供，按标题裁决)'}\n"
-        f"初选梗字: {' / '.join(punch)}\n"
-        "输出一个 JSON 对象。status 只能是 PASS、REVISE、REJECT。PASS 时"
-        " final_punch 必须与初选逐字相同；REVISE 时给更自足的 1-2 行；"
-        "REJECT 表示这条片子配不出任何合格的短梗字。final_punch.main 必填、"
-        "sub 可为 null；每行 2-12 字，"
-        "并且必须能作为一条物理行直接渲染（最多 9 个全角字宽；ASCII 字符约半个"
-        "全角字），也不能依赖渲染器在词中间二次断行。例如不要返回"
-        "“被粉色小姐姐布下迷魂阵”，应缩短为仍然自足的"
-        "“小姐姐布下迷魂阵 / 我是侄女啊”。\n"
-        "梗字**不要求**是标题或封面文案的逐字连续片段，也不必与标题一致重复"
-        "（维护者 2026-08-10 逐字裁定：「梗字从来没有要求过必须是标题的连续子串吧，"
-        "我不记得我要求过，事实上很多高播放量的切片，封面字块里的梗字和标题不一致，"
-        "反而可能承接了一些解释原因或者补充说明的感觉，不需要与标题一致重复。」）。"
-        "你可以改写、缩写、换更口语的说法，第二行也可以承接解释原因或补充说明，"
-        "而不是把第一行的词再抄一遍。\n"
-        "但梗字**只能说片里真有的事**：其中每一个具体指涉（人、物、动作、数字、"
-        "结论）都必须能由上面的完整标题或 StoryContract selection_hook 支撑。"
-        "不得新增没出现过的人物/物件/情节，不得把推测写成已发生的事实，不得升级"
-        "程度或结果（把「有点无语」写成「当场翻脸」），也不得用背景图也许会画出的"
-        "道具去补文字语义缺口。做不到就 REVISE 成有支撑的写法，仍做不到才 REJECT。\n"
-        "如果你选择直接抽取原文片段，那就不要停在紧随其后的引号、书名号或括号成分"
-        "之前——那个成分是未完的语义原子；例如抽“让新3D永久保留”必须改为带有"
-        "“白色奶龙”对象的片段。\n"
-        "stranger_can_infer_event、"
-        "contains_concrete_subject、"
-        "contains_action_or_conflict、"
-        "no_fabricated_fact 四项只有确实成立才给 true。"
-        "story_summary 用一句话说明梗字表达的具体事件，click_motivation 说明"
-        "陌生观众为何会想点开；不要复述规则。\n"
-        '{"schema_version":"lidousha-cover-punch-semantic-review.v2",'
-        '"status":"PASS|REVISE|REJECT",'
-        '"final_punch":{"main":"...","sub":null|"..."}|null,'
-        '"stranger_can_infer_event":true|false,'
-        '"contains_concrete_subject":true|false,'
-        '"contains_action_or_conflict":true|false,'
-        '"no_fabricated_fact":true|false,'
-        '"story_summary":"...","click_motivation":"..."}'
+ "只裁决封面梗字；不要声称听见或看见任何内容。\n"
+ "陌生观众在信息流里只会先看到通用主播主体和下面 1-2 行梗字。"
+ "梗字必须让他理解一件具体发生了什么的事、冲突/反差/荒诞因果，以及"
+ "为什么值得点开；不能只是两个各自来自标题、合起来却不成事件的关键词。"
+ "例如“生豆角 / 熊猫头下播”含具象名词但没有说明她要拉谁一起中招，"
+ "必须 REVISE。不要把背景可能会画出的道具当作文字语义缺口的补丁。\n"
+ "条件和宾语也不能被截掉后生成新因果。例如完整故事是“转发这条生日消息"
+ "能拿菲尔兹奖”，梗字若只写“生日能拿菲尔兹奖”就把生日误写成获奖原因，"
+ "必须 REVISE 为同时保留“转发”和“消息/信息”的文字原子。\n"
+ f"完整投稿标题: {title}\n"
+ f"完整封面文案: {cover_text}\n"
+ f"StoryContract selection_hook: {story_hook or '(未提供，按标题裁决)'}\n"
+ f"初选梗字: {' / '.join(punch)}\n"
+ "输出一个 JSON 对象。status 只能是 PASS、REVISE、REJECT。PASS 时"
+ " final_punch 必须与初选逐字相同；REVISE 时给更自足的 1-2 行；"
+ "REJECT 表示这条片子配不出任何合格的短梗字。final_punch.main 必填、"
+ "sub 可为 null；每行 2-12 字，"
+ "并且必须能作为一条物理行直接渲染（最多 9 个全角字宽；ASCII 字符约半个"
+ "全角字），也不能依赖渲染器在词中间二次断行。例如不要返回"
+ "“被粉色小姐姐布下迷魂阵”，应缩短为仍然自足的"
+ "“小姐姐布下迷魂阵 / 我是侄女啊”。\n"
+ "梗字**不要求**是标题或封面文案的逐字连续片段，也不必与标题一致重复"
+ "（公开规则逐字裁定：「梗字从来没有要求过必须是标题的连续子串吧，"
+ "我不记得我要求过，事实上很多高播放量的切片，封面字块里的梗字和标题不一致，"
+ "反而可能承接了一些解释原因或者补充说明的感觉，不需要与标题一致重复。」）。"
+ "你可以改写、缩写、换更口语的说法，第二行也可以承接解释原因或补充说明，"
+ "而不是把第一行的词再抄一遍。\n"
+ "但梗字**只能说片里真有的事**：其中每一个具体指涉（人、物、动作、数字、"
+ "结论）都必须能由上面的完整标题或 StoryContract selection_hook 支撑。"
+ "不得新增没出现过的人物/物件/情节，不得把推测写成已发生的事实，不得升级"
+ "程度或结果（把「有点无语」写成「当场翻脸」），也不得用背景图也许会画出的"
+ "道具去补文字语义缺口。做不到就 REVISE 成有支撑的写法，仍做不到才 REJECT。\n"
+ "如果你选择直接抽取原文片段，那就不要停在紧随其后的引号、书名号或括号成分"
+ "之前——那个成分是未完的语义原子；例如抽“让新3D永久保留”必须改为带有"
+ "“白色奶龙”对象的片段。\n"
+ "stranger_can_infer_event、"
+ "contains_concrete_subject、"
+ "contains_action_or_conflict、"
+ "no_fabricated_fact 四项只有确实成立才给 true。"
+ "story_summary 用一句话说明梗字表达的具体事件，click_motivation 说明"
+ "陌生观众为何会想点开；不要复述规则。\n"
+ '{"schema_version":"lidousha-cover-punch-semantic-review.v2",'
+ '"status":"PASS|REVISE|REJECT",'
+ '"final_punch":{"main":"...","sub":null|"..."}|null,'
+ '"stranger_can_infer_event":true|false,'
+ '"contains_concrete_subject":true|false,'
+ '"contains_action_or_conflict":true|false,'
+ '"no_fabricated_fact":true|false,'
+ '"story_summary":"...","click_motivation":"..."}'
     )
 
 

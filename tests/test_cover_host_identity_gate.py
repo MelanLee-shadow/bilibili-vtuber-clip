@@ -139,27 +139,29 @@ def test_source_final_lidousha_identity_match_passes_and_binds_hash(
     final = tmp_path / "final.png"
     Image.new("RGB", (1920, 1080), (20, 30, 40)).save(reference)
     Image.new("RGB", (1920, 1080), (80, 90, 100)).save(final)
-    monkeypatch.setattr(
-        cpa_frame_witness,
-        "image_vision_probe",
-        _fake_witness(
-            {
-                "source_lidousha_located": True,
-                "primary_subject_is_lidousha": True,
-                "primary_subject_matches_other_source_participant": False,
-                "primary_subject_is_visually_dominant": True,
-                "primary_subject_face_is_large_and_clear": True,
-                "primary_subject_carries_story_reaction": True,
-                "excessive_dead_space": False,
-                "meaningless_dominant_decoration": False,
-                "thumbnail_has_clear_click_hook": True,
-                "primary_subject_identity": "主播",
-                "identity_conflicts": [],
-                "composition_conflicts": [],
-                "reason": "主角与源图主播一致",
-            }
-        ),
-    )
+    verdict = {
+        "source_lidousha_located": True,
+        "primary_subject_is_lidousha": True,
+        "primary_subject_matches_other_source_participant": False,
+        "primary_subject_is_visually_dominant": True,
+        "primary_subject_face_is_large_and_clear": True,
+        "primary_subject_carries_story_reaction": True,
+        "excessive_dead_space": False,
+        "meaningless_dominant_decoration": False,
+        "thumbnail_has_clear_click_hook": True,
+        "primary_subject_identity": "主播，保留源图眼罩",
+        "identity_conflicts": [],
+        "composition_conflicts": [],
+        "reason": "主角与源图主播一致；眼罩是原有身份特征而非裁切",
+    }
+
+    def probe(image_path, question, **kwargs):
+        assert "原有眼罩是身份特征和 intentional occlusion" in question
+        assert "不得补画被遮住的眼" in question
+        assert "画面边缘、卡片、已渲染文字或新加物体" in question
+        return _fake_witness(verdict)(image_path, question, **kwargs)
+
+    monkeypatch.setattr(cpa_frame_witness, "image_vision_probe", probe)
 
     receipt = verify_final_host_identity(
         final_cover_path=final,
@@ -384,6 +386,109 @@ def test_cpa_redraw_blocks_before_ready_when_host_identity_is_wrong(
     assert generation["route_decision"]["host_identity_required"] is True
     assert generation["route_decision"]["actual_treatment"] is None
     assert generation["route_decision"]["execution_status"] == "BLOCKED"
+
+
+def test_cover_redraw_binds_canonical_runtime_cpa_when_ambient_is_missing(
+    tmp_path, monkeypatch
+):
+    from src.autoslice import publish_staging
+    from src.autoslice.cover_generation import LidoushaCoverArtDirection
+
+    runtime = tmp_path / "runtime"
+    reference = tmp_path / "reference.png"
+    reference.write_bytes(b"reference")
+    captured: dict[str, str] = {}
+
+    monkeypatch.delenv("CPA_BASE_URL", raising=False)
+    monkeypatch.delenv("CPA_API_KEY", raising=False)
+    monkeypatch.setenv("AUTOSLICE_FINAL_REVIEW_RUNTIME_ROOT", str(runtime))
+    monkeypatch.setattr(publish_staging, "_resolved_runtime_root", lambda _value: runtime)
+    monkeypatch.setattr(
+        publish_staging,
+        "runtime_cpa_command_environment",
+        lambda path: {
+            "CPA_BASE_URL": "https://runtime.example.test/v1",
+            "CPA_API_KEY": "runtime-secret",
+        },
+    )
+    monkeypatch.setattr(
+        publish_staging,
+        "_prepare_lidousha_cover_reference",
+        lambda *_args, **_kwargs: (reference, {"best_ms": 0}, None, None),
+    )
+    monkeypatch.setattr(
+        publish_staging,
+        "fixed_art_direction",
+        lambda *_args, **_kwargs: LidoushaCoverArtDirection(
+            role="shocked_default",
+            expression_en="shocked",
+            background_style="cobalt-comic-burst",
+            layout="banner",
+            hook_color="yellow",
+            is_song=False,
+        ),
+    )
+    monkeypatch.setattr(publish_staging, "load_emote_library", lambda _root: object())
+    monkeypatch.setattr(
+        publish_staging,
+        "_build_lidousha_cover_route",
+        lambda **_kwargs: (
+            "cpa_redraw",
+            {"host_identity_required": False, "required_participant_ids": []},
+        ),
+    )
+
+    def fake_redraw(**kwargs):
+        captured["base_url"] = kwargs["base_url"]
+        captured["api_key"] = kwargs["api_key"]
+        return {
+            "status": "AI_COVER_READY",
+            "reason_codes": [],
+            "cover_path": str(tmp_path / "cover.png"),
+            "cover_generation": kwargs["cover_generation"],
+        }
+
+    monkeypatch.setattr(publish_staging, "_stage_cpa_redraw_cover", fake_redraw)
+    monkeypatch.setattr(
+        publish_staging, "_enforce_final_talk_cover_thumbnail_gate", lambda value: value
+    )
+
+    result = publish_staging._stage_ai_cover(
+        {"status": "MATERIALIZED", "media_path": str(tmp_path / "clip.mp4")},
+        media_path=tmp_path / "clip.mp4",
+        candidate_id="runtime-cover-credentials",
+        title="【李豆沙】运行时封面凭据",
+        cover_text="运行时封面凭据",
+        run_ffmpeg=True,
+        fixed_options=publish_staging.FixedCoverStageOptions(cover_mode_override="cpa"),
+    )
+
+    assert result["status"] == "AI_COVER_READY"
+    assert captured == {
+        "base_url": "https://runtime.example.test/v1",
+        "api_key": "runtime-secret",
+    }
+
+
+def test_cover_cpa_credentials_keep_complete_ambient_override(monkeypatch):
+    from src.autoslice import publish_staging
+
+    monkeypatch.setenv("CPA_BASE_URL", "https://ambient.example.test/v1")
+    monkeypatch.setenv("CPA_API_KEY", "ambient-secret")
+
+    def runtime_loader_must_not_run(_path):
+        raise AssertionError("complete ambient CPA override should be preserved")
+
+    monkeypatch.setattr(
+        publish_staging,
+        "runtime_cpa_command_environment",
+        runtime_loader_must_not_run,
+    )
+
+    assert publish_staging._resolve_cover_cpa_credentials() == (
+        "https://ambient.example.test/v1",
+        "ambient-secret",
+    )
 
 
 def test_cpa_redraw_does_not_ship_source_pixels_when_identity_witness_is_down(
@@ -662,12 +767,12 @@ def test_published_carry_clause_keeps_hash_and_status_gates():
     assert not validate_final_host_identity_verification(failed)
 
 
-# --------------------------------------------------------------------------
-# 维护者 亲裁：自相矛盾的见证「完全没有否决权，完全不可信」。
-# 1323 打歌服置换封面 v4D 案：同一份回答里 primary_subject_is_lidousha=true
-# + identity_conflicts=[] + 文字认出李豆沙，却又
-# primary_subject_matches_other_source_participant=true。合成 fixture，真值盲。
-# --------------------------------------------------------------------------
+
+
+
+
+
+
 
 V4D_SHAPED_VERDICT: dict[str, object] = {
     "source_lidousha_located": True,

@@ -31,34 +31,39 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.audit_review_package import (  # noqa: E402
+from scripts.audit_review_package import (
     AUDIT_POLICY_EPOCH,
     AUDIT_SCHEMA_VERSION,
     audit_package,
 )
-from src.autoslice.authorized_upload_artifact_bindings import (  # noqa: E402
+from src.autoslice.authorized_upload_artifact_bindings import (
     sha256_file, _strip_sha_prefix, _record_artifact_hash_problems,
     _subtitle_audio_correspondence_problems,
 )
-from src.autoslice import authorized_upload_cli_parser  # noqa: E402
-from src.autoslice import authorized_upload_recovery_cli as upload_recovery  # noqa: E402
-from src.autoslice import bilibili_member_api as member_api  # noqa: E402
-from src.autoslice import authorized_upload_published_recovery as published_recovery  # noqa: E402
+from src.autoslice import authorized_upload_cli_parser
+from src.autoslice.authorized_upload_metadata import (
+    normalise_tags as _normalise_tags,
+    validate_tags,
+)
+from src.autoslice import authorized_upload_recovery_cli as upload_recovery
+from src.autoslice import bilibili_member_api as member_api
+from src.autoslice import authorized_upload_published_recovery as published_recovery
 from src.autoslice.package_audit_binding import (
     audit_content_binding as _audit_content_binding,
 )
-from src.autoslice import final_human_review as human_review  # noqa: E402
-from src.autoslice import publication_reconciliation  # noqa: E402
-from src.autoslice import publication_registry  # noqa: E402
-from src.autoslice import same_bv_repair as repair_binding  # noqa: E402
-from src.autoslice import authorized_upload_cover_repair_cli as cover_repair_cli  # noqa: E402
-from src.autoslice import cover_only_audit_scope  # noqa: E402
-from src.autoslice import same_bv_live_verification  # noqa: E402
-from src.autoslice import fastlane_c2_authorized_upload as c2_upload  # noqa: E402
-from src.autoslice import fastlane_c1_technical_receipt as c1_projection  # noqa: E402
-from src.autoslice.subtitle_validation import validate_srt_file  # noqa: E402
-from src.autoslice.publication_title_exception import upload_manifest_title_policy_violations  # noqa: E402
-from src.autoslice.same_bv_repair import (  # noqa: E402
+from src.autoslice import final_human_review as human_review
+from src.autoslice import authorized_upload_final_media
+from src.autoslice import publication_reconciliation
+from src.autoslice import publication_registry
+from src.autoslice import same_bv_repair as repair_binding
+from src.autoslice import authorized_upload_cover_repair_cli as cover_repair_cli
+from src.autoslice import cover_only_audit_scope
+from src.autoslice import same_bv_live_verification
+from src.autoslice import fastlane_c2_authorized_upload as c2_upload
+from src.autoslice import fastlane_c1_technical_receipt as c1_projection
+from src.autoslice.subtitle_validation import validate_srt_file
+from src.autoslice.publication_title_exception import upload_manifest_title_policy_violations
+from src.autoslice.same_bv_repair import (
     BilibiliRepairAdapter,
     PlanInvalid,
     RepairError,
@@ -71,7 +76,7 @@ from src.autoslice.same_bv_repair import (  # noqa: E402
     run_repair as run_same_bv_repair,
     write_plan as write_same_bv_repair_plan,
 )
-from src.autoslice.same_bv_repair_cli import (  # noqa: E402
+from src.autoslice.same_bv_repair_cli import (
     repair_reconcile_blocked,
     repair_verify_live,
 )
@@ -127,12 +132,12 @@ def _reconcile_same_bv_cover_publication(**kwargs) -> dict:
         ) from exc
 
 
-# Season (合集) policy — membership is part of the publish (维护者).
-# The LANE is a deterministic choke point on the frozen title: the song catalog
-# prefix/catalog form is enforced by the shared publish-title validator,
-# so title→lane cannot drift from content.  Season IDs are deliberately NOT
-# selected by a live title query, then checked against the channel's committed
-# talk/song IDs so a renamed or wrong collection cannot silently become truth.
+
+
+
+
+
+
 SONG_TITLE_PREFIX = "【李豆沙】豆沙歌，"
 SEASON_TITLES = {"talk": "小李切片", "song": "小李歌唱"}
 SEASON_ADD_ALREADY_IN = 20080  # episodes/add: already in the season (idempotent OK)
@@ -192,13 +197,6 @@ _BROWSER_UA = (
 
 class UploadLockBusy(RuntimeError):
     """Another upload/repair transaction owns the shared critical section."""
-
-
-# Tag policy (维护者, see scripts/suggest_upload_tags.py + memory
-# lidousha-upload-tags-policy): per-archive cap 12 (empirically probed via a
-# 12-tag edit on BV1EQNk6KErE), per-tag <=20 chars, no separators, no dups.
-MAX_TAGS = 12
-MAX_TAG_CHARS = 20
 
 
 def sidecar_record_path(video: Path) -> Path:
@@ -632,6 +630,15 @@ def _validate_v3_package_attestation(
             problems.append("reviewed SRT fails release validation: " + ",".join(codes))
         record = _load_json_object(record_path, "record", problems)
         problems.extend(
+            authorized_upload_final_media.validation_problems(
+                manifest,
+                record,
+                review_item,
+                package_root=root,
+                source_video_sha256=sha256_file(video),
+            )
+        )
+        problems.extend(
             repair_binding.recovery_publication_package_problems(manifest, record, review_item)
         )
         verified_song = bool(
@@ -769,6 +776,21 @@ def _title_cover_qc_attestation_problems(
         problems.append("title+cover joint-QC cannot resolve candidate from record")
     elif receipt.get("candidate_id") != expected_candidate:
         problems.append("title+cover joint-QC candidate_id does not match record")
+
+    if "source_identity_context" in receipt:
+        try:
+            from scripts.run_title_cover_joint_qc import package_identity_context, resolve_package_inputs
+
+            _record, publish, current_cover = resolve_package_inputs(package_root, title)
+            review = json.loads((package_root / "review_manifest.json").read_text(encoding="utf-8"))
+            current = package_identity_context(
+                root=package_root, item=review["items"][0], generation=publish["cover_generation"],
+                cover_path=current_cover, candidate_id=expected_candidate,
+            )
+            if current is None or current != receipt["source_identity_context"]:
+                raise ValueError("source identity context differs from current package")
+        except (ValueError, OSError, KeyError, TypeError, IndexError) as exc:
+            problems.append(f"title+cover joint-QC source identity context invalid: {exc}")
 
     if receipt.get("selected_provider") != "cpa":
         problems.append("title+cover joint-QC selected_provider must be cpa")
@@ -954,26 +976,6 @@ def _cover_only_audit_scope_attestation_problems(
                 problems.append("cover-only audit scope video differs from manifest")
             if any(scope_cover.get(key) != manifest_cover.get(key) for key in ("sha256", "bytes")):
                 problems.append("cover-only audit scope cover differs from manifest")
-    return problems
-
-
-def validate_tags(tags: list[str]) -> list[str]:
-    """Return problems; empty list means the tag list is manifest-worthy."""
-    problems: list[str] = []
-    if not isinstance(tags, list) or any(not isinstance(t, str) for t in tags):
-        return ["tags must be a list of strings"]
-    cleaned = [t.strip() for t in tags]
-    if any(not t for t in cleaned):
-        problems.append("tags contain an empty item")
-    if len(cleaned) > MAX_TAGS:
-        problems.append(f"{len(cleaned)} tags exceed the cap of {MAX_TAGS}")
-    if len({t.casefold() for t in cleaned}) != len(cleaned):
-        problems.append("tags contain duplicates")
-    for tag in cleaned:
-        if len(tag) > MAX_TAG_CHARS:
-            problems.append(f"tag too long (>{MAX_TAG_CHARS} chars): {tag!r}")
-        if any(ch in tag for ch in ",，\n\t"):
-            problems.append(f"tag contains a separator character: {tag!r}")
     return problems
 
 
@@ -1195,14 +1197,6 @@ def uploaded_sidecar_path(manifest_path: Path) -> Path:
     name = manifest_path.name
     stem = name[: -len(".upload_manifest.json")] if name.endswith(".upload_manifest.json") else name
     return manifest_path.parent / (stem + ".uploaded.json")
-
-
-def _normalise_tags(value: object) -> list[str]:
-    if isinstance(value, str):
-        return [part.strip() for part in value.split(",") if part.strip()]
-    if isinstance(value, list):
-        return [str(part).strip() for part in value if str(part).strip()]
-    return []
 
 
 def _section_episode_rows(payload: object) -> list[dict]:
@@ -1842,6 +1836,20 @@ def make_manifest(args: argparse.Namespace) -> int:
     }
     package_problems = published_recovery.attach_manifest_attestation(manifest, package_root) + repair_binding.attach_package_recovery_publication_authority(manifest, record, review_manifest, video)
     review_payload = _load_json_object(review_manifest, "review manifest", package_problems)
+    review_item = (
+        _find_review_item(review_payload, package_root, video)
+        if review_payload
+        else None
+    )
+    package_problems.extend(
+        authorized_upload_final_media.attach_release_attestation(
+            manifest,
+            record,
+            review_item,
+            package_root=package_root,
+            source_video_sha256=video_sha,
+        )
+    )
     if review_payload:
         package_problems.extend(
             _attach_cover_only_audit_scope(

@@ -21,11 +21,11 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from cleanup_preflight_scan import (  # noqa: E402
+from cleanup_preflight_scan import (
     ALLOWED_CLASSES, SOURCE_EXTRACTION_CLASSES, TERMINAL_STATES,
     classify, owning_ids, quiet_window,
 )
-from _cleanup_file_identity import remove_if_matches, verify_preimage  # noqa: E402
+from _cleanup_file_identity import remove_if_matches, verify_preimage
 
 
 def main() -> int:

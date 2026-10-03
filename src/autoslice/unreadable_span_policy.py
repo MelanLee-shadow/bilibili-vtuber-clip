@@ -1,10 +1,10 @@
 """证人判定「这一句音频物理上不可读」时：删掉那条字幕、照常出成品、等人审。
 
-维护者 逐字裁定：
+公开规则逐字裁定：
 
-    「遇到这种情况证人报 ``WITNESS_IMPLAUSIBLE_SYLLABLE_RATE``：11 个音节塞进
-    0.92s，根本听不出来，应该直接报需要审查，并且在权宜上传时也不能上传，
-    可以把这段字幕删掉然后出成品等待审阅，而不是拦住。」
+ 「遇到这种情况证人报 ``WITNESS_IMPLAUSIBLE_SYLLABLE_RATE``：11 个音节塞进
+ 0.92s，根本听不出来，应该直接报需要审查，并且在权宜上传时也不能上传，
+ 可以把这段字幕删掉然后出成品等待审阅，而不是拦住。」
 
 被改的是哪条路：``exact_final_witness_authority`` 在「CPA 收敛判官选了 PROPOSED
 但代码级见证门 BLOCK」时把 finding 降级成
@@ -21,23 +21,23 @@
 ``entity_audio_verifier`` 的证人链一共吐这些 UNCERTAIN 原因码，逐个判：
 
 *物理不可读*（本模块处置）
-  ``WITNESS_IMPLAUSIBLE_SYLLABLE_RATE``
-      音节率越过普通话物理上限（引擎自己的注释：峰值约 9 音节/秒）。无论把它
-      读成「这窗里真塞了这么多音节」还是「听写溢出了目标窗」，结论都一样：
-      **这 0.92s 的窗口拿不到可信转写**，重试一万次也定不了案。
+ ``WITNESS_IMPLAUSIBLE_SYLLABLE_RATE``
+ 音节率越过普通话物理上限（引擎自己的注释：峰值约 9 音节/秒）。无论把它
+ 读成「这窗里真塞了这么多音节」还是「听写溢出了目标窗」，结论都一样：
+ **这 0.92s 的窗口拿不到可信转写**，重试一万次也定不了案。
 
 *机器没能决定*（一律留在原地继续拦死，不许进本路）
-  ``WITNESS_REPORT_INVALID``            报告形状非法 —— 模型没按协议答
-  ``WITNESS_PROMPT_COPY_DETECTED``      模型抄了示范句 —— 根本没听
-  ``WITNESS_REQUEST_PROTOCOL_INVALID``  请求侧接线错
-  ``WITNESS_REQUEST_CARRIES_CANDIDATES``盲听协议被污染
-  ``AUDIO_VERIFIER_UNAVAILABLE``        本轮压根没有 provider 听过（F21 专用码）
-  ``ENTITY_AUDIO_PROVIDER_FAILED``      provider 调用失败
-  ``ENTITY_AUDIO_CROP_FAILED``          音频切不出来
-  ``ENTITY_AUDIO_REQUEST_INVALID`` / ``_CANDIDATES_INVALID`` /
-  ``_TIMELINE_OFFSET_INVALID`` / ``_REQUEST_HASH_MISMATCH`` / ``_SPAN_INVALID``
-                                        请求/绑定不合法
-  ``ENTITY_AUDIO_UNCERTAIN``            模型答了但答不出结论
+ ``WITNESS_REPORT_INVALID`` 报告形状非法 —— 模型没按协议答
+ ``WITNESS_PROMPT_COPY_DETECTED`` 模型抄了示范句 —— 根本没听
+ ``WITNESS_REQUEST_PROTOCOL_INVALID`` 请求侧接线错
+ ``WITNESS_REQUEST_CARRIES_CANDIDATES``盲听协议被污染
+ ``AUDIO_VERIFIER_UNAVAILABLE`` 本轮压根没有 provider 听过（F21 专用码）
+ ``ENTITY_AUDIO_PROVIDER_FAILED`` provider 调用失败
+ ``ENTITY_AUDIO_CROP_FAILED`` 音频切不出来
+ ``ENTITY_AUDIO_REQUEST_INVALID`` / ``_CANDIDATES_INVALID`` /
+ ``_TIMELINE_OFFSET_INVALID`` / ``_REQUEST_HASH_MISMATCH`` / ``_SPAN_INVALID``
+ 请求/绑定不合法
+ ``ENTITY_AUDIO_UNCERTAIN`` 模型答了但答不出结论
 裁决层同类（``acoustic_witness_adjudication``）：``WITNESS_UNAVAILABLE_KEEP_CURRENT``、
 ``LEGACY_SIGHTED_WITNESS_NOT_REUSABLE``、``JUDGE_CALL_FAILED``、
 ``JUDGE_CHOICE_OUT_OF_SET`` —— 全是「机器没跑完/没答完」。把这些放进来就是把
@@ -62,16 +62,16 @@ cue 的 ``start_ms``/``end_ms`` 一字不改，媒体一帧不剪。这与既有
 ``SRT_BLOCK_TOO_SHORT`` + ``SRT_CUE_INDEX_NON_CONSECUTIVE`` 拒收。
 
 守卫（fail-closed 侧，不是放宽）
-  * 不许删最后一条 cue —— 收束句被终点绑定
-    （``talk-boundary-final-endpoint-binding.v1``）挂着，删了只会换一个更难懂的
-    阻断码。这条同时蕴含「不会把整条字幕删空」（最后一条必然幸存），所以不另写
-    一条全删空守卫：翻不红的守卫是伪装成安全的死代码。这种情况保持今天的行为，
-    照旧拦死。
-  * **只有当本轮所有阻断项都是这一类死锁时才走本路**。混进任何一条别的阻断项，
-    整条候选照旧按今天拦死 —— 那条 finding 本来就该拦，删了字幕也救不回来，
-    反而白白有损。
-  * 调用侧（``unreadable_cue_drop_stage``）还压着一条次序守卫：CPA 判官这一轮
-    只要还改得动任何一条，就先走 CPA 自愈，本路一律不动。删字幕永远是最后手段。
+ * 不许删最后一条 cue —— 收束句被终点绑定
+ （``talk-boundary-final-endpoint-binding.v1``）挂着，删了只会换一个更难懂的
+ 阻断码。这条同时蕴含「不会把整条字幕删空」（最后一条必然幸存），所以不另写
+ 一条全删空守卫：翻不红的守卫是伪装成安全的死代码。这种情况保持今天的行为，
+ 照旧拦死。
+ * **只有当本轮所有阻断项都是这一类死锁时才走本路**。混进任何一条别的阻断项，
+ 整条候选照旧按今天拦死 —— 那条 finding 本来就该拦，删了字幕也救不回来，
+ 反而白白有损。
+ * 调用侧（``unreadable_cue_drop_stage``）还压着一条次序守卫：CPA 判官这一轮
+ 只要还改得动任何一条，就先走 CPA 自愈，本路一律不动。删字幕永远是最后手段。
 """
 
 from __future__ import annotations
@@ -101,7 +101,7 @@ MUTATION_SCHEMA = "subtitle-correction-mutation-authority.v1"
 # 与 exact-final 自愈同量级；实际上一条候选通常只有一两条不可读窗。
 UNREADABLE_CUE_DROP_MAX_PASSES = 5
 
-# 唯一收录项。改这张表等于改 fail-closed 边界，必须带 维护者 的新裁定。
+
 PHYSICALLY_UNREADABLE_WITNESS_REASON_CODES = frozenset(
     {
         "WITNESS_IMPLAUSIBLE_SYLLABLE_RATE",
@@ -378,7 +378,7 @@ def valid_unreadable_cue_drop(drop: object) -> bool:
         and witness.get("reason_code")
         in PHYSICALLY_UNREADABLE_WITNESS_REASON_CODES
         and drop.get("witness_reason_code") == witness.get("reason_code")
-        # 判据原文必须随件；维护者 一眼要看到「11 syllables over 0.92s target」。
+
         and isinstance(drop.get("witness_detail"), str)
         and bool(str(drop.get("witness_detail")).strip())
         and _SHA256_HEX_RX.fullmatch(

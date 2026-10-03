@@ -467,3 +467,137 @@ def test_joint_scene_clarification_does_not_override_any_failed_verdict(tmp_path
     assert result["verdict"] == verdict
     assert result["status"] == "FAIL"
     assert result["pass"] is False
+
+
+def _bound_identity_package(root: Path, *, identity_valid: bool = True):
+    from src.autoslice.cover_host_identity_gate import HOST_ONLY_AUTHORITY, HOST_ONLY_SCHEMA_VERSION
+    from src.autoslice.host_only_v4_package_binding import build_binding
+
+    title, cover = _c2_package(root)
+    review = json.loads((root / 'review_manifest.json').read_text())
+    item = review['items'][0]
+    record_path = root / item['record']
+    record = json.loads(record_path.read_text())
+    record['story_contract'] = {'candidate_id': item['candidate_id']}
+    _write_json(record_path, record)
+    publish_path = root / item['publish_json']
+    publish = json.loads(publish_path.read_text())
+    generation = publish['cover_generation']
+    generation['story_contract'] = {'cover_fallback_mode': 'HOST_ONLY_GENERIC'}
+    evidence = root / 'evidence'
+    evidence.mkdir()
+    reference, comparison, receipt_path = [evidence / n for n in ('reference.png', 'comparison.png', 'identity.json')]
+    reference.write_bytes(b'synthetic named source frame')
+    comparison.write_bytes(b'synthetic source-final comparison')
+    def sha(p):
+        return 'sha256:' + hashlib.sha256(p.read_bytes()).hexdigest()
+    verdict = {
+        'source_lidousha_located': True, 'primary_subject_is_lidousha': identity_valid,
+        'primary_subject_matches_other_source_participant': False,
+        'primary_subject_is_visually_dominant': True, 'primary_subject_face_is_large_and_clear': True,
+        'primary_subject_carries_story_reaction': True, 'excessive_dead_space': False,
+        'meaningless_dominant_decoration': False, 'thumbnail_has_clear_click_hook': True,
+        'identity_conflicts': [], 'composition_conflicts': [],
+        'other_recognizable_people_or_avatars_visible': False, 'other_recognizable_people_or_avatars': [],
+        'reason': 'Synthetic source nameplate identifies the same host.',
+    }
+    proof = {
+        'schema_version': HOST_ONLY_SCHEMA_VERSION, 'authority': HOST_ONLY_AUTHORITY,
+        'host_only_required': True, 'status': 'PASS', 'final_cover_sha256': sha(cover),
+        'reference_sha256': sha(reference), 'comparison_sha256': sha(comparison), 'verdict': verdict,
+        'witness': {'status': 'OBSERVED', 'provider': 'cpa', 'model': 'synthetic',
+                    'image_sha256': sha(comparison).removeprefix('sha256:'), 'answer': json.dumps(verdict)},
+    }
+    generation['final_host_identity_verification'] = proof
+    _write_json(receipt_path, proof)
+    item['host_only_v4_binding'] = build_binding(
+        candidate_id=item['candidate_id'], receipt_path='evidence/identity.json', receipt_bytes=receipt_path.read_bytes(),
+        reference_path='evidence/reference.png', reference_bytes=reference.read_bytes(),
+        comparison_path='evidence/comparison.png', comparison_bytes=comparison.read_bytes(),
+        final_cover_path=cover.name, final_cover_bytes=cover.read_bytes(),
+    )
+    _write_json(publish_path, publish)
+    _write_json(root / 'review_manifest.json', review)
+    out_parent = root / 'out'
+    out_parent.mkdir(mode=0o700)
+    return title, cover, out_parent / 'qc.json'
+
+
+def test_bound_source_identity_reaches_joint_probe_and_retains_current_verdict(tmp_path):
+    title, cover, out = _bound_identity_package(tmp_path)
+    verdict = _joint_verdict(lidousha_primary=False, **{'pass': False})
+    prompts = []
+
+    def probe(path, prompt):
+        assert path == cover
+        prompts.append(prompt)
+        return {'status': 'OBSERVED', 'answer': json.dumps(verdict)}
+
+    result = run_qc(tmp_path, title, out, image_probe=probe)
+    assert len(prompts) == 1
+    assert 'Synthetic source nameplate identifies the same host.' in prompts[0]
+    assert '独立源图—成品身份对比证据' in prompts[0]
+    assert '如当前可见内容与证据矛盾' in prompts[0]
+    assert result['source_identity_context']['package_binding']['reference_sha256'] in prompts[0]
+    assert result['verdict'] == verdict
+    assert result['status'] == 'FAIL'
+    assert result['pass'] is False
+
+
+@pytest.mark.parametrize('drift', ['reference', 'comparison', 'receipt', 'cover', 'missing_binding', 'negative_identity'])
+def test_invalid_bound_identity_stops_before_provider(tmp_path, drift):
+    title, _cover, out = _bound_identity_package(tmp_path, identity_valid=drift != 'negative_identity')
+    if drift in ('reference', 'comparison', 'receipt'):
+        name = {'reference': 'reference.png', 'comparison': 'comparison.png', 'receipt': 'identity.json'}[drift]
+        (tmp_path / 'evidence' / name).write_bytes(b'changed identity evidence')
+    elif drift == 'cover':
+        _cover.write_bytes(b'changed final pixels')
+    elif drift == 'missing_binding':
+        review = json.loads((tmp_path / 'review_manifest.json').read_text())
+        del review['items'][0]['host_only_v4_binding']
+        _write_json(tmp_path / 'review_manifest.json', review)
+
+    def forbidden(*_):
+        raise AssertionError('invalid identity must not reach provider')
+
+    with pytest.raises(ValueError):
+        run_qc(tmp_path, title, out, image_probe=forbidden)
+    assert not out.exists()
+
+
+def test_bound_identity_drift_during_probe_does_not_write_receipt(tmp_path):
+    title, _cover, out = _bound_identity_package(tmp_path)
+
+    def probe(*_):
+        (tmp_path / 'evidence' / 'reference.png').write_bytes(b'changed during call')
+        return {'status': 'OBSERVED', 'answer': json.dumps(_joint_verdict())}
+
+    with pytest.raises(ValueError):
+        run_qc(tmp_path, title, out, image_probe=probe)
+    assert not out.exists()
+
+
+@pytest.mark.parametrize('drift', [None, 'reference', 'context'])
+def test_upload_qc_replay_revalidates_source_identity_context(tmp_path, drift):
+    from scripts.run_title_cover_joint_qc import reuse_valid_qc
+
+    title, cover, out = _bound_identity_package(tmp_path)
+
+    def probe(path, prompt):
+        return {'schema_version': 'cpa-frame-witness.v1', 'status': 'OBSERVED', 'provider': 'cpa',
+                'model': 'synthetic', 'image_path': str(path),
+                'image_sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+                'answer': json.dumps(_joint_verdict())}
+
+    receipt = run_qc(tmp_path, title, out, image_probe=probe)
+    assert receipt['status'] == 'PASS'
+    if drift == 'reference':
+        (tmp_path / 'evidence' / 'reference.png').write_bytes(b'changed source identity')
+    elif drift == 'context':
+        receipt['source_identity_context']['package_binding']['reference_sha256'] = 'sha256:' + '0' * 64
+        _write_json(out, receipt)
+    if drift is None:
+        assert reuse_valid_qc(tmp_path, title, out) == receipt
+    else:
+        with pytest.raises(ValueError, match='source identity context'):
+            reuse_valid_qc(tmp_path, title, out)

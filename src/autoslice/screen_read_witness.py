@@ -1,14 +1,14 @@
 """Screen-read witness: recover fast-spoken lines from on-screen text.
 
-维护者（424_522 BV1d73P6iErL 1:24 案）：她快速念屏幕上的
+公开规则（424_522 BV1d73P6iErL 1:24 案）：她快速念屏幕上的
 「战斗回合用尽，即将离开战场」，音频糊但**看一眼画面就知道全文**。
 
 两个设计裁定（他亲自点的）：
 - 何时看画面：不盲扫——声学证人自己承认失败（confidence 低 / 不确定位
-  密集）时才升级视觉，一次 finding 至多采样两帧，成本只花在耳朵糊掉处。
+ 密集）时才升级视觉，一次 finding 至多采样两帧，成本只花在耳朵糊掉处。
 - 如何找到她念的词：不定位屏幕区域——全帧 OCR 出文本池，用**拼音对齐**
-  挑出与听写最相似的一段（她念的就是池里读音最像的那条），需边际优势，
-  平票不选。
+ 挑出与听写最相似的一段（她念的就是池里读音最像的那条），需边际优势，
+ 平票不选。
 
 命中的屏幕文本以 ``verified_ocr`` 出处进入既有裁决引擎（正字法权威白名单
 原生认这个 kind），judge 照常闭集裁定——视觉只供**候选与出处**，永不直改。
@@ -305,12 +305,26 @@ def build_env_screen_read_probe(media_path: Any):
     import shutil
     from pathlib import Path
 
+    from src.autoslice.llm_client import (
+        LlmRuntimeEnvironmentError,
+        runtime_cpa_command_environment,
+    )
+    from src.autoslice.producer_final_review_transport import _resolved_runtime_root
+
     agy_bin = os.environ.get(
         "AGY_BIN",
         str(Path.home() / ".local" / "bin" / "agy"),
     )
     api_base = os.environ.get("CPA_BASE_URL", "").strip()
     api_key = os.environ.get("CPA_API_KEY", "").strip()
+    if not (api_base and api_key):
+        try:
+            runtime = _resolved_runtime_root(None)
+            env = runtime_cpa_command_environment(runtime) if runtime is not None else {}
+            api_base = env.get("CPA_BASE_URL", "").strip()
+            api_key = env.get("CPA_API_KEY", "").strip()
+        except (LlmRuntimeEnvironmentError, OSError, ValueError):
+            api_base, api_key = "", ""
     agy_available = bool(Path(agy_bin).is_file() or shutil.which(agy_bin))
     if not Path(media_path).is_file() or not (
         (api_base and api_key) or agy_available

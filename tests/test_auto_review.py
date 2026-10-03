@@ -189,19 +189,19 @@ def test_non_agy_provider_blocks_auto_upload():
 
 def test_gemini_api_fallback_without_recorded_agy_outcome_is_rejected():
     """改判：拒绝的理由从「provider 不是 agy」改成「没说清 AGY 那条腿
-    怎么失败的」。
+ 怎么失败的」。
 
-    旧断言（``JINGTING_PROVIDER_NOT_AGY`` / ``JINGTING_PROVIDER_FALLBACK_USED``）
-    是一个**按 provider 层拒证据的门**——维护者 已拍板：AGY 订阅 /
-    免费 3key / 付费 backup 是同一个 Gemini 模型（``gemini-3.6-flash``）的配额
-    顺序，「按 provider 层拒证据的门 = 过度限制」，处方是「任一层证据有效 +
-    按层钉模型串」。free 实测三把免费 key 全部 HTTP 200 可用，
-    进一步坐实了这里拦掉的不是「没有证据」或「证据质量差」，而是「证据来自
-    同一模型的另一个配额层」。
+ 旧断言（``JINGTING_PROVIDER_NOT_AGY`` / ``JINGTING_PROVIDER_FALLBACK_USED``）
+ 是一个**按 provider 层拒证据的门**——公开规则已拍板：AGY 订阅 /
+ 免费 3key / 付费 backup 是同一个 Gemini 模型（``gemini-3.6-flash``）的配额
+ 顺序，「按 provider 层拒证据的门 = 过度限制」，处方是「任一层证据有效 +
+ 按层钉模型串」。free 实测三把免费 key 全部 HTTP 200 可用，
+ 进一步坐实了这里拦掉的不是「没有证据」或「证据质量差」，而是「证据来自
+ 同一模型的另一个配额层」。
 
-    这条 manifest 仍然被 BLOCK——因为 ``agy_rc=None`` 意味着它没有如实记录
-    AGY 那条腿是否尝试过、怎么退出的。fail-closed 保留，只是理由变准确了。
-    """
+ 这条 manifest 仍然被 BLOCK——因为 ``agy_rc=None`` 意味着它没有如实记录
+ AGY 那条腿是否尝试过、怎么退出的。fail-closed 保留，只是理由变准确了。
+ """
 
     decision = review_candidate(
         base_candidate(

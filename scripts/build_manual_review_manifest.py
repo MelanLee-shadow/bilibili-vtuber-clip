@@ -8,13 +8,13 @@
 值**；state 见证由**显式操作者署名**替代（--operator/--note 必填并入
 manifest，谁裁定的、为什么，写清楚）。上传授权不因此扩大半分：manifest 恒
 `upload_allowed=false`，投稿仍必须走 authorized_upload make-manifest 的
---quote 层绑定维护者原话 + 出版登记门。
+--quote 层绑定公开规则原话 + 出版登记门。
 
 手动包的平铺命名（与 runner 的 <cid>.recut.* 不同）：
-  <stem>.mp4（烧录成品）/ .publish.json / .record.json / .srt /
-  单人车道 .final-sapphire72.ass，或说话人车道 .speaker.srt +
-  .speaker.ass / .chat-authority.json / .clip-context.json /
-  .cover.png + .cover.pre-overlay.png / .cover.ai-bg.png / .cover.title-mask.png
+ <stem>.mp4（烧录成品）/ .publish.json / .record.json / .srt /
+ 单人车道 .final-sapphire72.ass，或说话人车道 .speaker.srt +
+ .speaker.ass / .chat-authority.json / .clip-context.json /
+ .cover.png + .cover.pre-overlay.png / .cover.ai-bg.png / .cover.title-mask.png
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.build_daily_review_manifest import (  # noqa: E402
+from scripts.build_daily_review_manifest import (
     DailyManifestError,
     _candidate_lane,
     _lane_manifest_contract_fields,
@@ -40,26 +40,29 @@ from scripts.build_daily_review_manifest import (  # noqa: E402
     _sha256,
     _sync_record_bound_candidate_artifacts,
 )
-from src.autoslice.host_only_v4_package_binding import (  # noqa: E402
+from src.autoslice.host_only_v4_package_binding import (
     BINDING_ITEM_KEY,
     HostOnlyV4PackageBindingError,
     materialize_package_binding,
 )
-from src.autoslice.review_package_ass_audit import (  # noqa: E402
+from src.autoslice.package_import_builtin_imagegen import (
+    builtin_imagegen_manifest_fields,
+)
+from src.autoslice.review_package_ass_audit import (
     uniform_host_fallback_declared,
 )
-from src.autoslice.published_recovery_package_contract import (  # noqa: E402
+from src.autoslice.published_recovery_package_contract import (
     validate_published_recovery_package_receipt,
 )
-from src.autoslice.recovery_title_authority import (  # noqa: E402
+from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
     validate_recovery_publication_authority,
 )
-from src.autoslice.qixi_corrected_package_finalization import (  # noqa: E402
+from src.autoslice.qixi_corrected_package_finalization import (
     QixiCorrectedPackageError,
     validate_applied_receipt,
 )
-from src.autoslice.qixi_cover_successor_finalization import (  # noqa: E402
+from src.autoslice.qixi_cover_successor_finalization import (
     QixiCoverSuccessorError,
     RECEIPT as QIXI_SUCCESSOR_RECEIPT,
     validate_applied_receipt as validate_qixi_successor_receipt,
@@ -636,6 +639,12 @@ def build_manual(
         packaged_speaker_manifest=packaged_speaker_manifest,
     )
     try:
+        item.update(
+            builtin_imagegen_manifest_fields(cover_generation, package_root=package_root)
+        )
+    except ValueError as exc:
+        raise DailyManifestError(f"Builtin image_gen package binding failed: {exc}") from exc
+    try:
         host_only_binding = materialize_package_binding(
             root=package_root,
             item=item,
@@ -674,8 +683,8 @@ def build_manual(
             "note": note.strip(),
             "spec_lane": "produce_slice_package",
         },
-        # 审片包本身不授权上传；上传授权由 authorized_upload make-manifest
-        # 的 --quote 层绑定维护者原话 + 出版登记门。
+
+
         "upload_allowed": False,
         "subtitle_visual_contract": {
             "max_visual_lines": 2,

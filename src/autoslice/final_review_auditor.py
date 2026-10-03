@@ -1,17 +1,17 @@
-"""成品自审员（维护者「发现环节不能永远是我」通病级机制）。
+"""成品自审员（公开规则：发现环节不能永远是我通病级机制）。
 
-今晚全部机制的共同缺陷：错误的发现向量始终是 维护者 的眼睛——流水线里没有
+今晚全部机制的共同缺陷：错误的发现向量始终是 公开规则的眼睛——流水线里没有
 任何一层用"审片员视角"看过最终成品。本层补上这只眼睛：在全部证据车道之后
 用 LLM 扫终稿字幕。LLM 本身**只报不改**；每条发现按证据纪律路由：
 
 - ``text-backed candidate``：glossary/roster 的高先验近音候选可走显式
-  expected-value canon 零 CPA 旁路；但 current/proposed 若都是登记词面，
-  专名平等，必须退出旁路进入 CPA。其他文字证据只负责提名。
-  维护者 operator truth 与纯标点/空格/全半角等机械规范化也可绕过 CPA。
+ expected-value canon 零 CPA 旁路；但 current/proposed 若都是登记词面，
+ 专名平等，必须退出旁路进入 CPA。其他文字证据只负责提名。
+ 公开规则operator truth 与纯标点/空格/全半角等机械规范化也可绕过 CPA。
 - ``context adjudication``：其余有局部替换建议的发现只能生成“当前完整 cue / 一次
-  局部替换后的完整 cue”两候选；AGY/Gemini 只作无候选拼音证人，CPA
-  结合拼音、完整语境与绑定文字证据作最终闭集选择，代码只校验拼音相容
-  与收据合同。范围不合法或 CPA 未到场时保留原文并披露。
+ 局部替换后的完整 cue”两候选；AGY/Gemini 只作无候选拼音证人，CPA
+ 结合拼音、完整语境与绑定文字证据作最终闭集选择，代码只校验拼音相容
+ 与收据合同。范围不合法或 CPA 未到场时保留原文并披露。
 - ``disclosure``：无可验证建议的怀疑只落工件与日报。
 
 审片员是发现器不是自由改写器。它的价值在于把「季下」「苏人」这类人眼
@@ -35,11 +35,13 @@ from src.autoslice.chat_evidence import (
     sanitize_chat_display_text,
 )
 from src.autoslice.acoustic_witness_adjudication import (
+    REQUIRE_COMPLETE_UTTERANCE_SUPPORT,
     adjudicate_with_witness,
     judge_word_choice,
     build_witness_request,
     valid_inaudible_drop_authority,
     valid_inaudible_witness_override,
+    valid_current_utterance_support,
     valid_witness_evidence,
 )
 from src.autoslice.acoustic_witness_protocol import bind_blind_witness_protocol
@@ -52,6 +54,10 @@ from src.autoslice.candidate_support import (
     orthography_ambiguous as _candidate_orthography_ambiguous,
     orthography_pronunciation_key as _orthography_pronunciation_key,
 )
+from src.autoslice.exact_final_witness_authority import (
+    valid_convergence_mutation_authority,
+)
+from src.autoslice.final_review_carryover import adjudicated_proposed_full_cue
 from src.autoslice.closed_set_evidence import (
     closed_set_structured_evidence,
     current_draft_fidelity_context,
@@ -288,11 +294,11 @@ def _strict_homophone_tie(
 ) -> bool:
     """Whether CURRENT and PROPOSED are pronounced identically.
 
-    识别度分层（维护者 概率裁定令）：严格同音对（一/咦）音频
-    定义上中立，语义是唯一判据，judge 排序可拍板；近音对（下斗里/沙豆李
-    式）音频仍可分辨，维持 text authority 门。两条判据都是代码复算，
-    生产者与审计者共用，防止裁决声明被洗白。
-    """
+ 识别度分层（公开规则概率裁定令）：严格同音对（一/咦）音频
+ 定义上中立，语义是唯一判据，judge 排序可拍板；近音对（下斗里/沙豆李
+ 式）音频仍可分辨，维持 text authority 门。两条判据都是代码复算，
+ 生产者与审计者共用，防止裁决声明被洗白。
+ """
 
     suspect = str(finding.get("suspect") or "")
     suggestion = str(finding.get("suggestion") or "")
@@ -888,8 +894,8 @@ def audit_final_subtitles(
             other_cues = "\n".join(
                 cue.text for index, cue in enumerate(cues, start=1) if index != cue_index
             )
-            # 维护者 8/8 真值法证 F1：登记误听面不得靠同源转写
-            # 或 glossary prose 回声自证；绑定弹幕/SC 仍是独立结构化证据。
+
+
             echo_suspected = confusable_transcript_echo(source_surface)
             unbound_text_hit = any(
                 source_surface.casefold() in text.casefold()
@@ -1366,6 +1372,7 @@ def build_context_adjudication_request(
     *,
     clip_context: Mapping[str, object] | None = None,
     source_media_timeline_offset_ms: int = 0,
+    require_complete_utterance_support: bool = False,
 ) -> dict[str, Any]:
     """Build a hash-bound, span-scoped acoustic compatibility request."""
 
@@ -1457,6 +1464,8 @@ def build_context_adjudication_request(
         ),
         "reason": str(finding.get("why") or "")[:120],
     }
+    if require_complete_utterance_support:
+        request[REQUIRE_COMPLETE_UTTERANCE_SUPPORT] = True
     prior_observations = []
     for observation in finding.get("_prior_acoustic_observations") or []:
         if not isinstance(observation, Mapping):
@@ -1548,6 +1557,7 @@ def _prepare_rebuilt_candidate_request(
     source_media_timeline_offset_ms: int,
     witness_request: Mapping[str, Any],
     witness: Mapping[str, Any],
+    require_complete_utterance_support: bool = False,
 ) -> dict[str, Any] | None:
     """Rebind a third candidate while proving the audio window is unchanged."""
 
@@ -1557,6 +1567,9 @@ def _prepare_rebuilt_candidate_request(
             rebuilt_finding,
             clip_context=clip_context,
             source_media_timeline_offset_ms=source_media_timeline_offset_ms,
+            require_complete_utterance_support=(
+                require_complete_utterance_support
+            ),
         )
     except (TypeError, ValueError) as exc:
         proposal_rebuild_audit.update(status="INVALID", reason_code=str(exc))
@@ -1687,6 +1700,7 @@ def adjudicate_context_finding(
     exact_source_transcript_provider: (
         Callable[[Mapping[str, Any]], Mapping[str, Any] | None] | None
     ) = None,
+    require_complete_utterance_support: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     """Fuse a reviewer proposal with witnessed pinyin + CPA word choice.
 
@@ -1730,6 +1744,9 @@ def adjudicate_context_finding(
             finding,
             clip_context=clip_context,
             source_media_timeline_offset_ms=source_media_timeline_offset_ms,
+            require_complete_utterance_support=(
+                require_complete_utterance_support
+            ),
         )
     except (TypeError, ValueError) as exc:
         return srt_text, {
@@ -1848,18 +1865,16 @@ def adjudicate_context_finding(
             },
         }
     screen_read_audit: dict[str, Any] | None = None
-    # 证据升级通道（维护者 424_522 1:24「战斗回合用尽」案 + 同日
-    # 扩展令）：触发器 = 听不清（弱证词）∪ 语境不通（审片员立了 finding
-    # 本身即语义怀疑，且提案无文本出处）。查证顺序 = 先弹幕池（结构化
-    # 记录，零成本，命中走 structured_chat_bound）→ 再看两帧画面（OCR
-    # 文本池，命中走 verified_ocr）。两池都按拼音与听写对齐挑选，命中只
-    # 替换「提案+出处」，裁决仍由同一 witness-judge 引擎完成；同段音频
-    # 重听由声学缓存吸收。
+
+
+
+
+
+
+
     if verdict.get("status") == "OBSERVED" and verdict.get(
         "target_audible"
-    ) is True and not isinstance(
-        finding.get("candidate_provenance"), Mapping
-    ):
+    ) is True and _orthography_text_authority(finding)["status"] != "PASS":
         from src.autoslice.evidence_escalation import (
             evidence_escalation_upgrade,
         )
@@ -1927,6 +1942,9 @@ def adjudicate_context_finding(
                         clip_context=clip_context,
                         source_media_timeline_offset_ms=(
                             source_media_timeline_offset_ms
+                        ),
+                        require_complete_utterance_support=(
+                            require_complete_utterance_support
                         ),
                     )
                 except (TypeError, ValueError) as exc:
@@ -2122,6 +2140,9 @@ def adjudicate_context_finding(
                     source_media_timeline_offset_ms=source_media_timeline_offset_ms,
                     witness_request=witness_request,
                     witness=verdict,
+                    require_complete_utterance_support=(
+                        require_complete_utterance_support
+                    ),
                 )
                 if rebuilt_request is None:
                     rebuilt_finding = None
@@ -2339,6 +2360,189 @@ def adjudicate_context_finding(
     }
 
 
+def _validated_nested_exact_release_repair(
+    srt_text: str,
+    *,
+    outer_adjudication: Mapping[str, Any],
+    clip_context: Mapping[str, object] | None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Carry a real nested CPA mutation through a context-only outer wrapper.
+
+    A missing-proposal convergence record can legitimately wrap an earlier
+    exact-final CPA receipt.  The wrapper is evidence about the context-only
+    decision, while the nested receipt is the authority the ordinary finalizer
+    consumes.  Promote it only after replaying the same bindings that make a
+    direct receipt actionable; an attempted but invalid nested receipt remains
+    unresolved so it cannot be washed into a clean context-only finding.
+    """
+
+    rebuilt = outer_adjudication.get("rebuilt_finding")
+    if not isinstance(rebuilt, Mapping):
+        return None, None
+    if "exact_release_adjudication" not in rebuilt:
+        return None, None
+    nested = rebuilt.get("exact_release_adjudication")
+    if not isinstance(nested, Mapping):
+        return None, "NESTED_EXACT_REPAIR_RECEIPT_INVALID"
+    mutation_authority = nested.get("mutation_authority")
+    attempted = nested.get("repaired") is True or (
+        isinstance(mutation_authority, Mapping)
+        and mutation_authority.get("status") == "PASS"
+    )
+    if not attempted:
+        return None, None
+
+    def blocked(reason: str) -> tuple[None, str]:
+        return None, f"NESTED_EXACT_REPAIR_{reason}"
+
+    if nested.get("schema_version") != "subtitle-span-adjudication.v1":
+        return blocked("SCHEMA_INVALID")
+    if nested.get("status") != "OBSERVED" or nested.get("repaired") is not True:
+        return blocked("STATUS_INVALID")
+    if nested.get("decision_authority") != "CPA_JUDGE":
+        return blocked("DECISION_AUTHORITY_INVALID")
+    if nested.get("timing_immutable") is not True:
+        return blocked("TIMING_MUTABLE")
+    if not isinstance(mutation_authority, Mapping):
+        return blocked("MUTATION_AUTHORITY_MISSING")
+    if mutation_authority.get("schema_version") != (
+        "subtitle-correction-mutation-authority.v1"
+    ) or mutation_authority.get("status") != "PASS":
+        return blocked("MUTATION_AUTHORITY_INVALID")
+
+    try:
+        cues = parse_srt_cues(srt_text)
+    except Exception:
+        return blocked("SRT_INVALID")
+    cue_index = rebuilt.get("cue_index")
+    if isinstance(cue_index, bool) or not isinstance(cue_index, int):
+        return blocked("CUE_INDEX_INVALID")
+    if cue_index < 1 or cue_index > len(cues):
+        return blocked("CUE_INDEX_OUT_OF_RANGE")
+    current = cues[cue_index - 1]
+    current_sha256 = hashlib.sha256(current.text.encode("utf-8")).hexdigest()
+    outer_convergence = outer_adjudication.get(
+        "cpa_missing_proposal_convergence"
+    )
+    if not isinstance(outer_convergence, Mapping):
+        return blocked("OUTER_CONVERGENCE_MISSING")
+    if outer_convergence.get("cue_index") != cue_index:
+        return blocked("OUTER_CUE_BINDING_INVALID")
+    if (
+        str(outer_convergence.get("current_cue_sha256") or "").removeprefix(
+            "sha256:"
+        )
+        != current_sha256
+    ):
+        return blocked("OUTER_CURRENT_CUE_DRIFT")
+    if (
+        str(outer_convergence.get("final_srt_sha256") or "").removeprefix(
+            "sha256:"
+        )
+        != hashlib.sha256(srt_text.encode("utf-8")).hexdigest()
+    ):
+        return blocked("OUTER_SRT_DRIFT")
+    request = nested.get("request")
+    if not isinstance(request, Mapping):
+        return blocked("REQUEST_MISSING")
+    if request.get("schema_version") != "subtitle-span-acoustic-check-request.v1":
+        return blocked("REQUEST_SCHEMA_INVALID")
+    proposed = request.get("proposed_cue")
+    if not isinstance(proposed, str) or not proposed.strip():
+        return blocked("PROPOSED_CUE_MISSING")
+    if proposed == current.text:
+        return blocked("PROPOSED_CUE_EQUALS_CURRENT")
+    if request.get("current_cue") != current.text:
+        return blocked("CURRENT_CUE_DRIFT")
+    if request.get("cue_indexes") != [cue_index]:
+        return blocked("CUE_BINDING_INVALID")
+    if request.get("matched_start_ms") != current.start_ms:
+        return blocked("START_WINDOW_DRIFT")
+    if request.get("matched_end_ms") != current.end_ms:
+        return blocked("END_WINDOW_DRIFT")
+
+    if request.get("base_text_sha256") != current_sha256:
+        return blocked("REQUEST_BASE_DRIFT")
+    if rebuilt.get("base_text_sha256") != current_sha256:
+        return blocked("FINDING_BASE_DRIFT")
+    if rebuilt.get("proposed_full_cue") not in (None, "", proposed):
+        return blocked("FINDING_PROPOSAL_MISMATCH")
+
+    request_sha256 = request.get("request_sha256")
+    if not isinstance(request_sha256, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", request_sha256
+    ):
+        return blocked("REQUEST_HASH_INVALID")
+    request_payload = {
+        key: value for key, value in request.items() if key != "request_sha256"
+    }
+    try:
+        expected_request_sha256 = hashlib.sha256(
+            json.dumps(
+                request_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+    except (TypeError, ValueError):
+        return blocked("REQUEST_UNSERIALIZABLE")
+    if request_sha256 != expected_request_sha256:
+        return blocked("REQUEST_HASH_MISMATCH")
+
+    witness_judge = nested.get("witness_judge")
+    judge = witness_judge.get("judge") if isinstance(witness_judge, Mapping) else None
+    if not isinstance(judge, Mapping):
+        return blocked("JUDGE_MISSING")
+    if judge.get("status") != "JUDGED" or judge.get("choice") != "PROPOSED":
+        return blocked("JUDGE_NOT_PROPOSED")
+    check_request_sha256 = judge.get("check_request_sha256")
+    if check_request_sha256 != request_sha256:
+        return blocked("JUDGE_REQUEST_UNBOUND")
+
+    verdict = nested.get("verdict")
+    if not isinstance(verdict, Mapping):
+        return blocked("WITNESS_MISSING")
+    try:
+        witness_request = build_witness_request(request)
+    except Exception:
+        return blocked("WITNESS_REQUEST_INVALID")
+    if not valid_witness_evidence(
+        verdict,
+        request_sha256=witness_request.get("request_sha256"),
+    ):
+        return blocked("WITNESS_UNBOUND")
+
+    candidate = dict(rebuilt)
+    candidate["exact_release_adjudication"] = dict(nested)
+    if adjudicated_proposed_full_cue(
+        candidate,
+        srt_text=srt_text,
+        clip_context=clip_context,
+    ) != proposed:
+        return blocked("FINALIZER_REPLAY_REJECTED")
+    if not valid_convergence_mutation_authority(
+        nested,
+        proposed=proposed,
+        window=(current.start_ms, current.end_ms),
+    ):
+        return blocked("CONVERGENCE_AUTHORITY_INVALID")
+
+    promoted = dict(nested)
+    promoted["context_only_outer_adjudication"] = dict(outer_adjudication)
+    # The outer wrapper owns this round's cumulative usage.  Promoting an older
+    # receipt must not refund the CPA work recorded by the normal budget.
+    pressure = outer_adjudication.get("cpa_resource_pressure")
+    if isinstance(pressure, Mapping):
+        promoted["cpa_resource_pressure"] = dict(pressure)
+    promoted["nested_repair_promotion"] = {
+        "schema_version": "exact-final-nested-repair-promotion.v1",
+        "status": "PENDING_NORMAL_SELF_HEAL",
+        "basis": "CONTEXT_ONLY_KEEP_EXISTING_CARRYOVER",
+    }
+    return promoted, None
+
+
 def adjudicate_exact_release_findings(
     srt_text: str,
     findings: Iterable[Mapping[str, Any]],
@@ -2348,19 +2552,39 @@ def adjudicate_exact_release_findings(
     source_media_timeline_offset_ms: int = 0,
     judge_llm_call: Callable[[str], str] | None = None,
     screen_read_probe: Callable[[int, int], Mapping[str, Any]] | None = None,
+    provider_calls_allowed: bool = True,
+    initial_provider_adjudication_count: int = 0,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Separate unresolved findings from decisively disproven proposals.
+    """Separate unresolved findings from proposals disproven by full support.
 
     The exact-byte reviewer is intentionally independent from the correction
-    pass and can rediscover a proposal that audio already rejects.  A finding
-    is closed only when the witness+judge chain keeps the current text with
-    the judge explicitly choosing CURRENT and the proposal\'s pinyin clearly
-    worse than the current text\'s. Any proposed mutation, uncertainty,
-    invalid response, or budget overflow remains an unresolved blocker.
+    pass and can rediscover a proposal that audio already rejects.  The acoustic relative CURRENT-vs-PROPOSED branch is closed only when the
+    witness+judge chain keeps the current text with the judge explicitly
+    choosing CURRENT, the proposal\'s pinyin clearly worse than the current
+    text\'s, and the CPA explicitly supports the complete CURRENT utterance
+    against the bound request. The existing context-only KEEP_EXISTING route
+    retains its own complete SRT/context-bound contract. The per-clip call
+    target is a soft resource signal, not authority to leave a new finding
+    unjudged.
     """
 
     unresolved: list[dict[str, Any]] = []
     resolved: list[dict[str, Any]] = []
+
+    def adjudicate_exact_context(
+        current_srt: str,
+        finding: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> tuple[str, dict[str, Any]]:
+        """Run the ordinary adjudicator with the exact-final closure contract."""
+
+        return adjudicate_context_finding(
+            current_srt,
+            finding,
+            require_complete_utterance_support=True,
+            **kwargs,
+        )
+
     budget = ContextAdjudicationBudget(
         limit=MAX_CONTEXT_ADJUDICATIONS,
         entity_verifier=entity_verifier,
@@ -2368,12 +2592,14 @@ def adjudicate_exact_release_findings(
         source_media_timeline_offset_ms=source_media_timeline_offset_ms,
         judge_llm_call=judge_llm_call,
         screen_read_probe=screen_read_probe,
-        adjudicate_context=adjudicate_context_finding,
+        adjudicate_context=adjudicate_exact_context,
+        provider_calls_allowed=provider_calls_allowed,
+        initial_provider_adjudication_count=initial_provider_adjudication_count,
     )
     for finding in findings:
         row = dict(finding)
         adjudication = budget.adjudicate(srt_text, row)
-        if adjudication.get("status") == "SKIPPED_BUDGET":
+        if adjudication.get("status") in {"SKIPPED_BUDGET", "SKIPPED_PROVIDER_DISABLED"}:
             row["exact_release_adjudication"] = adjudication
             unresolved.append(row)
             continue
@@ -2444,6 +2670,12 @@ def adjudicate_exact_release_findings(
             and float(compat["current"]) > float(compat["proposed"])
             and float(compat["current"]) >= 0.75
             and not orthography_ambiguous
+            and isinstance(request, Mapping)
+            and valid_current_utterance_support(
+                check_request=request,
+                judge=judge,
+                witness_judge=witness_judge,
+            )
         )
         convergence = adjudication.get(
             "cpa_missing_proposal_convergence"
@@ -2458,6 +2690,34 @@ def adjudicate_exact_release_findings(
             and adjudication.get("repaired") is False
             and adjudication.get("decision_authority") == "CPA_JUDGE"
         )
+        if context_only_keep:
+            nested_repair, nested_blocked_reason = (
+                _validated_nested_exact_release_repair(
+                    srt_text,
+                    outer_adjudication=adjudication,
+                    clip_context=clip_context,
+                )
+            )
+            if nested_repair is not None:
+                # The outer KEEP is context evidence.  The nested typed receipt
+                # is the actionable authority consumed by the normal finalizer.
+                row.pop("resolution", None)
+                row["exact_release_adjudication"] = nested_repair
+                unresolved.append(row)
+                continue
+            if nested_blocked_reason is not None:
+                # Never let an attempted but unbound nested mutation become a
+                # resolved context-only finding.
+                row.pop("resolution", None)
+                row["exact_release_nested_repair_blocked_reason"] = (
+                    nested_blocked_reason
+                )
+                unresolved.append(row)
+                continue
+        # Exact-final closure now requires explicit whole-utterance support.
+        # A context-only KEEP has its own full SRT/context-bound CPA contract;
+        # the new whole-utterance receipt applies only to the acoustic relative
+        # CURRENT-vs-PROPOSED branch above.
         if decisively_disproven or context_only_keep:
             row["resolution"] = (
                 "CPA_CONTEXT_ONLY_KEEP_EXISTING"
@@ -2645,8 +2905,8 @@ def audit_correction_mutation_authority(
                 if isinstance(adjudication, Mapping)
                 else None
             )
-            # 语义拍板路线（维护者）：严格同音 + judge 明选
-            # PROPOSED。每个条件都从落盘证据复算，不信任生产者位。
+
+
             request = (
                 adjudication.get("request")
                 if isinstance(adjudication, Mapping)

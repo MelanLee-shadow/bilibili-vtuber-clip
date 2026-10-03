@@ -1,6 +1,6 @@
 """F12 受话人归属判项：hook/标题事实审补上"这话是对谁说的"。
 
-出处（维护者 深夜纠错，受骗片标题案，
+出处（公开规则深夜纠错，受骗片标题案，
 内部取证综述文档留存「深夜追加:F12」）：
 自动 hook「{host}刚被劝别再受骗」事实错——字幕 cue1-3 的「别再被骗」是连线主持
 对**上一位选手**说的，cue4「下一位，我们的08号」之后本人才上场，她从未被劝。
@@ -10,13 +10,13 @@
 本模块提供该判项的确定性半边：
 
 * `build_addressee_transcripts` —— 从已产出的 speaker-final SRT 取出**带说话人
-  标签**的转写（hash-bound + 与最终字幕逐条对齐才采用），作为判官的第二份文字
-  authority；纯文字 `final_transcript` 逐字不变（既有回执/校验全部靠它绑定）。
+ 标签**的转写（hash-bound + 与最终字幕逐条对齐才采用），作为判官的第二份文字
+ authority；纯文字 `final_transcript` 逐字不变（既有回执/校验全部靠它绑定）。
 * `requires_addressee_attribution` —— 文案里出现指向性言语行为标记时，判官**不准
-  交空判项**（F15 盲证人同款纪律：可以答"无法判定"，不可以装作没这回事）。
+ 交空判项**（F15 盲证人同款纪律：可以答"无法判定"，不可以装作没这回事）。
 * `evaluate_addressee_attribution` —— 判项形状与证据绑定校验；
-  `WRONG_ADDRESSEE` 与 `status=KEEP` 互斥（fail-closed 打回重生成），
-  无说话人转写时只允许 `UNVERIFIABLE`（没有标签就没有归属权威）。
+ `WRONG_ADDRESSEE` 与 `status=KEEP` 互斥（fail-closed 打回重生成），
+ 无说话人转写时只允许 `UNVERIFIABLE`（没有标签就没有归属权威）。
 
 刻意不做的事：不改字幕、不改说话人二分、不新增 schema 版本
 （`source_fact_review` 的 SCHEMA_VERSION 是已落盘回执的相等性锚，动它等于让历史
@@ -1072,9 +1072,7 @@ def addressee_prompt_block(speaker_transcript: str | None) -> str:
             "verdict 只能是 UNVERIFIABLE，不得声称 SUPPORTED 或 WRONG_ADDRESSEE。\n"
         )
     return (
-        "受话人归属判项（F12，维护者 2026-08-08 受骗片标题案）：source-fact 复审"
-        '此前只验"这话说过没有"，不验"对谁说"，于是把别人挨的话安到主角头上也能'
-        "通过。现在必须额外产出 addressee_attribution 数组。\n"
+        '受话人归属判项（F12，公开规则受骗片标题案）：source-fact 复审此前只验"这话说过没有"，不验"对谁说"，于是把别人挨的话安到主角头上也能通过。现在必须额外产出 addressee_attribution 数组。\n'
         + authority
         + rule
         + "这里的 selection_hook/title 始终指本轮 prompt 输入、也就是当前待复审表面，"

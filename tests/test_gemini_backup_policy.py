@@ -68,7 +68,7 @@ def test_optional_cap_enforced_only_when_configured(
     allowed, reason = policy.paid_attempt_allowed("item-a", prior_strikes=3)
     assert allowed is False
     assert reason.startswith("PAID_DAILY_CAP_REACHED_")
-    # 维护者: no hard cap by default — unset env means uncapped.
+
     monkeypatch.delenv("GEMINI_PAID_BACKUP_DAILY_CAP")
     allowed, reason = policy.paid_attempt_allowed("item-a", prior_strikes=3)
     assert allowed is True

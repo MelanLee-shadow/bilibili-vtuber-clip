@@ -18,7 +18,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from src.autoslice.jev_response_diagnostics import diagnose_response  # noqa: E402
+from src.autoslice.jev_response_diagnostics import diagnose_response
 
 MAX_INPUT_BYTES = 16 * 1024 * 1024
 

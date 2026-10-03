@@ -22,13 +22,13 @@ REQUIRED_PUBLISH_ARTIFACT_KEYS: tuple[str, ...] = (
     "publish_json_sha256",
 )
 
-# Typed provenance lanes.  A jingting manifest is valid evidence when it says
-# HONESTLY which layer produced the refined subtitle — not only when that layer
-# happened to be agy.  维护者（项目 memory）：AGY 订阅 / 免费 key /
-# 付费 backup 是同一个 Gemini 模型的配额顺序，「按 provider 层拒证据的门 = 过度
-# 限制」，处方是「任一层证据有效 + 按层钉模型串」。维护者：「需要调用
-# AGY->gemini 这条链的，全都复用一种接口才好」/「CPA请求失败的逻辑是积极重试，
-# 而不是判候选死，毕竟这跟候选没有关系啊」。
+
+
+
+
+
+
+
 JINGTING_LANE_AGY = "agy"
 JINGTING_LANE_GEMINI_API_FALLBACK = "gemini_api_fallback"
 JINGTING_LANE_SONG_LRC_BYPASS = "song_lrc_bypass"

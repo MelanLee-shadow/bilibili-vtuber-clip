@@ -93,14 +93,14 @@ def test_agy_prompt_includes_danmaku_lines_and_visual_read_instruction():
     assert "given to you VERBATIM" not in bare
 
 
-# --------------------------------------------------------------------------
-# 提示名额（`DANMAKU_HINT_MAX_BURSTS`）——维护者「6 要放宽」
-#
-# 旧实现是 `find_danmaku_bursts(items)`（被调方默认 max_bursts=8）再 `bursts[:6]`：
-# **两道帽子，小的那道在调用方、大的那道藏在被调方**。8/7 那场 660000-690000 的
-# 爆发排第 7，被 `[:6]` 丢掉，选题模型连提示都没看到。下面三件事各钉一条：
-# 超过旧上限能进提示、仍然有上限、8/7 真实弹幕的那条爆发必须在提示里。
-# --------------------------------------------------------------------------
+
+
+
+
+
+
+
+
 
 
 def _bursty_session_xml(counts: list[int]) -> str:

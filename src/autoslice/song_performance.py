@@ -461,11 +461,11 @@ def _validate_audio_lrc_artifact_bindings(
             ):
                 raise ValueError("Gemini API audio failover metadata is incomplete")
         elif key_tier == "paid_backup":
-            # 维护者: a PAID acceptance is deliverable when the
-            # manifest proves the gate held — either the supervised dev
-            # exception was explicitly active, or >= 3 recorded free-chain
-            # failure rounds for this exact audio. Free keys always ran
-            # first (ordinal == free count + 1). No hard cap by policy.
+
+
+
+
+
             policy = run.paid_backup_policy
             if (
                 int(run.accepted_key_ordinal) != int(run.configured_key_count) + 1

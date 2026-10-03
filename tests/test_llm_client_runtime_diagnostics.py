@@ -25,7 +25,7 @@ def test_command_transport_merges_safe_runtime_diagnostics_on_success(
                 marker
                 + json.dumps(
                     {
-                        "provider_endpoint_host": "cpacn.ivanq.top",
+                        "provider_endpoint_host": "gateway.example.invalid",
                         "provider_endpoint_path": "/v1",
                         "provider_http_status": 200,
                     }
@@ -39,7 +39,7 @@ def test_command_transport_merges_safe_runtime_diagnostics_on_success(
         command_template="bridge {prompt_file} {completion_file}",
         command_diagnostic_context={
             "provider_transport": "ssh_runtime_cpa",
-            "provider_runtime_host": "oci3",
+            "provider_runtime_host": "runtime-host",
             "provider_credential_source": "/opt/bilive/autoslice/cpa.env",
         },
         command_diagnostic_sink=lambda row: captured.update(row),
@@ -49,9 +49,9 @@ def test_command_transport_merges_safe_runtime_diagnostics_on_success(
     assert call("fixture") == '{"findings":[]}'
     assert captured == {
         "provider_transport": "ssh_runtime_cpa",
-        "provider_runtime_host": "oci3",
+        "provider_runtime_host": "runtime-host",
         "provider_credential_source": "/opt/bilive/autoslice/cpa.env",
-        "provider_endpoint_host": "cpacn.ivanq.top",
+        "provider_endpoint_host": "gateway.example.invalid",
         "provider_endpoint_path": "/v1",
         "provider_http_status": 200,
     }
@@ -69,7 +69,7 @@ def test_command_transport_redacts_failure_diagnostics(
                 marker
                 + json.dumps(
                     {
-                        "provider_endpoint_host": "cpacn.ivanq.top",
+                        "provider_endpoint_host": "gateway.example.invalid",
                         "provider_http_status": 401,
                         "provider_error_code": "invalid_api_key",
                         "provider_error_message": ("Invalid API key token=remote-secret"),
@@ -96,7 +96,7 @@ def test_command_transport_redacts_failure_diagnostics(
     assert raised.value.provider_diagnostics == {
         "provider_transport": "ssh_runtime_cpa",
         "provider_credential_source": "/opt/bilive/autoslice/cpa.env",
-        "provider_endpoint_host": "cpacn.ivanq.top",
+        "provider_endpoint_host": "gateway.example.invalid",
         "provider_http_status": 401,
         "provider_error_code": "invalid_api_key",
         "provider_error_message": "Invalid API key token=<redacted>",

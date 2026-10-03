@@ -1,7 +1,6 @@
 """--smoke-segment 的有界 backfill：单候选 fail-closed 不再让整次冒烟空手。"""
 
 import json
-from pathlib import Path
 from types import SimpleNamespace
 
 import scripts.session_autoslice as runner

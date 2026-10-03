@@ -25,7 +25,7 @@ def test_runtime_cpa_ssh_bridge_writes_completion_and_safe_diagnostics(
             "completion": '{"findings":[]}',
             "diagnostics": {
                 "provider_transport": "ssh_runtime_cpa",
-                "provider_endpoint_host": "cpacn.ivanq.top",
+                "provider_endpoint_host": "gateway.example.invalid",
                 "provider_endpoint_path": "/v1",
                 "provider_credential_source": "/opt/bilive/autoslice/cpa.env",
                 "provider_http_status": 200,
@@ -41,7 +41,7 @@ def test_runtime_cpa_ssh_bridge_writes_completion_and_safe_diagnostics(
     result = bridge.run_bridge(
         prompt_file=prompt,
         completion_file=completion,
-        ssh_host="oci3",
+        ssh_host="runtime-host",
         runtime_root=Path("/opt/bilive/autoslice"),
         model="gpt-6-sol",
         effort="medium",
@@ -49,7 +49,7 @@ def test_runtime_cpa_ssh_bridge_writes_completion_and_safe_diagnostics(
     )
 
     assert completion.read_text(encoding="utf-8") == '{"findings":[]}'
-    assert result["provider_endpoint_host"] == "cpacn.ivanq.top"
+    assert result["provider_endpoint_host"] == "gateway.example.invalid"
     command = observed["command"]
     assert command[:7] == [
         "ssh",
@@ -87,7 +87,7 @@ def test_runtime_cpa_ssh_bridge_preserves_only_redacted_failure_diagnostics(
             "status": "FAILED",
             "diagnostics": {
                 "provider_transport": "ssh_runtime_cpa",
-                "provider_endpoint_host": "cpacn.ivanq.top",
+                "provider_endpoint_host": "gateway.example.invalid",
                 "provider_endpoint_path": "/v1",
                 "provider_credential_source": "/opt/bilive/autoslice/cpa.env",
                 "provider_http_status": 401,
@@ -107,7 +107,7 @@ def test_runtime_cpa_ssh_bridge_preserves_only_redacted_failure_diagnostics(
         bridge.run_bridge(
             prompt_file=prompt,
             completion_file=completion,
-            ssh_host="oci3",
+            ssh_host="runtime-host",
             runtime_root=Path("/opt/bilive/autoslice"),
             model="gpt-6-sol",
             effort="medium",

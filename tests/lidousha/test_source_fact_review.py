@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 import src.autoslice.reviewed_subtitle_baseline_registry as baseline_registry
-import src.autoslice.source_fact_staging as source_fact_staging
 from src.autoslice.llm_client import LlmCallError
 from src.autoslice.publish_staging import _stage_publish_draft
 from src.autoslice.review_evidence import SourceCue

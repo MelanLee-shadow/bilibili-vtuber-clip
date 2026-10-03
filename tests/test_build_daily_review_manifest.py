@@ -994,3 +994,103 @@ def test_build_still_refuses_non_reviewable_batch_statuses(
 
     with pytest.raises(DailyManifestError, match="batch status not reviewable"):
         build(package_root, state_path, deployed_commit_file, candidate_id)
+
+
+def test_build_projects_replayable_final_media_duration_binding(
+    tmp_path: Path,
+) -> None:
+    package_root, state_path, deployed_commit_file, candidate_id = (
+        _build_daily_talk_package(tmp_path, speaker_finalized=False)
+    )
+    record_path = package_root / f"{candidate_id}.record.json"
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record["burned_preview"] = {
+        "verification": {"duration_ms": 20_000},
+        "branding_intro": {"verification": {"duration_ms": 37_546}},
+    }
+    record_path.write_text(
+        json.dumps(record, ensure_ascii=False), encoding="utf-8"
+    )
+
+    manifest = build(
+        package_root, state_path, deployed_commit_file, candidate_id
+    )
+
+    assert manifest["items"][0]["final_media_duration_binding"] == {
+        "final_duration_ms": 20_000,
+        "final_duration_source": "burned_preview.verification.duration_ms",
+        "current_final_duration_ms": 20_000,
+        "legacy_branding_intro_duration_ms": 37_546,
+        "duration_witness_mismatch_ms": 17_546,
+        "duration_witness_mismatch": True,
+    }
+
+
+def test_build_omits_duration_binding_when_record_has_no_burned_preview(
+    tmp_path: Path,
+) -> None:
+    package_root, state_path, deployed_commit_file, candidate_id = (
+        _build_daily_talk_package(tmp_path, speaker_finalized=False)
+    )
+
+    manifest = build(
+        package_root, state_path, deployed_commit_file, candidate_id
+    )
+
+    assert "final_media_duration_binding" not in manifest["items"][0]
+
+
+def test_build_rejects_present_but_invalid_final_media_duration_binding(
+    tmp_path: Path,
+) -> None:
+    package_root, state_path, deployed_commit_file, candidate_id = (
+        _build_daily_talk_package(tmp_path, speaker_finalized=False)
+    )
+    record_path = package_root / f"{candidate_id}.record.json"
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record["burned_preview"] = {"verification": {"duration_ms": 0}}
+    record_path.write_text(
+        json.dumps(record, ensure_ascii=False), encoding="utf-8"
+    )
+
+    with pytest.raises(
+        DailyManifestError, match="final media duration binding invalid"
+    ) as exc_info:
+        build(package_root, state_path, deployed_commit_file, candidate_id)
+
+    assert exc_info.value.reason_code == "FINAL_MEDIA_DURATION_BINDING_INVALID"
+
+
+def test_build_projects_ordinary_producer_legacy_fallback_without_mismatch(
+    tmp_path: Path,
+) -> None:
+    package_root, state_path, deployed_commit_file, candidate_id = (
+        _build_daily_talk_package(tmp_path, speaker_finalized=False)
+    )
+    record_path = package_root / f"{candidate_id}.record.json"
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record["burned_preview"] = {
+        "status": "BURNED",
+        "branding_intro": {
+            "verification": {"duration_ms": 20_000, "full_decode": "clean"}
+        },
+    }
+    record_path.write_text(
+        json.dumps(record, ensure_ascii=False), encoding="utf-8"
+    )
+
+    manifest = build(
+        package_root, state_path, deployed_commit_file, candidate_id
+    )
+
+    assert manifest["items"][0]["final_media_duration_binding"] == {
+        "final_duration_ms": 20_000,
+        "final_duration_source": (
+            "burned_preview.branding_intro.verification.duration_ms:"
+            "legacy_fallback"
+        ),
+        "current_final_duration_ms": None,
+        "legacy_branding_intro_duration_ms": 20_000,
+        "duration_witness_mismatch_ms": None,
+        "duration_witness_mismatch": False,
+    }

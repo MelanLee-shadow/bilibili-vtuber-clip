@@ -440,3 +440,59 @@ def test_source_receipt_symlink_refuses(packages) -> None:
             title=title,
         )
     assert not output.exists()
+
+
+def test_nested_source_receipt_replays_and_records_package_relative_authority(
+    packages,
+) -> None:
+    source, source_receipt, destination, output, _candidate_id, title = packages
+    nested = source / "verification" / source_receipt.name
+    nested.parent.mkdir()
+    source_receipt.rename(nested)
+    source_before = _inventory(source)
+
+    projected = create_title_cover_qc_locator_successor(
+        source_package_root=source,
+        source_receipt_path=nested,
+        destination_package_root=destination,
+        output_path=output,
+        title=title,
+    )
+
+    assert projected["locator_successor"]["source_receipt_name"] == (
+        "verification/title-cover-joint-qc.json"
+    )
+    assert projected["locator_successor"]["source_receipt_sha256"] == (
+        "sha256:" + _sha(nested.read_bytes())
+    )
+    assert qc.reuse_valid_qc(destination, title, output) == projected
+    assert _inventory(source) == source_before
+
+
+def test_nested_source_receipt_directory_symlink_refuses(
+    packages,
+    tmp_path: Path,
+) -> None:
+    source, source_receipt, destination, output, _candidate_id, title = packages
+    outside = tmp_path / "outside-verification"
+    outside.mkdir()
+    outside_receipt = outside / source_receipt.name
+    source_receipt.rename(outside_receipt)
+    (source / "verification").symlink_to(outside, target_is_directory=True)
+    aliased_receipt = source / "verification" / source_receipt.name
+    before = outside_receipt.read_bytes()
+
+    with pytest.raises(
+        TitleCoverQcSuccessorError,
+        match="regular file safely inside its package",
+    ):
+        create_title_cover_qc_locator_successor(
+            source_package_root=source,
+            source_receipt_path=aliased_receipt,
+            destination_package_root=destination,
+            output_path=output,
+            title=title,
+        )
+
+    assert outside_receipt.read_bytes() == before
+    assert not output.exists()

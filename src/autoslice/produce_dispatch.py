@@ -1,6 +1,6 @@
 """Windowed concurrent slice production with deploy-yield.
 
-维护者 部署优先令（「一个切片结束了立刻部署最新版」）：马拉松
+公开规则部署优先令（「一个切片结束了立刻部署最新版」）：马拉松
 tick 整批持锁会让部署排队数小时。派发窗口每次派新活前检查 deploy.guard，
 在场即停派（在飞的做完），本 tick 提前收官让位；未派发候选状态未动，
 下个 tick（新代码）自然续跑。全部依赖注入，runner 侧同名 wrapper 保持

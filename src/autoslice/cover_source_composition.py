@@ -23,10 +23,10 @@ from src.autoslice.surface_canon import CHANNEL_PROFILE
 SCHEMA_VERSION = "lidousha-cover-source-composition-verification.v1"
 AUTHORITY = "CPA_PRIMARY_HASH_BOUND_SOURCE_COMPOSITION"
 
-# 场景分叉（维护者 02:20 逐字裁定）：「如果是截图封面的话，当然不要求
-# 李豆沙在画面里占主要部分，毕竟是游戏截图，只要截图足够有趣就行，主体肯定会
-# 会是游戏。」——单人主导框架只对谈话场成立；游戏场问的是**小窗可见 + 画面有趣**。
-# 未证明是游戏场的一律按 talk 走（fail-closed），talk 提问与判据逐字节不变。
+
+
+
+
 TALK_SCENE = "talk"
 GAME_SCENE = "game"
 COVER_SCENE_KINDS = (TALK_SCENE, GAME_SCENE)
@@ -47,16 +47,16 @@ _SCENE_BOOL_FIELDS = {
     GAME_SCENE: _GAME_BOOL_FIELDS,
 }
 
-# 竖屏源不走截图（维护者 逐字裁定）：「并不是所有的都需要截图，特别是
-# 竖屏直播，通常不适合截图，只能重绘。」
-#
-# 阈值依据（几何，不是标定）：成品封面固定 16:9（0.5625 的 h/w）。从一张 h/w=r
-# 的源里裁一条满宽 16:9，只用得到 0.5625/r 的画面高度。r=1.2 时已经只剩 46.9%
-# ——超过一半的直播画面被丢掉，"忠实裁切"这个前提本身就不成立；再往上（3:4 竖屏
-# r=1.333 剩 42%，9:16 手机竖屏 r=1.778 剩 32%）只会更糟。实测事故
-# `auto_230125_960_1072`（源帧 1920×3414，r=1.7781）正是这样把 16:9 窗口对准
-# 形心后从眼睛处切断。横版侧留足余量：16:9=0.5625、4:3=0.75、1:1=1.0 全部远低于
-# 1.2，所以"横版源但人物在画面上部"不会被这条判据误伤（那是整脸门的辖区）。
+
+
+
+
+
+
+
+
+
+
 VERTICAL_SOURCE_MIN_ASPECT_RATIO = 1.2
 COVER_OUTPUT_ASPECT_RATIO = 1080 / 1920
 
@@ -235,8 +235,8 @@ def _verdict_is_coherent(
         return False
 
     if scene == GAME_SCENE:
-        # 游戏场没有"她能否成为大主体"这个判据（维护者 8/9：主体本来就是游戏）。
-        # 唯一的一致性要求：小窗可见且画面有趣时不得同时建议整张重绘。
+
+
         game_screenshot_safe = bool(
             verdict.get("host_window_visible") is True
             and verdict.get("frame_is_interesting") is True
@@ -287,13 +287,22 @@ def _routing_valid(witness: Mapping[str, object]) -> bool:
     return False
 
 
+_SOURCE_EYEPATCH_VISIBILITY_RULE = (
+    "判断脸部或面捕小窗可见性时，当场造型若有眼罩，原本被眼罩遮住的一只眼不算缺失，"
+    "不要要求露出或补画；仍须确认可见眼、眼罩、嘴巴、下巴及头脸轮廓没有被画面边缘、"
+    "直播卡片、文字或其他遮挡物切断或盖住。"
+)
+
+
 _QUESTION_PREFIX = (
     f"这是待制作{CHANNEL_PROFILE.display_name}切片封面的、已经 hash-bound 的 SOURCE REFERENCE。"
     "只判断这张源图本身，不假设后续生成器会修正构图。先按当场服装、"
     f"{CHANNEL_PROFILE.cover_identity.locator_zh}定位{CHANNEL_PROFILE.display_name}；"
     f"不要把{CHANNEL_PROFILE.cover_identity.composition_decoys_zh} 当成她。"
     f"给出{CHANNEL_PROFILE.display_name}完整可见区域的归一化 bbox=[x0,y0,x1,y1]，坐标必须在 0..1 且紧包住"
-    "她的脸和承担反应的上半身。判断脸是否完整；在不生成、不补画、不扭曲身份且不裁掉"
+    "她的脸和承担反应的上半身。"
+    + _SOURCE_EYEPATCH_VISIBILITY_RULE
+    + "在不生成、不补画、不扭曲身份且不裁掉"
     "关键反应的前提下，能否只靠 16:9 裁切让她成为大号第一主体；源图中的表情/动作是否"
     "承载给定故事中的任一相关情绪或状态，无需单帧同时演出所有动作、反转和结尾。"
     "平静、温柔或笑容也可以是有效状态；没有拍到的故事信息可以由封面文字承担。"
@@ -309,10 +318,10 @@ _QUESTION_PREFIX = (
 )
 
 
-# 游戏场提问（维护者 02:20 裁定的落地面）。与 talk 版的差别是**故意**的：
-# 删掉「让她成为大号第一主体」与「不要因为游戏画面显眼而放行」——这两句正是把
-# 游戏场恒判重绘的那两句；改问 维护者 给的两个判据：小窗里能不能认出她、这张游戏
-# 画面本身够不够有趣。她占画面比例在这里只作披露，不参与放行。
+
+
+
+
 _GAME_QUESTION_PREFIX = (
     f"这是待制作{CHANNEL_PROFILE.display_name}切片封面的、已经 hash-bound 的 SOURCE REFERENCE。"
     "本条是**游戏直播场**：画面主体本来就是游戏，"
@@ -320,7 +329,8 @@ _GAME_QUESTION_PREFIX = (
     f"先按当场服装、{CHANNEL_PROFILE.cover_identity.locator_zh}在画面中定位{CHANNEL_PROFILE.display_name}"
     f"的面捕小窗/立绘；不要把{CHANNEL_PROFILE.cover_identity.composition_decoys_zh} 当成她。"
     "给出该小窗的归一化 bbox=[x0,y0,x1,y1]，坐标必须在 0..1 且紧包住小窗里她的脸和上半身。"
-    "然后只判断两件事：①host_window_visible——小窗确实存在、没有被遮挡或裁掉，"
+    + _SOURCE_EYEPATCH_VISIBILITY_RULE
+    + "然后只判断两件事：①host_window_visible——小窗确实存在、没有被遮挡或裁掉，"
     "里面的人可以被认出就是她（哪怕很小）；②frame_is_interesting——这张游戏画面本身"
     "是否承载一个看得出来的事件（战况、结算、道具、失误、名场面、可读的关键 UI 文字），"
     "而不是空面板、加载页、菜单、纯黑/纯色过渡或什么都没发生的静止画面。"
@@ -521,8 +531,8 @@ def source_composition_recommends_redraw(verification: object) -> bool:
     if not isinstance(verdict, Mapping):
         return False
     if source_composition_scene_kind(verification) == GAME_SCENE:
-        # 游戏场（维护者）：几何否决只剩「小窗不可见」与「画面无聊」。
-        # "她不能成为大主体"在这里不是缺陷，是这类封面的定义。
+
+
         return (
             verdict.get("host_window_visible") is False
             or verdict.get("frame_is_interesting") is False
@@ -548,10 +558,10 @@ def source_composition_supports_subject(verification: object) -> bool:
     if not isinstance(verdict, Mapping):
         return False
     if source_composition_scene_kind(verification) == GAME_SCENE:
-        # 游戏场恒 False，且这是**故意**的：`subject_confident` 的语义就是
-        # 「她能当大主体」，而 维护者 8/9 明说游戏场不要求这个。返回 False 让路由
-        # 落到既有的 camera-window 分支（`publish_staging.py` 小窗回归，7/25 维护者
-        # 授权）——那条分支在见证在场时原本永远不可达，正是 C5 的死代码。
+
+
+
+
         return False
     return bool(
         verdict.get("faithful_crop_can_make_dominant") is True
@@ -794,14 +804,14 @@ def _extract_game_scene_full_frame(
     verification_receipt_path: Path,
     verification_receipt_sha256: str,
 ) -> dict[str, object]:
-    """Keep the whole game frame — the game IS the subject (维护者).
+    """Keep the whole game frame — the game IS the subject (公开规则).
 
-    「如果是截图封面的话，当然不要求李豆沙在画面里占主要部分，毕竟是游戏截图，
-    只要截图足够有趣就行，主体肯定会会是游戏。」把小窗 1.38x 裁出来当封面恰好
-    做反了：那样丢掉的正是 维护者 要的游戏画面，而且等于用截图重演一次"角落小人
-    放大成大头"——重绘 lane 做这件事本来就更强。所以游戏场用**原样全幅**，
-    她的小窗 bbox 只作披露，供最终身份门定位。
-    """
+ 「如果是截图封面的话，当然不要求李豆沙在画面里占主要部分，毕竟是游戏截图，
+ 只要截图足够有趣就行，主体肯定会会是游戏。」把小窗 1.38x 裁出来当封面恰好
+ 做反了：那样丢掉的正是 公开规则要的游戏画面，而且等于用截图重演一次"角落小人
+ 放大成大头"——重绘 lane 做这件事本来就更强。所以游戏场用**原样全幅**，
+ 她的小窗 bbox 只作披露，供最终身份门定位。
+ """
 
     verdict = verification["verdict"]
     assert isinstance(verdict, Mapping)

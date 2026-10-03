@@ -252,18 +252,18 @@ class TestBypassLaneStaysFailClosed:
 
 
 class TestGeminiApiFallbackLane:
-    """维护者 拍板（项目 memory）：AGY 订阅 / 免费 key / 付费 backup 是
-    同一个 Gemini 模型的**配额顺序**，「按 provider 层拒证据的门 = 过度限制」；
-    「需要调用 AGY->gemini 这条链的，全都复用一种接口才好」。
+    """公开规则拍板（项目 memory）：AGY 订阅 / 免费 key / 付费 backup 是
+ 同一个 Gemini 模型的**配额顺序**，「按 provider 层拒证据的门 = 过度限制」；
+ 「需要调用 AGY->gemini 这条链的，全都复用一种接口才好」。
 
-    因此带完整 typed provenance 的 Gemini API 兜底是**有效证据**，但必须如实
-    记录用了哪一层（provider_fallback_used=True）、模型串是什么、AGY 那条腿的
-    退出码是多少。缺任何一项仍然阻断。
+ 因此带完整 typed provenance 的 Gemini API 兜底是**有效证据**，但必须如实
+ 记录用了哪一层（provider_fallback_used=True）、模型串是什么、AGY 那条腿的
+ 退出码是多少。缺任何一项仍然阻断。
 
-    注意：本仓当前 jingting 精听链（jingting_remote_runner）**没有**任何
-    Gemini 兜底实现，只会返回 provider="agy"。所以本 lane 是前瞻契约，不修复
-    任何已观测到的生产故障。见内部取证文档留存（song-lane-forensics）。
-    """
+ 注意：本仓当前 jingting 精听链（jingting_remote_runner）**没有**任何
+ Gemini 兜底实现，只会返回 provider="agy"。所以本 lane 是前瞻契约，不修复
+ 任何已观测到的生产故障。见内部取证文档留存（song-lane-forensics）。
+ """
 
     @staticmethod
     def manifest(**overrides) -> dict:

@@ -255,7 +255,7 @@ def _install_deployed_registry_authority(fixture: dict) -> Path:
     _write_json(
         repo / "DEPLOYED_MANIFEST.json",
         {
-            "schema_version": "oci3-shadow-autoslice-repo-manifest.v1",
+            "schema_version": "runtime-host-shadow-autoslice-repo-manifest.v1",
             "commit": commit,
             "entries": tree_entries,
             "tree_sha256": tree_sha256,
@@ -2009,3 +2009,71 @@ def test_original_successor_authority_must_equal_manifest(monkeypatch):
     assert not reconciliation._repair_successor_authority_valid(
         {"schema_version": "unrecognized-self-approved"}, {}, {}
     )
+
+
+def _normal_repair_fixture(tmp_path):
+    from src.autoslice.new_bv_repair_authority import build_new_bv_repair_authority
+
+    fixture = _new_bv_fixture(tmp_path)
+    _reconcile_new(fixture)
+    source = reconciliation.authority_sidecar_path(fixture["manifest_path"])
+    title = f"{CHANNEL_PROFILE.talk_title_prefix}请求抱抱，怎么还要加一句咬一下？"
+    authority = build_new_bv_repair_authority(source, candidate_id=CANDIDATE, title=title)
+    return fixture, source, title, authority
+
+
+def test_normal_new_bv_authority_reaches_existing_same_bv_target_and_mechanical_title(tmp_path, monkeypatch):
+    from src.autoslice import same_bv_repair, final_human_review
+    from src.autoslice.recovery_title_authority import validate_recovery_publication_authority
+
+    fixture, source, title, authority = _normal_repair_fixture(tmp_path)
+    assert validate_recovery_publication_authority(
+        authority, candidate_id=CANDIDATE, expected_final_title=title,
+    ) == authority
+    monkeypatch.setattr(same_bv_repair, "_final_human_review_attestation", lambda manifest: {})
+    manifest = {"manifest_version": 3, "title": title, "recovery_publication_authority": authority}
+    assert same_bv_repair.validate_repair_publication_target(manifest, BVID) == authority
+    target = final_human_review._publication_target(
+        authority, candidate_id=CANDIDATE, title=title, source="test",
+    )
+    assert target["cid"] == fixture["public"]["public_view"]["cid"]
+    assert reconciliation._repair_successor_authority_valid(
+        authority, manifest, {"candidate_id": CANDIDATE},
+    )
+    with pytest.raises(same_bv_repair.PlanInvalid, match="BVID differs"):
+        same_bv_repair.validate_repair_publication_target(manifest, "BV0000000000")
+    assert source.read_bytes()  # Projection preserves the original closure.
+
+
+@pytest.mark.parametrize("key", ["candidate_id", "bvid", "aid", "cid", "title"])
+def test_normal_repair_projection_rejects_rehashed_target_or_title_drift(tmp_path, key):
+    from src.autoslice.new_bv_repair_authority import validate_new_bv_repair_authority, _digest
+
+    _, _, title, authority = _normal_repair_fixture(tmp_path)
+    changed = dict(authority)
+    changed[key] = 99999 if key in {"aid", "cid"} else "wrong"
+    changed.pop("authority_sha256")
+    changed["authority_sha256"] = _digest(changed)
+    with pytest.raises(ValueError):
+        validate_new_bv_repair_authority(changed, candidate_id=CANDIDATE, expected_final_title=title)
+
+
+@pytest.mark.parametrize("key", ["public_path", "season_path", "uploaded_path"])
+def test_normal_repair_projection_replays_original_receipt_bytes(tmp_path, key):
+    from src.autoslice.new_bv_repair_authority import validate_new_bv_repair_authority
+
+    fixture, _, title, authority = _normal_repair_fixture(tmp_path)
+    fixture[key].write_text('{}\n')
+    with pytest.raises(ValueError):
+        validate_new_bv_repair_authority(authority, candidate_id=CANDIDATE, expected_final_title=title)
+
+
+def test_normal_repair_projection_requires_the_complete_first_publication(tmp_path):
+    from src.autoslice.new_bv_repair_authority import build_new_bv_repair_authority
+
+    _, source, title, _ = _normal_repair_fixture(tmp_path)
+    raw = json.loads(source.read_text())
+    raw["cid"] += 1  # A freshly hashed envelope cannot overrule the public evidence.
+    _write_json(source, raw)
+    with pytest.raises(ValueError, match="identity drifted"):
+        build_new_bv_repair_authority(source, candidate_id=CANDIDATE, title=title)

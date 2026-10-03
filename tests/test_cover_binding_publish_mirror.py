@@ -67,3 +67,58 @@ def test_missing_binding_still_rejected():
     with pytest.raises(PublishStagingMirrorError) as err:
         validate_publish_staging_mirror(record, publish)
     assert err.value.code == "PUBLISH_STAGING_FIELD_SET_DRIFT"
+
+
+def test_b2_local_video_and_subtitle_locators_are_not_semantic_mirror_fields():
+    record, publish = _pair(False)
+    record["publish_staging"]["video_path"] = "/tmp/current-final.mp4"
+    record["publish_staging"]["subtitle_path"] = "/tmp/current-final.srt"
+
+    staging = validate_publish_staging_mirror(record, publish)
+
+    assert staging["video_path"] == "/tmp/current-final.mp4"
+    assert staging["subtitle_path"] == "/tmp/current-final.srt"
+    assert publish["video_path"] == "/tmp/final.mp4"
+
+
+def test_b2_local_locator_does_not_hide_semantic_field_drift():
+    record, publish = _pair(False)
+    record["publish_staging"]["video_path"] = "/tmp/current-final.mp4"
+    record["publish_staging"]["subtitle_path"] = "/tmp/current-final.srt"
+    record["publish_staging"]["title"] = "Changed title"
+
+    with pytest.raises(PublishStagingMirrorError) as err:
+        validate_publish_staging_mirror(record, publish)
+
+    assert err.value.code == "PUBLISH_STAGING_VALUE_DRIFT"
+
+
+@pytest.mark.parametrize("local_key", ["video_path", "subtitle_path"])
+def test_optional_local_locator_is_individually_allowed(local_key):
+    record, publish = _pair(False)
+    record["publish_staging"][local_key] = f"/tmp/current-{local_key}"
+
+    assert validate_publish_staging_mirror(record, publish) is record["publish_staging"]
+
+
+def test_unknown_staging_extra_remains_rejected():
+    record, publish = _pair(False)
+    record["publish_staging"]["unexpected_runtime_path"] = "/tmp/unknown"
+
+    with pytest.raises(PublishStagingMirrorError) as err:
+        validate_publish_staging_mirror(record, publish)
+
+    assert err.value.code == "PUBLISH_STAGING_FIELD_SET_DRIFT"
+
+
+def test_local_name_declared_by_publish_remains_semantically_mirrored():
+    record, publish = _pair(False)
+    publish["subtitle_path"] = "/tmp/published-subtitle.srt"
+    record["publish_staging"]["subtitle_path"] = "/tmp/published-subtitle.srt"
+    assert validate_publish_staging_mirror(record, publish)
+
+    record["publish_staging"]["subtitle_path"] = "/tmp/other-subtitle.srt"
+    with pytest.raises(PublishStagingMirrorError) as err:
+        validate_publish_staging_mirror(record, publish)
+
+    assert err.value.code == "PUBLISH_STAGING_VALUE_DRIFT"

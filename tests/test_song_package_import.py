@@ -529,13 +529,14 @@ def test_already_published_candidate_is_refused(
     ]
     # 真"已发布"要一整条 reconciliation 权威链才成立；这里用闭包投影 seam
     # 直接给出那个结论，检的是导入面对已发布件必须拒绝改绑。
-    published_closure = lambda _state: {  # noqa: E731
-        "schema_version": "daily-publication-closure.v1",
-        "status": "published",
-        "published_candidate_ids": [CANDIDATE_ID],
-        "ready_unpublished_candidate_ids": [],
-        "unresolved_candidate_ids": [],
-    }
+    def published_closure(_state):
+        return {
+            "schema_version": "daily-publication-closure.v1",
+            "status": "published",
+            "published_candidate_ids": [CANDIDATE_ID],
+            "ready_unpublished_candidate_ids": [],
+            "unresolved_candidate_ids": [],
+        }
 
     with pytest.raises(pi.PackageImportError) as excinfo:
         spi.build_bound_song_state(

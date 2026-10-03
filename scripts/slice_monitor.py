@@ -97,8 +97,8 @@ HISTORY_DIR = os.path.join(REPORT_DIR, "history")
 
 EMAIL_TO = ""  # 收件人由 smtp.json 的 to 字段提供；留空禁用兜底
 EMAIL_ACCOUNT = "iCloud"
-# 维护者 dropped the email channel : report file is the only alert channel.
-# Flip back to True (and configure ~/.config/slice_monitor/smtp.json) to re-enable email.
+
+
 EMAIL_ENABLED = False
 
 # thresholds
@@ -879,7 +879,7 @@ def evaluate(probe, state):
             problems.append({
                 "id": "record_health_audit",
                 "sev": "DOWN" if down else "DEGRADED",
-                "msg": "OCI3 normalized recorder-health audit failed.",
+                "msg": "runtime host normalized recorder-health audit failed.",
                 "fix": (
                     f"Inspect {SSH_HOST}:/opt/bilive/recording/status.json, "
                     "adapter-state.json and the deployed record_health_audit.py result."
@@ -1008,13 +1008,13 @@ def evaluate(probe, state):
                          "fix": f"检查 {SSH_HOST} 上 bililive_recorder 容器、"
                                 "/opt/bilive/recording/status.json 与 bililive_adapter 服务。"})
 
-    # ---- OLD control plane RETIRED (维护者) ----
-    # BililiveRecorder records; the autoslice runner lives on the configured production host.
-    # slices.  scan/local_prepare/shadow-daemon must NOT run: they double-
-    # produce, burn AI-cover money on full segments, and their full-tree FUSE
-    # rescans destabilized the CloudDrive mount (the 7/9 outage).  This monitor
-    # used to AUTO-RESURRECT them (slice_blessed crash-recovery) — that logic is
-    # deliberately gone; a running copy is reported, never restarted.
+
+
+
+
+
+
+
     for label, key in (("scan", "scan"), ("local_prepare", "local_prepare"),
                        ("auto-review-shadow-daemon", "auto_review_shadow")):
         if procs.get(key, 0) > 0:
@@ -1274,11 +1274,11 @@ def main():
     print(f"[{ts:%Y-%m-%d %H:%M:%S}] {verdict}  problems={prob_ids}  "
           f"actions={[a[0] for a in actions]}")
     print(md)
-    # A SUCCESSFUL monitor run exits 0 — the health verdict is surfaced via the
-    # report file + email (维护者 的约定：告警只走报告文件), NOT the process exit
-    # code.  Under launchd, exit 1 on a monitored-DEGRADED made `launchctl list`
-    # show a permanent "1" that reads as the monitor itself failing.  Opt into
-    # the old verdict-as-exit-code behavior with --health-exit (manual/cron).
+
+
+
+
+
     if "--health-exit" in sys.argv:
         sys.exit({"OK": 0, "WARN": 0, "DEGRADED": 1, "DOWN": 2}[verdict])
     sys.exit(0)

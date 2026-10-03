@@ -13,8 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.autoslice.channel_profile import load_channel_profile  # noqa: E402
-from src.autoslice.timely_term_crawler import (  # noqa: E402
+from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.timely_term_crawler import (
     BoundedHttpClient,
     CrawlError,
     CrawlWindow,

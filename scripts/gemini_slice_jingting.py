@@ -1476,12 +1476,12 @@ def run_gemini_api(slice_path: str, srt_path: str, out_path: str) -> str:
     srt_text = Path(srt_path).read_text(encoding="utf-8")
     errors: list[dict[str, object]] = []
     corrected = ""
-    # 维护者: the PAID backup key may fire only after the free
-    # chain has already failed >= 3 recorded rounds for this exact audio,
-    # and never past the daily cap. pure quota-class (429)
-    # failure rounds may complete back-to-back within one run — see
-    # gemini_backup_policy.quota_exhausted_round for the delivery-incident
-    # rationale; non-quota failures still stop after one round.
+
+
+
+
+
+
     from src.autoslice import gemini_backup_policy as backup_policy
 
     item_key = sha256_file(audio)

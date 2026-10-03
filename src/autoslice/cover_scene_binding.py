@@ -1,14 +1,14 @@
 """Bind one clip's cover scene (talk vs game) to the evidence that exists.
 
-维护者 02:20（逐字）：「事实上，如果是截图封面的话，当然不要求李豆沙在
+公开规则（逐字）：「事实上，如果是截图封面的话，当然不要求李豆沙在
 画面里占主要部分，毕竟是游戏截图，只要截图足够有趣就行，主体肯定会会是游戏。」
 
 这层只做"这一条是不是游戏场"的绑定，不新建任何探测器：
 
 * 会话级 —— `src/autoslice/game_context.py` 已经在算的 `session-game-context.v1`
-  （runner 通过 `bind_session_game_context` 绑进 `LIDOUSHA_SESSION_GAME_CONTEXT`）；
+ （runner 通过 `bind_session_game_context` 绑进 `LIDOUSHA_SESSION_GAME_CONTEXT`）；
 * 逐条 —— `src/autoslice/cover_frame_selection.py` 已经在算的
-  `camera_window_bbox_frac`（固定位置的面捕小窗，正是"全屏游戏 + 角落小窗"版式）。
+ `camera_window_bbox_frac`（固定位置的面捕小窗，正是"全屏游戏 + 角落小窗"版式）。
 
 两条都拿到才是游戏场。任何缺失、读坏、schema 不合、status 非 RESOLVED，或者这一条
 根本没有小窗（游戏场里的纯杂谈切片就是这样），都退回 talk，放宽面不会靠"猜"生效。

@@ -8,6 +8,9 @@ import subprocess
 from src.autoslice import llm_client
 from src.autoslice.acoustic_witness_adjudication import judge_word_choice
 from src.autoslice.cpa_runtime import build_cpa_qa_command
+from src.autoslice.final_media_review_model_capability import (
+    KNOWN_UNSUPPORTED_DUAL_RAW_AV_MODELS,
+)
 
 
 def test_qa_factory_uses_sol_without_gpt5_or_astra_fallback():
@@ -126,11 +129,18 @@ def test_unknown_model_identity_never_reuses_a_global_judge_cache(tmp_path, monk
 
 def test_production_source_has_no_implicit_astra_route():
     root = Path(__file__).resolve().parents[1]
+    negative_capability_policy = (
+        root / "src/autoslice/final_media_review_model_capability.py"
+    )
+    assert {"gpt-6-astra", "gpt-6.1-astra"} <= set(
+        KNOWN_UNSUPPORTED_DUAL_RAW_AV_MODELS
+    )
     allowed_historical_tools = {
         root / "scripts/astra_eval_transport.py",
         root / "scripts/evaluate_astra_native_audio.py",
         root / "scripts/evaluate_native_target_replay.py",
         root / "scripts/run_astra_transport_canary.py",
+        negative_capability_policy,
     }
     offenders = []
     for base in (root / "src/autoslice", root / "scripts"):

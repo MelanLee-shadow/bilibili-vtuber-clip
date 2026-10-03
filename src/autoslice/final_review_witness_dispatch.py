@@ -41,7 +41,7 @@ def dispatch_context_witness(
     )
     # force_acoustic exits deterministic T1; it does not require a fresh listen.
     text_judge = None
-    if judge_llm_call is not None and entity_verifier is not None and not audio_required:
+    if judge_llm_call is not None and not audio_required:
         text_judge = judge_word_choice(
             llm_call=judge_llm_call, check_request=request,
             witness=pending, structured_chat_context=structured_chat_context,

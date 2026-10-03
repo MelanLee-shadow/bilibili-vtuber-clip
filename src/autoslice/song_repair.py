@@ -551,13 +551,13 @@ def _select_text_lrc(
                 )
             )
             continue
-        # Tolerate a SHORT unmatched tail: the ASR routinely drops the last few
-        # sung lines of an outro (quiet fade, applause/'谢谢大家' bleed) even when
-        # she sang the song in full (维护者 confirmed 《屑屑》 was complete
-        # to 4:11 yet the ASR missed 3 tail lines → false BLOCK).  The LRC, not the
-        # ASR, is the subtitle authority, so those lines still render.  A GENUINELY
-        # cut-off song leaves many more unmatched tail lines and still fails.  The
-        # HEAD stays strict — a mid-song start is truly unsliceable.
+
+
+
+
+
+
+
         tail_limit = max(3, len(alignment) // 12)
         if tail_missing > tail_limit:
             attempts.append(

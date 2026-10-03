@@ -106,9 +106,9 @@ _COVER_BG_PHRASES = {
     "soft-radial": "a soft radial glow background with gentle bokeh and a few sparkles, calm and uncluttered",
     "clean-scenic": "a clean dreamy scene — a starry night sky with a crescent moon, soft bokeh and a few floating music notes, low-detail and uncluttered",
 }
-# Expression guardrail (维护者 — 表情永不吐舌头, never 油滑/挑衅/sexy).  Match bad
-# PHRASES, not bare "tongue" (else a benign "no tongue" would be rejected); the
-# global no-tongue rule is enforced unconditionally in _cover_prompt.
+
+
+
 _COVER_FORBIDDEN_EXPR = (
     "tongue out", "tongue-out", "tongue sticking", "sticking tongue", "stick out her tongue",
     "licking", "sexy", "seductive", "挑衅", "provocative", "油滑", "媚", "cleavage", "flirt", "吐舌",
@@ -183,8 +183,11 @@ def image_identity_prompt(*, profile, identity_descriptor, identity_asset, art_d
         "Her mouth may be open for a gasp/shout/laugh but she must NEVER stick her tongue out — no tongue showing; "
         "never look sly beyond cute, never provocative or sexy. "
         f"SUBJECT READABILITY: {profile.prompt_name} must be easy to identify and carry the story reaction. "
-        "Choose the camera distance and subject hierarchy for this story, keeping her complete face clear and "
-        "expressive at feed-thumbnail size. A story object or a sequence may share focus with her; unrelated decoration "
+        "Choose the camera distance and subject hierarchy for this story, keeping her face clear and "
+        "faithful to the reference: preserve a source-visible eyepatch and never invent the eye beneath it. "
+        "Keep the visible eye, eyepatch, mouth, chin, and face outline inside the frame and unobstructed "
+        "by frame edges, cards, rendered title text, or newly added objects, "
+        "with an expressive face at feed-thumbnail size. A story object or a sequence may share focus with her; unrelated decoration "
         "must not compete with the event. A clean title zone is intentional, but it must not become vast "
         "dead space or a meaningless solid-color strip; every non-title element must support this clip's story. "
         "FEED-SAFE FRAMING: keep her FACE and all key features within the central 4:3 portion of the frame — feed "

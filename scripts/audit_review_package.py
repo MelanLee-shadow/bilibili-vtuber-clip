@@ -9,103 +9,103 @@ from typing import Any, Mapping
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from src.autoslice.subtitle_rendering import (  # noqa: E402
+from src.autoslice.subtitle_rendering import (
     ASS_MAX_CHARS_PER_LINE,
     ASS_MAX_VISUAL_LINES,
 )
-from src.autoslice.cover_generation import (  # noqa: E402
+from src.autoslice.cover_generation import (
     COVER_MIN_TALK_FONT_SIZE,
     validate_cover_punch_semantic_review,
 )
-from src.autoslice.cover_punch_semantics import (  # noqa: E402
+from src.autoslice.cover_punch_semantics import (
     talk_cover_thumbnail_gate_violations,
 )
-from src.autoslice.cover_route_evidence import (  # noqa: E402
+from src.autoslice.cover_route_evidence import (
     validate_cover_route_decision,
     validate_rendered_text_pixel_evidence,
 )
-from src.autoslice.review_package_cover_diagnostics import (  # noqa: E402
+from src.autoslice.review_package_cover_diagnostics import (
     audit_builtin_imagegen_cover, validate_package_cover_route,
     audit_host_only_v4_package_binding as _audit_host_only_v4_package_binding,
     host_only_identity_route_blocker_detail as _host_only_identity_route_blocker_detail,
 )
-from src.autoslice.cover_text_pixel_evidence import (  # noqa: E402
+from src.autoslice.cover_text_pixel_evidence import (
     verify_pre_overlay_route_background,
     verify_rendered_text_pixel_artifacts,
 )
-from src.autoslice.cover_font_paths import (  # noqa: E402
+from src.autoslice.cover_font_paths import (
     resolve_trusted_cover_font,
 )
-from src.autoslice.cover_polish_gate import (  # noqa: E402
+from src.autoslice.cover_polish_gate import (
     _polish_face_binding_failure,
 )
-from src.autoslice.clip_context import (  # noqa: E402
+from src.autoslice.clip_context import (
     ClipContextError,
     clip_context_prompt_text,
     validate_clip_context,
 )
-from src.autoslice.jingting_chunker import parse_srt_cues  # noqa: E402
-from src.autoslice.final_review_contract import (  # noqa: E402
+from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.final_review_contract import (
     FinalReviewContractError,
     validate_final_review_release,
 )
-from src.autoslice.selection_scorecard import (  # noqa: E402
+from src.autoslice.selection_scorecard import (
     SelectionCalibrationPolicyError,
     load_selected_selection_calibration_policy,
     selection_calibration_violations,
     selection_scorecard_is_valid,
 )
-from src.autoslice.subtitle_validation import validate_srt_file  # noqa: E402
-from src.autoslice.published_recovery_package_contract import audit_published_recovery_manifest_binding  # noqa: E402
-from src.autoslice.review_package_ass_audit import (  # noqa: E402
+from src.autoslice.subtitle_validation import validate_srt_file
+from src.autoslice.published_recovery_package_contract import audit_published_recovery_manifest_binding
+from src.autoslice.review_package_ass_audit import (
     audit_review_package_ass,
 )
-from src.autoslice.review_package_boundary_contract import (  # noqa: E402
+from src.autoslice.review_package_boundary_contract import (
     audit_boundary_contract,
 )
 from src.autoslice.fastlane_original_patch import append_original_release_issues
 
-from src.autoslice.review_package_owner_audit import (  # noqa: E402
+from src.autoslice.review_package_owner_audit import (
     audit_source_truth_owner_attestations,
 )
-from src.autoslice.review_package_portable_evidence import (  # noqa: E402
+from src.autoslice.review_package_portable_evidence import (
     contained_package_artifact as _contained_package_artifact,  # noqa: F401 - compatibility export
     portable_item_artifact_path as _portable_item_artifact_path,
     resolve_portable_primary_artifacts,
     resolve_review_item_evidence,
 )
-from src.autoslice.review_package_source_fact_audit import (  # noqa: E402
+from src.autoslice.review_package_source_fact_audit import (
     audit_story_source_fact_receipt,
 )
-from src.autoslice.review_package_title_audit import (  # noqa: E402
+from src.autoslice.review_package_title_audit import (
     audit_recovery_publication_surfaces,
     recovery_publication_authority_contract,
 )
-from src.autoslice.title_policy import (  # noqa: E402
+from src.autoslice.title_policy import (
     CHANNEL_PROFILE,
 )
-from src.autoslice.review_package_policy_fingerprint import (  # noqa: E402
+from src.autoslice.review_package_policy_fingerprint import (
     build_policy_fingerprint,
 )
-from src.autoslice.story_contract import (  # noqa: E402
+from src.autoslice.story_contract import (
     SCHEMA_VERSION as STORY_CONTRACT_SCHEMA,
     audit_story_artifact,
 )
-from src.autoslice.publication_title_exception import (  # noqa: E402
+from src.autoslice.publication_title_exception import (
     candidate_title_policy_violations,
 )
-from src.autoslice.qixi_corrected_package_finalization import (  # noqa: E402
+from src.autoslice.qixi_corrected_package_finalization import (
     QixiCorrectedPackageError,
     validate_manifest_bound_applied_receipt,
 )
-from src.autoslice.qixi_review_package_owner_bridge import (  # noqa: E402
+from src.autoslice.qixi_review_package_owner_bridge import (
     manifest_bound_terminal_projection_authority,
 )
-from src.autoslice.fastlane_c1_formal_adapter import (  # noqa: E402
+from src.autoslice.fastlane_c1_formal_adapter import (
     audit_fastlane_formal_package,
     is_fastlane_formal_manifest,
 )
-from src.autoslice.fastlane_c9_successor import audit_c9_successor  # noqa: E402
+from src.autoslice.fastlane_c9_successor import audit_c9_successor
 DEFAULT_MAX_VISUAL_LINES = 2
 DEFAULT_MAX_VISUAL_LINE_CHARS = 18
 LONG_STATIC_CUE_SECONDS = 10.0

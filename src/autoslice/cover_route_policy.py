@@ -97,11 +97,11 @@ def decide_cover_treatment(
             "CPA source-composition witness reports the face is cut or cannot "
             "become the dominant subject",
         )
-    # witness 不再无条件替换路由。此前它是 Mapping 就直接 return，导致下方整套
-    # 标定阈值（4.5 / 2.6 / 0.50 弥散 / camera window）在有 witness 时**完全不可达**
-    # ——维护者 拍板的名场面分路由被整体退役，封面路线退化成一次 CPA 二值
-    # 判断。现在它降级为**置信输入**（见下方 subject_confident 的合成），
-    # 标定分数恢复决定权。
+
+
+
+
+
     if frame_selection is None:
         return "cpa_redraw", "frame selection unavailable"
     candidates = frame_selection.get("candidates") or []
@@ -180,13 +180,13 @@ def decide_cover_treatment(
     if subject_confident and best >= _COVER_TREATMENT_SCORE_LO:
         return "screenshot_polish", f"usable moment + CPA touch-up (score={best:.2f})"
     if best >= _COVER_TREATMENT_SCORE_LO:
-        # 游戏场小窗回归。**出处据实**：「截图修图优先于重绘」是 03:34
-        # 助手对 维护者 提问的回答，不是 维护者 的裁定；维护者 当场没有反对，并在 03:38
-        # 逐字授权了配套修复（「你可以现在开始做小窗裁剪」）。02:20 另有
-        # 逐字裁定：游戏截图封面不要求她占画面主要部分。本分支在见证
-        # 在场（正常 talk 生产恒真）时曾**逻辑不可达**——faithful_crop=false 在上面
-        # 提前 return，=true 又把 subject_confident 抬成 True；游戏场受证
-        # `supports_subject()==False` 之后它才第一次真正可达。
+
+
+
+
+
+
+
         if frame_selection.get("camera_window_bbox_frac"):
             if scene_kind == GAME_SCENE:
                 lead = "game scene: host camera window visible; full game frame"

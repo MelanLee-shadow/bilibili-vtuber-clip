@@ -21,6 +21,7 @@ from src.autoslice.provider_slots import ProviderSlotTimeout, provider_wait_for_
 
 SCHEMA_VERSION = "cpa-frame-witness.v1"
 _UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
+_MAX_BATCH_IMAGES = 12
 
 
 def _sha256_bytes(payload: bytes) -> str:
@@ -198,6 +199,156 @@ def frame_vision_probe(
         timeout_seconds=timeout_seconds,
         max_tokens=max_tokens,
     )
+
+
+def batch_jpeg_vision_probe(
+    image_paths: list[Path],
+    question: str,
+    *,
+    api_base: str,
+    api_key: str,
+    model: str = "gpt-6-sol",
+    timeout_seconds: float = 90.0,
+    max_tokens: int = 4096,
+) -> dict[str, object]:
+    """Ask CPA one visual question about 1--12 exact on-disk JPEG snapshots.
+
+    The bytes sent to CPA are the bytes read from each path.  This route is
+    deliberately separate from :func:`image_vision_probe`, whose compatibility
+    contract converts ordinary image formats through FFmpeg before dispatch.
+    """
+
+    receipt: dict[str, object] = {
+        "schema_version": SCHEMA_VERSION,
+        "question": question,
+        "model": model,
+        "provider": "cpa",
+    }
+    if not api_base or not api_key:
+        receipt.update(
+            status="UNAVAILABLE",
+            reason_code="CPA_CREDENTIALS_MISSING",
+            error="CPA_BASE_URL/CPA_API_KEY missing",
+        )
+        return receipt
+    if not isinstance(image_paths, list) or not 1 <= len(image_paths) <= _MAX_BATCH_IMAGES:
+        receipt.update(
+            status="UNAVAILABLE",
+            reason_code="BATCH_IMAGE_COUNT_INVALID",
+            error=f"batch requires 1 to {_MAX_BATCH_IMAGES} images",
+        )
+        return receipt
+    if not isinstance(question, str) or not question.strip():
+        receipt.update(
+            status="UNAVAILABLE",
+            reason_code="BATCH_QUESTION_INVALID",
+            error="question must be a non-empty string",
+        )
+        return receipt
+
+    images: list[dict[str, object]] = []
+    image_bytes: list[bytes] = []
+    try:
+        for image_path in image_paths:
+            path = Path(image_path).absolute()
+            payload = path.read_bytes()
+            image_bytes.append(payload)
+            images.append(
+                {
+                    "image_path": str(path),
+                    "image_sha256": _sha256_bytes(payload),
+                }
+            )
+    except Exception as exc:
+        receipt.update(
+            status="UNAVAILABLE",
+            reason_code="IMAGE_READ_FAILED",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        return receipt
+    receipt["images"] = images
+
+    content: list[dict[str, object]] = [
+        {"type": "input_text", "text": question},
+    ]
+    content.extend(
+        {
+            "type": "input_image",
+            "image_url": "data:image/jpeg;base64," + base64.b64encode(payload).decode("ascii"),
+        }
+        for payload in image_bytes
+    )
+    body = {
+        "model": model,
+        "input": [
+            {
+                "role": "user",
+                "content": content,
+            }
+        ],
+        "reasoning": {"effort": "low"},
+        "max_output_tokens": max_tokens,
+    }
+    request_bytes = json.dumps(body).encode("utf-8")
+    receipt["prompt_sha256"] = _sha256_bytes(
+        json.dumps(
+            {
+                "question": question,
+                "image_sha256s": [image["image_sha256"] for image in images],
+                "model": model,
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    )
+    request = urllib.request.Request(
+        api_base.rstrip("/") + "/responses",
+        data=request_bytes,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+            "User-Agent": _UA,
+        },
+    )
+    try:
+        with runtime_provider_slot(timeout_seconds=provider_wait_for_call(timeout_seconds)):
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                raw = response.read()
+        payload = json.loads(raw.decode("utf-8", errors="replace"))
+        answer = payload.get("output_text")
+        if not answer:
+            parts: list[str] = []
+            for item in payload.get("output") or []:
+                if isinstance(item, dict) and item.get("type") == "message":
+                    for chunk in item.get("content") or []:
+                        if (
+                            isinstance(chunk, dict)
+                            and chunk.get("type") in ("output_text", "text")
+                            and chunk.get("text")
+                        ):
+                            parts.append(str(chunk["text"]))
+            answer = "".join(parts)
+        if not isinstance(answer, str) or not answer.strip():
+            raise ValueError(f"empty vision completion (status={payload.get('status')})")
+    except ProviderSlotTimeout:
+        receipt.update(
+            status="UNAVAILABLE",
+            reason_code="VISION_PROVIDER_CAPACITY",
+            error="provider capacity wait timed out",
+        )
+        return receipt
+    except Exception as exc:
+        receipt.update(
+            status="UNAVAILABLE",
+            reason_code="VISION_CALL_FAILED",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        return receipt
+    receipt.update(
+        status="OBSERVED",
+        answer=answer.strip(),
+        response_sha256=_sha256_bytes(raw),
+    )
+    return receipt
 
 
 def _vision_qa(

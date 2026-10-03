@@ -1,8 +1,8 @@
 {
   "schema_version": "lidousha-bilibili-gift-names.v1",
-  "authority": "维护者 2026-07-24: B站礼物名是固定专名，字幕以平台记录为准。全部名称逐字提取自 room 22966160 blrec chat jsonl 的 SEND_GIFT 记录（2026-07 66 个场次文件），零人工杜撰。",
-  "extracted_at": "2026-07-24",
-  "source": "SEND_GIFT.data.giftName, room 22966160, 2026-07 sessions",
+  "authority": "按目标平台公开礼物目录或授权导出核对；不要写入账号、房间或采集会话信息。",
+  "extracted_at": "1970-01-01",
+  "source": "REPLACE_ME（平台礼物目录或授权导出）",
   "names": [
     "666",
     "BW权杖",

@@ -1,3 +1,4 @@
+
 from src.autoslice.review_package_boundary_validators import (
     expected_boundary_authority,
     semantic_boundary_review_is_valid,
@@ -180,3 +181,6 @@ def test_exact_pin_crossing_rejects_delivery_past_frozen_pin():
         snapped_sentence_end_ms=95_680,
         final_end_ms=95_680,
     )
+
+
+# Public synthetic boundary tests end here.

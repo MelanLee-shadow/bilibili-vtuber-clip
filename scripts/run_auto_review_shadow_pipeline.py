@@ -812,7 +812,7 @@ def _stage_publish_after_release_gate(
 # Title policy applies only to LLM-generated titles. Manual titles still pass
 # through untouched in ``_stage_publish_draft``.  Keep these imports explicit
 # because tests and older callers also import the compatibility names here.
-from src.autoslice.title_policy import (  # noqa: E402
+from src.autoslice.title_policy import (
     _TITLE_PREFIX,
     _SELECTION_HOOK_GENERIC_ANCHORS,
     _SELECTION_HOOK_GENERIC_WORDS,
@@ -834,13 +834,13 @@ from src.autoslice.title_policy import (  # noqa: E402
 )
 
 
-# --------------------------------------------------------------------------
-# Persona-driven cover art-direction (维护者 redesign).
-# Old covers were "wallpaper + a single-color bottom title bar", all alike.
-# The new system rotates layouts, matches the FACE to the clip's in-character
-# role, varies the background, highlights a hook word, and backs the text with a
-# soft dark card so any fill color reads on a bright pop background.  CPA still
-# makes only a text-free background; the title is overlaid locally (fail-closed).
+
+
+
+
+
+
+
 from src.autoslice.cover_emote import (
     EmoteEntry,
     EmoteLibrary,

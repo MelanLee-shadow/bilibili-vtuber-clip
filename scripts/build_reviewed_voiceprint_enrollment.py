@@ -192,10 +192,10 @@ def _select_reviewed_host_rows(
                 "duration_ms": duration_ms,
                 "authority": authority,
                 "speaker": speaker,
-                # The pristine worksheet binding and 维护者's corrected text may
-                # differ (cue 5 in the 7/22 truth is a known example).  Text is
-                # not an acoustic-boundary gate, so bind both without changing
-                # the delivery baseline validator.
+
+
+
+
                 "binding_text_sha256": "sha256:"
                 + hashlib.sha256(expected_text.encode("utf-8")).hexdigest(),
                 "reviewed_text_sha256": "sha256:"

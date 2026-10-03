@@ -70,9 +70,9 @@ def test_detail_truncation_keeps_the_decisive_tail():
         ("[cpa] http=429", pf.QUOTA),
         ('{"type":"usage_limit_reached"}', pf.QUOTA),
         ("RESOURCE_EXHAUSTED", pf.QUOTA),
-        # 实测翻案：分组抽签 400 不是"请求写错了"，是上游 sudocode
-        # 的分组路由抽签（维护者 裁定 #8），原样重发就可能落到对的分组，桥接层已
-        # 按瞬时故障退避重试 → 必须归 service，否则上层读到 rejected 会放弃。
+
+
+
         ("[cpa] http=400 upstream_code=group_capability_unavailable", pf.SERVICE),
         ("[cpa] http=400 当前分组不支持本次请求所需能力", pf.SERVICE),
         ("[cpa] http=400 The current group does not support the capability", pf.SERVICE),
@@ -106,11 +106,11 @@ def test_quota_outranks_a_rejection_in_the_same_cascade():
 def test_group_capability_cascade_reads_as_service_not_rejected():
     """桥接层真实 stderr 形状：分组抽签 400 归 service（该等/会自己好）。
 
-    free 直打 CPA 实测：单次失败率 ~15–17%，与 payload 大小无关
-    （0B 失败而 2000B 成功，非单调）、与模型无关（sol 5/6、gpt-5.5 5/6、
-    gpt-5.4 6/6）。归成 ``rejected`` 会让上层把一次抽签失败误读成"请求本身写
-    错了"而停止重试。根治是 维护者 裁定 #8 的 oracle 侧分组修复。
-    """
+ free 直打 CPA 实测：单次失败率 ~15–17%，与 payload 大小无关
+ （0B 失败而 2000B 成功，非单调）、与模型无关（sol 5/6、gpt-5.5 5/6、
+ gpt-5.4 6/6）。归成 ``rejected`` 会让上层把一次抽签失败误读成"请求本身写
+ 错了"而停止重试。根治是 公开规则裁定 #8 的 oracle 侧分组修复。
+ """
 
     cascade = (
         "[cpa] model=gpt-5.6-sol attempt=1 http=400 curl_exit=22 "
@@ -448,9 +448,9 @@ def test_non_provider_failures_keep_their_state_shape(tmp_path: Path):
     assert "failure_provider_status_codes" not in classified
 
 
-# ---------------------------------------------------------------------------
-# 维护者 #9 第二半：「CPA请求失败的逻辑是积极重试，而不是判候选死」
-# ---------------------------------------------------------------------------
+
+
+
 
 
 def _authority_with_boundary_review(

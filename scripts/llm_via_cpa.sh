@@ -106,32 +106,32 @@ deadline_reached() {
 
 # 实测（free 上直打 https://cpa.example.com/v1/responses）：CPA 的上游
 # sudocode 把凭据分成两组——一组带 gpt-image 能力，一组带 gpt-5.6-sol 能力
-# （维护者 裁定 #8）。请求轮询一旦落到没有该模型能力的分组，就直接
+# （公开规则裁定 #8）。请求轮询一旦落到没有该模型能力的分组，就直接
 # 400 group_capability_unavailable。这**与 payload 大小无关、与模型无关**：
-#   · 同一个极小请求重复打：sol 5/6 成功（一次 408）、gpt-5.5 5/6（一次 400）、
-#     gpt-5.4 6/6；
-#   · 同一模型按 body 大小阶梯打：0B→400、200B/500B/1000B/2000B→200、4000B→400。
-#     0B 失败而 2000B 成功 —— 非单调，所以不是"大请求把次级 leg 压垮"。
+# · 同一个极小请求重复打：sol 5/6 成功（一次 408）、gpt-5.5 5/6（一次 400）、
+# gpt-5.4 6/6；
+# · 同一模型按 body 大小阶梯打：0B→400、200B/500B/1000B/2000B→200、4000B→400。
+# 0B 失败而 2000B 成功 —— 非单调，所以不是"大请求把次级 leg 压垮"。
 # 单次失败率约 15–17%；退避重试三次 ≈ 0.17³ ≈ 0.5%。按本文件自己在
 # body_bytes() 那段写下的判据（「同一 body_bytes 反复失败 = 退避治不好，得降
 # 上下文/分块；body_bytes 不相关 = 就是瞬时抖动，退避正确」），这类 400 正落在
 # "瞬时抖动"一侧，必须当服务类退避重试，而不是一枪把整条候选判死。
 #
-# 根治是 维护者 #8 的 oracle 侧分组修复（让一个分组同时具备两种能力，或按模型
+# 根治是 公开规则#8 的 oracle 侧分组修复（让一个分组同时具备两种能力，或按模型
 # 定向路由）；本函数只是**客户端缓解**，把抽签失败当瞬时故障吸收掉。
 #
 # 线上响应体（8/10 实测原文）同时带三种可识别字样：
-#   "code":"group_capability_unavailable"
-#   "message":"当前分组不支持本次请求所需能力，请调整请求或切换分组后重试。"
-#   "metadata":{"message_en":"The current group does not support the capability …"}
+# "code":"group_capability_unavailable"
+# "message":"当前分组不支持本次请求所需能力，请调整请求或切换分组后重试。"
+# "metadata":{"message_en":"The current group does not support the capability …"}
 # 三种都认。LC_ALL=C + grep -F 走字节匹配，不受 locale 和正则元字符影响。
 group_capability_body() {
-  [[ -s "$RESP_FILE" ]] || return 1
-  LC_ALL=C grep -qF \
-    -e 'group_capability_unavailable' \
-    -e '当前分组不支持' \
-    -e 'current group does not support' \
-    -- "$RESP_FILE"
+ [[ -s "$RESP_FILE" ]] || return 1
+ LC_ALL=C grep -qF \
+ -e 'group_capability_unavailable' \
+ -e '当前分组不支持' \
+ -e 'current group does not support' \
+ -- "$RESP_FILE"
 }
 
 # Service-class failures are worth waiting out; everything else is not.

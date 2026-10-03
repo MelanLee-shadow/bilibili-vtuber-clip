@@ -1,5 +1,5 @@
 #!/bin/bash
-# CloudDrive FUSE mount and recorder-consumer bootstrap watchdog (Free/OCI3).
+# CloudDrive FUSE mount and recorder-consumer bootstrap watchdog (Free/runtime host).
 #
 # Two distinct incidents are covered:
 #   1. A dead CloudDrive FUSE endpoint can remain bound into recorder containers.
@@ -17,7 +17,7 @@
 # quarantine; they are never deleted or hidden below a subsequent FUSE mount.
 set -u
 
-# OCI3's existing root crontab and the boot unit invoke this script directly.
+# runtime host's existing root crontab and the boot unit invoke this script directly.
 # Load the optional root-owned authority here so both callers use the same
 # paths; with no file, Free keeps its historical defaults below.
 WATCHDOG_ENV_FILE=/opt/bilive/autoslice/recording-health.env
@@ -47,7 +47,7 @@ RECORDER_RETRIES="${AUTOSLICE_WATCHDOG_RECORDER_RETRIES:-4}"
 RETRY_SLEEP_S="${AUTOSLICE_WATCHDOG_RETRY_SLEEP_S:-5}"
 RECORDER_SETTLE_S="${AUTOSLICE_WATCHDOG_RECORDER_SETTLE_S:-8}"
 EXPECTED_SOURCE="${AUTOSLICE_WATCHDOG_EXPECTED_SOURCE:-CloudFS}"
-# The mount probe may be a room below the bind root (OCI3 uses the room path
+# The mount probe may be a room below the bind root (runtime host uses the room path
 # while Docker binds its parent).  Keep Free's historical default intact.
 EXPECTED_RECORDING_BIND_ROOT="${AUTOSLICE_WATCHDOG_EXPECTED_RECORDING_BIND_ROOT:-$PROBE_DIR}"
 COMPOSE_FILE="${AUTOSLICE_WATCHDOG_COMPOSE_FILE:-/opt/bilive/compose.yml}"
@@ -81,6 +81,7 @@ UMOUNT_BIN="${AUTOSLICE_WATCHDOG_UMOUNT_BIN:-umount}"
 PYTHON_BIN="${AUTOSLICE_WATCHDOG_PYTHON_BIN:-python3}"
 LS_BIN="${AUTOSLICE_WATCHDOG_LS_BIN:-ls}"
 PROBE_TIMEOUT_S="${AUTOSLICE_WATCHDOG_PROBE_TIMEOUT_S:-25}"
+PROBE_ONLY=0
 
 ts() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 say() { echo "[$(ts)] $*"; }
@@ -109,6 +110,46 @@ import stat
 import sys
 from pathlib import Path
 
+HOLD_SCHEMA = "clouddrive-source-recovery-hold.v1"
+ACTIVE = "ACTIVE_MAINTENANCE_HOLD"
+
+def safe_json(path, label):
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        raise ValueError(f"{label} metadata unreadable: {type(exc).__name__}") from exc
+    mode = stat.S_IMODE(info.st_mode)
+    if (
+        stat.S_ISLNK(info.st_mode)
+        or not stat.S_ISREG(info.st_mode)
+        or info.st_uid != os.geteuid()
+        or mode != 0o600
+        or info.st_nlink != 1
+        or info.st_size > 1_000_000
+    ):
+        raise ValueError(
+            f"{label} metadata unsafe: owner={info.st_uid} mode={mode:o} "
+            f"nlink={info.st_nlink} size={info.st_size}"
+        )
+    payload = path.read_bytes()
+    after = os.lstat(path)
+    if (
+        (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+        != (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+        or len(payload) != info.st_size
+    ):
+        raise ValueError(f"{label} changed during read")
+    try:
+        document = json.loads(payload.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{label} metadata invalid: {type(exc).__name__}") from exc
+    if not isinstance(document, dict):
+        raise ValueError(f"{label} metadata invalid: expected object")
+    return payload, document
+
+
 root = Path(sys.argv[1])
 explicit = sys.argv[2]
 candidates = (
@@ -119,34 +160,16 @@ candidates = (
 
 for path in candidates:
     try:
-        info = os.lstat(path)
+        payload, document = safe_json(path, "maintenance hold")
     except FileNotFoundError:
         continue
-    except OSError as exc:
-        print(f"maintenance hold metadata unreadable: {path}: {type(exc).__name__}")
+    except ValueError as exc:
+        print(f"{exc}: {path}")
         raise SystemExit(0)
-    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
-        print(f"maintenance hold metadata unsafe: {path}: not a regular file")
-        raise SystemExit(0)
-    mode = stat.S_IMODE(info.st_mode)
-    if info.st_uid != os.geteuid() or mode != 0o600:
-        print(
-            f"maintenance hold metadata unsafe: {path}: "
-            f"owner={info.st_uid} mode={mode:o}"
-        )
-        raise SystemExit(0)
-    try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        print(f"maintenance hold metadata invalid: {path}: {type(exc).__name__}")
-        raise SystemExit(0)
-    if not isinstance(document, dict):
-        print(f"maintenance hold metadata invalid: {path}: expected object")
-        raise SystemExit(0)
-    if document.get("schema_version") != "clouddrive-source-recovery-hold.v1":
+    if document.get("schema_version") != HOLD_SCHEMA:
         print(f"maintenance hold metadata invalid: {path}: unsupported schema")
         raise SystemExit(0)
-    if document.get("status") != "ACTIVE_MAINTENANCE_HOLD":
+    if document.get("status") != ACTIVE:
         continue
     if document.get("restoration_required") is not True:
         print(f"maintenance hold metadata invalid: {path}: restoration_required")
@@ -509,19 +532,28 @@ quarantine_unmounted_contents() {
     alert "preserved system-disk fallback entries in $quarantine"
 }
 
-case "${1:-}" in
-    "")
-        ;;
-    --probe-only)
-        exit_if_maintenance_hold_blocks_probes
-        probe
-        exit $?
-        ;;
-    *)
-        echo "usage: $0 [--probe-only]" >&2
-        exit 2
-        ;;
-esac
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --probe-only)
+            [ "$PROBE_ONLY" -eq 0 ] || {
+                echo "duplicate --probe-only" >&2
+                exit 2
+            }
+            PROBE_ONLY=1
+            shift
+            ;;
+        *)
+            echo "usage: $0 [--probe-only]" >&2
+            exit 2
+            ;;
+    esac
+done
+
+if [ "$PROBE_ONLY" -eq 1 ]; then
+    exit_if_maintenance_hold_blocks_probes
+    probe
+    exit $?
+fi
 
 exit_if_maintenance_hold_blocks_probes
 

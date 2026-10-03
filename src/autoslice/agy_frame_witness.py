@@ -1,13 +1,13 @@
 """Hash-bound AGY fallback witness for still images and video frames.
 
-The production visual router shows pixels to CPA first.  This module is called
+The production visual router shows pixels to CPA first. This module is called
 only when that CPA visual witness is unavailable or violates the caller's
 answer contract; AGY then opens a sandboxed local JPEG with ``view_file`` and
-returns a disclosed fallback observation.  The receipt is evidence input, not
+returns a disclosed fallback observation. The receipt is evidence input, not
 an automatic semantic verdict.
 
-(维护者 的「AGY->gemini 这条链全都复用一种接口」裁定)：这条腿此前
-**完全没有兜底**——AGY 不在（wsl 产线上按 维护者 的长期指示就是不装）时，
+(公开规则的「AGY->gemini 这条链全都复用一种接口」裁定)：这条腿此前
+**完全没有兜底**——AGY 不在（wsl 产线上按 公开规则的长期指示就是不装）时，
 CPA 的视觉兜底本身也就跟着没了。现在同一张 JPEG 在 AGY 缺席/失败后直接走
 ``agy_gemini_client`` 的 Gemini 视觉腿，回执用 ``provider``/``model``/
 ``key_tier`` 三元组说清楚到底是谁看的这张图。

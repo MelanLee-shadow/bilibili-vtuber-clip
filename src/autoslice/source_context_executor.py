@@ -551,10 +551,10 @@ def _agy_reason_codes(
     if not refinement_required and result.provider == "source_draft_context":
         return ()
     if result.provider == GEMINI_API_FALLBACK_PROVIDER:
-        # 维护者（项目 memory）：AGY 订阅 / 免费 3key / 付费 backup 是
-        # 同一个 Gemini 模型的配额顺序，「按 provider 层拒证据的门 = 过度限制」；
-        # 处方是「任一层证据有效 + 按层钉模型串」。所以兜底本身不是拒绝理由,
-        # 但它必须如实说明用了哪一层、跑的哪个模型、AGY 那条腿怎么退出的。
+
+
+
+
         reasons = []
         if result.provider_fallback_used is not True:
             reasons.append("JINGTING_PROVIDER_FALLBACK_UNKNOWN")

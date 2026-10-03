@@ -86,7 +86,7 @@ def test_f2_pristine_machine_occurrences_receive_complete_candidate_receipt():
         "他们",
     }
     assert "每一个 TA/他/她/它/TA们/他们/她们/它们" in prompts[0]
-    assert "维护者 2026-07-10" in prompts[0]
+    assert '公开规则' in prompts[0]
     assert audit["mutation_authorized"] is False
 
 
@@ -332,5 +332,5 @@ def test_f7_pristine_context_rewrite_without_acoustic_witness_is_disclosure_only
         ]
         is False
     )
-    # 维护者 truth is deliberately only a post-execution comparison assertion.
+
     assert (machine_current == reviewer_truth) is current_is_truth

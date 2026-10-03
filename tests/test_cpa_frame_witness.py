@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
+import base64
+import hashlib
 from email.message import Message
 import io
 import json
+import os
+from contextlib import nullcontext
 from pathlib import Path
 import urllib.error
 
@@ -14,6 +17,129 @@ from src.autoslice import cpa_frame_witness
 from src.autoslice import screen_read_witness
 from src.autoslice import visual_witness
 from src.autoslice.cover_polish_gate import _verify_polish_face_integrity
+
+
+def test_cpa_batch_jpeg_probe_binds_ordered_exact_images_and_one_slot(
+    monkeypatch,
+    tmp_path,
+):
+    first = tmp_path / "first.jpg"
+    second = tmp_path / "second.jpg"
+    first_bytes = b"persisted-jpeg-one"
+    second_bytes = b"persisted-jpeg-two"
+    first.write_bytes(first_bytes)
+    second.write_bytes(second_bytes)
+    captured = {}
+    slot_calls = []
+    response_bytes = json.dumps(
+        {"status": "completed", "output_text": "批量结果"}
+    ).encode()
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return response_bytes
+
+    def fake_urlopen(request, **kwargs):
+        captured["body"] = json.loads(request.data)
+        captured["timeout"] = kwargs["timeout"]
+        return Response()
+
+    def fake_slot(**kwargs):
+        slot_calls.append(kwargs)
+        return nullcontext()
+
+    monkeypatch.setattr(cpa_frame_witness.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(cpa_frame_witness, "runtime_provider_slot", fake_slot)
+    receipt = cpa_frame_witness.batch_jpeg_vision_probe(
+        [first, second],
+        "比较这两张图",
+        api_base="https://cpa.example/v1",
+        api_key="secret",
+        timeout_seconds=17,
+        max_tokens=4096,
+    )
+
+    assert receipt["status"] == "OBSERVED"
+    assert receipt["answer"] == "批量结果"
+    assert receipt["images"] == [
+        {
+            "image_path": str(first.absolute()),
+            "image_sha256": hashlib.sha256(first_bytes).hexdigest(),
+        },
+        {
+            "image_path": str(second.absolute()),
+            "image_sha256": hashlib.sha256(second_bytes).hexdigest(),
+        },
+    ]
+    content = captured["body"]["input"][0]["content"]
+    assert [item["type"] for item in content] == [
+        "input_text",
+        "input_image",
+        "input_image",
+    ]
+    assert content[0]["text"] == "比较这两张图"
+    assert [
+        base64.b64decode(item["image_url"].split(",", 1)[1])
+        for item in content[1:]
+    ] == [first_bytes, second_bytes]
+    assert captured["timeout"] == 17
+    assert len(slot_calls) == 1
+    assert receipt["response_sha256"] == hashlib.sha256(response_bytes).hexdigest()
+    prompt_identity = {
+        "question": "比较这两张图",
+        "image_sha256s": [item["image_sha256"] for item in receipt["images"]],
+        "model": "gpt-6-sol",
+    }
+    assert receipt["prompt_sha256"] == hashlib.sha256(
+        json.dumps(prompt_identity, sort_keys=True).encode()
+    ).hexdigest()
+    assert "secret" not in json.dumps(receipt)
+
+
+def test_cpa_batch_jpeg_probe_rejects_bounds_and_read_fail_without_dispatch(
+    monkeypatch,
+    tmp_path,
+):
+    calls = []
+
+    def fail_urlopen(*_args, **_kwargs):
+        calls.append("urlopen")
+        raise AssertionError("provider dispatch is forbidden")
+
+    def fail_slot(*_args, **_kwargs):
+        calls.append("slot")
+        raise AssertionError("provider slot is forbidden")
+
+    monkeypatch.setattr(cpa_frame_witness.urllib.request, "urlopen", fail_urlopen)
+    monkeypatch.setattr(cpa_frame_witness, "runtime_provider_slot", fail_slot)
+    image = tmp_path / "image.jpg"
+    image.write_bytes(b"jpeg")
+
+    for paths in ([], [image] * 13):
+        receipt = cpa_frame_witness.batch_jpeg_vision_probe(
+            paths,
+            "q",
+            api_base="https://cpa.example/v1",
+            api_key="secret",
+        )
+        assert receipt["status"] == "UNAVAILABLE"
+        assert receipt["reason_code"] == "BATCH_IMAGE_COUNT_INVALID"
+
+    missing = cpa_frame_witness.batch_jpeg_vision_probe(
+        [image, tmp_path / "missing.jpg"],
+        "q",
+        api_base="https://cpa.example/v1",
+        api_key="secret",
+    )
+    assert missing["status"] == "UNAVAILABLE"
+    assert missing["reason_code"] == "IMAGE_READ_FAILED"
+    assert calls == []
 
 
 def test_cpa_observed_receipt_binds_frame_prompt_response(
@@ -334,6 +460,53 @@ def test_env_screen_probe_uses_cpa_without_agy(monkeypatch, tmp_path):
         "api_base": "https://cpa.example/v1",
         "api_key": "secret",
     }
+
+
+def test_env_screen_probe_reads_private_runtime_cpa_without_ambient(monkeypatch, tmp_path):
+    from src.autoslice import llm_client
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    env_file = runtime / "cpa.env"
+    env_file.write_text("CPA_BASE_URL=https://runtime.example/v1\nCPA_API_KEY=runtime-secret\n")
+    env_file.chmod(0o600)
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"video")
+    monkeypatch.delenv("CPA_BASE_URL", raising=False)
+    monkeypatch.delenv("CPA_API_KEY", raising=False)
+    monkeypatch.setenv("AUTOSLICE_FINAL_REVIEW_RUNTIME_ROOT", str(runtime))
+    monkeypatch.setenv("AGY_BIN", str(tmp_path / "missing-agy"))
+    original = llm_client.runtime_cpa_command_environment
+    monkeypatch.setattr(
+        llm_client,
+        "runtime_cpa_command_environment",
+        lambda path: original(path, _owner_uid=os.getuid()),
+    )
+    captured = {}
+
+    def fake_builder(**kwargs):
+        captured.update(kwargs)
+        return "runtime-probe"
+
+    monkeypatch.setattr(screen_read_witness, "make_screen_read_probe", fake_builder)
+    assert screen_read_witness.build_env_screen_read_probe(media) == "runtime-probe"
+    assert captured == {
+        "media_path": media,
+        "api_base": "https://runtime.example/v1",
+        "api_key": "runtime-secret",
+    }
+
+
+def test_env_screen_probe_missing_runtime_credentials_stays_unavailable(monkeypatch, tmp_path):
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"video")
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    monkeypatch.delenv("CPA_BASE_URL", raising=False)
+    monkeypatch.delenv("CPA_API_KEY", raising=False)
+    monkeypatch.setenv("AUTOSLICE_FINAL_REVIEW_RUNTIME_ROOT", str(runtime))
+    monkeypatch.setenv("AGY_BIN", str(tmp_path / "missing-agy"))
+    assert screen_read_witness.build_env_screen_read_probe(media) is None
 
 
 def test_polish_face_gate_uses_cpa_primary(monkeypatch, tmp_path):

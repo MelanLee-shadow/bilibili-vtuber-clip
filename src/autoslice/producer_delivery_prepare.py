@@ -55,7 +55,22 @@ def prepare_talk_delivery(
     """Create one private Talk handle from finalization's exact artifacts."""
 
     output_root = Path(str(spec["output_root"])).resolve(strict=True)
-    runtime_root = output_root.parents[1]
+    explicit_runtime_root = spec.get("runtime_root")
+    if explicit_runtime_root is None:
+        # Keep the historical runner layout working for specs emitted before
+        # runtime_root became explicit.  New private output layouts can carry
+        # their actual authority root without changing source containment.
+        runtime_root = output_root.parents[1]
+    else:
+        raw_runtime_root = str(explicit_runtime_root).strip()
+        if not raw_runtime_root:
+            raise ProducerDeliveryTransactionError("runtime root is empty")
+        runtime_root = Path(raw_runtime_root).expanduser()
+        if not runtime_root.is_absolute():
+            raise ProducerDeliveryTransactionError("runtime root must be absolute")
+        # Do not resolve here: deployment_authority_binding/_safe_directory
+        # must still see and reject a symlinked runtime root or ancestor.
+        runtime_root = runtime_root.absolute()
     date = str(spec["date"])
     basename = str(spec.get("delivery_name") or candidate_id)
     delivery = delivery_root / date

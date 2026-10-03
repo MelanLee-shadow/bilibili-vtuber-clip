@@ -1,6 +1,6 @@
-"""声学证人「可达性」契约（F21，维护者 直令）。
+"""声学证人「可达性」契约（F21，公开规则直令）。
 
-维护者 8/10：「wsl 上有 gemini key，没有 AGY 当然要 fall back 到 gemini key」。
+公开规则8/10：「wsl 上有 gemini key，没有 AGY 当然要 fall back 到 gemini key」。
 配套 7/19 既有裁定：AGY 订阅 → 免费 3 key → 付费 backup 只是**同一 Gemini
 模型的配额顺序**，按 provider 层拒证据的门 = 过度限制。
 
@@ -8,12 +8,12 @@
 纯接线缺陷：
 
 1. **host 门谓词**：旧门问「``--ssh-host`` 是不是 localhost」。produce 姿势下
-   ``prepare_source_media`` 已把 piece/padded 拉到**本机** out 目录，远端 host
-   只决定源素材在哪切，不决定证人的音频窗在哪。于是 wsl 产线（host=free）
-   恒定拿不到证人，链在第一步就断。
+ ``prepare_source_media`` 已把 piece/padded 拉到**本机** out 目录，远端 host
+ 只决定源素材在哪切，不决定证人的音频窗在哪。于是 wsl 产线（host=free）
+ 恒定拿不到证人，链在第一步就断。
 2. **typed UNCERTAIN 尾巴**：provider 全竭（或根本没有 provider）时旧代码下传
-   裸 ``None``，下游 ``dict(None)`` 抛 TypeError、证词直接 invalid，法官永远
-   不跑，findings 全 UNCERTAIN，``FINAL_REVIEW_UNRESOLVED_FINDINGS`` 拦死。
+ 裸 ``None``，下游 ``dict(None)`` 抛 TypeError、证词直接 invalid，法官永远
+ 不跑，findings 全 UNCERTAIN，``FINAL_REVIEW_UNRESOLVED_FINDINGS`` 拦死。
 
 尾巴的 reason_code 是**专用**的：``AUDIO_VERIFIER_UNAVAILABLE`` 表示「本轮
 证人链从未真正听过这段音频」，与 ``ENTITY_AUDIO_PROVIDER_FAILED``（provider

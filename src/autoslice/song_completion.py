@@ -1360,10 +1360,10 @@ def verified_song_fallback_title(
 ) -> str | None:
     """Deterministic song title: fixed catalog form, never a hook suffix.
 
-    维护者 铁律：歌切标题就是「【李豆沙】豆沙歌，《歌名》」，
-    《歌名》后不加任何字（旧「｜{hook}」副标题格式已废除）。hook 参数仅为兼容
-    旧调用点保留，永远被忽略。
-    """
+ 公开规则铁律：歌切标题就是「【李豆沙】豆沙歌，《歌名》」，
+ 《歌名》后不加任何字（旧「｜{hook}」副标题格式已废除）。hook 参数仅为兼容
+ 旧调用点保留，永远被忽略。
+ """
     song_title = str(song_title or "").strip()
     if not song_title:
         return None

@@ -5,15 +5,15 @@
 全程 null **不是阈值死区，也不是标志位被算成假——是产出侧根本不存在**：
 
 1. `overlap_detected` / `mixed_speaker_within_unit_detected` 两个键在全仓库只出现
-   在 *校验方*（`speaker_session_router.py`）、*消费方*（`producer_speaker.py`、
-   `speaker_evidence.py`）和测试里，**没有任何 in-repo 生产者**；唯一的产出面是
-   `AUTOSLICE_SPEAKER_ROUTING_PROVIDER_COMMAND_JSON` 指向的外部密封 provider。
+ 在 *校验方*（`speaker_session_router.py`）、*消费方*（`producer_speaker.py`、
+ `speaker_evidence.py`）和测试里，**没有任何 in-repo 生产者**；唯一的产出面是
+ `AUTOSLICE_SPEAKER_ROUTING_PROVIDER_COMMAND_JSON` 指向的外部密封 provider。
 2. 该 env 在 deploy 脚本、cron 行和文档里都没有配置，`_speaker_routing_provider_command`
-   因此返回 None，`prepare_speaker_routing` 提前返回 None，候选项上根本不会挂
-   `speaker_routing_claim`；producer 侧只能落到 `ROUTING_CLAIM_MISSING`。
+ 因此返回 None，`prepare_speaker_routing` 提前返回 None，候选项上根本不会挂
+ `speaker_routing_claim`；producer 侧只能落到 `ROUTING_CLAIM_MISSING`。
 3. 即使有人配上了 env，`speaker_session_router.AUDITED_PROVIDER_BUNDLES` 是**空 dict**，
-   `validate_provider_authority(require_audited=True)` 必然抛
-   "provider bundle/algorithm is not repo-audited"，路由照样整条关闭。
+ `validate_provider_authority(require_audited=True)` 必然抛
+ "provider bundle/algorithm is not repo-audited"，路由照样整条关闭。
 
 三重独立断路 ⇒ `producer_speaker.run_producer_speaker_finalization` 里
 `result["mixed_or_overlap_detected"] is True` 那条分支在生产上**结构性不可达**，
@@ -24,18 +24,18 @@ mixed gate 跑在声学分析之前，自产证据无法喂回同一轮的门—
 本模块的取舍）。它按 cue 时长切确定性子窗、复用同一套 host/guest 打分与
 `acoustic_hard_pass` 判据，只在同一 cue 的子窗落到**互相冲突的确信标签**时出证据。
 
-保守面（维护者 口径「证据只披露不改标签」）：
+保守面（公开规则口径「证据只披露不改标签」）：
 * 本模块**不改任何标签**，不做句内切分，不动二分语义；决策数组原样返回。
 * 产出物是一份 schema 合法、`validate_mixed_overlap_evidence_document` 可校验的
-  sidecar + READY manifest 里的披露块。没有任何代码自动把它喂进
-  `_evaluate_mixed_overlap_gate`——把它提升成阻断输入是 integrator/维护者 的开关，
-  不是本次修复顺手打开的。
+ sidecar + READY manifest 里的披露块。没有任何代码自动把它喂进
+ `_evaluate_mixed_overlap_gate`——把它提升成阻断输入是 integrator/公开规则的开关，
+ 不是本次修复顺手打开的。
 * v1 只出 `CUE_MIXED_SPEAKER`：子窗嵌入能证明"同一 cue 内出现了两个确信不同的
-  说话人"，不能证明"两人同时说"；真正的同时重叠会把子窗嵌入拉成混合向量、落进
-  模糊带，v1 不据此断言 `CUE_OVERLAPPING_SPEECH`。
+ 说话人"，不能证明"两人同时说"；真正的同时重叠会把子窗嵌入拉成混合向量、落进
+ 模糊带，v1 不据此断言 `CUE_OVERLAPPING_SPEECH`。
 * 只按时长决定哪些 cue 进子窗（**不按 margin 预筛**）：8/7 法证的假李豆沙
-  cue33/37 margin 0.43/0.34 明显在模糊带之外，用 margin 预筛等于在这类案子上重建
-  一个新的阈值死区。短于两个最小窗的 cue 无法分窗，属 v1 已知盲区。
+ cue33/37 margin 0.43/0.34 明显在模糊带之外，用 margin 预筛等于在这类案子上重建
+ 一个新的阈值死区。短于两个最小窗的 cue 无法分窗，属 v1 已知盲区。
 """
 
 from __future__ import annotations

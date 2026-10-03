@@ -1,11 +1,11 @@
-"""说话人证据不足 → 人工审阅停泊态（维护者 裁定）。
+"""说话人证据不足 → 人工审阅停泊态（公开规则裁定）。
 
 覆盖三条硬要求：
-  (a) 说话人证据不足落停泊态而**非** ``candidate_rejected``；
-  (b) 停泊态**不可上传**、**不进** ``review_ready``；
-  (c) 停泊态**不会**进入无限基础设施重试（指纹不变就一动不动）。
+ (a) 说话人证据不足落停泊态而**非** ``candidate_rejected``；
+ (b) 停泊态**不可上传**、**不进** ``review_ready``；
+ (c) 停泊态**不会**进入无限基础设施重试（指纹不变就一动不动）。
 
-外加化石迁移：维护者 裁定之前已被铸成 ``candidate_rejected`` 的两个真实受害者
+外加化石迁移：公开规则裁定之前已被铸成 ``candidate_rejected`` 的两个真实受害者
 （``auto_220747_1271_1323`` / ``auto_213135_62_138``，字段形状取自 free 只读
 取证）必须迁回停泊态，否则裁定对它们等于没发生。
 """
@@ -358,7 +358,7 @@ def test_requeue_migrates_fossilized_rows_before_the_recovery_decision(
     assert state["picks"][0]["speaker_manual_review"]["upload_authorized"] is False
 
 
-# --- 可见面：维护者 一眼看到"这条在等我看" -----------------------------------
+
 
 
 def test_report_shows_the_hold_outside_the_rejection_table(tmp_path, monkeypatch):
@@ -387,6 +387,6 @@ def test_report_shows_the_hold_outside_the_rejection_table(tmp_path, monkeypatch
     assert "## 等待人工说话人审阅" in report
     assert "auto_213135_62_138" in report
     assert "1 条等待人工说话人审阅（停泊，禁传）" in report
-    # 停泊件不得出现在"候选门禁拒绝（终态）"表里——那正是 维护者 反对的判死叙事。
+
     rejection_header = "## 候选门禁拒绝（终态，不是成品）"
     assert rejection_header not in report

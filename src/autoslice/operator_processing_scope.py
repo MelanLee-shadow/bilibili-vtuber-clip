@@ -4,7 +4,7 @@
 
 `session_autoslice.list_dates()` 只取录像根目录**最新三个**日期，另加两个
 例外：`status == "source_incomplete"`，以及 `historical_source_recovery_in_progress`
-（后者要求 `state["source_recoveries"]` 非空）。维护者 要求
+（后者要求 `state["source_recoveries"]` 非空）。公开规则要求
 「**把 tier1 的 4 条做了**」并明确「**87 现在需要纳入处理范围**」，但
 早已滑出最新三天窗口，而且它的 `source_recoveries` 是空的——两个既有例外一个都
 不成立。仓里此前**没有任何**「运维显式指定某天进处理范围」的通道。
@@ -15,23 +15,23 @@
 ## 形态与铁律
 
 - **出处即生效条件**：授权块写在**那一天自己的 state 文件**里（key
-  `operator_processing_scope`），字段集严格等值校验，必须携带 维护者 逐字原话、
-  授权时间、理由、针对哪一天、以及**被点名的候选 id**。任何字段缺失/多余/类型
-  不对 → 整块失效（fail-closed，不是"部分生效"），reason_code 进日志。
+ `operator_processing_scope`），字段集严格等值校验，必须携带 公开规则逐字原话、
+ 授权时间、理由、针对哪一天、以及**被点名的候选 id**。任何字段缺失/多余/类型
+ 不对 → 整块失效（fail-closed，不是"部分生效"），reason_code 进日志。
 - **收敛即自动退出**：v1 见 `_settled` —— 被点名的候选一旦"有了 picks 行且不再
-  排队"，它就算干完了；全部干完，这一天下一个 tick 自动离开窗口，**不需要人回来
-  清理**。历史 failed pick 只有携带严格 v2 schema 和
-  `RECOVER_NAMED_FAILED_PICKS` 意图的逐字授权才保持未竟；v3-v5 则各自只恢复一种
-  点名的 typed Talk hold。这些通道都不绕过恢复、配额或上传门。
+ 排队"，它就算干完了；全部干完，这一天下一个 tick 自动离开窗口，**不需要人回来
+ 清理**。历史 failed pick 只有携带严格 v2 schema 和
+ `RECOVER_NAMED_FAILED_PICKS` 意图的逐字授权才保持未竟；v3-v5 则各自只恢复一种
+ 点名的 typed Talk hold。这些通道都不绕过恢复、配额或上传门。
 - **硬性兜底 `expires_at`**：收敛判据依赖候选真的能被产出。万一它们因为配额/分数门
-  根本坐不上席，光靠收敛会让老日期永远赖在窗口里。所以 `expires_at` 是必填项，
-  到点无条件失效。
+ 根本坐不上席，光靠收敛会让老日期永远赖在窗口里。所以 `expires_at` 是必填项，
+ 到点无条件失效。
 - **blast radius 只有被点名的那一天**：判据只读该日期自己的 state，窗口仍然是
-  最新三天 + 既有两个例外 + 本通道点名的那一天。不是把窗口从 3 天改成 N 天。
+ 最新三天 + 既有两个例外 + 本通道点名的那一天。不是把窗口从 3 天改成 N 天。
 - **不放宽任何门**：本通道只回答"这一天要不要进 tick 的处理范围"。交付门、上传门、
-  配额门（`talk_quota_policy_authority.v1.json` + `talk_quota_freeze`）一字未动。
-  上传唯一授权仍然是 `assets/lidousha/publication_registry.v1.json`。本通道能做的
-  只有**减少**产出（把没被点名的候选压回 backlog），永远不会多坐一个席位。
+ 配额门（`talk_quota_policy_authority.v1.json` + `talk_quota_freeze`）一字未动。
+ 上传唯一授权仍然是 `assets/lidousha/publication_registry.v1.json`。本通道能做的
+ 只有**减少**产出（把没被点名的候选压回 backlog），永远不会多坐一个席位。
 
 ## 为什么写 state 而不是仓内资产
 
@@ -322,7 +322,7 @@ def _validate_grant(block: object) -> tuple[dict[str, object] | None, str]:
         or _text(authorization.get("quote"), minimum=_MIN_AUTHORITY_TEXT) is None
         or _utc(authorization.get("timestamp")) is None
     ):
-        # 没有 维护者 逐字 + 授权时间就没有出处，整块不生效。
+
         return None, "AUTHORITY_INCOMPLETE"
     expires_at = _utc(block.get("expires_at"))
     if expires_at is None:
@@ -1060,18 +1060,18 @@ def hold_talk_outside_operator_scope(
 ) -> list[dict]:
     """把没被点名的话题候选压出本 tick 的准入池，返回被压下的行。
 
-    维护者 逐字「**把 tier1 的 4 条做了**」——只放这一天进窗口是不够的：
-    `prioritize()` 每个 tick 把整份 `talk_backlog` 收回 `pending_talk` 重排，名额
-    有富余时 tier-2 会一起坐进席位，白烧几小时机时。
+ 公开规则：**把 tier1 的 4 条做了**——只放这一天进窗口是不够的：
+ `prioritize()` 每个 tick 把整份 `talk_backlog` 收回 `pending_talk` 重排，名额
+ 有富余时 tier-2 会一起坐进席位，白烧几小时机时。
 
-    这个过滤器只做**收窄**：席位数、分数门、Tier 排序、冻结章全都不碰，只是让没被
-    点名的候选这一轮不进准入池。调用方必须在 `prioritize()` 收尾时把返回的行交回
-    `release_operator_scope_held_talk`，因为 `prioritize()` 最后会整体覆写
-    `state["talk_backlog"]`。
+ 这个过滤器只做**收窄**：席位数、分数门、Tier 排序、冻结章全都不碰，只是让没被
+ 点名的候选这一轮不进准入池。调用方必须在 `prioritize()` 收尾时把返回的行交回
+ `release_operator_scope_held_talk`，因为 `prioritize()` 最后会整体覆写
+ `state["talk_backlog"]`。
 
-    存在 `talk_selection_contract` 时一律不介入：那条精确恢复契约有自己的一整套
-    闭环校验，两个"只做这几条"的机制不许互相踩。
-    """
+ 存在 `talk_selection_contract` 时一律不介入：那条精确恢复契约有自己的一整套
+ 闭环校验，两个"只做这几条"的机制不许互相踩。
+ """
 
     if state.get("talk_selection_contract") is not None:
         state.pop(DISCLOSURE_KEY, None)

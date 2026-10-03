@@ -301,7 +301,7 @@ def _admit_scope(
     A candidate carrying a valid freeze stamp for this scope already won its
     seat under the policy in force at that moment; a later widening or
     tightening applies to NEW admissions only and never retroactively rewrites
-    a closed date (`4af4a88` did exactly that to 8/7).  Fresh
+    a closed date (`PUBLIC_CASE_ID` did exactly that to 8/7).  Fresh
     candidates are admitted under the policy resolved for this tick, and are
     stamped as they take their seat.
     """

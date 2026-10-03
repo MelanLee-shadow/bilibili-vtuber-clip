@@ -1344,10 +1344,10 @@ def test_blind_witness_429_rounds_record_real_strikes_before_paid_retry(
 
 
 def test_witness_acoustic_cache_replays_same_audio_without_provider(tmp_path, monkeypatch):
-    """成本裁定（维护者，3 天 $40 案）：同一段音频的纯听写答案
-    与请求文本/几何标识无关——第二次（哪怕 request_sha 不同）必须直接
-    命中内容寻址缓存，零 provider 调用；验证照常全跑。失败/UNCERTAIN
-    永不入缓存（沿用既有规则）。"""
+    """成本裁定（公开规则，3 天 $40 案）：同一段音频的纯听写答案
+ 与请求文本/几何标识无关——第二次（哪怕 request_sha 不同）必须直接
+ 命中内容寻址缓存，零 provider 调用；验证照常全跑。失败/UNCERTAIN
+ 永不入缓存（沿用既有规则）。"""
 
     from src.autoslice.acoustic_witness_adjudication import (
         build_witness_request,

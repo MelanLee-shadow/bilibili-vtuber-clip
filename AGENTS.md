@@ -1,7 +1,7 @@
 # AGENTS.md — 公开版操作约定
 
-本项目优先由 AI 代理完成配置与验证，人类提供真实频道信息与授权。开始前读 [README.md](README.md)，
-修改某一步前读 [流水线索引](docs/pipeline/README.md) 及对应 step。
+本项目提供可复现的配置与验证流程。使用前读 [README.md](README.md)，修改某一步前读
+[流水线索引](docs/pipeline/README.md) 及对应 step。
 以下是操作地图，不覆盖代码、schema、profile 或分步规则。
 
 ## 首次运行
@@ -16,9 +16,9 @@
    .venv/bin/python -m pytest -q
    ```
 
-   离线测试可在普通用户或 root 容器中运行，但真实 consumer-web adapter 不能以 root
-   身份运行。root 启动器必须把 `ENTITY_AUDIO_GEMINI_WEB_USER` 指向专用非 root 账号；
-   测试夹具模拟该降权边界，不会打开浏览器或读取登录资料。
+   离线测试可在普通用户或 root 容器中运行；真实 consumer-web adapter 要使用专用
+   非 root 账号。root 启动器须配置 `ENTITY_AUDIO_GEMINI_WEB_USER`；测试不会打开
+   浏览器或读取登录资料。
 
 3. 按 [profiles/README.md](profiles/README.md) 建立自己的频道；词表、人设、标题风格和
    封面身份描述来自频道提供者，不能代为编造。模板资产和真实运营状态必须区分。
@@ -48,7 +48,7 @@
 后置检查仍执行，也可能调用模型；不要承诺最终字幕一致或整个重试零请求。
 
 **已审原稿只改授权范围。** 冻结未受影响内容，按需要重新烧录并检查实际成片。
-公共仓库的空台账或兼容占位不是维护者的历史授权。
+公共仓库的空台账或兼容占位不提供历史授权。
 
 **上传只走 `authorized_upload.py` 的闭环。** 禁止裸调 `do_upload.sh`。
 已发布候选不得重复新投稿，修复走同 BV 路径；`review_ready` 不等于已发布。
@@ -77,7 +77,6 @@
 `lidousha_centrality`。这些兼容键不是当前频道身份，不能为美观直接重命名。
 
 修改后先跑相关回归，再跑全量公开测试；记录 Python 版本、commit、命令、通过和跳过范围。
-`tests/test_runtime_architecture.py` 的债务基线不能为了过测试随意上调。
 模型调用点的标识、effort 与环境覆盖范围要从当前源码核实，不能照搬旧 README 或私有部署值。
 
 凭据、真实账号状态、私有授权和声纹不得提交。安全问题使用 [SECURITY.md](SECURITY.md)

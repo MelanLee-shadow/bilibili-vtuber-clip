@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from src.autoslice import llm_client
-from src.autoslice import qixi_post_correction_public_surface as qixi
+from src.autoslice import producer_final_review_transport as transport
 from src.autoslice import provider_slots
 from src.autoslice.provider_slots import ProviderSlotError, ProviderSlotTimeout, provider_slot, provider_wait_for_call, provider_wait_seconds, runtime_provider_slot
 from src.autoslice.qixi_transaction_core import exclusive_runner_commit
@@ -108,7 +108,7 @@ def test_live_canonical_runtime_never_silently_bypasses_pool(tmp_path: Path, mon
         assert lease is not None
 
 
-def test_command_adapter_and_qixi_default_share_one_runtime_pool(
+def test_command_adapter_and_publication_review_share_one_runtime_pool(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path))
@@ -117,15 +117,20 @@ def test_command_adapter_and_qixi_default_share_one_runtime_pool(
     monkeypatch.setattr(llm_client, "_call_command", lambda _prompt, _config: "ok")
     config = llm_client.LlmConfig(transport="command", command_template="ignored")
     direct_command = llm_client.build_llm_call(config)
-    qixi_default = qixi._default_source_fact_llm()
+    monkeypatch.delenv("AUTOSLICE_FINAL_REVIEW_SSH_HOST", raising=False)
+    monkeypatch.setattr(
+        transport, "runtime_cpa_command_environment",
+        lambda _root: {"CPA_BASE_URL": "https://runtime.example.test/v1", "CPA_API_KEY": "synthetic-key"},
+    )
+    publication_review = transport.build_publication_llm_call(effort="high")
 
     with provider_slot(tmp_path):
         with pytest.raises(llm_client.LlmCallError, match="provider capacity wait timed out"):
             direct_command("one")
         with pytest.raises(llm_client.LlmCallError, match="provider capacity wait timed out"):
-            qixi_default("two")
+            publication_review("two")
     assert direct_command("one") == "ok"
-    assert qixi_default("two") == "ok"
+    assert publication_review("two") == "ok"
 
 
 def test_provider_slot_refuses_symlink_directory(tmp_path: Path) -> None:

@@ -15,11 +15,11 @@ from src.autoslice.segment_scene_context import (
 from src.autoslice.talk_quota_authority import resolve_quota_grant
 
 
-# 历史锚点，**不是**政策来源：维护者（回忆）「88 这个 3D live 场放宽到
-# 15 个」曾被实现成事件 lane 全局常量，与游戏 lane 同型病（一条按日裁定变成所有
-# 事件日的默认）。维护者 逐字「追认。88改成15，85。日常还是5，并没有分数
-# 限制。」后，15/85 只属于，写在 assets 的授权条目里；没有条目的事件日
-# 回落 default_policy 的 5 席/无额外席。
+
+
+
+
+
 EVENT_TALK_PICK_CAP = 15
 EVENT_EXTRA_SLOT_MIN_SCORE = 85.0
 _LEGACY_SESSION_ID = "legacy-date-session"
@@ -88,19 +88,19 @@ def resolve_talk_quota_policy(
 ) -> TalkQuotaPolicy:
     """Resolve one candidate to exactly one accounting scope and its quota.
 
-    Scope identity is unchanged: a RESOLVED game date is GAME, then landscape
-    event, then ordinary talk.  Policies never stack — an event-looking segment
-    on a date already governed by the game authority remains in its GAME scope;
-    everything not positively proven is TALK.
+ Scope identity is unchanged: a RESOLVED game date is GAME, then landscape
+ event, then ordinary talk. Policies never stack — an event-looking segment
+ on a date already governed by the game authority remains in its GAME scope;
+ everything not positively proven is TALK.
 
-    The *numbers* attached to that scope no longer come from lane constants.
-    They come from the dated authority asset (``talk_quota_authority``), which
-    is matched on ``(recording_date, scope)`` exactly.  A date with no entry
-    falls back to the document default (5 席 / 无额外席) and, if even that is
-    unavailable, to ``default_cap`` — never to another date's grant and never
-    to a lane constant.  维护者(逐字):「追认。88改成15，85。日常还是5，
-    并没有分数限制。」
-    """
+ The *numbers* attached to that scope no longer come from lane constants.
+ They come from the dated authority asset (``talk_quota_authority``), which
+ is matched on ``(recording_date, scope)`` exactly. A date with no entry
+ falls back to the document default (5 席 / 无额外席) and, if even that is
+ unavailable, to ``default_cap`` — never to another date's grant and never
+ to a lane constant. 公开规则(逐字):「追认。88改成15，85。日常还是5，
+ 并没有分数限制。」
+ """
 
     scene = _validated_scene(item)
     recording_date = _recording_date(item, scene)
@@ -115,9 +115,9 @@ def resolve_talk_quota_policy(
     grant = resolve_quota_grant(
         recording_date, kind, default_cap=default_cap, path=authority_path
     )
-    # 维护者: the default five slots belong to the recording date.
-    # A scene labelled event creates no extra budget without its dated grant.
-    # RESOLVED game context already classifies the entire date together.
+
+
+
     accounting_kind = kind
     if kind == "event" and (
         grant.source == "asset:default_policy" or grant.source.startswith("default:")

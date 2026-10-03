@@ -86,7 +86,12 @@ from .cover_punch_semantics import (
     validate_full_text_cover_contract,
 )
 from .fixed_cover_stage import FixedCoverStageOptions, fixed_art_direction, resolved_cover_mode
-from .llm_client import LlmCall, extract_json_object
+from .llm_client import (
+    LlmCall,
+    LlmRuntimeEnvironmentError,
+    extract_json_object,
+    runtime_cpa_command_environment,
+)
 from .manual_title_repair_authority import (
     ManualTitleRepairAuthorityError,
     load_manual_title_repair_authority,
@@ -99,6 +104,7 @@ from .publish_staging_paths import (
     staged_transcript_sample,
 )
 from .manual_title_keep_authority import PASS_DECISION as MANUAL_TITLE_KEEP_PASS_DECISION
+from .producer_final_review_transport import _resolved_runtime_root
 from .review_evidence import SourceCue
 from .recovery_title_authority import (
     RecoveryTitleAuthorityError,
@@ -133,6 +139,39 @@ from .title_policy import (
 ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(ROOT)
 PROFILE_ID = CHANNEL_PROFILE.profile_id
+
+
+def _resolve_cover_cpa_credentials() -> tuple[str, str]:
+    """Resolve the image-edit credentials without weakening the cover gate.
+
+    A complete explicit ambient pair remains the historical operator override.
+    Normal producers clear that ambient pair and bind the same runtime-owned
+    ``cpa.env`` used by final-review CPA calls.  Invalid or missing runtime
+    credentials deliberately return an incomplete pair so existing cover
+    routes stay fail-closed; this helper never logs or persists the key.
+    """
+
+    ambient_base_url = os.environ.get("CPA_BASE_URL", "").strip().rstrip("/")
+    ambient_api_key = os.environ.get("CPA_API_KEY", "").strip()
+    if ambient_base_url and ambient_api_key:
+        return ambient_base_url, ambient_api_key
+
+    try:
+        runtime = _resolved_runtime_root(None)
+        runtime_env = (
+            runtime_cpa_command_environment(runtime)
+            if runtime is not None
+            else {}
+        )
+    except (LlmRuntimeEnvironmentError, OSError, ValueError):
+        runtime_env = {}
+    if not isinstance(runtime_env, Mapping):
+        runtime_env = {}
+    runtime_base_url = str(runtime_env.get("CPA_BASE_URL") or "").strip().rstrip("/")
+    runtime_api_key = str(runtime_env.get("CPA_API_KEY") or "").strip()
+    if runtime_base_url and runtime_api_key:
+        return runtime_base_url, runtime_api_key
+    return ambient_base_url, ambient_api_key
 
 
 def profile_asset_text(key: str) -> str:
@@ -505,9 +544,9 @@ def _stage_publish_draft(
     # may be added.
     if title_llm_call is not None:
         staged_title = canonicalize_hard_surfaces(staged_title)
-    # 维护者/19 歌切标题铁律 choke point：自动标题只要带歌切前缀就
-    # 折叠成「前缀《歌名》」，任何「｜副标题」/hook 尾巴在这里被最终清除。
-    # The common publish canonicalizer below applies to manual and automatic titles alike.
+
+
+
     if title_llm_call is not None:
         staged_title = canonicalize_song_catalog_title(staged_title)
     explicit_lane = publish_title_lane(
@@ -761,8 +800,7 @@ def _stage_publish_draft(
                 identity_reference = (
                         media_path.parent / "cover_refs" / f"{candidate_id}.cover-ref.png"
                 )
-                fresh_base_url = os.environ.get("CPA_BASE_URL", "").strip().rstrip("/")
-                fresh_api_key = os.environ.get("CPA_API_KEY", "").strip()
+                fresh_base_url, fresh_api_key = _resolve_cover_cpa_credentials()
                 if identity_reference.is_file() and fresh_base_url and fresh_api_key:
                     try:
                         witness = run_final_host_identity_witness(
@@ -840,11 +878,11 @@ def _stage_publish_draft(
             "cover_text": cover_text,
             "run_ffmpeg": run_ffmpeg,
             "art_direction_llm_call": art_direction_llm_call,
-            # Publish-title authority only freezes ``staged_title``.  It does
-            # not authorize putting that entire string on a thumbnail.  Every
-            # talk title, including 维护者 manual and same-BV recovery titles,
-            # therefore asks CPA for a source-bound 1-2 line punch unless an
-            # independently explicit full-text-cover contract says otherwise.
+
+
+
+
+
             "punch_allowed": full_text_cover_contract is None,
             "full_text_cover_contract": full_text_cover_contract,
             "diversity_slot": cover_diversity_slot,
@@ -947,9 +985,9 @@ def _prepare_lidousha_cover_reference(
     """Select, extract, and verify the source-bound cover reference frame."""
 
     reference_path = cover_refs_dir / f"{candidate_id}.cover-ref.png"
-    # 受监督重产时可指定封面参考帧（内容时间轴毫秒，维护者 点名画面用）；
-    # 未设置则先跑表现力选帧（动作能量×人声响度×字幕情绪×清晰度，
-    # 跳过片头/结尾），失败才落回 thumbnail 代表帧。
+
+
+
     cover_ref_override = os.environ.get("AUTOSLICE_COVER_REF_MS", "").strip()
     reference_authority = (
         story_contract.get("cover_reference_authority")
@@ -1108,13 +1146,13 @@ def _stage_cpa_redraw_cover(
     screenshot_direct 的 BLOCKED 回执同时在场才放行。
     """
 
-    # Strong-reason emote pick (维护者): "replace" swaps the CPA
-    # reference from the live frame to the official sticker (subject swap,
-    # mutually exclusive with the character redraw); "companion" keeps the
-    # frame and insets the sticker (分身 / kmx stand-in).  Any resolution
-    # Once the router selected an emote-backed redraw, reference failure is a
-    # route failure.  Do not silently change the subject back to the character
-    # redraw after the decision receipt has already been issued.
+
+
+
+
+
+
+
     emote_entry = None
     if art_direction.emote_id:
         entry = emote_library.get(art_direction.emote_id)
@@ -1661,14 +1699,13 @@ def _stage_ai_cover(
     story_contract = materialized_recut.get("story_contract")
     if isinstance(story_contract, Mapping):
         cover_generation["story_contract"] = cover_story_contract_binding(story_contract)
-    # 封面路线（维护者："加入判断，哪些适合全图 CPA 重做、哪些适合截图"）：
-    # AUTOSLICE_COVER_MODE = auto（默认，按名场面强度路由）| screenshot（强制直出）
-    # | polish（强制截图+CPA 轻微调）| cpa（强制全图重绘，旧行为）。
-    # 凭据门只对强制 cpa 模式前置；其余路线推迟到真正要调 CPA 时再卡。
+
+
+
+
     cover_mode = resolved_cover_mode(fixed_options, os.environ.get("AUTOSLICE_COVER_MODE", "").strip().lower()) or "auto"
     cover_generation["cover_mode"] = cover_mode
-    base_url = os.environ.get("CPA_BASE_URL", "").strip().rstrip("/")
-    api_key = os.environ.get("CPA_API_KEY", "").strip()
+    base_url, api_key = _resolve_cover_cpa_credentials()
     if (not base_url or not api_key) and cover_mode == "cpa":
         return _blocked_ai_cover_result(
             cover_generation,

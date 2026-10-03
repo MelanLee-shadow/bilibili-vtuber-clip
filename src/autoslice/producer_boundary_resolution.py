@@ -138,7 +138,7 @@ def _replayed_search_scope(
     return expected_search_scope, True
 
 
-from src.autoslice.recovery_title_authority import (  # noqa: E402 — 环形导入规避（既有布局）
+from src.autoslice.recovery_title_authority import (  # noqa: E402
     RecoveryTitleAuthorityError,
     validate_recovery_publication_authority,
 )

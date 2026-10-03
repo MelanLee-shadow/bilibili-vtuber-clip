@@ -470,16 +470,16 @@ def _cpa_lines(completed: subprocess.CompletedProcess[str]) -> list[str]:
 def test_group_capability_400_retries_the_same_model_and_then_succeeds(tmp_path):
     """金丝雀⑤：分组抽签 400 必须退避重试，不是判死候选。
 
-    上游 sudocode 把凭据分成两组（维护者 裁定 #8：一组带 gpt-image 能力、一组带
-    gpt-5.6-sol 能力）。请求轮询落到没有该能力的分组就 400
-    ``group_capability_unavailable``——**请求本身合法**，原样重发就可能落到对
-    的分组。实测单次失败率 ~15–17%，与 payload 大小无关（0B 失败而 2000B 成
-    功，非单调）、与模型无关（sol 5/6、gpt-5.5 5/6、gpt-5.4 6/6）。
+ 上游 sudocode 把凭据分成两组（公开规则裁定 #8：一组带 gpt-image 能力、一组带
+ gpt-5.6-sol 能力）。请求轮询落到没有该能力的分组就 400
+ ``group_capability_unavailable``——**请求本身合法**，原样重发就可能落到对
+ 的分组。实测单次失败率 ~15–17%，与 payload 大小无关（0B 失败而 2000B 成
+ 功，非单调）、与模型无关（sol 5/6、gpt-5.5 5/6、gpt-5.4 6/6）。
 
-    修复前 ``transient_failure()`` 的 ``4??) return 1`` 把它判成确定性拒绝，
-    一次抽签失败就把整条候选打死；本用例在修复前必红（第一枪 400 直接换模型，
-    第二枪打在 gpt-second 上）。
-    """
+ 修复前 ``transient_failure()`` 的 ``4??) return 1`` 把它判成确定性拒绝，
+ 一次抽签失败就把整条候选打死；本用例在修复前必红（第一枪 400 直接换模型，
+ 第二枪打在 gpt-second 上）。
+ """
 
     completed, capture, completion, _tmp = _run_bridge(
         tmp_path,

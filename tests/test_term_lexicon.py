@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 from src.autoslice.source_context_executor import _parse_srt as parse_source_context_srt
 from src.autoslice.term_lexicon import load_term_lexicon, normalize_text

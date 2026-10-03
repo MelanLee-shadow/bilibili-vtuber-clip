@@ -215,7 +215,7 @@ def _check_local_agy() -> None:
     """Validate the executable used by the native loopback AGY adapter."""
 
     # The native adapter keeps the historical remote-binary override because
-    # OCI3's production install lives at agy.  AGY_BIN remains
+    # runtime host's production install lives at agy.  AGY_BIN remains
     # a useful local preflight override for developer shells.
     configured = (
         os.environ.get("AGY_REMOTE_BIN", "").strip()

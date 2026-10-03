@@ -23,7 +23,7 @@ cd "$ROOT"
 remote_ssh() {
     local host=$1
     shift
-    if [ "$host" != oci3 ]; then
+    if [ "$host" != runtime-host ]; then
         ssh "$host" "$@"
         return $?
     fi
@@ -999,8 +999,8 @@ REMOTE_GUARD_RECOVERY
     exit $?
 fi
 
-if [ "$HOST" = oci3 ]; then
-    echo "REFUSE: deploy_autoslice.sh is Free-only; use scripts/deploy_oci3_shadow_autoslice.sh for oci3." >&2
+if [ "$HOST" = runtime-host ]; then
+    echo "REFUSE: deploy_autoslice.sh is Free-only; use scripts/deploy_oci3_shadow_autoslice.sh for runtime-host." >&2
     exit 2
 fi
 

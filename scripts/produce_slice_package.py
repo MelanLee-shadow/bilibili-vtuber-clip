@@ -82,6 +82,8 @@ from src.autoslice.speaker_session_router import (
     verify_speaker_routing_claim,
     verify_speaker_routing_claim_for_candidate,
 )
+from src.autoslice.topic_entity_graph import load_topic_entity_graph
+from src.autoslice.producer_nested_caption_observer import build_runtime_caption_observer
 
 CHANNEL_PROFILE = load_channel_profile(ROOT)
 
@@ -441,7 +443,7 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("minimum_effective_duration_ms must be a non-negative integer")
         if boundary.final_end - boundary.final_start <= minimum_effective_duration_ms:
             raise SystemExit(
-                "TALK_EFFECTIVE_DURATION_NOT_OVER_45S_AFTER_BOUNDARY: "
+                "TALK_EFFECTIVE_DURATION_NOT_OVER_60S_AFTER_BOUNDARY: "
                 f"effective={boundary.final_end - boundary.final_start}ms "
                 f"minimum_exclusive={minimum_effective_duration_ms}ms"
             )
@@ -492,6 +494,9 @@ def main(argv: list[str] | None = None) -> int:
             generate_upload_tags=generate_upload_tags,
             delivery_root=profile_delivery_root,
             run_exact_final_review=text_result.review_exact_final_srt,
+            observe_nested_captions=(build_runtime_caption_observer(
+                ROOT.parent if (ROOT.parent / "cpa.env").exists() else None)
+                if spec.get("selection_scorecard") is not None else None),
         ),
     )
 

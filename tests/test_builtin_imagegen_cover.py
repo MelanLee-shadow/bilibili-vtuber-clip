@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageOps
 
 from src.autoslice.builtin_imagegen_cover import (
     METHOD,
@@ -36,7 +36,17 @@ def generation(tmp_path):
         return {"path": name, "sha256": _sha(path)}
 
     reference = asset("reference.png", Image.new("RGB", (32, 18), "blue"))
-    raw = asset("raw.png", Image.new("RGBA", (32, 18), "red"))
+    raw_image = Image.new("RGBA", (40, 18))
+    raw_pixels = raw_image.load()
+    for y in range(18):
+        for x in range(40):
+            raw_pixels[x, y] = (
+                (13 * x + 7 * y) % 256,
+                (5 * x + 17 * y) % 256,
+                (23 * (x + y)) % 256,
+                255,
+            )
+    raw = asset("raw.png", raw_image)
     background = asset(
         "background.png",
         Image.open(source / raw["path"]).resize((1920, 1080), Image.Resampling.LANCZOS),
@@ -139,6 +149,66 @@ def test_accepts_original_tool_bytes_and_portable_copy(generation, tmp_path):
     assert copy_builtin_imagegen_source(generation, copied.parent) == copied
 
 
+def test_accepts_declared_fit_background_transform_and_portable_copy(
+    generation, tmp_path
+):
+    root = Path(generation["builtin_imagegen_provenance_path"]).parent
+    with Image.open(root / "raw.png") as raw:
+        fitted = ImageOps.fit(
+            raw.convert("RGBA"),
+            (1920, 1080),
+            method=Image.Resampling.LANCZOS,
+            centering=(0.5, 0.5),
+        )
+        resized = raw.convert("RGBA").resize(
+            (1920, 1080), Image.Resampling.LANCZOS
+        )
+        assert fitted.tobytes() != resized.tobytes()
+        fitted.save(root / "background.png")
+
+    source_path = root / "source.json"
+    source = json.loads(source_path.read_text())
+    source["background"]["sha256"] = _sha(root / "background.png")
+    source_path.write_text(json.dumps(source))
+    generation["builtin_imagegen_provenance_sha256"] = _sha(source_path)
+    generation["ai_background_sha256"] = _sha(root / "background.png")
+
+    # A fit-derived background must not silently pass through the legacy
+    # direct-resize behavior when its transform declaration is absent.
+    assert not validate_builtin_imagegen_provenance(generation)
+
+    source["background_transform"] = {
+        "method": "fit",
+        "size": [1920, 1080],
+        "resample": "LANCZOS",
+        "centering": [0.5, 0.5],
+    }
+    source_path.write_text(json.dumps(source))
+    generation["builtin_imagegen_provenance_sha256"] = _sha(source_path)
+    assert validate_builtin_imagegen_provenance(generation)
+    copied = copy_builtin_imagegen_source(generation, tmp_path / "fit-portable")
+    copied_source = json.loads(copied.read_text())
+    assert copied_source["background_transform"]["method"] == "fit"
+    assert validate_builtin_imagegen_provenance(generation, manifest_path=copied)
+
+
+@pytest.mark.parametrize(
+    "transform",
+    [
+        None,
+        {"method": "crop", "size": [1920, 1080], "resample": "LANCZOS"},
+        {"method": "fit", "size": [1920, 1081], "resample": "LANCZOS", "centering": [0.5, 0.5]},
+        {"method": "fit", "size": [1920, 1080], "resample": "BILINEAR", "centering": [0.5, 0.5]},
+        {"method": "fit", "size": [1920, 1080], "resample": "LANCZOS", "centering": [-0.1, 0.5]},
+        {"method": "fit", "size": [1920, 1080], "resample": "LANCZOS", "centering": [0.5]},
+        {"method": "resize", "size": [1920, 1080], "resample": "LANCZOS", "centering": [0.5, 0.5]},
+    ],
+)
+def test_rejects_invalid_declared_background_transform(generation, transform):
+    _rewrite_source(generation, lambda source: source.update(background_transform=transform))
+    assert not validate_builtin_imagegen_provenance(generation)
+
+
 @pytest.mark.parametrize(
     "key,value",
     [
@@ -198,7 +268,8 @@ def test_copy_refuses_to_overwrite_changed_portable_asset(generation, tmp_path):
 
 
 @pytest.mark.parametrize(
-    "defect", [None, "source_hash", "incomplete_face", "identity", "tool_bytes"]
+    "defect",
+    [None, "source_hash", "incomplete_face", "identity", "incomplete_face_identity", "tool_bytes"],
 )
 def test_redraw_accepts_bound_corner_host_without_requiring_screenshot_crop(
     generation,
@@ -210,7 +281,7 @@ def test_redraw_accepts_bound_corner_host_without_requiring_screenshot_crop(
 
     verdict = {
         "lidousha_bbox_frac": [0.75, 0.57, 0.96, 1.0],
-        "source_face_complete": defect != "incomplete_face",
+        "source_face_complete": defect not in {"incomplete_face", "incomplete_face_identity"},
         "faithful_crop_can_make_dominant": False,
         "source_carries_story_reaction": True,
         "cpa_redraw_recommended": True,
@@ -255,10 +326,147 @@ def test_redraw_accepts_bound_corner_host_without_requiring_screenshot_crop(
         image_generation_used=True,
     )
     monkeypatch.setattr(
-        routes, "validate_final_host_identity_verification", lambda _g: defect != "identity"
+        routes,
+        "validate_final_host_identity_verification",
+        lambda _g: defect not in {"identity", "incomplete_face_identity"},
     )
     if defect == "source_hash":
         generation["reference_sha256"] = "sha256:" + "0" * 64
     if defect == "tool_bytes":
         Path(generation["builtin_imagegen_provenance_path"]).write_text("{}")
-    assert routes.validate_cover_route_decision(generation) is (defect is None)
+    assert routes.validate_cover_route_decision(generation) is (
+        defect in {None, "incomplete_face"}
+    )
+
+
+def _add_renderer_only_successor(generation, monkeypatch):
+    import shutil
+
+    from PIL import ImageChops, ImageDraw
+    from src.autoslice import builtin_imagegen_cover as builtin
+
+    root = Path(generation["builtin_imagegen_provenance_path"]).parent
+    source_path = root / "source.json"
+    parent_root = root / "parent"
+    parent_root.mkdir()
+    for source_file in list(root.iterdir()):
+        if source_file.is_file():
+            shutil.copy2(source_file, parent_root / source_file.name)
+    parent_manifest = parent_root / "source.json"
+    parent_source = json.loads(parent_manifest.read_text())
+    parent_final = parent_root / parent_source["final_cover"]["path"]
+
+    current_final = Path(generation["final_cover"])
+    with Image.open(current_final) as image:
+        current = image.convert("RGBA")
+    ImageDraw.Draw(current).rectangle((5, 5, 14, 14), fill="yellow")
+    current.save(current_final)
+
+    old_mask = root / "old-title-mask.png"
+    new_mask = root / "new-title-mask.png"
+    for mask_path in (old_mask, new_mask):
+        mask = Image.new("L", (1920, 1080), 0)
+        ImageDraw.Draw(mask).rectangle((5, 5, 14, 14), fill=255)
+        mask.save(mask_path)
+
+    with Image.open(parent_final) as old_image, Image.open(current_final) as new_image:
+        difference = ImageChops.difference(
+            old_image.convert("RGB"), new_image.convert("RGB")
+        )
+        bbox = list(difference.getbbox() or ())
+        changed_count = sum(any(pixel) for pixel in difference.getdata())
+
+    source = json.loads(source_path.read_text())
+    source["final_cover"]["sha256"] = _sha(current_final)
+    source["final_cover_successor"] = {
+        "schema_version": builtin.FINAL_COVER_SUCCESSOR_SCHEMA,
+        "status": builtin.FINAL_COVER_SUCCESSOR_STATUS,
+        "candidate_id": generation["candidate_id"],
+        "parent_manifest": {
+            "path": "parent/source.json",
+            "sha256": _sha(parent_manifest),
+        },
+        "parent_manifest_sha256": "sha256:" + _sha(parent_manifest),
+        "parent_final_cover_sha256": "sha256:" + _sha(parent_final),
+        "current_final_cover_sha256": "sha256:" + _sha(current_final),
+        "pre_overlay_sha256": "sha256:" + source["background"]["sha256"],
+        "old_title_mask": {
+            "path": old_mask.name,
+            "sha256": _sha(old_mask),
+        },
+        "new_title_mask": {
+            "path": new_mask.name,
+            "sha256": _sha(new_mask),
+        },
+        "old_vs_new_changed_pixels": changed_count,
+        "old_vs_new_difference_bbox": bbox,
+        "pixels_changed_outside_union_title_masks": 0,
+        "pre_overlay_bytes_preserved": True,
+        "render_spec_preserved": True,
+        "title_text_preserved": True,
+        "image_generation_calls": 0,
+        "provider_calls": 0,
+    }
+    source_path.write_text(json.dumps(source))
+    generation["final_cover_sha256"] = _sha(current_final)
+    generation["builtin_imagegen_provenance_sha256"] = _sha(source_path)
+
+    monkeypatch.setattr(
+        builtin, "B2_E422_SUCCESSOR_CANDIDATE_ID", generation["candidate_id"]
+    )
+    monkeypatch.setattr(
+        builtin, "B2_E422_PARENT_MANIFEST_SHA256", _sha(parent_manifest)
+    )
+    monkeypatch.setattr(
+        builtin, "B2_E422_PARENT_FINAL_COVER_SHA256", _sha(parent_final)
+    )
+    monkeypatch.setattr(
+        builtin, "B2_E422_CURRENT_FINAL_COVER_SHA256", _sha(current_final)
+    )
+    monkeypatch.setattr(
+        builtin, "B2_E422_PRE_OVERLAY_SHA256", source["background"]["sha256"]
+    )
+    monkeypatch.setattr(
+        builtin, "B2_E422_OLD_TITLE_MASK_SHA256", _sha(old_mask)
+    )
+    monkeypatch.setattr(
+        builtin, "B2_E422_NEW_TITLE_MASK_SHA256", _sha(new_mask)
+    )
+    monkeypatch.setattr(builtin, "B2_E422_CHANGED_PIXEL_COUNT", changed_count)
+    monkeypatch.setattr(builtin, "B2_E422_DIFFERENCE_BBOX", bbox)
+    return source_path, parent_manifest, old_mask, new_mask
+
+
+def test_accepts_renderer_only_final_cover_successor_and_portable_copy(
+    generation, tmp_path, monkeypatch
+):
+    source_path, _parent, old_mask, new_mask = _add_renderer_only_successor(
+        generation, monkeypatch
+    )
+    assert validate_builtin_imagegen_provenance(generation)
+    copied = copy_builtin_imagegen_source(generation, tmp_path / "portable-successor")
+    assert copied.read_bytes() == source_path.read_bytes()
+    assert (copied.parent / "parent/source.json").is_file()
+    assert (copied.parent / old_mask.name).is_file()
+    assert (copied.parent / new_mask.name).is_file()
+    assert validate_builtin_imagegen_provenance(generation, manifest_path=copied)
+
+
+def test_renderer_successor_rejects_pixel_change_outside_rebound_masks(
+    generation, monkeypatch
+):
+    from src.autoslice import builtin_imagegen_cover as builtin
+
+    source_path, _parent, old_mask, new_mask = _add_renderer_only_successor(
+        generation, monkeypatch
+    )
+    for mask_path in (old_mask, new_mask):
+        Image.new("L", (1920, 1080), 0).save(mask_path)
+    source = json.loads(source_path.read_text())
+    source["final_cover_successor"]["old_title_mask"]["sha256"] = _sha(old_mask)
+    source["final_cover_successor"]["new_title_mask"]["sha256"] = _sha(new_mask)
+    source_path.write_text(json.dumps(source))
+    generation["builtin_imagegen_provenance_sha256"] = _sha(source_path)
+    monkeypatch.setattr(builtin, "B2_E422_OLD_TITLE_MASK_SHA256", _sha(old_mask))
+    monkeypatch.setattr(builtin, "B2_E422_NEW_TITLE_MASK_SHA256", _sha(new_mask))
+    assert not validate_builtin_imagegen_provenance(generation)

@@ -58,11 +58,12 @@ from src.autoslice.cover_text_pixel_evidence import (
 )
 from src.autoslice.cue_split_hygiene import merge_release_grade_cues
 from src.autoslice.delivery_fast_path import resolve_operator_text_full_ownership
-from src.autoslice.final_review_auditor import persist_review_audit
+from src.autoslice.final_review_auditor import audit_final_subtitles, persist_review_audit
 from src.autoslice.exact_final_cpa_history import build_run_audit, retained_runs
 from src.autoslice.final_subtitle_audio_gate import (
     require_final_subtitle_audio_check,
     copy_subtitle_audio_artifacts,
+    load_validated_subtitle_audio_witness,
 )
 from src.autoslice.final_review_contract import (
     EXACT_FINAL_CPA_SELF_HEAL_MAX_REPAIR_PASSES,
@@ -71,7 +72,12 @@ from src.autoslice.final_review_contract import (
     validate_final_review_release,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
-from src.autoslice.producer_final_review_transport import build_publication_llm_call
+from src.autoslice.producer_final_review_transport import (
+    build_final_review_llm_call,
+    build_publication_llm_call,
+)
+from src.autoslice.clip_context import clip_context_prompt_text
+from src.autoslice.llm_client import extract_json_object
 from src.autoslice.producer_media import (
     _resolved_optional_path,
     _validated_burned_ass_artifact,
@@ -95,8 +101,8 @@ from src.autoslice.producer_text_finalization import (
 from src.autoslice.redelivery_baseline_ownership import (
     suppress_baseline_owned_self_heal_findings,
 )
-# 维护者 ruling #2「弹幕不修正」（主包/主播案）——同一 owned-interval
-# 缺口，第二个不同权威源；本体见 chat_authority_ownership.py，这里只留调用点。
+
+
 from src.autoslice.chat_authority_ownership import (
     suppress_chat_authority_owned_self_heal_findings,
 )
@@ -142,6 +148,7 @@ from src.autoslice.subtitle_fidelity import (
 )
 from src.autoslice.subtitle_regression import verify_subtitle_regression_surfaces
 from src.autoslice.talk_filler import bind_final_filler_audit_to_burn
+from src.autoslice.producer_nested_caption import consume_nested_caption_policy
 from src.autoslice.story_contract import (
     audit_story_artifact,
     build_story_contract,
@@ -195,6 +202,7 @@ class ProducerFinalizationAdapters:
     delivery_root: Callable[[], Path]
     run_exact_final_review: Callable[..., dict] | None = None
     capture_subtitle_audio_check: Callable[..., dict] | None = None
+    observe_nested_captions: Callable[..., dict] | None = None
 
 @dataclass(frozen=True)
 class FinalRecutArtifacts:
@@ -701,6 +709,24 @@ def _materialize_final_recut(
         chat_authority_audit[
             "post_redelivery_japanese_native_script_audit"
         ] = final_japanese_native_script_audit
+    # Caption display ownership is resolved on the post-baseline final text.
+    # Subsequent exact-final/boundary review and ASS generation see these bytes,
+    # not the original all-speaker transcript archived by this consumer.
+    caption_spec = spec
+    if adapters.observe_nested_captions is not None:
+        caption_spec = adapters.observe_nested_captions(
+            spec=spec, candidate_id=cid, source_media=padded,
+            source_start_ms=final_start, source_end_ms=final_end,
+            subtitle_path=subtitle_path, evidence_root=spec_parent or Path.cwd(),
+            chat_authority_audit=chat_authority_audit,
+        )
+    final_text = consume_nested_caption_policy(
+        spec=caption_spec, candidate_id=cid, source_media=padded,
+        source_start_ms=final_start, source_end_ms=final_end,
+        subtitle_path=subtitle_path,
+        evidence_root=spec_parent or Path.cwd(),
+        chat_authority_audit=chat_authority_audit,
+    )
     if chat_authority_audit is not None:
         chat_authority_audit["final_output_srt_sha256"] = hashlib.sha256(
             final_text.encode("utf-8")
@@ -1321,17 +1347,13 @@ def _run_exact_final_review_gate(
     carryover_file = carryover_path(out_root, cid)
     replayable_carryover_base_sha256: set[str] = set()
     consumed_carryover_repairs: dict[str, Mapping[str, object]] = {}
-    # A long clip can expose a second-order wording error only after an earlier
-    # CPA-authorized repair makes the surrounding sentence coherent.  Two
-    # repair rounds proved too small for the five-minute pink-room recovery:
-    # the third scan found valid repairs and then stopped solely because of the
-    # historical cap.  Keep convergence bounded, but allow five repair rounds
-    # plus the mandatory final clean scan.
-    max_review_passes = (
-        EXACT_FINAL_CPA_SELF_HEAL_MAX_REPAIR_PASSES + 1
-    )
+    # CPA remains the controller while distinct, authorized repairs progress.
+    # Stop unchanged/cyclic text instead of cutting off at an arbitrary count.
+    reviewed_hashes: set[str] = set()
     review_audit_path = out_root / f"{cid}.review-flags.json"
-    for pass_index in range(max_review_passes):
+    pass_index = -1
+    while True:
+        pass_index += 1
         chat_authority_before_pass = deepcopy(chat_authority_audit)
         baseline_before_pass = (
             deepcopy(recut.redelivery_baseline_audit)
@@ -1352,6 +1374,7 @@ def _run_exact_final_review_gate(
         )
         final_bytes = recut.subtitle_path.read_bytes()
         final_text = final_bytes.decode("utf-8", errors="strict")
+        reviewed_hashes.add(hashlib.sha256(final_bytes).hexdigest())
         audit = reviewer(
             final_text,
             chat_authority_audit,
@@ -1411,6 +1434,15 @@ def _run_exact_final_review_gate(
             final_text, audit, chat_authority_before_pass, final_start
         )
         chat_authority_audit["final_review_audit"] = audit
+        if isinstance(audit.get("cpa_adjudication_usage"), Mapping):
+            chat_authority_audit["cpa_adjudication_usage"] = dict(
+                audit["cpa_adjudication_usage"]
+            )
+        audit["cpa_review_resource_pressure"] = {
+            "review_pass_count": pass_index + 1,
+            "soft_repair_pass_target": EXACT_FINAL_CPA_SELF_HEAL_MAX_REPAIR_PASSES,
+            "policy": "SOFT_PROGRESS_REQUIRED",
+        }
         persist_review_audit(review_audit_path, audit)
         expected_srt_sha256 = "sha256:" + hashlib.sha256(
             final_bytes
@@ -1440,13 +1472,19 @@ def _run_exact_final_review_gate(
                     repaired_base_sha256
                 )
             )
+            repaired_sha256 = hashlib.sha256(
+                repaired_text.encode("utf-8")
+            ).hexdigest()
+            repair_progress = bool(repairs and repaired_sha256 not in reviewed_hashes)
+            if repairs and not repair_progress:
+                audit["cpa_progress_stop_reason"] = "UNCHANGED_OR_CYCLIC_FINAL_SRT"
+                persist_review_audit(review_audit_path, audit)
             if (
                 (
                     exc.reason_code == "FINAL_REVIEW_UNRESOLVED_FINDINGS"
                     or exact_replay_closes_unconsumed_carryover
                 )
-                and repairs
-                and pass_index < max_review_passes - 1
+                and repair_progress
             ):
                 staged_chat_authority = deepcopy(
                     chat_authority_audit
@@ -1573,14 +1611,14 @@ def _run_exact_final_review_gate(
                         )
                     raise
                 continue
-            # 「耳朵说这段音频物理上不可读」的死锁（维护者 裁定）：删掉
-            # 那条 cue 的字幕、照常出成品、落人工审阅停泊态，而不是把整条候选
-            # 拦死。判据/守卫/授权/事务全在 unreadable_cue_drop_stage，这里只留
-            # 调用点；排在 CPA 自愈之后是刻意的——删字幕有损，永远是最后手段。
+
+
+
+
             next_drop_passes = stage_unreadable_cue_drop_pass(
                 reason_code=exc.reason_code,
                 cpa_repairs=repairs,
-                pass_budget_left=pass_index < max_review_passes - 1,
+                pass_budget_left=not bool(repairs),
                 final_text=final_text,
                 audit=audit,
                 expected_srt_sha256=expected_srt_sha256,
@@ -1676,7 +1714,6 @@ def _run_exact_final_review_gate(
             encoding="utf-8",
         )
         return audit
-    raise AssertionError("exact-final self-heal loop exhausted")
 
 def _finalize_speaker(
     *,
@@ -2020,6 +2057,491 @@ def _build_and_burn_record(
         capture=adapters.capture_subtitle_audio_check,
     )
 
+
+def _sha256_text(value: str) -> str:
+    return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _complete_postburn_cpa_identity(value: object) -> dict[str, object] | None:
+    """Accept only the identity emitted by the real CPA callable.
+
+    The command transport already exposes this through ``cpa_cache_identity``.
+    Missing model/effort/transport fields are an unbound call, never a reason
+    to invent a cache key from local defaults.
+    """
+
+    if not isinstance(value, Mapping):
+        return None
+    identity = dict(value)
+    transport = identity.get("transport")
+    models = identity.get("models")
+    effort = identity.get("effort")
+    if (
+        not isinstance(transport, str)
+        or not transport.strip()
+        or not isinstance(models, (list, tuple))
+        or not models
+        or any(not isinstance(model, str) or not model.strip() for model in models)
+        or not isinstance(effort, str)
+        or not effort.strip()
+    ):
+        return None
+    identity["models"] = list(models)
+    return identity
+
+
+def _write_postburn_cpa_text(path: Path, value: str) -> None:
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.write_bytes(value.encode("utf-8"))
+    os.chmod(path, 0o600)
+
+
+def _read_postburn_cpa_text(path_value: object, expected_sha256: object) -> str:
+    path = Path(str(path_value or ""))
+    if not path.is_file() or path.is_symlink():
+        raise ValueError("POSTBURN_SUBTITLE_AUDIO_CPA_ARTIFACT_MISSING")
+    value = path.read_bytes().decode("utf-8", errors="strict")
+    if _sha256_text(value) != str(expected_sha256 or ""):
+        raise ValueError("POSTBURN_SUBTITLE_AUDIO_CPA_ARTIFACT_HASH_DRIFT")
+    return value
+
+
+def _postburn_request_sha256(request: Mapping[str, object]) -> str:
+    payload = {
+        key: value for key, value in request.items() if key != "request_sha256"
+    }
+    return _sha256_text(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    )
+
+
+def _postburn_cached_review_complete(review: object) -> bool:
+    if not isinstance(review, Mapping):
+        return False
+    request = review.get("cpa_request")
+    calls = review.get("cpa_calls")
+    if (
+        review.get("schema_version") != "postburn-subtitle-audio-review.v1"
+        or not isinstance(request, Mapping)
+        or _complete_postburn_cpa_identity(request.get("cpa_cache_identity")) is None
+        or not isinstance(request.get("provider_runtime_binding"), Mapping)
+        or not isinstance(request.get("request_sha256"), str)
+        or _postburn_request_sha256(request) != request.get("request_sha256")
+        or not isinstance(review.get("findings"), list)
+        or not isinstance(calls, list)
+        or not calls
+    ):
+        return False
+    for call in calls:
+        if (
+            not isinstance(call, Mapping)
+            or call.get("error_type")
+            or call.get("request_sha256") != request.get("request_sha256")
+        ):
+            return False
+        try:
+            _read_postburn_cpa_text(call.get("prompt_path"), call.get("prompt_sha256"))
+            _read_postburn_cpa_text(call.get("response_path"), call.get("response_sha256"))
+        except (OSError, UnicodeError, ValueError):
+            return False
+    return True
+
+
+def _run_postburn_subtitle_audio_review(
+    *,
+    cid: str,
+    out_root: Path,
+    recut: FinalRecutArtifacts,
+    record: dict,
+    chat_authority_audit: dict,
+    chat_authority_path: Path,
+    clip_context: Mapping[str, object] | None = None,
+    selection_hook: str = "",
+) -> dict:
+    """Let normal CPA inspect an already-validated postburn text witness.
+
+    The gate has already paid for BCUT.  This pass only reads and validates its
+    artifacts, then sends the current final SRT plus witness context through
+    the normal CPA transport.  It never applies a subtitle mutation.
+    """
+
+    try:
+        burned = _validated_burned_artifact(record)
+        witness = load_validated_subtitle_audio_witness(
+            record,
+            recut.subtitle_path,
+            burned,
+            candidate_id=cid,
+        )
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise SystemExit(
+            f"POSTBURN_SUBTITLE_AUDIO_WITNESS_INVALID: {type(exc).__name__}: {exc}"
+        ) from exc
+    final_bytes = recut.subtitle_path.read_bytes()
+    final_text = final_bytes.decode("utf-8", errors="strict")
+    reviewed_srt_sha256 = _sha256_text(final_text)
+    existing = chat_authority_audit.get("final_review_audit")
+    if not isinstance(existing, Mapping):
+        raise SystemExit("POSTBURN_SUBTITLE_AUDIO_FINAL_REVIEW_AUDIT_MISSING")
+    declared_srt_sha256 = str(existing.get("reviewed_srt_sha256") or "")
+    if (
+        declared_srt_sha256.removeprefix("sha256:")
+        != reviewed_srt_sha256.removeprefix("sha256:")
+        or existing.get("release_gate") != "PASS"
+    ):
+        raise SystemExit("POSTBURN_SUBTITLE_AUDIO_FINAL_REVIEW_AUDIT_DRIFT")
+    receipt = witness["receipt"]
+    receipt_mapping = receipt if isinstance(receipt, Mapping) else {}
+    context_text = "\n".join(
+        (
+            "POSTBURN_SUBTITLE_AUDIO_WITNESS (EVIDENCE ONLY)",
+            f"candidate_id: {cid}",
+            f"actual_media_sha256: {witness['actual_media_sha256']}",
+            f"final_srt_sha256: {reviewed_srt_sha256}",
+            f"witness_srt_sha256: {witness['witness_srt_sha256']}",
+            f"intro_offset_ms: {witness['intro_offset_ms']}",
+            "timebase: witness_ms = final_delivery_ms + intro_offset_ms; apply once",
+            f"timing_status: {receipt_mapping.get('timing_status')}",
+            f"text_correctness_status: {receipt_mapping.get('text_correctness_status')}",
+            "BCUT text is an independent witness; a difference is not proof of an error.",
+            *([f"selection_hook: {selection_hook.strip()}"] if selection_hook.strip() else []),
+            "witness_srt:",
+            str(witness["witness_text"]),
+        )
+    )
+    context_sha256 = _sha256_text(context_text)
+    final_review_llm = build_final_review_llm_call()
+    cache_identity = _complete_postburn_cpa_identity(
+        getattr(final_review_llm, "cpa_cache_identity", None)
+    )
+    if cache_identity is None:
+        raise SystemExit("POSTBURN_SUBTITLE_AUDIO_CPA_IDENTITY_MISSING")
+    runtime_binding = getattr(final_review_llm, "provider_runtime_binding", {})
+    if isinstance(runtime_binding, Mapping):
+        runtime_binding = dict(runtime_binding)
+    else:
+        runtime_binding = {}
+    # These values come from the callable's real command identity.  Keep them
+    # beside the runtime/credential binding so a model or effort change cannot
+    # look like the same transport merely because the host stayed constant.
+    runtime_binding.update(
+        {
+            "provider_call_transport": cache_identity["transport"],
+            "provider_model": list(cache_identity["models"]),
+            "provider_effort": cache_identity["effort"],
+        }
+    )
+    candidate_context_text = (
+        clip_context_prompt_text(clip_context)
+        if isinstance(clip_context, Mapping)
+        else ""
+    )
+    request = {
+        "schema_version": "postburn-subtitle-audio-cpa-request.v1",
+        "candidate_id": cid,
+        "actual_media_sha256": witness["actual_media_sha256"],
+        "final_srt_sha256": reviewed_srt_sha256,
+        "witness_srt_sha256": witness["witness_srt_sha256"],
+        "audio_sha256": witness["audio_sha256"],
+        "raw_result_sha256": witness["raw_result_sha256"],
+        "receipt_sha256": witness["receipt_sha256"],
+        "intro_offset_ms": witness["intro_offset_ms"],
+        "timebase": "witness_ms = final_delivery_ms + intro_offset_ms",
+        "witness_authority": "EVIDENCE_ONLY",
+        "structured_context_sha256": context_sha256,
+        "candidate_context_sha256": _sha256_text(candidate_context_text),
+        "cpa_cache_identity": cache_identity,
+        "provider_runtime_binding": runtime_binding,
+    }
+    request["request_sha256"] = _postburn_request_sha256(request)
+    cpa_calls: list[dict[str, object]] = []
+    subtitle_audio_binding = {
+        key: witness[key]
+        for key in (
+            "candidate_id", "provider", "provider_route",
+            "actual_media_sha256", "final_srt_sha256",
+            "witness_srt_sha256", "audio_sha256", "raw_result_sha256",
+            "intro_offset_ms", "witness_srt_path", "provenance_path",
+            "correspondence_path", "raw_result_path", "receipt_sha256",
+        )
+        if key in witness
+    }
+    review_audit_path = out_root / f"{cid}.review-flags.json"
+
+    def persist_running_checkpoint(call: Mapping[str, object]) -> None:
+        checkpoint = {
+            "schema_version": "postburn-subtitle-audio-review.v1",
+            "status": "RUNNING",
+            "release_gate": "BLOCK",
+            "reason_codes": [
+                "POSTBURN_SUBTITLE_AUDIO_CPA_DISPATCH_INCOMPLETE"
+            ],
+            "reviewed_srt_sha256": reviewed_srt_sha256,
+            "validated_finding_count": 0,
+            "findings": [],
+            "cache_reused": False,
+            "cpa_cache_identity": cache_identity,
+            "subtitle_audio_binding": subtitle_audio_binding,
+            "cpa_request": dict(request),
+            "cpa_calls": [dict(call)],
+            "provider_runtime_binding": dict(runtime_binding),
+            "checkpoint": "before_provider_dispatch",
+            **(
+                {"prior_postburn_subtitle_audio_review": dict(prior_review_for_audit)}
+                if isinstance(prior_review_for_audit, Mapping)
+                else {}
+            ),
+        }
+        checkpoint_audit = deepcopy(dict(existing))
+        # Keep the ordinary exact-final PASS as the input authority.  The
+        # nested postburn checkpoint carries the separate incomplete state.
+        checkpoint_audit["postburn_subtitle_audio_review"] = checkpoint
+        chat_authority_audit["postburn_subtitle_audio_review"] = checkpoint
+        chat_authority_audit["final_review_audit"] = checkpoint_audit
+        chat_authority_path.write_bytes(_json_bytes(chat_authority_audit))
+        persist_review_audit(review_audit_path, checkpoint_audit)
+        try:
+            persisted_chat = json.loads(chat_authority_path.read_text(encoding="utf-8"))
+            persisted_checkpoint = persisted_chat.get("postburn_subtitle_audio_review")
+            persisted_request = (
+                persisted_checkpoint.get("cpa_request")
+                if isinstance(persisted_checkpoint, Mapping)
+                else None
+            )
+            if (
+                not isinstance(persisted_checkpoint, Mapping)
+                or not isinstance(persisted_request, Mapping)
+                or persisted_request.get("request_sha256")
+                != request["request_sha256"]
+                or persisted_checkpoint.get("status") != "RUNNING"
+            ):
+                raise ValueError("POSTBURN_SUBTITLE_AUDIO_CHECKPOINT_DRIFT")
+            persisted_review = json.loads(review_audit_path.read_text(encoding="utf-8"))
+            if persisted_review.get("postburn_subtitle_audio_review") != checkpoint:
+                raise ValueError("POSTBURN_SUBTITLE_AUDIO_REVIEW_CHECKPOINT_DRIFT")
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError("POSTBURN_SUBTITLE_AUDIO_CHECKPOINT_PERSIST_FAILED") from exc
+
+    def tracked_llm_call(prompt: str) -> str:
+        prompt_sha256 = _sha256_text(prompt)
+        attempt = len(cpa_calls) + 1
+        private_root = out_root / f".{cid}.postburn-cpa"
+        prompt_path = private_root / f"attempt-{attempt:02d}-{prompt_sha256[7:19]}.prompt.txt"
+        _write_postburn_cpa_text(prompt_path, prompt)
+        call = {
+            "attempt": attempt,
+            "request_sha256": request["request_sha256"],
+            "prompt_sha256": prompt_sha256,
+            "prompt_path": str(prompt_path),
+            "served_from_cache": False,
+            "dispatch_status": "RUNNING",
+        }
+        cpa_calls.append(call)
+        persist_running_checkpoint(call)
+        try:
+            completion = final_review_llm(prompt)
+            if not isinstance(completion, str):
+                raise TypeError("CPA completion must be text")
+            response_sha256 = _sha256_text(completion)
+            response_path = private_root / (
+                f"attempt-{attempt:02d}-{response_sha256[7:19]}.completion.txt"
+            )
+            _write_postburn_cpa_text(response_path, completion)
+        except Exception as exc:
+            call["dispatch_status"] = "FAILED"
+            call["error_type"] = type(exc).__name__
+            raise
+        call.update(
+            dispatch_status="COMPLETED",
+            response_sha256=response_sha256,
+            response_path=str(response_path),
+        )
+        return completion
+
+    tracked_llm_call.cpa_cache_identity = cache_identity  # type: ignore[attr-defined]
+    tracked_llm_call.provider_runtime_binding = dict(runtime_binding)  # type: ignore[attr-defined]
+
+    def replay_cached_call(prompt: str) -> str:
+        cached_calls = cached_review.get("cpa_calls") if isinstance(cached_review, Mapping) else None
+        if not isinstance(cached_calls, list) or replay_index[0] >= len(cached_calls):
+            raise ValueError("POSTBURN_SUBTITLE_AUDIO_CPA_CACHE_CALL_MISSING")
+        cached_call = cached_calls[replay_index[0]]
+        if not isinstance(cached_call, Mapping):
+            raise ValueError("POSTBURN_SUBTITLE_AUDIO_CPA_CACHE_CALL_INVALID")
+        prompt_sha256 = _sha256_text(prompt)
+        if cached_call.get("prompt_sha256") != prompt_sha256:
+            raise ValueError("POSTBURN_SUBTITLE_AUDIO_CPA_CACHE_PROMPT_DRIFT")
+        cached_prompt = _read_postburn_cpa_text(
+            cached_call.get("prompt_path"), cached_call.get("prompt_sha256")
+        )
+        if cached_prompt != prompt:
+            raise ValueError("POSTBURN_SUBTITLE_AUDIO_CPA_CACHE_PROMPT_BYTES_DRIFT")
+        completion = _read_postburn_cpa_text(
+            cached_call.get("response_path"), cached_call.get("response_sha256")
+        )
+        replay_index[0] += 1
+        return completion
+
+    replay_cached_call.cpa_cache_identity = cache_identity  # type: ignore[attr-defined]
+    replay_cached_call.provider_runtime_binding = dict(runtime_binding)  # type: ignore[attr-defined]
+
+    findings: list[dict[str, object]] = []
+    error: BaseException | None = None
+    error_reason_code: str | None = None
+    cached_review = existing.get("postburn_subtitle_audio_review")
+    replay_index = [0]
+    cache_reused = False
+    prior_review_for_audit: Mapping[str, object] | None = None
+    try:
+        cached_request = (
+            cached_review.get("cpa_request")
+            if isinstance(cached_review, Mapping)
+            else None
+        )
+        prior_review_present = "postburn_subtitle_audio_review" in existing
+        cached_request_sha = (
+            cached_request.get("request_sha256")
+            if isinstance(cached_request, Mapping)
+            else None
+        )
+        same_request = cached_request_sha == request["request_sha256"]
+        prior_complete = _postburn_cached_review_complete(cached_review)
+        ambiguous_prior = (
+            prior_review_present
+            and (
+                not isinstance(cached_review, Mapping)
+                or not isinstance(cached_request, Mapping)
+                or not isinstance(cached_request_sha, str)
+                or not cached_request_sha
+                or not prior_complete
+            )
+        )
+        if ambiguous_prior:
+            # An old or incomplete dispatch has no safe way to establish that
+            # the provider did not receive the request. Preserve it and stop.
+            prior_review_for_audit = (
+                cached_review if isinstance(cached_review, Mapping) else None
+            )
+            error = ValueError("POSTBURN_SUBTITLE_AUDIO_CPA_AMBIGUOUS_REPLAY")
+            error_reason_code = "POSTBURN_SUBTITLE_AUDIO_CPA_AMBIGUOUS_REPLAY"
+        elif prior_review_present and same_request:
+            prior_review_for_audit = cached_review
+            try:
+                replay_findings = audit_final_subtitles(
+                    final_text,
+                    llm_call=replay_cached_call,
+                    extract_json=extract_json_object,
+                    structured_context_text=context_text,
+                    candidate_context_text=candidate_context_text,
+                    candidate_context=clip_context,
+                )
+                if replay_index[0] != len(cached_review["cpa_calls"]):
+                    raise ValueError(
+                        "POSTBURN_SUBTITLE_AUDIO_CPA_CACHE_CALL_COUNT_DRIFT"
+                    )
+                if replay_findings != cached_review["findings"]:
+                    raise ValueError(
+                        "POSTBURN_SUBTITLE_AUDIO_CPA_CACHE_FINDINGS_DRIFT"
+                    )
+                findings = replay_findings
+                cpa_calls = [
+                    {**dict(call), "served_from_cache": True}
+                    for call in cached_review["cpa_calls"]
+                    if isinstance(call, Mapping)
+                ]
+                cache_reused = True
+            except Exception as exc:
+                error = ValueError("POSTBURN_SUBTITLE_AUDIO_CPA_AMBIGUOUS_REPLAY")
+                error.__cause__ = exc
+                error_reason_code = "POSTBURN_SUBTITLE_AUDIO_CPA_AMBIGUOUS_REPLAY"
+        elif prior_review_present and not same_request and prior_complete:
+            # A changed, fully completed request may be sent once, but retain
+            # the old receipt so the input transition remains auditable.
+            prior_review_for_audit = cached_review
+
+        if error is None and not cache_reused:
+            # A missing prior review, or a clearly different bound input, may
+            # make one fresh normal call.  Same-input incomplete/ambiguous
+            # dispatches have already taken the blocking branch above.
+            findings = audit_final_subtitles(
+                final_text,
+                llm_call=tracked_llm_call,
+                extract_json=extract_json_object,
+                structured_context_text=context_text,
+                candidate_context_text=candidate_context_text,
+                candidate_context=clip_context,
+            )
+    except Exception as exc:
+        if error is None:
+            error = exc
+            error_reason_code = "POSTBURN_SUBTITLE_AUDIO_CPA_UNAVAILABLE"
+
+    postburn = {
+        "schema_version": "postburn-subtitle-audio-review.v1",
+        "status": (
+            "AUDITOR_UNAVAILABLE" if error is not None
+            else "FLAGGED" if findings else "CLEAN"
+        ),
+        "release_gate": "BLOCK" if error is not None or findings else "PASS",
+        "reason_codes": (
+            [error_reason_code or "POSTBURN_SUBTITLE_AUDIO_CPA_UNAVAILABLE"] if error is not None
+            else ["POSTBURN_SUBTITLE_AUDIO_CPA_FINDINGS"] if findings else []
+        ),
+        "reviewed_srt_sha256": reviewed_srt_sha256,
+        "validated_finding_count": len(findings),
+        "findings": findings,
+        "cache_reused": cache_reused,
+        "cpa_cache_identity": cache_identity,
+        "subtitle_audio_binding": subtitle_audio_binding,
+        "cpa_request": {
+            **request,
+        },
+        "cpa_calls": cpa_calls,
+        "provider_runtime_binding": (
+            dict(runtime_binding)
+        ),
+        **(
+            {"prior_postburn_subtitle_audio_review": dict(prior_review_for_audit)}
+            if isinstance(prior_review_for_audit, Mapping)
+            else {}
+        ),
+        **({"error_type": type(error).__name__} if error is not None else {}),
+    }
+    merged_audit = deepcopy(dict(existing))
+    merged_findings = [
+        row for row in merged_audit.get("findings") or [] if isinstance(row, Mapping)
+    ]
+    merged_findings.extend(findings)
+    merged_audit["postburn_subtitle_audio_review"] = postburn
+    merged_audit["findings"] = merged_findings
+    merged_audit["validated_finding_count"] = len(merged_findings)
+    if postburn["release_gate"] != "PASS":
+        merged_audit["release_gate"] = "BLOCK"
+        merged_audit["status"] = postburn["status"]
+        merged_audit["reason_codes"] = sorted(
+            {str(code) for code in [*(merged_audit.get("reason_codes") or []), *postburn["reason_codes"]]}
+        )
+    record["postburn_subtitle_audio_review"] = postburn
+    chat_authority_audit["postburn_subtitle_audio_review"] = postburn
+    chat_authority_audit["final_review_audit"] = merged_audit
+    persist_review_audit(review_audit_path, merged_audit)
+    chat_authority_path.write_bytes(_json_bytes(chat_authority_audit))
+    record.setdefault("artifact_hashes", {})[
+        "chat_authority_audit_sha256"
+    ] = "sha256:" + _sha256(chat_authority_path)
+    if error is not None:
+        raise SystemExit(
+            "POSTBURN_SUBTITLE_AUDIO_REVIEW_BLOCKED: "
+            f"{type(error).__name__}: {review_audit_path}"
+        ) from error
+    if findings:
+        raise SystemExit(
+            "POSTBURN_SUBTITLE_AUDIO_REVIEW_BLOCKED: "
+            f"{review_audit_path}"
+        )
+    return record
+
+
 def _stage_record(
     *,
     options: ProducerFinalizationOptions,
@@ -2293,11 +2815,11 @@ def _stage_record(
             raise SystemExit(
                 "STORY_CONTRACT_COVER_FAILED: " + ",".join(cover_reason_codes)
             )
-    # 7. Upload tags (维护者): generated at package time against the
-    # FINAL title + FINAL delivered subtitles (tag 必须按成品字幕出), frozen
-    # into the record so make-manifest picks them up without re-running any
-    # model. Fail-safe by contract: generate_upload_tags never raises; a tag
-    # failure records status=FAILED and the uploader falls back to base tags.
+
+
+
+
+
     if not str(staging.get("title_authority_status") or "").startswith("UNRESOLVED"):
         record["upload_tags"] = adapters.generate_upload_tags(
             str(staging.get("title") or given_title or cid), subtitle_path, timeout=180.0
@@ -2555,6 +3077,20 @@ def finalize_producer_package(
         adapters=adapters,
         talk_filler_audit_path=talk_filler_audit_path,
         candidate_id=cid,
+    )
+    record = _run_postburn_subtitle_audio_review(
+        cid=cid,
+        out_root=out_root,
+        recut=recut,
+        record=record,
+        chat_authority_audit=chat_authority_audit,
+        chat_authority_path=chat_authority_path,
+        clip_context=(
+            spec.get("clip_context")
+            if isinstance(spec.get("clip_context"), Mapping)
+            else None
+        ),
+        selection_hook=str(spec.get("selection_hook") or ""),
     )
     staged = _stage_record(
         options=options,

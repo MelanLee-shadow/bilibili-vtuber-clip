@@ -117,7 +117,8 @@ def _source_frame_layout(screenshot_path, direction):
         zone = _COVER_LAYOUT_RENDER[requested]["zone"]
         current = _source_region(size, zone)
         fallback = _source_region(size, footer_zone)
-        scale = lambda box: min((box[2] - box[0]) / size[0], (box[3] - box[1]) / size[1])
+        def scale(box):
+            return min((box[2] - box[0]) / size[0], (box[3] - box[1]) / size[1])
         if scale(current) < scale(fallback):
             direction = replace(direction, layout="footer")
             zone = footer_zone

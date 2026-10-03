@@ -1490,6 +1490,18 @@ def _repair_successor_authority_valid(authority, manifest, incoming) -> bool:
     schema = authority.get("schema_version")
     if schema == "recovery-same-bv-publication-authority.v1":
         return True  # Existing path retains the full plan/before checks below.
+    if schema == "new-bv-same-bv-publication-authority.v1":
+        if manifest.get("recovery_publication_authority") != authority:
+            return False
+        from src.autoslice.new_bv_repair_authority import validate_new_bv_repair_authority
+        try:
+            validate_new_bv_repair_authority(
+                authority, candidate_id=str(incoming.get("candidate_id") or ""),
+                expected_final_title=str(manifest.get("title") or ""),
+            )
+        except (OSError, ValueError, TypeError, KeyError):
+            return False
+        return True
     if schema != "original-fastlane-authorized-same-bv.v1":
         return False
     if manifest.get("recovery_publication_authority") != authority:

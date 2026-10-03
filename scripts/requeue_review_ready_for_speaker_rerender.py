@@ -1,8 +1,8 @@
 """Requeue review_ready talk picks for a uniform_host speaker rerender.
 
-维护者 逐字：「我刚刚看了一眼11号的切片，立刻发现一个严重问题，那就是
+公开规则：我刚刚看了一眼11号的切片，立刻发现一个严重问题，那就是
 这些都是李豆沙单人直播，但是可能会偶尔有guest字幕混入。目前先把host改成单一
-host，全部只有李豆沙一人直播，默认这样。重新做一下这些切片。」
+host，全部只有李豆沙一人直播，默认这样。重新做一下这些切片。
 
 生产 cron 已把 ``AUTOSLICE_SPEAKER_MODE`` 翻回 ``uniform_host``。仍未处理的是
 一批已产出、未上传、非 hold 的 ``review_ready`` talk pick：它们是 ``auto``
@@ -45,12 +45,12 @@ ready 的 pick”）。它的手法只翻四个字段：``status`` → ``failed`
 - 候选在 ``state["picks"]`` 里存在且**恰好一行**；
 - ``status == "review_ready"``；
 - 不在 ``pending_talk``/``talk_backlog`` 里已有一份在途行（否则下次 tick 的
-  ``existing_pending`` 去重会把这次翻转晾在原地，永远进不了队列）；
+ ``existing_pending`` 去重会把这次翻转晾在原地，永远进不了队列）；
 - ``src.autoslice.publication_registry.upload_block_reason`` 判定它未被
-  ``published``/``hold_pending_review`` 挡住（含 runtime registry 合并，即
-  已上传但仓库未提交的发布也会被挡）；
+ ``published``/``hold_pending_review`` 挡住（含 runtime registry 合并，即
+ 已上传但仓库未提交的发布也会被挡）；
 - 该行记录的包证据（``cover_path`` 指向的文件必须存在；且至少携带一个内容哈希
-  字段 ``video_sha256``/``delivered_sha256``/``cover_sha256`` 之一）；
+ 字段 ``video_sha256``/``delivered_sha256``/``cover_sha256`` 之一）；
 - ``--package-root`` 是一个存在的目录（粗粒度确认该日期的交付目录当下可读）。
 
 ## 事务与产物
@@ -61,7 +61,7 @@ ready 的 pick”）。它的手法只翻四个字段：``status`` → ``failed`
 
 除了四个 load-bearing 字段，每条候选还会得到一个独立的、自己的 schema 的审计
 块 ``speaker_rerender_authority``（不影响 ``_pending_sanctioned_revival_retry``
-的判据，纯审计）：写明 schema_version、维护者 逐字授权与时间戳、重做原因
+的判据，纯审计）：写明 schema_version、公开规则逐字授权与时间戳、重做原因
 （固定文案 ``"speaker_mode uniform_host rerender"``）、``--package-root``、旧
 包记录的路径/哈希取证字段、以及本次操作时间。
 
@@ -69,13 +69,7 @@ state 原子写（tmp + fsync + rename）；全程自持 ``runner.lock``（不�
 套 flock，会死锁）。默认 dry-run，只有 ``--apply`` 才写盘。
 
 用法：
-  python3 scripts/requeue_review_ready_for_speaker_rerender.py \
-      --date \
-      --candidate-id auto_173005_934_1166 \
-      --package-root /opt/bilive/autoslice/lidousha/2026-08-11 \
-      --authority-quote "目前先把host改成单一host，全部只有李豆沙一人直播，默认这样。重新做一下这些切片。" \
-      --authority-timestamp T00:00:00Z \
-      [--apply]
+ python3 scripts/requeue_review_ready_for_speaker_rerender.py --date --candidate-id auto_173005_934_1166 --package-root /opt/bilive/autoslice/lidousha/2026-08-11 --authority-quote "目前先把host改成单一host，全部只有李豆沙一人直播，默认这样。重新做一下这些切片。" --authority-timestamp T00:00:00Z [--apply]
 """
 
 from __future__ import annotations
@@ -93,7 +87,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.autoslice import publication_registry  # noqa: E402
+from src.autoslice import publication_registry
 
 REVIVAL_SCHEMA = "candidate-revival.v1"
 SANCTIONED_REVIVAL_RETRY_SCHEMA = "sanctioned-revival-retry.v1"

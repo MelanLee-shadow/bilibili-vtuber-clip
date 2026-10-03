@@ -436,10 +436,10 @@ def _prepare_campplus_anchor_state(
         host_indices = clip_host_indices
         host_anchor_scope = "clip"
         if len(host_indices) < 2:
-            # 维护者「我要的就是正常分离两说话人，尽最大努力分开」：
-            # 清过 host_session_seed_min 的 cue 不够两条时，**阈值一字不动**，
-            # 改成明示降级——提名 seed 分最高的几条当锚点，下游整条分离链照跑。
-            # 本体（含逐条"没清过阈值"的披露）在 src/autoslice/speaker_guess.py。
+
+
+
+
             nomination = (
                 speaker_guess.nominate_host_anchors(
                     seed_scores,
@@ -675,9 +675,9 @@ def _run_campplus_analysis(
         for index, speaker in (reviewed_context_votes or {}).items()
         if index in ambiguous and speaker in SPEAKERS
     }
-    # 维护者: the whole-clip judge is a corroborating signal, not an
-    # independent one, so its votes must carry a real confidence value that
-    # resolve_ambiguous_labels/speaker_host_evidence can gate on.
+
+
+
     context_vote_rows, context_attempts, context_errors = _whole_clip_context_votes(
         cues,
         labels,
@@ -708,9 +708,9 @@ def _run_campplus_analysis(
         if index in ambiguous:
             sources[index] = "accepted_context_baseline"
 
-    # 维护者: no neighbour-island smoothing toward HOST -- ambiguous
-    # cues already default to GUEST (speaker_host_evidence), so there is
-    # nothing left to smooth without manufacturing HOST from adjacency alone.
+
+
+
 
     _assert_runtime_assets_stable(
         model_dir=model_dir,
@@ -739,8 +739,8 @@ def _run_campplus_analysis(
         },
         "context_required_cues": [index + 1 for index in ambiguous],
         "context_unresolved_cues": [index + 1 for index in unresolved_context],
-        # F5 披露专用（维护者「证据只披露不改标签」）：产出 mixed gate 可
-        # 消费的 sidecar，但本轮不喂回门、不改 decisions。见 speaker_overlap_evidence。
+
+
         "subcue_mixed_overlap": subcue_mixed_overlap_disclosure(cues=cues, cue_audio_paths=cue_paths, media_path=media_path, text_srt_path=text_srt_path, work_dir=work_dir, host_prints=host_prints, guest_groups=guest_groups, threshold=threshold, band=band, similarity=similarity) if text_srt_path is not None else None,
         "decisions": [
             {
@@ -1354,8 +1354,8 @@ def finalize_speaker_subtitles(
         review_manifest = None
     if review_manifest is not None and not best_effort_guess:
         return review_manifest
-    # 梯子第二级：分离已经跑完，只是若干 cue 语境未定。原本这里删产物、交一份
-    # SPEAKER_REVIEW_REQUIRED 就走人（维护者 8/10：那样我什么也看不到）。
+
+
     ladder.absorb_gate_manifest(review_manifest)
     return _write_ready_speaker_delivery(
         bound=bound,

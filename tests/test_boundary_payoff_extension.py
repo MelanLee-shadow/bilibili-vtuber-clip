@@ -1,12 +1,12 @@
 """观众 payoff 后延。
 
-真值出处：维护者 盲审 8/7 四条 tier-1（不看分数直接看原片），判定评分器排最低的
+真值出处：公开规则盲审 8/7 四条 tier-1（不看分数直接看原片），判定评分器排最低的
 `auto_223750_578_654` 是唯一该发的，并要求「再往后面切一点，补全剧情」。integrator 按此
-重切、维护者 逐字确认「收尾没问题」，正确边界 **578030 → 734200**（原流水线 578030 → 654170）。
+重切、公开规则逐字确认「收尾没问题」，正确边界 **578030 → 734200**（原流水线 578030 → 654170）。
 本文件的 cue 栅格与弹幕桶直方图逐条抄自 free 上的真实产物
 （`cache/2026-08-07/22966160_20260807-22-37-50.bcut.srt` 与同名 blrec 弹幕 XML）。
 
-维护者 确认的三条收敛判据（按可靠性排序）在这里逐条有测试：
+公开规则确认的三条收敛判据（按可靠性排序）在这里逐条有测试：
 1. 落点必须在人声边界（恒为某条 cue 的结束）；
 2. 必须到故事完结（把无人认领的连续语音串整段采纳）；
 3. 下一话题起点是天然停止位（代理＝下一条被选中候选的起点）。
@@ -107,7 +107,7 @@ REAL_DANMAKU_BUCKETS: tuple[tuple[int, int], ...] = (
 
 REAL_START_MS = 578030
 REAL_PIPELINE_END_MS = 654170  # 流水线切出来的（包袱之前）
-REVIEWER_CONFIRMED_END_MS = 734230  # 「我以为都能吃掉」说完那一刻；维护者 复核的重切是 734200
+REVIEWER_CONFIRMED_END_MS = 734230
 NEXT_CANDIDATE_START_MS = 734400  # `auto_223750_734_822` 的起点＝下一话题
 
 
@@ -187,8 +187,8 @@ def test_real_20260807_case_extends_to_reviewer_confirmed_boundary() -> None:
     assert boundary.resolved_end_ms == REVIEWER_CONFIRMED_END_MS
     assert boundary.next_end_ms == REVIEWER_CONFIRMED_END_MS
     assert AUDIENCE_PAYOFF_EXTENDED_REASON in boundary.reason_codes
-    assert "SEMANTIC_RECALL" in boundary.reason_codes  # 原回执不被抹掉
-    # 判据 2：维护者 说的第二层反转（想吃尸体没吃到就被发现）与她自己抖的包袱都进来了。
+    assert "SEMANTIC_RECALL" in boundary.reason_codes
+
     texts = [cue.text for cue in extended[0].cues]
     assert "SHAW 立在藏能吃尸体。不是我" in texts
     assert texts[-1] == "我以为都能吃掉"

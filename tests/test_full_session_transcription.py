@@ -1,5 +1,7 @@
 import hashlib
 import json
+import shlex
+from pathlib import Path
 
 import scripts.free_asr_client as free_asr_client
 import src.autoslice.full_session_transcription as transcription
@@ -398,6 +400,173 @@ def test_pronoun_pass_gets_its_own_low_effort_config_not_the_reconcile_one(
         pronoun_cfg.command_template
     )
     assert pronoun_cfg.timeout_seconds == 600.0
+
+
+def test_legacy_cpa_scripts_are_repo_absolute_outside_repo_cwd(
+    monkeypatch, tmp_path
+):
+    captured_configs = []
+
+    def capture(config):
+        captured_configs.append(config)
+        return lambda _prompt: "{}"
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("AUTOSLICE_FINAL_REVIEW_RUNTIME_ROOT", raising=False)
+    monkeypatch.delenv("AUTOSLICE_BASE", raising=False)
+    monkeypatch.setattr(llm_client, "build_llm_call", capture)
+    monkeypatch.setattr(
+        transcription,
+        "_full_session_cpa_runtime_root",
+        lambda: None,
+    )
+
+    transcription._build_aggregate_asr_transcriber(
+        host="localhost",
+        correct="cpa",
+    )
+
+    assert len(captured_configs) == 2
+    expected_script = (
+        Path(transcription.ROOT) / "scripts" / "llm_via_cpa.sh"
+    ).absolute()
+    for config in captured_configs:
+        parts = shlex.split(config.command_template)
+        assert parts[:2] == ["bash", str(expected_script)]
+        assert config.command_template.count("scripts/llm_via_cpa.sh") == 1
+
+
+def test_runtime_cpa_builder_prefers_configured_remote_host(
+    monkeypatch, tmp_path
+):
+    runtime = tmp_path / "runtime"
+    calls = []
+
+    def capture(*, effort, runtime_root, runtime_ssh_host):
+        calls.append((effort, runtime_root, runtime_ssh_host))
+        return lambda _prompt: "{}"
+
+    monkeypatch.setenv("AUTOSLICE_FINAL_REVIEW_RUNTIME_ROOT", str(runtime))
+    monkeypatch.setenv("AUTOSLICE_FINAL_REVIEW_SSH_HOST", "stale-host")
+    monkeypatch.setattr(
+        transcription._final_review_transport,
+        "_build_review_llm_call",
+        capture,
+    )
+
+    transcription._build_aggregate_asr_transcriber(
+        host="127.0.0.1",
+        correct="bcut_agy_cpa",
+    )
+
+    assert calls == [
+        ("medium", runtime, "stale-host"),
+        ("low", runtime, "stale-host"),
+    ]
+
+
+def test_runtime_cpa_builder_uses_local_loader_for_unconfigured_local_host(
+    monkeypatch, tmp_path
+):
+    runtime = tmp_path / "runtime"
+    calls = []
+
+    def capture(*, effort, runtime_root, runtime_ssh_host):
+        calls.append((effort, runtime_root, runtime_ssh_host))
+        return lambda _prompt: "{}"
+
+    monkeypatch.setenv("AUTOSLICE_FINAL_REVIEW_RUNTIME_ROOT", str(runtime))
+    monkeypatch.delenv("AUTOSLICE_FINAL_REVIEW_SSH_HOST", raising=False)
+    monkeypatch.setattr(
+        transcription._final_review_transport,
+        "_build_review_llm_call",
+        capture,
+    )
+
+    transcription._build_aggregate_asr_transcriber(
+        host="localhost",
+        correct="cpa",
+    )
+
+    assert calls == [
+        ("low", runtime, ""),
+        ("low", runtime, ""),
+    ]
+
+
+def test_deployed_parent_cpa_env_selects_runtime_without_environment_override(
+    monkeypatch, tmp_path
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (tmp_path / "cpa.env").write_text(
+        "CPA_BASE_URL=https://owner.example/v1\n"
+    )
+    calls = []
+
+    def capture(*, effort, runtime_root, runtime_ssh_host):
+        calls.append((effort, runtime_root, runtime_ssh_host))
+        return lambda _prompt: "{}"
+
+    monkeypatch.setattr(transcription, "ROOT", repo)
+    monkeypatch.delenv("AUTOSLICE_FINAL_REVIEW_RUNTIME_ROOT", raising=False)
+    monkeypatch.delenv("AUTOSLICE_BASE", raising=False)
+    monkeypatch.delenv("AUTOSLICE_FINAL_REVIEW_SSH_HOST", raising=False)
+    monkeypatch.setattr(
+        transcription._final_review_transport,
+        "_build_review_llm_call",
+        capture,
+    )
+
+    transcription._build_aggregate_asr_transcriber(
+        host="localhost",
+        correct="cpa",
+    )
+
+    assert calls == [
+        ("low", tmp_path, ""),
+        ("low", tmp_path, ""),
+    ]
+
+
+def test_runtime_cpa_builder_keeps_local_secret_out_of_repr_and_diagnostics(
+    monkeypatch, tmp_path
+):
+    runtime = tmp_path / "runtime"
+    captured_configs = []
+    secret = "runtime-secret-must-not-print"
+
+    def capture(config):
+        captured_configs.append(config)
+        return lambda _prompt: "{}"
+
+    monkeypatch.setenv("AUTOSLICE_BASE", str(runtime))
+    monkeypatch.setenv("AUTOSLICE_FINAL_REVIEW_SSH_HOST", "localhost")
+    monkeypatch.setattr(
+        transcription._final_review_transport,
+        "runtime_cpa_command_environment",
+        lambda _runtime: {
+            "CPA_BASE_URL": "https://runtime.example/v1",
+            "CPA_API_KEY": secret,
+        },
+    )
+    monkeypatch.setattr(
+        transcription._final_review_transport,
+        "build_llm_call",
+        capture,
+    )
+
+    transcription._build_aggregate_asr_transcriber(
+        host="localhost",
+        correct="bcut_agy_cpa",
+    )
+
+    assert len(captured_configs) == 2
+    for config in captured_configs:
+        assert secret not in repr(config)
+        assert secret not in repr(config.command_diagnostic_context)
+        assert config.command_child_env["CPA_API_KEY"] == secret
+        assert config.command_diagnostic_sink is not None
 
 
 def test_cpa_pronoun_ta_pass_still_validates_minimal_legal_rewrite():

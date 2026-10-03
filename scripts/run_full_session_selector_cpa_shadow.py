@@ -594,12 +594,12 @@ def _review_selected_candidates(
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
-    # 维护者: 歌切一律不加片头，直接进歌 —— the branding intro is a
-    # talk-lane mandate only. The manifest argument stays accepted for CLI
-    # compatibility but is intentionally ignored in this song lane.
+
+
+
     branding_intro = None
     if args.branding_intro_manifest is not None:
-        print("branding intro manifest ignored: songs ship without the intro (维护者 2026-07-14)")
+        print('branding intro manifest ignored: songs ship without the intro (公开规则)')
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     cues = _parse_srt(args.source_srt)

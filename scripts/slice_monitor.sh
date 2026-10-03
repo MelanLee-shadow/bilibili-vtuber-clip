@@ -2,7 +2,7 @@
 # Wrapper for the 李豆沙 auto-slice monitor, launched by the LaunchAgent
 # com.维护者.slice-monitor every 5 minutes.
 export PATH="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-PROJ="/Users/op/Project/vtuber-slice"
+PROJ="$(cd -- "$(dirname -- "$0")/.." && pwd)"
 cd "$PROJ" || exit 1
 LOG="$PROJ/reports/slice_monitor/cron.log"
 # keep the log from growing unbounded (tail last 2000 lines)

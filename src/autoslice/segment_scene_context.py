@@ -308,10 +308,10 @@ def resolve_segment_scene_context(
 ) -> dict[str, object]:
     """Build or reuse one stat-bound scene receipt.
 
-    F13(维护者,裁定失落案重申):「我记得我当时说过 88 这个 3D live 场
-    放宽到 15 个,然后当天的杂谈场认为是独立的,自然有 5 个」。事件放宽必须同时
-    看到事件标题/语境和横屏；任何缺失、不可读、unknown 或竖屏都退回 talk。
-    """
+ F13(公开规则,裁定失落案重申):「我记得我当时说过 88 这个 3D live 场
+ 放宽到 15 个,然后当天的杂谈场认为是独立的,自然有 5 个」。事件放宽必须同时
+ 看到事件标题/语境和横屏；任何缺失、不可读、unknown 或竖屏都退回 talk。
+ """
 
     segment = Path(segment)
     meta_path = segment.with_suffix(".meta.json")

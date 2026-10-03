@@ -63,14 +63,12 @@ from src.autoslice.selection_scorecard import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
 
-DEFAULT_MIN_TALK_WINDOW_MS = 45_000
+DEFAULT_MIN_TALK_WINDOW_MS = 60_000
 DEFAULT_MAX_TALK_WINDOW_MS = 300_000
 MAX_CONTEXT_BACKTRACK_MS = 120_000
-# 同主题合并跳切（维护者）：同一 event_key 的分离窗口之间允许的
-# 最大缝隙（与 talk_filler.MAX_MERGE_GAP_MS 对齐）；小于 MIN 的缝隙直接
-# 吞进窗口，不值得跳切。
-MAX_SAME_TOPIC_MERGE_GAP_MS = 600_000
-MIN_SAME_TOPIC_MERGE_GAP_MS = 5_000
+# Same-event windows stay one continuous candidate.  Gap-removal plans are a
+# legacy compatibility input for the filler lane, not something recall may
+# generate or subtract to make a candidate fit the duration gate.
 SEMANTIC_RECALL_STAGE = "semantic_recall"
 SEMANTIC_RECALL_SINGLE_PASS_MAX_MS = 45 * 60 * 1000
 SEMANTIC_RECALL_SHARD_DURATION_MS = 30 * 60 * 1000
@@ -495,6 +493,10 @@ _SCORECARD_RUBRIC_BLOCK = """选片量化表（talk 必填，song 可省略）�
 - tier 是硬层级 1/2/3；Tier 1 不是“出现了人名”就算，必须由至少两个本候选 cue 组成可核验的
   关系/CP/GL 立场链，或“观众起哄→她照做→人设反差”的完整互动链。把证据 cue 编号放入
   tier_evidence_cues；系统会拒绝候选窗外编号并确定性复算分数。
+- audience_driven_performance 的最高级还要求 relationship_interaction/persona_reversal 各至少3、
+  audience_salience至少2、self_contained至少3、comedic_payoff=4。可爱、普通抱抱或普通反差可以是
+  第二层看点，不因有请求和回应就给落点4；4须有不可替代、完整的渐进表演或强收束证据。
+  仅字幕中的“抱抱”“咬一下”等口头说法不能证明发生了实际动作，理由不得补写未证实的表演。
 - tier_basis 只能按事实选择 relationship_chain / explicit_gl_stance / cp_positioning /
   audience_driven_performance / personal_stance / generic_event。
 - dimensions 七项都打 0..4 整数：lidousha_centrality（{CHANNEL_PROFILE.display_name}不可替代性）、stance_intensity、
@@ -543,8 +545,9 @@ def build_semantic_recall_prompt(
 前段铺垫，就必须从首次触发点一直框到最后 payoff，绝不能拆成两条来满足数量。给同一事件稳定填写相同
 event_key（简短中文，如“妈感姐妹分类”）；不同事件的 event_key 必须不同。
 **同一个梗/称呼/话题隔几分钟被再次触发（比如新弹幕或 SC 又提起同一件事、主播回访之前的梗）也算
-同一事件**：两段窗口都列出来，但用**同一个 event_key**——系统会自动把它们合并成一条带跳切的切片，
-不要因为中间隔了别的内容就换 key（维护者 2026-07-19 规定：主题一致尽量放在一个切片里）。
+同一事件**：两段窗口都列出来，但用**同一个 event_key**——系统会自动把它们合并成一条连续窗口，
+保留中间所有连续互动、观众反馈、有意义的重复、铺垫和笑点，不会把中间内容变成跳切或自动删除。
+合并后的连续窗口若超过 5 分钟就拒绝整个候选；不要靠标题核心、关键词或缩短故事来过时长门。
 
 值得选的片段类型(语义判断,不要机械找关键词):
 1. 讲故事/完整叙事:主播在讲一件事,有起因和结局。
@@ -558,12 +561,12 @@ event_key（简短中文，如“妈感姐妹分类”）；不同事件的 even
 - 如果上下文既不在片段里、也推测不出来、也找不到触发点,不要选这个片段。
 
 谈话内部跳切提议(只提议,后续还会由确定性规则逐条验收):
-- talk 候选可以填写 filler_removals,最多 3 段。只有删除后左右仍是同一话题、因果和指代都完整时才提议。
-- mode="remove_cues": start_cue/end_cue 是可整段删除的首尾字幕(含);只用于礼物致谢 gift_thanks、
-  短进场欢迎 welcome_chatter 或完全无关的插话 unrelated_aside。
-- mode="gap_only": start_cue 是停顿左边保留的字幕,end_cue 是右边紧邻保留的字幕;只用于至少约 3 秒、
-  没有承载画面反应或话题节奏的 dead_pause。
-- 不得删除 SC/礼物所引发的实质回答,也不得删除起因、铺垫、指代来源、纠正、笑点、结论和收尾。
+- talk 候选可以填写 filler_removals,最多 3 段。自动精简只允许以下三类：
+  gift_thanks（与主题无关、单纯感谢具体礼物）、unrelated_sc（确实在读与主题无关的 SC，且正常输入中有绑定的结构化 SC 证据）、
+  housekeeping（喝水、暂时离席、上厕所等事务话语）。
+- mode="remove_cues": start_cue/end_cue 是可整段删除的首尾字幕(含);只用于上述三类。
+- 不得自动删除观众反馈、接梗、二次回应、有意义的重复、SC/礼物所引发的实质回答、主题相关的谢礼物，
+  也不得删除起因、铺垫、指代来源、纠正、笑点、结论和收尾。不能从模型自称“这是 SC”获得删除权；缺少绑定证据就不要提议 unrelated_sc。
 - bridge_coherent 只有在删除后左右两句可自然直连时才填 true;bridge 简述为什么语义可直连。
 - 对每段语音删除还必须逐项检查 contains_setup/contains_cause/contains_answer/contains_punchline/
   contains_referent_intro/contains_correction/contains_resolution/later_dependency/interaction_relevant/
@@ -572,12 +575,12 @@ event_key（简短中文，如“妈感姐妹分类”）；不同事件的 even
 
 {_SCORECARD_RUBRIC_BLOCK}
 约束:
-- talk 片段有效内容必须长于 45 秒且不超过 5 分钟;song 不限。
+- talk 片段有效内容必须长于 60 秒且不超过 5 分钟;song 不限。
 - 按有趣程度从高到低排序。confidence 是你对"路人观众会觉得有趣"的信心(0-1)。
 - hook 用一句中文概括这个片段的看点。
 
 只输出一个 JSON 对象,不要任何其他文字:
-{{"candidates": [{{"start_cue": 整数, "end_cue": 整数, "kind": "talk"或"song", "event_key": "同一事件稳定键", "hook": "一句话看点", "context_trigger_cue": 整数或null, "context_inferable": true或false, "confidence": 0到1小数, "selection_scorecard": {{"tier": 1或2或3, "tier_basis": "上述枚举", "tier_reason": "准入理由", "tier_evidence_cues": [整数], "dimensions": {{"lidousha_centrality": 0到4整数, "stance_intensity": 0到4整数, "audience_salience": 0到4整数, "relationship_interaction": 0到4整数, "persona_reversal": 0到4整数, "comedic_payoff": 0到4整数, "self_contained": 0到4整数}}, "uncertainty_penalty": 0到15, "fatigue_penalty": 0到10}}, "filler_removals": [{{"mode": "remove_cues"或"gap_only", "start_cue": 整数, "end_cue": 整数, "reason": "gift_thanks"或"welcome_chatter"或"dead_pause"或"unrelated_aside", "topic_relation": "incidental"或"unrelated", "bridge_coherent": true或false, "bridge": "左右可直连的理由", "contains_setup": false, "contains_cause": false, "contains_answer": false, "contains_punchline": false, "contains_referent_intro": false, "contains_correction": false, "contains_resolution": false, "later_dependency": false, "interaction_relevant": false, "meaning_or_stance_changed": false, "confidence": 0到1小数}}]}}]}}
+{{"candidates": [{{"start_cue": 整数, "end_cue": 整数, "kind": "talk"或"song", "event_key": "同一事件稳定键", "hook": "一句话看点", "context_trigger_cue": 整数或null, "context_inferable": true或false, "confidence": 0到1小数, "selection_scorecard": {{"tier": 1或2或3, "tier_basis": "上述枚举", "tier_reason": "准入理由", "tier_evidence_cues": [整数], "dimensions": {{"lidousha_centrality": 0到4整数, "stance_intensity": 0到4整数, "audience_salience": 0到4整数, "relationship_interaction": 0到4整数, "persona_reversal": 0到4整数, "comedic_payoff": 0到4整数, "self_contained": 0到4整数}}, "uncertainty_penalty": 0到15, "fatigue_penalty": 0到10}}, "filler_removals": [{{"mode": "remove_cues", "start_cue": 整数, "end_cue": 整数, "reason": "gift_thanks"或"unrelated_sc"或"housekeeping", "topic_relation": "incidental"或"unrelated", "bridge_coherent": true或false, "bridge": "左右可直连的理由", "contains_setup": false, "contains_cause": false, "contains_answer": false, "contains_punchline": false, "contains_referent_intro": false, "contains_correction": false, "contains_resolution": false, "later_dependency": false, "interaction_relevant": false, "meaning_or_stance_changed": false, "confidence": 0到1小数}}]}}]}}
 
 字幕时间轴:
 {transcript}
@@ -766,46 +769,15 @@ def select_semantic_session_candidates(
                 normalized[-1][1] = max(normalized[-1][1], end_cue)
             else:
                 normalized.append([start_cue, end_cue])
-        # talk 的分离同主题段走 merge_gap 跳切合并（维护者「主题一致
-        # 尽量放在一个切片里」；7/18 kmx 称呼两条切片案）。gap 超上限时不
-        # 盲扫中间内容，退回 winner 单段并留审计——旧的 min..max sweep 会把
-        # 8 分钟无关内容框进窗口，被时长门整条毙掉，两段全丢。
-        merge_gaps: list[dict[str, object]] = []
-        gap_too_large = False
-        for left, right in zip(normalized, normalized[1:]):
-            gap_start_ms = ordered[left[1] - 1].source_end_ms
-            gap_end_ms = ordered[right[0] - 1].source_start_ms
-            gap_ms = gap_end_ms - gap_start_ms
-            if gap_ms > MAX_SAME_TOPIC_MERGE_GAP_MS:
-                gap_too_large = True
-                break
-            if gap_ms >= MIN_SAME_TOPIC_MERGE_GAP_MS:
-                merge_gaps.append(
-                    {
-                        "start_ms": gap_start_ms,
-                        "end_ms": gap_end_ms,
-                        "event_key": str(merged_spec.get("event_key") or ""),
-                    }
-                )
-        if kind_key == "talk" and gap_too_large:
-            merged_spec = dict(winner_spec)
-            event_audit["merge_outcome"] = "kept_winner_gap_too_large"
-            event_audit["merged_range"] = [
-                int(merged_spec["start_cue"]),
-                int(merged_spec["end_cue"]),
-            ]
-            merged_parsed.append((winner_confidence, merged_spec))
-            merged_events.append(event_audit)
-            continue
+        # Same-event windows form one continuous source interval.  Keep all
+        # intermediate cues; the ordinary duration gate below rejects an
+        # overlong story instead of manufacturing a jump cut through it.
         merged_spec["start_cue"] = normalized[0][0]
         merged_spec["end_cue"] = normalized[-1][1]
-        if kind_key == "talk" and merge_gaps:
-            merged_spec["merge_gaps"] = merge_gaps
-            event_audit["merge_gaps_ms"] = [[int(gap["start_ms"]), int(gap["end_ms"])] for gap in merge_gaps]
         merged_spec["filler_removals"] = [
             removal for row in rows for removal in row[1].get("filler_removals", []) if isinstance(removal, dict)
         ][:3]
-        event_audit["merge_outcome"] = "merged"
+        event_audit["merge_outcome"] = "merged_contiguous"
         event_audit["merged_range"] = [
             int(merged_spec["start_cue"]),
             int(merged_spec["end_cue"]),
@@ -834,11 +806,9 @@ def select_semantic_session_candidates(
         start_ms = window[0].source_start_ms
         end_ms = window[-1].source_end_ms
         duration_ms = end_ms - start_ms
-        # 合并候选按有效时长（扣掉 merge_gap 缝隙）过时长门，否则跨缝
-        # 合并的窗口必超 5 分钟上限、被整条毙掉。
-        spec_merge_gaps = [gap for gap in (spec.get("merge_gaps") or []) if isinstance(gap, dict)]
-        gap_total_ms = sum(max(0, int(gap["end_ms"]) - int(gap["start_ms"])) for gap in spec_merge_gaps)
-        effective_duration_ms = duration_ms - gap_total_ms
+        # A merged event is measured as the complete continuous source range.
+        # Do not subtract legacy merge gaps to make it pass the duration gate.
+        effective_duration_ms = duration_ms
         if spec["kind"] == "talk" and not (min_talk_window_ms < effective_duration_ms <= max_talk_window_ms):
             skipped.append(
                 {
@@ -893,8 +863,6 @@ def select_semantic_session_candidates(
                 end_cue=int(spec["end_cue"]),
                 receipt=semantic_chat_evidence_receipt,
             )
-        if spec_merge_gaps:
-            merge_gap_plans[anchor.candidate_id] = [dict(gap) for gap in spec_merge_gaps]
         raw_filler_proposals = spec.get("filler_removals")
         if isinstance(raw_filler_proposals, list) and raw_filler_proposals:
             filler_proposals[anchor.candidate_id] = [

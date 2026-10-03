@@ -332,7 +332,7 @@ def validate_audio_lrc_execution_metadata(
             or sandbox is not False
             or isinstance(agy_rc, bool)
             or not isinstance(agy_rc, (int, type(None)))
-            # F1 负数退出=被信号杀死(-9=SIGKILL,即 AGY OOM)、0=AGY 干净退出但输出不可用(AGY_EMPTY_OUTPUT 系列),两者都是合法 failover 触发——被杀本身就是触发条件,不能反过来成为否定 failover 产物的理由(维护者T23:28 逐字: AGY 与 Gemini API 同为 gemini 模型,只差调用顺序)。取代旧 `agy_rc < 0` 的防伪是类别一致性: AGY_FAILED_RC 只由 _classify_agy_nonzero 在非零退出时铸造,配 rc==0 即伪造。见 tests/test_song_repair.py::test_gemini_audio_lrc_failover_accepts_every_way_agy_can_fail 与同处的离线重放。
+
             or (agy_failure_category == "AGY_FAILED_RC" and agy_rc == 0)
         ):
             return "audio aligner Gemini API failover metadata is invalid"

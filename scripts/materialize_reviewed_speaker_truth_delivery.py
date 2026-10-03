@@ -50,15 +50,15 @@ TIMING_RE = re.compile(
     r"(\d{2}):(\d{2}):(\d{2}),(\d{3})\s*-->\s*"
     r"(\d{2}):(\d{2}):(\d{2}),(\d{3})\Z"
 )
-# 维护者 令：真值里的圆括号注记分两类，且只有机器类可以被剥。
-#   - MACHINE（下面这张白名单）＝标注者对**机器听写可信度**的元评论
-#     （「(无可辨别人声)」「(无可分辨人声)」）。它不是李豆沙说的话，
-#     烧进字幕就是把审阅便签当台词，必须剥掉。
-#   - CONTENT＝维护者 手写的动作/舞台注记（「(跃起)」等）。它是内容的一部分，
-#     **原样保留并渲染**。1323/104「你起什么哄啊(跃起)」、1323/128
-#     「你不许再说话(跃起)」正是被旧的一刀切规则误删的实证。
-# 判别用白名单类别（而不是「凡括号皆注记」或「按标注来源猜」）：机器类是一个
-# 封闭、可枚举、语义单一的短语集；内容类是开放集，天然只能靠 fail-open 保留。
+
+
+
+
+
+
+
+
+
 MACHINE_STAGE_NOTES = ("无可辨别人声", "无可分辨人声")
 MACHINE_STAGE_NOTE_RE = re.compile(
     r"\s*(?:\(|（)(" + "|".join(MACHINE_STAGE_NOTES) + r")(?:\)|）)\s*\Z"
@@ -434,10 +434,10 @@ def _build_delivery_outputs(
 
     truth_sha = _sha256(truth_path)
     media_sha = _sha256(source_media)
-    # F20 覆盖证明：每一条交付 cue 的文字都来自这份 hash-bound 真值，而且它
-    # 恰好属于「维护者 复核的说话人 override」或「维护者 留给机器判说话人、但由
-    # 正面人声仲裁保住的 cue」两桶之一。编译器的分桶本来就是穷尽的，这里把
-    # 它写成显式不变量，pin 才有资格当下游快路径的授权凭据。
+
+
+
+
     if len(overrides) + len(machine_rows) != len(clean_rows):
         raise DeliveryCompileError("truth cue ownership does not cover the delivery grid")
     truth_full_ownership_pin = {

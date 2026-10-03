@@ -41,6 +41,11 @@ TIER_ONE_BASES = frozenset(
     }
 )
 TIER_BASES = TIER_ONE_BASES | {"personal_stance", "generic_event"}
+ADMISSION_POLICY_FIELD = "admission_policy"
+# New scorecards carry the policy explicitly.  Historical v1 scorecards did
+# not have this field and remain valid under the legacy arithmetic/admission
+# rules (see ``selection_scorecard_is_valid``).
+CURRENT_ADMISSION_POLICY = "selection-scorecard-admission.v2"
 _CHANNEL_PROFILE = load_channel_profile(
     Path(__file__).resolve().parents[2]
 )
@@ -322,11 +327,39 @@ def load_selected_selection_calibration_policy(
     return load_selection_calibration_policy(path)
 
 
-def normalize_selection_scorecard(
+def _performance_tier_one_admitted(
+    dimensions: Mapping[str, int],
+    evidence_cues: list[int],
+    *,
+    strong_policy: bool,
+) -> bool:
+    """Return whether a performance card may occupy the highest tier.
+
+    The legacy gate is intentionally kept here because scorecards written
+    before the admission-policy field was introduced remain historical
+    evidence.  New cards use the stronger, explicitly identified policy.
+    """
+
+    admitted = (
+        dimensions["relationship_interaction"] >= 3
+        and dimensions["persona_reversal"] >= 3
+        and len(evidence_cues) >= 2
+    )
+    if strong_policy:
+        admitted = admitted and (
+            dimensions["audience_salience"] >= 2
+            and dimensions["self_contained"] >= 3
+            and dimensions["comedic_payoff"] == 4
+        )
+    return admitted
+
+
+def _normalize_selection_scorecard(
     raw: object,
     *,
     start_cue: int,
     end_cue: int,
+    admission_policy: str | None,
 ) -> dict[str, object] | None:
     """Validate model evidence, enforce Tier admission, and compute scores.
 
@@ -384,9 +417,11 @@ def normalize_selection_scorecard(
         )
         performance_admitted = (
             tier_basis == "audience_driven_performance"
-            and dimensions["relationship_interaction"] >= 3
-            and dimensions["persona_reversal"] >= 3
-            and len(evidence_cues) >= 2
+            and _performance_tier_one_admitted(
+                dimensions,
+                evidence_cues,
+                strong_policy=admission_policy == CURRENT_ADMISSION_POLICY,
+            )
         )
         if tier_basis not in TIER_ONE_BASES or not (
             relationship_admitted or performance_admitted
@@ -406,7 +441,7 @@ def normalize_selection_scorecard(
         for name in DIMENSION_WEIGHTS
     )
     effective_score = max(0.0, raw_score - uncertainty - fatigue)
-    return {
+    normalized: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
         "status": "VALID",
         "tier": tier,
@@ -422,6 +457,61 @@ def normalize_selection_scorecard(
         "effective_score": round(effective_score, 2),
         "reason_codes": reason_codes,
     }
+    if admission_policy == CURRENT_ADMISSION_POLICY:
+        normalized[ADMISSION_POLICY_FIELD] = CURRENT_ADMISSION_POLICY
+    return normalized
+
+
+def normalize_selection_scorecard(
+    raw: object,
+    *,
+    start_cue: int,
+    end_cue: int,
+) -> dict[str, object] | None:
+    """Normalize a new scorecard under the current admission policy.
+
+    The public signature is intentionally unchanged.  Scorecards produced by
+    this path carry an explicit policy identifier; absence of that field is
+    reserved for historical v1 cards accepted by ``selection_scorecard_is_valid``.
+    """
+
+    if not isinstance(raw, Mapping):
+        return None
+    if (
+        ADMISSION_POLICY_FIELD in raw
+        and raw.get(ADMISSION_POLICY_FIELD) != CURRENT_ADMISSION_POLICY
+    ):
+        return None
+    return _normalize_selection_scorecard(
+        raw,
+        start_cue=start_cue,
+        end_cue=end_cue,
+        admission_policy=CURRENT_ADMISSION_POLICY,
+    )
+
+
+def _ranking_tier(scorecard: Mapping[str, object]) -> float:
+    """Map a valid historical performance Tier 1 card to current priority.
+
+    The card itself is deliberately left untouched: its bytes may be bound by
+    source-fact or publication receipts.  Only the transient sorting key uses
+    the current stronger performance admission rule.
+    """
+
+    tier = float(scorecard["tier"])
+    if (
+        ADMISSION_POLICY_FIELD not in scorecard
+        and tier == 1.0
+        and scorecard.get("tier_basis") == "audience_driven_performance"
+    ):
+        dimensions = scorecard.get("dimensions")
+        evidence = scorecard.get("tier_evidence_cues")
+        if isinstance(dimensions, Mapping) and isinstance(evidence, list):
+            if not _performance_tier_one_admitted(
+                dimensions, evidence, strong_policy=True
+            ):
+                return 2.0
+    return tier
 
 
 def selection_rank_key(item: Mapping[str, object]) -> tuple[float, float, float, str]:
@@ -437,8 +527,9 @@ def selection_rank_key(item: Mapping[str, object]) -> tuple[float, float, float,
     )
     scorecard = item.get("selection_scorecard")
     if selection_scorecard_is_valid(scorecard):
+        assert isinstance(scorecard, Mapping)
         return (
-            float(scorecard["tier"]),
+            _ranking_tier(scorecard),
             -float(scorecard["effective_score"]),
             -confidence,
             str(item.get("cid") or item.get("candidate_id") or ""),
@@ -502,7 +593,25 @@ def apply_reviewed_selection_calibration(
     assert isinstance(scorecard, Mapping)
     anchor = selected_policy.anchors.get(str(candidate_id or ""))
     if anchor is None:
-        return dict(scorecard)
+        evidence = list(scorecard.get("tier_evidence_cues") or [])
+        normalized = normalize_selection_scorecard(
+            {
+                "tier": scorecard.get("requested_tier"),
+                "tier_basis": scorecard.get("tier_basis"),
+                "tier_reason": scorecard.get("tier_reason"),
+                "tier_evidence_cues": evidence,
+                "dimensions": scorecard.get("dimensions"),
+                "uncertainty_penalty": scorecard.get("uncertainty_penalty"),
+                "fatigue_penalty": scorecard.get("fatigue_penalty"),
+            },
+            start_cue=min(evidence, default=0),
+            end_cue=max(evidence, default=0),
+        )
+        if normalized is None:
+            return None
+        # Keep refresh/review metadata while replacing the scorecard's
+        # arithmetic and admission fields with the current policy result.
+        return {**dict(scorecard), **normalized}
     dimensions = anchor.get("dimensions")
     if not isinstance(dimensions, Mapping):
         raise SelectionCalibrationPolicyError(
@@ -546,6 +655,15 @@ def selection_scorecard_is_valid(raw: object) -> bool:
         or raw.get("weights") != DIMENSION_WEIGHTS
     ):
         return False
+    admission_policy: str | None
+    if ADMISSION_POLICY_FIELD in raw:
+        if raw.get(ADMISSION_POLICY_FIELD) != CURRENT_ADMISSION_POLICY:
+            return False
+        admission_policy = CURRENT_ADMISSION_POLICY
+    else:
+        # No identifier is the compatibility marker for historical v1 cards.
+        admission_policy = None
+
     dimensions = raw.get("dimensions")
     if not isinstance(dimensions, Mapping) or set(dimensions) != set(DIMENSION_WEIGHTS):
         return False
@@ -575,7 +693,7 @@ def selection_scorecard_is_valid(raw: object) -> bool:
         effective - round(expected_effective, 2)
     ) > 0.001:
         return False
-    normalized = normalize_selection_scorecard(
+    normalized = _normalize_selection_scorecard(
         {
             "tier": raw.get("requested_tier"),
             "tier_basis": raw.get("tier_basis"),
@@ -587,10 +705,12 @@ def selection_scorecard_is_valid(raw: object) -> bool:
         },
         start_cue=min(evidence, default=0),
         end_cue=max(evidence, default=0),
+        admission_policy=admission_policy,
     )
     return bool(
         normalized is not None
         and normalized["tier"] == raw.get("tier")
+        and normalized["tier_evidence_cues"] == evidence
         and normalized["reason_codes"] == raw.get("reason_codes")
         and normalized["effective_score"] == raw.get("effective_score")
     )

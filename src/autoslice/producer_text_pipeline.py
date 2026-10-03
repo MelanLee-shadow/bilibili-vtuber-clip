@@ -65,6 +65,7 @@ from src.autoslice.final_review_auditor import (
     resolve_verified_source_truth_findings,
     route_findings,
 )
+from src.autoslice.final_review_provider_budget import with_cpa_resource_pressure
 from src.autoslice.final_review_contract import (
     SCHEMA_VERSION as FINAL_REVIEW_SCHEMA_VERSION,
     is_keep_current_disclosed,
@@ -77,7 +78,7 @@ from src.autoslice.review_priority_candidates import (
 from src.autoslice.fidelity_review_candidates import fidelity_kept_contexts
 from src.autoslice.final_source_language_owner import register_final_foreign_script_cpa_repairs, register_final_source_language_cpa_repairs
 from src.autoslice.jingting_chunker import parse_srt_cues
-from src.autoslice.llm_client import LlmConfig, build_llm_call, extract_json_object
+from src.autoslice.llm_client import extract_json_object
 from src.autoslice.producer_chat_input import (
     build_structured_chat_binding_audit,
     DANMAKU_PRE_CONTEXT_MS,
@@ -124,7 +125,6 @@ from src.autoslice.producer_source_truth_authority import (
     verify_source_truth_preview_formal_binding,
 )
 from src.autoslice.song_name_semantic_verification import verify_and_pin_song_names
-from src.autoslice.terminal_closure_guard import preserve_context_only_terminal_closure
 from src.autoslice.foreign_span_witness import (
     adjudicate_language_preservation_audit,
     adjudicate_foreign_script_audit,
@@ -401,22 +401,10 @@ def _build_entity_verification_context(
     # unresolved; audio can never inherit final authority.
     from src.autoslice.read_aloud_llm_verifier import build_cpa_read_aloud_verifier
 
-    read_aloud_llm_call = None
-    if os.environ.get("CPA_BASE_URL") and os.environ.get("CPA_API_KEY"):
-        # 模型分工试验：luna@max 在 P1/P4 两口味小样上与 sol
-        # 判决一致，但 维护者 要求穷尽级验证（luna 理论弱于 sol，举证责任在
-        # 换方）且首轮金丝雀出过一笔 2m5s 的 luna 500。在真实历史案例批量
-        # A/B 通过之前，生产保持 sol 首选。
-        read_aloud_llm_call = build_llm_call(
-            LlmConfig(
-                transport="command",
-                command_template=(
-                    "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} "
-                    "'gpt-6-sol' medium"
-                ),
-                timeout_seconds=180.0,
-            )
-        )
+    # Runtime credentials live in cpa.env, not in the producer's ambient env.
+    # Use the same canonical medium-effort judge as the remaining text stages.
+    # An unbound runtime fails closed when called; audio stays evidence-only.
+    read_aloud_llm_call = _build_final_review_llm_call()
     cpa_read_aloud_verifier = build_cpa_read_aloud_verifier(
         read_aloud_llm_call, next_verifier=audio_entity_verifier
     )
@@ -835,13 +823,19 @@ def _run_final_review(
                 if row.get("routed") == "disclosure" and row.get("proposed_full_cue") is not None
             ]
 
+            correction_adjudication_count = 0
+
             def adjudicate(live_srt: str, finding: dict[str, Any]):
+                nonlocal correction_adjudication_count
+                correction_adjudication_count += 1
                 return adjudicate_context_finding(
                     live_srt,
                     entity_verifier=verify_confusable_entity,
                     finding=finding,
                     clip_context=clip_context,
-                    judge_llm_call=review_llm_call,
+                    judge_llm_call=with_cpa_resource_pressure(
+                        review_llm_call, correction_adjudication_count, MAX_CONTEXT_ADJUDICATIONS
+                    ),
                     screen_read_probe=screen_read_probe,
                 )
 
@@ -864,7 +858,7 @@ def _run_final_review(
             ) = adjudicate_routed_findings(
                 srt_text,
                 adjudicable,
-                max_adjudications=MAX_CONTEXT_ADJUDICATIONS,
+                max_adjudications=None,
                 adjudicate=adjudicate,
                 original_srt_text=original_srt_text,
             )
@@ -875,6 +869,7 @@ def _run_final_review(
                 final_review_audit["status"] = "APPLIED"
             final_review_audit["context_adjudication_count"] = adjudication_count
             final_review_audit["context_adjudication_budget"] = MAX_CONTEXT_ADJUDICATIONS
+            final_review_audit["context_adjudication_budget_policy"] = "SOFT"
             final_review_audit["context_adjudication_witness_prewarm"] = prewarm_receipt
             final_review_audit["priority_raw_finding_count"] = len(priority_rows)
             final_review_audit.update(_review_priority_candidate_counts(priority_raw_findings))
@@ -1069,6 +1064,18 @@ def _run_exact_final_release_review(
         timeline_offset_ms=timeline_offset_ms,
     )
     exact_judge_llm_call = final_review_llm or _build_final_review_llm_call()
+    prior_usage = (
+        verified_authority_audit.get("cpa_adjudication_usage")
+        if isinstance(verified_authority_audit, Mapping)
+        else None
+    )
+    prior_count = (
+        prior_usage.get("provider_adjudication_count")
+        if isinstance(prior_usage, Mapping)
+        else correction_audit.get("context_adjudication_count", 0)
+    )
+    if isinstance(prior_count, bool) or not isinstance(prior_count, int) or prior_count < 0:
+        raise ValueError("CPA_ADJUDICATION_USAGE_INVALID")
     acoustic_pending, acoustic_resolved = adjudicate_exact_release_findings(
         srt_text,
         authority_pending,
@@ -1077,7 +1084,26 @@ def _run_exact_final_release_review(
         source_media_timeline_offset_ms=timeline_offset_ms,
         judge_llm_call=exact_judge_llm_call,
         screen_read_probe=screen_read_probe,
+        initial_provider_adjudication_count=prior_count,
     )
+    cumulative_count = max(
+        [prior_count]
+        + [
+            int(pressure["provider_adjudication_count"])
+            for finding in [*acoustic_pending, *acoustic_resolved]
+            if isinstance(
+                pressure := (finding.get("exact_release_adjudication") or {}).get(
+                    "cpa_resource_pressure"
+                ), Mapping
+            )
+        ]
+    )
+    base["cpa_adjudication_usage"] = {
+        "provider_adjudication_count": cumulative_count,
+        "prior_provider_adjudication_count": prior_count,
+        "soft_limit": MAX_CONTEXT_ADJUDICATIONS,
+        "policy": "SOFT",
+    }
     unresolved_findings, memo_resolved = resolve_findings_from_exact_final_convergence_memos(
         srt_text,
         acoustic_pending,
@@ -1089,20 +1115,20 @@ def _run_exact_final_release_review(
         authority_audit=verified_authority_audit or {},
         judge_llm_call=exact_judge_llm_call,
     )
-    unresolved_findings, boundary_preserved = preserve_context_only_terminal_closure(
-        unresolved_findings,
-        boundary=base["boundary_semantic_review"],
-    )
-    acoustic_resolved.extend(boundary_preserved)
+    # A boundary PASS proves closure on the current subtitle surface; it does
+    # not make a misspelled terminal name immutable. CPA-authorized repairs
+    # stay pending for the finalizer to apply. Its next exact review calls
+    # exact_delivery_correction_audit on the new bytes, rechecking closure
+    # before release instead of silently resolving the word-choice finding.
     resolved_findings = [
         *authority_resolved,
         *memo_resolved,
         *acoustic_resolved,
         *convergence_resolved,
     ]
-    # 维护者（无人值守裁定）：judge 走完仍 UNCERTAIN 且策略分支为
-    # KEEP_CURRENT 的 finding 是已完成的机器决定——按现文本交付并披露，
-    # 发后可修；结构性失败照旧 fail-closed。
+
+
+
     disclosed_keep_current: list = []
     blocking_findings: list = []
     for finding in unresolved_findings:
@@ -1473,10 +1499,10 @@ def _finalize_text_evidence(
         padded is not None
         and foreign_script_audit["status"] == "BLOCKED_MIXED_FOREIGN_SCRIPT_CLUSTER"
     ):
-        # Wrong-language ASR repair (维护者): the cluster text itself
-        # is garbage, so re-transcribe each clustered cue from its own audio
-        # and let a fresh audit judge the repaired text; unrepaired clusters
-        # stay blocked.
+
+
+
+
         srt_text, cluster_repair_audit = retranscribe_foreign_script_cluster(
             media_path=padded,
             srt_text=srt_text,
@@ -1604,10 +1630,10 @@ def _finalize_text_evidence(
     # the last mutable truth/hygiene stage.
     srt_text, japanese_native_script_audit = normalize_japanese_native_script_surfaces(srt_text)
     chat_authority_audit["final_japanese_native_script_audit"] = japanese_native_script_audit
-    # 维护者 source-interval truth (authority #1) supersedes read-aloud exact
-    # surfaces (authority #2) on the same cue: the guest may rephrase a danmaku
-    # rather than read it verbatim (HimeHina case, audio support 0).
-    # Mirror of the reviewed-text-override reconciliation channel.
+
+
+
+
     reconcile_required_source_truth_chat_authority(
         chat_authority_audit,
         source_truth_audit,
@@ -1824,7 +1850,7 @@ def run_text_pipeline(
             "SKIPPED_PINNED_REPLAY", pinned_replay_ownership=pinned_replay_ownership
         )
     elif truth_ownership is not None:
-        # F20 真值全所有权快路径（维护者 立项）：同理，真值拥有词面。
+
         reviewed_srt = authority.srt_text
         final_review_audit = skipped_final_review_audit(
             "SKIPPED_TRUTH_FULL_OWNERSHIP", truth_full_ownership=truth_ownership
@@ -1913,8 +1939,8 @@ def run_text_pipeline(
     if exact_interval_replay is not None:
         final_review_audit["reviewed_exact_source_interval_replay"] = exact_interval_replay
     if source_boundary_replay:
-        # 维护者 优化①边界重放 + wsl 重产 BLOCK 实证：披露冻结
-        # authority，并在 current-bound derived receipt 内保留原 review canonical SHA。
+
+
         final_review_audit["boundary_receipt_replay"] = {
             "source_full_window": source_boundary_replay,
         }
@@ -1978,11 +2004,11 @@ def run_text_pipeline(
             draft_fidelity_contexts=fidelity_kept_contexts(padded, final_srt_text),
             acoustic_discovery_audit=microcue_audit,
         )
-        # 硬退出侧车（维护者 15:05Z 交棒清单第 7 项「硬退出丢
-        # carryover(超时/崩溃跳过侧车落盘)」）：本 pass 的确证行算出来就写，
-        # 不等整个终审门跑完最多五轮自愈。取舍/原子落盘/完整性标记全在
-        # src/autoslice/final_review_carryover.py，这里只有一处薄调用。
-        # 测试 tests/test_final_review_carryover_hard_exit.py。
+
+
+
+
+
         checkpoint_final_review_carryover(carryover_path(out_root, cid), exact_final_audit)
         return exact_final_audit
 

@@ -43,7 +43,7 @@ def test_copied_cover_resolves_without_opening_producer_path(tmp_path, absolute)
 
 def test_pre_e166_absolute_v4_alias_is_not_rejected(tmp_path):
     cover, generation = _fixture(tmp_path, absolute=True)
-    # This is exactly the alias the original importer used before E166.
+
     historical_alias = (
         tmp_path
         / Path(generation["final_cover"]).parent.name

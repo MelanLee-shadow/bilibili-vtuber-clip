@@ -407,8 +407,8 @@ def requeue_recoverable_talks(
 ) -> int:
     """Implement selected Talk requeue through the legacy runtime seam."""
 
-    # 维护者 裁定的迁移面：裁定之前化石化的说话人拒绝行先迁回停泊态，
-    # 再进下面的常规恢复判定（本体在 src/autoslice/speaker_manual_review.py）。
+
+
     allowed = set(candidate_ids) if candidate_ids is not None else None
     source_fact_scope = runtime._active_selected_source_fact_recovery_scope(
         date, state, candidate_ids
@@ -598,9 +598,9 @@ def requeue_recoverable_talks(
         state.setdefault("talk_superseded_attempts", []).append(archived)
     state["picks"] = kept
     state.setdefault("pending_talk", []).extend(requeued)
-    # 闭环接线（维护者 狍哥案实施指令）：这是 exact-contract 和
-    # 普通两条 requeue 路径共同经过的唯一收口——一次调用覆盖两条分支，
-    # 不新增第二个调用点。重活在 selection_rescore.py。
+
+
+
     runtime.selection_rescore.execute_pending_rescores(
         date, state, candidate_ids=allowed
     )

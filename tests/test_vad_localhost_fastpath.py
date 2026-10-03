@@ -1,6 +1,7 @@
 """VAD provider 的 localhost 快路径：免 scp/免 self-ssh，远端语义不变。"""
 
 from pathlib import Path
+import sys
 
 import src.autoslice.subtitle_timing_qa as timing_qa
 from src.autoslice.subtitle_timing_qa import SpeechSpan
@@ -35,10 +36,29 @@ def test_localhost_provider_never_shells_out_to_ssh(monkeypatch, tmp_path):
 
     assert spans == [SpeechSpan(start_ms=1_100, end_ms=1_300)]
     assert not any(cmd[0] in {"ssh", "scp"} for cmd in calls)
-    python_calls = [cmd for cmd in calls if cmd[0] == "python3"]
+    python_calls = [cmd for cmd in calls if cmd[0] == sys.executable]
     assert len(python_calls) == 1
     # 本地直跑仍然用同一个 spans 脚本（env/默认解析不因快路径改变）
     assert python_calls[0][1].endswith("silero_vad_spans.py")
+
+
+def test_localhost_default_uses_repo_script_and_current_python(monkeypatch, tmp_path):
+    calls: list[list[str]] = []
+    monkeypatch.delenv("AUTOSLICE_VAD_SCRIPT", raising=False)
+    monkeypatch.delenv("AUTOSLICE_VAD_PYTHON", raising=False)
+    monkeypatch.setattr(timing_qa.subprocess, "run", _fake_run_factory(calls))
+    provider = timing_qa.build_ssh_silero_vad_provider("localhost")
+
+    provider(tmp_path / "src.mp4", 0, 1_000)
+
+    python_calls = [cmd for cmd in calls if cmd[0] == sys.executable]
+    assert len(python_calls) == 1
+    assert python_calls[0][1] == str(
+        Path(timing_qa.__file__).resolve().parents[2]
+        / "scripts"
+        / "silero_vad_spans.py"
+    )
+    assert python_calls[0][1] != "/opt/bilive/vad/silero_vad_spans.py"
 
 
 def test_remote_provider_still_ships_wav_over_ssh(monkeypatch, tmp_path):
@@ -50,7 +70,10 @@ def test_remote_provider_still_ships_wav_over_ssh(monkeypatch, tmp_path):
 
     assert spans == [SpeechSpan(start_ms=100, end_ms=300)]
     assert any(cmd[0] == "scp" for cmd in calls)
-    assert any(cmd[0] == "ssh" for cmd in calls)
+    ssh_calls = [cmd for cmd in calls if cmd[0] == "ssh"]
+    assert ssh_calls
+    assert "/opt/bilive/autoslice/venv-main/bin/python" in ssh_calls[0][2]
+    assert "/opt/bilive/autoslice/repo/scripts/silero_vad_spans.py" in ssh_calls[0][2]
     assert not any(cmd[0] == "python3" for cmd in calls)
 
 
@@ -62,7 +85,7 @@ def test_env_override_steers_localhost_script_path(monkeypatch, tmp_path):
 
     provider(tmp_path / "src.mp4", 0, 1_000)
 
-    python_calls = [cmd for cmd in calls if cmd[0] == "python3"]
+    python_calls = [cmd for cmd in calls if cmd[0] == sys.executable]
     assert python_calls and python_calls[0][1] == "/custom/spans.py"
 
 

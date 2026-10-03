@@ -789,6 +789,92 @@ def validate_final_subtitle_audio_check(
     )
 
 
+def load_validated_subtitle_audio_witness(
+    record: Mapping[str, object],
+    final_srt: str | Path,
+    actual_media: str | Path,
+    *,
+    candidate_id: str | None = None,
+) -> dict[str, Any]:
+    """Return an already-captured BCUT witness after deterministic validation.
+
+    This helper deliberately performs no extraction or provider call.  The
+    returned text is evidence only; the caller still has to send it through
+    the normal CPA review before treating a discrepancy as a finding.
+    """
+
+    receipt = validate_final_subtitle_audio_check(
+        record,
+        final_srt,
+        actual_media,
+        candidate_id=candidate_id,
+    )
+    evidence = record.get("subtitle_audio_correspondence")
+    if not isinstance(evidence, Mapping):
+        raise FinalSubtitleAudioGateError(
+            "FINAL_SUBTITLE_AUDIO_RECORD_BINDING_MISSING"
+        )
+    witness_path = _regular_file(
+        evidence.get("witness_srt_path"),
+        label="FINAL_SUBTITLE_AUDIO_WITNESS_SRT",
+    )
+    try:
+        witness_text = witness_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise FinalSubtitleAudioGateError(
+            f"FINAL_SUBTITLE_AUDIO_WITNESS_READ_FAILED: {exc}"
+        ) from exc
+    if not witness_text.strip():
+        raise FinalSubtitleAudioGateError(
+            "FINAL_SUBTITLE_AUDIO_WITNESS_SRT_EMPTY"
+        )
+
+    def bound_sha(field: str) -> str:
+        return _canonical_sha(evidence.get(field), label=f"record_{field}")
+
+    candidate = str(evidence.get("candidate_id") or "")
+    if not candidate:
+        raise FinalSubtitleAudioGateError(
+            "FINAL_SUBTITLE_AUDIO_RECORD_CANDIDATE_ID_MISSING"
+        )
+    if candidate_id is not None and candidate != candidate_id:
+        raise FinalSubtitleAudioGateError(
+            "FINAL_SUBTITLE_AUDIO_RECORD_CANDIDATE_ID_DRIFT"
+        )
+    intro_offset_ms = evidence.get("intro_offset_ms")
+    if isinstance(intro_offset_ms, bool) or not isinstance(intro_offset_ms, int):
+        raise FinalSubtitleAudioGateError(
+            "FINAL_SUBTITLE_AUDIO_RECORD_INTRO_OFFSET_INVALID"
+        )
+    receipt_sha256 = "sha256:" + hashlib.sha256(
+        (json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n").encode(
+            "utf-8"
+        )
+    ).hexdigest()
+    if evidence.get("receipt_sha256") != receipt_sha256:
+        raise FinalSubtitleAudioGateError(
+            "FINAL_SUBTITLE_AUDIO_RECORD_RECEIPT_HASH_DRIFT"
+        )
+    return {
+        "candidate_id": candidate,
+        "provider": evidence.get("provider"),
+        "provider_route": evidence.get("provider_route"),
+        "actual_media_sha256": bound_sha("actual_media_sha256"),
+        "final_srt_sha256": bound_sha("final_srt_sha256"),
+        "witness_srt_sha256": bound_sha("witness_srt_sha256"),
+        "audio_sha256": bound_sha("audio_sha256"),
+        "raw_result_sha256": bound_sha("raw_result_sha256"),
+        "intro_offset_ms": intro_offset_ms,
+        "witness_srt_path": str(witness_path),
+        "provenance_path": str(evidence.get("provenance_path") or ""),
+        "correspondence_path": str(evidence.get("correspondence_path") or ""),
+        "raw_result_path": str(evidence.get("raw_result_path") or ""),
+        "receipt": dict(receipt),
+        "receipt_sha256": receipt_sha256,
+        "witness_text": witness_text,
+    }
+
+
 def require_final_subtitle_audio_check(
     record: dict, subtitle_path: Path, output_dir: Path, candidate_id: str,
     *, capture: Callable | None = None,

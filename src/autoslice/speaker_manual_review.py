@@ -1,6 +1,6 @@
 """说话人证据不足 → 人工审阅停泊态，而不是终态判死。
 
-维护者 裁定：「说话人证据不足应该转人工审阅，不是判死」，理由是
+公开规则：说话人证据不足应该转人工审阅，不是判死，理由是
 **说话人分离是刚开的功能**——用一个新功能的不成熟去毙掉本来可用的内容。
 
 时间线（为什么这条路径今天才咬人）：``34b9b26``(7/12) 建立了证据不足 fail-closed；
@@ -13,22 +13,22 @@
 **停泊 ≠ 放行**，fail-closed 由既有机制承载，本模块不新造一套平行状态：
 
 - 复用既有状态名 ``speaker_review_required`` / ``speaker_evidence_insufficient``。
-  它们本来就在 ``delivery_recovery.TALK_RECOVERY_FAILURE_STATUSES`` 里，而
-  **从来不在** ``DELIVERED_TALK_STATUSES``（``{"ok","review_ready","quarantine"}``）里
-  ——于是天然不可上传、不可 ``review_ready``、进不了日审清单
-  （``build_daily_review_manifest.py`` 要求 ``status == "review_ready"``）。
+ 它们本来就在 ``delivery_recovery.TALK_RECOVERY_FAILURE_STATUSES`` 里，而
+ **从来不在** ``DELIVERED_TALK_STATUSES``（``{"ok","review_ready","quarantine"}``）里
+ ——于是天然不可上传、不可 ``review_ready``、进不了日审清单
+ （``build_daily_review_manifest.py`` 要求 ``status == "review_ready"``）。
 - 既有范式就在同一个函数里：``apply_talk_backfill_rejection_policy`` 的
-  exact-recovery 分支下 backfill 被抑制时，这两个状态**本来就**原样留存、
-  不改写成 ``candidate_rejected``。本模块把普通车道拉到同一处置而已。
+ exact-recovery 分支下 backfill 被抑制时，这两个状态**本来就**原样留存、
+ 不改写成 ``candidate_rejected``。本模块把普通车道拉到同一处置而已。
 - 出版登记（``publication_registry.py`` 的 ``hold_pending_review``）是**上传**
-  的唯一授权门，承载的是仓内已提交资产上的人工裁定；停泊件根本没有产物可传，
-  运行时不得代 维护者 往那份登记里写行（7667d9a 血泪：hold 要写仓内资产）。
+ 的唯一授权门，承载的是仓内已提交资产上的人工裁定；停泊件根本没有产物可传，
+ 运行时不得代 公开规则往那份登记里写行（7667d9a 血泪：hold 要写仓内资产）。
 
 **为什么不是 ``failure_recoverable=True``**：True 会把它送进基础设施重试车道
 （``INFRASTRUCTURE_WAIT_FAILURE_KINDS`` 定时重排），而证据不足重试一万次还是
 不足；``True`` 还会让 runner 把整批当外部故障中断。停泊件的唤醒只有两条，
 两条都已经在 ``talk_failure_recovery_fingerprint("speaker_evidence", cid)``
-的指纹里：说话人模块代码波，或 维护者 落一份 ``candidate_speaker_override_path``
+的指纹里：说话人模块代码波，或 公开规则落一份 ``candidate_speaker_override_path``
 人工覆盖件。指纹不变就一动不动，没有每 tick 空转。
 """
 
@@ -89,9 +89,9 @@ def park_for_manual_review(
     held_at = existing.get("held_at") or time.strftime(
         "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
     )
-    # 同一条 pick 会被盖两次章：produce 收尾先盖（带成品与 guess 回执），紧接着
-    # 运行时主循环的 backfill 政策按状态又盖一次（只知道原因码）。第二次必须
-    # **继承**第一次的成品面，否则 维护者 的审阅入口和防误删引用当场蒸发。
+
+
+
     guess = guess if guess is not None else existing.get("speaker_guess")
     artifacts = artifacts if artifacts is not None else existing.get("review_artifacts")
     held_status = str(record.get("status") or "")
@@ -120,8 +120,8 @@ def park_for_manual_review(
         receipt["migrated_from"] = dict(migrated_from)
     if guess is not None:
         receipt["speaker_guess"] = dict(guess)
-        # 有产物的停泊 vs 完全没产物的停泊：维护者 的审阅动作不同（前者是打开成品
-        # 改几句，后者是根本没得看），所以回执里显式分开，不靠调用方猜。
+
+
         receipt["disposition"] = "AWAITING_HUMAN_SPEAKER_CORRECTION_ON_GUESSED_DELIVERY"
         receipt["wakes_on"] = "speaker_evidence_recovery_fingerprint_change"
     if artifacts:
@@ -142,13 +142,13 @@ def restore_fossilized_speaker_holds(
     *,
     candidate_ids: Collection[str] | None = None,
 ) -> int:
-    """把 维护者 裁定之前化石化的说话人拒绝行迁回停泊态。
+    """把 公开规则裁定之前化石化的说话人拒绝行迁回停泊态。
 
-    只认这一种精确形状（与 ``_is_legacy_exact_backfill_rejection`` 同款窄识别）：
-    ``candidate_rejected`` + ``rejected_status`` 是两个说话人状态之一 +
-    ``rejection_reason == speaker_identity_unresolved_backfilled``。别的拒绝
-    一律不碰——这不是通用复活器（那是 ``scripts/revive_rejected_candidates.py``）。
-    """
+ 只认这一种精确形状（与 ``_is_legacy_exact_backfill_rejection`` 同款窄识别）：
+ ``candidate_rejected`` + ``rejected_status`` 是两个说话人状态之一 +
+ ``rejection_reason == speaker_identity_unresolved_backfilled``。别的拒绝
+ 一律不碰——这不是通用复活器（那是 ``scripts/revive_rejected_candidates.py``）。
+ """
 
     restored = 0
     allowed = set(candidate_ids) if candidate_ids is not None else None
@@ -214,17 +214,9 @@ def render_report_section(
         "",
         "## 等待人工说话人审阅（停泊态，**不是**拒绝，也**不可上传**）",
         "",
-        "> 说话人分离是新开的功能，证据不足不判死（维护者 2026-08-10）。这些候选停在"
-        "队列里等人看：既不会交付、不会进 `review_ready`、不会被上传，也不会每 tick "
-        "空转重试。**唯一的推进面是人**——落一份候选级说话人人工覆盖件（或说话人"
-        "模块本身的代码波）会改变 `speaker_evidence` 恢复指纹，下个 tick 自动重产；"
-        "看过确认没救就把这行显式改回 `candidate_rejected` 并写明出处。",
+        '> 说话人分离是新开的功能，证据不足不判死（公开规则）。这些候选停在队列里等人看：既不会交付、不会进 `review_ready`、不会被上传，也不会每 tick 空转重试。**唯一的推进面是人**——落一份候选级说话人人工覆盖件（或说话人模块本身的代码波）会改变 `speaker_evidence` 恢复指纹，下个 tick 自动重产；看过确认没救就把这行显式改回 `candidate_rejected` 并写明出处。',
         "",
-        "> 「成品」一列非空的行**已经有可以打开看的视频和逐句说话人标注**（维护者 "
-        "2026-08-10「它必须无论如何至少先猜一个说话人，我才能审查」）。那份归属是"
-        "**猜的**：`猜法` 说清这次降到哪一级，`存疑句` 是逐句证据缺口的条数——"
-        "改这几句就够，不用整片重标。逐句清单在成品同名的 `.speaker.json` 里"
-        "（`speaker_guess.low_confidence_cues`），改完照常走说话人覆盖件通道。",
+        '> 「成品」一列非空的行**已经有可以打开看的视频和逐句说话人标注**（公开规则：它必须无论如何至少先猜一个说话人，我才能审查）。那份归属是**猜的**：`猜法` 说清这次降到哪一级，`存疑句` 是逐句证据缺口的条数——改这几句就够，不用整片重标。逐句清单在成品同名的 `.speaker.json` 里（`speaker_guess.low_confidence_cues`），改完照常走说话人覆盖件通道。',
         "",
         "| candidate | 停泊类型 | hook | 阻塞证据 | cue 清单 | 猜法 | 存疑句 | 成品 |",
         "|---|---|---|---|---|---|---|---|",

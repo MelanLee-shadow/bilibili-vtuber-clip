@@ -7,12 +7,12 @@ make-manifest），于是 wsl 产的每条片都要人伺候。本脚本把前�
 
 用法（在 free 的部署仓库根目录下跑）：
 
-    python3 scripts/import_external_package.py \\
-        --source /opt/bilive/autoslice/staging/2026-08-07/auto_220747_488_680/replacement_recuts \\
-        --date --candidate auto_220747_488_680 --apply
+ python3 scripts/import_external_package.py \\
+ --source /opt/bilive/autoslice/staging/2026-08-07/auto_220747_488_680/replacement_recuts \\
+ --date --candidate auto_220747_488_680 --apply
 
 已在 committed publication registry 逐字放行的 exact failed pick 只能加
-``--adopt-failed-pick <同一 cid> --release-quote '<维护者 逐字原话>'``。它不与
+``--adopt-failed-pick <同一 cid> --release-quote '<公开规则逐字原话>'``。它不与
 ``--allow-new-pick`` 共用，也不会替代 audit/QC/authorized-upload。
 
 不带 ``--apply`` 是 dry-run：解析根、验证定位符契约、列出要搬的字节、并在**持
@@ -22,8 +22,8 @@ runner.lock 只读**的前提下预判 state 能不能绑；默认只向 stdout 
 做了什么 / 没做什么：
 
 - ①路径规整、②state 绑定、③manifest、④audit、⑤联合质检 —— 做；
-- ⑥``authorized_upload make-manifest`` —— **不做**（那是上传授权面，需要 维护者 的
-  逐字引语）。回执里给出该跑的命令，人来接。
+- ⑥``authorized_upload make-manifest`` —— **不做**（那是上传授权面，需要 公开规则的
+ 逐字引语）。回执里给出该跑的命令，人来接。
 
 fail-closed：任何一步 REFUSE 就停，回执 ``steps[]`` 写明卡在哪、原因码、怎么修。
 退出码 0=全绿，2=被拒（回执已落盘），3=用法/环境错误。
@@ -49,17 +49,17 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.autoslice import package_import as pi  # noqa: E402
-from src.autoslice.publication_reconciliation import (  # noqa: E402
+from src.autoslice import package_import as pi
+from src.autoslice.publication_reconciliation import (
     project_publication_closure,
 )
-from src.autoslice.runner_state_writeback import (  # noqa: E402
+from src.autoslice.runner_state_writeback import (
     RunnerStateWritebackError,
     read_exact_state_preimage,
     write_exact_state_bytes_under_lease,
     write_state,
 )
-from src.autoslice.qixi_transaction_core import exclusive_runner_commit  # noqa: E402
+from src.autoslice.qixi_transaction_core import exclusive_runner_commit
 
 
 DEFAULT_BASE = Path("/opt/bilive/autoslice")
@@ -1176,7 +1176,7 @@ def _step_make_manifest_hint(
             "--authorized-by",
             "维护者",
             "--quote",
-            "<维护者 的逐字授权引语>",
+            '<公开规则的逐字授权引语>',
             "--title-cover-qc",
             f"{destination_package_root}/<candidate>.title-cover-joint-qc.json",
             "--season",

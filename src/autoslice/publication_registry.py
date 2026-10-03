@@ -1,22 +1,22 @@
 """候选↔BV 出版登记：新投稿副作用前的重复出版/搁置件闸口。
 
-BV1ec3A6bEWF 事故：7/24 争议搁置件（当晚批次 上传许可:否）被
+BV1PUBLIC000 事故：7/24 争议搁置件（当晚批次 上传许可:否）被
 重产成 review_ready 后当新切片上传。state 的 review_ready 只描述产物就绪，
 不携带「是否已出版 / 是否被人工搁置」——该事实必须由 committed registry
 承载，并在任何新投稿副作用前查询。
 
 - published 候选：内容已在某 BV 上，修复只允许 authorized_upload.py
-  repair-* 的原 BV 修复链；
-- hold_pending_review 候选：维护者 放行前禁止任何上传；
-- released_for_upload 候选：保留历史 hold 与 维护者 放行证据，但不再阻断新投稿；
+ repair-* 的原 BV 修复链；
+- hold_pending_review 候选：公开规则放行前禁止任何上传；
+- released_for_upload 候选：保留历史 hold 与 公开规则放行证据，但不再阻断新投稿；
 - registry 缺失或不可读时 fail-closed（宁可拒发也不重复出版）。
 
-贪生怕死（auto_223750_913_1322）：封面维护车道当时只认 published，
-被 维护者 明令搁置的 hold 件照旧每个 tick 刷预算、出图（已烧 9 次尝试），而按
-定义那些像素永远不会被上传。维护者 逐字「贪生怕死不需要进行上传，就不需要封面
-了」。所以 cover 闸口按 ``_BLOCKING_STATUSES`` 成员判定：登记里凡是阻断上传
+贪生怕死（auto_000000_0_0）：封面维护车道当时只认 published，
+被 公开规则明令搁置的 hold 件照旧每个 tick 刷预算、出图（已烧 9 次尝试），而按
+定义那些像素永远不会被上传。公开规则：贪生怕死不需要进行上传，就不需要封面
+了。所以 cover 闸口按 ``_BLOCKING_STATUSES`` 成员判定：登记里凡是阻断上传
 的状态，一律不再为它花图片额度。判据是每次调用现读 committed registry 的纯
-函数，不在 state 里写任何 hold 标记——维护者 把该行改成 released_for_upload，
+函数，不在 state 里写任何 hold 标记——公开规则把该行改成 released_for_upload，
 下一 tick 封面自然恢复，没有需要人工清理的终态。
 """
 

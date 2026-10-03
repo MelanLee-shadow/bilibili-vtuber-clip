@@ -36,11 +36,11 @@ try:  # pragma: no cover - exercised via the pinyin-present path in tests
 except ImportError:  # pragma: no cover
     _lazy_pinyin = None
 
-# 维护者 pipeline wiring: findings carry a deterministic candidate
-# (the restatement text itself) — unlike the microcue lane, which is
-# proposal-less by design. The candidate-blind acoustic witness and CPA
-# CURRENT/PROPOSED judge still own every mutation; this schema only records
-# what was discovered and offered, never what was applied.
+
+
+
+
+
 SCHEMA_VERSION = "restatement-candidates.v1"
 
 _LABEL_PREFIX_RE = re.compile(r"^\[([^\[\]]{1,20})\]\s*")

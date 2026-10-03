@@ -4,6 +4,8 @@ from pathlib import Path
 import pytest
 
 from src.autoslice.selection_scorecard import (
+    ADMISSION_POLICY_FIELD,
+    CURRENT_ADMISSION_POLICY,
     SCHEMA_VERSION,
     SelectionCalibrationPolicyError,
     apply_reviewed_selection_calibration,
@@ -41,6 +43,27 @@ def _dimensions(**overrides: int) -> dict[str, int]:
     return base
 
 
+def _legacy_performance_card(**overrides: int) -> dict[str, object]:
+    """Build a v1 card whose historic tier can differ from today's gate."""
+
+    raw = _raw(
+        tier=1,
+        basis="audience_driven_performance",
+        dimensions=_dimensions(**overrides),
+    )
+    raw["fatigue_penalty"] = 0
+    card = normalize_selection_scorecard(
+        raw,
+        start_cue=8,
+        end_cue=20,
+    )
+    assert card is not None
+    card["tier"] = 1
+    card["reason_codes"] = []
+    card.pop(ADMISSION_POLICY_FIELD)
+    return card
+
+
 def test_scorecard_arithmetic_is_deterministic_and_evidence_bound() -> None:
     scorecard = normalize_selection_scorecard(
         _raw(
@@ -73,6 +96,135 @@ def test_incidental_name_cannot_self_declare_tier_one() -> None:
     assert scorecard is not None
     assert scorecard["tier"] == 2
     assert "TIER1_ADMISSION_DOWNGRADED" in scorecard["reason_codes"]
+
+
+def test_current_performance_requires_exceptional_payoff() -> None:
+    raw = _raw(
+        tier=1,
+        basis="audience_driven_performance",
+        dimensions=_dimensions(
+            lidousha_centrality=3,
+            stance_intensity=2,
+            audience_salience=2,
+            relationship_interaction=4,
+            persona_reversal=3,
+            comedic_payoff=3,
+            self_contained=3,
+        ),
+    )
+    raw["fatigue_penalty"] = 0
+    scorecard = normalize_selection_scorecard(
+        raw,
+        start_cue=8,
+        end_cue=20,
+    )
+
+    assert scorecard is not None
+    assert scorecard["tier"] == 2
+    assert scorecard["effective_score"] == 68.0
+    assert scorecard[ADMISSION_POLICY_FIELD] == CURRENT_ADMISSION_POLICY
+    assert selection_scorecard_is_valid(scorecard)
+
+
+def test_current_performance_with_complete_payoff_stays_tier_one() -> None:
+    scorecard = normalize_selection_scorecard(
+        _raw(
+            tier=1,
+            basis="audience_driven_performance",
+            dimensions=_dimensions(
+                audience_salience=2,
+                relationship_interaction=3,
+                persona_reversal=3,
+                comedic_payoff=4,
+                self_contained=3,
+            ),
+        ),
+        start_cue=8,
+        end_cue=20,
+    )
+
+    assert scorecard is not None
+    assert scorecard["tier"] == 1
+    assert selection_scorecard_is_valid(scorecard)
+
+
+@pytest.mark.parametrize("dimension", ["audience_salience", "self_contained"])
+def test_current_performance_without_audience_or_self_contained_gate_is_tier_two(
+    dimension: str,
+) -> None:
+    scorecard = normalize_selection_scorecard(
+        _raw(
+            tier=1,
+            basis="audience_driven_performance",
+            dimensions=_dimensions(
+                **{dimension: 1 if dimension == "audience_salience" else 2}
+            ),
+        ),
+        start_cue=8,
+        end_cue=20,
+    )
+
+    assert scorecard is not None
+    assert scorecard["tier"] == 2
+    assert selection_scorecard_is_valid(scorecard)
+
+
+def test_legacy_weak_performance_remains_valid_but_ranks_as_tier_two() -> None:
+    scorecard = _legacy_performance_card(
+        lidousha_centrality=3,
+        stance_intensity=2,
+        audience_salience=2,
+        relationship_interaction=4,
+        persona_reversal=3,
+        comedic_payoff=3,
+        self_contained=3,
+    )
+    before = json.dumps(scorecard, ensure_ascii=False, sort_keys=True)
+
+    assert selection_scorecard_is_valid(scorecard)
+    key = selection_rank_key(
+        {
+            "cid": "historic-performance",
+            "confidence": 0.9,
+            "selection_scorecard": scorecard,
+        }
+    )
+
+    assert key[0] == 2.0
+    assert key[1] == -68.0
+    assert json.dumps(scorecard, ensure_ascii=False, sort_keys=True) == before
+
+
+def test_legacy_strong_performance_keeps_historic_tier_one_priority() -> None:
+    scorecard = _legacy_performance_card(comedic_payoff=4, self_contained=3)
+
+    assert selection_scorecard_is_valid(scorecard)
+    assert selection_rank_key(
+        {"cid": "historic-strong-performance", "selection_scorecard": scorecard}
+    )[0] == 1.0
+
+
+def test_recalibration_rewrites_legacy_admission_to_current_policy() -> None:
+    scorecard = _legacy_performance_card(
+        lidousha_centrality=3,
+        stance_intensity=2,
+        audience_salience=2,
+        relationship_interaction=4,
+        persona_reversal=3,
+        comedic_payoff=3,
+        self_contained=3,
+    )
+    before = dict(scorecard)
+
+    recalibrated = apply_reviewed_selection_calibration(
+        "not-a-reviewed-anchor", scorecard
+    )
+
+    assert recalibrated is not None
+    assert recalibrated[ADMISSION_POLICY_FIELD] == CURRENT_ADMISSION_POLICY
+    assert recalibrated["tier"] == 2
+    assert selection_scorecard_is_valid(recalibrated)
+    assert scorecard == before
 
 
 def test_fabricated_score_span_invalidates_scorecard() -> None:
@@ -144,6 +296,21 @@ def test_unknown_basis_and_tampered_arithmetic_fail_closed() -> None:
     assert valid is not None
     valid["effective_score"] = 100.0
     assert selection_scorecard_is_valid(valid) is False
+
+    unknown_policy = dict(valid)
+    unknown_policy["effective_score"] = 79.5
+    unknown_policy[ADMISSION_POLICY_FIELD] = "selection-scorecard-admission.unknown"
+    assert selection_scorecard_is_valid(unknown_policy) is False
+
+    tampered_tier = dict(valid)
+    tampered_tier["effective_score"] = 79.5
+    tampered_tier["tier"] = 2
+    assert selection_scorecard_is_valid(tampered_tier) is False
+
+    tampered_cues = dict(valid)
+    tampered_cues["effective_score"] = 79.5
+    tampered_cues["tier_evidence_cues"] = [10]
+    assert selection_scorecard_is_valid(tampered_cues) is False
 
 
 def test_722_reviewed_score_anchor_replaces_95_point_overrating() -> None:

@@ -165,7 +165,7 @@ def regenerate_cover(
         # right-split = text LEFT (character on the right), left-split = text RIGHT.
         art_direction = dataclasses.replace(art_direction, layout=layout)
     if emote_id:
-        # 维护者 点名表情包（人工强理由通道）：--emote 覆盖 judge 的选择。歌切照旧禁用。
+
         if art_direction.is_song:
             raise SystemExit("EMOTE_NOT_ALLOWED_ON_SONG_COVERS")
         if emote_library.get(emote_id) is None:
@@ -182,11 +182,11 @@ def regenerate_cover(
     if not base_url or not api_key:
         raise SystemExit("BLOCKED_AI_COVER_REQUIRED: CPA_BASE_URL/CPA_API_KEY missing (no frame-grab fakery)")
 
-    # Emote reference resolution: replace mode swaps the reference to the
-    # sticker (no live frame needed at all); companion insets the sticker into
-    # the frame.  Once either a judge or 维护者 selects an emote, resolution
-    # failure is terminal for this repair attempt; never silently swap the
-    # cover subject after route selection.
+
+
+
+
+
     emote_entry = None
     emote_meta: dict | None = None
     emote_reference: Path | None = None

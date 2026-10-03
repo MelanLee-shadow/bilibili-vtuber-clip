@@ -191,15 +191,15 @@ _JUDGE_PROVIDER_MARKERS = (
 
 def _judge_row_provider_transient(row: object) -> bool:
     """A judge-layer call outage (JUDGE_CALL_FAILED/JUDGE_UNAVAILABLE) with a
-    provider-shaped error is the same recoverable class as an unavailable
-    audio witness — mirrors talk_lane.py's FINAL_REVIEW_ADJUDICATION_INFRA_
-    UNRESOLVED precedent.
+ provider-shaped error is the same recoverable class as an unavailable
+ audio witness — mirrors talk_lane.py's FINAL_REVIEW_ADJUDICATION_INFRA_
+ UNRESOLVED precedent.
 
-    维护者 工程优化②授权：judge 供应商瞬断（如三个 CPA 模型均短暂
-    400）此前误落 subtitle_authority（不可恢复），整轮候选被报废——真善美
-    zsm4 事故。判者语义拒绝（JUDGED 但 CURRENT/NEITHER/DROP）绝不在此列，
-    只有调用层本身失败（未拿到判者语义结果）才可能是可恢复的。
-    """
+ 公开规则工程优化②授权：judge 供应商瞬断（如三个 CPA 模型均短暂
+ 400）此前误落 subtitle_authority（不可恢复），整轮候选被报废——真善美
+ zsm4 事故。判者语义拒绝（JUDGED 但 CURRENT/NEITHER/DROP）绝不在此列，
+ 只有调用层本身失败（未拿到判者语义结果）才可能是可恢复的。
+ """
 
     if not isinstance(row, dict):
         return False
@@ -271,8 +271,8 @@ def foreign_source_provider_transient(
     ]
     if relevant_witness and all(witness_row_provider_transient(row) for row in relevant_witness):
         return True
-    # 维护者 工程优化②授权：判者层瞬断（同 cue 的 CPA judge 调用
-    # 失败，而非听写本身有问题）同样属于可恢复基础设施等待，不是文本终态。
+
+
     cpa_rows = violation.get("cpa_adjudication_rows")
     relevant_cpa = [
         row

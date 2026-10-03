@@ -1,18 +1,18 @@
-"""证据不足时的 best-effort 说话人分离（维护者 第二次裁定）。
+"""证据不足时的 best-effort 说话人分离（公开规则第二次裁定）。
 
 出处两句逐字，缺一不可：
 
-  ①「它必须无论如何至少先猜一个说话人，我才能审查，不能猜都不猜」
-  ②「我说的猜不是全片统一李豆沙，这样的话我要修正的工作量太大了，我要的就是
-     正常分离两说话人，尽最大努力分开，然后再由我改正」
+ ①「它必须无论如何至少先猜一个说话人，我才能审查，不能猜都不猜」
+ ②「我说的猜不是全片统一李豆沙，这样的话我要修正的工作量太大了，我要的就是
+ 正常分离两说话人，尽最大努力分开，然后再由我改正」
 
 覆盖四条硬要求：
-  (a) ``auto`` 档证据不足 → **有成品产出**，且成品标注为猜测；
-  (b) 该成品**不可自动上传**、不进自动上传路径（停泊态承载 fail-closed）；
-  (c) ``required`` 档行为不变（严格档从不要求降级，证据不足照旧硬失败）；
-  (d) 证据充分时仍走真分离，不被回落污染。
+ (a) ``auto`` 档证据不足 → **有成品产出**，且成品标注为猜测；
+ (b) 该成品**不可自动上传**、不进自动上传路径（停泊态承载 fail-closed）；
+ (c) ``required`` 档行为不变（严格档从不要求降级，证据不足照旧硬失败）；
+ (d) 证据充分时仍走真分离，不被回落污染。
 
-外加 维护者 ② 的专项守卫：猜出来的**必须是双人分离**而不是全片统一主播色；
+外加 公开规则② 的专项守卫：猜出来的**必须是双人分离**而不是全片统一主播色；
 统一色只在梯子最后一级作为兜底，且与前两级在回执里明确可分。
 """
 
@@ -403,7 +403,7 @@ def test_auto_evidence_shortage_still_produces_a_marked_guess(tmp_path: Path) ->
 
     manifest = _finalize(inputs, analyzer, best_effort_guess=True)
 
-    # 有产物：这正是 b4d4000 缺的那一半（当时 rc=1，维护者 打开什么也看不到）。
+
     assert inputs["srt"].is_file() and inputs["ass"].is_file()
     assert calls == [False, True]
     # 标注为猜：状态与 READY 全程可分，且永不自称 production_ready。
@@ -459,7 +459,7 @@ def test_guess_receipt_points_at_the_cues_that_need_correcting(
         False,
     ]
     assert receipt["clip_host_anchor_candidates"] == []
-    # 整体极性可能反（被提名成主播的那簇其实是客人）——必须明写，不让 维护者 自己推。
+
     assert receipt["host_guest_polarity"] == "GUESSED_FROM_TOP_SEED_CUES_MAY_BE_INVERTED"
     rows = {row["source_index"]: row for row in receipt["low_confidence_cues"]}
     assert receipt["low_confidence_cue_count"] == 2
@@ -522,7 +522,7 @@ def test_ladder_bottom_rung_is_uniform_host_and_stays_distinguishable(
         HOST_SPEAKER,
         HOST_SPEAKER,
     ]
-    # 兜底件每一句都自陈"没有声学分离"，维护者 一眼知道这条要整片重标。
+
     assert all(
         speaker_guess.GAP_NO_SEPARATION in row["reason_codes"]
         for row in receipt["low_confidence_cues"]
@@ -687,7 +687,7 @@ def test_guessed_delivery_parks_and_is_not_auto_uploadable() -> None:
     receipt = result["speaker_manual_review"]
     assert receipt["upload_authorized"] is False
     assert receipt["disposition"] == ("AWAITING_HUMAN_SPEAKER_CORRECTION_ON_GUESSED_DELIVERY")
-    # 成品路径写进 state：既是 维护者 的审阅入口，也挡住容量清理误删。
+
     assert receipt["review_artifacts"]["burned_video"].endswith("hook.mp4")
     assert receipt["review_artifacts"]["speaker_ass"].endswith(".speaker.ass")
     # rc==0 的路径上 classify_talk_failure 不会跑，失败面字段必须手工补齐——

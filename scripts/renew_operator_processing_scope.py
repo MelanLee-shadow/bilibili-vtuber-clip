@@ -16,12 +16,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.autoslice.historical_fastlane_authority import (  # noqa: E402
+from src.autoslice.historical_fastlane_authority import (
     HistoricalFastlaneAuthorityError,
     commit_scope_renewal,
     prepare_scope_renewal,
 )
-from src.autoslice.producer_delivery_transaction import deployment_authority_binding  # noqa: E402
+from src.autoslice.producer_delivery_transaction import deployment_authority_binding
 
 
 def main(argv: list[str] | None = None) -> int:

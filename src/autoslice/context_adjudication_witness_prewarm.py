@@ -4,46 +4,46 @@
 per-finding worker ``adjudicate_context_finding`` (``final_review_auditor.py``)
 run serially and, in the common (non-deferred, non-rebased) case, each spend
 one AGY dictation-witness call built from ``build_context_adjudication_request``
-+ ``build_witness_request``.  That witness call is candidate-blind (only cue
++ ``build_witness_request``. That witness call is candidate-blind (only cue
 audio geometry survives into the request — see ``build_witness_request``) and
 its result is written to a content-addressed, hash-keyed disk cache
 (``entity_verdicts/<hash>/verdict.manifest.json`` /
-``acoustic_cache/<identity>.json``).  A cache lookup by exact
+``acoustic_cache/<identity>.json``). A cache lookup by exact
 ``request_sha256``/``audio_clip_sha256`` identity can never serve the wrong
 answer to a mismatched request — at worst it misses and the caller falls back
-to the ordinary provider call.  That makes it safe to *warm* this cache ahead
+to the ordinary provider call. That makes it safe to *warm* this cache ahead
 of the serial loop by firing the same, byte-identical first-window requests
 concurrently, then letting the untouched serial loop replay them from cache.
 
 This module deliberately reads only ``srt_text``/``findings`` and the same
 constants (``max_adjudications``) the real loop already enforces; it never
 mutates ``srt_text``, never touches subtitle state, and never authorizes any
-mutation.  It replicates, read-only, exactly the admission bookkeeping
+mutation. It replicates, read-only, exactly the admission bookkeeping
 ``adjudicate_routed_findings`` performs before it would call the provider for
 each finding, so that:
 
 * only the *first* finding of each admitted (start_ms, end_ms) window is
-  prewarmed — later same-window findings are always rebased mid-loop
-  (``rebase_deferred_finding``) before their real request is built, so a
-  prewarm request built against the pre-loop text is guaranteed to miss for
-  them regardless (see the module docstring and ``adjudicate_routed_findings``
-  in ``deferred_same_cue_resolution.py``);
+ prewarmed — later same-window findings are always rebased mid-loop
+ (``rebase_deferred_finding``) before their real request is built, so a
+ prewarm request built against the pre-loop text is guaranteed to miss for
+ them regardless (see the module docstring and ``adjudicate_routed_findings``
+ in ``deferred_same_cue_resolution.py``);
 * findings that would fail either of the loop's own cheap prechecks
-  (``base_text_sha256`` no longer matches the live cue text, or
-  ``suspect`` is no longer a substring of the live cue text) are skipped,
-  matching ``STALE_FINDING_SKIPPED``/rebase in the real loop;
+ (``base_text_sha256`` no longer matches the live cue text, or
+ ``suspect`` is no longer a substring of the live cue text) are skipped,
+ matching ``STALE_FINDING_SKIPPED``/rebase in the real loop;
 * windows beyond ``max_adjudications`` (``group_sizes``/``reserved_calls``,
-  the same ``ContextAdjudicationBudget``-shaped cap the real loop enforces)
-  are never prewarmed, so prewarm cannot spend AGY/Gemini quota the serial
-  loop would never have spent.
+ the same ``ContextAdjudicationBudget``-shaped cap the real loop enforces)
+ are never prewarmed, so prewarm cannot spend AGY/Gemini quota the serial
+ loop would never have spent.
 
 Any failure building or firing an individual request (invalid finding,
 provider error, timeout, malformed response) is swallowed per item; the
-function itself never raises.  It writes nothing except through the ordinary
+function itself never raises. It writes nothing except through the ordinary
 ``entity_verifier`` cache-write path already exercised by the serial loop.
 
 
-提速理由（维护者 裁定）：串行主循环逐 finding 打一次 AGY 听写证人，
+提速理由（公开规则裁定）：串行主循环逐 finding 打一次 AGY 听写证人，
 是这条腿墙钟时间的主因。证人请求是纯函数——内容由音频几何决定，结果按
 request_sha256/audio_clip_sha256 内容寻址落盘——所以同一份请求提前并发打一遍
 写进既有缓存，随后串行循环原样命中即可。预热**只读**地复演

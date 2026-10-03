@@ -1,7 +1,6 @@
 import hashlib
 import json
 import fcntl
-from pathlib import Path
 
 import pytest
 

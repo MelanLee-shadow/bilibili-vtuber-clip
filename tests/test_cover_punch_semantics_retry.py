@@ -2,7 +2,7 @@
 
 合并 ft-a8600994 时的改动说明：本文件来自 ft 分支,写时该分支的
 ``SCHEMA_VERSION`` 还是 v1、判官只有三项布尔门,故 fixture 里硬编码了
-``...review.v1`` 且不带 ``no_fabricated_fact``。主线 3301e4e 已按 维护者
+``...review.v1`` 且不带 ``no_fabricated_fact``。主线 3301e4e 已按 公开规则
 裁定把 schema 抬到 v2 并新增 fail-closed 的反编造门
 ``no_fabricated_fact``。合并后取更严那侧(v2 四项布尔),因此这里把 fixture
 的 schema 改成引用模块常量 ``SCHEMA_VERSION``、并给每个 payload 补上

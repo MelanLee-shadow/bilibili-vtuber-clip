@@ -3,8 +3,11 @@
 
 This runner discovers finalized recordings, selects talk and song candidates,
 and drives the canonical pipeline into review-ready delivery artifacts and
-status reports. Upload and publication stay off at this boundary: drafts keep
-``upload_enabled=false`` and no upload path is enabled here.
+status reports. Publication stays off by default. When the explicit authorized
+queue flag is enabled, the runner may prepare one manifest from a hash-bound
+project authority or consume one ``READY_FOR_SERIAL_UPLOAD`` manifest through
+the canonical upload state machine; it never invents authorization or bypasses
+package/review gates.
 
 Pipeline rules and step authority live in ``docs/pipeline/README.md`` and its
 linked step documents; runtime deployment and pause controls belong to the
@@ -55,7 +58,9 @@ from src.autoslice.batch_terminal_state import (
 )
 from src.autoslice import (
     live_gate,
+    publication_queue,
     publication_reconciliation,
+    runner_publication_queue,
     review_package_poststage,
     runner_state_writeback,
     semantic_evidence_scorecard_refresh as semantic_chat_refresh,
@@ -142,6 +147,7 @@ from src.autoslice.structured_chat_binding import (
     StructuredChatBindingError,
     resolve_structured_chat_binding as _resolve_structured_chat_binding,
 )
+from src.autoslice.supplement_audio_budget import validate_budget_config
 from src.autoslice.cpa_runtime import (
     build_cpa_qa_command as _build_cpa_qa_command,
     probe_cpa_health as _probe_cpa_health,
@@ -196,13 +202,67 @@ def profile_tool(key: str) -> Path:
 
 BASE = Path(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice"))
 os.environ.setdefault("AUTOSLICE_BASE", str(BASE))
-# 维护者: during the speaker data-accumulation phase every delivered
-# clip keeps the single host (李豆沙) subtitle style and speaker uncertainty
-# must never reject a delivery. "required"/"auto" stay available for the
-# future re-enable decision.
+
+
+
+
 SPEAKER_MODE = os.environ.get("AUTOSLICE_SPEAKER_MODE", "uniform_host")
 if SPEAKER_MODE not in {"uniform_host", "required", "auto"}:
     SPEAKER_MODE = "uniform_host"
+
+LOCAL_AUDIO_WITNESS_PROVIDER_ENV = "AUTOSLICE_LOCAL_AUDIO_WITNESS_PROVIDER"
+LOCAL_AUDIO_WITNESS_MAX_WINDOWS_ENV = "AUTOSLICE_LOCAL_AUDIO_WITNESS_MAX_WINDOWS"
+LOCAL_AUDIO_WITNESS_MAX_AUDIO_MS_ENV = "AUTOSLICE_LOCAL_AUDIO_WITNESS_MAX_AUDIO_MS"
+_LOCAL_AUDIO_WITNESS_PROVIDERS = frozenset({"agy", "moss", "mai"})
+
+
+def _positive_audio_budget_env(name: str) -> int | None:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        value = int(raw.strip())
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive integer") from exc
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
+def local_audio_witness_config() -> dict[str, object | None]:
+    """Read the explicit normal-runner local audio witness configuration.
+
+    An unset provider deliberately leaves the producer spec unchanged, so the
+    existing local AGY/Gemini witness remains the default.  A budget is only
+    meaningful with an explicitly selected native provider and is rejected
+    otherwise instead of guessing a provider or silently dropping the limit.
+    """
+
+    raw_provider = os.environ.get(LOCAL_AUDIO_WITNESS_PROVIDER_ENV, "").strip().lower()
+    provider = raw_provider or None
+    if provider not in {None, *_LOCAL_AUDIO_WITNESS_PROVIDERS}:
+        raise ValueError(
+            f"{LOCAL_AUDIO_WITNESS_PROVIDER_ENV} must be unset, agy, moss or mai"
+        )
+    max_windows = _positive_audio_budget_env(LOCAL_AUDIO_WITNESS_MAX_WINDOWS_ENV)
+    max_audio_ms = _positive_audio_budget_env(LOCAL_AUDIO_WITNESS_MAX_AUDIO_MS_ENV)
+    if max_windows is None and max_audio_ms is None:
+        budget = None
+    else:
+        if provider not in {"moss", "mai"}:
+            raise ValueError(
+                "local audio witness budget requires "
+                f"{LOCAL_AUDIO_WITNESS_PROVIDER_ENV}=moss or mai"
+            )
+        budget = validate_budget_config(
+            {
+                **({"max_windows": max_windows} if max_windows is not None else {}),
+                **({"max_audio_ms": max_audio_ms} if max_audio_ms is not None else {}),
+            }
+        )
+    return {"provider": provider, "budget": budget}
+
+
 ROOM = os.environ.get("AUTOSLICE_ROOM", CHANNEL_PROFILE.room_id)
 _DEFAULT_REC_ROOT = Path(f"/path/to/cloud-drive/live-streaming/{ROOM}")
 REC_ROOT = Path(
@@ -268,9 +328,9 @@ TALK_ATTEMPT_CAP = 20  # reject unsafe content candidates and backfill, bounded
 # 冒烟同款 backfill（帽更小）：talk[0] 一票否决曾让整次冒烟颗粒无收，而它偏偏
 # 是文档推荐的"第一支切片"入口——单候选级 fail-closed 时换下一个候选再试。
 SMOKE_TALK_ATTEMPT_CAP = 3
-MAX_SONGS_PER_DATE = 1  # 维护者: 每天一条歌切；同日多场共享额度
+MAX_SONGS_PER_DATE = 1
 MAX_SONGS_PER_SESSION = MAX_SONGS_PER_DATE  # legacy import alias; budget is per date
-MIN_TALK_EFFECTIVE_DURATION_MS = 45_000
+MIN_TALK_EFFECTIVE_DURATION_MS = 60_000
 TALK_PER_SEGMENT_CAP = 2  # diversity guard on the GLOBAL confidence ranking; slack refills
 SONG_ATTEMPT_CAP = 6  # per-pipeline-generation song attempts for one live session
 SONG_LIFETIME_ATTEMPT_CAP = 18  # absolute session cap including superseded attempts;
@@ -319,12 +379,12 @@ SONG_INFRA_TRANSIENT_REASON_CODES = frozenset(
 # boundary_unrepairable (no delivery; fingerprint-gated bounded self-heal).
 DELIVERED_TALK_STATUSES = {"ok", "review_ready", "quarantine"}
 TALK_COVER_PENDING_STATUS = "media_ready_cover_pending"
-# Recall pool, not delivery quota. Long sessions are recalled in overlapping
-# 30-minute windows and need enough global slack for review gates before the
-# per-live-session top-5 delivery selection.
-# 12 -> 18 (+50%, 维护者「候选也最好搞多一点」): a RESOLVED game
-# session can now deliver up to 20 talk picks, so the recall pool feeding it
-# needs more slack too.
+
+
+
+
+
+
 PER_SEGMENT_CANDIDATES = 18
 MIN_SEGMENT_BYTES = 5_000_000  # recorder restart stubs are a few KB — dead on sight
 BCUT_MAX_ATTEMPTS = 2
@@ -398,30 +458,30 @@ DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 PIPELINE_FINGERPRINT_EXCLUSIONS = {
     "src/autoslice/reporting.py",
 }
-# Per-stage CPA model chains (维护者): sol ONLY where open-ended
-# judgment is load-bearing — semantic recall (editorial pick over a 30-min
-# transcript) and the single brand-critical title call (high effort, short
-# prompt).  Terra (the everyday 5.5 successor) carries song hints: fuzzy
-# world-knowledge recall from garbled ASR, NOT a known-good-shape task — and it
-# is non-load-bearing anyway (known_songs fingerprint pinning + clean-line
-# search are the authority; a wrong hint is discarded by the alignment gate).
-# Luna carries cover art direction: a structured pick with a known good shape,
-# high volume, deterministic fallback + judge guardrails — the doc-exact luna
-# lane.  Every chain falls back gpt-5.5 → gpt-5.4.
+
+
+
+
+
+
+
+
+
+
 CPA_CMD_DEEP = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-sol' medium"
 CPA_CMD_TITLE = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-sol' high"
 CPA_CMD_STANDARD = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-sol' medium"
 CPA_CMD_STRUCTURED = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-sol' medium"
-# The selector's --cpa-command is the semantic-QA JUDGE lane (request/response
-# JSON contract), NOT a prompt/completion LLM template — canonical validated
-# command per the retired live-e2e runbook.  The selector
-# does NOT run it through a shell, so the api-base must be substituted here
-# (the key stays off the command line via --api-key-env).
-# (维护者): the judge moved to gpt-5.6-luna on the /responses route
-# (structured verdict = the doc-exact luna lane; gpt-5.x misroute on chat).
-# max-tokens 16000 keeps headroom for reasoning burn; --retries 3 absorbs the
-# upstream empty-completion quirk.  Judge failure stays fail-closed (BLOCK,
-# advisory-only for delivery since the song contract).
+
+
+
+
+
+
+
+
+
+
 
 
 def pipeline_fingerprint() -> str:
@@ -586,7 +646,7 @@ def talk_pipeline_fingerprint(candidate_id: str) -> str:
 # Implementation lives in src/autoslice/speaker_routing_session.py; these
 # wrappers rebuild the context from module globals AT CALL TIME so tests that
 # monkeypatch BASE/log/child_env on this module keep steering the behaviour.
-from src.autoslice.speaker_routing_session import (  # noqa: E402
+from src.autoslice.speaker_routing_session import (
     SPEAKER_ROUTING_SESSION_AUTHORITY_SCHEMA,
     SPEAKER_ROUTING_DATE_RE,
     RunnerContext as _SpeakerRunnerContext,
@@ -601,17 +661,17 @@ from src.autoslice.speaker_routing_session import (  # noqa: E402
     _speaker_session_state_from_authority,
     _speaker_session_state_matches_authority,
 )
-from src.autoslice import speaker_routing_session as _speaker_routing_session  # noqa: E402
+from src.autoslice import speaker_routing_session as _speaker_routing_session
 
-from src.autoslice.verified_io import (  # noqa: E402
+from src.autoslice.verified_io import (
     _matches_sha256,
     _canonical_existing_path,
     _normalized_sha256,
     _read_json_object,
     _document_video_hash,
 )
-from src.autoslice import song_completion as _song_completion  # noqa: E402
-from src.autoslice.song_completion import (  # noqa: E402
+from src.autoslice import song_completion as _song_completion
+from src.autoslice.song_completion import (
     MATERIALIZED_RECUT_SCHEMA_VERSION,
     VERIFIED_SONG_OUTPUT_BINDING_SCHEMA_VERSION,
     SONG_STREAM_CONTRACT_SCHEMA_VERSION,
@@ -619,7 +679,7 @@ from src.autoslice.song_completion import (  # noqa: E402
     _expected_song_recut_command,
     _has_exact_av_streams,
 )
-from src.autoslice.song_lane import (  # noqa: E402
+from src.autoslice.song_lane import (
     _srt_cue_spans,
     _song_core_span,
     song_status,
@@ -635,11 +695,11 @@ from src.autoslice.song_lane import (  # noqa: E402
     scheduled_retry_epoch,
     produce_song,
 )
-from src.autoslice.published_song_history import (  # noqa: E402
+from src.autoslice.published_song_history import (
     PublishedSongHistoryError,
     published_song_match as _published_song_match,
 )
-from src.autoslice.talk_lane import (  # noqa: E402
+from src.autoslice.talk_lane import (
     danmaku_hints,
     danmaku_count_in,
     slice_srt,
@@ -653,10 +713,10 @@ from src.autoslice.talk_lane import (  # noqa: E402
     classify_talk_failure,
     produce_talk,
 )
-from src.autoslice.talk_failure_recovery_policy import (  # noqa: E402
+from src.autoslice.talk_failure_recovery_policy import (
     subtitle_authority_recovery_relatives,
 )
-from src.autoslice.session_discovery import (  # noqa: E402
+from src.autoslice.session_discovery import (
     date_chat_jsonl_files,
     _clean_dian_ge_title,
     dian_ge_song_titles,
@@ -668,7 +728,7 @@ from src.autoslice.session_discovery import (  # noqa: E402
     annotate_state_sessions,
     discover_segments,
 )
-from src.autoslice.song_delivery import (  # noqa: E402
+from src.autoslice.song_delivery import (
     VERIFIED_SONG_DELIVERY_SCHEMA_VERSION,
     SongDeliveryError,
     record_is_song,
@@ -683,7 +743,7 @@ from src.autoslice.song_delivery import (  # noqa: E402
     _stage_verified_bytes,
     _atomic_verified_song_delivery,
 )
-from src.autoslice.delivery_recovery import (  # noqa: E402
+from src.autoslice.delivery_recovery import (
     CONTENT_BOUNDARY_RECOVERY_RELATIVES,
     TALK_RECOVERY_FAILURE_STATUSES,
     _song_delivery_recovery_authority,
@@ -697,7 +757,7 @@ from src.autoslice.delivery_recovery import (  # noqa: E402
     requeue_recoverable_songs,
     requeue_recoverable_talks,
 )
-from src.autoslice.candidate_selection import (  # noqa: E402
+from src.autoslice.candidate_selection import (
     _exact_talk_contract_ids,
     exact_talk_contract_closure,
     session_sealed,
@@ -710,13 +770,13 @@ from src.autoslice.candidate_selection import (  # noqa: E402
     refill_songs,
     prioritize, replace_scoped_pending_talk_items, scoped_pending_talk_items,
 )
-from src.autoslice import historical_failed_talk_scope, operator_processing_scope as operator_scope  # noqa: E402
-from src.autoslice import selected_source_fact_recovery_persistence  # noqa: E402
+from src.autoslice import historical_failed_talk_scope, operator_processing_scope as operator_scope
+from src.autoslice import selected_source_fact_recovery_persistence
 from src.autoslice.exact_talk_recovery_scope import (
     suppress_exact_talk_recovery_song_work,
-)  # noqa: E402
-from src.autoslice.selection_rescore import split_produce_blocked_talk_items  # noqa: E402
-from src.autoslice.cover_repair import (  # noqa: E402
+)
+from src.autoslice.selection_rescore import split_produce_blocked_talk_items
+from src.autoslice.cover_repair import (
     COVER_TRANSACTION_SCHEMA_VERSION,
     _validate_repaired_cover_generation,
     _active_cover_documents,
@@ -737,7 +797,7 @@ from src.autoslice.cover_repair import (  # noqa: E402
     _cover_repair_eligible,
     _cover_authority_preflight,
 )
-from src.autoslice.cover_maintenance import (  # noqa: E402
+from src.autoslice.cover_maintenance import (
     delivered_paths,
     cover_ref_for,
     _json_file_bytes,
@@ -745,7 +805,7 @@ from src.autoslice.cover_maintenance import (  # noqa: E402
     _atomic_write_json_file,
     repair_covers,
 )
-from src.autoslice.reporting import write_reports  # noqa: E402
+from src.autoslice.reporting import write_reports
 
 
 def song_completion_evidence(record: dict) -> dict:
@@ -864,8 +924,8 @@ def talk_failure_recovery_fingerprint(failure_kind: str | None, candidate_id: st
             "src/autoslice/speaker_context.py",
             "src/autoslice/speaker_evidence.py",
             "src/autoslice/speaker_finalizer.py",
-            # 证据不足时的 best-effort 分离本体（维护者 第二次裁定）：
-            # 它现在也是"能修好一条说话人失败"的代码之一，改了必须唤醒停泊件。
+
+
             "src/autoslice/speaker_guess.py",
             profile_asset_file("voiceprint_profile"),
         )
@@ -1017,9 +1077,9 @@ def child_env() -> dict[str, str]:
 def child_env_for_date(recording_date: str) -> dict[str, str]:
     env = child_env()
     env["LIDOUSHA_TERM_AS_OF"] = recording_date
-    # 会话游戏语境（维护者 指令：鹅鸭杀场三症状通病修复）。检测与
-    # 状态文件都在 src.autoslice.game_context；这里只按日期绑定 env，失败即
-    # 无语境，绝不阻断产线。
+
+
+
     bind_session_game_context(
         env,
         recording_date=recording_date,
@@ -1310,9 +1370,9 @@ def list_dates() -> list[str]:
         except (OSError, ValueError):
             continue
         recovery_in_progress = historical_source_recovery_in_progress(state, TALK_COVER_PENDING_STATUS)
-        # 第三条例外：运维显式点名（维护者 逐字「87 现在需要纳入处理
-        # 范围」）。判据、出处校验与"干完就自动出圈"全在
-        # src/autoslice/operator_processing_scope.py。
+
+
+
         admission = operator_scope.operator_scope_admission(state, date=date)
         if admission.log_line:
             log(f"list_dates: {date}: {admission.log_line}")
@@ -1847,6 +1907,14 @@ def tick(*, historical_date: str | None = None) -> int:
     suffix = f" live_yield_deferred={' '.join(deferred)}" if deferred else ""
     if deploy_deferred:
         suffix += f" deploy_yield_deferred={' '.join(deploy_deferred)}"
+    suffix += runner_publication_queue.consume_tick(
+        publication_queue,
+        enabled=historical_date is None
+        and os.environ.get("AUTOSLICE_AUTHORIZED_UPLOAD_QUEUE_ENABLED", "0") == "1",
+        blocked=bool(deferred or deploy_deferred),
+        repository_root=REPO_ROOT,
+        runtime_root=BASE,
+        log=log)
     write_heartbeat(f"live={live} source=ok dates={' '.join(checked) or '(none)'}{suffix}")
     log(f"tick done: live={live} dates={' '.join(checked) or '(none)'}{suffix}")
     return 0

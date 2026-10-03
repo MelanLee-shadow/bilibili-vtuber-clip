@@ -338,7 +338,7 @@ def test_canary_2b_final_game_gate_rejects_an_empty_panel(tmp_path):
         "source_lidousha_located": True,
         "host_window_visible_in_final": True,
         "host_window_identity_matches": True,
-        # 她确实不是主体——这正是 维护者 8/9 说的"主体肯定是游戏"，不该扣分。
+
         "primary_subject_is_visually_dominant": False,
         "frame_is_interesting": True,
         "excessive_dead_space": False,
@@ -363,7 +363,7 @@ def test_canary_2b_final_game_gate_rejects_an_empty_panel(tmp_path):
         finally:
             visual_witness.image_vision_probe = original
 
-    # 基线：她不占主要部分也能过——这就是 维护者 8/9 裁定的机器面。
+
     passing = _verify(base)
     assert passing["status"] == "PASS"
     assert passing["scene_kind"] == GAME_SCENE
@@ -388,15 +388,16 @@ def test_canary_2b_final_game_gate_rejects_an_empty_panel(tmp_path):
 # ───────────────── ③ 保真：当前 talk 提问契约 ─────────────────
 
 # Source pixels decide appearance; a calm expression can support a screenshot.
-# Final talk QC also allows story-related calm states and joint image/text hooks.
-# Game-scene contracts remain unchanged.
+# Intentional source-consistent eyepatches are identity, not missing-face evidence;
+# real frame/card/text/object clipping remains a failure.  The exact current talk
+# contracts stay pinned here so later edits must be deliberate.
 _TALK_SOURCE_QUESTION_SHA = (
-    "12e68752fdb2633437d40b1f07be43b097e0ff278eea6d0a0f6bca2c944a073e"
+    "e45518631beaa30dc3c5d912fbda13352696e10f1f7523c5c66da11ee389762e"
 )
 # 143f711f intentionally separates narrated actions from visible pixels.
 # Keep this exact pin plus semantic assertions; do not revert the valid prompt.
 _TALK_HOST_GATE_QUESTION_SHA = (
-    "a358d30a15e51cdc57334b5dea0837d4558f380a1cf274b4a481fb5ca74581a5"
+    "7cdce7f362150f712c434bc29a2138f2f307d029caa409a0916b387064dff5ad"
 )
 
 
@@ -412,13 +413,17 @@ def test_canary_3_talk_prompts_match_current_contract_fingerprints():
         == _TALK_HOST_GATE_QUESTION_SHA
     )
     assert "源图实际可见" in _QUESTION_PREFIX and "头戴物" in _QUESTION_PREFIX
+    assert "原本被眼罩遮住的一只眼不算缺失" in _QUESTION_PREFIX
+    assert "直播卡片、文字或其他遮挡物" in _QUESTION_PREFIX
+    assert "原有眼罩是身份特征和 intentional occlusion" in HOST_QUESTION
+    assert "画面边缘、卡片、已渲染文字或新加物体" in HOST_QUESTION
     assert "本图像门不能仅凭没有画出动作或对象" in HOST_QUESTION
     assert "只有人物名/空泛口号、主体缺失" in HOST_QUESTION
     assert "图文存在可指出的事实矛盾，仍须判 false" in HOST_QUESTION
 
 
 def test_canary_3b_talk_receipt_and_call_shape_are_unchanged(tmp_path):
-    """talk 场不多带 scene_kind：回执形状、提问串、kwargs 全部零变化。"""
+    """talk 场不多带 scene_kind：新提问仍沿用原回执与调用形状。"""
 
     reference = _reference(tmp_path)
     probe = _probe(_REAL_8_8_DEMOTED_VERDICT)
@@ -844,11 +849,11 @@ def test_repair_still_runs_for_demoted_and_blocked_screenshot_attempts(tmp_path)
     )
 
 
-# ───────────── ⑦ 竖屏源 → 重绘（维护者 逐字裁定）─────────────
-#
-# 「并不是所有的都需要截图，特别是竖屏直播，通常不适合截图，只能重绘。」
-# 实测事故：`auto_230125_960_1072`（BV1Bau16nEyq）源帧 1920×3414，16:9 窗口
-# 对准形心后从眼睛处切断。以下三条钉住：判据成立、判据优先级、判据不误伤。
+
+
+
+
+
 
 _VERTICAL_SOURCE_SIZE = (1920, 3414)      # 真实事故几何，h/w = 1.7781
 _LANDSCAPE_SOURCE_SIZE = (1920, 1080)     # 16:9，h/w = 0.5625

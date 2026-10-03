@@ -810,6 +810,158 @@ def test_same_group_multi_occurrence_with_mishear_still_blocks():
     assert audit["entity_verdict_required"][0]["reason_code"] == "TRANSCRIPT_ENTITY_SLOT_AMBIGUOUS"
 
 
+def test_one_noncanonical_same_identity_uses_bound_target_slot_and_current_can_pass():
+    group = ReferentGroup(
+        (
+            ReferentEntity("李豆沙", ("李豆沙", "流沙")),
+            ReferentEntity("小李", ("小李",)),
+        ),
+        audio_verify_all_surfaces=True,
+    )
+    source = _srt("虽然李豆沙叫流沙")
+    requests = []
+
+    def verifier(request):
+        requests.append(request)
+        assert request["schema_version"] == "transcript-entity-verification-request.v1"
+        assert request["candidate_entities"] == [
+            {"canonical": "李豆沙", "surfaces": ["李豆沙", "流沙"], "readings": []},
+            {"canonical": "小李", "surfaces": ["小李"], "readings": []},
+        ]
+        assert request["target_slot"]["exact_surface"] == "流沙"
+        assert request["target_slot"]["mapped_canonical"] == "李豆沙"
+        assert request["target_slot"]["character_start"] == 6
+        assert request["target_slot"]["character_end"] == 8
+        assert [choice["choice_id"] for choice in request["slot_choices"]][0] == "CURRENT"
+        assert {choice["canonical_entity"] for choice in request["slot_choices"][1:]} == {
+            "李豆沙",
+            "小李",
+        }
+        return {
+            "schema_version": "chat-entity-verdict.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "RESOLVED",
+            "authority_kind": "cpa_witness_adjudication",
+            "decision_authority": "CPA_JUDGE",
+            "witness_authority": "EVIDENCE_ONLY",
+            "witness_status": "UNCERTAIN",
+            "confidence": 0.91,
+            "witness_request_sha256": "a" * 64,
+            "judge_prompt_sha256": "b" * 64,
+            "judge_completion_sha256": "c" * 64,
+            "target_slot_id": request["target_slot"]["slot_id"],
+            "slot_choice_id": "CURRENT",
+            "selected_slot_text": "流沙",
+            "selected_full_cue": "虽然李豆沙叫流沙",
+            "selected_full_cue_sha": request["slot_choices"][0]["full_cue_sha256"],
+            "selected_full_cue_sha256": request["slot_choices"][0]["full_cue_sha256"],
+            "ranking": [
+                {"choice_id": choice["choice_id"], "p": 0.91 if index == 0 else 0.04}
+                for index, choice in enumerate(request["slot_choices"])
+            ],
+        }
+
+    output, audit = apply_audio_entity_verification(
+        source, referent_groups=[group], entity_verifier=verifier
+    )
+
+    assert output == source
+    assert len(requests) == 1
+    assert audit["entity_verdict_required"] == []
+    assert audit["confirmed"][0]["slot_choice_id"] == "CURRENT"
+
+
+def test_one_noncanonical_same_identity_canonical_choice_replaces_only_target_slice():
+    group = ReferentGroup(
+        (
+            ReferentEntity("李豆沙", ("李豆沙", "流沙")),
+            ReferentEntity("小李", ("小李",)),
+        ),
+        audio_verify_all_surfaces=True,
+    )
+    source = _srt("虽然李豆沙叫流沙")
+
+    def verifier(request):
+        selected = request["slot_choices"][1]
+        return {
+            "schema_version": "chat-entity-verdict.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "RESOLVED",
+            "authority_kind": "cpa_witness_adjudication",
+            "decision_authority": "CPA_JUDGE",
+            "witness_authority": "EVIDENCE_ONLY",
+            "witness_status": "OBSERVED",
+            "confidence": 0.88,
+            "witness_request_sha256": "a" * 64,
+            "judge_prompt_sha256": "b" * 64,
+            "judge_completion_sha256": "c" * 64,
+            "target_slot_id": request["target_slot"]["slot_id"],
+            "slot_choice_id": selected["choice_id"],
+            "selected_slot_text": selected["slot_text"],
+            "selected_full_cue": selected["full_cue"],
+            "selected_full_cue_sha": selected["full_cue_sha256"],
+            "selected_full_cue_sha256": selected["full_cue_sha256"],
+            "canonical_entity": selected["canonical_entity"],
+            "ranking": [
+                {"choice_id": choice["choice_id"], "p": 0.90 if choice is selected else 0.05}
+                for choice in request["slot_choices"]
+            ],
+        }
+
+    output, audit = apply_audio_entity_verification(
+        source, referent_groups=[group], entity_verifier=verifier
+    )
+
+    assert "虽然李豆沙叫李豆沙" in output
+    assert audit["status"] == "APPLIED_AND_VERIFIED"
+    assert audit["repairs"][0]["mode"] == "transcript_entity_slot_only"
+
+
+def test_one_noncanonical_slot_rejects_incomplete_ranking_without_calling_it_applied():
+    group = ReferentGroup(
+        (
+            ReferentEntity("李豆沙", ("李豆沙", "流沙")),
+            ReferentEntity("小李", ("小李",)),
+        ),
+        audio_verify_all_surfaces=True,
+    )
+    source = _srt("虽然李豆沙叫流沙")
+
+    def malformed(request):
+        selected = request["slot_choices"][1]
+        return {
+            "schema_version": "chat-entity-verdict.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "RESOLVED",
+            "authority_kind": "cpa_witness_adjudication",
+            "decision_authority": "CPA_JUDGE",
+            "witness_authority": "EVIDENCE_ONLY",
+            "witness_status": "OBSERVED",
+            "confidence": 0.99,
+            "witness_request_sha256": "a" * 64,
+            "judge_prompt_sha256": "b" * 64,
+            "judge_completion_sha256": "c" * 64,
+            "target_slot_id": request["target_slot"]["slot_id"],
+            "slot_choice_id": selected["choice_id"],
+            "selected_slot_text": selected["slot_text"],
+            "selected_full_cue": selected["full_cue"],
+            "selected_full_cue_sha": selected["full_cue_sha256"],
+            "selected_full_cue_sha256": selected["full_cue_sha256"],
+            "canonical_entity": selected["canonical_entity"],
+            "ranking": [{"choice_id": selected["choice_id"], "p": 1.0}],
+        }
+
+    output, audit = apply_audio_entity_verification(
+        source, referent_groups=[group], entity_verifier=malformed
+    )
+
+    assert output == source
+    assert audit["status"] == "ENTITY_VERDICT_REQUIRED"
+    assert audit["entity_verdict_required"][0]["reason_code"] == (
+        "TRANSCRIPT_ENTITY_SLOT_AMBIGUOUS"
+    )
+
+
 WD_GROUP = ReferentGroup(
     (
         ReferentEntity("李豆沙", ("李豆沙",), ("li dou sha",)),
@@ -2653,8 +2805,8 @@ def test_unrelated_reviewed_text_override_does_not_supersede_chat_read():
 
 
 def test_hard_meme_surface_zhinv_is_always_canonicalized():
-    """维护者 铁律：这是梗，所有「直女」一律写成「侄女」（无例外），
-    与 code-switch 同机制、authority 分表可审计。"""
+    """公开规则铁律：这是梗，所有「直女」一律写成「侄女」（无例外），
+ 与 code-switch 同机制、authority 分表可审计。"""
     from src.autoslice.chat_authority import canonicalize_hard_surfaces
 
     source = _srt("我是直女", "全场都在鼓掌")
@@ -2821,10 +2973,10 @@ def test_sc_read_with_mid_read_interjection_is_preserved():
 
 
 def test_sc_emote_placeholders_survive_subtitle_splice_generic_glyphs_still_stripped():
-    """维护者 审片裁定新增专名「；；」（读"分号分号"）：模拟哭哭表情，
-    李豆沙直播间专属梗，SC/弹幕带它不能忽略——必须逐字进字幕，不再被当成
-    占位乱码顿号化/丢弃（此前版本会折叠成逗号，属于「弹幕不修正」铁律要拦
-    的改写）。生僻区颜文字仍然真的渲染不出来，继续剥离。"""
+    """公开规则审片裁定新增专名「；；」（读"分号分号"）：模拟哭哭表情，
+ 李豆沙直播间专属梗，SC/弹幕带它不能忽略——必须逐字进字幕，不再被当成
+ 占位乱码顿号化/丢弃（此前版本会折叠成逗号，属于「弹幕不修正」铁律要拦
+ 的改写）。生僻区颜文字仍然真的渲染不出来，继续剥离。"""
     from src.autoslice.chat_authority import _strip_unrenderable_for_subtitle
 
     assert _strip_unrenderable_for_subtitle("李姐；；动车被取消了；；我想回家；；") == (
@@ -3092,8 +3244,8 @@ def test_spoken_repeat_after_read_survives():
 
 
 def test_hard_meme_rule_applies_to_quoted_danmaku_evidence_too():
-    """维护者 铁律覆盖证据入口：观众弹幕原文写「直女」时，逐字注入前先回正，
-    不允许 verbatim 权威把已规范化的字幕改回直女。"""
+    """公开规则铁律覆盖证据入口：观众弹幕原文写「直女」时，逐字注入前先回正，
+ 不允许 verbatim 权威把已规范化的字幕改回直女。"""
     source = _srt("弹幕说以前不是零是侄女")
     output, audit = apply_authoritative_chat_evidence(
         source,
@@ -3844,9 +3996,9 @@ def test_time_anchored_thanks_ignores_incompatible_names():
 
 
 def test_named_thanks_record_coverage_disclosure_states():
-    """自审计面（维护者 复盘令）：「有记录没用上」不许静默。
-    三态锚死：无事件=RECORD_CHANNEL_ABSENT；有事件名不相容=
-    RECORD_PRESENT_NAME_INCOMPATIBLE；已修 cue 不出行。"""
+    """自审计面（公开规则复盘令）：「有记录没用上」不许静默。
+ 三态锚死：无事件=RECORD_CHANNEL_ABSENT；有事件名不相容=
+ RECORD_PRESENT_NAME_INCOMPATIBLE；已修 cue 不出行。"""
 
     # 无任何带名事件 → ABSENT
     source = _srt("谢谢桃林的钢镚")

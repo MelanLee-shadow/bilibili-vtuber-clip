@@ -445,6 +445,45 @@ _CLOSED_CHOICE_PROMPT = """# 字幕闭集裁决
 "choice":"概率最高的 canonical 原文","reason":"一句证据理由"}}
 """
 
+_SLOT_CHOICE_PROMPT = """# 字幕实体槽闭集裁决
+
+你是最终文字/语义法官。音频证人从未见过候选，只按目标时窗听写拼音；
+它是辅助证据，不能决定汉字。请结合拼音、前后语境和完整 cue，在下面的
+闭集中选出一个 choice_id。CURRENT 是完整 cue 原样保留；CANONICAL 只替换
+标记的一个实体槽位。必须把每个 choice_id 排序一次，不能生成第三种 cue。
+
+## 音频证人（未见候选）
+{witness}
+
+## 槽位闭集候选
+{choices}
+
+## 语境与结构化证据
+{context}
+
+只输出一个 JSON 对象：
+{{"ranking":[{{"choice_id":"闭集中的 choice_id","p":0.0到1.0}}, ...覆盖全部 choice_id],
+"choice_id":"概率最高的 choice_id","reason":"一句证据理由"}}
+"""
+
+_SLOT_TEXT_FIRST_CHOICE_PROMPT = """# 字幕文字实体槽闭集裁决
+
+本轮尚未调用音频证人。请先依据完整 cue、前后语境和结构化文字证据，在下面的
+闭集中选出一个 choice_id。CURRENT 是完整 cue 原样保留；CANONICAL 只替换标记的
+一个实体槽位。必须把每个 choice_id 排序一次，不能生成第三种 cue，也不能把本轮
+尚未取得的听音或拼音写进理由。
+
+## 槽位闭集候选
+{choices}
+
+## 语境与结构化证据
+{context}
+
+只输出一个 JSON 对象：
+{{"ranking":[{{"choice_id":"闭集中的 choice_id","p":0.0到1.0}}, ...覆盖全部 choice_id],
+"choice_id":"概率最高的 choice_id","reason":"一句文字证据理由"}}
+"""
+
 
 def _closed_choice_with_witness(
     *,
@@ -454,6 +493,31 @@ def _closed_choice_with_witness(
     context_unresolved: bool = False,
     audio_dispatch_decision: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
+    target_slot = request.get("target_slot")
+    raw_slot_choices = request.get("slot_choices")
+    slot_requested = "target_slot" in request or "slot_choices" in request
+    slot_mode = isinstance(target_slot, Mapping) and isinstance(raw_slot_choices, list)
+    if slot_requested and not slot_mode:
+        return None
+    if slot_mode and any(not isinstance(choice, Mapping) for choice in raw_slot_choices):
+        return None
+    slot_choices = (
+        [dict(choice) for choice in raw_slot_choices]
+        if slot_mode
+        else []
+    )
+    if slot_mode:
+        # The request builder/validator owns the detailed binding.  This
+        # narrow producer-side check prevents a malformed optional request
+        # from reaching either the witness or the CPA judge.
+        choice_ids = [str(choice.get("choice_id") or "") for choice in slot_choices]
+        if (
+            len(slot_choices) < 2
+            or len(choice_ids) != len(set(choice_ids))
+            or any(not choice_id for choice_id in choice_ids)
+            or str(target_slot.get("slot_id") or "") == ""
+        ):
+            return None
     candidates = [
         dict(candidate)
         for candidate in request.get("candidate_entities") or ()
@@ -461,14 +525,29 @@ def _closed_choice_with_witness(
         and str(candidate.get("canonical") or "")
     ]
     canonicals = [str(candidate["canonical"]) for candidate in candidates]
-    if len(canonicals) < 2 or len(canonicals) != len(set(canonicals)):
+    if len(canonicals) < (1 if slot_mode else 2) or len(canonicals) != len(set(canonicals)):
         return None
-    current = str(request.get("matched_audio_text") or canonicals[-1])
-    proposed = str(
-        request.get("exact_text")
-        or request.get("structured_chat_canonical")
-        or canonicals[0]
-    )
+    if slot_mode:
+        current = str(target_slot.get("full_cue") or "")
+        proposed = str(
+            next(
+                (
+                    choice.get("full_cue")
+                    for choice in slot_choices
+                    if choice.get("action") == "CANONICAL"
+                ),
+                "",
+            )
+        )
+        if not current or not proposed:
+            return None
+    else:
+        current = str(request.get("matched_audio_text") or canonicals[-1])
+        proposed = str(
+            request.get("exact_text")
+            or request.get("structured_chat_canonical")
+            or canonicals[0]
+        )
     check_request = _witness_check_request(
         request,
         current=current,
@@ -513,16 +592,25 @@ def _closed_choice_with_witness(
             else None,
         }
         template = (
+            _SLOT_CHOICE_PROMPT if slot_mode else
             _CLOSED_CHOICE_TRANSCRIPT_PROMPT
             if protocol == CANDIDATE_BLIND_TRANSCRIPT_PROTOCOL
             else _CLOSED_CHOICE_PROMPT
         )
         text_first = witness.get("reason_code") == TEXT_FIRST_REASON
-        if text_first:
+        if text_first and not slot_mode:
             intro_end = template.index("铁律：")
             template = "# 字幕文字闭集裁决\n\n你是最终文字/语义法官，先依据全部文字证据裁决。\n\n" + template[intro_end:]
+        elif text_first and slot_mode:
+            template = _SLOT_TEXT_FIRST_CHOICE_PROMPT
         prompt = template.format(
             witness=json.dumps(witness, ensure_ascii=False, sort_keys=True),
+            choices=json.dumps(
+                slot_choices if slot_mode else candidates,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ),
             candidates=json.dumps(
                 candidates, ensure_ascii=False, indent=2, sort_keys=True
             ),
@@ -542,24 +630,65 @@ def _closed_choice_with_witness(
         for row in ranking_raw:
             if not isinstance(row, Mapping):
                 continue
-            canonical = str(row.get("canonical") or "")
+            canonical = str(
+                row.get("choice_id" if slot_mode else "canonical") or ""
+            )
             probability = row.get("p")
             if (
-                canonical in canonicals
+                canonical
+                in (
+                    [str(choice.get("choice_id") or "") for choice in slot_choices]
+                    if slot_mode
+                    else canonicals
+                )
                 and not isinstance(probability, bool)
                 and isinstance(probability, (int, float))
                 and math.isfinite(float(probability))
                 and 0.0 <= float(probability) <= 1.0
             ):
-                ranking.append({"canonical": canonical, "p": float(probability)})
-        if {str(row["canonical"]) for row in ranking} != set(canonicals):
+                ranking.append(
+                    {
+                        "choice_id" if slot_mode else "canonical": canonical,
+                        "p": float(probability),
+                    }
+                )
+        expected_ranking_ids = (
+            [str(choice.get("choice_id") or "") for choice in slot_choices]
+            if slot_mode
+            else canonicals
+        )
+        ranking_ids = [
+            str(row["choice_id" if slot_mode else "canonical"])
+            for row in ranking
+        ]
+        if set(ranking_ids) != set(expected_ranking_ids):
             return None
-        if len(ranking) != len(canonicals):
+        if len(ranking) != len(expected_ranking_ids) or len(ranking_ids) != len(
+            set(ranking_ids)
+        ):
             return None
         top = max(ranking, key=lambda row: float(row["p"]))
-        choice = str(payload.get("choice") or "")
-        if choice != top["canonical"]:
-            choice = str(top["canonical"])
+        if slot_mode:
+            top_probability = float(top["p"])
+            if sum(float(row["p"]) == top_probability for row in ranking) != 1:
+                return None
+            choice = str(payload.get("choice_id") or "")
+            if choice != str(top["choice_id"]):
+                return None
+            selected = next(
+                (
+                    candidate
+                    for candidate in slot_choices
+                    if str(candidate.get("choice_id") or "") == choice
+                ),
+                None,
+            )
+            if selected is None:
+                return None
+        else:
+            choice = str(payload.get("choice") or "")
+            if choice != top["canonical"]:
+                choice = str(top["canonical"])
         heard_pinyin = str(witness.get("heard_pinyin") or "")
         uncertain_positions = list(witness.get("uncertain_positions") or [])
         compatibility = (
@@ -575,11 +704,11 @@ def _closed_choice_with_witness(
             else {canonical: None for canonical in canonicals}
         )
         context_only = witness.get("status") != "OBSERVED"
-        result = {
+        verdict = {
             "schema_version": VERDICT_SCHEMA,
             "request_sha256": request.get("request_sha256"),
             "status": "RESOLVED",
-            "canonical_entity": choice,
+            **({} if slot_mode else {"canonical_entity": choice}),
             "confidence": float(top["p"]),
             "authority_kind": (
                 "cpa_context_only_closed_set_adjudication"
@@ -612,17 +741,35 @@ def _closed_choice_with_witness(
                 "CPA_CONTEXT_ONLY_CLOSED_SET_DISAMBIGUATION"
                 if context_only
                 else (
-                    "READ_ALOUD_CPA_WITNESS_ADJUDICATED"
-                    if request.get("schema_version") == READ_ALOUD_REQUEST_SCHEMA
-                    else "REGISTERED_ENTITY_CPA_WITNESS_ADJUDICATED"
+                    "TRANSCRIPT_ENTITY_SLOT_CPA_WITNESS_ADJUDICATED"
+                    if slot_mode
+                    else (
+                        "READ_ALOUD_CPA_WITNESS_ADJUDICATED"
+                        if request.get("schema_version") == READ_ALOUD_REQUEST_SCHEMA
+                        else "REGISTERED_ENTITY_CPA_WITNESS_ADJUDICATED"
+                    )
                 )
             ),
             "reason": str(payload.get("reason") or "")[:300],
         }
+        if slot_mode:
+            verdict.update(
+                {
+                    "target_slot_id": str(target_slot.get("slot_id") or ""),
+                    "slot_choice_id": choice,
+                    "selected_slot_text": selected.get("slot_text"),
+                    "selected_full_cue": selected.get("full_cue"),
+                    "selected_full_cue_sha": selected.get("full_cue_sha256"),
+                    "selected_full_cue_sha256": selected.get("full_cue_sha256"),
+                    "ranking": ranking,
+                }
+            )
+            if selected.get("action") == "CANONICAL":
+                verdict["canonical_entity"] = selected.get("canonical_entity")
         native_receipt = _native_audio_routing_receipt(witness)
         if native_receipt is not None:
-            result["acoustic_witness"] = native_receipt
-        return result
+            verdict["acoustic_witness"] = native_receipt
+        return verdict
 
     text_decision = None
     if not context_unresolved and next_verifier is not None:

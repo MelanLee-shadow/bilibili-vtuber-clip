@@ -1,8 +1,12 @@
 import hashlib
 import json
+from copy import deepcopy
 
 import pytest
 
+from src.autoslice.acoustic_witness_adjudication import (
+    REQUIRE_COMPLETE_UTTERANCE_SUPPORT,
+)
 from src.autoslice.final_review_auditor import (
     FinalReviewAuditError,
     adjudicate_context_finding,
@@ -979,7 +983,161 @@ def _witness(request, heard, *, audible=True, uncertain=()):
 
 
 def _judge(choice):
-    return lambda prompt: json.dumps({"choice": choice, "reason": "test"})
+    return lambda prompt: json.dumps(
+        {
+            "choice": choice,
+            "reason": "test",
+            "current_utterance_supported": choice == "CURRENT",
+            "current_utterance_support_reason": (
+                "test fixture supports the complete current utterance"
+                if choice == "CURRENT"
+                else "test fixture does not support the complete current utterance"
+            ),
+        }
+    )
+
+
+def _nested_exact_context_keep_case():
+    source = _srt("那我不应该说咱", "嗯，咱有点像迪酱", "我要吃午饭")
+
+    def witness(request):
+        return _witness(request, "en zan you dian xiang zi cheng")
+
+    def cpa(prompt):
+        if "# 字幕缺失候选重建" in prompt:
+            return json.dumps(
+                {
+                    "status": "PROPOSED",
+                    "proposed_cue": "嗯，咱有点像自称",
+                    "reason": "上下文候选",
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {
+                "choice": "PROPOSED",
+                "reason": "盲听支持候选",
+                "current_utterance_supported": False,
+                "current_utterance_support_reason": "测试候选被选中",
+            },
+            ensure_ascii=False,
+        )
+
+    _, nested = adjudicate_context_finding(
+        source,
+        {
+            "cue_index": 2,
+            "suspect": "迪酱",
+            "suggestion": None,
+            "proposed_full_cue": None,
+            "repair_class": "disclosure_only",
+        },
+        entity_verifier=witness,
+        judge_llm_call=cpa,
+        require_complete_utterance_support=True,
+    )
+    current = "嗯，咱有点像迪酱"
+    row = {
+        "cue_index": 2,
+        "suspect": "迪酱",
+        "suggestion": "自称",
+        "proposed_full_cue": "嗯，咱有点像自称",
+        "repair_class": "disclosure_only",
+        "base_text_sha256": hashlib.sha256(current.encode()).hexdigest(),
+        "exact_release_adjudication": nested,
+        "_cpa_missing_proposal_convergence": {
+            "schema_version": "subtitle-missing-proposal-cpa-convergence.v1",
+            "status": "RESOLVED",
+            "decision": "KEEP_EXISTING",
+            "cue_index": 2,
+            "current_cue_sha256": hashlib.sha256(current.encode()).hexdigest(),
+            "final_srt_sha256": (
+                "sha256:" + hashlib.sha256(source.encode()).hexdigest()
+            ),
+            "context_sha256": "sha256:" + "0" * 64,
+        },
+    }
+    return source, row
+
+
+def test_exact_release_carries_nested_cpa_repair_through_context_keep():
+    source, row = _nested_exact_context_keep_case()
+
+    unresolved, resolved = adjudicate_exact_release_findings(
+        source,
+        [row],
+        entity_verifier=lambda request: pytest.fail(
+            f"outer context KEEP must not call a new witness: {request}"
+        ),
+        judge_llm_call=lambda prompt: pytest.fail(
+            f"outer context KEEP must not call CPA: {prompt}"
+        ),
+    )
+
+    assert resolved == []
+    assert len(unresolved) == 1
+    promoted = unresolved[0]["exact_release_adjudication"]
+    assert promoted["repaired"] is True
+    assert promoted["request"]["proposed_cue"] == "嗯，咱有点像自称"
+    assert promoted["nested_repair_promotion"]["status"] == (
+        "PENDING_NORMAL_SELF_HEAL"
+    )
+    outer = promoted["context_only_outer_adjudication"]
+    assert outer["repaired"] is False
+    assert outer["cpa_missing_proposal_convergence"]["decision"] == (
+        "KEEP_EXISTING"
+    )
+    assert outer["mutation_authority"]["status"] == "NOT_APPLIED"
+    assert promoted["cpa_resource_pressure"] == outer["cpa_resource_pressure"]
+
+    from src.autoslice.producer_package_finalization import (
+        _apply_exact_final_cpa_repairs,
+    )
+
+    healed, repairs = _apply_exact_final_cpa_repairs(
+        source,
+        {"findings": unresolved},
+    )
+    assert "嗯，咱有点像自称" in healed
+    assert "嗯，咱有点像迪酱" not in healed
+    assert len(repairs) == 1
+
+
+@pytest.mark.parametrize("drift", ["base", "window", "request"])
+def test_nested_exact_cpa_binding_drift_stays_unresolved(drift):
+    source, row = _nested_exact_context_keep_case()
+    nested = row["exact_release_adjudication"]
+    assert isinstance(nested, dict)
+    nested = deepcopy(nested)
+    request = nested["request"]
+    if drift == "base":
+        request["base_text_sha256"] = "f" * 64
+    elif drift == "window":
+        request["matched_start_ms"] += 1
+    else:
+        request["current_cue"] = "外部伪造当前文本"
+    row["exact_release_adjudication"] = nested
+
+    unresolved, resolved = adjudicate_exact_release_findings(
+        source,
+        [row],
+        entity_verifier=lambda request: pytest.fail(
+            f"invalid nested receipt must not call a new witness: {request}"
+        ),
+        judge_llm_call=lambda prompt: pytest.fail(
+            f"invalid nested receipt must not call CPA: {prompt}"
+        ),
+    )
+
+    assert resolved == []
+    assert len(unresolved) == 1
+    assert unresolved[0]["exact_release_nested_repair_blocked_reason"].startswith(
+        "NESTED_EXACT_REPAIR_"
+    )
+    assert (
+        unresolved[0]["exact_release_adjudication"]["repaired"] is False
+    )
+
 
 def test_exact_release_adjudication_threads_source_media_timeline_offset():
     source = (
@@ -1014,6 +1172,66 @@ def test_exact_release_adjudication_threads_source_media_timeline_offset():
     assert seen_requests[0]["matched_start_ms"] == 250
     assert seen_requests[0]["matched_end_ms"] == 2_810
     assert seen_requests[0]["source_media_timeline_offset_ms"] == 9_770
+    assert (
+        resolved[0]["exact_release_adjudication"]["request"]
+        [REQUIRE_COMPLETE_UTTERANCE_SUPPORT]
+        is True
+    )
+
+
+@pytest.mark.parametrize(
+    "support_fields",
+    [
+        {
+            "current_utterance_supported": False,
+            "current_utterance_support_reason": (
+                "CURRENT is only relatively closer than the proposal."
+            ),
+        },
+        {},
+    ],
+)
+def test_exact_release_relative_current_win_without_complete_support_stays_unresolved(
+    support_fields,
+):
+    """Relative pinyin superiority cannot disclose an incomplete CURRENT cue."""
+
+    source = _srt("就请坐在左边的弹")
+
+    def witness(request):
+        return _witness(request, "jiu qing zuo zai zuo bian de tan")
+
+    def judge(_prompt):
+        payload = {"choice": "CURRENT", "reason": "relative pinyin win"}
+        payload.update(support_fields)
+        return json.dumps(payload)
+
+    unresolved, resolved = adjudicate_exact_release_findings(
+        source,
+        [
+            {
+                "cue_index": 1,
+                "suspect": "弹",
+                "suggestion": "互相弹",
+                "proposed_full_cue": "就请坐在左边的互相弹",
+                "repair_class": "phonetic",
+            }
+        ],
+        entity_verifier=witness,
+        judge_llm_call=judge,
+    )
+
+    assert resolved == []
+    assert len(unresolved) == 1
+    adjudication = unresolved[0]["exact_release_adjudication"]
+    assert adjudication["request"][REQUIRE_COMPLETE_UTTERANCE_SUPPORT] is True
+    nested_judge = adjudication.get("witness_judge", {}).get("judge", {})
+    assert nested_judge.get("choice") != "NEITHER"
+    if support_fields:
+        assert nested_judge["choice"] == "CURRENT"
+        assert nested_judge["current_utterance_supported"] is False
+    else:
+        assert nested_judge.get("reason_code") == "CURRENT_UTTERANCE_SUPPORT_REQUIRED"
 
 
 def test_context_request_builds_real_title_fix_without_duplicating_suffix():
@@ -1089,8 +1307,22 @@ def test_neither_rebuilds_one_third_candidate_then_cpa_judges_it():
                 ensure_ascii=False,
             )
         if len([row for row in calls if "# 字幕选字裁决" in row]) == 1:
-            return json.dumps({"choice": "NEITHER", "reason": "坏闭集"})
-        return json.dumps({"choice": "PROPOSED", "reason": "第三候选匹配"})
+            return json.dumps(
+                {
+                    "choice": "NEITHER",
+                    "reason": "坏闭集",
+                    "current_utterance_supported": False,
+                    "current_utterance_support_reason": "第三候选尚未裁决",
+                }
+            )
+        return json.dumps(
+            {
+                "choice": "PROPOSED",
+                "reason": "第三候选匹配",
+                "current_utterance_supported": False,
+                "current_utterance_support_reason": "第三候选被选中",
+            }
+        )
 
     output, audit = adjudicate_context_finding(
         source,
@@ -1123,11 +1355,13 @@ def test_exact_release_adopts_rebuilt_candidate_for_same_run_self_heal():
         return _witness(request, "jiu shi na zhong wen")
 
     judge_count = 0
+    calls: list[str] = []
 
     def cpa(prompt):
         if "TEXT_FIRST" in prompt:
             return json.dumps({"choice": "NEITHER", "needs_audio": True})
         nonlocal judge_count
+        calls.append(prompt)
         if "# 字幕坏闭集重建" in prompt:
             return json.dumps(
                 {
@@ -1139,7 +1373,11 @@ def test_exact_release_adopts_rebuilt_candidate_for_same_run_self_heal():
             )
         judge_count += 1
         return json.dumps(
-            {"choice": "NEITHER" if judge_count == 1 else "PROPOSED"}
+            {
+                "choice": "NEITHER" if judge_count == 1 else "PROPOSED",
+                "current_utterance_supported": False,
+                "current_utterance_support_reason": "测试候选尚未支持整句",
+            }
         )
 
     unresolved, resolved = adjudicate_exact_release_findings(
@@ -1165,6 +1403,15 @@ def test_exact_release_adopts_rebuilt_candidate_for_same_run_self_heal():
     adjudication = unresolved[0]["exact_release_adjudication"]
     assert adjudication["repaired"] is True
     assert adjudication["request"]["proposed_cue"] == "就是那种吻"
+    assert adjudication["request"][REQUIRE_COMPLETE_UTTERANCE_SUPPORT] is True
+    cpa_judge_prompts = [
+        prompt for prompt in calls if "# 字幕选字裁决" in prompt
+    ]
+    assert len(cpa_judge_prompts) == 2
+    assert all(
+        "exact-final CURRENT 整句闭合要求" in prompt
+        for prompt in cpa_judge_prompts
+    )
 
     from src.autoslice.producer_package_finalization import (
         _apply_exact_final_cpa_repairs,
@@ -1202,7 +1449,14 @@ def test_missing_disclosure_candidate_is_proposed_then_acoustically_judged():
                 },
                 ensure_ascii=False,
             )
-        return json.dumps({"choice": "PROPOSED", "reason": "盲听与语境一致"})
+        return json.dumps(
+            {
+                "choice": "PROPOSED",
+                "reason": "盲听与语境一致",
+                "current_utterance_supported": False,
+                "current_utterance_support_reason": "测试候选被选中",
+            }
+        )
 
     output, audit = adjudicate_context_finding(
         source,
@@ -1363,7 +1617,12 @@ def test_missing_candidate_second_cpa_exact_text_self_heals_with_acoustic_witnes
                 ensure_ascii=False,
             )
         return json.dumps(
-            {"choice": "PROPOSED", "reason": "盲听与文字候选一致"},
+            {
+                "choice": "PROPOSED",
+                "reason": "盲听与文字候选一致",
+                "current_utterance_supported": False,
+                "current_utterance_support_reason": "测试候选被选中",
+            },
             ensure_ascii=False,
         )
 
@@ -1566,7 +1825,14 @@ def test_exact_release_self_heals_a_bootstrapped_missing_candidate():
                 },
                 ensure_ascii=False,
             )
-        return json.dumps({"choice": "PROPOSED", "reason": "盲听支持"})
+        return json.dumps(
+            {
+                "choice": "PROPOSED",
+                "reason": "盲听支持",
+                "current_utterance_supported": False,
+                "current_utterance_support_reason": "测试候选被选中",
+            }
+        )
 
     unresolved, resolved = adjudicate_exact_release_findings(
         source,
@@ -1764,17 +2030,17 @@ def test_glossary_conflict_follows_final_cpa_choice_without_granting_glossary_au
 
 
 def test_glossary_candidate_with_registered_misheard_direction_wins_witness_conflict():
-    """维护者 回归修正正向金丝雀之一：kmx 类误听面方向历史合法胜出案例。
+    """公开规则回归修正正向金丝雀之一：kmx 类误听面方向历史合法胜出案例。
 
-    ``停放熊 -> kmx`` 是 ``assets/lidousha/glossary.txt`` 登记的已知 kmx 误听
-    面，但只登记在 ``expected_value_respell_pairs()``（不在
-    ``respell_pairs()``，两者来源不同），所以 ``orthography_ambiguous``
-    （只查 ``respell_pairs()`` 的 ``_declared_respell_edit``）对这一对必然是
-    False。84e3603 首版守卫只要 ``candidate_provenance.kind == "glossary"``
-    就拦截，会连带把这类历史上应当胜出的登记误听方向也拦掉——这正是
-    维护者 指出的回归风险。此用例证明收窄后的 ``registered_direction`` 检查
-    （同时查 ``respell_pairs()`` 与 ``expected_value_respell_pairs()``）放行
-    了它；回退到收窄前的守卫代码，本用例会转为失败（错误地拦截）。"""
+ ``停放熊 -> kmx`` 是 ``assets/lidousha/glossary.txt`` 登记的已知 kmx 误听
+ 面，但只登记在 ``expected_value_respell_pairs()``（不在
+ ``respell_pairs()``，两者来源不同），所以 ``orthography_ambiguous``
+ （只查 ``respell_pairs()`` 的 ``_declared_respell_edit``）对这一对必然是
+ False。84e3603 首版守卫只要 ``candidate_provenance.kind == "glossary"``
+ 就拦截，会连带把这类历史上应当胜出的登记误听方向也拦掉——这正是
+ 公开规则指出的回归风险。此用例证明收窄后的 ``registered_direction`` 检查
+ （同时查 ``respell_pairs()`` 与 ``expected_value_respell_pairs()``）放行
+ 了它；回退到收窄前的守卫代码，本用例会转为失败（错误地拦截）。"""
 
     source = _srt("你听到停放熊在门口叫了吗")
     finding = {
@@ -1808,15 +2074,15 @@ def test_glossary_candidate_with_registered_misheard_direction_wins_witness_conf
 
 
 def test_glossary_candidate_with_bound_structured_chat_support_wins_witness_conflict():
-    """维护者 回归修正正向金丝雀之二：独立结构化文字支持胜出案例。
+    """公开规则回归修正正向金丝雀之二：独立结构化文字支持胜出案例。
 
-    与上面 cue59 负向金丝雀同一事实模式（候选「殉情」、同一错位证人、同一
-    judge PROPOSED），唯一变量是这次候选替换词面「殉情」被一条 sha256 绑定
-    的弹幕/SC 独立佐证（``clip_context.structured_chat``）——这正是 维护者
-    描述的「历史上耳朵持续听错、词表/独立文字证据佐证的候选正确胜出」场景
-    的机制对照组。收窄后的 ``structured_text_support`` 检查放行；回退到
-    收窄前的守卫代码（不接收 ``clip_context``），本用例会转为失败（错误地
-    拦截），证明这不是巧合通过。"""
+ 与上面 cue59 负向金丝雀同一事实模式（候选「殉情」、同一错位证人、同一
+ judge PROPOSED），唯一变量是这次候选替换词面「殉情」被一条 sha256 绑定
+ 的弹幕/SC 独立佐证（``clip_context.structured_chat``）——这正是 公开规则
+ 描述的「历史上耳朵持续听错、词表/独立文字证据佐证的候选正确胜出」场景
+ 的机制对照组。收窄后的 ``structured_text_support`` 检查放行；回退到
+ 收窄前的守卫代码（不接收 ``clip_context``），本用例会转为失败（错误地
+ 拦截），证明这不是巧合通过。"""
 
     source = _srt("你知道我要偶遇啊！偶遇")
     finding = {
@@ -1893,8 +2159,8 @@ def test_cpa_can_use_distinguishing_pinyin_without_text_authority():
 
 
 def test_strict_homophone_tie_judge_semantic_tiebreak_applies_proposed():
-    """维护者 概率裁定令：一/咦 同音，音频定义上中立，judge 按语义
-    排序拍板施改；mutation basis 为 SEMANTIC_JUDGE_ORTHOGRAPHY_TIEBREAK。"""
+    """公开规则概率裁定令：一/咦 同音，音频定义上中立，judge 按语义
+ 排序拍板施改；mutation basis 为 SEMANTIC_JUDGE_ORTHOGRAPHY_TIEBREAK。"""
 
     source = _srt("一、那现在就等")
     finding = {
@@ -3894,9 +4160,9 @@ def _weak_witness(request, heard, *, confidence=0.6, uncertain=()):
 
 
 def test_screen_read_escalation_recovers_fast_spoken_ui_line():
-    """424_522 1:24 案（维护者）：快速念屏「战斗回合用尽，即将
-    离开战场」音频糊——弱证词触发读屏，OCR 池拼音对齐命中，verified_ocr
-    出处进入同一裁决引擎，judge PROPOSED 后施改。"""
+    """424_522 1:24 案（公开规则）：快速念屏「战斗回合用尽，即将
+ 离开战场」音频糊——弱证词触发读屏，OCR 池拼音对齐命中，verified_ocr
+ 出处进入同一裁决引擎，judge PROPOSED 后施改。"""
 
     source = _srt("战斗回合永进即将离开占场")
     finding = {
@@ -3941,6 +4207,159 @@ def test_screen_read_escalation_recovers_fast_spoken_ui_line():
     assert esc["match"]["text"] == "战斗回合用尽，即将离开战场"
     assert audit["request"]["candidate_provenance"]["kind"] == "verified_ocr"
     assert audit["mutation_authority"]["status"] == "PASS"
+
+
+def test_unbound_cpa_candidate_mapping_still_triggers_screen_read():
+    """A CPA proposal mapping is still unbound and must reach frame escalation."""
+
+    source = _srt("战斗回合永进即将离开占场")
+    probes = []
+
+    def fake_screen_probe(start_ms, end_ms):
+        probes.append((start_ms, end_ms))
+        return {
+            "schema_version": "screen-read-witness.v1",
+            "media_path": "/x/padded.mp4",
+            "span_start_ms": start_ms,
+            "span_end_ms": end_ms,
+            "frame_ms": [start_ms + 100, end_ms - 100],
+            "pool": ["战斗回合用尽，即将离开战场"],
+        }
+
+    output, audit = adjudicate_context_finding(
+        source,
+        {
+            "cue_index": 1,
+            "kind": "context",
+            "suspect": "永进",
+            "suggestion": "用尽",
+            "proposed_full_cue": "战斗回合用尽即将离开占场",
+            "repair_class": "phonetic",
+            "candidate_provenance": {
+                "kind": "cpa_context_proposal",
+                "mutation_authorized": False,
+            },
+        },
+        entity_verifier=lambda request: _weak_witness(
+            request,
+            "zhan dou hui he yong jin ji jiang li kai zhan chang",
+        ),
+        judge_llm_call=_judge("PROPOSED"),
+        screen_read_probe=fake_screen_probe,
+    )
+
+    assert probes
+    assert "战斗回合用尽，即将离开战场" in output
+    assert audit["request"]["candidate_provenance"]["kind"] == "verified_ocr"
+
+
+def test_bound_verified_ocr_does_not_probe_frames_again():
+    source = _srt("战斗回合永进即将离开占场")
+    probes = []
+
+    def unexpected_screen_probe(start_ms, end_ms):
+        probes.append((start_ms, end_ms))
+        raise AssertionError("bound OCR must not trigger another frame probe")
+
+    output, audit = adjudicate_context_finding(
+        source,
+        {
+            "cue_index": 1,
+            "kind": "context",
+            "suspect": "永进",
+            "suggestion": "用尽",
+            "proposed_full_cue": "战斗回合用尽即将离开占场",
+            "repair_class": "phonetic",
+            "candidate_provenance": {
+                "kind": "verified_ocr",
+                "surface": "用尽",
+                "screen_read": {"media_path": "/x/padded.mp4", "frame_ms": [100]},
+            },
+        },
+        entity_verifier=lambda request: _weak_witness(
+            request,
+            "zhan dou hui he yong jin ji jiang li kai zhan chang",
+        ),
+        judge_llm_call=_judge("PROPOSED"),
+        screen_read_probe=unexpected_screen_probe,
+    )
+
+    assert probes == []
+    assert "战斗回合用尽，即将离开战场" not in output
+    assert audit.get("screen_read_witness") is None
+
+
+@pytest.mark.parametrize(
+    ("choice", "expected_output"),
+    [
+        ("CURRENT", "战斗回合永进即将离开占场"),
+        ("PROPOSED", "战斗回合用尽即将离开占场"),
+    ],
+)
+def test_unmatched_screen_pool_is_cpa_evidence_only(choice, expected_output):
+    source = _srt("战斗回合永进即将离开占场")
+    finding = {
+        "cue_index": 1,
+        "kind": "context",
+        "suspect": "永进",
+        "suggestion": "用尽",
+        "proposed_full_cue": "战斗回合用尽即将离开占场",
+        "repair_class": "phonetic",
+        "candidate_provenance": {
+            "kind": "cpa_context_proposal",
+            "mutation_authorized": False,
+        },
+    }
+    original_request = build_context_adjudication_request(source, finding)
+    prompts = []
+
+    def fake_screen_probe(start_ms, end_ms):
+        return {
+            "schema_version": "screen-read-witness.v1",
+            "media_path": "/x/padded.mp4",
+            "span_start_ms": start_ms,
+            "span_end_ms": end_ms,
+            "frame_ms": [start_ms + 100, end_ms - 100],
+            "receipts": [
+                {
+                    "receipt_id": "screen-r1",
+                    "answer": "无关屏幕文本",
+                }
+            ],
+            "pool": ["无关屏幕文本"],
+        }
+
+    def capture_judge(prompt):
+        prompts.append(prompt)
+        return json.dumps({"choice": choice, "reason": "test"})
+
+    output, audit = adjudicate_context_finding(
+        source,
+        finding,
+        entity_verifier=lambda request: _weak_witness(
+            request,
+            "zhan dou hui he yong jin ji jiang li kai zhan chang",
+        ),
+        judge_llm_call=capture_judge,
+        screen_read_probe=fake_screen_probe,
+    )
+
+    evidence = audit["request"]["candidate_provenance"]["screen_read_evidence"]
+    assert output == _srt(expected_output)
+    assert audit["request"]["candidate_provenance"]["kind"] == "cpa_context_proposal"
+    assert audit["request"]["candidate_provenance"]["mutation_authorized"] is False
+    assert evidence["status"] == "EVIDENCE_ONLY"
+    assert evidence["mutation_authorized"] is False
+    assert evidence["pool"] == ["无关屏幕文本"]
+    assert evidence["receipts"] == [
+        {"receipt_id": "screen-r1", "answer": "无关屏幕文本"}
+    ]
+    assert audit["screen_read_witness"]["evidence_only"]["reason_code"] == (
+        "SCREEN_POOL_NO_PINYIN_MATCH"
+    )
+    assert audit["request"]["request_sha256"] != original_request["request_sha256"]
+    assert "无关屏幕文本" in "\n".join(prompts)
+    assert "verified_ocr" not in str(audit["request"]["candidate_provenance"])
 
 
 def test_semantic_trigger_prefers_danmaku_pool_before_frames():

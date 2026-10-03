@@ -235,19 +235,19 @@ def validate_session_game_context(payload: object) -> dict[str, Any]:
     return dict(payload)
 
 
-# 维护者 游戏场配额放宽指令（逐字）：「本场游戏直播的切片可突破5个上限，
-# 放宽到10个。当然，前提是分数在90分以上。」——这是**按场/按日期**的裁定（本场 =
-# 鹅鸭杀），下面两个常量只是它的历史锚点。
-#
-# `4af4a88` 把 维护者 另一条按日裁定（「8.8切片配额到20条，分数在85分以上
-# 即可」）写成了这两个常量（10->20 / 90->85）。8/8 是 NO_MATCH 不走游戏 lane，那次
-# 改动没管到 8/8，却回溯放宽了全库唯一 RESOLVED 的游戏日 8/7。
-#
-# **这两个常量不再是政策来源**，任何代码都不再读它们来决定 cap 或分数门；配额一律
-# 由 assets 里按日期的授权条目（`talk_quota_authority`）+ 准入时冻结
-# （`talk_quota_freeze`）承载。留在这里只为存档 维护者 8/7 原话的数字，改它们不会、
-# 也不允许再改变任何一天的合法性——`tests/lidousha/test_talk_quota_policy_freeze.py`
-# 的金丝雀 ② 把这条钉死。
+
+
+
+
+
+
+
+
+
+
+
+
+
 GAME_SESSION_TALK_PICK_CAP = 10
 GAME_SESSION_EXTRA_SLOT_MIN_SCORE = 90.0
 

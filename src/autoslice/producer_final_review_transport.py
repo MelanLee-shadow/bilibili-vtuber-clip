@@ -48,6 +48,10 @@ def _resolved_runtime_ssh_host(runtime_ssh_host: str | None) -> str | None:
     normalized = str(raw or "").strip()
     if not normalized:
         return None
+    # Native producers use a local media host.  Loopback must use the same
+    # runtime-owned credentials directly, rather than SSH back into the host.
+    if normalized.lower() in {"localhost", "127.0.0.1"}:
+        return None
     if any(
         char
         not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
@@ -80,8 +84,11 @@ def _missing_runtime_call() -> Callable[[str], str]:
 def _bound_call(
     config: LlmConfig,
     runtime_binding: Mapping[str, object],
+    cpa_cache_identity: Mapping[str, object] | None = None,
 ) -> Callable[[str], str]:
-    diagnostics = dict(runtime_binding)
+    bound_runtime_binding = dict(runtime_binding)
+    identity = cpa_cache_identity
+    diagnostics = dict(bound_runtime_binding)
 
     def sink(row: dict[str, object]) -> None:
         diagnostics.clear()
@@ -94,8 +101,21 @@ def _bound_call(
         }
     )
     call = build_llm_call(bound_config)
+    if identity is None:
+        identity = getattr(call, "cpa_cache_identity", None)
+    call.cpa_cache_identity = identity  # type: ignore[attr-defined]
+    if isinstance(identity, Mapping):
+        bound_runtime_binding.update(
+            {
+                "provider_call_transport": identity.get("transport"),
+                "provider_model": list(identity.get("models") or []),
+                "provider_effort": identity.get("effort"),
+            }
+        )
+    diagnostics.clear()
+    diagnostics.update(bound_runtime_binding)
     call.provider_diagnostics = diagnostics  # type: ignore[attr-defined]
-    call.provider_runtime_binding = dict(runtime_binding)  # type: ignore[attr-defined]
+    call.provider_runtime_binding = bound_runtime_binding  # type: ignore[attr-defined]
     return call
 
 
@@ -113,13 +133,14 @@ def _local_runtime_call(
         "provider_credential_source": str(runtime / "cpa.env"),
     }
     script = runtime / "repo" / "scripts" / "llm_via_cpa.sh"
+    model = "gpt-6-sol"
     return _bound_call(
         LlmConfig(
             transport="command",
             command_template=(
                 f"bash {shlex.quote(str(script))} "
                 "{prompt_file} {completion_file} "
-                f"'gpt-6-sol' {effort} 1"
+                f"'{model}' {effort} 1"
             ),
             timeout_seconds=600.0,
             runtime_root=str(runtime),
@@ -127,6 +148,11 @@ def _local_runtime_call(
             command_diagnostic_context=runtime_binding,
         ),
         runtime_binding,
+        cpa_cache_identity={
+            "transport": "cpa_command",
+            "models": [model],
+            "effort": effort,
+        },
     )
 
 
@@ -141,6 +167,7 @@ def _remote_runtime_call(
         "provider_runtime_host": ssh_host,
         "provider_credential_source": str(runtime / "cpa.env"),
     }
+    model = "gpt-6-sol"
     return _bound_call(
         LlmConfig(
             transport="command",
@@ -149,13 +176,18 @@ def _remote_runtime_call(
                 "{prompt_file} {completion_file} "
                 f"--ssh-host {shlex.quote(ssh_host)} "
                 f"--runtime-root {shlex.quote(str(runtime))} "
-                f"--model gpt-6-sol --effort {effort} --attempts 1"
+                f"--model {model} --effort {effort} --attempts 1"
             ),
             timeout_seconds=720.0,
             command_child_env=_without_ambient_cpa_environment(),
             command_diagnostic_context=runtime_binding,
         ),
         runtime_binding,
+        cpa_cache_identity={
+            "transport": "ssh_runtime_cpa",
+            "models": [model],
+            "effort": effort,
+        },
     )
 
 

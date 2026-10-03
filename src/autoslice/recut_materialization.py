@@ -200,9 +200,9 @@ def _burn_preview_subtitles(
         return record
     branding_intro_binding: dict[str, object] | None = None
     if branding_intro is not None:
-        # Mandatory delivery intro (维护者): splice before hashing so
-        # every downstream sha256 binding freezes the with-intro bytes.  Any
-        # intro problem fails the burn instead of shipping without the intro.
+
+
+
         try:
             branding_intro_binding = prepend_branding_intro(
                 context=branding_intro,

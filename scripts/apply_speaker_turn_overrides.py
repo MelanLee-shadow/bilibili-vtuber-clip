@@ -48,13 +48,13 @@ SPEAKER_SUBTITLE_STYLE_ID = (
 )
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 
-# 维护者-approved production contract :
-# - every host cue must byte-for-byte reuse the established sapphire72
-#   typography/colour metrics;
-# - every guest cue uses the white style accepted in the v11 review,
-#   not a newly invented colour;
-# - overlap cues move only through an event-level MarginV override; they reuse
-#   the exact same two styles and cannot drift in typography or colours.
+
+
+
+
+
+
+
 LDS_SAPPHIRE_STYLE = (
     "Microsoft YaHei,72,&H00FFFFFF,&H000000FF,&H00BA520F,&H70000000,"
     "0,0,0,0,100,100,0,0,1,3,2,2,60,60,40,1"

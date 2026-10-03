@@ -49,6 +49,38 @@ def _srt(*texts: str) -> str:
     )
 
 
+def test_entity_context_runs_runtime_cpa_without_ambient_credentials(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from tests.test_read_aloud_llm_verifier import _request
+
+    prompts = []
+    monkeypatch.delenv("CPA_BASE_URL", raising=False)
+    monkeypatch.delenv("CPA_API_KEY", raising=False)
+    monkeypatch.setattr(pipeline, "witness_audio_locally_resolvable", lambda *_args, **_kw: False)
+    monkeypatch.setattr(pipeline, "load_referent_groups", lambda *_args, **_kw: [])
+
+    def judge(prompt):
+        prompts.append(prompt)
+        return json.dumps({"is_read_aloud": False, "confidence": 0.99})
+
+    monkeypatch.setattr(pipeline, "_build_final_review_llm_call", lambda: judge)
+    context = pipeline._build_entity_verification_context(
+        spec={"date": "2026-09-29"}, padded=tmp_path / "padded.mp4",
+        padded_dur=20_000, host="localhost", text_override_path=None,
+        cid="new-talk", out_root=tmp_path, srt_text=_srt("歪了是什么颜色"),
+        authoritative_chat=[], adapters=SimpleNamespace(
+            profile_asset_file=lambda _name: tmp_path / "entities.json",
+            topic_graph_disabled=lambda: True,
+        ),
+    )
+
+    verdict = context.verify_confusable_entity(_request())
+
+    assert len(prompts) == 1
+    assert verdict["decision_authority"] == "CPA_JUDGE"
+    assert verdict["canonical_entity"] == "歪了是什么颜色"
+
+
 def test_fidelity_reverts_become_bounded_cpa_candidates(tmp_path):
     media = tmp_path / "clip.mp4"
     media.with_suffix(".fidelity-audit.json").write_text(
@@ -587,17 +619,13 @@ def test_replay_delivery_review_carries_source_only_boundary_witness():
     )
 
 
-def test_exact_delivery_review_callers_propagate_their_recording_date():
-    qixi_tree = ast.parse(inspect.getsource(qixi_refresh.refresh_terminal_evidence))
-    qixi_call = next(
-        node
-        for node in ast.walk(qixi_tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "exact_delivery_correction_audit"
-    )
-    date_keyword = next(keyword for keyword in qixi_call.keywords if keyword.arg == "recording_date")
-    assert ast.unparse(date_keyword.value) == "RECORDING_DATE"
+def test_private_delivery_refresh_cannot_supply_recording_authority(tmp_path):
+    with pytest.raises(
+        qixi_refresh.QixiTerminalEvidenceRefreshError,
+        match="PRIVATE_CANDIDATE_AUTHORITY_UNAVAILABLE",
+    ):
+        qixi_refresh.refresh_terminal_evidence(output_dir=tmp_path)
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_final_boundary_review_indexes_exact_post_authority_grid():
@@ -1468,7 +1496,11 @@ def test_exact_final_release_review_closes_acoustically_disproven_proposal(
     monkeypatch.setattr(
         pipeline,
         "_build_final_review_llm_call",
-        lambda: lambda _prompt: _judge_json("CURRENT"),
+        lambda: lambda _prompt: json.dumps({
+            "choice": "CURRENT", "reason": "proposal differs from original audio",
+            "current_utterance_supported": True,
+            "current_utterance_support_reason": "whole target pinyin matches the current cue",
+        }),
     )
     finding = {
         "cue_index": 1,
@@ -1691,14 +1723,18 @@ def test_exact_final_release_review_does_not_apply_new_mutation(monkeypatch):
         validate_final_review_release(receipt)
 
 
-def test_exact_final_release_review_discloses_cpa_keep_current_real_shape(
+def test_exact_final_release_review_keeps_unsupported_current_blocked(
     monkeypatch,
 ):
     monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
     monkeypatch.setattr(
         pipeline,
         "_build_final_review_llm_call",
-        lambda: lambda _prompt: _judge_json("CURRENT"),
+        lambda: lambda _prompt: json.dumps({
+            "choice": "CURRENT", "reason": "relative preference only",
+            "current_utterance_supported": False,
+            "current_utterance_support_reason": "the witness does not support the full current utterance",
+        }),
     )
     current = f"我一会儿让我们先看了这个{CHANNEL_PROFILE.display_name}的队伍"
     proposed = f"我一会儿让我们先看这个{CHANNEL_PROFILE.display_name}的队伍"
@@ -1730,12 +1766,10 @@ def test_exact_final_release_review_discloses_cpa_keep_current_real_shape(
         verify_confusable_entity=keep_current,
     )
 
-    assert receipt["status"] == "CLEAN"
-    assert receipt["findings"] == []
-    assert len(receipt["unresolved_findings_disclosed"]) == 1
-    adjudication = receipt["unresolved_findings_disclosed"][0]["exact_release_adjudication"]
-    assert adjudication["policy_branch"] == "JUDGE_KEEPS_CURRENT"
-    validate_final_review_release(receipt)
+    assert receipt["status"] == "FLAGGED"
+    assert receipt["release_gate"] == "BLOCK"
+    assert len(receipt["findings"]) == 1
+    assert receipt.get("unresolved_findings_disclosed", []) == []
 
 
 def test_exact_final_release_review_does_not_relitigate_verified_human_truth(
@@ -2064,6 +2098,7 @@ def test_exact_final_release_review_forwards_recut_offset_to_audio_adjudication(
         source_media_timeline_offset_ms,
         judge_llm_call=None,
         screen_read_probe=None,
+        initial_provider_adjudication_count=0,
     ):
         captured["findings"] = list(findings)
         captured["entity_verifier"] = entity_verifier
@@ -2215,13 +2250,15 @@ def test_exact_transcript_transport_failure_adds_only_typed_infra_marker(
     ]
 
 
-def test_exact_release_context_only_cpa_cannot_reopen_bound_terminal_closure(
-    monkeypatch,
+@pytest.mark.parametrize(
+    ("current", "proposed"),
+    [("大小姐说了", "大小姐说的"), ("是霜桥先动的手", "是ShuangQiao先动的手")],
+)
+def test_exact_release_context_only_cpa_terminal_repair_requires_new_review(
+    monkeypatch, current, proposed,
 ):
     monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
     monkeypatch.setattr(pipeline, "_build_final_review_llm_call", lambda: lambda _prompt: "{}")
-    current = "大小姐说了"
-    proposed = "大小姐说的"
     finding = {
         "cue_index": 3,
         "kind": "context",
@@ -2277,15 +2314,15 @@ def test_exact_release_context_only_cpa_cannot_reopen_bound_terminal_closure(
         clip_context={},
     )
 
-    assert receipt["status"] == "CLEAN"
-    assert receipt["release_gate"] == "PASS"
-    assert receipt["findings"] == []
-    resolved = receipt["resolved_findings"][0]
-    assert resolved["resolution"] == ("BOUNDARY_SEMANTIC_PRESERVES_TERMINAL_CLOSURE_WITHOUT_AUDIO")
-    assert resolved["boundary_closure_authority"]["status"] == "KEEP_CURRENT"
+    assert receipt["status"] == "FLAGGED"
+    assert receipt["release_gate"] == "BLOCK"
+    assert len(receipt["findings"]) == 1
+    pending = receipt["findings"][0]
+    assert pending["exact_release_adjudication"]["repaired"] is True
+    assert not any(row.get("boundary_closure_authority") for row in receipt["resolved_findings"])
 
 
-def test_exact_release_terminal_closure_guard_does_not_override_audio_cpa(
+def test_exact_release_terminal_repair_keeps_audio_cpa_authority(
     monkeypatch,
 ):
     monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
@@ -3152,7 +3189,7 @@ def test_final_review_inaudible_proposed_records_explicit_cpa_override(
     assert audit_correction_mutation_authority(audit)["status"] == "PASS"
 
 
-def test_final_review_marks_findings_beyond_audio_budget(monkeypatch):
+def test_final_review_adjudicates_new_findings_beyond_cpa_soft_target(monkeypatch):
     source_texts = [f"坏词{index}留在这里" for index in range(1, 14)]
     findings = [
         {
@@ -3181,13 +3218,13 @@ def test_final_review_marks_findings_beyond_audio_budget(monkeypatch):
         adapters=_adapters(),
     )
 
-    assert len(requests) == 12
-    assert audit["findings"][12]["routed"] == "skipped_budget"
-    assert audit["findings"][12]["context_audio_adjudication"]["status"] == "SKIPPED_BUDGET"
-    assert audit["status"] == "PARTIAL"
+    assert len(requests) == 13
+    assert audit["context_adjudication_count"] == 13
+    assert audit["context_adjudication_budget_policy"] == "SOFT"
+    assert audit["findings"][12]["context_audio_adjudication"]["status"] != "SKIPPED_BUDGET"
 
 
-def test_audio_budget_rejects_whole_same_cue_group_before_any_mutation(monkeypatch):
+def test_cpa_soft_target_does_not_interrupt_same_cue_group(monkeypatch):
     source_texts = [f"坏词{index}留在这里" for index in range(1, 13)]
     findings = [
         {
@@ -3234,11 +3271,12 @@ def test_audio_budget_rejects_whole_same_cue_group_before_any_mutation(monkeypat
         adapters=_adapters(),
     )
 
-    assert len(requests) == 11
+    assert len(requests) == 12  # the second same-window finding reuses its witness
+    assert audit["context_adjudication_count"] == 13
     assert "坏词12留在这里" in output
     for row in audit["findings"][-2:]:
-        assert row["routed"] == "skipped_budget"
-        assert row["context_audio_adjudication"]["status"] == "SKIPPED_BUDGET"
+        assert row["routed"] != "skipped_budget"
+        assert row["context_audio_adjudication"]["status"] != "SKIPPED_BUDGET"
 
 
 def test_deferred_windows_survive_drop_and_cue_renumbering():

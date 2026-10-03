@@ -32,10 +32,10 @@ from src.autoslice.channel_profile import load_channel_profile
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
 BRANDING_INTRO_SCHEMA = f"{CHANNEL_PROFILE.profile_id}-branding-intro.v1"
-# v2 (维护者): the manifest may carry SEVERAL verified intros and the
-# delivery rotates between them, keyed on the main clip's content hash so a
-# re-burn of the same material never flips its intro (edit-replace and refix
-# reruns must stay byte-stable relative to their recorded bindings).
+
+
+
+
 BRANDING_INTRO_SCHEMA_V2 = f"{CHANNEL_PROFILE.profile_id}-branding-intro.v2"
 BRANDING_INTRO_MANIFEST_RELPATH = CHANNEL_PROFILE.asset_file(
     "branding_intro_manifest"

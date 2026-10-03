@@ -211,6 +211,110 @@ def _one_file(root: Path, patterns: tuple[str, ...]) -> Path | None:
     return next(iter(found)) if len(found) == 1 else None
 
 
+def _review_package_binding(
+    root: Path, candidate_id: str
+) -> tuple[bool, dict[str, object] | None]:
+    """Resolve current artifact roles from a root review-package manifest.
+
+    Recovery packages intentionally retain differing ``history/`` and
+    ``lineage/`` artifacts.  Those are audit preimages, not competing current
+    authorities.  When a supported root ``review_manifest.json`` exists, its
+    exact candidate set and item locators are fail-closed and the legacy
+    recursive mirror heuristics are not consulted for those roles.
+    """
+
+    manifest_path = root / "review_manifest.json"
+    if not manifest_path.exists() and not manifest_path.is_symlink():
+        return False, None
+    try:
+        before = _snapshot_regular(manifest_path, root)
+        manifest = json.loads(before.decode("utf-8"))
+    except (OSError, ValueError, UnicodeError, json.JSONDecodeError):
+        return True, None
+    if not isinstance(manifest, Mapping):
+        return True, None
+    if manifest.get("schema_version") != "lidousha-review-package.v1":
+        return False, None
+    exact_ids = manifest.get("exact_candidate_ids")
+    items = manifest.get("items")
+    if (
+        manifest.get("status")
+        != "finished_review_package_no_upload_pending_human_review"
+        or manifest.get("upload_allowed") is not False
+        or not isinstance(exact_ids, list)
+        or not exact_ids
+        or any(not isinstance(value, str) or not value for value in exact_ids)
+        or len(set(exact_ids)) != len(exact_ids)
+        or candidate_id not in exact_ids
+        or not isinstance(items, list)
+        or len(items) != len(exact_ids)
+    ):
+        return True, None
+    item_ids = [
+        item.get("candidate_id") if isinstance(item, Mapping) else None
+        for item in items
+    ]
+    if item_ids != exact_ids:
+        return True, None
+    matching = [
+        item
+        for item in items
+        if isinstance(item, Mapping)
+        and item.get("candidate_id") == candidate_id
+    ]
+    if len(matching) != 1:
+        return True, None
+    item = matching[0]
+    title = item.get("title")
+    if not isinstance(title, str) or not title.strip():
+        return True, None
+    roles = {
+        "record": "record",
+        "publish": "publish_json",
+        "video": "video",
+        "subtitle": "subtitle_srt",
+        "subtitle_ass": "ass_path",
+        "cover": "cover",
+    }
+    resolved: dict[str, object] = {
+        "manifest": manifest_path,
+        "title": title,
+        "item": dict(item),
+    }
+    try:
+        for role, field in roles.items():
+            value = item.get(field)
+            relative = Path(value) if isinstance(value, str) else None
+            if (
+                relative is None
+                or not value
+                or relative.is_absolute()
+                or any(part in {"", ".", ".."} for part in relative.parts)
+                or (role in {"record", "publish"} and relative.name != value)
+            ):
+                return True, None
+            resolved[role] = _safe_path(root / relative, root)
+        if item.get("mp4") not in (None, item.get("video")):
+            return True, None
+        if item.get("speaker_srt") not in (None, item.get("subtitle_srt")):
+            return True, None
+        if _snapshot_regular(manifest_path, root) != before:
+            return True, None
+    except (OSError, ValueError):
+        return True, None
+    return True, resolved
+
+
+def _review_package_record_file(
+    root: Path, candidate_id: str
+) -> tuple[bool, Path | None]:
+    manifest_bound, binding = _review_package_binding(root, candidate_id)
+    if not manifest_bound:
+        return False, None
+    record = binding.get("record") if isinstance(binding, Mapping) else None
+    return True, record if isinstance(record, Path) else None
+
+
 def _canonical_record_file(root: Path, candidate_id: str) -> Path | None:
     """Resolve the candidate record, retaining delivery records as artifacts.
 
@@ -222,6 +326,12 @@ def _canonical_record_file(root: Path, candidate_id: str) -> Path | None:
     conflicting record fail-closed while supporting the documented
     evidence-json/delivery-record package shape.
     """
+
+    manifest_bound, manifest_record = _review_package_record_file(
+        root, candidate_id
+    )
+    if manifest_bound:
+        return manifest_record
 
     records: dict[Path, bytes] = {}
     for path in root.rglob("*.record.json"):
@@ -380,7 +490,11 @@ def _final_review_cover(
 
     Before assembly the existing generation locator remains the only input.
     An occupied canonical review manifest is never ignored on validation failure.
-    This resolves a locator, not a new QC verdict or an upload authorization.
+    The established daily schema retains its evidence-json contract; the
+    schema-less legacy upload package is accepted only when it binds the exact
+    same-stem record, publish JSON, video, cover and title.  Unknown schemas
+    remain fail-closed.  This resolves a locator, not a new QC verdict or an
+    upload authorization.
     """
     manifests = list(root.rglob("review_manifest.json"))
     if not manifests:
@@ -391,21 +505,45 @@ def _final_review_cover(
     before = _snapshot_regular(manifest_path, root)
     manifest = _load_json(manifest_path, root)
     items = manifest.get("items")
-    if (manifest.get("schema_version") != "lidousha-daily-review-manifest.v1"
-            or manifest.get("candidate_id") != candidate_id
-            or not isinstance(items, list) or len(items) != 1
-            or not isinstance(items[0], Mapping)):
+    if (
+        not isinstance(items, list)
+        or len(items) != 1
+        or not isinstance(items[0], Mapping)
+    ):
         raise ValueError("current review manifest identity is invalid")
     item = items[0]
     if str(item.get("candidate_id") or item.get("id") or "") != candidate_id:
         raise ValueError("review item candidate differs from canonical record")
-    for key, expected in (("evidence_json", record_path), ("publish_json", publish_path),
-                          ("video", Path(burned_path) if burned_path else None)):
+    declared_candidate = str(manifest.get("candidate_id") or "")
+    if declared_candidate and declared_candidate != candidate_id:
+        raise ValueError("current review manifest candidate differs")
+
+    def require_binding(key: str, expected: Path | None) -> None:
         value = item.get(key)
-        if (not isinstance(value, str) or not value or Path(value).is_absolute()
-                or expected is None
-                or _safe_path(manifest_path.parent / value, root) != _safe_path(expected, root)):
+        if (
+            not isinstance(value, str)
+            or not value
+            or Path(value).is_absolute()
+            or expected is None
+            or _safe_path(manifest_path.parent / value, root)
+            != _safe_path(expected, root)
+        ):
             raise ValueError("review item does not bind current package artifacts")
+
+    schema = manifest.get("schema_version")
+    if schema == "lidousha-daily-review-manifest.v1":
+        if manifest.get("candidate_id") != candidate_id:
+            raise ValueError("current review manifest identity is invalid")
+        require_binding("evidence_json", record_path)
+    elif schema is None:
+        require_binding("record", record_path)
+        if item.get("evidence_json") is not None:
+            require_binding("evidence_json", record_path)
+    else:
+        raise ValueError("current review manifest schema is unsupported")
+    require_binding("publish_json", publish_path)
+    require_binding("video", Path(burned_path) if burned_path else None)
+
     from scripts.run_title_cover_joint_qc import resolve_package_inputs
 
     _record, _publish, cover = resolve_package_inputs(manifest_path.parent, title)
@@ -414,14 +552,165 @@ def _final_review_cover(
     return _safe_path(cover, root)
 
 
+def _current_joint_qc(
+    root: Path,
+    *,
+    candidate_id: str,
+    title: object,
+    cover: Path | None,
+    cover_sha256: object,
+) -> tuple[set[str], Path | None]:
+    """Select and replay the current QC, preferring its canonical root name."""
+
+    root_candidate = root / f"{candidate_id}.title-cover-joint-qc.json"
+    root_generic = root / "title-cover-joint-qc.json"
+    if root_candidate.exists() or root_candidate.is_symlink():
+        candidates = {root_candidate}
+    elif root_generic.exists() or root_generic.is_symlink():
+        candidates = {root_generic}
+    else:
+        candidates: set[Path] = set()
+        for pattern in ("*title*cover*qc*.json", "*joint*qc*.json"):
+            for path in root.rglob(pattern):
+                try:
+                    _safe_path(path, root)
+                except (OSError, ValueError):
+                    continue
+                candidates.add(path)
+    current: list[Path] = []
+    for candidate in candidates:
+        try:
+            document = _load_json(candidate, root)
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        if _valid_joint_qc(
+            document,
+            candidate_id=candidate_id,
+            title=title,
+            cover=cover,
+            cover_sha256=cover_sha256 if cover is not None else None,
+            root=root,
+        ):
+            current.append(candidate)
+    selected = current[0] if len(current) == 1 else None
+    if selected is None:
+        return {"COVER_QC_MISSING"}, None
+    try:
+        document = _load_json(selected, root)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {"COVER_QC_INVALID"}, None
+    if not _valid_joint_qc(
+        document,
+        candidate_id=candidate_id,
+        title=title,
+        cover=cover,
+        cover_sha256=cover_sha256,
+        root=root,
+    ):
+        return {"COVER_QC_MISSING"}, None
+    return set(), selected
+
+
+def _current_mechanical_receipt(
+    root: Path, candidate_id: str
+) -> tuple[set[str], Path | None]:
+    """Replay one current mechanical receipt without invoking the auditor."""
+
+    verification = root / "verification"
+    candidates = [
+        verification / "mechanical-delivery-review.json",
+        verification / f"{candidate_id}.mechanical-delivery-review.json",
+    ]
+    present = [
+        path for path in candidates if path.exists() or path.is_symlink()
+    ]
+    if not present:
+        return {"MECHANICAL_DELIVERY_REVIEW_MISSING"}, None
+    if len(present) != 1:
+        return {"MECHANICAL_DELIVERY_REVIEW_INVALID"}, None
+    receipt_path = present[0]
+    try:
+        value = _load_json(receipt_path, root)
+        from src.autoslice.mechanical_delivery_review import (
+            validate_saved_mechanical_receipt,
+        )
+
+        validate_saved_mechanical_receipt(value, root)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {"MECHANICAL_DELIVERY_REVIEW_INVALID"}, None
+    return set(), receipt_path
+
+
+def _current_final_media_review(
+    package_root: Path,
+    candidate_id: str,
+    *,
+    source_video_sha256: str,
+) -> tuple[set[str], dict[str, str]]:
+    from src.autoslice.final_media_review_release_gate import (
+        inspect_final_media_review_release,
+    )
+
+    gate = inspect_final_media_review_release(
+        package_root,
+        candidate_id,
+        source_video_sha256=source_video_sha256,
+    )
+    dependencies: dict[str, str] = {}
+    bindings = gate.get("bindings")
+    if isinstance(bindings, Mapping):
+        for key, dependency_key in (
+            ("job", "final_media_review_job"),
+            ("state", "final_media_review_state"),
+            ("active_job", "final_media_review_active_job"),
+        ):
+            entry = bindings.get(key)
+            if isinstance(entry, Mapping) and isinstance(entry.get("path"), str):
+                dependencies[dependency_key] = str(entry["path"])
+    reason = gate.get("reason_code")
+    return ({str(reason)} if isinstance(reason, str) and reason else set()), dependencies
+
+
+def _inspect_bound_final_media_review(
+    *,
+    package_root: Path,
+    candidate_id: str,
+    burned_video: str,
+    trusted_root: Path,
+    reasons: set[str],
+    dependencies: dict[str, str],
+) -> None:
+    try:
+        current_reasons, current_dependencies = _current_final_media_review(
+            package_root,
+            candidate_id,
+            source_video_sha256=_sha256(Path(burned_video), trusted_root),
+        )
+    except (OSError, ValueError):
+        current_reasons = {"FINAL_MEDIA_REVIEW_STATE_INVALID"}
+        current_dependencies = {}
+    reasons.update(current_reasons)
+    dependencies.update(current_dependencies)
+
+
 def _inspect_package(root: Path | None, candidate_id: str, date: str) -> tuple[set[str], dict[str, str], Path | None]:
     """Replay the minimum local descriptor closure required for readiness."""
     reasons: set[str] = set()
     dependencies: dict[str, str] = {}
     if root is None:
         return {"PACKAGE_ROOT_MISSING"}, dependencies, None
-    record_path = _canonical_record_file(root, candidate_id)
-    if record_path is None:
+    review_package_bound, review_package = _review_package_binding(
+        root, candidate_id
+    )
+    if review_package_bound:
+        record_path = (
+            review_package.get("record")
+            if isinstance(review_package, Mapping)
+            else None
+        )
+    else:
+        record_path = _canonical_record_file(root, candidate_id)
+    if not isinstance(record_path, Path):
         return {"PACKAGE_RECORD_MISSING_OR_AMBIGUOUS"}, dependencies, None
     dependencies["record"] = str(record_path)
     try:
@@ -434,31 +723,68 @@ def _inspect_package(root: Path | None, candidate_id: str, date: str) -> tuple[s
     if not isinstance(hashes, Mapping):
         return reasons | {"PACKAGE_ARTIFACT_HASHES_MISSING"}, dependencies, None
     preview = record.get("burned_preview")
-    nested_burn = _field_path(preview, "burned_path", "path") if isinstance(preview, Mapping) else None
-    # Uniform-host rendering creates the actual ASS after the optional speaker
-    # stage.  Its committed producer locator therefore lives in burned_preview.
-    # Validate every declared nested locator even when a top-level one exists;
-    # a good mirror must not hide a missing, escaped or conflicting file.
-    nested_ass = _field_path(preview, "ass_path") if isinstance(preview, Mapping) else None
-    if isinstance(preview, Mapping) and preview.get("ass_path") is not None:
-        if nested_ass is None:
-            reasons.add("PACKAGE_ARTIFACT_LOCATOR_MISSING")
-        else:
-            try:
-                nested_ass_sha = _sha256(nested_ass, root)
-            except (OSError, ValueError):
-                reasons.add("PACKAGE_ARTIFACT_FILE_INVALID")
-            else:
-                if hashes.get("ass_sha256") != nested_ass_sha:
-                    reasons.add("PACKAGE_ARTIFACT_HASH_DRIFT")
-    required = ((("media_path", "main_path"), "video_sha256", "media"), (("subtitle_path",), "subtitle_sha256", "subtitle"), (("subtitle_ass_path",), "ass_sha256", "subtitle_ass"), (("burned_video_path",), "burned_video_sha256", "burned_video"))
-    for fields, hash_key, role in required:
-        path = nested_burn if role == "burned_video" and nested_burn is not None else _field_path(record, *fields)
-        if role == "subtitle_ass" and path is None:
-            if record.get("subtitle_ass_path") is not None:
+    nested_burn = (
+        _field_path(preview, "burned_path", "path")
+        if isinstance(preview, Mapping)
+        else None
+    )
+    nested_ass = (
+        _field_path(preview, "ass_path")
+        if isinstance(preview, Mapping)
+        else None
+    )
+    # A root review-package manifest is the installed-package locator
+    # authority. Producer records may intentionally preserve absolute source
+    # labels as provenance; those labels must not override package-contained
+    # current artifact roles. Legacy packages without this manifest retain the
+    # stricter recursive/nested-locator validation below.
+    if not review_package_bound:
+        if isinstance(preview, Mapping) and preview.get("ass_path") is not None:
+            if nested_ass is None:
                 reasons.add("PACKAGE_ARTIFACT_LOCATOR_MISSING")
-            elif isinstance(preview, Mapping) and preview.get("status") == "BURNED":
-                path = nested_ass
+            else:
+                try:
+                    nested_ass_sha = _sha256(nested_ass, root)
+                except (OSError, ValueError):
+                    reasons.add("PACKAGE_ARTIFACT_FILE_INVALID")
+                else:
+                    if hashes.get("ass_sha256") != nested_ass_sha:
+                        reasons.add("PACKAGE_ARTIFACT_HASH_DRIFT")
+    required = (
+        (("media_path", "main_path"), "video_sha256", "media"),
+        (("subtitle_path",), "subtitle_sha256", "subtitle"),
+        (("subtitle_ass_path",), "ass_sha256", "subtitle_ass"),
+        (("burned_video_path",), "burned_video_sha256", "burned_video"),
+    )
+    manifest_roles = {
+        "media": "video",
+        "subtitle": "subtitle",
+        "subtitle_ass": "subtitle_ass",
+        "burned_video": "video",
+    }
+    review_item = (
+        review_package.get("item")
+        if isinstance(review_package, Mapping)
+        else None
+    )
+    for fields, hash_key, role in required:
+        if review_package_bound and isinstance(review_package, Mapping):
+            path = review_package.get(manifest_roles[role])
+            path = path if isinstance(path, Path) else None
+        else:
+            path = (
+                nested_burn
+                if role == "burned_video" and nested_burn is not None
+                else _field_path(record, *fields)
+            )
+            if role == "subtitle_ass" and path is None:
+                if record.get("subtitle_ass_path") is not None:
+                    reasons.add("PACKAGE_ARTIFACT_LOCATOR_MISSING")
+                elif (
+                    isinstance(preview, Mapping)
+                    and preview.get("status") == "BURNED"
+                ):
+                    path = nested_ass
         if path is None:
             reasons.add("PACKAGE_ARTIFACT_LOCATOR_MISSING")
             continue
@@ -470,18 +796,50 @@ def _inspect_package(root: Path | None, candidate_id: str, date: str) -> tuple[s
             dependencies[role] = str(path)
             if hashes.get(hash_key) != actual:
                 reasons.add("PACKAGE_ARTIFACT_HASH_DRIFT")
-            if role == "burned_video" and isinstance(preview, Mapping) and nested_burn is not None:
-                if preview.get("burned_sha256") != actual:
+            if role == "burned_video" and isinstance(preview, Mapping):
+                declared = preview.get("burned_sha256")
+                if declared is not None and declared != actual:
+                    reasons.add("PACKAGE_ARTIFACT_HASH_DRIFT")
+            if isinstance(review_item, Mapping):
+                item_hash_field = {
+                    "subtitle": "speaker_srt_sha256",
+                    "subtitle_ass": "ass_sha256",
+                }.get(role)
+                declared_item_hash = (
+                    review_item.get(item_hash_field)
+                    if item_hash_field is not None
+                    else None
+                )
+                if (
+                    declared_item_hash is not None
+                    and declared_item_hash != actual
+                ):
                     reasons.add("PACKAGE_ARTIFACT_HASH_DRIFT")
     staging = record.get("publish_staging")
-    publish_path = _field_path(staging, "publish_json_path") if isinstance(staging, Mapping) else None
-    publish_path = publish_path or _one_file(root, (f"{candidate_id}.publish.json", "*.publish.json"))
+    if review_package_bound and isinstance(review_package, Mapping):
+        manifest_publish = review_package.get("publish")
+        publish_path = (
+            manifest_publish if isinstance(manifest_publish, Path) else None
+        )
+    else:
+        publish_path = (
+            _field_path(staging, "publish_json_path")
+            if isinstance(staging, Mapping)
+            else None
+        )
+        publish_path = publish_path or _one_file(
+            root, (f"{candidate_id}.publish.json", "*.publish.json")
+        )
     if publish_path is None:
-        return reasons | {"PACKAGE_PUBLISH_MISSING_OR_AMBIGUOUS"}, dependencies, None
+        return (
+            reasons | {"PACKAGE_PUBLISH_MISSING_OR_AMBIGUOUS"},
+            dependencies,
+            record_path,
+        )
     try:
         publish = _load_json(publish_path, root)
     except (OSError, ValueError, json.JSONDecodeError):
-        return reasons | {"PACKAGE_PUBLISH_INVALID"}, dependencies, None
+        return reasons | {"PACKAGE_PUBLISH_INVALID"}, dependencies, record_path
     dependencies["publish"] = str(publish_path)
     if publish.get("candidate_id") not in (None, candidate_id):
         reasons.add("PACKAGE_PUBLISH_IDENTITY_DRIFT")
@@ -494,7 +852,26 @@ def _inspect_package(root: Path | None, candidate_id: str, date: str) -> tuple[s
     if not isinstance(generation, Mapping):
         reasons.add("COVER_QC_MISSING")
     else:
-        cover = _field_path(generation, "final_cover") or _field_path(publish, "cover_path")
+        if review_package_bound and isinstance(review_package, Mapping):
+            manifest_cover = review_package.get("cover")
+            cover = manifest_cover if isinstance(manifest_cover, Path) else None
+            generated_cover = (
+                _field_path(generation, "final_cover")
+                or _field_path(publish, "cover_path")
+            )
+            if generated_cover is None:
+                reasons.add("COVER_QC_MISSING")
+            else:
+                try:
+                    if _safe_path(generated_cover, root) != cover:
+                        reasons.add("PACKAGE_ARTIFACT_HASH_DRIFT")
+                except (OSError, ValueError):
+                    reasons.add("PACKAGE_ARTIFACT_FILE_INVALID")
+        else:
+            cover = (
+                _field_path(generation, "final_cover")
+                or _field_path(publish, "cover_path")
+            )
         if cover is None:
             reasons.add("COVER_QC_MISSING")
         else:
@@ -504,68 +881,113 @@ def _inspect_package(root: Path | None, candidate_id: str, date: str) -> tuple[s
                 reasons.add("PACKAGE_ARTIFACT_FILE_INVALID")
             else:
                 dependencies["cover"] = str(cover)
-                if generation.get("final_cover_sha256") != actual_cover or (hashes.get("cover_sha256") is not None and hashes.get("cover_sha256") != actual_cover):
+                if (
+                    generation.get("final_cover_sha256") != actual_cover
+                    or (
+                        hashes.get("cover_sha256") is not None
+                        and hashes.get("cover_sha256") != actual_cover
+                    )
+                ):
                     reasons.add("PACKAGE_ARTIFACT_HASH_DRIFT")
+                if isinstance(review_item, Mapping):
+                    host_binding = review_item.get("host_only_v4_binding")
+                    if (
+                        isinstance(host_binding, Mapping)
+                        and host_binding.get("final_cover_sha256")
+                        != actual_cover
+                    ):
+                        reasons.add("PACKAGE_ARTIFACT_HASH_DRIFT")
     if cover is not None and actual_cover is not None:
-        try:
-            final_cover = _final_review_cover(
-                root, candidate_id=candidate_id, title=publish.get("title"),
-                record_path=record_path, publish_path=publish_path,
-                burned_path=dependencies.get("burned_video"), generated_cover=cover,
-            )
-            if _sha256(final_cover, root) != actual_cover:
-                raise ValueError("final cover differs from generation bytes")
-        except (OSError, ValueError, KeyError, TypeError):
-            reasons.add("PACKAGE_ARTIFACT_FILE_INVALID")
-            cover = None  # Never rescue an invalid assembled package via the old locator.
+        if review_package_bound and isinstance(review_package, Mapping):
+            if (
+                review_package.get("title") != publish.get("title")
+                or review_package.get("record") != record_path
+                or review_package.get("publish") != publish_path
+                or review_package.get("video")
+                != Path(dependencies.get("burned_video", ""))
+            ):
+                reasons.add("PACKAGE_ARTIFACT_FILE_INVALID")
+                cover = None
+            else:
+                dependencies["review_manifest"] = str(
+                    review_package["manifest"]
+                )
         else:
-            cover = final_cover
-            dependencies["cover"] = str(cover)
+            try:
+                final_cover = _final_review_cover(
+                    root,
+                    candidate_id=candidate_id,
+                    title=publish.get("title"),
+                    record_path=record_path,
+                    publish_path=publish_path,
+                    burned_path=dependencies.get("burned_video"),
+                    generated_cover=cover,
+                )
+                if _sha256(final_cover, root) != actual_cover:
+                    raise ValueError("final cover differs from generation bytes")
+            except (OSError, ValueError, KeyError, TypeError):
+                reasons.add("PACKAGE_ARTIFACT_FILE_INVALID")
+                cover = None
+            else:
+                cover = final_cover
+                dependencies["cover"] = str(cover)
+    burned_video = dependencies.get("burned_video")
+    if burned_video is not None:
+        _inspect_bound_final_media_review(
+            package_root=record_path.parent,
+            candidate_id=candidate_id,
+            burned_video=burned_video,
+            trusted_root=root,
+            reasons=reasons,
+            dependencies=dependencies,
+        )
+
     source_fact = record.get("source_fact_review")
     if not isinstance(source_fact, Mapping):
         contract = record.get("story_contract")
         source_fact = contract.get("source_fact_review") if isinstance(contract, Mapping) else None
     if not isinstance(source_fact, Mapping) or source_fact.get("status") != "PASS":
         reasons.add("SOURCE_FACT_PROVIDER_MISSING")
-    qc_candidates: set[Path] = set()
-    for pattern in ("*title*cover*qc*.json", "*joint*qc*.json"):
-        for path in root.rglob(pattern):
-            try:
-                _safe_path(path, root)
-            except (OSError, ValueError):
-                continue
-            qc_candidates.add(path)
-    current_qcs: list[Path] = []
-    for candidate_qc in qc_candidates:
-        try:
-            candidate_doc = _load_json(candidate_qc, root)
-        except (OSError, ValueError, json.JSONDecodeError):
-            continue
-        if _valid_joint_qc(candidate_doc, candidate_id=candidate_id, title=publish.get("title"), cover=cover, cover_sha256=actual_cover if cover is not None else None, root=root):
-            current_qcs.append(candidate_qc)
-    qc = current_qcs[0] if len(current_qcs) == 1 else None
-    if qc is None:
-        reasons.add("COVER_QC_MISSING")
-    else:
+    qc_reasons, qc = _current_joint_qc(
+        root,
+        candidate_id=candidate_id,
+        title=publish.get("title"),
+        cover=cover,
+        cover_sha256=actual_cover,
+    )
+    reasons.update(qc_reasons)
+    if qc is not None:
         dependencies["title_cover_qc"] = str(qc)
-        try:
-            qc_doc = _load_json(qc, root)
-        except (OSError, ValueError, json.JSONDecodeError):
-            reasons.add("COVER_QC_INVALID")
-        else:
-            if not _valid_joint_qc(
-                qc_doc,
-                candidate_id=candidate_id,
-                title=publish.get("title"),
-                cover=cover,
-                cover_sha256=actual_cover,
-                root=root,
-            ):
-                reasons.add("COVER_QC_MISSING")
+    if review_package_bound:
+        mechanical_reasons, mechanical_receipt = _current_mechanical_receipt(
+            root, candidate_id
+        )
+        reasons.update(mechanical_reasons)
+        if mechanical_receipt is not None:
+            dependencies["mechanical_delivery_review"] = str(
+                mechanical_receipt
+            )
+    if review_package_bound and isinstance(review_package, Mapping):
+        manifest_dependency = review_package.get("manifest")
+        if isinstance(manifest_dependency, Path):
+            dependencies["review_manifest"] = str(manifest_dependency)
     for role, patterns in (
         ("review_manifest", ("*review*manifest*.json",)),
         ("package_audit", ("*package*audit*.json",)),
     ):
+        if role in dependencies:
+            continue
+        exact = (
+            root / "package_audit.json"
+            if role == "package_audit"
+            else root / "review_manifest.json"
+        )
+        if exact.exists() or exact.is_symlink():
+            try:
+                dependencies[role] = str(_safe_path(exact, root))
+                continue
+            except (OSError, ValueError):
+                pass
         document = _one_file(root, patterns)
         if document is not None:
             dependencies[role] = str(document)
@@ -630,9 +1052,29 @@ def _category(reasons: set[str], *, serial: bool) -> str:
         return READY_FOR_SERIAL_UPLOAD
     groups = {
         NEEDS_REVIEWER_TRUTH: {"HOLD_PENDING_REVIEW", "HUMAN_TRUTH_MISSING", "TITLE_AUTHORITY_REQUIRED", "SELECTION_SUPPORT_TERMINAL_BLOCKED"},
-        STATE_DRIFT: {code for code in reasons if code.startswith(("STATE_", "PACKAGE_", "UPLOAD_"))},
+        STATE_DRIFT: {
+            code
+            for code in reasons
+            if code.startswith(
+                (
+                    "STATE_",
+                    "PACKAGE_",
+                    "UPLOAD_",
+                    "MECHANICAL_DELIVERY_REVIEW_",
+                )
+            )
+        }
+        | {
+            "FINAL_MEDIA_REVIEW_STATE_INVALID",
+            "FINAL_MEDIA_REVIEW_CONTENT_BLOCKED",
+        },
         CODE_DEFECT: {"TYPED_RUNTIME_FAILURE"},
-        NEEDS_PROVIDER: {"SOURCE_FACT_PROVIDER_MISSING", "COVER_QC_MISSING", "COVER_QC_INVALID"},
+        NEEDS_PROVIDER: {
+            "SOURCE_FACT_PROVIDER_MISSING",
+            "COVER_QC_MISSING",
+            "COVER_QC_INVALID",
+            "FINAL_MEDIA_REVIEW_UNRESOLVED",
+        },
     }
     for category in _PRECEDENCE:
         if reasons & groups.get(category, set()):
@@ -807,6 +1249,8 @@ def build_readiness_graph(*, repository_root: Path, runtime_root: Path,
         serial = False
         try:
             manifest = _manifest_path(root)
+            if manifest is not None:
+                dependencies["upload_manifest"] = str(manifest)
             serial_inputs = {"review_manifest", "package_audit", "title_cover_qc"}
             if not package_reasons and manifest is not None and serial_inputs <= dependencies.keys() and registry_valid and not (registry_row and registry_row.get("status") == "hold_pending_review"):
                 parsed, manifest_problems = manifest_loader(manifest)

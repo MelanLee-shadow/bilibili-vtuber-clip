@@ -13,24 +13,23 @@ import re
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
+from src.autoslice.chat_evidence import normalize_chat_text
 from src.autoslice.piece_roles import content_only
 
 
 FILLER_PLAN_SCHEMA = "talk-filler-plan.v1"
 FILLER_AUDIT_SCHEMA = "talk-filler-audit.v1"
-MIN_TALK_EFFECTIVE_DURATION_MS = 45_000
-MIN_AUTOMATIC_EFFECTIVE_DURATION_MS = 45_500
+MIN_TALK_EFFECTIVE_DURATION_MS = 60_000
+MIN_AUTOMATIC_EFFECTIVE_DURATION_MS = 60_500
 MIN_MODEL_CONFIDENCE = 0.94
 MAX_AUTOMATIC_REMOVALS = 2
 MAX_REVIEWED_REMOVALS = 3
 MAX_SINGLE_REMOVAL_MS = 15_000
 MAX_AUTOMATIC_REMOVED_RATIO = 0.15
 MAX_AUTOMATIC_REMOVED_MS = 20_000
-# 同主题合并跳切（维护者 kmx 称呼两条切片案 → 新规
-# 「主题一致尽量放在一个切片里」）：同一 event_key 的两段窗口之间的无关
-# 插曲作为确定性 merge_gap 移除，走 pieces 拼接。上限远大于微剪（15s），
-# 因为它移除的是"两次同主题触发之间的整段别的内容"，由 event_key 合并
-# 审计确定性授权，不依赖模型置信度。
+# Legacy merge-gap constants remain for input compatibility; selector recall no
+# longer creates gap cuts, and the filler rejects such inputs without explicit
+# user approval.
 MAX_MERGE_GAP_MS = 600_000
 MAX_MERGE_GAP_REMOVALS = 2
 MIN_RETAINED_PIECE_MS = 6_000
@@ -43,8 +42,13 @@ _THANKS_RX = re.compile(
     r"灵感多|阿里嘎多|ありがとう)",
     re.IGNORECASE,
 )
-_WELCOME_RX = re.compile(
-    r"(?:^|[，。！？!?\s])(?:欢迎|晚上好|早上好|中午好|来了|来啦)"
+_GIFT_OBJECT_RX = re.compile(
+    r"(?:粉丝灯牌|钢蹦|钢镚|告白花束|音乐盒|舰长|上舰|礼物)",
+    re.IGNORECASE,
+)
+_HOUSEKEEPING_RX = re.compile(
+    r"(?:喝(?:一?(?:口|杯))?水|接水|倒水|上(?:个)?厕所|去厕所|洗手间|暂时离席|离席|离开一下|我去一下|马上回来)",
+    re.IGNORECASE,
 )
 _SUBSTANTIVE_RX = re.compile(
     r"(?:为什么|怎么|请问|因为|所以|但是|然后|我想|问题|故事|视频|"
@@ -70,7 +74,17 @@ _GLOBAL_REQUIRED_TRUE_FIELDS = (
     "punchline_preserved",
     "closing_resolution_preserved",
     "audience_interactions_consistent",
+    "audience_feedback_preserved",
+    "meaningful_repeats_preserved",
 )
+
+_AUTOMATIC_REMOVAL_REASONS = frozenset(
+    {"gift_thanks", "unrelated_sc", "housekeeping"}
+)
+_BOUND_STRUCTURED_CHAT_STATUSES = frozenset(
+    {"BOUND_DIRECT", "BOUND_SOURCE_ALIAS"}
+)
+_SHA256_RX = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 def _sha256(path: Path) -> str:
@@ -89,6 +103,132 @@ def _cue_row(cue: object, position: int) -> dict[str, object]:
         "end_ms": int(getattr(cue, "source_end_ms")),
         "text": _cue_text(cue),
     }
+
+
+def _structured_chat_binding_receipt(
+    binding: Mapping[str, object] | None,
+) -> dict[str, object]:
+    """Keep only the hash-bound fields needed for filler audit/prompt input."""
+
+    if not isinstance(binding, Mapping):
+        return {}
+    return {
+        key: binding[key]
+        for key in (
+            "chat_jsonl",
+            "chat_jsonl_sha256",
+            "chat_origin_epoch_ms",
+            "chat_timeline_offset_ms",
+            "structured_chat_required",
+            "chat_binding_status",
+            "chat_binding_authority",
+            "chat_source_alias_id",
+            "chat_canonical_recording_basename",
+        )
+        if key in binding
+    }
+
+
+def _load_structured_chat_sc_witness(
+    binding: Mapping[str, object] | None,
+    *,
+    source_start_ms: int,
+    source_end_ms: int,
+    clip_start_ms: int,
+    clip_end_ms: int,
+    removed_cues: Sequence[Mapping[str, object]],
+) -> tuple[list[dict[str, object]], str | None]:
+    """Load only hash-bound SC rows that can support an ``unrelated_sc`` cut.
+
+    A model-provided reason is never enough: the normal runner must have bound a
+    real JSONL sidecar, and the sidecar must contain a nearby SUPER_CHAT event.
+    The bounded window allows for the speaker reading an SC shortly after it was
+    sent while keeping unrelated session-wide SCs out of the evidence.
+    """
+
+    if not isinstance(binding, Mapping):
+        return [], "structured_chat_binding_missing"
+    if binding.get("structured_chat_required") is not True:
+        return [], "structured_chat_binding_not_required"
+    if str(binding.get("chat_binding_status") or "") not in _BOUND_STRUCTURED_CHAT_STATUSES:
+        return [], "structured_chat_binding_unverified"
+    raw_path = str(binding.get("chat_jsonl") or "").strip()
+    declared_sha = str(binding.get("chat_jsonl_sha256") or "").strip().lower()
+    path = Path(raw_path) if raw_path else None
+    if path is None or path.is_symlink() or not path.is_file():
+        return [], "structured_chat_jsonl_missing_or_not_regular"
+    if not _SHA256_RX.fullmatch(declared_sha):
+        return [], "structured_chat_jsonl_hash_missing_or_invalid"
+    try:
+        source_bytes = path.read_bytes()
+        actual_sha = "sha256:" + hashlib.sha256(source_bytes).hexdigest()
+    except OSError:
+        return [], "structured_chat_jsonl_unreadable"
+    if actual_sha != declared_sha:
+        return [], "structured_chat_jsonl_hash_mismatch"
+    origin = binding.get("chat_origin_epoch_ms")
+    offset = binding.get("chat_timeline_offset_ms")
+    if (
+        isinstance(origin, bool)
+        or not isinstance(origin, int)
+        or origin <= 0
+        or isinstance(offset, bool)
+        or not isinstance(offset, int)
+    ):
+        return [], "structured_chat_timeline_binding_invalid"
+    try:
+        from src.autoslice.chat_authority import load_chat_jsonl
+
+        # Parse exactly the bytes whose digest was checked.  This prevents a
+        # sidecar replacement between hashing and parsing from becoming SC
+        # authorization evidence.
+        rows = load_chat_jsonl(
+            path,
+            recording_start_ms=origin,
+            source_bytes=source_bytes,
+        )
+    except (OSError, TypeError, ValueError):
+        return [], "structured_chat_jsonl_parse_failed"
+
+    # The event often precedes the spoken read by a few seconds.  Never widen
+    # beyond the candidate itself; missing/uncertain association keeps the clip
+    # contiguous.
+    witness_start_ms = max(clip_start_ms, source_start_ms - 30_000)
+    witness_end_ms = min(clip_end_ms, source_end_ms)
+    witness: list[dict[str, object]] = []
+    for row in rows:
+        if row.kind != "superchat":
+            continue
+        event_offset_ms = int(row.offset_ms) + offset
+        if not witness_start_ms <= event_offset_ms <= witness_end_ms:
+            continue
+        witness.append(
+            {
+                "offset_ms": event_offset_ms,
+                "sender": str(row.sender or ""),
+                "text": " ".join(str(row.text or "").split()),
+                "source_event_id": str(row.source_event_id or ""),
+                "source_sha256": str(row.source_sha256 or declared_sha),
+            }
+        )
+    if not witness:
+        return [], "structured_chat_sc_witness_missing"
+    removed_text = normalize_chat_text(
+        "".join(str(row.get("text") or "") for row in removed_cues)
+    )
+    if len(removed_text) < 4:
+        return [], "structured_chat_removed_text_too_short"
+    matched = [
+        row
+        for row in witness
+        if len(normalize_chat_text(str(row.get("text") or ""))) >= 4
+        and normalize_chat_text(str(row.get("text") or "")) in removed_text
+    ]
+    if not matched:
+        return [], "structured_chat_sc_not_read_in_removed_text"
+    for row in matched:
+        row["removed_text_match"] = True
+    return matched[:16], None
 
 
 def _contiguous_plan(
@@ -119,6 +259,7 @@ def _proposal_interval(
     *,
     clip_start_ms: int,
     clip_end_ms: int,
+    structured_chat_binding: Mapping[str, object] | None = None,
 ) -> tuple[dict[str, object] | None, str | None]:
     try:
         first_position = int(proposal["start_cue"])
@@ -131,6 +272,9 @@ def _proposal_interval(
     mode = str(proposal.get("mode") or "remove_cues")
     reason = str(proposal.get("reason") or "")
     if mode == "gap_only":
+        # Legacy gap proposals remain parseable only so the deterministic
+        # authorization path can reject them; no automatic reason admits this
+        # mode after the three-category policy change.
         if last_position != first_position + 1:
             return None, "dead_pause_requires_adjacent_retained_cues"
         left = cues[first_position - 1]
@@ -145,8 +289,10 @@ def _proposal_interval(
             return None, "removal_needs_retained_context_on_both_sides"
         previous = cues[first_position - 2]
         following = cues[last_position]
-        start_ms = int(getattr(previous, "source_end_ms"))
-        end_ms = int(getattr(following, "source_start_ms"))
+        # Retain the surrounding pauses/reactions.  Permission to remove these
+        # spoken cues does not authorize cutting all time between their neighbors.
+        start_ms = int(getattr(cues[first_position - 1], "source_start_ms"))
+        end_ms = int(getattr(cues[last_position - 1], "source_end_ms"))
         removed_cues = [
             _cue_row(cue, position)
             for position, cue in enumerate(
@@ -164,6 +310,18 @@ def _proposal_interval(
     duration_ms = end_ms - start_ms
     if duration_ms > MAX_SINGLE_REMOVAL_MS:
         return None, "single_removal_too_long"
+
+    structured_chat_witness: list[dict[str, object]] = []
+    structured_chat_error: str | None = None
+    if reason == "unrelated_sc":
+        structured_chat_witness, structured_chat_error = _load_structured_chat_sc_witness(
+            structured_chat_binding,
+            source_start_ms=start_ms,
+            source_end_ms=end_ms,
+            clip_start_ms=clip_start_ms,
+            clip_end_ms=clip_end_ms,
+            removed_cues=removed_cues,
+        )
 
     return (
         {
@@ -187,6 +345,11 @@ def _proposal_interval(
                 },
             },
             "acoustic_evidence": proposal.get("acoustic_evidence"),
+            "structured_chat_binding": _structured_chat_binding_receipt(
+                structured_chat_binding
+            ),
+            "structured_chat_witness": structured_chat_witness,
+            "structured_chat_error": structured_chat_error,
             "removed_cues": removed_cues,
             "left_retained_context": left_context,
             "right_retained_context": right_context,
@@ -212,55 +375,58 @@ def _reason_authorized(removal: Mapping[str, object]) -> str | None:
     if reason == "gift_thanks" and mode == "remove_cues":
         if not _THANKS_RX.search(joined):
             return "gift_thanks_has_no_lexical_witness"
+        if not _GIFT_OBJECT_RX.search(joined):
+            return "gift_thanks_has_no_specific_gift_witness"
         if _SUBSTANTIVE_RX.search(joined):
             return "gift_thanks_contains_substantive_topic_language"
         if len(joined) > 120:
             return "gift_thanks_block_too_verbose"
         if not isinstance(semantic_checks, Mapping):
             return "semantic_discrete_checks_missing"
-        if semantic_checks.get("topic_relation") not in {
-            "incidental",
-            "unrelated",
-        }:
+        if semantic_checks.get("topic_relation") != "unrelated":
             return "semantic_topic_relation_not_removable"
         if any(semantic_checks.get(field) is not False for field in _SEMANTIC_DENY_FIELDS):
             return "semantic_protected_role_or_dependency_not_denied"
         return None
-    if reason == "welcome_chatter" and mode == "remove_cues":
-        if not _WELCOME_RX.search(joined):
-            return "welcome_has_no_lexical_witness"
-        if _SUBSTANTIVE_RX.search(joined) or len(joined) > 60:
-            return "welcome_contains_substantive_topic_language"
+    if reason == "housekeeping" and mode == "remove_cues":
+        if not _HOUSEKEEPING_RX.search(joined):
+            return "housekeeping_has_no_lexical_witness"
+        if len(joined) > 120:
+            return "housekeeping_block_too_verbose"
         if not isinstance(semantic_checks, Mapping):
             return "semantic_discrete_checks_missing"
-        if semantic_checks.get("topic_relation") not in {
-            "incidental",
-            "unrelated",
-        }:
+        if semantic_checks.get("topic_relation") not in {"incidental", "unrelated"}:
             return "semantic_topic_relation_not_removable"
         if any(semantic_checks.get(field) is not False for field in _SEMANTIC_DENY_FIELDS):
             return "semantic_protected_role_or_dependency_not_denied"
         return None
-    if reason == "dead_pause" and mode == "gap_only":
-        if int(removal["removed_duration_ms"]) < MIN_DEAD_PAUSE_MS:
-            return "dead_pause_too_short"
-        acoustic = removal.get("acoustic_evidence")
-        required = (
-            "asr_word_free",
-            "vad_non_speech",
-            "rms_silence",
-            "no_laughter_or_applause",
-            "no_music_occupancy",
-            "no_danmaku_burst",
-        )
-        if not isinstance(acoustic, Mapping) or any(
-            acoustic.get(field) is not True for field in required
+    if reason == "unrelated_sc" and mode == "remove_cues":
+        if not isinstance(semantic_checks, Mapping) or any(
+            semantic_checks.get(field) is None
+            for field in ("topic_relation", *_SEMANTIC_DENY_FIELDS)
         ):
-            return "dead_pause_acoustic_proof_incomplete"
+            return "semantic_discrete_checks_missing"
+        if semantic_checks.get("topic_relation") != "unrelated":
+            return "semantic_topic_relation_not_unrelated"
+        if any(semantic_checks.get(field) is not False for field in _SEMANTIC_DENY_FIELDS):
+            return "semantic_protected_role_or_dependency_not_denied"
+        if removal.get("structured_chat_error"):
+            return str(removal["structured_chat_error"])
+        witness = removal.get("structured_chat_witness")
+        if not isinstance(witness, list) or not witness:
+            return "structured_chat_sc_witness_missing"
+        if any(
+            not isinstance(row, Mapping) or row.get("removed_text_match") is not True
+            for row in witness
+        ):
+            return "structured_chat_sc_not_read_in_removed_text"
         return None
-    if reason == "unrelated_aside":
-        return "unrelated_aside_requires_later_semantic_authorizer"
-    return "reason_or_mode_not_supported"
+    if reason not in _AUTOMATIC_REMOVAL_REASONS:
+        return "automatic_reason_not_allowed"
+    # The model must not be able to invent a new automatic reason or mode.
+    if mode != "remove_cues":
+        return "automatic_reason_mode_not_allowed"
+    return "automatic_reason_not_allowed"
 
 
 def _authorize_automatic_proposals(
@@ -269,6 +435,7 @@ def _authorize_automatic_proposals(
     *,
     start_ms: int,
     end_ms: int,
+    structured_chat_binding: Mapping[str, object] | None,
     rejected: list[dict[str, object]],
 ) -> list[dict[str, object]]:
     accepted: list[dict[str, object]] = []
@@ -303,6 +470,7 @@ def _authorize_automatic_proposals(
             cues,
             clip_start_ms=start_ms,
             clip_end_ms=end_ms,
+            structured_chat_binding=structured_chat_binding,
         )
         if removal is None:
             rejected.append(
@@ -316,6 +484,7 @@ def _authorize_automatic_proposals(
                     "proposal_index": index,
                     "proposal_id": removal["proposal_id"],
                     "reason_code": reason_error,
+                    "reason": removal.get("reason"),
                 }
             )
             continue
@@ -332,6 +501,24 @@ def _authorize_reviewed_removals(
 ) -> list[dict[str, object]]:
     accepted: list[dict[str, object]] = []
     for index, row in enumerate(reviewed):
+        authority = row.get("authority")
+        if (
+            not isinstance(authority, str)
+            or not authority.strip()
+            or not re.fullmatch(
+                r"(?:user|维护者)_reviewed_\d{4}-\d{2}-\d{2}(?:[/:].+)?",
+                authority.strip(),
+            )
+        ):
+            rejected.append(
+                {
+                    "reviewed_index": index,
+                    "proposal_id": row.get("proposal_id"),
+                    "reason_code": "CONSERVATIVE_POLICY_REQUIRES_USER_APPROVAL",
+                }
+            )
+            continue
+        authority = authority.strip()
         try:
             removal_start = int(row["start_ms"])
             removal_end = int(row["end_ms"])
@@ -370,7 +557,7 @@ def _authorize_reviewed_removals(
                 "removed_cues": list(row.get("removed_cues") or []),
                 "left_retained_context": row.get("left_retained_context"),
                 "right_retained_context": row.get("right_retained_context"),
-                "authority": str(row.get("authority") or "reviewer_reviewed"),
+                "authority": authority,
                 "authorization_kind": "reviewed",
             }
         )
@@ -384,51 +571,17 @@ def _authorize_merge_gap_removals(
     end_ms: int,
     rejected: list[dict[str, object]],
 ) -> list[dict[str, object]]:
-    """Authorize deterministic same-topic merge gaps (selector event_key merge)."""
+    """Reject legacy selector gap cuts unless a separate user approval exists."""
 
-    accepted: list[dict[str, object]] = []
     for index, row in enumerate(merge_gaps):
-        try:
-            gap_start = int(row["start_ms"])
-            gap_end = int(row["end_ms"])
-        except (KeyError, TypeError, ValueError):
-            rejected.append(
-                {"merge_gap_index": index, "reason_code": "MERGE_GAP_INTERVAL_INVALID"}
-            )
-            continue
-        if not start_ms < gap_start < gap_end < end_ms:
-            rejected.append(
-                {"merge_gap_index": index, "reason_code": "MERGE_GAP_NOT_STRICTLY_INSIDE"}
-            )
-            continue
-        if gap_end - gap_start > MAX_MERGE_GAP_MS:
-            rejected.append(
-                {"merge_gap_index": index, "reason_code": "MERGE_GAP_TOO_LARGE"}
-            )
-            continue
-        accepted.append(
+        rejected.append(
             {
-                "proposal_id": str(row.get("proposal_id") or f"merge_gap_{index + 1}"),
-                "mode": "merge_gap",
-                "reason": "same_topic_merge_gap",
-                "source_start_ms": gap_start,
-                "source_end_ms": gap_end,
-                "removed_duration_ms": gap_end - gap_start,
-                "model_confidence": None,
-                "bridge_coherent": True,
-                "bridge_reason": str(
-                    row.get("bridge")
-                    or "同一 event_key 的两段同主题窗口合并，中间为无关插曲"
-                ),
-                "event_key": str(row.get("event_key") or ""),
-                "removed_cues": [],
-                "left_retained_context": None,
-                "right_retained_context": None,
-                "authority": "selector_event_key_merge_v1",
-                "authorization_kind": "merge_gap",
+                "merge_gap_index": index,
+                "proposal_id": row.get("proposal_id"),
+                "reason_code": "CONSERVATIVE_POLICY_REQUIRES_USER_APPROVAL",
             }
         )
-    return accepted
+    return []
 
 
 def _select_removals(
@@ -552,6 +705,7 @@ def build_talk_filler_plan(
     source_srt_path: Path | None = None,
     reviewed_removals: Sequence[Mapping[str, object]] | None = None,
     merge_gap_removals: Sequence[Mapping[str, object]] | None = None,
+    structured_chat_binding: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Authorize proposals and return a complete retained-interval plan.
 
@@ -595,6 +749,7 @@ def build_talk_filler_plan(
         cues,
         start_ms=start_ms,
         end_ms=end_ms,
+        structured_chat_binding=structured_chat_binding,
         rejected=rejected,
     )
     accepted.extend(
@@ -657,7 +812,7 @@ def build_talk_filler_plan(
         rejected.extend(
             {
                 "proposal_id": row["proposal_id"],
-                "reason_code": "EFFECTIVE_DURATION_NOT_OVER_45S",
+                "reason_code": "EFFECTIVE_DURATION_NOT_OVER_60S",
             }
             for row in selected
         )
@@ -704,6 +859,7 @@ def build_talk_filler_plan(
         "policy": {
             "minimum_effective_duration_ms_exclusive": MIN_TALK_EFFECTIVE_DURATION_MS,
             "minimum_automatic_effective_duration_ms_exclusive": MIN_AUTOMATIC_EFFECTIVE_DURATION_MS,
+            "automatic_removal_reasons": sorted(_AUTOMATIC_REMOVAL_REASONS),
             "minimum_model_confidence": MIN_MODEL_CONFIDENCE,
             "maximum_automatic_removals": MAX_AUTOMATIC_REMOVALS,
             "maximum_reviewed_removals": MAX_REVIEWED_REMOVALS,
@@ -739,10 +895,152 @@ def verify_automatic_filler_plan(
     ):
         return {"status": "NOT_REQUIRED", "reason_code": "NO_AUTOMATIC_REMOVAL"}
 
-    transcript_parts: list[str] = []
-    for piece_index, interval in enumerate(retained):
+    # New plans carry the exact candidate interval.  Older hand-built plans
+    # used by replay/tests only carry retained pieces and removal boundaries;
+    # recover that same source range without inventing a second coverage
+    # contract.
+    source_bounds: list[int] = []
+    for interval in retained:
         if not isinstance(interval, Mapping):
             return {"status": "FAIL", "reason_code": "RETAINED_INTERVAL_INVALID"}
+        try:
+            source_bounds.extend(
+                [int(interval["start_ms"]), int(interval["end_ms"])]
+            )
+        except (KeyError, TypeError, ValueError):
+            return {"status": "FAIL", "reason_code": "RETAINED_INTERVAL_INVALID"}
+    for removal in removals:
+        if not isinstance(removal, Mapping):
+            continue
+        if removal.get("reason") == "unrelated_sc":
+            witness = removal.get("structured_chat_witness")
+            if not isinstance(witness, list) or not witness:
+                return {
+                    "status": "FAIL",
+                    "reason_code": "STRUCTURED_CHAT_SC_WITNESS_MISSING",
+                }
+            if any(
+                not isinstance(row, Mapping)
+                or row.get("removed_text_match") is not True
+                for row in witness
+            ):
+                return {
+                    "status": "FAIL",
+                    "reason_code": "STRUCTURED_CHAT_SC_NOT_READ_IN_REMOVED_TEXT",
+                }
+        try:
+            source_bounds.extend(
+                [
+                    int(removal["source_start_ms"]),
+                    int(removal["source_end_ms"]),
+                ]
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    try:
+        source_start_ms = int(plan["source_start_ms"])
+        source_end_ms = int(plan["source_end_ms"])
+    except (KeyError, TypeError, ValueError):
+        if not source_bounds:
+            return {"status": "FAIL", "reason_code": "SOURCE_INTERVAL_UNAVAILABLE"}
+        source_start_ms = min(source_bounds)
+        source_end_ms = max(source_bounds)
+    if source_end_ms <= source_start_ms:
+        return {"status": "FAIL", "reason_code": "SOURCE_INTERVAL_INVALID"}
+
+    source_transcript_parts: list[str] = []
+    removed_transcript_parts: list[str] = []
+    removal_rows: list[tuple[Mapping[str, object], int, int]] = []
+    for removal in removals:
+        if not isinstance(removal, Mapping):
+            continue
+        try:
+            removal_start = int(removal["source_start_ms"])
+            removal_end = int(removal["source_end_ms"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if removal_start >= removal_end:
+            continue
+        removal_rows.append((removal, removal_start, removal_end))
+
+    for position, cue in enumerate(cues, start=1):
+        cue_start = int(getattr(cue, "source_start_ms"))
+        cue_end = int(getattr(cue, "source_end_ms"))
+        if not (cue_start < source_end_ms and cue_end > source_start_ms):
+            continue
+        matching_removals = [
+            removal
+            for removal, removal_start, removal_end in removal_rows
+            if cue_start < removal_end and cue_end > removal_start
+        ]
+        label = (
+            "REMOVED:"
+            + ",".join(
+                str(row.get("proposal_id") or "unknown")
+                for row in matching_removals
+            )
+            if matching_removals
+            else "RETAINED"
+        )
+        source_transcript_parts.append(
+            f"[{label}] #{position} [{cue_start}-{cue_end}ms] {_cue_text(cue)}"
+        )
+
+    for removal, removal_start, removal_end in removal_rows:
+        removed_lines = [
+            f"#{position} [{int(getattr(cue, 'source_start_ms'))}-"
+            f"{int(getattr(cue, 'source_end_ms'))}ms] {_cue_text(cue)}"
+            for position, cue in enumerate(cues, start=1)
+            if int(getattr(cue, "source_start_ms")) < removal_end
+            and int(getattr(cue, "source_end_ms")) > removal_start
+        ]
+        if not removed_lines:
+            plan_rows = removal.get("removed_cues")
+            if isinstance(plan_rows, list):
+                removed_lines = [
+                    f"#{row.get('position')} [{row.get('start_ms')}-"
+                    f"{row.get('end_ms')}ms] {row.get('text')}"
+                    for row in plan_rows
+                    if isinstance(row, Mapping)
+                ]
+        if not removed_lines:
+            if removal.get("authorization_kind") == "automatic":
+                return {"status": "FAIL", "reason_code": "REMOVED_TRANSCRIPT_MISSING"}
+            removed_lines = ["(该删除区间没有可核对的原始字幕覆盖，必须 fail)"]
+        removed_transcript_parts.append(
+            f"<REMOVED {removal.get('proposal_id')} "
+            f"{removal_start}-{removal_end}ms reason={removal.get('reason') or 'unknown'}>\n"
+            + "\n".join(removed_lines)
+            + "\n</REMOVED>"
+        )
+
+    structured_chat_parts: list[str] = []
+    for removal, _removal_start, _removal_end in removal_rows:
+        witness = removal.get("structured_chat_witness")
+        if not isinstance(witness, list):
+            continue
+        rows = []
+        for row in witness:
+            if not isinstance(row, Mapping):
+                continue
+            rows.append(
+                f"@{row.get('offset_ms')}ms sender={row.get('sender') or '(unknown)'} "
+                f"event={row.get('source_event_id') or '(unknown)'} "
+                f"removed_text_match={row.get('removed_text_match') is True}: "
+                f"{row.get('text') or ''}"
+            )
+        if rows:
+            structured_chat_parts.append(
+                f"<STRUCTURED_CHAT_WITNESS {removal.get('proposal_id')}\n"
+                + "\n".join(rows)
+                + "\n</STRUCTURED_CHAT_WITNESS>"
+            )
+
+    if not source_transcript_parts:
+        return {"status": "FAIL", "reason_code": "SOURCE_TRANSCRIPT_MISSING"}
+
+    transcript_parts: list[str] = []
+    for piece_index, interval in enumerate(retained):
         piece_start = int(interval["start_ms"])
         piece_end = int(interval["end_ms"])
         if piece_index:
@@ -761,15 +1059,35 @@ def verify_automatic_filler_plan(
 
     prompt = """你是谈话切片的最终语义否决器。下面的字幕已按一个固定方案删除少量片段，
 <JUMP> 是已确定且不可移动的跳点。你只能判断保留内容是否仍完整，不能建议新剪点或改写字幕。
-逐项检查：主题是否完整、因果/问答链是否完整、所有指代是否有来源、纠正/笑点/结论是否保留、
-观众互动是否仍然前后一致、删除是否改变主播原意或立场。任一项不确定就 fail。
+逐项检查：主题上下文和铺垫是否完整、因果/问答链是否完整、所有代词指代是否有来源、
+纠正/笑点/结论/自然衔接是否保留、观众反馈是否完整保留、弹幕互动是否仍然前后一致、
+有意义的重复回应是否仍然保留、删除是否改变主播原意或立场。
+尤其不要把 SC/礼物引发的实质回答、主题相关的谢礼物、笑点铺垫或收尾当作 unrelated aside；
+观众反馈、接梗、二次回应和有意义的重复不能因为前面已经出现过就删除；
+必须把原始选中区间和每个 REMOVED 段的原话与保留后的字幕逐一对照；只有确认被删段
+确实属于允许的 gift_thanks、housekeeping，或有绑定 STRUCTURED_CHAT_WITNESS 的 unrelated_sc、
+且 REMOVED 原话完整包含该 witness 的 SC 文本（removed_text_match=true），确认主播实际在读这条 SC；
+不能只因候选附近存在另一条 SC 就放行，
+与主题无关且没有承载上述受保护内容，且删除后保留文本仍完整时才 pass。
+如果原始区间、删除段原话或字幕覆盖不完整，按不确定处理为 fail。
 
 只输出 JSON：
 {"topic_complete":true或false,"cause_answer_chain_complete":true或false,
 "referents_resolved":true或false,"corrections_preserved":true或false,
 "punchline_preserved":true或false,"closing_resolution_preserved":true或false,
-"audience_interactions_consistent":true或false,
+"audience_interactions_consistent":true或false,"audience_feedback_preserved":true或false,
+"meaningful_repeats_preserved":true或false,
 "meaning_or_stance_changed":true或false,"pass":true或false,"reason":"简述"}
+
+原始完整选中区间（所有可见原始字幕；REMOVED 标记仅表示固定删除区间）：
+<SOURCE """ + f"{source_start_ms}-{source_end_ms}ms>\n" + ("\n".join(source_transcript_parts) or "(未提供原始字幕覆盖，必须 fail)") + """
+</SOURCE>
+
+固定删除区间及删除前原话：
+""" + ("\n".join(removed_transcript_parts) or "(未提供删除区间原话，必须 fail)") + """
+
+绑定结构化弹幕/SC 原始证据（只作核对输入，不能由模型自称替代）：
+""" + ("\n".join(structured_chat_parts) or "(本计划没有绑定 SC 证据)") + """
 
 保留后的字幕：
 """ + "\n".join(transcript_parts)

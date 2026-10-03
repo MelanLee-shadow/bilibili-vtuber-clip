@@ -9,14 +9,14 @@ daily 新 BV 上传车道自 7/14 后没有合法的 manifest 生成器。
 （record/publish/state），不发明任何值：
 
 - 候选自身必须 state 里 rc=0 且 review_ready（批级 with_failures 可接受——
-  维护者 行军令：能传的先传，不因批内其他候选失败扣押好片）；
+ 公开规则行军令：能传的先传，不因批内其他候选失败扣押好片）；
 - items 路径指向包内真实文件并带 sha256；
 - Talk 显式声明 story_contract_required/source_fact_review_required，并在装配
-  前验证 StoryContract、record.publish_staging、publish.json 三面携带逐字
-  相同且 hash-bound 的 source-fact receipt；Song 保持既有歌词/标题/封面
-  证明车道，不冒充拥有 Talk StoryContract/source-fact receipt；
+ 前验证 StoryContract、record.publish_staging、publish.json 三面携带逐字
+ 相同且 hash-bound 的 source-fact receipt；Song 保持既有歌词/标题/封面
+ 证明车道，不冒充拥有 Talk StoryContract/source-fact receipt；
 - 不承诺 upload_allowed=true（daily 新上传不是 recovery same-BV 修复；
-  上传授权仍由 authorized_upload 的 make-manifest --quote 层绑定 维护者 原话）。
+ 上传授权仍由 authorized_upload 的 make-manifest --quote 层绑定 公开规则原话）。
 """
 
 from __future__ import annotations
@@ -37,36 +37,40 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.autoslice.jingting_chunker import parse_srt_cues  # noqa: E402
-from src.autoslice.channel_profile import load_channel_profile  # noqa: E402
-from src.autoslice.review_package_ass_audit import (  # noqa: E402
+from src.autoslice.final_media_duration_binding import (
+    FinalMediaDurationBindingError,
+    final_burn_duration_binding,
+)
+from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.review_package_ass_audit import (
     uniform_host_fallback_declared,
 )
-from src.autoslice.review_evidence import SourceCue  # noqa: E402
-from src.autoslice.addressee_attribution import (  # noqa: E402
+from src.autoslice.review_evidence import SourceCue
+from src.autoslice.addressee_attribution import (
     SpeakerEvidenceRejected,
     rebuild_speaker_evidence,
 )
-from src.autoslice.source_fact_review import (  # noqa: E402
+from src.autoslice.source_fact_review import (
     validate_source_fact_review,
 )
-from src.autoslice.operator_exact_title_source_fact_authority import (  # noqa: E402
+from src.autoslice.operator_exact_title_source_fact_authority import (
     PASS_DECISION as OPERATOR_EXACT_TITLE_PASS_DECISION,
     validate_operator_exact_title_source_fact_receipt,
 )
-from src.autoslice.qixi_operator_exact_title_source_fact import (  # noqa: E402
+from src.autoslice.qixi_operator_exact_title_source_fact import (
     DECISION as QIXI_OPERATOR_EXACT_TITLE_DECISION,
     validate_receipt as validate_qixi_operator_exact_title_receipt,
 )
-from src.autoslice.host_only_v4_package_binding import (  # noqa: E402
+from src.autoslice.host_only_v4_package_binding import (
     BINDING_ITEM_KEY,
     HostOnlyV4PackageBindingError,
     materialize_package_binding,
 )
-from src.autoslice.package_import_builtin_imagegen import (  # noqa: E402
+from src.autoslice.package_import_builtin_imagegen import (
     builtin_imagegen_manifest_fields,
 )
-from src.autoslice.fastlane_c3_terminal_source_fact_preservation import (  # noqa: E402
+from src.autoslice.fastlane_c3_terminal_source_fact_preservation import (
     CANDIDATE_ID as C3_SOURCE_FACT_CANDIDATE_ID,
     DECISION as C3_SOURCE_FACT_DECISION,
     validate_review as validate_c3_source_fact_review,
@@ -676,6 +680,21 @@ def _sync_record_bound_candidate_artifacts(
     return resolved
 
 
+def _project_final_media_duration_binding(
+    record_doc: dict,
+) -> dict[str, object] | None:
+    raw_burned_preview = record_doc.get("burned_preview")
+    if raw_burned_preview is None:
+        return None
+    try:
+        return final_burn_duration_binding(raw_burned_preview)
+    except FinalMediaDurationBindingError as exc:
+        raise DailyManifestError(
+            f"final media duration binding invalid: {exc}",
+            reason_code="FINAL_MEDIA_DURATION_BINDING_INVALID",
+        ) from exc
+
+
 def build(
     package_root: Path, state_path: Path, deployed_commit_file: Path, candidate_id: str
 ) -> dict:
@@ -730,6 +749,9 @@ def build(
         raise DailyManifestError("cover generation is not an object")
     record = need(f"{candidate_id}.record.json")
     record_doc = json.loads(record.read_text(encoding="utf-8"))
+    final_media_duration_binding = _project_final_media_duration_binding(
+        record_doc
+    )
     subtitle = need(f"{stem}.srt")
     lane = _candidate_lane(record_doc, publish_doc)
     cover_rel = _resolve_final_cover(
@@ -893,6 +915,11 @@ def build(
         "cover_route_background": cover_route_background,
         **builtin_cover_fields,
         "record": f"{upload_stem}.record.json",
+        **(
+            {"final_media_duration_binding": final_media_duration_binding}
+            if final_media_duration_binding is not None
+            else {}
+        ),
         "chat_authority": chat_name,
         "clip_context": clip_context_name,
         "ass_path": ass.name,
@@ -954,8 +981,8 @@ def build(
         "deployed_commit": deployed_commit,
         "state_path": str(state_path),
         "run_mode": "PRODUCTION_REVIEW",
-        # 审片包本身不授权上传；上传授权由 authorized_upload make-manifest
-        # 的 --quote 层绑定 维护者 原话。
+
+
         "upload_allowed": False,
         # Sapphire72 车道显式声明 28 字合同（audit docstring 指定该车道必须
         # 显式声明，否则被旧手工包 18 字默认误拒）。

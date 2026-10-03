@@ -1,32 +1,32 @@
 """One client for the whole ``AGY -> Gemini`` witness chain.
 
-维护者 逐字裁定：「我认为这些地方不应该分散，反而是防止代码屎山的
+公开规则逐字裁定：「我认为这些地方不应该分散，反而是防止代码屎山的
 重要决策，需要调用AGY->gemini 这条链的，全都复用一种接口才好」。
 
 Before this module seven call sites each re-derived "where is agy", "did the
-call fail and how", and "which Gemini key may I use next".  Coverage was
+call fail and how", and "which Gemini key may I use next". Coverage was
 wildly uneven: two sites (``agy_frame_witness``/``visual_song_discovery``) had
 no Gemini leg at all and simply died wherever AGY was missing, while four
 hardcoded an absolute ``agy``.
 
-The second standing ruling this module encodes is 维护者's repeated instruction
-not to install AGY on wsl (that host holds the Gemini keys instead).  **AGY
+The second standing ruling this module encodes is 公开规则's repeated instruction
+not to install AGY on wsl (that host holds the Gemini keys instead). **AGY
 absence is therefore a supported deployment shape, not an incident**: every
 leg here degrades to Gemini rather than raising, and the receipt says
 ``AGY_BINARY_ABSENT`` so operators do not go hunting for a broken AGY that was
 never meant to exist on that box.
 
 What is deliberately NOT unified: each call site keeps its own prompt, its own
-answer schema, and its own key-ladder *policy knobs*.  Two different rulings
+answer schema, and its own key-ladder *policy knobs*. Two different rulings
 are live at once —
 
 * (entity/LRC lanes): a pure-quota free-chain round may be repeated
-  back-to-back inside one run until the >=3 strike policy is satisfiable.
+ back-to-back inside one run until the >=3 strike policy is satisfiable.
 * (foreign-span lane): a fully-429 free chain is deterministic
-  exhaustion, so the paid backup fires in the SAME round.
+ exhaustion, so the paid backup fires in the SAME round.
 
 Collapsing those into one shape would silently rewrite a production policy, so
-``run_gemini_key_ladder`` takes them as parameters instead.  Key ORDER never
+``run_gemini_key_ladder`` takes them as parameters instead. Key ORDER never
 varies: AGY subscription -> free keys 1..3 -> policy-gated paid backup.
 """
 

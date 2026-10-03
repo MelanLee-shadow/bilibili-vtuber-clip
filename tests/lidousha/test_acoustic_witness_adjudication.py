@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
 
+import src.autoslice.acoustic_witness_adjudication as acoustic_witness_adjudication
+
 from src.autoslice.acoustic_witness_adjudication import (
+    REQUIRE_COMPLETE_UTTERANCE_SUPPORT,
     adjudicate_with_witness,
     build_witness_request,
     judge_word_choice,
@@ -135,6 +139,149 @@ def test_pinyin_wildcards_cover_declared_uncertainty():
     assert score == 1.0
 
 
+def test_unflagged_judge_keeps_historical_payload_contract():
+    """Ordinary word-choice requests do not require the exact-final fields."""
+
+    verdict = judge_word_choice(
+        llm_call=lambda _prompt: json.dumps(
+            {"choice": "CURRENT", "reason": "legacy judge payload"}
+        ),
+        check_request=CHECK_REQUEST,
+        witness=_witness("hai mei you ge za ne"),
+    )
+
+    assert verdict["status"] == "JUDGED"
+    assert verdict["choice"] == "CURRENT"
+    assert "current_utterance_supported" not in verdict
+    assert "current_utterance_support_reason" not in verdict
+
+
+@pytest.mark.parametrize(
+    "support_fields",
+    [
+        {
+            "current_utterance_supported": False,
+            "current_utterance_support_reason": "CURRENT is only relatively closer",
+        },
+        {},
+    ],
+)
+def test_exact_final_support_contract_preserves_current_choice_without_support(
+    support_fields,
+):
+    """A false/missing support claim stays a CPA result and never becomes NEITHER."""
+
+    request = {
+        **CHECK_REQUEST,
+        REQUIRE_COMPLETE_UTTERANCE_SUPPORT: True,
+    }
+    payload = {"choice": "CURRENT", "reason": "relative pinyin win"}
+    payload.update(support_fields)
+
+    verdict = judge_word_choice(
+        llm_call=lambda _prompt: json.dumps(payload),
+        check_request=request,
+        witness=_witness("hai mei you ge za ne"),
+    )
+
+    if support_fields:
+        assert verdict["status"] == "JUDGED"
+        assert verdict["choice"] == "CURRENT"
+        assert verdict["current_utterance_supported"] is False
+    else:
+        assert verdict["status"] == "JUDGE_OUT_OF_SET"
+        assert verdict["choice"] == "UNCERTAIN"
+    assert verdict["choice"] != "NEITHER"
+
+
+@pytest.mark.parametrize("choice", ["PROPOSED", "NEITHER"])
+def test_exact_final_support_fields_are_optional_without_current_claim(choice):
+    request = {
+        **CHECK_REQUEST,
+        REQUIRE_COMPLETE_UTTERANCE_SUPPORT: True,
+    }
+
+    verdict = judge_word_choice(
+        llm_call=lambda _prompt: json.dumps(
+            {"choice": choice, "reason": "CURRENT is not being retained"}
+        ),
+        check_request=request,
+        witness=_witness("hai mei you ge za ne"),
+    )
+
+    assert verdict["status"] == "JUDGED"
+    assert verdict["choice"] == choice
+    assert "current_utterance_supported" not in verdict
+    assert "current_utterance_support_reason" not in verdict
+
+
+def test_exact_final_cache_does_not_reuse_fieldless_judge_receipt(tmp_path, monkeypatch):
+    """A matching new prompt with an old fieldless receipt must call CPA again."""
+
+    request = {
+        **CHECK_REQUEST,
+        REQUIRE_COMPLETE_UTTERANCE_SUPPORT: True,
+    }
+    witness = _witness("hai mei you ge za ne")
+    identity = {"model": "test-gpt-6-sol", "effort": "medium"}
+    calls = []
+
+    def llm(prompt):
+        calls.append(prompt)
+        return json.dumps(
+            {
+                "choice": "CURRENT",
+                "reason": "whole utterance is supported",
+                "current_utterance_supported": True,
+                "current_utterance_support_reason": "The complete current cue is supported.",
+            }
+        )
+
+    llm.cpa_cache_identity = identity
+    prompt, _choices, _contract, _similarities, _candidates = (
+        acoustic_witness_adjudication._word_choice_prompt(
+            llm_call=llm,
+            check_request=request,
+            witness=witness,
+        )
+    )
+    cache_path = tmp_path / "judge-verdict.json"
+    monkeypatch.setattr(
+        acoustic_witness_adjudication,
+        "_judge_cache_path",
+        lambda _cache_key: cache_path,
+    )
+    cache_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "judge-verdict-cache.v2",
+                "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+                "model_identity": identity,
+                "verdict": {
+                    "schema_version": "acoustic-witness-adjudication.v1",
+                    "status": "JUDGED",
+                    "choice": "CURRENT",
+                    "reason": "old fieldless receipt",
+                    "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+                    "check_request_sha256": "",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    verdict = judge_word_choice(
+        llm_call=llm,
+        check_request=request,
+        witness=witness,
+    )
+
+    assert len(calls) == 1
+    assert verdict["status"] == "JUDGED"
+    assert verdict.get("served_from_cache") is not True
+    assert verdict["current_utterance_supported"] is True
+
+
 def test_legacy_sighted_witness_stays_valid_but_is_not_recomputed():
     request = build_witness_request(CHECK_REQUEST)
     legacy = _witness("hai mei you ge zhai ne")
@@ -248,8 +395,8 @@ def test_judge_call_failure_fails_closed():
 
 
 def test_judge_call_retries_once_on_provider_transient_error_then_succeeds():
-    """维护者 工程优化②：真善美 zsm4 三模型均短暂 400 报废整轮候选
-    的事故——同轮内单次 provider-shaped 失败必须能自愈重试，不立刻判死。"""
+    """公开规则工程优化②：真善美 zsm4 三模型均短暂 400 报废整轮候选
+ 的事故——同轮内单次 provider-shaped 失败必须能自愈重试，不立刻判死。"""
 
     attempts = {"n": 0}
 
@@ -912,8 +1059,8 @@ def test_witness_implausible_syllable_rate_is_retriable(tmp_path):
 
 
 def test_judge_ranking_top_choice_wins_and_uncertain_is_not_terminal():
-    """维护者：按概率排序必须选最高；模型自报 UNCERTAIN 但给出
-    有效排序时以排序第一为裁决；无排序的拒答仍是可重试的 OUT_OF_SET。"""
+    """公开规则：按概率排序必须选最高；模型自报 UNCERTAIN 但给出
+ 有效排序时以排序第一为裁决；无排序的拒答仍是可重试的 OUT_OF_SET。"""
 
     import json as _json
 

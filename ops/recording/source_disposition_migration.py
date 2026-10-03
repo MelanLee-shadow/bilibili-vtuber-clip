@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create-only OCI3 source-disposition substitution receipts.
+"""Create-only runtime host source-disposition substitution receipts.
 
 This lane is deliberately separate from the recorder adapter's ordinary FUSE
 identity-rebind lane.  It records explicit operator evidence that a different

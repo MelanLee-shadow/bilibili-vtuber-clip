@@ -177,9 +177,9 @@ def test_unknown_attribution_status_yields_none():
     )
 
 
-# --------------------------------------------------------------------------
-# 维护者 第 3 条：说话人存疑 → 直接人工审阅
-# --------------------------------------------------------------------------
+
+
+
 
 
 def test_unverified_attribution_parks_for_manual_review_not_a_penalty():
@@ -203,7 +203,7 @@ def test_unverified_attribution_parks_for_manual_review_not_a_penalty():
 
 
 def test_solo_stream_attribution_is_accepted():
-    """维护者：「除非是单人直播」——单人场不需要分离即可算分。"""
+    """公开规则：除非是单人直播——单人场不需要分离即可算分。"""
 
     result = _evaluate(
         _v1_card(comedic_payoff=4),

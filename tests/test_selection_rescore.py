@@ -1,11 +1,11 @@
 """Bounded selection-rescore lane state machine .
 
 Mirrors the internal source-fact rescore design note's §6 test
-matrix.  Each ``test_scenario_N_*`` docstring names the matrix row it covers;
+matrix. Each ``test_scenario_N_*`` docstring names the matrix row it covers;
 scenarios this file cannot cover with a real (non-faked) test are named in
 the module docstring below rather than silently skipped.
 
-闭环接线（维护者「你把狍哥案解决了」实施指令）：``selection_rescore.
+闭环接线（公开规则：你把狍哥案解决了实施指令）：``selection_rescore.
 execute_pending_rescores`` 现在从 ``delivery_recovery.requeue_recoverable_
 talks`` 尾部被调用（唯一薄接线点，覆盖 exact-contract 与普通两条 requeue
 分支），``scripts/session_autoslice.py`` 的 produce 派发前用
@@ -681,8 +681,8 @@ def test_scenario_10_rejected_talk_table_excludes_pending_but_keeps_terminal_fai
     assert callable(write_reports)  # import surface stays wired
 
 
-# --- Closeout: bounded execution wired into the live runner flow (维护者
-# 狍哥案实施指令，闭环接线) -----------------------------------
+
+
 
 
 def _uniform_scorecard(tier: int, *, all_dim: int, uncertainty: int = 0) -> dict[str, object]:

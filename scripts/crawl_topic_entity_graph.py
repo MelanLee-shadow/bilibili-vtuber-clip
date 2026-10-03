@@ -14,15 +14,15 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.autoslice.channel_profile import load_channel_profile  # noqa: E402
-from scripts.gemini_slice_jingting import load_validated_timely_terms_snapshot  # noqa: E402
-from src.autoslice.timely_term_crawler import BoundedHttpClient, CrawlError, HttpCache  # noqa: E402
-from src.autoslice.topic_entity_crawler import (  # noqa: E402
+from src.autoslice.channel_profile import load_channel_profile
+from scripts.gemini_slice_jingting import load_validated_timely_terms_snapshot
+from src.autoslice.timely_term_crawler import BoundedHttpClient, CrawlError, HttpCache
+from src.autoslice.topic_entity_crawler import (
     crawl_topic_entity_graph,
     graph_json,
     write_graph_atomically,
 )
-from src.autoslice.topic_entity_graph import load_topic_entity_graph  # noqa: E402
+from src.autoslice.topic_entity_graph import load_topic_entity_graph
 
 
 CHANNEL_PROFILE = load_channel_profile(ROOT)

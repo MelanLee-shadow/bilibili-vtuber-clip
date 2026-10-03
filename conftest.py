@@ -39,7 +39,7 @@ def _hermetic_autoslice_base(monkeypatch):
 # 任何测试打到它都显式失败。需要 LLM 输出的测试请 monkeypatch 使用方模块
 # 自己的 llm-call builder（例如 ``pipeline._build_final_review_llm_call``）。
 
-from src.autoslice import llm_client as _llm_client
+from src.autoslice import llm_client as _llm_client  # noqa: E402
 
 _REAL_CALL_COMMAND = _llm_client._call_command
 

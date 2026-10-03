@@ -1,16 +1,16 @@
-"""F21（维护者 直令）：AGY 缺席时声学证人 fall back 到 Gemini key。
+"""F21（公开规则直令）：AGY 缺席时声学证人 fall back 到 Gemini key。
 
-维护者 8/10：「wsl 上有 gemini key，没有 AGY 当然要 fall back 到 gemini key」。
+公开规则8/10：「wsl 上有 gemini key，没有 AGY 当然要 fall back 到 gemini key」。
 病灶是纯接线，不是缺 provider：``entity_audio_verifier`` 里 AGY→免费 3 key→
 政策门控付费 backup 的链 7/25 起就在，但
 
 1. ``producer_text_pipeline`` 的 host 门在 ``--ssh-host`` 非 localhost 时直接
-   把 ``audio_entity_verifier`` 置 None（wsl 产线恒中），链根本没被构造；
+ 把 ``audio_entity_verifier`` 置 None（wsl 产线恒中），链根本没被构造；
 2. 没有 next_verifier 时 ``read_aloud_llm_verifier._defer`` 下传裸 ``None``，
-   ``microcue_acoustic_discovery`` 对它做 ``dict(None)`` 抛 TypeError。
+ ``microcue_acoustic_discovery`` 对它做 ``dict(None)`` 抛 TypeError。
 
 两条金丝雀分别钉死这两点；第三组钉死 F21 新开的 typed UNCERTAIN 尾巴**不得**
-继承既有的无声学改字权（8/8 F7 张力，默认关死待 维护者 复裁）。
+继承既有的无声学改字权（8/8 F7 张力，默认关死待 公开规则复裁）。
 
 密闭性：AGY 一律走假 ``subprocess.run``/不存在的二进制，Gemini 一律 mock 在
 ``entity_audio_verifier._gemini_api_observe_witness``（使用方模块自己的 seam），

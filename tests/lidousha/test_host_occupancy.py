@@ -1,17 +1,17 @@
 """候选级 Target Host Occupancy Estimator 的对抗性回归。
 
 设计权威：内部证据留存（chatgpt-pro-ordering-and-rubric）
-（维护者已批准）+ 内部盲评真值文档留存
+（公开规则已批准）+ 内部盲评真值文档留存
 
 负向金丝雀（每条都对应一个"如果实现偷懒就会绿"的形态）：
-① 声学同质 ≠ 单人 —— 高置信 HOST + 未过严格门 → 不许 SOLO      :: test_quiet_but_not_strict_*
-② UNKNOWN 必停泊，绝不猜成 SOLO 放行                          :: test_unknown_*
-③ 主播不是主体 → 归属已确定，**不许**送人工                    :: test_host_minor_*
-④ 重叠候选区间并集去重 + 全局栅格 → 同窗只推理一次             :: test_overlapping_*
-⑤ 前后扩窗必须发生，且越界要钳并披露                          :: test_padding_*
-⑥ 单窗孤岛不许支撑 MULTI（最短持续时间约束）                   :: test_single_window_*
-⑦ N=10 与补位有界，补位不许回收已剪枝候选                      :: test_contention_*
-⑧ 争席排序不看 centrality（改它不许改次序）                    :: test_contention_order_ignores_centrality
+① 声学同质 ≠ 单人 —— 高置信 HOST + 未过严格门 → 不许 SOLO :: test_quiet_but_not_strict_*
+② UNKNOWN 必停泊，绝不猜成 SOLO 放行 :: test_unknown_*
+③ 主播不是主体 → 归属已确定，**不许**送人工 :: test_host_minor_*
+④ 重叠候选区间并集去重 + 全局栅格 → 同窗只推理一次 :: test_overlapping_*
+⑤ 前后扩窗必须发生，且越界要钳并披露 :: test_padding_*
+⑥ 单窗孤岛不许支撑 MULTI（最短持续时间约束） :: test_single_window_*
+⑦ N=10 与补位有界，补位不许回收已剪枝候选 :: test_contention_*
+⑧ 争席排序不看 centrality（改它不许改次序） :: test_contention_order_ignores_centrality
 """
 
 from __future__ import annotations
@@ -258,11 +258,11 @@ def test_unknown_parked_candidate_is_not_deliverable() -> None:
 
 
 def test_host_minor_is_verified_and_never_parks() -> None:
-    """③ 维护者「主要发言人不是李豆沙」的两条：归属**已确定**，不进人工队列。
+    """③ 公开规则：主要发言人不是李豆沙的两条：归属**已确定**，不进人工队列。
 
-    「最好是能够自然给出低分，而不是强制压低」——低分要靠 centrality 看见
-    ``[其他]`` 标签自然得到，不靠把一条已确定的候选伪装成存疑。
-    """
+ 「最好是能够自然给出低分，而不是强制压低」——低分要靠 centrality 看见
+ ``[其他]`` 标签自然得到，不靠把一条已确定的候选伪装成存疑。
+ """
 
     occupancy = ho.aggregate_occupancy(_windows("H" * 8 + "O" * 22))
     assert occupancy["state"] == ho.MULTI_VERIFIED
@@ -564,7 +564,7 @@ def test_base_score_excludes_centrality_and_keeps_v1_scale() -> None:
 
 
 def test_contention_set_takes_top_n() -> None:
-    """⑦ 维护者：「N 可以选 10 个」。"""
+    """⑦ 公开规则：N 可以选 10 个。"""
 
     assert ho.CONTENTION_SET_SIZE == 10
     items = [_item(f"c{index:02d}", confidence=index / 100) for index in range(25)]

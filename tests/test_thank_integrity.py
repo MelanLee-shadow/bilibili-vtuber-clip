@@ -609,9 +609,9 @@ def test_scope_rejected_straddler_materially_retained_still_must_survive() -> No
 
 
 def test_adjudication_reverted_by_baseline_retires_instead_of_deadlock() -> None:
-    """672 看/外案：correction pass 的声学修正被 维护者 已审 baseline 收回
-    （同窗 final_owner 逐字验证通过且文本≠修正文本）时，修正行声明性退位，
-    提案留在审计里，不再终验死锁。"""
+    """672 看/外案：correction pass 的声学修正被 公开规则已审 baseline 收回
+ （同窗 final_owner 逐字验证通过且文本≠修正文本）时，修正行声明性退位，
+ 提案留在审计里，不再终验死锁。"""
     from src.autoslice.producer_text_finalization import (
         verify_chat_authority_final_surfaces,
     )

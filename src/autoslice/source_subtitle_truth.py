@@ -19,7 +19,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from src.autoslice.source_truth_target_selection import (  # noqa: E402
+from src.autoslice.source_truth_target_selection import (
     MIN_CUE_OVERLAP_MS,
     _cue_window_containment,
     _operator_cues_fully_owned,
@@ -1241,14 +1241,14 @@ def _apply_replace_cue_action(
                     before_by_index[index] for index in target_indexes
                 ]
         else:
-            # 多 cue 辖区重分配（kmx r5 案：每轮 fresh 的
-            # cue 切分方差让单目标 fail-closed 变成无限重掷）。钉子
-            # 文本按与现文本的相似度分布到覆盖的连续 cue 上（断点
-            # 吸附标点，词不跨 cue）——内容全部来自 维护者 审定文本，
-            # 零发明；时间轴与 cue 数不动。
-            # 辖区收缩：与钉文毫无字符共通的 cue 是被窗口误圈的
-            # 邻句（真实内容不许被钉文覆盖），从两端剔除后必须仍
-            # 连续；收缩集与钉文整体相似 ≥0.55 才允许重分配落刀。
+
+
+
+
+
+
+
+
             kept_joined_text = "".join(texts[index] for index in kept)
             joined_char_score = (
                 _match_metrics(replacement, kept_joined_text)[0]
@@ -1263,9 +1263,9 @@ def _apply_replace_cue_action(
                 if kept
                 else 0.0,
             )
-            # 时间包含度准入（672 重复句窗）：全部 kept cue ≥90% 时长在
-            # 真值窗内 → 窗口时间即 维护者 裁定的辖区，文本相似只留 0.30
-            # 底线防「错窗错配」；任何骑缘 cue 使该准入失效（邻句保护）。
+
+
+
             window_containment_admission = bool(
                 kept
                 and windows

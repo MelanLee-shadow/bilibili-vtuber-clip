@@ -4,14 +4,14 @@ ChatGPT Pro 的结论（内部设计文档留存·or-gate-metric-and-
 function-split.md` §二）：**裸 `max(单维分数)` 是错的，`softmax`/p-范数伪装成
 OR 也是错的**。正确形态是"语义路径 OR"——
 
-    硬门槛 ⟶ 若干"命名卖点路径"各自评分 ⟶ 取 max ⟶ 题材疲劳惩罚
+ 硬门槛 ⟶ 若干"命名卖点路径"各自评分 ⟶ 取 max ⟶ 题材疲劳惩罚
 
-    Q = max( P_broad − U_broad ,  max_j( P_j − U_j ) )
-    E = Q − U_global − F(topic_fingerprint)
+ Q = max( P_broad − U_broad , max_j( P_j − U_j ) )
+ E = Q − U_global − F(topic_fingerprint)
 
 本模块只做上面这套聚合，**不动 v1 的任何算术**：``selection_scorecard.py`` 的
 ``DIMENSION_WEIGHTS`` / ``normalize_selection_scorecard`` / 校准锚点资产
-（``assets/lidousha/selection_score_calibration.v1.json``，维护者 手签）
+（``assets/lidousha/selection_score_calibration.v1.json``，公开规则手签）
 逐字不变。``selection_scorecard_is_valid`` 硬要求 ``weights == DIMENSION_WEIGHTS``
 且锚点要求维度集合逐字相等——迁移它们是**政策行为**，不是重构。
 
@@ -19,22 +19,22 @@ OR 也是错的**。正确形态是"语义路径 OR"——
 
 - ``self_contained``：Pro 明确它是**必要条件不是卖点**，放最前当 gate，不参与 OR。
 - ``lidousha_centrality``：Pro「仅仅『主播是主角』通常不足以构成值得发布的理由」，
-  宜作归属条件而非可加权卖点轴。**而且它现在测的是错的东西**——rubric 那个括号
-  写的是「李豆沙不可替代性」（能不能把她换掉），不是「她是不是这段的主体」；
-  rubric 还明文把"身份不确定"赶进 ``uncertainty_penalty``（一个满分 100 里最多
-  扣 15 的可补偿小减项）。维护者 盲审四条 tier-1 的真值证明这根轴与
-  真值**反相关**：该发的那条 centrality=3，两条"主要发言人不是李豆沙"的是 4 和 3。
+ 宜作归属条件而非可加权卖点轴。**而且它现在测的是错的东西**——rubric 那个括号
+ 写的是「李豆沙不可替代性」（能不能把她换掉），不是「她是不是这段的主体」；
+ rubric 还明文把"身份不确定"赶进 ``uncertainty_penalty``（一个满分 100 里最多
+ 扣 15 的可补偿小减项）。公开规则盲审四条 tier-1 的真值证明这根轴与
+ 真值**反相关**：该发的那条 centrality=3，两条"主要发言人不是李豆沙"的是 4 和 3。
 
-  维护者 裁定：「**必须要说话人分离才能判断李豆沙是不是主角，除非是单人
-  直播**」「**说话人存疑都要直接给人工审阅**」。于是归属判定整体离开本模块，
-  只以 ``attribution_status`` 这一个**输入接口**出现——见下。
+ 公开规则：**必须要说话人分离才能判断李豆沙是不是主角，除非是单人
+ 直播**「**说话人存疑都要直接给人工审阅**」。于是归属判定整体离开本模块，
+ 只以 ``attribution_status`` 这一个**输入接口**出现——见下。
 
 ## `attribution_status`：稳定接口，不在本模块判定
 
 ``VERIFIED_SOLO``（单人直播）/ ``VERIFIED_HOST_DOMINANT``（已分离且主播为主体）/
 ``VERIFIED_HOST_MINOR``（已分离但主播不是主体）可以继续算分——**归属已确定就该算分**，
 「主角不是她」要靠 centrality 看着 ``[其他]`` 标签自然给低分，不靠伪装成存疑；
-``UNVERIFIED`` **停泊转人工审阅**（维护者 第 3 条），不是扣分、不是猜。
+``UNVERIFIED`` **停泊转人工审阅**（公开规则第 3 条），不是扣分、不是猜。
 停泊复用既有机制 ``speaker_manual_review``（``speaker_review_required`` /
 ``speaker_evidence_insufficient`` 天然不在 ``DELIVERED_TALK_STATUSES`` 里），
 本模块不新造平行状态。
@@ -77,13 +77,13 @@ RUBRIC_VERSION = f"{_CHANNEL_PROFILE.profile_id}-scorecard-rubric.v1"
 # 归属状态（本模块只消费，不判定）。
 ATTRIBUTION_VERIFIED_SOLO = "VERIFIED_SOLO"
 ATTRIBUTION_VERIFIED_HOST_DOMINANT = "VERIFIED_HOST_DOMINANT"
-# 候选级占比检测（``host_occupancy.py``）落地时补的第四态：
-# **已分离，但主播不是主体**。原来的三态词汇没有它的名字，而两个替代都是错的：
-# 叫 ``VERIFIED_HOST_DOMINANT`` 是事实错误（维护者 盲审对两条候选的原话正是
-# 「这里的主要发言人不是李豆沙」），叫 ``UNVERIFIED`` 会把一条归属**已经确定**
-# 的候选送去人工，既淹没人工队列（Pro §5）又违反 维护者「最好是能够自然给出低分，
-# 而不是强制压低」。纯加性：``passed = status != UNVERIFIED`` 一字未改，既有
-# 两个状态的行为逐字不变，停泊仍然只留给 ``UNVERIFIED``。
+
+
+
+
+
+
+
 ATTRIBUTION_VERIFIED_HOST_MINOR = "VERIFIED_HOST_MINOR"
 ATTRIBUTION_UNVERIFIED = "UNVERIFIED"
 ATTRIBUTION_STATUSES = frozenset(
@@ -411,7 +411,7 @@ def evaluate_selection_metric_v2(
         )
         base["reason_codes"] = [*base["reason_codes"], blocking]  # type: ignore[list-item]
         if blocking == "SPEAKER_ATTRIBUTION_UNVERIFIED":
-            # 维护者:「说话人存疑都要直接给人工审阅」——不是扣分、不是猜。
+
             base["speaker_manual_review_status"] = PARK_STATUS
         return base
 

@@ -39,6 +39,7 @@ from src.autoslice.jingting_chunker import parse_srt_cues
 
 SCHEMA_VERSION = "microcue-candidate-blind-acoustic-discovery.v1"
 MAX_DURATION_MS = 1_300
+FUNCTIONAL_MAX_DURATION_MS = 3_000
 MIN_CJK_COUNT = 2
 MAX_TEXT_CODEPOINTS = 12
 MAX_CUES = 12
@@ -63,6 +64,20 @@ _KANA_RX = re.compile(r"[\u3040-\u30ff]")
 _LATIN_RX = re.compile(r"[A-Za-z]")
 _FILLER_ONLY_RX = re.compile(r"[嗯呃啊哦诶欸哎唉嘿哈呵哼呀嘛呢吧啦]+")
 
+# These are deliberately finite, generic discourse prefixes.  They only
+# qualify a longer all-Hanzi cue for the bounded duration extension; they are
+# not a vocabulary of names, foreign words, or replacement text.
+_FUNCTIONAL_PREFIXES = (
+    "谢谢你呀",
+    "谢谢大家",
+    "感谢大家",
+    "早上好",
+    "大家好",
+    "谢谢你",
+    "感谢你",
+    "你好",
+)
+
 
 def _sha256_json(value: Mapping[str, Any]) -> str:
     return hashlib.sha256(
@@ -72,16 +87,97 @@ def _sha256_json(value: Mapping[str, Any]) -> str:
     ).hexdigest()
 
 
-def _eligible(text: str, duration_ms: int) -> bool:
+def _functional_prefix(text: str) -> str | None:
     compact = "".join(text.split())
-    return bool(
-        0 < duration_ms <= MAX_DURATION_MS
+    return next(
+        (prefix for prefix in _FUNCTIONAL_PREFIXES if compact.startswith(prefix)),
+        None,
+    )
+
+
+def _eligibility_scope(text: str, duration_ms: int) -> str | None:
+    compact = "".join(text.split())
+    common_ok = bool(
+        0 < duration_ms
         and len(compact) <= MAX_TEXT_CODEPOINTS
         and len(_CJK_RX.findall(compact)) >= MIN_CJK_COUNT
         and not _KANA_RX.search(compact)
         and not _LATIN_RX.search(compact)
         and not _FILLER_ONLY_RX.fullmatch(compact)
     )
+    if not common_ok:
+        return None
+    if duration_ms <= MAX_DURATION_MS:
+        return "standard"
+    if (
+        duration_ms <= FUNCTIONAL_MAX_DURATION_MS
+        and _functional_prefix(compact) is not None
+        and len(_CJK_RX.findall(compact)) == len(compact)
+    ):
+        return "functional_prefix_extended"
+    return None
+
+
+def _eligible(text: str, duration_ms: int) -> bool:
+    return _eligibility_scope(text, duration_ms) is not None
+
+
+def _functional_tail_details(
+    text: str,
+    current_tokens: list[str],
+    heard_tokens: list[str],
+) -> dict[str, Any]:
+    """Describe the optional aligned-prefix comparison without choosing text."""
+
+    compact = "".join(text.split())
+    prefix = _functional_prefix(compact)
+    if prefix is not None and len(_CJK_RX.findall(compact)) != len(compact):
+        prefix = None
+    details: dict[str, Any] = {
+        "functional_prefix": prefix,
+        "functional_prefix_token_count": None,
+        "functional_prefix_aligned": None if prefix is None else False,
+        "comparison_scope": "whole_cue",
+        "tail_current_pinyin": None,
+        "tail_heard_pinyin": None,
+        "tail_pinyin_similarity": None,
+    }
+    if prefix is None:
+        return details
+
+    # A cue can contain a longer polite prefix while the witness renders its
+    # final particle differently.  Try the finite prefixes from longest to
+    # shortest and use only the longest one whose *pinyin* is identical on
+    # both sides.  This keeps a real shared prefix useful without treating a
+    # mismatching prefix syllable as a tail error.
+    for candidate_prefix in _FUNCTIONAL_PREFIXES:
+        if not compact.startswith(candidate_prefix):
+            continue
+        prefix_tokens = text_pinyin_tokens(candidate_prefix) or []
+        prefix_count = len(prefix_tokens)
+        if not prefix_tokens:
+            continue
+        if (
+            current_tokens[:prefix_count] != prefix_tokens
+            or heard_tokens[:prefix_count] != prefix_tokens
+        ):
+            continue
+        details["functional_prefix"] = candidate_prefix
+        details["functional_prefix_token_count"] = prefix_count
+        details["functional_prefix_aligned"] = True
+        current_tail = current_tokens[prefix_count:]
+        heard_tail = heard_tokens[prefix_count:]
+        if not current_tail or not heard_tail:
+            return details
+        details["comparison_scope"] = "functional_prefix_tail"
+        details["tail_current_pinyin"] = " ".join(current_tail)
+        details["tail_heard_pinyin"] = " ".join(heard_tail)
+        details["tail_pinyin_similarity"] = round(
+            pinyin_similarity(current_tail, heard_tail, character_level=True),
+            4,
+        )
+        return details
+    return details
 
 
 def _witness_one_microcue(
@@ -145,6 +241,11 @@ def _witness_one_microcue(
         heard_tokens,
         character_level=True,
     )
+    functional_tail = _functional_tail_details(
+        cue.text,
+        current_tokens,
+        heard_tokens,
+    )
     observed = bool(
         valid
         and witness.get("status") == "OBSERVED"
@@ -181,6 +282,22 @@ def _witness_one_microcue(
         "current_pinyin": " ".join(current_tokens),
         "heard_pinyin": " ".join(heard_tokens),
         "pinyin_similarity": round(similarity, 4),
+        "whole_cue_pinyin_similarity": round(similarity, 4),
+        "eligibility_scope": _eligibility_scope(
+            cue.text,
+            int(cue.end_ms) - int(cue.start_ms),
+        ),
+        "functional_prefix": functional_tail["functional_prefix"],
+        "functional_prefix_token_count": functional_tail[
+            "functional_prefix_token_count"
+        ],
+        "functional_prefix_aligned": functional_tail[
+            "functional_prefix_aligned"
+        ],
+        "comparison_scope": functional_tail["comparison_scope"],
+        "tail_current_pinyin": functional_tail["tail_current_pinyin"],
+        "tail_heard_pinyin": functional_tail["tail_heard_pinyin"],
+        "tail_pinyin_similarity": functional_tail["tail_pinyin_similarity"],
         "status": (
             "INAUDIBLE_OBSERVED"
             if inaudible_observed
@@ -217,7 +334,43 @@ def _witness_one_microcue(
         row["finding_sha256"] = "sha256:" + _sha256_json(finding)
     elif not observed or not syllable_count_plausible:
         pass
-    elif similarity < MAX_PINYIN_SIMILARITY_FOR_FINDING:
+    else:
+        tail_similarity = functional_tail["tail_pinyin_similarity"]
+        uses_tail_comparison = (
+            functional_tail["comparison_scope"] == "functional_prefix_tail"
+        )
+        mismatch = (
+            tail_similarity < MAX_PINYIN_SIMILARITY_FOR_FINDING
+            if uses_tail_comparison
+            else similarity < MAX_PINYIN_SIMILARITY_FOR_FINDING
+        )
+        if not mismatch:
+            return row, finding
+        if uses_tail_comparison:
+            why = (
+                "候选盲短句声学巡检听得拼音 "
+                f"{' '.join(heard_tokens)}，与现稿拼音 "
+                f"{' '.join(current_tokens)} 的整 cue 拼音相似度为 "
+                f"{similarity:.4f}"
+                f"；通用功能性前缀「{functional_tail['functional_prefix']}」"
+                "在双方逐音节一致，去除共同前缀后尾部拼音相似度为 "
+                f"{tail_similarity:.4f}"
+            )
+        else:
+            why = (
+                "候选盲短句声学巡检听得拼音 "
+                f"{' '.join(heard_tokens)}，与现稿拼音 "
+                f"{' '.join(current_tokens)} 显著不一致；请 CPA 只生成候选，"
+                "随后仍需盲听证人与 CPA 闭集裁决"
+            )
+        if uses_tail_comparison:
+            why += "，显著不一致；请 CPA 只生成候选，随后仍需盲听证人与 CPA 闭集裁决"
+        suspect = cue.text
+        prefix = functional_tail["functional_prefix"]
+        if uses_tail_comparison and isinstance(prefix, str) and cue.text.startswith(prefix):
+            tail = cue.text[len(prefix):].strip()
+            if tail and cue.text.count(tail) == 1:
+                suspect = tail
         finding = {
             "cue": ordinal,
             "kind": "context",
@@ -226,13 +379,12 @@ def _witness_one_microcue(
             "source_surface": None,
             "candidate_memory_id": None,
             "evidence_cue_ids": [],
-            "suspect": cue.text,
-            "why": (
-                "候选盲短句声学巡检听得拼音 "
-                f"{' '.join(heard_tokens)}，与现稿拼音 "
-                f"{' '.join(current_tokens)} 显著不一致；请 CPA 只生成候选，"
-                "随后仍需盲听证人与 CPA 闭集裁决"
-            ),
+            "suspect": suspect,
+            "why": why,
+            "comparison_scope": functional_tail["comparison_scope"],
+            "functional_prefix": functional_tail["functional_prefix"],
+            "whole_cue_pinyin_similarity": round(similarity, 4),
+            "tail_pinyin_similarity": tail_similarity,
         }
         row["status"] = "MISMATCH_PROPOSED_TO_CPA"
         row["finding_sha256"] = "sha256:" + _sha256_json(finding)

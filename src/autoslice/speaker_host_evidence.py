@@ -1,16 +1,16 @@
-"""Host-evidence policy for the talk speaker binary (维护者, x2).
+"""Host-evidence policy for the talk speaker binary (公开规则, x2).
 
-Default label is GUEST (连线).  Labelling a cue as HOST (李豆沙) requires hard
+Default label is GUEST (连线). Labelling a cue as HOST (李豆沙) requires hard
 evidence: a confident CAM++ voiceprint margin, or (new) a loudness margin
-against the session's host-anchor baseline.  Semantics (the whole-clip LLM
+against the session's host-anchor baseline. Semantics (the whole-clip LLM
 context judge) is a corroborating signal, not an independent one: it may only
 confirm the HOST-leaning half of an acoustically *borderline* cue, and it may
-always confirm GUEST.  When acoustic evidence is absent, unavailable, or
-guest-ward, semantics alone must never assign HOST (维护者: 「我没说语义应该完全出局，语义
-当然也是一个线索，但是不能作为独立线索而已」；cue43 in the 真善美 clip proved
+always confirm GUEST. When acoustic evidence is absent, unavailable, or
+guest-ward, semantics alone must never assign HOST (公开规则：我没说语义应该完全出局，语义
+当然也是一个线索，但是不能作为独立线索而已；cue43 in the 真善美 clip proved
 naive semantic heuristics wrong in both directions).
 
-Calibration source: auto_203735_555_680, 61-cue 维护者-adjudicated truth diff,
+Calibration source: auto_203735_555_680, 61-cue 公开规则-adjudicated truth diff,
 (see docs/pipeline/40-subtitle-text.md and the finalization test
 fixtures for the study this module was calibrated against).
 """
@@ -24,18 +24,18 @@ from src.autoslice.speaker_common import GUEST_SPEAKER, HOST_SPEAKER
 
 DEFAULT_HOST_SEMANTIC_MIN_CONFIDENCE = 0.7
 
-# Loudness lane: a same-session mean-volume(dB) study on the calibration clip
-# (ffmpeg volumedetect per cue window) found no reliable host/guest
-# separation (host median -22.95dB vs guest -22.0dB; full range overlap
-# -40.8..-14.9dB on both sides; guest median was in fact louder).  维护者's
-# "closer mic -> louder" heuristic did not hold empirically for this mixed,
-# already-normalized stream.  The margin below is deliberately calibrated
-# above the observed guest ceiling relative to the host-anchor baseline so
-# the lane stays conservative (zero loudness-sourced false-host on the
-# calibration fixture) rather than silently degrading the false-host rate.
-# It is wired in as declared infrastructure for a future revisit with
-# isolated per-speaker audio (e.g. per-track stems), not a currently
-# load-bearing signal.
+
+
+
+
+
+
+
+
+
+
+
+
 DEFAULT_HOST_LOUDNESS_REQUIRED_MARGIN_DB = 9.0
 
 

@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.autoslice.huozi_luanshua import (  # noqa: E402
+from src.autoslice.huozi_luanshua import (
     CORPUS_SCHEMA,
     PLAN_SCHEMA,
     SOURCE_MANIFEST_SCHEMA,
@@ -41,7 +41,7 @@ from src.autoslice.huozi_luanshua import (  # noqa: E402
     split_clauses,
     validate_renderable_plan,
 )
-from scripts.run_auto_review_shadow_pipeline import (  # noqa: E402
+from scripts.run_auto_review_shadow_pipeline import (
     _write_sapphire_ass_from_srt,
 )
 

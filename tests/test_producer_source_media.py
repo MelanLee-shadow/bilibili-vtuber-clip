@@ -470,7 +470,7 @@ def test_checkpoint_source_media_cache_is_consumed_read_only(
         spec=spec,
         cid="checkpoint-resume",
         out_root=out_root,
-        host="oci3",
+        host="runtime-host",
         require_existing_cache=True,
     )
 
@@ -530,7 +530,7 @@ def test_checkpoint_source_media_cache_drift_blocks_without_mutation(
             spec=spec,
             cid="checkpoint-resume",
             out_root=out_root,
-            host="oci3",
+            host="runtime-host",
             require_existing_cache=True,
         )
 

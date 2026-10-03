@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Task-private CPA Responses transport with measured model/usage metadata.
 
-Runs on OCI3; credentials stay in the existing runtime loader. It never calls
+Runs on runtime host; credentials stay in the existing runtime loader. It never calls
 an upstream provider directly, never falls back to GPT-5, and never prints keys
 or private reasoning content. Used for controlled model/effort experiments.
 """

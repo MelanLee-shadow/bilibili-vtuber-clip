@@ -1,30 +1,30 @@
 """删过不可读字幕的成品 → 人工审阅停泊态，而不是拦死、也不是照常放行。
 
-维护者 逐字：「……应该直接报需要审查，并且在权宜上传时也不能上传，
-可以把这段字幕删掉然后出成品等待审阅，而不是拦住。」
+公开规则：……应该直接报需要审查，并且在权宜上传时也不能上传，
+可以把这段字幕删掉然后出成品等待审阅，而不是拦住。
 
 三条硬要求分别落在哪：
 
 1. **报「需要人工审查」** —— 本模块的停泊回执 + 报表专章
-   （``render_report_section``），维护者 一眼看到「这里少了一句话，为什么少」。
+ （``render_report_section``），公开规则一眼看到「这里少了一句话，为什么少」。
 2. **权宜/快速上传通道也不能上传** —— 靠状态承载，不靠回执。
-   ``UNREADABLE_CUE_REVIEW_STATUS`` **不在**
-   ``session_autoslice.DELIVERED_TALK_STATUSES``（``{"ok","review_ready",
-   "quarantine"}``）里，于是：日审清单构建器要求 ``status == "review_ready"``
-   直接跳过它 → v3 包认证拿不到 review_manifest 条目 → ``authorized_upload``
-   的 ``upload()`` 连门都进不去；封面车道（``cover_maintenance``/``cover_repair``）
-   只认 ``TALK_COVER_PENDING_STATUS``，不会把它偷偷提成 ``review_ready``；
-   ``package_import``/``resume_frozen_talk_package``/``revive_rejected_candidates``
-   同样按 ``review_ready`` 白名单拒收。``delivery_fast_path``（唯一叫得上
-   「快速通道」的模块）只跳过可证明被下游覆盖的**发现/改写**阶段，不读任何状态，
-   也不产生上传授权。
+ ``UNREADABLE_CUE_REVIEW_STATUS`` **不在**
+ ``session_autoslice.DELIVERED_TALK_STATUSES``（``{"ok","review_ready",
+ "quarantine"}``）里，于是：日审清单构建器要求 ``status == "review_ready"``
+ 直接跳过它 → v3 包认证拿不到 review_manifest 条目 → ``authorized_upload``
+ 的 ``upload()`` 连门都进不去；封面车道（``cover_maintenance``/``cover_repair``）
+ 只认 ``TALK_COVER_PENDING_STATUS``，不会把它偷偷提成 ``review_ready``；
+ ``package_import``/``resume_frozen_talk_package``/``revive_rejected_candidates``
+ 同样按 ``review_ready`` 白名单拒收。``delivery_fast_path``（唯一叫得上
+ 「快速通道」的模块）只跳过可证明被下游覆盖的**发现/改写**阶段，不读任何状态，
+ 也不产生上传授权。
 3. **出成品等待审阅、不拦死** —— 删除发生在终审自愈循环里，release gate 照常
-   PASS，媒体照常烧录；成品路径写进停泊回执，维护者 打得开。
+ PASS，媒体照常烧录；成品路径写进停泊回执，公开规则打得开。
 
 **停泊 ≠ 放行**，本模块沿用 ``speaker_manual_review`` 的既有范式，不另造平行状态机：
 回执是收据，真正的 fail-closed 由 ``status`` 不在 ``DELIVERED_TALK_STATUSES``
 里承载；出版登记（``publication_registry`` 的 ``hold_pending_review``）是仓内
-已提交资产上的人工裁定，运行时**不得**代 维护者 写行（7667d9a 血泪，而且
+已提交资产上的人工裁定，运行时**不得**代 公开规则写行（7667d9a 血泪，而且
 ``state/publication_registry.runtime.v1.json`` 是另一套 schema，写错会以
 ``PUBLICATION_RUNTIME_REGISTRY_INVALID`` 把**所有**上传一起拦掉）。
 
@@ -213,7 +213,7 @@ def _ms(value: object) -> str:
 def render_report_section(
     picks: Collection[object], *, exact_ids: Collection[str] = ()
 ) -> list[str]:
-    """维护者 一眼能看到「这条少了一句话，是因为它物理上听不清」的那张表。"""
+    """公开规则一眼能看到「这条少了一句话，是因为它物理上听不清」的那张表。"""
 
     rows = pending_unreadable_cue_review_rows(picks, exact_ids=exact_ids)
     if not rows:
@@ -222,11 +222,7 @@ def render_report_section(
         "",
         "## 删过不可读字幕，等待人工审阅（停泊态，**不是**拒绝，也**不可上传**）",
         "",
-        "> 声学证人判定这几段音频**物理上不可读**（例：11 个音节塞进 0.92s，"
-        "超出普通话音节率上限），既不是「机器没跑」也不是「内容有问题」。按 维护者 "
-        "2026-08-10 裁定：删掉那一句字幕、照常出成品、落停泊态等人看，而不是把整条"
-        "候选拦死。**删除是有损的**——下表逐条列出删了哪一段、原文是什么、证人的"
-        "原始判据是什么。",
+        '> 声学证人判定这几段音频**物理上不可读**（例：11 个音节塞进 0.92s，超出普通话音节率上限），既不是「机器没跑」也不是「内容有问题」。按 公开规则裁定：删掉那一句字幕、照常出成品、落停泊态等人看，而不是把整条候选拦死。**删除是有损的**——下表逐条列出删了哪一段、原文是什么、证人的原始判据是什么。',
         "",
         "> 这些行**永远不会被自动上传**：状态不在 `DELIVERED_TALK_STATUSES` 里，"
         "进不了日审清单，因此每一条上传路径都拿不到授权。看过之后：认可就人工把"

@@ -138,8 +138,8 @@ def find_best_read_aloud_candidate(
                 and extent >= 0.82
                 and common >= min(6, len(authority_norm))
             )
-            # SC 线程弹幕按念读处理（维护者：这是她念的弹幕，不需要听出来）。
-            # 谐音梗让字符相似度结构性失效；线程、时间窗和长度构成直接支持。
+
+
             thread_delay_ms = cues[start].start_ms - item.offset_ms if item.offset_ms >= 0 else None
             thread_full = (
                 thread_anchor

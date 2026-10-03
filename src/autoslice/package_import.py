@@ -76,8 +76,8 @@ from src.autoslice.package_relocation_contract import (
     validate_path_root_role,
 )
 from src.autoslice.package_publish_mirror import (
-    PUBLISH_STAGING_LOCAL_KEYS,
     PublishStagingMirrorError,  # noqa: F401 - retained compatibility symbol
+    publish_staging_field_sets,
     validate_publish_staging_mirror as _validate_publish_staging_mirror,  # noqa: F401
 )
 
@@ -1242,9 +1242,10 @@ def transform_record(
     artifact_hashes["publish_draft_sha256"] = "sha256:" + publish_sha256
 
     publish_staging = validate_publish_staging_mirror(result, publish)
-    for key in publish_staging:
-        if key in PUBLISH_STAGING_LOCAL_KEYS:
-            continue
+    mirrored_keys, _required_keys, _allowed_keys = publish_staging_field_sets(
+        publish
+    )
+    for key in mirrored_keys:
         publish_staging[key] = copy.deepcopy(publish[key])
 
     _guard_immutable(

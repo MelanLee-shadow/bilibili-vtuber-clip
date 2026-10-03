@@ -89,8 +89,8 @@ def test_crash_preserves_history_and_allows_only_bounded_restart(
     assert snapshots[0]["exitcode"] == 73, observed
     assert snapshots[0]["recorded_attempts"] == 1, observed
     assert snapshots[0]["pending_attempts"] == 1, observed
-    # 维护者: an unknown compute outcome is recoverable, not a
-    # permanent lockout. Every retry remains charged; the fourth is refused.
+
+
     for count, snapshot in enumerate(snapshots[:3], 1):
         assert snapshot["exitcode"] == 73, observed
         assert snapshot["recorded_attempts"] == count, observed

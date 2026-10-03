@@ -2,7 +2,6 @@ from src.autoslice.auto_review import DecisionAction
 from src.autoslice.boundary_resolver import (
     AnchorCandidate,
     BoundaryPolicy,
-    BoundaryResolution,
     TalkCue,
     resolve_talk_boundary,
 )

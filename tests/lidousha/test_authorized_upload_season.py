@@ -1,17 +1,60 @@
 """Season (合集) membership is part of the publish (维护者): the manifest
 freezes the lane at review time, upload finishes the add + PUBLIC re-verify, and
 season-add is the idempotent retry.  发布未入集 = 流程未完成 (exit 6)."""
+import importlib
 import json
+from pathlib import Path
 
 import pytest
 
 from tests.subtitle_audio_test_support import SYNTHETIC_SRT, bind_synthetic_audio_evidence
 
 import scripts.authorized_upload as au
+import scripts.session_autoslice as runner
+from src.autoslice import authorized_upload_final_media
+from src.autoslice.publication_queue import consume_ready_publication_queue
 
 TALK_TITLE = "【李豆沙】这是一个足够长度的谈话切片标题"
 SONG_TITLE = "【李豆沙】豆沙歌，《暖暖》"
 TEST_TAGS = ["李豆沙", "虚拟主播", "直播切片"]
+
+
+def test_candidate_id_treats_missing_verification_as_unconfigured(tmp_path):
+    candidate_id, problems = authorized_upload_final_media._candidate_id(
+        {"candidate_id": "candidate-test"},
+        None,
+        package_root=tmp_path,
+        manifest={},
+    )
+    assert candidate_id == "candidate-test"
+    assert problems == []
+
+
+def test_candidate_id_fails_closed_when_verification_scan_errors(
+    tmp_path, monkeypatch
+):
+    verification = tmp_path / "verification"
+    verification.mkdir()
+    original_iterdir = Path.iterdir
+
+    def broken_iterdir(path):
+        if path == verification:
+            def delayed_failure():
+                raise OSError("synthetic verification scan failure")
+                yield  # pragma: no cover
+
+            return delayed_failure()
+        return original_iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", broken_iterdir)
+    candidate_id, problems = authorized_upload_final_media._candidate_id(
+        {"candidate_id": "candidate-test"},
+        None,
+        package_root=tmp_path,
+        manifest={},
+    )
+    assert candidate_id is None
+    assert problems == ["FINAL_MEDIA_REVIEW_STATE_INVALID"]
 
 
 @pytest.fixture(autouse=True)
@@ -195,10 +238,16 @@ def _write_title_cover_qc(cover, title):
     return receipt
 
 
-def _mk(tmp_path, title=TALK_TITLE, season_args=()):
+def _mk(
+    tmp_path,
+    title=TALK_TITLE,
+    season_args=(),
+    *,
+    video_bytes=b"fake-video-bytes",
+):
     video = tmp_path / "clip.mp4"
     cover = tmp_path / "clip.cover.png"
-    video.write_bytes(b"fake-video-bytes")
+    video.write_bytes(video_bytes)
     cover.write_bytes(b"fake-cover-bytes")
     subtitle = tmp_path / "clip.srt"
     subtitle.write_text(SYNTHETIC_SRT, encoding="utf-8")
@@ -565,6 +614,541 @@ def test_explicit_bvid_recovers_one_started_attempt_without_uploader(
     before = ledger.read_bytes()
     assert au.main(command) == 0
     assert ledger.read_bytes() == before
+
+
+def test_queue_blocks_started_only_then_explicit_bvid_recovery_closes_it(
+    tmp_path,
+    monkeypatch,
+):
+    target_bvid = "BV1ABC234XYZ"
+    fake = FakeBili()
+    fake._title = TALK_TITLE
+    fake._bvid = target_bvid
+    monkeypatch.setattr(au, "_build_season_http", fake.build)
+    rc, manifest = _mk(tmp_path)
+    assert rc == 0
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    ledger = reports / "upload_ledger.jsonl"
+    started = _write_started_row(ledger, manifest)
+
+    def must_not_act(*_args, **_kwargs):
+        raise AssertionError("unresolved upload intent must stop before action")
+
+    blocked = consume_ready_publication_queue(
+        repository_root=tmp_path,
+        runtime_root=tmp_path,
+        enabled=True,
+        graph_builder=must_not_act,
+        upload_call=must_not_act,
+        ledger_reader=au.read_ledger,
+        ledger_guard=au.ledger_guard,
+    )
+    assert blocked["status"] == "BLOCKED_LEDGER"
+    assert blocked["reason_codes"] == ["UPLOAD_ATTEMPT_OUTCOME_UNRESOLVED"]
+    assert blocked["attempt_id"] == started["attempt_id"]
+    assert blocked["side_effect_attempted"] is False
+    before_recovery = ledger.read_bytes()
+
+    monkeypatch.setattr(au.subprocess, "run", must_not_act)
+    command = [
+        "season-add",
+        "--manifest",
+        str(manifest),
+        "--ledger",
+        str(ledger),
+        "--bvid",
+        target_bvid,
+        "--cookie-json",
+        str(tmp_path / "unused.json"),
+    ]
+    assert au.main(command) == 0
+    assert ledger.read_bytes() != before_recovery
+    rows = [json.loads(line) for line in ledger.read_text().splitlines()]
+    assert [row["event"] for row in rows] == [
+        "UPLOAD_ATTEMPT_STARTED",
+        "UPLOAD_ATTEMPT_FINISHED",
+        "UPLOAD_PUBLICATION_VERIFIED",
+    ]
+    assert rows[1]["recovery_source"] == "season-add-explicit-bvid"
+    assert rows[1]["recovery_started_row_sha256"]
+    assert {row["attempt_id"] for row in rows} == {started["attempt_id"]}
+
+    graph_calls = 0
+
+    def empty_graph(**_kwargs):
+        nonlocal graph_calls
+        graph_calls += 1
+        return {
+            "schema_version": "publication-readiness-graph.v1",
+            "observational_only": True,
+            "graph_blockers": [],
+            "rows": [],
+        }
+
+    closed = consume_ready_publication_queue(
+        repository_root=tmp_path,
+        runtime_root=tmp_path,
+        enabled=True,
+        graph_builder=empty_graph,
+        upload_call=must_not_act,
+        ledger_reader=au.read_ledger,
+        ledger_guard=au.ledger_guard,
+    )
+    assert closed["status"] == "NO_READY_ACTION"
+    assert closed["side_effect_attempted"] is False
+    assert graph_calls == 1
+
+    # Replaying the exact explicit recovery is idempotent and writes no rows.
+    complete_ledger = ledger.read_bytes()
+    assert au.main(command) == 0
+    assert ledger.read_bytes() == complete_ledger
+
+
+@pytest.mark.parametrize(
+    "ledger_order",
+    [("A_POSTED", "B_STARTED"), ("B_STARTED", "A_POSTED")],
+)
+def test_multicandidate_real_ledger_blocks_then_recovers_without_reupload(
+    tmp_path,
+    monkeypatch,
+    ledger_order,
+):
+    a_root = tmp_path / "candidate-a"
+    b_root = tmp_path / "candidate-b"
+    a_root.mkdir()
+    b_root.mkdir()
+    rc_a, manifest_a = _mk(a_root, video_bytes=b"candidate-a-video")
+    rc_b, manifest_b = _mk(b_root, video_bytes=b"candidate-b-video")
+    assert rc_a == rc_b == 0
+
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    ledger = reports / "upload_ledger.jsonl"
+    started_a = _write_started_row(ledger, manifest_a, attempt_id="attempt-A")
+    finished_a = {
+        "event": "UPLOAD_ATTEMPT_FINISHED",
+        "at": "2026-08-25T06:15:39+0000",
+        **{
+            key: value
+            for key, value in started_a.items()
+            if key not in {"event", "at"}
+        },
+        "uploader_rc": 0,
+        "rc": 6,
+        "bvid": "BV1DEF567QWE",
+        "public_verify_status": "POSTED_UNVERIFIED",
+    }
+    # Rebuild the ledger in both cross-candidate orders.  This uses the real
+    # append-only reader/guard, not a status-injection fixture.
+    ledger.unlink()
+    if ledger_order[0] == "A_POSTED":
+        au.append_ledger(ledger, started_a)
+        au.append_ledger(ledger, finished_a)
+        started_b = _write_started_row(
+            ledger, manifest_b, attempt_id="attempt-B"
+        )
+    else:
+        started_b = _write_started_row(
+            ledger, manifest_b, attempt_id="attempt-B"
+        )
+        au.append_ledger(ledger, started_a)
+        au.append_ledger(ledger, finished_a)
+
+    callbacks = {"graph": 0, "upload": 0, "prepare": 0}
+
+    def graph_forbidden(**_kwargs):
+        callbacks["graph"] += 1
+        raise AssertionError("unresolved ledger must stop before readiness")
+
+    def action_forbidden(*_args, **_kwargs):
+        callbacks["upload"] += 1
+        raise AssertionError("unresolved ledger must stop before action")
+
+    def prepare_forbidden(*_args, **_kwargs):
+        callbacks["prepare"] += 1
+        raise AssertionError("unresolved ledger must stop before preparation")
+
+    blocked = consume_ready_publication_queue(
+        repository_root=tmp_path,
+        runtime_root=tmp_path,
+        enabled=True,
+        graph_builder=graph_forbidden,
+        upload_call=action_forbidden,
+        manifest_prepare_call=prepare_forbidden,
+        ledger_reader=au.read_ledger,
+        ledger_guard=au.ledger_guard,
+    )
+    assert blocked["status"] == "BLOCKED_LEDGER"
+    assert blocked["reason_codes"] == ["UPLOAD_ATTEMPT_OUTCOME_UNRESOLVED"]
+    assert blocked["attempt_id"] == started_b["attempt_id"]
+    assert blocked["side_effect_attempted"] is False
+    assert callbacks == {"graph": 0, "upload": 0, "prepare": 0}
+
+    def must_not_upload(*_args, **_kwargs):
+        raise AssertionError("recovery must not call an uploader subprocess")
+
+    monkeypatch.setattr(au.subprocess, "run", must_not_upload)
+    fake_b = FakeBili()
+    fake_b._title = TALK_TITLE
+    fake_b._bvid = "BV1ABC234XYZ"
+    monkeypatch.setattr(au, "_build_season_http", fake_b.build)
+    recover_b = [
+        "season-add",
+        "--manifest",
+        str(manifest_b),
+        "--ledger",
+        str(ledger),
+        "--bvid",
+        fake_b._bvid,
+        "--cookie-json",
+        str(tmp_path / "unused-b.json"),
+        "--season-wait",
+        "0",
+        "--season-poll",
+        "0",
+        "--public-wait",
+        "0",
+    ]
+    assert au.main(recover_b) == 0
+
+    fake_a = FakeBili()
+    fake_a._title = TALK_TITLE
+    fake_a._bvid = "BV1DEF567QWE"
+    monkeypatch.setattr(au, "_build_season_http", fake_a.build)
+    queue_actions: list[list[str]] = []
+
+    def actual_recovery(argv):
+        queue_actions.append(list(argv))
+        return au.main(
+            [
+                *argv,
+                "--cookie-json",
+                str(tmp_path / "unused-a.json"),
+                "--season-wait",
+                "0",
+                "--season-poll",
+                "0",
+                "--public-wait",
+                "0",
+            ]
+        )
+
+    recovered_a = consume_ready_publication_queue(
+        repository_root=tmp_path,
+        runtime_root=tmp_path,
+        enabled=True,
+        graph_builder=graph_forbidden,
+        upload_call=actual_recovery,
+        manifest_prepare_call=prepare_forbidden,
+        ledger_reader=au.read_ledger,
+        ledger_guard=au.ledger_guard,
+    )
+    assert recovered_a["status"] == "ACTION_COMPLETED"
+    assert recovered_a["action"]["action"] == "SEASON_ADD"
+    assert recovered_a["action"]["attempt_id"] == "attempt-A"
+    assert queue_actions == [
+        [
+            "season-add",
+            "--manifest",
+            str(manifest_a.resolve()),
+            "--bvid",
+            "BV1DEF567QWE",
+            "--ledger",
+            str(ledger),
+        ]
+    ]
+
+    graph_calls = 0
+
+    def empty_graph(**_kwargs):
+        nonlocal graph_calls
+        graph_calls += 1
+        return {
+            "schema_version": "publication-readiness-graph.v1",
+            "observational_only": True,
+            "graph_blockers": [],
+            "rows": [],
+        }
+
+    closed = consume_ready_publication_queue(
+        repository_root=tmp_path,
+        runtime_root=tmp_path,
+        enabled=True,
+        graph_builder=empty_graph,
+        upload_call=action_forbidden,
+        manifest_prepare_call=prepare_forbidden,
+        ledger_reader=au.read_ledger,
+        ledger_guard=au.ledger_guard,
+    )
+    assert closed["status"] == "NO_READY_ACTION"
+    assert closed["side_effect_attempted"] is False
+    assert graph_calls == 1
+    assert au.ledger_guard(
+        ledger, json.loads(manifest_a.read_text())["video"]["sha256"]
+    )[0] == "uploaded"
+    assert au.ledger_guard(
+        ledger, json.loads(manifest_b.read_text())["video"]["sha256"]
+    )[0] == "uploaded"
+
+    before_replay = ledger.read_bytes()
+    monkeypatch.setattr(au, "_build_season_http", fake_b.build)
+    assert au.main(recover_b) == 0
+    assert ledger.read_bytes() == before_replay
+    rows = [json.loads(line) for line in ledger.read_text().splitlines()]
+    assert [row["event"] for row in rows].count("UPLOAD_ATTEMPT_STARTED") == 2
+    assert [row["event"] for row in rows].count("UPLOAD_ATTEMPT_FINISHED") == 2
+    assert [row["event"] for row in rows].count("UPLOAD_PUBLICATION_VERIFIED") == 2
+    assert {row["attempt_id"] for row in rows} == {"attempt-A", "attempt-B"}
+    assert not any(call[0] == "upload" for call in queue_actions)
+
+
+@pytest.mark.parametrize(
+    "ledger_order",
+    [("A_POSTED", "B_STARTED"), ("B_STARTED", "A_POSTED")],
+)
+def test_normal_runner_restart_recovers_multicandidate_real_ledger_without_reupload(
+    tmp_path,
+    monkeypatch,
+    ledger_order,
+):
+    """A fresh runner import must preserve ledger-first safety and recovery.
+
+    Each tick reloads the ordinary runner module, so no Python module-local
+    queue state can bridge the transitions.  The append-only ledger and
+    manifest-bound sidecars are the only durable state.
+    """
+
+    runtime = tmp_path / "runtime"
+    a_root = runtime / "out" / "candidate-a"
+    b_root = runtime / "out" / "candidate-b"
+    a_root.mkdir(parents=True)
+    b_root.mkdir(parents=True)
+    rc_a, manifest_a = _mk(a_root, video_bytes=b"restart-candidate-a-video")
+    rc_b, manifest_b = _mk(b_root, video_bytes=b"restart-candidate-b-video")
+    assert rc_a == rc_b == 0
+
+    reports = runtime / "reports"
+    reports.mkdir(parents=True)
+    ledger = reports / "upload_ledger.jsonl"
+    started_a = _write_started_row(ledger, manifest_a, attempt_id="restart-A")
+    finished_a = {
+        "event": "UPLOAD_ATTEMPT_FINISHED",
+        "at": "2026-08-25T06:15:39+0000",
+        **{
+            key: value
+            for key, value in started_a.items()
+            if key not in {"event", "at"}
+        },
+        "uploader_rc": 0,
+        "rc": 6,
+        "bvid": "BV1DEF567QWE",
+        "public_verify_status": "POSTED_UNVERIFIED",
+    }
+    ledger.unlink()
+    if ledger_order[0] == "A_POSTED":
+        au.append_ledger(ledger, started_a)
+        au.append_ledger(ledger, finished_a)
+        started_b = _write_started_row(
+            ledger, manifest_b, attempt_id="restart-B"
+        )
+    else:
+        started_b = _write_started_row(
+            ledger, manifest_b, attempt_id="restart-B"
+        )
+        au.append_ledger(ledger, started_a)
+        au.append_ledger(ledger, finished_a)
+
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    heartbeats: list[str] = []
+    logs: list[str] = []
+    queue_actions: list[list[str]] = []
+    callbacks = {"graph": 0, "upload": 0, "prepare": 0}
+    original_consumer = consume_ready_publication_queue
+
+    def configure_fresh_runner(*, graph_builder, upload_call):
+        fresh = importlib.reload(runner)
+
+        def consume(**kwargs):
+            return original_consumer(
+                **kwargs,
+                graph_builder=graph_builder,
+                upload_call=upload_call,
+                manifest_prepare_call=prepare_forbidden,
+                ledger_reader=au.read_ledger,
+                ledger_guard=au.ledger_guard,
+            )
+
+        monkeypatch.setattr(fresh, "BASE", runtime)
+        monkeypatch.setattr(fresh, "REPO_ROOT", repository)
+        monkeypatch.setenv("AUTOSLICE_AUTHORIZED_UPLOAD_QUEUE_ENABLED", "1")
+        monkeypatch.setattr(fresh, "cjk_font_present", lambda: True)
+        monkeypatch.setattr(fresh, "source_health_error", lambda: None)
+        monkeypatch.setattr(fresh, "recorder_live_status", lambda: False)
+        monkeypatch.setattr(fresh, "live_determination_basis", lambda _live: {})
+        monkeypatch.setattr(
+            fresh, "_live_hold_active", lambda *_args, **_kwargs: False
+        )
+        monkeypatch.setattr(fresh, "list_dates", lambda: [])
+        monkeypatch.setattr(
+            fresh.review_package_poststage,
+            "backfill_terminal_review_packages",
+            lambda _runner: None,
+        )
+        monkeypatch.setattr(
+            fresh.publication_queue,
+            "consume_ready_publication_queue",
+            consume,
+        )
+        monkeypatch.setattr(fresh, "write_heartbeat", heartbeats.append)
+        monkeypatch.setattr(fresh, "log", logs.append)
+        return fresh
+
+    def graph_forbidden(**_kwargs):
+        callbacks["graph"] += 1
+        raise AssertionError("ledger dependency must resolve before readiness")
+
+    def upload_forbidden(_argv):
+        callbacks["upload"] += 1
+        raise AssertionError("unresolved ledger must not call an action")
+
+    def prepare_forbidden(*_args, **_kwargs):
+        callbacks["prepare"] += 1
+        raise AssertionError("ledger dependency must resolve before preparation")
+
+    # Fresh import 1: B's STARTED-only intent blocks globally before any graph
+    # or action, even when A's recoverable FINISHED row appears first.
+    fresh = configure_fresh_runner(
+        graph_builder=graph_forbidden,
+        upload_call=upload_forbidden,
+    )
+    assert fresh.tick() == 0
+    assert callbacks == {"graph": 0, "upload": 0, "prepare": 0}
+    assert "publication_queue=BLOCKED_LEDGER" in heartbeats[-1]
+    ambiguity_logs = [
+        row for row in logs if "UPLOAD_ATTEMPT_OUTCOME_UNRESOLVED" in row
+    ]
+    assert len(ambiguity_logs) == 1
+    assert started_b["attempt_id"] in ambiguity_logs[0]
+
+    # Resolve B through the existing exact-BVID recovery path.  The uploader
+    # subprocess is forbidden; public/Creator data are deterministic fixtures.
+    def must_not_upload(*_args, **_kwargs):
+        raise AssertionError("explicit recovery must not call an uploader")
+
+    monkeypatch.setattr(au.subprocess, "run", must_not_upload)
+    fake_b = FakeBili()
+    fake_b._title = TALK_TITLE
+    fake_b._bvid = "BV1ABC234XYZ"
+    monkeypatch.setattr(au, "_build_season_http", fake_b.build)
+    recover_b = [
+        "season-add",
+        "--manifest",
+        str(manifest_b),
+        "--ledger",
+        str(ledger),
+        "--bvid",
+        fake_b._bvid,
+        "--cookie-json",
+        str(tmp_path / "unused-b.json"),
+        "--season-wait",
+        "0",
+        "--season-poll",
+        "0",
+        "--public-wait",
+        "0",
+    ]
+    assert au.main(recover_b) == 0
+
+    # Fresh import 2: the ordinary runner now sees only A's posted-unverified
+    # dependency and performs one season-add, never a new upload.
+    fake_a = FakeBili()
+    fake_a._title = TALK_TITLE
+    fake_a._bvid = "BV1DEF567QWE"
+    monkeypatch.setattr(au, "_build_season_http", fake_a.build)
+
+    def recover_a(argv):
+        queue_actions.append(list(argv))
+        return au.main(
+            [
+                *argv,
+                "--cookie-json",
+                str(tmp_path / "unused-a.json"),
+                "--season-wait",
+                "0",
+                "--season-poll",
+                "0",
+                "--public-wait",
+                "0",
+            ]
+        )
+
+    fresh = configure_fresh_runner(
+        graph_builder=graph_forbidden,
+        upload_call=recover_a,
+    )
+    assert fresh.tick() == 0
+    assert "publication_queue=ACTION_COMPLETED" in heartbeats[-1]
+    assert queue_actions == [
+        [
+            "season-add",
+            "--manifest",
+            str(manifest_a.resolve()),
+            "--bvid",
+            "BV1DEF567QWE",
+            "--ledger",
+            str(ledger),
+        ]
+    ]
+
+    # Fresh import 3: both hashes are terminally verified, so the runner reaches
+    # the readiness graph and then reports a clean idle queue.
+    graph_calls = 0
+
+    def empty_graph(**_kwargs):
+        nonlocal graph_calls
+        graph_calls += 1
+        return {
+            "schema_version": "publication-readiness-graph.v1",
+            "observational_only": True,
+            "graph_blockers": [],
+            "rows": [],
+        }
+
+    fresh = configure_fresh_runner(
+        graph_builder=empty_graph,
+        upload_call=upload_forbidden,
+    )
+    assert fresh.tick() == 0
+    assert "publication_queue=NO_READY_ACTION" in heartbeats[-1]
+    assert graph_calls == 1
+    assert callbacks == {"graph": 0, "upload": 0, "prepare": 0}
+
+    rows = [json.loads(line) for line in ledger.read_text().splitlines()]
+    assert [row["event"] for row in rows].count("UPLOAD_ATTEMPT_STARTED") == 2
+    assert [row["event"] for row in rows].count("UPLOAD_ATTEMPT_FINISHED") == 2
+    assert [row["event"] for row in rows].count("UPLOAD_PUBLICATION_VERIFIED") == 2
+    assert {row["attempt_id"] for row in rows} == {"restart-A", "restart-B"}
+    assert au.ledger_guard(
+        ledger, json.loads(manifest_a.read_text())["video"]["sha256"]
+    )[0] == "uploaded"
+    assert au.ledger_guard(
+        ledger, json.loads(manifest_b.read_text())["video"]["sha256"]
+    )[0] == "uploaded"
+    assert not any(action[0] == "upload" for action in queue_actions)
+
+    # A fourth fresh import and an exact B recovery replay remain idempotent.
+    before_replay = ledger.read_bytes()
+    monkeypatch.setattr(au, "_build_season_http", fake_b.build)
+    assert au.main(recover_b) == 0
+    fresh = configure_fresh_runner(
+        graph_builder=empty_graph,
+        upload_call=upload_forbidden,
+    )
+    assert fresh.tick() == 0
+    assert "publication_queue=NO_READY_ACTION" in heartbeats[-1]
+    assert ledger.read_bytes() == before_replay
 
 
 def test_explicit_bvid_recovery_rejects_wrong_archive_without_ledger_write(

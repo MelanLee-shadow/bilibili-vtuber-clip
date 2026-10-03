@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 
 from src.autoslice import read_aloud_llm_verifier as verifier_module
 from src.autoslice.chat_authority import (
@@ -255,6 +256,124 @@ def test_registered_entity_conflict_also_uses_blind_witness_then_cpa():
         "REGISTERED_ENTITY_CPA_WITNESS_ADJUDICATED"
     )
     assert len(audio_calls) == 1
+
+
+def test_transcript_entity_slot_current_is_one_explicit_cpa_choice_without_audio():
+    group = ReferentGroup(
+        (
+            ReferentEntity("李豆沙", ("李豆沙", "流沙")),
+            ReferentEntity("小李", ("小李",)),
+        ),
+        audio_verify_all_surfaces=True,
+    )
+    source = _srt("虽然李豆沙叫流沙")
+    prompts = []
+    audio_calls = []
+    seen_choice_ids = []
+
+    def cpa(prompt):
+        prompts.append(prompt)
+        choice_ids = re.findall(
+            r'"choice_id": "([^"]+)"', prompt
+        )
+        seen_choice_ids.extend(choice_ids)
+        return json.dumps(
+            {
+                "ranking": [
+                    {"choice_id": choice_id, "p": 0.91 if choice_id == "CURRENT" else 0.04}
+                    for choice_id in choice_ids
+                ],
+                "choice_id": "CURRENT",
+                "needs_audio": False,
+                "reason": "当前规范面已由整句文字证据支持",
+            },
+            ensure_ascii=False,
+        )
+
+    def audio(request):
+        audio_calls.append(request)
+        return _audio_witness_stub()(request)
+
+    output, audit = apply_audio_entity_verification(
+        source,
+        referent_groups=[group],
+        entity_verifier=verifier_module.build_cpa_read_aloud_verifier(
+            cpa, next_verifier=audio
+        ),
+    )
+
+    assert output == source
+    assert len(prompts) == 1
+    assert audio_calls == []
+    verdict = audit["confirmed"][0]["verdict"]
+    assert verdict["slot_choice_id"] == "CURRENT"
+    assert "canonical_entity" not in verdict
+    assert verdict["authority_kind"] == "cpa_context_only_closed_set_adjudication"
+    assert verdict["reason_code"] == "CPA_CONTEXT_ONLY_CLOSED_SET_DISAMBIGUATION"
+    assert verdict["needs_audio"] is False
+    assert verdict["acoustic_evidence_used"] is False
+    assert "音频证人（未见候选）" not in prompts[0]
+    assert "尚未调用音频证人" in prompts[0]
+    assert {row["choice_id"] for row in verdict["ranking"]} == {
+        *seen_choice_ids,
+    }
+
+
+def test_transcript_entity_slot_cpa_choice_uses_blind_witness_without_slot_leak():
+    group = ReferentGroup(
+        (
+            ReferentEntity("李豆沙", ("李豆沙", "流沙")),
+            ReferentEntity("小李", ("小李",)),
+        ),
+        audio_verify_all_surfaces=True,
+    )
+    source = _srt("虽然李豆沙叫流沙")
+    prompts = []
+    audio_calls = []
+
+    def cpa(prompt):
+        prompts.append(prompt)
+        choice_ids = re.findall(
+            r'"choice_id": "([^"]+)"', prompt
+        )
+        selected = next(choice_id for choice_id in choice_ids if choice_id != "CURRENT")
+        return json.dumps(
+            {
+                "ranking": [
+                    {"choice_id": choice_id, "p": 0.90 if choice_id == selected else 0.05}
+                    for choice_id in choice_ids
+                ],
+                "choice_id": selected,
+                "needs_audio": len(prompts) == 1,
+                "reason": "盲听拼音与 canonical 闭集共同支持",
+            },
+            ensure_ascii=False,
+        )
+
+    def audio(request):
+        audio_calls.append(request)
+        serialized = json.dumps(request, ensure_ascii=False)
+        for forbidden in ("流沙", "李豆沙", "小李", "choice_id", "full_cue", "slot_text"):
+            assert forbidden not in serialized
+        return _audio_witness_stub()(request)
+
+    output, audit = apply_audio_entity_verification(
+        source,
+        referent_groups=[group],
+        entity_verifier=verifier_module.build_cpa_read_aloud_verifier(
+            cpa, next_verifier=audio
+        ),
+    )
+
+    assert "虽然李豆沙叫李豆沙" in output
+    assert len(prompts) == 2
+    assert len(audio_calls) == 1
+    verdict = audit["repairs"][0]["verdict"]
+    assert verdict["authority_kind"] == "cpa_witness_adjudication"
+    assert verdict["canonical_entity"] == "李豆沙"
+    assert len(verdict["ranking"]) == len(
+        {row["choice_id"] for row in verdict["ranking"]}
+    )
 
 
 def test_fresh_read_aloud_rejects_explicit_legacy_sighted_witness():
@@ -646,9 +765,9 @@ def test_cpa_witness_judge_can_keep_current_without_audio_final_authority():
     )
 
 
-# --------------------------------------------------------------------------- #
-# 维护者 审片裁定 #2「弹幕不修正」（主包/主播案）regression coverage
-# --------------------------------------------------------------------------- #
+
+
+
 _MEME_DANMU = "主包给我讲讲这是怎么回事"
 _MEME_ASR = "主播给我讲讲这是怎么回事"
 
@@ -777,14 +896,14 @@ def test_prompt_and_closed_choice_rules_flag_meme_spelling_and_emote_as_not_typo
 
 
 def test_completeness_heuristic_extends_partial_read_to_full_danmu_boundary():
-    """维护者 审片裁定「念弹幕大多念完整」heuristic: documents that
-    the existing ascending-cue-count search (``find_best_read_aloud_candidate``)
-    already extends a match across cue boundaries to the full danmaku instead
-    of settling for a shorter partial span — here the second cue alone has a
-    structural ASR mishearing (懂→瞳) that only a full two-cue read recovers,
-    and a corroborating independent transcript is enough to win ownership
-    (no interruption evidence exists, so the read-aloud contract must copy
-    the full two-cue danmaku, not truncate it or leave the typo behind)."""
+    """公开规则审片裁定「念弹幕大多念完整」heuristic: documents that
+ the existing ascending-cue-count search (``find_best_read_aloud_candidate``)
+ already extends a match across cue boundaries to the full danmaku instead
+ of settling for a shorter partial span — here the second cue alone has a
+ structural ASR mishearing (懂→瞳) that only a full two-cue read recovers,
+ and a corroborating independent transcript is enough to win ownership
+ (no interruption evidence exists, so the read-aloud contract must copy
+ the full two-cue danmaku, not truncate it or leave the typo behind)."""
 
     danmu = "谢谢老板的解释，我现在完全懂了这个梗的意思"
     source = _srt("谢谢老板的解释，", "我现在完全瞳了这个梗的意思")

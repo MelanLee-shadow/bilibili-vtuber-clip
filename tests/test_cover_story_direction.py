@@ -68,7 +68,6 @@ def test_no_brief_and_emote_prompts_keep_identity_without_forced_poster_style(br
 @pytest.mark.parametrize("layout", ["banner", "footer", "left-split", "right-split"])
 @pytest.mark.parametrize("title_style", ["clean", "outline"])
 def test_source_frame_survives_title_and_center_crop_with_no_overlap(tmp_path, layout, title_style):
-    from PIL import ImageOps
     from src.autoslice.cover_generation import _sha256
     from src.autoslice.cover_route_evidence import build_no_crop_participant_verification
     from src.autoslice.cover_polish_gate import _compose_screenshot_cover_with_face_gate
@@ -314,7 +313,8 @@ def test_clean_screenshot_preserves_source_face_pixels_and_relationship_branch(t
     from src.autoslice.cover_screenshot_poster import _compose_screenshot_poster_background
     source, output = tmp_path / "source.png", tmp_path / "poster.png"
     original = Image.new("RGB", (1920, 1080), (180, 150, 120))
-    original.putpixel((960, 440), (220, 30, 40)); original.save(source)
+    original.putpixel((960, 440), (220, 30, 40))
+    original.save(source)
     direction = replace(BASE, layout="footer", title_style="clean",
         visual_brief="Keep the actual smiling source frame and place clear editorial copy below the face.")
     evidence = _compose_screenshot_poster_background(source, output, art_direction=direction)

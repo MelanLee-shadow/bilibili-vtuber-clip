@@ -41,7 +41,7 @@ def test_142_needs_digit_boundary():
 
 
 def test_proper_tags_use_searchable_canonical_names():
-    # 维护者: 专名只出正主名 — 大N老师/豆町 只是触发面。
+
     tags = {h.tag for h in st.scan_proper_nouns("", "大N老师来了\n豆町天下第一")}
     assert "南町" in tags
     assert "大N老师" not in tags and "豆町" not in tags
@@ -91,7 +91,7 @@ def test_generate_upload_tags_ok_with_stub_llm(tmp_path):
     out = st.generate_upload_tags(f"{CHANNEL_PROFILE.talk_title_prefix}标题", srt, llm_call=stub)
     assert out["status"] == "OK" and out["engine"] == st.ENGINE_VERSION
     assert "侄女" in out["final_tags"] and "可爱" in out["final_tags"]
-    assert "彩排" not in out["final_tags"]  # 维护者 硬毙词
+    assert "彩排" not in out["final_tags"]
     assert out["final_tag_line"].startswith(",".join(st.BASE_TAGS))
 
 

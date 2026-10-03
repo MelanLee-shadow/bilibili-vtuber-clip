@@ -19,11 +19,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.autoslice.manual_publication_intake import (  # noqa: E402
+from src.autoslice.manual_publication_intake import (
     already_applied_manual_intake, plan_manual_publication_intake, verified_manual_inputs,
 )
-from src.autoslice.package_import import atomic_write_bytes, exclusive_lock  # noqa: E402
-from src.autoslice.publication_state_projection import _reconciliation_lock  # noqa: E402
+from src.autoslice.package_import import atomic_write_bytes, exclusive_lock
+from src.autoslice.publication_state_projection import _reconciliation_lock
 
 
 def main() -> int:

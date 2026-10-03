@@ -34,25 +34,25 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.autoslice.cover_route_evidence import (  # noqa: E402
+from src.autoslice.cover_route_evidence import (
     validate_cover_route_decision,
     validate_rendered_text_pixel_evidence,
 )
-from src.autoslice.host_only_v4_package_binding import (  # noqa: E402
+from src.autoslice.host_only_v4_package_binding import (
     BINDING_ITEM_KEY,
     HostOnlyV4PackageBindingError,
     materialize_package_binding,
 )
-from src.autoslice.channel_profile import load_channel_profile  # noqa: E402
-from src.autoslice import operator_processing_scope as operator_scope  # noqa: E402
-from src.autoslice import semantic_evidence_scorecard_refresh as semantic_refresh  # noqa: E402
-from src.autoslice.song_delivery import (  # noqa: E402
+from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice import operator_processing_scope as operator_scope
+from src.autoslice import semantic_evidence_scorecard_refresh as semantic_refresh
+from src.autoslice.song_delivery import (
     SongDeliveryError,
     _validated_song_upload_tags,
 )
-from src.autoslice.song_completion import song_completion_evidence  # noqa: E402
-from src.autoslice.title_policy import publish_title_policy_violations  # noqa: E402
-from scripts.suggest_upload_tags import generate_upload_tags  # noqa: E402
+from src.autoslice.song_completion import song_completion_evidence
+from src.autoslice.title_policy import publish_title_policy_violations
+from scripts.suggest_upload_tags import generate_upload_tags
 
 
 CHANNEL_PROFILE = load_channel_profile(ROOT)

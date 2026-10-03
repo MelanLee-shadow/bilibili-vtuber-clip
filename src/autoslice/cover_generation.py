@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Callable, Mapping, NamedTuple, Sequence
 
 from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.cover_candidate_direction import apply_candidate_cover_direction
 from src.autoslice.cover_emote import (
     EmoteEntry,
     EmoteLibrary,
@@ -91,27 +92,27 @@ class LidoushaCoverArtDirection:
     is_song: bool
     hook_word: str = ""  # verbatim substring of cover_text to highlight ("" = none)
     line_breaks: tuple[str, ...] = ()  # LLM word-aware line split of cover_text ("" = balancer)
-    words: tuple[str, ...] = ()  # LLM word segmentation of cover_text — wrap atoms
-    #   (维护者: keep the FULL title and grow the font via MANY line
-    #   breaks; only whole words / hook / proper nouns may never split)
-    # Official emote sticker as the cover subject (维护者).  "" = the
-    # default character redraw.  Only the strong-reason judge may set these
-    # (never the deterministic baseline); "replace" swaps the subject, and
-    # "companion" (sticker AND character) is reserved for 分身 memes or a
-    # sticker depicting kmx (kimo熊 — her FANS' name, not a mascot).
+    words: tuple[str, ...] = ()
+
+
+
+
+
+
+
     emote_id: str = ""
     emote_mode: str = ""    # "" | "replace" | "companion"
     emote_reason: str = ""
-    # 维护者 生豆角案：重绘封面画面必须扣本条故事——1-2 个来自
-    # 标题具象意象的英文道具短语（raw green beans / a big gaming chair），
-    # 注入重绘 prompt 作手边/背景道具；绝不上身（穿戴铁律不变），歌切不用。
+
+
+
     scene_props: tuple[str, ...] = ()
-    # B站生态调研（20万+ 播放封面）：高播放封面的字是 2-12 字"梗字"
-    # （原话/质问/反差点），从不是整条标题。非空时叠字层只渲染它：第 1 行=主梗字
-    # （hook 色、巨大），可选第 2 行副字（奶油小一号）；cover_text 退为 fallback。
-    # 所有 talk 标题都允许，包括 维护者 手定标题；手工 authority 锁投稿标题，
-    # 不等于授权封面全文。只有独立显式 full-text-cover contract 才关闭该轴。
-    # 歌切 song-clean 永远不用（裸《歌名》已是终态）。
+
+
+
+
+
+
     cover_punch: tuple[str, ...] = ()
     # CPA 须证明短梗对陌生观众语义自足，否则退回完整 cover_text。
     cover_punch_semantic_review: dict[str, object] = field(
@@ -129,8 +130,8 @@ _COVER_SONG_LAYOUT = "song-clean"
 _COVER_BASE_FILL = (255, 246, 214)  # cream #FFF6D6 — approved base fill
 _COVER_STROKE = (18, 36, 79)        # navy  #12244F — approved outer stroke
 _COVER_WHITE = (255, 255, 255)
-# Hook/accent colors rotate — NOT only yellow/pink (维护者).  All are
-# SATURATED (never the cream base fill, else the hook word would be invisible).
+
+
 _COVER_HOOK_COLORS = {
     "yellow": (255, 198, 41),
     "pink": (255, 92, 138),
@@ -144,7 +145,6 @@ _COVER_HOOK_LEXICON = (
     "犯傻", "离谱", "掏兜", "买弹幕", "回扣", f"反{CHANNEL_PROFILE.display_name}", "海王", "认输", "自封", "妈妈", "宝宝", "破大防",
     "猴群", "奇遇", "熊猫头",
 )
-
 
 def _cover_stable_hash(seed: str) -> int:
     return int(hashlib.sha256((seed or PROFILE_ID).encode("utf-8")).hexdigest(), 16)
@@ -163,8 +163,8 @@ def _cover_role_from_title(title: str, cover_text: str) -> tuple[str, str, str |
 
 
 def _cover_default_hook_word(cover_text: str) -> str:
-    # A 《song name》is the strongest hook and must stay whole on its own line
-    # (维护者: 歌名不能换行). Highlight the whole 《...》.
+
+
     song = re.search(r"《[^》]*》", cover_text)
     if song:
         return song.group()
@@ -190,7 +190,7 @@ _COVER_PUNCH_QUOTED_RX = re.compile(r"[“‘「『]([^”’」』]{4,12})[”�
 # Short quoted catchphrases are semantic and visual atoms on a cover.  The
 # July 22 fallback split ``“最最最喜欢”`` in half, which looked like a typo even
 # though every character survived.  Paired short quotes must stay together.
-from src.autoslice.cover_text_layout import (  # noqa: E402 — re-export for shadow pipeline
+from src.autoslice.cover_text_layout import (  # noqa: E402
     _COVER_QUOTED_SPAN_RX,
     _cover_lines_canon,
     _validated_cover_lines,
@@ -232,11 +232,11 @@ def _cover_default_punch(cover_text: str) -> tuple[str, ...]:
 def _validated_cover_punch(value: object, cover_text: str) -> tuple[str, ...]:
     """Validate the LLM's initial cover punch **shape** only（v2,）。
 
-    main 必填、sub 可选；每行 2-12 字、单物理行、行首禁闭标点/行末禁开标点。任何不合格 → ()
-    → 调用方回退确定性兜底。**逐字连续子串已不再是要求**（维护者 裁定；考据与动机转移
-    见 `cover_punch_semantics.SCHEMA_VERSION` 注释）：防编造改由终审 `no_fabricated_fact` 承担，
-    这一层只保证可渲染。白色奶龙护栏（截在左引号前=截掉一个语义原子）仍在，但只对**确实是原文子串**的片段成立——对自由改写的梗字，原文括号位置说明不了任何事。
-    """
+ main 必填、sub 可选；每行 2-12 字、单物理行、行首禁闭标点/行末禁开标点。任何不合格 → ()
+ → 调用方回退确定性兜底。**逐字连续子串已不再是要求**（公开规则裁定；考据与动机转移
+ 见 `cover_punch_semantics.SCHEMA_VERSION` 注释）：防编造改由终审 `no_fabricated_fact` 承担，
+ 这一层只保证可渲染。白色奶龙护栏（截在左引号前=截掉一个语义原子）仍在，但只对**确实是原文子串**的片段成立——对自由改写的梗字，原文括号位置说明不了任何事。
+ """
 
     if not isinstance(value, Mapping):
         return ()
@@ -258,9 +258,9 @@ def _validated_cover_punch(value: object, cover_text: str) -> tuple[str, ...]:
             or "\n" in fragment
         ):
             return ()
-        # 合并 ft-a8600994：不恢复 ft 的「必须是标题子串」强制(主线 3301e4e 已按
-        # 维护者 裁定撤销);ft 新增的 whitespace 守卫留下,与 extractive
-        # 同域——只对确实是原文子串的片段成立。
+
+
+
         if canon in haystack and (
             not punch_fragment_whitespace_is_source_safe(fragment, cover_text)
             or not extractive_punch_fragment_is_source_safe(
@@ -348,8 +348,8 @@ def _cover_art_direction(
                 cover_punch=reviewed,
                 cover_punch_semantic_review=proof,
             )
-        return _talk_font_floor_layout_override(
-            _punch_layout_override(baseline), cover_text
+        return apply_candidate_cover_direction(
+            candidate_id, _talk_font_floor_layout_override(_punch_layout_override(baseline), cover_text)
         )
     try:
         payload = extract_json_object(
@@ -430,11 +430,11 @@ def _cover_art_direction(
             cover_punch=reviewed,
             cover_punch_semantic_review=proof,
         )
-    return refresh_visual_brief(
+    return apply_candidate_cover_direction(candidate_id, refresh_visual_brief(
         _talk_font_floor_layout_override(_punch_layout_override(direction), cover_text),
         original_punch=original_punch, title=title, story_hook=story_hook,
         llm_call=art_direction_llm_call,
-    )
+    ))
 
 
 def _punch_layout_override(direction: LidoushaCoverArtDirection) -> LidoushaCoverArtDirection:
@@ -530,14 +530,7 @@ def _cover_art_direction_prompt(
     punch_output_field = ""
     if allow_punch:
         punch_block = (
-            "- cover_punch: **封面主梗字（最高优先，2026-07-20 B站高播放封面调研铁律：封面上的字是 2-12 字的'梗字'，"
-            "从不是整条标题）**。从封面文案里挑她最出圈的那一句：原话/口癖/质问/反差点（如'什么是侄女''给我整无语了'）。\n"
-            "  **梗字必须扣住本条的具体名场面**（2026-07-25 维护者 生豆角案铁律）：main+sub 合起来必须包含核心具象"
-            "意象——事件里的具体东西/动作/原话（如'生豆角''有骗子！'）；**禁止只用抽象总结词**（'团结默契''下播暗示'"
-            "这类无画面、换条也能用的词）。若最出圈的感叹句本身抽象，则 main 取具象意象词、sub 取该感叹句（或反之）。\n"
-            "  **梗字不必是标题/封面文案的连续子串，也不必与标题一致重复**（维护者 2026-08-10 逐字裁定：「梗字从来没有要求过必须是标题的连续子串吧，我不记得我要求过，事实上很多高播放量的切片，封面字块里的梗字和标题不一致，反而可能承接了一些解释原因或者补充说明的感觉，不需要与标题一致重复。」）。原话直引依然是最好的第一选择，但你也可以改写、缩写、换口语说法；**sub 尤其鼓励承接解释原因或补充说明**，而不是把 main 的词再抄一遍。\n"
-            "  **只能说片里真有的事**：梗字里的每个具体指涉（人/物/动作/数字/结论）都必须由本条标题或切片语境支撑；不得新增没出现过的人物或情节，不得把推测写成已发生的事实，不得升级程度或结果。编造会在终审被 no_fabricated_fact 门拦下。\n"
-            "  硬约束：main 与 sub 各 2-12 字、各自是一条能直接渲染的物理行（可含标点）；sub 可选（null 或第二行小字）。若直接抽取原文片段，不得停在紧随的引号/书名号/括号成分之前。**几乎永远都写得出来**——按优先级找：含具象意象的她的原话感叹句＞引号里的梗词＞含具象意象的短分句＞你自己写的、有支撑的一句补充说明；只有本条完全无从概括时才允许 main 给 null（极罕见）。梗字模式下 lines/words 仍要照常输出（作回退）。\n"
+            "- cover_punch: **封面主梗字（最高优先，2026-07-20 B站高播放封面调研铁律：封面上的字是 2-12 字的'梗字'，从不是整条标题）**。从封面文案里挑她最出圈的那一句：原话/口癖/质问/反差点（如'什么是侄女''给我整无语了'）。\n **梗字必须扣住本条的具体名场面**（公开规则生豆角案铁律）：main+sub 合起来必须包含核心具象意象——事件里的具体东西/动作/原话（如'生豆角''有骗子！'）；**禁止只用抽象总结词**（'团结默契''下播暗示'这类无画面、换条也能用的词）。若最出圈的感叹句本身抽象，则 main 取具象意象词、sub 取该感叹句（或反之）。\n **梗字不必是标题/封面文案的连续子串，也不必与标题一致重复**（公开规则逐字裁定：「梗字从来没有要求过必须是标题的连续子串吧，我不记得我要求过，事实上很多高播放量的切片，封面字块里的梗字和标题不一致，反而可能承接了一些解释原因或者补充说明的感觉，不需要与标题一致重复。」）。原话直引依然是最好的第一选择，但你也可以改写、缩写、换口语说法；**sub 尤其鼓励承接解释原因或补充说明**，而不是把 main 的词再抄一遍。\n **只能说片里真有的事**：梗字里的每个具体指涉（人/物/动作/数字/结论）都必须由本条标题或切片语境支撑；不得新增没出现过的人物或情节，不得把推测写成已发生的事实，不得升级程度或结果。编造会在终审被 no_fabricated_fact 门拦下。\n 硬约束：main 与 sub 各 2-12 字、各自是一条能直接渲染的物理行（可含标点）；sub 可选（null 或第二行小字）。若直接抽取原文片段，不得停在紧随的引号/书名号/括号成分之前。**几乎永远都写得出来**——按优先级找：含具象意象的她的原话感叹句＞引号里的梗词＞含具象意象的短分句＞你自己写的、有支撑的一句补充说明；只有本条完全无从概括时才允许 main 给 null（极罕见）。梗字模式下 lines/words 仍要照常输出（作回退）。\n"
         )
         punch_output_field = ',"cover_punch":null|{"main":"...","sub":null|"..."}'
     return (
@@ -664,10 +657,10 @@ def _normalize_cover_art_direction(
     if not (isinstance(hook_word, str) and hook_word and hook_word in cover_text.replace("\n", "")):
         hook_word = baseline.hook_word
 
-    # Word-aware line split (维护者: 均衡分行器把"拒绝/熊猫"拆到两行) —
-    # validated against the FINAL layout's line budget and the FINAL hook word.
-    # Colon-derived explicit breaks ("\n" in cover_text) stay authoritative and
-    # are handled in _fit_cover_lines; the LLM split only fills the no-colon case.
+
+
+
+
     max_lines = _COVER_LAYOUT_RENDER.get(layout, _COVER_LAYOUT_RENDER["left-split"])["max_lines"]
     line_breaks = _validated_cover_lines(payload.get("lines"), cover_text, hook_word=hook_word, max_lines=max_lines)
     words = _validated_cover_words(payload.get("words"), cover_text, hook_word=hook_word)
@@ -746,10 +739,10 @@ def _normalize_cover_art_direction(
 
 
 def _cover_text(title: str) -> str:
-    # Cover title NEVER uses a colon (维护者): the archive/video title
-    # may use "引语：反应", but on the cover the clause break is a LINE BREAK,
-    # not punctuation. Strip the selected profile's talk/song prefix and turn any colon
-    # into a newline so the overlay splits clauses by line.
+
+
+
+
     text = title.strip()
     for prefix in (CHANNEL_PROFILE.song_title_prefix, CHANNEL_PROFILE.talk_title_prefix):
         if text.startswith(prefix):
@@ -1049,24 +1042,24 @@ def _multipart_form_data(*, fields: Mapping[str, str], files: Mapping[str, tuple
 _COVER_SCRIM_SIDE = {"color": (8, 16, 44), "alpha": 172, "pad": 48, "feather": 26}
 _COVER_SCRIM_BAR = {"color": (8, 16, 44), "alpha": 168, "pad": 44, "feather": 24}
 _COVER_SCRIM_SOFT = {"color": (6, 12, 34), "alpha": 140, "pad": 58, "feather": 34}
-# per-layout render spec: text-block zone box, tilt, dark card, outline stack.
-# song-clean stays at -4.0 (the approved default tilt; keeps the song-cover test
-# deterministic) while talk layouts each get their own slight tilt for variety.
-# FEED-CROP SAFE ZONE (维护者): Bilibili's feed/首页/推荐 center-crops the
-# 16:9 cover to ~4:3 (height kept, width 1920→1440, cutting 240px each side); some
-# surfaces go to 1:1. Text near the L/R edges gets cut ("下播" was lost). So ALL
-# title text must stay inside the central ~1280-wide safe band x∈[320,1600]
-# (matches Bilibili's recommended 中央 1280×720 safe area, with buffer over the
-# 240px 4:3 crop). Every layout's text zone is clamped to that band.
+
+
+
+
+
+
+
+
+
 _COVER_SAFE_X0, _COVER_SAFE_X1 = FEED_SAFE_X0, FEED_SAFE_X1
 _COVER_LAYOUT_RENDER = {
-    # zone the text block fills, tilt, dark-card params (unused when backing=outline),
-    # max_lines (wrap budget — MORE lines ⇒ shorter lines ⇒ BIGGER font in the narrow
-    # half, 维护者's trick), max_size (font cap). Outer edge = feed-safe band 260/1660;
-    # inner edge kept off the character; zone made tall so many big lines fit.
-    # Line budgets raised (维护者: keep the FULL title, grow the font
-    # via MANY line breaks — a 30-49 char title in a narrow side zone needs 6-8
-    # short lines to fill it; the old cap of 5 pinned long titles at ~73-105px).
+
+
+
+
+
+
+
     "left-split": {"zone": (960, 66, 1660, 1014), "angle": -4.0, "scrim": _COVER_SCRIM_SIDE, "max_lines": 8, "max_size": 360},
     "right-split": {"zone": (260, 66, 960, 1014), "angle": -3.0, "scrim": _COVER_SCRIM_SIDE, "max_lines": 8, "max_size": 360},
     "banner": {"zone": (260, 16, 1660, 486), "angle": -2.0, "scrim": _COVER_SCRIM_BAR, "max_lines": 4, "max_size": 360},
@@ -1075,12 +1068,12 @@ _COVER_LAYOUT_RENDER = {
 }
 _COVER_OUTLINE_NAVY_RATIO = 0.085   # outer stroke ≈ 8.5% of font size (chunky, scales up)
 _COVER_OUTLINE_WHITE_RATIO = 0.042
-# 最小可读强调字号（维护者 河粉封面案：整批 146-182px，唯独它 90px）。
-# 字号上限 ≈ zone宽/最宽不可拆原子宽 —— 一个超宽原子（LLM 把 “要交780吗”？
-# 整段当一个"词"，hook 又是其中的 780）会把强调行钉死，行数预算再大也救不回。
-# fitter 在打包前把任何在 _COVER_MIN_EMPH 下都放不进 zone 的原子按词内安全点
-# 再分（hook/《歌名》/ASCII 串不拆；开标点绑后、闭标点绑前，顺带满足
-# 行首禁闭标点/行末禁开标点）。
+
+
+
+
+
+
 COVER_MIN_TALK_FONT_SIZE = 120
 _COVER_MIN_EMPH = COVER_MIN_TALK_FONT_SIZE
 _COVER_OPENING_PUNCT = "“‘《〈「『（(【[｛{"
@@ -1093,12 +1086,12 @@ def _cover_outlines_for(size):
     outer = max(8, int(round(size * _COVER_OUTLINE_NAVY_RATIO)))
     inner = max(4, int(round(size * _COVER_OUTLINE_WHITE_RATIO)))
     return ((outer, _COVER_STROKE), (inner, _COVER_WHITE))
-# Text backing behind the title. 维护者: the reference covers use NO
-# box — the thick navy+white outline alone separates the text from a bright pop
-# background (the earlier dark "card" looked like an ugly rectangle and was only
-# needed before the white-glyph outline bug was fixed).  "outline" = default,
-# clean, reference-accurate.  "glow" = a soft dark halo hugging the glyphs (a
-# sticker-shadow, NOT a box) for extra depth.  "card" = the old rounded panel.
+
+
+
+
+
+
 _COVER_TEXT_BACKING = "outline"
 
 
@@ -1439,8 +1432,8 @@ def _wrap_even(text, n, keep=()):
     text = text.strip()
     if n <= 1 or len(text) <= 1:
         return [text]
-    # A 《song name》never wraps and gets its own complete line (维护者);
-    # the prefix/suffix DO wrap across the remaining lines so a long tail stays big.
+
+
     song = re.search(r"《[^》]*》", text)
     if song:
         pre = text[:song.start()].strip()
@@ -1479,9 +1472,9 @@ def _wrap_even(text, n, keep=()):
     n = min(n, len(atoms))
     if n <= 1:
         return ["".join(atoms)]
-    # BALANCED partition: break at the atom boundaries nearest the even split
-    # positions, so every line is ~equal length (no long tail line that would cap
-    # the font). Balanced lines ⇒ bigger font (维护者).
+
+
+
     cum = [0]
     for atom in atoms:
         cum.append(cum[-1] + len(atom))
@@ -1643,16 +1636,16 @@ def _fit_cover_lines(cover_text, *, hook_word, base_fill, hook_rgb, zone, font_p
         # 强调行被单个原子钉死（7/11 河粉封面 90px 案），行数预算全被浪费。
         word_atoms = _split_wide_atoms(word_atoms, max(3.0, zone_w / _COVER_MIN_EMPH), hook_word or "")
     keep = tuple(dict.fromkeys([*(w for w in word_atoms if w), *((hook_word,) if hook_word else ())]))
-    # BIG TEXT (维护者 "字卡还是太小"): the font is capped by the longest
-    # line's width, so a fixed 2-clause colon split leaves a narrow side zone's
-    # font tiny with most of the height empty.  Evaluate MANY line counts and take
-    # the biggest font that fills the zone — but PREFER a word-safe wrap (the LLM's
-    # split, then the colon clauses) whenever it lands within 90% of the best, so
-    # bigger text never costs a mid-word break (拒绝/熊猫/礼墨).  The balancer wraps
-    # (word-blind, but keep hook/《song》/ASCII whole) fill the zone as the floor.
-    # Word-safe base split (finest granularity): the LLM's word-aware lines, else
-    # the colon clauses.  Regrouping it at every line count 1..len gives bigger
-    # options (fewer lines fill wide zones) that never split a word.
+
+
+
+
+
+
+
+
+
+
     base: list[str] = []
     if forced_lines:
         base = [line for line in (raw_line.strip() for raw_line in forced_lines) if line]
@@ -1987,10 +1980,10 @@ def _overlay_cover_title(
             f"talk cover emphasis is {font_size}px; minimum is "
             f"{COVER_MIN_TALK_FONT_SIZE}px. Shorten the cover hook or use a "
             "wider layout instead of shrinking the title. "
-            # 回收路径：无 word_atoms 的短文案锁单行后撞下限时，三条
-            # 降级路都违法——缩字违反 维护者 7/22 的 91px 铁律（70-cover.md:60）、
-            # 无 atoms 让平衡器重开会复活 `表情小李` 洞、overlay 阶段换 banner 会把
-            # 字压到已按分栏生成的人物上。唯一合法出路是打开梗字评审重跑。
+
+
+
+
             "Bounded rerun must enable the punch semantic review: a CPA "
             "segment split routes through the 1:1 punch lane and chooses a "
             "title zone that fits before regenerating the background."

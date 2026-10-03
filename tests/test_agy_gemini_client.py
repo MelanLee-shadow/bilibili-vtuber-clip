@@ -1,14 +1,14 @@
 """统一 AGY->Gemini 客户端的金丝雀。
 
-维护者 逐字：「需要调用AGY->gemini 这条链的，全都复用一种接口才好」，
+公开规则：需要调用AGY->gemini 这条链的，全都复用一种接口才好，
 外加长期指示「不要在 wsl 上安装 AGY」——所以 **AGY 缺席是一种正常部署形态**，
 每条腿都必须能在没有 AGY 的机器上靠 Gemini 走通。
 
 四组金丝雀，每组都写明「摘掉什么会让它变红」：
-①  AGY 缺席 + mock Gemini：各入口拿到结果、回执标 AGY_BINARY_ABSENT。
-②  AGY 在场：仍优先 AGY，不碰 Gemini。
-③  key 顺序：免费 3 key 轮换 → 全 429 才动付费，且记一笔账。
-④  路径解析：不得出现写死的 /root/...（本机腿）。
+① AGY 缺席 + mock Gemini：各入口拿到结果、回执标 AGY_BINARY_ABSENT。
+② AGY 在场：仍优先 AGY，不碰 Gemini。
+③ key 顺序：免费 3 key 轮换 → 全 429 才动付费，且记一笔账。
+④ 路径解析：不得出现写死的 /root/...（本机腿）。
 """
 
 from __future__ import annotations

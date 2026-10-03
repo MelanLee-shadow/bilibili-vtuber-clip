@@ -651,12 +651,12 @@ def test_producer_sidecar_is_exactly_what_the_runner_globs(
 ) -> None:
     """把 produce 落的旁车和 runner 的 glob 焊在一起，用生产目录布局。
 
-    这两半分开测都会绿，合起来才拦得住本仓最典型的那类静默 fail-open：旁车路径
-    与 glob 根一旦漂开，runner 读不到删除记录 → 状态照常 review_ready → 一个
-    少了一句话的成品直接进日审清单、变成可上传。正是 维护者 裁定里「在权宜上传时
-    也不能上传」要挡的那条路，所以这条走完整链路：
-    ``out/<cid>/replacement_recuts/<cid>.recut.srt`` → 终审门 → 停泊态。
-    """
+ 这两半分开测都会绿，合起来才拦得住本仓最典型的那类静默 fail-open：旁车路径
+ 与 glob 根一旦漂开，runner 读不到删除记录 → 状态照常 review_ready → 一个
+ 少了一句话的成品直接进日审清单、变成可上传。正是 公开规则裁定里「在权宜上传时
+ 也不能上传」要挡的那条路，所以这条走完整链路：
+ ``out/<cid>/replacement_recuts/<cid>.recut.srt`` → 终审门 → 停泊态。
+ """
 
     from src.autoslice import producer_package_finalization as finalization
     from src.autoslice import speaker_guess, unreadable_cue_review
@@ -713,7 +713,7 @@ def test_producer_sidecar_is_exactly_what_the_runner_globs(
         recut_dir / "candidate.unreadable-cue-drops.json"
     )
     assert receipt["review_artifacts"]["burned_video"] == str(delivery)
-    # 成品真的在，维护者 打得开；字幕已经少了那一句。
+
     assert delivery.is_file()
     assert _CUE_TEXT not in subtitle.read_text(encoding="utf-8")
 
@@ -852,13 +852,13 @@ def test_dropped_delivery_parks_for_human_review_instead_of_review_ready(
         receipt["dropped_cues"][0]["witness_detail"]
         == "11 syllables over 0.92s target"
     )
-    # 成品路径写进 state：维护者 打得开，free 容量清理也不会当孤儿删掉。
+
     assert receipt["review_artifacts"]["burned_video"].endswith(
         "candidate.mp4"
     )
     assert record["failure_recoverable"] is False
     assert unreadable_cue_review.is_unreadable_cue_review_hold(record)
-    # 报表里有专章，维护者 一眼看到少了哪一句、为什么。
+
     section = "\n".join(
         unreadable_cue_review.render_report_section([record])
     )
