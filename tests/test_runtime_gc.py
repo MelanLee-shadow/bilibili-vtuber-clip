@@ -223,7 +223,10 @@ def test_cached_alignment_replay_survives_scratch_collection(tmp_path):
     assert not raw.exists()
 
 
-@pytest.mark.skipif(not Path("/proc/self/fd").exists(), reason="Linux process census")
+@pytest.mark.skipif(
+    not Path("/proc/self/fd").exists() or os.geteuid() != 0,
+    reason="real complete Linux /proc census requires root",
+)
 def test_real_open_fd_owner_is_kept(tmp_path):
     base, job, _, raw = fixture(tmp_path)
     child = subprocess.Popen(

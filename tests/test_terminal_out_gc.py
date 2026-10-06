@@ -61,7 +61,9 @@ def _fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, source_exists: 
     state_dir = tmp_path / "gc-state"
     monkeypatch.setattr(gc, "quiet_window", lambda _base: [])
     monkeypatch.setattr(gc, "authority_references", lambda _base: (set(), set()))
-    if not Path("/proc").is_dir():
+    # Lifecycle/recipe unit tests use a quiet census when the test runner cannot
+    # inspect every user's processes. Run this module as root for real /proc.
+    if not Path("/proc").is_dir() or os.geteuid() != 0:
         monkeypatch.setattr(gc, "_proc_census", lambda *_args: {"available": True, "open_inodes": [], "active_namespaces": []})
     return base, candidate, recording, state_dir
 
@@ -373,7 +375,10 @@ def test_unrelated_final_source_and_png_are_never_selected(tmp_path, monkeypatch
     assert not any(str(path) in json.dumps(report["groups"]) for path in candidate.iterdir())
 
 
-@pytest.mark.skipif(not Path("/proc").is_dir(), reason="Linux /proc census only")
+@pytest.mark.skipif(
+    not Path("/proc").is_dir() or os.geteuid() != 0,
+    reason="real complete Linux /proc census requires root",
+)
 def test_open_target_fd_keeps_group(tmp_path, monkeypatch):
     base, candidate, _recording, state_dir = _fixture(tmp_path, monkeypatch)
     target = _source_target(candidate)

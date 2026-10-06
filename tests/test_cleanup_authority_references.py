@@ -171,7 +171,10 @@ def test_new_namespace_entry_during_scan_is_detected(tmp_path, monkeypatch):
 
     def read(name, info):
         text = real_read(name, info)
+        before = path.parent.stat()
         path.with_name("new-authority.json").write_text("{}")
+        # Make the namespace drift observable even within one filesystem tick.
+        os.utime(path.parent, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
         return text
 
     monkeypatch.setattr(planner, "_authority_text", read)
