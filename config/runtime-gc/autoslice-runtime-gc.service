@@ -1,0 +1,12 @@
+[Unit]
+Description=Collect completed autoslice scratch with producer recovery proofs
+
+[Service]
+Type=oneshot
+Environment=AUTOSLICE_GC_STATE=/var/lib/autoslice-runtime-gc
+EnvironmentFile=/etc/autoslice/runtime-gc.env
+StateDirectory=autoslice-runtime-gc
+StateDirectoryMode=0700
+UMask=0077
+ExecStart=/usr/local/sbin/autoslice-runtime-gc
+TimeoutStartSec=360

@@ -69,7 +69,9 @@ SOURCE_EXTRACTION_CLASSES = {"_source.mp4", "_full_source.mp4"}
 TERMINAL_STATES = {"published", "candidate_rejected", "failed", "superseded",
                    "blocked", "boundary_unrepairable", "delivery_quarantined"}
 
-CANDIDATE_ID = re.compile(r"(auto_\d+_\d+_\d+|song_\d+_\d+|seededsong_\d+_\d+)")
+CANDIDATE_ID = re.compile(
+    r"(auto_\d+_\d+_\d+|song_\d+_\d+|seededsong_\d+_\d+|songvis_\d+_\d+_[0-9a-f]{8})"
+)
 OUT_PATH = re.compile(r"/opt/bilive/autoslice/out/[^\"'\s,\]\}<>()]+")
 
 
@@ -133,7 +135,9 @@ def quiet_window(base: str) -> list[str]:
     return problems
 
 
-MAX_AUTHORITY_BYTES = 20 * 2**20
+# Match the live bounded scan cap, which accommodates the observed 45 MiB
+# archived inventory. Files above this finite cap still abort the whole scan.
+MAX_AUTHORITY_BYTES = 64 * 2**20
 
 
 class AuthorityScanError(ValueError):

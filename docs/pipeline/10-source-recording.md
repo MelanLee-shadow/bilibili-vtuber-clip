@@ -301,7 +301,7 @@ mtime/ctime、权限、uid/gid 和链接数。规划器与执行器共用 `_clea
   CloudFS → recreate 三个消费者 → 逐容器验证。mountinfo 多义、source/fstype 不符或
   connection 路径不安全时 fail closed；不得枚举或批量 abort 其他 FUSE connection。
   detach 后 mountpoint 本身随旧 endpoint 消失表示没有系统盘 fallback 可搬运，是合法空状态；
-  随后必须用独立的 `/root/clouddrive2/docker-compose.yml`、固定本地镜像、
+  随后必须用独立的 CloudDrive2 compose 配置、固定本地镜像、
   `--pull never --no-build --no-deps --force-recreate` 只重建 `clouddrive2`；不得误用消费者
   `/opt/bilive/compose.yml`，也不得 `start/restart` 复用旧容器的 rshared mount peer。
   该步骤用于清理 userspace 重启后仍占据 PID 1 namespace、并导致 CloudDrive 持续报告
@@ -442,3 +442,72 @@ mtime/ctime、权限、uid/gid 和链接数。规划器与执行器共用 `_clea
   哈希/模式精确；最多一个非空的最后 blob prefix，且字节必须等于该 commit blob 的同长度前缀，不能有后续成员
   或额外项。验证时以 canonical stage-tree SHA 重新绑定 cleanup，随后只删
   此 stage 与 exact owner guard；出现 backup、repo/外部漂移、未知项、链接或第二个/错误 partial 都拒绝。
+
+## 运行时GC
+
+GC是流水线的运行维护环节，由定时任务在制作间隙调用，按生产者终态回收中间文件。
+最终切片短不代表工作目录小：长源窗口、context cache、AGY staging与alignment PCM
+可能各有一份，重试和试验又会增加副本。完成可恢复的scratch后应持续回收，不等磁盘满。
+
+公开版提供两个Linux collector：
+
+- `scripts/runtime_gc.py`只处理完成alignment的两个确切PCM名。它核对INPUT/PROCESS/RESULT
+  绑定、源完整哈希和当前ffmpeg精确重建，保护源文件与结果参数。
+- `scripts/terminal_out_gc.py`处理已明确拒绝且无pending/inflight的候选源窗口、完成context
+  cache及完成AGY别名。它核对真实录播健康/大小/边缘读取、精确区间和producer参数、完整
+  输入/结果哈希、引用/proc与闭合hardlink组；不承诺重新编码获得相同字节。
+
+默认仅证明，`--apply`才删除；CLI仍会写GC状态。`--runtime`用同一 `runner.lock`代替
+人工DISABLED窗口，其余门照常检查。忙锁、活跃writer或引用漂移时保留，后续tick重试。
+源码依赖合作writer和完整Linux `/proc`，不能为清理停止未知producer或跳过引用扫描。
+它们不自动删除完整录播、当前交付、任意reports/private目录、pending媒体或其它PCM。
+完整录播需要持久化副本独立核验后才能另行退役；CloudDrive2/FUSE关闭与队列入列不等于
+上云成功。使用115时所有访问应通过自己的CloudDrive2，不直接调用115服务接口。
+
+工作根以 `--base`指定，状态目录以 `--state-dir`指定。外部录播根可配置
+`AUTOSLICE_GC_SOURCE_ROOTS`，Linux用冒号分隔多个绝对目录；未配置仅接受工作根下的
+recordings/recording/sources。不得配置 `/`、相对路径或 `..`；配置根不能替代源健康证明。
+回执含真实路径与文件身份，只保存在私有状态目录，别将它们提交到公开仓库。
+
+### 配置与调度
+
+以下为中性Linux参考路径，使用者应替换为自己的布局；需要Python、ffmpeg/ffprobe、
+util-linux的flock/ionice及coreutils的timeout。两种collector和三个helper来自同一版本：
+
+```sh
+sudo install -d /usr/local/lib/autoslice-gc /etc/autoslice
+sudo install -m 0644 scripts/runtime_gc.py scripts/terminal_out_gc.py \
+  scripts/cleanup_preflight_scan.py scripts/_cleanup_file_identity.py \
+  scripts/_cleanup_appledouble.py /usr/local/lib/autoslice-gc/
+sudo install -m 0755 config/runtime-gc/autoslice-runtime-gc /usr/local/sbin/
+sudo install -m 0644 config/runtime-gc/autoslice-runtime-gc.service \
+  config/runtime-gc/autoslice-runtime-gc.timer /etc/systemd/system/
+```
+
+创建root拥有、0600的 `/etc/autoslice/runtime-gc.env`，至少设置：
+
+```ini
+AUTOSLICE_BASE=/srv/autoslice
+AUTOSLICE_GC_STATE=/var/lib/autoslice-runtime-gc
+# 外部录播根按实际需要配置；不要直接沿用示例路径。
+# AUTOSLICE_GC_SOURCE_ROOTS=/srv/cloud/recordings
+```
+
+先不加apply，以真实工作根和状态目录核对报告；外部source配置也应传入同一进程：
+
+```sh
+sudo python3 /usr/local/lib/autoslice-gc/runtime_gc.py \
+  --base /srv/autoslice --state-dir /var/lib/autoslice-runtime-gc --inventory-only
+sudo python3 /usr/local/lib/autoslice-gc/terminal_out_gc.py \
+  --base /srv/autoslice --state-dir /var/lib/autoslice-runtime-gc --runtime \
+  --max-files 32 --max-bytes 2147483648
+sudo systemctl daemon-reload
+sudo systemctl enable --now autoslice-runtime-gc.timer
+```
+
+timer每15分钟触发apply；PCM默认90秒/8文件/512MiB，terminal预算180秒/32路径/2GiB。
+这些是单轮工作量，不是垃圾留存配额。可接入既有维护timer，保持同一互斥及门即可；
+不要同时启用两份重复调度。状态在 `last.json` 与 `terminal-out-gc-plan.json`，实际删除
+回执在 `recoveries/`。保留小型恢复配方和实际partial子集，媒体直接删除，不制作冷归档。
+`systemctl`返回成功或timer active不代替collector的complete/errors；原系统清理成功也
+不证明本轮GC完整。allocated释放量与实测磁盘净变化分别记录。

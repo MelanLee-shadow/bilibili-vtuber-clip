@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic collection of completed autoslice scratch
+
+[Timer]
+OnCalendar=*:0/15
+RandomizedDelaySec=30
+Persistent=true
+Unit=autoslice-runtime-gc.service
+
+[Install]
+WantedBy=timers.target

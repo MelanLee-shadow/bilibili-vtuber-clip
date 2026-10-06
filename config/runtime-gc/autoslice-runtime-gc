@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+: "${AUTOSLICE_BASE:?set the pipeline work root}"
+: "${AUTOSLICE_GC_STATE:?set the private GC state directory}"
+gc_scripts=${AUTOSLICE_GC_SCRIPTS:-/usr/local/lib/autoslice-gc}
+gc_python=${AUTOSLICE_GC_PYTHON:-/usr/bin/python3}
+pcm_status=0
+terminal_status=0
+nice -n 19 ionice -c 3 "$gc_python" -B "$gc_scripts/runtime_gc.py" \
+  --base "$AUTOSLICE_BASE" --state-dir "$AUTOSLICE_GC_STATE" --apply || pcm_status=$?
+nice -n 19 ionice -c 3 timeout 180s "$gc_python" -B "$gc_scripts/terminal_out_gc.py" \
+  --base "$AUTOSLICE_BASE" --state-dir "$AUTOSLICE_GC_STATE" \
+  --apply --runtime --max-files 32 --max-bytes 2147483648 || terminal_status=$?
+[ "$pcm_status" -eq 0 ] && [ "$terminal_status" -eq 0 ]
