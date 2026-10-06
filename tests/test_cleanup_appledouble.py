@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 from pathlib import Path
 import struct
 import sys
@@ -151,7 +152,11 @@ def test_metadata_pair_identity_drift_is_not_hidden(tmp_path, monkeypatch, which
     def changing(path, info):
         value = original(path, info)
         if Path(path) == victim:
+            before = victim.stat()
             victim.write_bytes(victim.read_bytes())
+            # A same-byte write can share the previous filesystem clock tick.
+            # Force an observable metadata drift instead of relying on timing.
+            os.utime(victim, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
             mutated.append(True)
         return value
 

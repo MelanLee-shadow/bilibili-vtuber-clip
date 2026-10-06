@@ -48,7 +48,7 @@ def test_unreadable_authority_is_not_treated_as_no_reference(tmp_path, monkeypat
 def test_oversize_authority_cannot_silently_disappear(tmp_path):
     base, path = document(tmp_path)
     with path.open("r+b") as stream:
-        stream.truncate(20 * 2**20 + 1)  # Sparse disposable file, not real evidence.
+        stream.truncate(planner.MAX_AUTHORITY_BYTES + 1)  # Sparse disposable file, not real evidence.
     with pytest.raises((OSError, ValueError)):
         planner.authority_references(str(base))
 
@@ -171,7 +171,10 @@ def test_new_namespace_entry_during_scan_is_detected(tmp_path, monkeypatch):
 
     def read(name, info):
         text = real_read(name, info)
+        before = path.parent.stat()
         path.with_name("new-authority.json").write_text("{}")
+        # Make the namespace drift observable even within one filesystem tick.
+        os.utime(path.parent, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
         return text
 
     monkeypatch.setattr(planner, "_authority_text", read)

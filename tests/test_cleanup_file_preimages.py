@@ -230,7 +230,8 @@ def test_preimage_reader_detects_mutation_during_hash(fixture, monkeypatch):
         data = original(fd, size)
         if data and not changed:
             changed = True
-            target.write_bytes(b"modified")
+            # A size change remains observable within one filesystem clock tick.
+            target.write_bytes(b"modified-during-read")
         return data
 
     monkeypatch.setattr(helper.os, "read", read)

@@ -110,6 +110,7 @@
 | `validate_channel_profile.py` | profile 校验器（`--config-only` 起步；配置 READY 不代表声纹和全部生产依赖已就绪） |
 | `install_voiceprints.py` | 安装声纹参考（READY 的 voiceprint profile → 部署目录） |
 | `pull_recent_autoslice.py` | 从部署主机拉回近期交付 |
+| `runtime_gc.py` / `terminal_out_gc.py` | Linux运行时GC：完成alignment PCM及拒绝候选窗口/cache/完成AGY；默认仅证明，配置与定时入口见[源步骤](../docs/pipeline/10-source-recording.md#运行时gc) |
 | `slice_monitor.py` / `slice_monitor.sh` | 录制+切片监控（报告文件为唯一告警通道）与 launchd 包装 |
 | `llm_via_cpa.sh` / `llm_via_free_groq.sh` | LLM 调用小工具（CPA / 免费 groq 层） |
 
