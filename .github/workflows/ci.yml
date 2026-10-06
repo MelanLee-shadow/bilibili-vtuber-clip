@@ -24,5 +24,12 @@ jobs:
         run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Install requirements
         run: pip install -r requirements.txt
+      - name: Runtime GC with complete Linux process visibility
+        run: |
+          gc_test_root="$(mktemp -d "${RUNNER_TEMP}/runtime-gc-root.XXXXXX")"
+          trap 'sudo rm -rf -- "$gc_test_root"' EXIT
+          sudo env PYTHONDONTWRITEBYTECODE=1 "$(command -v python)" -m pytest -q \
+            -p no:cacheprovider --basetemp "$gc_test_root" \
+            tests/test_runtime_gc.py tests/test_terminal_out_gc.py
       - name: Test suite (hermetic — no credentials, no network)
         run: python -m pytest -q
