@@ -48,7 +48,7 @@ def test_unreadable_authority_is_not_treated_as_no_reference(tmp_path, monkeypat
 def test_oversize_authority_cannot_silently_disappear(tmp_path):
     base, path = document(tmp_path)
     with path.open("r+b") as stream:
-        stream.truncate(20 * 2**20 + 1)  # Sparse disposable file, not real evidence.
+        stream.truncate(planner.MAX_AUTHORITY_BYTES + 1)  # Sparse disposable file, not real evidence.
     with pytest.raises((OSError, ValueError)):
         planner.authority_references(str(base))
 
