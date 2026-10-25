@@ -58,6 +58,65 @@ _RUNTIME_IDENTITY_FIELDS = (
     "observer_prompt_sha256",
     "cpa_prompt_sha256",
 )
+# These versions describe protocol semantics, never a deployment. Historical
+# identities without a version implement v1; changing this constant must not
+# relabel those historical observations as the new contract.
+LEGACY_RESPONSE_ADAPTER_CONTRACT = "nested-acoustic-response.v1"
+LEGACY_TRANSPORT_CONTRACT = "agy-three-part.v1"
+LEGACY_WIRE_SCHEMA_SHA256 = "sha256:8c6476ce82729503ec7aba960df0e19d11f8a43c2cc0a47e0d38de7bd1f9f54c"
+
+
+def _transport_protocol(binding: Mapping[str, object]) -> dict[str, object]:
+    """Project the three-part wire contract; keep execution facts in PROCESS."""
+    if binding.get("observer_transport") != "agy_three_part":
+        # An unknown transport has no authority to discard binding fields.
+        return dict(binding)
+    agy = binding.get("agy")
+    ffmpeg = binding.get("ffmpeg")
+    protocol = {
+        **{key: binding[key] for key in (
+            "schema_version", "observer_transport", "part_order",
+            "source_audio_sha256", "source_audio_durations_seconds",
+            "derived_attachment_sha256", "attachment_prompt_sha256",
+            "output_format", "structured_schema_version", "structured_schema_sha256",
+        ) if key in binding},
+        "transport_contract_version": binding.get("transport_contract_version", LEGACY_TRANSPORT_CONTRACT),
+        "wire_schema_sha256": binding.get("wire_schema_sha256", LEGACY_WIRE_SCHEMA_SHA256),
+        "model": agy.get("model") if isinstance(agy, Mapping) else binding.get("model"),
+        "conversion": ffmpeg.get("conversion") if isinstance(ffmpeg, Mapping) else binding.get("conversion"),
+    }
+    # Preserve unfamiliar fields as guards. Only this deployed producer's
+    # known execution telemetry and duplicate aliases may disappear.
+    known = {
+        "schema_version", "observer_transport", "part_order", "source_audio_sha256",
+        "source_audio_durations_seconds", "derived_attachment_sha256", "attachment_prompt_sha256",
+        "output_format", "structured_schema_version", "structured_schema_sha256",
+        "transport_contract_version", "wire_schema_sha256", "model", "conversion",
+        "source_audio_hashes", "source_durations_seconds", "derived_attachment_hashes",
+        "agy", "ffmpeg", "adapter_source_sha256", "job_dir", "structured_log_filename",
+    }
+    protocol.update({key: item for key, item in binding.items() if key not in known})
+    return protocol
+
+
+def _protocol_identity(value: object) -> dict[str, object] | None:
+    """Compare protocols after validating each identity's original hash chain."""
+    identity = _runtime_identity(value)
+    if identity is None:
+        return None
+    result = {key: identity[key] for key in (
+        "provider", "model", "transport", "observer_prompt_sha256", "cpa_prompt_sha256",
+        "cpa_call_identity", "cpa_call_identity_sha256",
+    )}
+    result["response_adapter_contract_version"] = identity.get(
+        "response_adapter_contract_version", LEGACY_RESPONSE_ADAPTER_CONTRACT)
+    result["observer_schema"] = identity.get("observer_schema", "nested-media-acoustic-observation.v1")
+    result["cpa_schema"] = identity.get("cpa_schema", "nested-media-acoustic-cpa-judgement.v1")
+    if "transport_binding" in identity:
+        result["transport_binding"] = _transport_protocol(identity["transport_binding"])
+    return result
+
+
 _IDENTITY_KEY = re.compile(r"[A-Za-z0-9_.-]{1,80}\Z")
 _IDENTITY_SECRET_KEY = re.compile(r"(?i)(?:api[_-]?key|authorization|credential|cookie|password|secret|token)")
 _IDENTITY_STRING_MAX = 256
@@ -164,7 +223,12 @@ def _runtime_identity(value: object) -> dict[str, object] | None:
     if not isinstance(value, Mapping):
         raise NestedMediaAcousticObserverError("RUNTIME_IDENTITY_INVALID")
     normalized: dict[str, object] = {}
-    for field in _RUNTIME_IDENTITY_FIELDS:
+    fields = _RUNTIME_IDENTITY_FIELDS
+    if "response_adapter_contract_version" in value:
+        fields = tuple(field for field in fields if field not in (
+            "transport_module", "transport_module_sha256")) + (
+                "response_adapter_contract_version", "observer_schema", "cpa_schema")
+    for field in fields:
         raw = value.get(field)
         if not isinstance(raw, str):
             raise NestedMediaAcousticObserverError("RUNTIME_IDENTITY_INVALID")
@@ -181,9 +245,10 @@ def _runtime_identity(value: object) -> dict[str, object] | None:
         raise NestedMediaAcousticObserverError("RUNTIME_IDENTITY_INVALID")
     normalized["cpa_call_identity"] = cpa_identity
     normalized["cpa_call_identity_sha256"] = cpa_identity_sha
-    # Decoder changes must not replay a prior parsed UNKNOWN or typed receipt.
-    # Historical identities remain readable with their original fields.
-    if "response_adapter_sha256" in value:
+    # Historical source-signed identities retain their original hash chain.
+    # Modern identities use the explicit contract, even if a caller attaches
+    # legacy execution telemetry alongside the protocol fields.
+    if "response_adapter_sha256" in value and "response_adapter_contract_version" not in value:
         normalized["response_adapter_sha256"] = _normal_hash(
             value["response_adapter_sha256"], code="RUNTIME_IDENTITY_INVALID"
         )
@@ -191,6 +256,8 @@ def _runtime_identity(value: object) -> dict[str, object] | None:
         transport_binding = _safe_identity_value(value["transport_binding"])
         if not isinstance(transport_binding, Mapping):
             raise NestedMediaAcousticObserverError("RUNTIME_IDENTITY_INVALID")
+        if "response_adapter_contract_version" in value:
+            transport_binding = _transport_protocol(transport_binding)
         normalized["transport_binding"] = transport_binding
     identity_sha = _canonical_hash(normalized)
     supplied = value.get("identity_sha256")
@@ -1129,6 +1196,45 @@ def _validate_cached_pass(
     return _file_hash(receipt_path, code="CACHED_RECEIPT_INVALID")
 
 
+def _compatible_receipt_request(
+    observation_dir: Path, request: Mapping[str, object],
+) -> tuple[dict[str, object], Path] | None:
+    """Locate immutable receipts by protocol, then use the ordinary validator.
+
+    Never rewrite/re-sign a historical request or use its new projected hash
+    as evidence. All original request/response/receipt bindings are checked by
+    _validate_cached_pass before the caller returns any PASS.
+    """
+    wanted = dict(request)
+    wanted.pop("request_sha256", None)
+    wanted["runtime_identity"] = _protocol_identity(wanted.get("runtime_identity"))
+    if wanted["runtime_identity"] is None or not observation_dir.is_dir():
+        return None
+    wanted_inputs = {key: item for key, item in wanted.items() if key != "runtime_identity"}
+    exact_dir = observation_dir / str(request.get("request_sha256", "")).removeprefix("sha256:")
+    directories = [exact_dir, *(p for p in sorted(observation_dir.iterdir()) if p != exact_dir)]
+    for directory in directories:
+        if not directory.is_dir() or directory.is_symlink():
+            continue
+        path = directory / "request.json"
+        # Incomplete dispatches and request-only crash remnants must reach
+        # the same ordinary no-redispatch guards as completed receipts.
+        if path.is_symlink() or not path.is_file():
+            continue
+        saved = dict(_json_mapping(path, code="CACHED_RECEIPT_INVALID"))
+        body = dict(saved)
+        sha = body.pop("request_sha256", None)
+        # Only consider the exact original content-addressed request directory.
+        if sha != _canonical_hash(body) or directory.name != str(sha).removeprefix("sha256:"):
+            continue
+        if {key: item for key, item in body.items() if key != "runtime_identity"} != wanted_inputs:
+            continue
+        body["runtime_identity"] = _protocol_identity(body.get("runtime_identity"))
+        if body == wanted:
+            return saved, directory
+    return None
+
+
 def observe_nested_media_acoustics(
     *,
     candidate_id: str,
@@ -1301,12 +1407,15 @@ def observe_nested_media_acoustics(
     request_dir = observation_dir / request_sha.removeprefix("sha256:")
     if request_dir.exists() and (request_dir.is_symlink() or not request_dir.is_dir()):
         raise NestedMediaAcousticObserverError("EVIDENCE_ROOT_UNSAFE")
-    request_dir.mkdir(parents=True, exist_ok=True)
-    request_path, state_path, result_path = request_dir / "request.json", request_dir / "state.json", request_dir / "RESULT.json"
-    receipt_path = request_dir / "acoustic-receipt.json"
-    observer_path, cpa_path = request_dir / "observer-response.json", request_dir / "cpa-response.json"
-
     with exclusive_lock(observation_dir / "observer.lock", label="nested acoustic observer"):
+        compatible = _compatible_receipt_request(observation_dir, request)
+        if compatible is not None:
+            request, request_dir = compatible
+            request_sha = str(request["request_sha256"])
+        request_dir.mkdir(parents=True, exist_ok=True)
+        request_path, state_path, result_path = request_dir / "request.json", request_dir / "state.json", request_dir / "RESULT.json"
+        receipt_path = request_dir / "acoustic-receipt.json"
+        observer_path, cpa_path = request_dir / "observer-response.json", request_dir / "cpa-response.json"
         if normalized_runtime_identity is None:
             # A historical request may lack the runtime contract.  Preserve it
             # as evidence-only and never dispatch or promote its result here.

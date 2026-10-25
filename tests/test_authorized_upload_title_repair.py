@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 from contextlib import nullcontext
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -16,11 +17,12 @@ from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.same_bv_repair import normalise_creator_snapshot
 from src.autoslice.source_fact_review import review_and_repair_source_facts
+from src.autoslice.channel_envelope import render_talk_title_prefix
 
 
 BVID = "BV1nsHJ65Ecx"
-ORIGINAL_TITLE = "【李豆沙】这是一个原始标题"
-FINAL_TITLE = "【李豆沙】游戏对白里的暧昧关系"
+ORIGINAL_TITLE = render_talk_title_prefix() + "这是一个原始标题"
+FINAL_TITLE = render_talk_title_prefix() + "游戏对白里的暧昧关系"
 SELECTION_HOOK = "游戏对白展示"
 
 
@@ -139,7 +141,7 @@ def _fixture(tmp_path, *, review_origin=None):
         final_reviewed_srt_path=srt,
         story_contract=record["story_contract"],
     )
-    assert review["status"] == "PASS"
+    assert review["status"] == "PASS", review
     title_result = {
         "status": "OK",
         "final_title": FINAL_TITLE,
@@ -297,7 +299,7 @@ def test_title_edit_preserves_non_title_fields_and_safe_resume(tmp_path, review_
 
 def test_independently_valid_review_from_unrelated_title_cannot_authorize_edit(tmp_path):
     args, adapter, dependencies, _manifest_path = _fixture(
-        tmp_path, review_origin="【李豆沙】另一条没有绑定的标题"
+        tmp_path, review_origin=render_talk_title_prefix() + "另一条没有绑定的标题"
     )
     with pytest.raises(title_repair.TitleRepairError, match="REVIEW_SURFACE_INVALID"):
         title_repair.run(args, **dependencies)
@@ -594,7 +596,7 @@ def _successor_fixture(tmp_path):
     }
     title_input = json.loads(first_paths["input"].read_text())
     title_input["original_title"] = FINAL_TITLE
-    second_title = "【李豆沙】游戏对白：这段暧昧关系怎么回事？"
+    second_title = render_talk_title_prefix() + "游戏对白：这段暧昧关系怎么回事？"
     input_path = tmp_path / "second-input.json"
     input_path.write_text(json.dumps(title_input, ensure_ascii=False))
     inputs = title_input["source_fact_inputs"]
@@ -605,7 +607,7 @@ def _successor_fixture(tmp_path):
         selection_scorecard=inputs["selection_scorecard"],
         speaker_evidence=inputs["speaker_evidence"],
         candidate_id=title_input["candidate_id"],
-        final_reviewed_srt_path=title_input["srt_path"],
+        final_reviewed_srt_path=Path(title_input["srt_path"]),
         story_contract=inputs["story_contract"], title_repair_allowed=True,
         llm_call=lambda _p: json.dumps({
             "schema_version": "lidousha-source-fact-review.v1", "status": "KEEP",

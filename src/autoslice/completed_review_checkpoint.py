@@ -98,32 +98,104 @@ def _semantic_binding(binding: Mapping[str, object]) -> dict:
             **({'provider_runtime_host': runtime['provider_runtime_host']}
                if runtime.get('provider_runtime_host') and not provider.get('endpoint_sha256')
                and not runtime.get('provider_endpoint_host') else {})}
+    inputs = binding.get('inputs') or {}
+    materials = _finding_materials(inputs)
+    if materials is not None:
+        # The producer supplied a complete typed (P,M), not a rendered prompt
+        # with a few fields deleted. Raw request/response bytes stay in binding.
+        from .finding_context import materials_for_model
+        provider = result.get('provider') or {}
+        materials = materials_for_model(materials, provider.get('routing') or {})
+        return {'schema_version': result.get('schema_version'), 'stage': result.get('stage'),
+                'semantic_policy': result.get('semantic_policy'), 'provider': provider,
+                'finding_materials': materials,
+                **({'owner_materials': result['owner_materials']} if result.get('owner_materials') else {})}
+    return result
+
+
+def _request_material_binding(binding, prompt):
+    """One identity computation for live creation and all cold/legacy reads."""
+    from .prompt_materials import canonical_materials, prompt_material_sha256
+    result = _semantic_binding(binding)
+    if 'owner_materials' in result:
+        result['owner_materials'] = canonical_materials(result['owner_materials'])
+    if 'finding_materials' not in result:
+        for key in ('inputs',):
+            if key in result:
+                result[key] = canonical_materials(result[key])
+        result['request_sha256'] = prompt_material_sha256(prompt)
     return result
 
 
 def ruling_response(*, stage: str, prompt: str, llm_call: Callable,
                     inputs: Mapping[str, object], parser_path: Path,
-                    response_schema=None, name="ruling") -> tuple[str, bool]:
+                    response_schema=None, name="ruling", consumed_ruling_sink=None) -> tuple[str, bool]:
     """Return original bytes; the caller must rerun its current validation.
 
     Deliberately omit a format-retry validator from the transport context:
     schema/contract failure is a local error after one returned answer.
     """
     from .structured_output import call_json
-    checkpoint = CompletedReviewCheckpoint.for_call(
-        stage=stage, prompt=prompt, llm_call=llm_call, inputs=inputs, parser_path=parser_path)
-    if checkpoint is None:
-        checkpoint = CompletedReviewCheckpoint.for_ruling(
+    capture = None
+    invocation = None
+    try:
+        if os.environ.get('AUTOSLICE_FINAL_REVIEW_MODE') == 'per_finding' or _finding_materials(inputs) is not None:
+            from .finding_closure_shell import (
+            RulingInvocation, current_ruling_capture, note_checkpoint_ruling, bind_ruling_inputs,
+            ensure_provider_calls_allowed,
+            )
+            from .finding_closure_ports import RetainedObject
+            capture = current_ruling_capture()
+            if capture is not None:capture.raise_failure()
+            retained_inputs=RetainedObject.from_value(inputs)
+            retained_inputs=bind_ruling_inputs(retained_inputs,capture.finding if capture else None)
+            inputs=retained_inputs.value()
+            invocation = RulingInvocation(stage,prompt,retained_inputs,
+                parser_path,response_schema,name)
+            def retained(raw: str) -> bool:
+                owner = _owner_context.get()
+                return ruling_cache_allowed() and (owner is None or all(guard(raw) for guard in owner['guards']))
+            if capture is not None and capture.router is not None:
+                routed = capture.router.run_ruling(invocation,llm_call,retained)
+                if routed is not None:
+                    raw,hit,routed_checkpoint = routed
+                    record=note_checkpoint_ruling(invocation=invocation,raw=raw,
+                        identity=getattr(llm_call,'cpa_cache_identity',{}),retention_allowed=retained(raw),
+                        checkpoint=routed_checkpoint)
+                    if record is not None and consumed_ruling_sink is not None:consumed_ruling_sink(record)
+                    recorder=getattr(llm_call,'_semantic_attempt_recorder',None)
+                    if hit and callable(getattr(recorder,'note_cache_replay',None)):
+                        recorder.note_cache_replay(prompt=prompt,completion=raw,
+                            model_identity=completion_identity(getattr(llm_call,'cpa_cache_identity',{}),raw))
+                    return raw,hit
+        checkpoint = CompletedReviewCheckpoint.for_call(
             stage=stage, prompt=prompt, llm_call=llm_call, inputs=inputs, parser_path=parser_path)
-    send = lambda actual: call_json(llm_call, actual, response_schema=response_schema, name=name, reuse=False)
-    if checkpoint is None:
-        return send(prompt), False
-    raw = checkpoint.response(send, preserve_raw=True)
-    recorder = getattr(llm_call, '_semantic_attempt_recorder', None)
-    if checkpoint.hit and callable(getattr(recorder, 'note_cache_replay', None)):
-        recorder.note_cache_replay(prompt=prompt, completion=raw,
-            model_identity=getattr(llm_call, 'cpa_cache_identity', {}))
-    return raw, checkpoint.hit
+        if checkpoint is None:
+            checkpoint = CompletedReviewCheckpoint.for_ruling(
+                stage=stage, prompt=prompt, llm_call=llm_call, inputs=inputs, parser_path=parser_path)
+        def send(actual: str) -> str:
+            if invocation is not None:ensure_provider_calls_allowed()
+            return call_json(llm_call,actual,response_schema=response_schema,name=name,reuse=False)
+        if checkpoint is None:
+            raw=send(prompt)
+            if capture is not None and invocation is not None:
+                note_checkpoint_ruling(invocation=invocation,raw=raw,
+                    identity=getattr(llm_call,'cpa_cache_identity',{}),retention_allowed=False,checkpoint=None)
+            return raw, False
+        raw = checkpoint.response(send, preserve_raw=True)
+        if invocation is not None and (capture is not None or consumed_ruling_sink is not None):
+            record=note_checkpoint_ruling(invocation=invocation,raw=raw,
+                identity=getattr(llm_call,'cpa_cache_identity',{}),retention_allowed=retained(raw),checkpoint=checkpoint)
+            if record is not None and consumed_ruling_sink is not None:consumed_ruling_sink(record)
+        recorder = getattr(llm_call, '_semantic_attempt_recorder', None)
+        if checkpoint.hit and callable(getattr(recorder, 'note_cache_replay', None)):
+            recorder.note_cache_replay(prompt=prompt, completion=raw,
+                model_identity=getattr(llm_call, 'cpa_cache_identity', {}))
+        return raw, checkpoint.hit
+    except BaseException as exc:
+        if capture is not None:
+            capture.failures.append(exc)
+        raise
 
 
 class CompletedReviewCheckpointError(ValueError):
@@ -182,12 +254,8 @@ class CompletedReviewCheckpoint:
         self.prompt = prompt
         self.root = root
         self.semantic_binding = _semantic_binding(self.binding)
-        from .prompt_materials import prompt_material_sha256, canonical_materials
         self.legacy_directory = root / _sha(_canonical(self.semantic_binding))
-        for key in ('inputs', 'owner_materials'):
-            if key in self.semantic_binding:
-                self.semantic_binding[key] = canonical_materials(self.semantic_binding[key])
-        self.semantic_binding['request_sha256'] = prompt_material_sha256(prompt)
+        self.semantic_binding = _request_material_binding(self.binding, prompt)
         self.directory = root / _sha(_canonical(self.semantic_binding))
         self.raw: str | None = None
         self.hit = False
@@ -204,7 +272,8 @@ class CompletedReviewCheckpoint:
         if not ruling_cache_allowed():
             return None
         routing = getattr(llm_call, "cpa_cache_identity", None)
-        base = os.environ.get("AUTOSLICE_BASE") or os.environ.get("AUTOSLICE_FINAL_REVIEW_RUNTIME_ROOT")
+        base = ((os.environ.get('AUTOSLICE_FINAL_REVIEW_RUNTIME_ROOT') if _finding_materials(inputs) is not None else None)
+                or os.environ.get("AUTOSLICE_BASE") or os.environ.get("AUTOSLICE_FINAL_REVIEW_RUNTIME_ROOT"))
         raw_root = root or getattr(llm_call, "completed_review_root", None)
         if raw_root is None and base:
             raw_root = Path(base) / "cache" / "completed-reviews"
@@ -346,17 +415,15 @@ class CompletedReviewCheckpoint:
             if (not isinstance(original_prompt, str) or not isinstance(saved_binding, Mapping)
                     or saved_binding.get('request_sha256') != _sha(original_prompt.encode())):
                 raise CompletedReviewCheckpointError("COMPLETED_REVIEW_BINDING_DRIFT")
-            saved_semantic = _semantic_binding(saved_binding)
-            for key in ('inputs', 'owner_materials'):
-                if key in saved_semantic:
-                    saved_semantic[key] = canonical_materials(saved_semantic[key])
-            saved_semantic['request_sha256'] = prompt_material_sha256(original_prompt)
+            saved_semantic = _request_material_binding(saved_binding, original_prompt)
+            same_materials = ('finding_materials' in self.semantic_binding
+                or same_prompt_materials(original_prompt, self.prompt))
             if isinstance(raw, str) and owner and not all(guard(raw) for guard in owner['guards']):
                 raise CompletedReviewCheckpointError('COMPLETED_REVIEW_RETENTION_REJECTED')
             if (value.get("schema_version") != SCHEMA
                     or not isinstance(value.get("binding"), Mapping)
                     or saved_semantic != self.semantic_binding
-                    or not same_prompt_materials(original_prompt, self.prompt) or not isinstance(raw, str)
+                    or not same_materials or not isinstance(raw, str)
                     or not raw.strip() or value.get("response_sha256") != _sha(raw.encode("utf-8"))):
                 raise CompletedReviewCheckpointError("COMPLETED_REVIEW_BINDING_DRIFT")
             self.raw = cached_completion(raw, self.binding.get('provider', {}).get('routing', {}))
@@ -377,6 +444,10 @@ class CompletedReviewCheckpoint:
         # Only the documented producer bags need old-key discovery. Ordinary
         # byte-identical old entries use legacy_directory above; never scan a
         # growing response store for unrelated brand-new questions.
+        if 'finding_materials' in self.semantic_binding:
+            # v2 has never used a prompt-derived directory. A cache miss is a
+            # direct lookup, not a scan through every unrelated old question.
+            return None
         from .prompt_materials import prompt_material_view, has_material_bag
         if (not any(has_material_bag(block) for block in prompt_material_view(self.prompt))
                 or not _directory(self.root, create=False)):
@@ -411,11 +482,7 @@ class CompletedReviewCheckpoint:
                 prompt = value.get('request') if isinstance(value, Mapping) else None
                 if not isinstance(binding, Mapping) or not isinstance(prompt, str):
                     continue
-                semantic = _semantic_binding(binding)
-                for key in ('inputs', 'owner_materials'):
-                    if key in semantic:
-                        semantic[key] = canonical_materials(semantic[key])
-                semantic['request_sha256'] = prompt_material_sha256(prompt)
+                semantic = _request_material_binding(binding, prompt)
                 if semantic == self.semantic_binding:
                     matches.append(directory)
                     break
@@ -519,3 +586,14 @@ class CompletedReviewCheckpoint:
                 raise CompletedReviewCheckpointError("COMPLETED_REVIEW_SAVE_FAILED")
         except (OSError, QixiTransactionCoreError) as exc:
             raise CompletedReviewCheckpointError("COMPLETED_REVIEW_SAVE_FAILED") from exc
+
+
+def _finding_materials(inputs):
+    if not isinstance(inputs, Mapping):
+        return None
+    if inputs.get('finding_materials') is not None:
+        return inputs['finding_materials']
+    for key in ('request', 'material'):
+        if isinstance(inputs.get(key), Mapping) and inputs[key].get('finding_materials') is not None:
+            return inputs[key]['finding_materials']
+    return None

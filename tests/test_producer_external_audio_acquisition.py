@@ -70,7 +70,7 @@ def _seed_cache(
 def test_profile_map_preserves_verified_public_map_bytes():
     path = Path("assets/lidousha/external_audio_sources.v1.json").resolve()
     _path, map_sha, document = load_source_map(path)
-    assert map_sha == "5c1e73813e2879ae3e9c12fed758e29b5164aa6d08aaf3cf0f592e8396b70406"
+    assert map_sha == "1c94243d068cafdc4a637d0081a63914dbaaefc14849033e6182a0b6520765e3"
     assert document["page_sha256"] == "d88308a3a966fbdef8835710a5e737482ea6021df2fd346ede7ed02b99dbcf42"
     assert document["button_count"] == len(document["buttons"]) == 30
 

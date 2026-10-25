@@ -539,6 +539,15 @@ def _run_local_agy_job(
     if extra_files:
         files.update(extra_files)
     directory, _ = _stage_local_agy_inputs(job_dir, files=files)
+    if agy_gemini_client.cpa_gemini_client.enabled():
+        completion = agy_gemini_client.cpa_gemini_client.generate_files(
+            prompt=prompt, files=[directory / name for name in files if name != 'prompt.md'],
+            model=model, purpose=stage, timeout_seconds=poll_deadline_seconds,
+            response_mime_type='application/json' if output_name.endswith('.json') else None)
+        _stage_local_bytes(directory, output_name, completion.text.encode('utf-8'))
+        _stage_local_bytes(directory, 'cpa-gemini.receipt.json',
+            json.dumps(dict(completion.receipt)).encode('utf-8'))
+        return completion.text
     binary = agy_gemini_client.resolve_remote_agy_binary()
     try:
         process = _start_local_agy_process(
@@ -793,7 +802,13 @@ class _RemoteJingtingRunner:
             f"{job_dir}/draft.srt, and {job_dir}/output.srt. "
             "Do not inspect any other file or directory. Do not use shell or terminal."
         )
-        if is_local_host(self.host):
+        if agy_gemini_client.cpa_gemini_client.enabled():
+            completion = agy_gemini_client.cpa_gemini_client.generate_files(
+                prompt=prompt, files=[chunk_clip], model=AGY_MODEL,
+                purpose='jingting_chunk', timeout_seconds=self.chunk_poll_deadline_seconds,
+                response_mime_type=None)
+            corrected = strip_markdown_fence(completion.text)
+        elif is_local_host(self.host):
             draft_bytes = (
                 chunk_srt_text
                 if chunk_srt_text.endswith("\n")
@@ -1007,6 +1022,8 @@ class _RemoteJingtingRunner:
                         last_error = None
                         break
                     except (AgyRunnerError, RuntimeError) as exc:
+                        if agy_gemini_client.cpa_gemini_client.enabled():
+                            raise
                         last_error = exc
                 if last_error is not None:
                     raise last_error

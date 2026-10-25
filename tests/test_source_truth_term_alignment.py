@@ -191,7 +191,8 @@ def test_invalid_location_never_saved(tmp_path, failure):
         answer["decision"] = "EQUIVALENT"
     with pytest.raises(ValueError, match="ALIGNMENT_.*INVALID"):
         review_local_term_alignment(**kwargs)
-    assert not list((tmp_path / "cache").rglob("*.json"))
+    retained = [json.loads(path.read_bytes()) for path in (tmp_path / "cache").rglob("*.json")]
+    assert retained and all(row.get("schema_version") == "completed-review-response.v1" for row in retained)
 
 
 @pytest.mark.parametrize("drift", ["source", "window", "context", "current_text", "raw",

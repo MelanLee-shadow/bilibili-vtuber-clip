@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from src.autoslice.discovery_channels import batch_from_rows
+
+
 import hashlib
 import json
 
@@ -384,7 +387,7 @@ def test_glossary_insertion_carryover_preserves_raw_provenance(tmp_path):
         llm_call=_literal_review_llm(lambda _prompt: '{"findings":[]}'),
         extract_json=lambda value: json.loads(value),
         glossary_text="- 粉丝团灯牌",
-        extra_raw_findings=rows,
+        discovery_batch=batch_from_rows(rows),
     )
     assert len(findings) == 1
     assert findings[0]["suspect"] == ""
@@ -536,7 +539,7 @@ def test_carryover_not_shadowed_by_different_empty_span_proposal(tmp_path):
         )),
         extract_json=lambda value: json.loads(value),
         glossary_text="- 粉丝团灯牌\n- 粉丝牌灯牌",
-        extra_raw_findings=load_final_review_carryover(path),
+        discovery_batch=batch_from_rows(load_final_review_carryover(path)),
     )
     assert {
         row["proposed_full_cue"] for row in findings
@@ -552,7 +555,7 @@ def test_carryover_replays_by_text_hash_when_padded_cue_index_shifted():
         "4\n00:00:03,000 --> 00:00:04,000\n后文\n",
         llm_call=_literal_review_llm(lambda _prompt: '{"findings":[]}'),
         extract_json=json.loads,
-        extra_raw_findings=[
+        discovery_batch=batch_from_rows([
             {
                 "cue": 1,
                 "base_text_sha256": hashlib.sha256(
@@ -565,7 +568,7 @@ def test_carryover_replays_by_text_hash_when_padded_cue_index_shifted():
                 "repair_class": "phonetic",
                 "evidence_cue_ids": [2],
             }
-        ],
+        ]),
     )
 
     assert findings[0]["cue_index"] == 3
@@ -597,7 +600,7 @@ def test_legacy_carryover_replays_only_when_suspect_owner_is_unique():
         source,
         llm_call=_literal_review_llm(lambda _prompt: '{"findings":[]}'),
         extract_json=json.loads,
-        extra_raw_findings=[row],
+        discovery_batch=batch_from_rows([row]),
     )
     assert findings[0]["cue_index"] == 2
     assert (
@@ -612,7 +615,7 @@ def test_legacy_carryover_replays_only_when_suspect_owner_is_unique():
         ambiguous,
         llm_call=_literal_review_llm(lambda _prompt: '{"findings":[]}'),
         extract_json=json.loads,
-        extra_raw_findings=[row],
+        discovery_batch=batch_from_rows([row]),
     ) == []
 
 

@@ -26,6 +26,7 @@ from src.autoslice.nested_media_acoustic_observer import (
     _canonical_hash,
     _normalize_cpa_identity,
     _runtime_identity,
+    LEGACY_RESPONSE_ADAPTER_CONTRACT,
     bound_observer_prompt,
     observer_target_scope,
     VOICE_REFERENCE_MODE,
@@ -35,6 +36,7 @@ ROLE_ORDER = ("host_enrollment", "independent_source", "current_target")
 ROLE_STATES = frozenset({"PRESENT", "ABSENT", "UNKNOWN"})
 _TARGET_SCOPE_KEYS = ("target_interval_ms", "target_cue_indexes", "target_audio_offset_ms")
 _SAFE_LABEL = re.compile(r"[A-Za-z0-9_./:-]{1,256}\Z")
+RESPONSE_ADAPTER_CONTRACT_VERSION = LEGACY_RESPONSE_ADAPTER_CONTRACT
 
 OBSERVER_PROMPT = """You are a blind acoustic observer, not a transcriber.
 Three audio parts are attached in this exact order:
@@ -138,6 +140,7 @@ class RuntimeAcousticCallbacks:
     observe_audio: Callable[[Mapping[str, object]], Mapping[str, object]]
     cpa_judge: Callable[[Mapping[str, object], Mapping[str, object]], Mapping[str, object]]
     runtime_identity: Mapping[str, object] | None
+    transport_audit: Mapping[str, object] | None = None
 
 
 def _hash_bytes(value: bytes) -> str:
@@ -403,8 +406,8 @@ def build_runtime_acoustic_callbacks(
     provider: str,
     model: str,
     transport: str,
-    transport_module: str,
-    transport_module_sha256: str,
+    transport_module: str | None = None,
+    transport_module_sha256: str | None = None,
     cpa_call_identity: Mapping[str, object] | None = None,
     transport_binding: Mapping[str, object] | None = None,
     observer_prompt: str = OBSERVER_PROMPT,
@@ -418,6 +421,9 @@ def build_runtime_acoustic_callbacks(
     The returned identity is intentionally non-secret and is part of the
     observer request hash, so a changed model, prompt, or transport cannot
     replay an older receipt.
+
+    The optional module arguments remain accepted for older callers. They are
+    execution metadata and do not contribute bytes or paths to the identity.
     """
 
     if not callable(audio_generate) or not callable(cpa_call):
@@ -425,8 +431,6 @@ def build_runtime_acoustic_callbacks(
     provider = _safe_label(provider, "RUNTIME_PROVIDER_INVALID")
     model = _safe_label(model, "RUNTIME_MODEL_INVALID")
     transport = _safe_label(transport, "RUNTIME_TRANSPORT_INVALID")
-    transport_module = _safe_label(transport_module, "RUNTIME_MODULE_INVALID")
-    transport_module_sha256 = _safe_hash(transport_module_sha256)
     if not isinstance(observer_prompt, str) or not observer_prompt.strip():
         raise NestedMediaAcousticRuntimeError("OBSERVER_PROMPT_INVALID")
     if not isinstance(cpa_prompt, str) or not cpa_prompt.strip():
@@ -444,13 +448,13 @@ def build_runtime_acoustic_callbacks(
             "provider": provider,
             "model": model,
             "transport": transport,
-            "transport_module": transport_module,
-            "transport_module_sha256": transport_module_sha256,
             "observer_prompt_sha256": _hash_text(observer_prompt),
             "cpa_prompt_sha256": _hash_text(cpa_prompt),
             "cpa_call_identity": normalized_cpa_identity,
             "cpa_call_identity_sha256": _canonical_hash(normalized_cpa_identity),
-            "response_adapter_sha256": _hash_file(Path(__file__)),
+            "response_adapter_contract_version": RESPONSE_ADAPTER_CONTRACT_VERSION,
+            "observer_schema": OBSERVER_SCHEMA,
+            "cpa_schema": CPA_SCHEMA,
         }
         if transport_binding is not None:
             identity_base["transport_binding"] = dict(transport_binding)
@@ -787,6 +791,7 @@ def build_runtime_acoustic_callbacks(
         observe_audio=observe_audio,
         cpa_judge=cpa_judge,
         runtime_identity=runtime_identity,
+        transport_audit=transport_binding,
     )
 
 

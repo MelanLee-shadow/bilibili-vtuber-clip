@@ -519,6 +519,15 @@ def _run_agy_once(
     agy_bin: Path,
     command_runner: CommandRunner,
 ) -> None:
+    if agy_gemini_client.cpa_gemini_client.enabled():
+        completion = agy_gemini_client.cpa_gemini_client.generate_files(
+            prompt=(job_dir / 'prompt.md').read_text(encoding='utf-8'),
+            files=sorted(job_dir.glob('contact_*.jpg')), model=config.model,
+            purpose='visual_song_discovery', timeout_seconds=config.timeout_seconds)
+        (job_dir / 'visual_songs.json').write_text(completion.text, encoding='utf-8')
+        (job_dir / 'cpa-gemini.receipt.json').write_text(
+            json.dumps(dict(completion.receipt)), encoding='utf-8')
+        return
     short_prompt = (
         f"Open {job_dir}/prompt.md with view_file and follow it exactly. "
         f"Use only {job_dir}/prompt.md, {job_dir}/contact_*.jpg, and {job_dir}/visual_songs.json. "
@@ -718,7 +727,7 @@ def discover_visual_songs(
                 agy_bin, env_names=("AUTOSLICE_AGY_BIN", "AGY_BIN")
             )
         )
-        agy_present = agy_gemini_client.local_agy_available(
+        agy_present = agy_gemini_client.cpa_gemini_client.enabled() or agy_gemini_client.local_agy_available(
             agy_bin, env_names=("AUTOSLICE_AGY_BIN", "AGY_BIN")
         )
         if not agy_present:
@@ -755,6 +764,8 @@ def discover_visual_songs(
                         output.read_text(encoding="utf-8"), duration_ms=duration_ms
                     )
                 except Exception as exc:
+                    if agy_gemini_client.cpa_gemini_client.enabled():
+                        raise
                     if isinstance(exc, VisualSongProviderError):
                         category = exc.category
                         returncode = exc.returncode

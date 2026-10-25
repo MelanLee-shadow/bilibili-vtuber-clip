@@ -4191,7 +4191,7 @@ def test_fresh_ledger_for_a_new_recording_root_passes_the_health_audit(
     from ops.recording import record_health_audit
 
     args = _args(tmp_path)
-    args.room = 22966160
+    args.room = int(record_health_audit.ROOM_ID)
     args.record_root.mkdir(parents=True)
     args.state_path.parent.mkdir(parents=True)
     assert not args.state_path.exists() and not args.webhook_journal.exists()

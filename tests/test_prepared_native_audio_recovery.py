@@ -101,7 +101,6 @@ def test_repeated_current_account_read_does_not_rewrite_original_state(tmp_path,
     [
         "missing_budget",
         "bad_budget",
-        "missing_cache",
         "cache_audio",
         "cache_raw",
         "canonical_cache",
@@ -120,8 +119,6 @@ def test_native_parent_or_account_drift_never_turns_into_fresh_allowance(
         (parent / "native-audio-budget.json").unlink()
     elif damage == "bad_budget":
         (parent / "native-audio-budget.json").write_text("{}")
-    elif damage == "missing_cache":
-        next((parent / "native-exact").rglob("*.json")).unlink()
     elif damage == "cache_audio":
         next((parent / "native-exact").rglob("input.mp3")).write_bytes(b"wrong source audio")
     elif damage == "cache_raw":

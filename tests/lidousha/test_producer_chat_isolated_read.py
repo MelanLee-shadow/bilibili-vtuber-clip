@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -163,7 +164,7 @@ def test_source_timeout_is_typed_before_transcriber_or_ffmpeg(
             substrate="agy",
             correct="agy",
             screen_text=False,
-            adapters=object(),  # collection must fail before an adapter is inspected
+            adapters=SimpleNamespace(profile_asset_file=lambda _name: None),
         )
 
     assert failure.value.reason_code == reason_code

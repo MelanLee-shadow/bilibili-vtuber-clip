@@ -39,6 +39,9 @@ from src.autoslice.branding_intro import (
     prepend_branding_intro,
     require_branding_intro,
 )
+from src.autoslice.clip_profile import (
+    CLIP_PROFILE_FIELD, clip_profile_from_spec, spec_clip_profile_transcription, requires_intro,
+)
 # _editorial_score is deliberately shared with the analyzer so the semantic
 # authority override cannot drift from the canonical editorial formula.
 from src.autoslice.content_evidence import _editorial_score, analyze_content_evidence
@@ -460,11 +463,19 @@ def _run_live_source(
         speech_spans_provider=speech_spans_provider,
         fresh_talk_transcriber=fresh_talk_transcriber,
     )
+    profile_document = spec_clip_profile_transcription(
+        job_manifest, lane="song" if song_candidate else "talk",
+    )
+    if profile_document is not None and materialized_recut is not None:
+        materialized_recut[CLIP_PROFILE_FIELD] = profile_document
     if burn_preview and successor is None:
+        # The job's declared clip form (lane default) decides the intro; a
+        # song candidate is a derived member that takes none.
+        clip_form = clip_profile_from_spec(job_manifest, lane="song" if song_candidate else "talk")
         materialized_recut = _burn_preview_subtitles(
             materialized_recut,
             run_ffmpeg=source_context_run_ffmpeg,
-            branding_intro=branding_intro,
+            branding_intro=branding_intro if requires_intro(clip_form) else None,
         )
     successor_receipt = None
     completed = completed_boundary(job_manifest, materialized_recut, boundary_resolution)
@@ -1110,9 +1121,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             build_lrclib_lrc_provider(),
             build_kugou_lrc_provider(),
         )
+    intro_job = source_context_job if isinstance(source_context_job, Mapping) else {}
+    intro_form = clip_profile_from_spec(
+        intro_job, lane="song" if _job_is_song_candidate(intro_job) else "talk",
+    )
     branding_intro = (
         require_branding_intro(ROOT, manifest_path=args.branding_intro_manifest)
-        if args.branding_intro_manifest is not None
+        if args.branding_intro_manifest is not None and requires_intro(intro_form)
         else None
     )
     summary = run_shadow_pipeline(

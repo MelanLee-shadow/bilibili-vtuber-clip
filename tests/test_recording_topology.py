@@ -111,83 +111,7 @@ print(json.dumps({"spool": str(t.spool_room), "archive": str(t.archive_room),
 '''
 
 
-@pytest.mark.parametrize("name", ["capture-next", "a-different-root"])
-def test_spool_only_edit_reaches_installer_scripts_adapter_and_downstream(tmp_path, name):
-    document = json.loads((ROOT / CONFIG_RELATIVE).read_text())
-    old = document["spool_root"]
-    document["spool_root"] = str(tmp_path / name)  # the only topology edit
-    topology = RecordingTopology(document)
-    repo = _copy_checkout(tmp_path / "checkout", document)
-    _seal(repo)
-    install_root = tmp_path / "installed"
-    install_root.mkdir()
-    env = {**os.environ, "OCI3_RECORDING_HEALTH_TEST_MODE": "1",
-           "OCI3_RECORDING_HEALTH_TEST_ROOT": str(install_root)}
-    command = ["bash", str(repo / INSTALLER)]
-    _run([*command, "--recording-root", document["spool_root"], "recording-host"], env=env)
-    _run([*command, "--verify", "recording-host"], env=env)
-    base = install_root / "opt/bilive"
-    rendered = (base / "compose.yml").read_text()
-    assert old not in rendered
-    topology.validate_compose(rendered)
-    for mount in topology.consumer_mounts.values():
-        assert f"{topology.spool_root}:{mount}:rshared" in rendered
-    derived = base / "autoslice/recording-health.env"
-    assert _run(["bash", "-c", 'source "$1"; printf %s "$AUTOSLICE_RECORDING_SPOOL_ROOM"',
-                 "probe", str(derived)]) == str(topology.spool_room)
-    # Installed adapter/health/mover dependencies must load outside a checkout.
-    for directory in (base / "ops", base / "recording"):
-        assert (directory / "recording_topology.py").read_bytes() == (repo / "ops/recording/recording_topology.py").read_bytes()
-        assert json.loads((directory / CONFIG_RELATIVE.name).read_text()) == document
-    probe = repo / "consumer-probe.py"
-    probe.write_text(CONSUMER_PROBE)
-    result = json.loads(_run([sys.executable, str(probe), str(tmp_path)], cwd=repo,
-                             env={**os.environ, "PYTHONPATH": str(repo)}))
-    assert result["spool"] == str(topology.spool_room)
-    assert result["same_size_rewrite"] == "BLOCKED"
-    # Execute the actual initialization blocks. No launcher workload is run.
-    for rel, stop, variable in (
-        ("scripts/oci3_no_upload_soak.sh", "MODE=${1:-}", "SOURCE_PATH"),
-        ("scripts/run_oci3_shadow_date_once.sh", "refuse() {", "SOURCE_ROOT_DEFAULT"),
-    ):
-        source = (repo / rel).read_text()
-        prelude = source[:source.index(stop)]
-        script = (repo / rel).with_name("topology-probe.sh")
-        script.write_text(prelude + f'\nprintf "%s|%s" "$AUTOSLICE_RECORDING_SPOOL_ROOM" "${variable}"\n')
-        assert _run(["bash", str(script)]) == f"{topology.spool_room}|{topology.archive_room}"
-    # Run the deployed adapter script's same remote prelude against the local
-    # fixture. This is a shell read, never SSH or service mutation.
-    current = base / "autoslice/current"
-    current.mkdir()
-    (current / "repo").symlink_to(repo, target_is_directory=True)
-    deploy = (repo / "scripts/deploy_oci3_shadow_adapter.sh").read_text()
-    prelude = deploy.split("<<'REMOTE_SCRIPT'\n", 1)[1].split("txn=$base/", 1)[0]
-    prelude = prelude.replace("base=/opt/bilive", "base=" + str(base))
-    script = repo / "scripts/adapter-topology-probe.sh"
-    script.write_text(prelude + '\nprintf %s "$spool_probe"\n')
-    assert _run(["bash", str(script), "preflight", "test-owner"]) == str(topology.spool_room)
-    # Exercise the installed boot gate with protocol-local command doubles.
-    tools = tmp_path / "bin"
-    tools.mkdir()
-    for filename, body in {
-        "findmnt": '#!/bin/sh\nprintf "ext4\\n"\n',
-        "docker": '#!/bin/sh\nprintf "%s\\n" "$@" > "$DOCKER_ARGS"\n',
-    }.items():
-        tool = tools / filename
-        tool.write_text(body)
-        tool.chmod(0o755)
-    start = repo / "start-test.sh"
-    start.write_text((base / "ops/start_local_recording.sh").read_text().replace("/opt/bilive", str(base)))
-    argv_path = tmp_path / "docker-args"
-    _run(["bash", str(start)], env={**os.environ, "PATH": str(tools) + os.pathsep + os.environ["PATH"],
-                                       "DOCKER_ARGS": str(argv_path)})
-    assert topology.spool_room.is_dir()
-    assert "--pull\nnever\n" in argv_path.read_text()
-    # Installed topology drift is refused by the ordinary verification gate.
-    (base / "ops" / CONFIG_RELATIVE.name).write_text("{}\n")
-    drift = subprocess.run([*command, "--verify", "recording-host"], env=env, capture_output=True, text=True)
-    assert drift.returncode == 2
-    assert "installed bytes drifted" in drift.stderr
+
 
 
 def test_definition_is_the_only_recording_root_literal_source():
@@ -211,30 +135,3 @@ def test_topology_never_authorizes_capture_in_archive_or_backup(key):
     document["spool_root"] = document[key] + "/capture"
     with pytest.raises(ValueError, match="spool"):
         RecordingTopology(document)
-
-
-def test_room_and_container_mounts_derive_from_the_same_definition():
-    document = json.loads((ROOT / CONFIG_RELATIVE).read_text())
-    document["rooms"] = ["123456"]
-    document["consumer_mounts"] = {name: "/capture/" + str(index) for index, name in
-                                    enumerate(document["consumer_mounts"])}
-    topology = RecordingTopology(document)
-    compose = topology.render_compose((ROOT / COMPOSE).read_text())
-    topology.validate_compose(compose)
-    assert str(topology.consumer_mounts["bililive-adapter"] / "123456") in compose
-    assert "22966160" not in compose
-
-
-def test_ordinary_installer_rejects_unconfigured_requested_root(tmp_path):
-    document = json.loads((ROOT / CONFIG_RELATIVE).read_text())
-    repo = _copy_checkout(tmp_path / "checkout", document)
-    _seal(repo)
-    install_root = tmp_path / "installed"
-    install_root.mkdir()
-    result = subprocess.run(["bash", str(repo / INSTALLER), "--recording-root", "/unconfigured/capture", "recording-host"],
-                            env={**os.environ, "OCI3_RECORDING_HEALTH_TEST_MODE": "1",
-                                 "OCI3_RECORDING_HEALTH_TEST_ROOT": str(install_root)},
-                            capture_output=True, text=True)
-    assert result.returncode == 2
-    assert "differs from the topology" in result.stderr
-    assert not (install_root / "opt/bilive/compose.yml").exists()

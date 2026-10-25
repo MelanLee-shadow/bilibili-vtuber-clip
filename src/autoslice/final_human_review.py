@@ -29,6 +29,12 @@ from .final_human_review_evidence import validate_bound_review_evidence
 from .cover_route_evidence import validate_cover_route_decision
 from .review_package_cover_diagnostics import validate_package_cover_route
 from .channel_profile import load_channel_profile as _load_channel_profile
+from .clip_profile import (
+    ClipProfileError,
+    clip_profile_from_document_holder,
+    season_for,
+    season_ids as _clip_season_ids,
+)
 from .final_media_duration_binding import (
     FinalMediaDurationBindingError,
     final_burn_duration_binding,
@@ -785,9 +791,14 @@ def attach_final_human_review(
     manifest: dict[str, object],
     receipt_argument: object,
     *,
-    season_ids: Mapping[str, Mapping[str, int]],
+    season_ids: Mapping[str, Mapping[str, int]] | None = None,
 ) -> list[str]:
-    """Attach the receipt and exact section only for a recovery manifest."""
+    """Attach the receipt and exact section only for a recovery manifest.
+
+    The exact collection comes from ``season_for`` of the manifest's
+    transcribed clip profile (lane default when absent); ``season_ids``
+    overrides only the account ID table, never the route.
+    """
 
     argument = str(receipt_argument or "").strip()
     recovery = isinstance(
@@ -815,8 +826,16 @@ def attach_final_human_review(
         return ["same-BV recovery manifest has no package_attestation"]
     if not isinstance(season, dict):
         return ["same-BV recovery manifest requires a season binding"]
-    lane = season.get("lane")
-    exact_ids = season_ids.get(str(lane or ""))
+    lane = str(season.get("lane") or "")
+    try:
+        route = season_for(
+            clip_profile_from_document_holder(manifest, lane="song" if lane == "song" else "talk")
+        )
+    except ClipProfileError as exc:
+        return [f"same-BV recovery manifest clip profile is invalid: {exc}"]
+    if route.lane != lane:
+        return ["same-BV recovery manifest season lane contradicts its clip profile"]
+    exact_ids = (season_ids if season_ids is not None else _clip_season_ids()).get(route.lane)
     if not isinstance(exact_ids, Mapping):
         return ["same-BV recovery manifest has no exact season IDs"]
     season.update(exact_ids)

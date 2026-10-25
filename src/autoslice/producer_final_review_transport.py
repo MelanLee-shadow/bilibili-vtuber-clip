@@ -127,7 +127,12 @@ def _local_runtime_call(
     *,
     runtime: Path,
     effort: str,
+    model: str = TOP_CPA_MODEL,
+    exact_model: bool = False,
 ) -> Callable[[str], str]:
+    from src.autoslice.cpa_model_ladder import CPA_MODEL_LADDER
+    if model not in CPA_MODEL_LADDER:
+        raise ValueError('FINAL_REVIEW_MODEL_OUTSIDE_CANONICAL_LADDER')
     child_env = runtime_cpa_command_environment(runtime)
     parsed = urlsplit(child_env["CPA_BASE_URL"])
     runtime_binding = {
@@ -143,14 +148,13 @@ def _local_runtime_call(
             or repository_runtime_root(repo)!=runtime.resolve()):
         raise ValueError('FINAL_REVIEW_RUNTIME_VERSION_BINDING_INVALID')
     script = repo / "scripts" / "llm_via_cpa.sh"
-    model = TOP_CPA_MODEL
-    return _bound_call(
+    call = _bound_call(
         LlmConfig(
             transport="command",
             command_template=(
                 f"bash {shlex.quote(str(script))} "
                 "{prompt_file} {completion_file} "
-                f"'{model}' {effort} 1"
+                f"'{model}' {effort} 1" + (" --exact-model" if exact_model else "")
             ),
             timeout_seconds=cpa_call_timeout_seconds(),
             runtime_root=str(runtime),
@@ -164,6 +168,9 @@ def _local_runtime_call(
             "effort": effort,
         },
     )
+    from src.autoslice.cpa_model_ladder import model_ladder
+    setattr(call,'pinned_model_route',exact_model or len(model_ladder(model))==1)
+    return call
 
 
 def _remote_runtime_call(
@@ -171,14 +178,18 @@ def _remote_runtime_call(
     runtime: Path,
     ssh_host: str,
     effort: str,
+    model: str = TOP_CPA_MODEL,
+    exact_model: bool = False,
 ) -> Callable[[str], str]:
+    from src.autoslice.cpa_model_ladder import CPA_MODEL_LADDER
+    if model not in CPA_MODEL_LADDER:
+        raise ValueError('FINAL_REVIEW_MODEL_OUTSIDE_CANONICAL_LADDER')
     runtime_binding = {
         "provider_transport": "ssh_runtime_cpa",
         "provider_runtime_host": ssh_host,
         "provider_credential_source": str(runtime / "cpa.env"),
     }
-    model = TOP_CPA_MODEL
-    return _bound_call(
+    call = _bound_call(
         LlmConfig(
             transport="command",
             command_template=(
@@ -186,7 +197,7 @@ def _remote_runtime_call(
                 "{prompt_file} {completion_file} "
                 f"--ssh-host {shlex.quote(ssh_host)} "
                 f"--runtime-root {shlex.quote(str(runtime))} "
-                f"--model {model} --effort {effort} --attempts 1"
+                f"--model {model} --effort {effort} --attempts 1" + (" --exact-model" if exact_model else "")
             ),
             timeout_seconds=cpa_call_timeout_seconds() + 1920,
             command_child_env=_without_ambient_cpa_environment(),
@@ -199,6 +210,9 @@ def _remote_runtime_call(
             "effort": effort,
         },
     )
+    from src.autoslice.cpa_model_ladder import model_ladder
+    setattr(call,'pinned_model_route',exact_model or len(model_ladder(model))==1)
+    return call
 
 
 def _build_review_llm_call(
@@ -206,11 +220,22 @@ def _build_review_llm_call(
     effort: str,
     runtime_root: str | Path | None,
     runtime_ssh_host: str | None,
+    closure_routes: bool = False,
 ) -> Callable[[str], str]:
     runtime = _resolved_runtime_root(runtime_root)
     ssh_host = _resolved_runtime_ssh_host(runtime_ssh_host)
     if runtime is None:
         return _missing_runtime_call()
+    if closure_routes:
+        from src.autoslice.cpa_model_ladder import CPA_MODEL_LADDER
+        from src.autoslice.finding_closure_shell import FinalReviewCall
+        def factory(model: str) -> Callable[[str],str]:
+            if ssh_host is not None:
+                return _remote_runtime_call(runtime=runtime,ssh_host=ssh_host,effort=effort,model=model,exact_model=True)
+            return _local_runtime_call(runtime=runtime,effort=effort,model=model,exact_model=True)
+        return FinalReviewCall(primary=factory(CPA_MODEL_LADDER[0]),factory=factory,
+            models=CPA_MODEL_LADDER,provider='canonical-runtime-cpa:'+str(ssh_host or 'local'),
+            key_id=str(runtime))
     if ssh_host is not None:
         return _remote_runtime_call(
             runtime=runtime,
@@ -227,6 +252,9 @@ def build_final_review_llm_call(
 ) -> Callable[[str], str]:
     """Build the medium-effort exact-final CPA call from canonical runtime."""
 
+    if os.environ.get('AUTOSLICE_FINAL_REVIEW_MODE') == 'per_finding':
+        return _build_review_llm_call(effort='medium', runtime_root=runtime_root,
+            runtime_ssh_host=runtime_ssh_host, closure_routes=True)
     call = _build_review_llm_call(
         effort="medium",
         runtime_root=runtime_root,

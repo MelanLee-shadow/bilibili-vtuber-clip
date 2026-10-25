@@ -85,15 +85,18 @@ def _capture_profile(base: Path, profile_binding: object | None = None):
     repo = active_repository(base)
     parent_binding = profile_binding_from_environment()
     if parent_binding is not None and profile_binding is not None:
-        require_profile_binding(profile_binding, parent_binding)
+        profile_binding = require_profile_binding(task_binding=profile_binding,
+            current_binding=parent_binding, repo_root=repo)
     profile = load_channel_profile(repo_root=repo, profile_binding=profile_binding)
     binding = binding_for_profile(profile)
     if profile_binding is not None:
-        require_profile_binding(binding, profile_binding)
+        require_profile_binding(task_binding=profile_binding, current_binding=binding, repo_root=repo)
     return profile, binding
 
 
-def _require_persisted_binding(actual: object, expected: object, *, label: str) -> dict[str, str]:
+def _require_persisted_binding(
+    actual: object, expected: object, *, label: str, repo_root: Path | None = None,
+) -> dict[str, str]:
     """Turn a stale/missing durable binding into a probe failure.
 
     Durable assignment and cache files are owned by the controller.  Their
@@ -101,10 +104,10 @@ def _require_persisted_binding(actual: object, expected: object, *, label: str) 
     helper only validates and raises.
     """
 
-    from src.autoslice.channel_profile import require_profile_binding
+    from src.autoslice.channel_profile import require_record_profile_binding
 
     try:
-        return require_profile_binding(actual, expected)
+        return require_record_profile_binding(record_binding=actual, task_binding=expected, repo_root=repo_root)
     except (TypeError, ValueError) as exc:
         raise runtime_storage.CapacityProbeError(
             f"{label} is missing or differs from the selected channel profile binding; preserve durable bytes"
@@ -142,8 +145,11 @@ def _source_inputs(
         if item.get(key):
             paths.add(Path(str(item[key])))
     # Intro videos are runtime assets outside Git. Resolve the committed
-    # profile policy, including every rotation member, before remote staging.
-    if lane != "song" and (active_repository(base) / "profiles").is_dir():
+    # profile policy, including every rotation member, before remote staging,
+    # only when the candidate's declared clip form takes the intro.
+    from src.autoslice.clip_profile import clip_profile_from_spec, requires_intro
+    clip_form = clip_profile_from_spec(item, lane="song" if lane == "song" else "talk")
+    if requires_intro(clip_form) and (active_repository(base) / "profiles").is_dir():
         from src.autoslice.branding_intro import require_branding_intro
         from src.autoslice.channel_profile import load_channel_profile
         repo = active_repository(base)
@@ -404,7 +410,8 @@ class SSHBackend(LocalBackend):
         """Re-read the bound manifest before any remote or promotion action."""
 
         from src.autoslice.channel_profile import binding_for_profile, require_profile_binding
-        require_profile_binding(self.profile_binding, binding_for_profile(self.profile))
+        require_profile_binding(task_binding=self.profile_binding,
+            current_binding=binding_for_profile(self.profile), repo_root=self.repo)
         profile, binding = _capture_profile(self.base, self.profile_binding)
         if binding != self.profile_binding:
             raise runtime_storage.CapacityProbeError(
@@ -418,7 +425,7 @@ class SSHBackend(LocalBackend):
                 f"{label} is invalid; preserve durable assignment bytes"
             )
         _require_persisted_binding(
-            assignment.get("profile_binding"), self.profile_binding, label=label
+            assignment.get("profile_binding"), self.profile_binding, label=label, repo_root=self.repo
         )
         from src.autoslice.overflow_worker import compute_job_id
         identity = compute_job_id(assignment)
@@ -432,7 +439,7 @@ class SSHBackend(LocalBackend):
                 f"{label} is invalid; preserve cached result bytes"
             )
         _require_persisted_binding(
-            cached.get("profile_binding"), self.profile_binding, label=label
+            cached.get("profile_binding"), self.profile_binding, label=label, repo_root=self.repo
         )
         if (cached.get('schema_version')=='autoslice-overflow-terminal-failure.v1'
                 and (assignment is None or not _terminal_failure_matches(cached,assignment))):
@@ -557,7 +564,7 @@ class SSHBackend(LocalBackend):
                 )
             _require_persisted_binding(
                 pointer_value.get("profile_binding"), self.profile_binding,
-                label="overflow candidate pointer profile binding",
+                label="overflow candidate pointer profile binding", repo_root=self.repo,
             )
         else:
             pointer_value = None

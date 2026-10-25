@@ -1,0 +1,11 @@
+{
+  "manifests": {
+    "profiles/_template/profile.json": [
+      "f425a4b2e1e5087227732e7cf9e9839feba30ef8506985f67de605b4debff3bd"
+    ],
+    "profiles/lidousha/profile.json": [
+      "5d2f3720054e7f85cfcf80f816906ebfe5ea1a3db39a2917887c608171ad48f0"
+    ]
+  },
+  "schema_version": "autoslice-profile-manifest-history.v1"
+}

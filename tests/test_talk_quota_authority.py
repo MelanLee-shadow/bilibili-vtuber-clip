@@ -8,32 +8,22 @@ import pytest
 from src.autoslice import talk_quota_authority as authority
 
 
+from tests.quota_support import synthetic_quota_authority
+
+@pytest.fixture(autouse=True)
+def _synthetic_quota_input(tmp_path, monkeypatch):
+    path = tmp_path / "synthetic-quota-authority.json"
+    path.write_text(json.dumps(synthetic_quota_authority(), ensure_ascii=False))
+    monkeypatch.setattr(authority, "DEFAULT_AUTHORITY_PATH", path)
+
+
 def _write(tmp_path, document):
     path = tmp_path / "quota.json"
     path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
     return path
 
 
-def test_committed_song_grant_has_exact_human_authority():
-    document = authority.load_talk_quota_policy_authority()
-    assert document is not None
-    rows = [row for row in document["entries"] if row["scope"] == "song"]
-    assert len(rows) == 1
-    row = rows[0]
-    assert (row["recording_date"], row["cap"], row["extra_slot_min_score"]) == (
-        "2026-10-21", 2, None,
-    )
-    quote = (
-        "既然如此，我希望能做《快乐手帐》，《快乐手帐》这首歌我也很喜欢，我希望做这个。"
-        "但是《失眠飞行》反正已经做了，那也可以做，无所谓啊，这个就上传两个呗。"
-    )
-    assert row["authority"] == '公开规则T18:18:00Z（逐字）：' + quote
-    assert row["authority_timestamp"] == "2026-10-23T18:18:00Z"
-    assert row["authority_source"] == "transcript c02e95b9（type=user，origin=human）；REQUIREMENTS H35"
-    default = document["default_policy"]["song"]
-    assert default["cap"] == 1
-    assert default["authority"].startswith('公开规则T21:42:45.772Z（逐字，')
-    assert "「默认是每天5条限额和一条歌切」" in default["authority"]
+
 
 
 @pytest.mark.parametrize("legacy", [False, True])

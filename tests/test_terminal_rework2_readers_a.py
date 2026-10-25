@@ -103,18 +103,7 @@ def _compact_chat(tmp_path: Path) -> tuple[dict, Path, bytes]:
                 fromlist=["_load_object"],
             )._load_object(path, label="chat", review=True),
         ),
-        (
-            "qixi-terminal-refresh",
-            lambda raw, path: __import__(
-                "src.autoslice.qixi_terminal_evidence_refresh",
-                fromlist=["_json_document"],
-            )._json_document(
-                raw,
-                "CHAT",
-                review=True,
-                directory=path.parent,
-            ),
-        ),
+        # Private reader omitted from this distribution.
     ],
 )
 def test_each_first_h_reader_expands_compact_wire_roundtrip(
@@ -136,7 +125,5 @@ def test_first_h_reader_defaults_keep_ordinary_json_semantics(tmp_path: Path) ->
     path.write_text('{"kind":"ordinary","value":[1,2,3]}\n', encoding="utf-8")
 
     from src.autoslice.b2_current_delivery_refresh import _json
-    from src.autoslice.qixi_terminal_evidence_refresh import _json_document
 
     assert _json(path, label="ordinary") == ordinary
-    assert _json_document(path.read_bytes(), "ORDINARY") == ordinary

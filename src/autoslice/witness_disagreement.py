@@ -28,8 +28,11 @@ import hashlib
 import json
 import re
 import unicodedata
+import os
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
+
+from src.autoslice.text_scripts import script_profile
 
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.restatement_recall import pinyin_tokens
@@ -60,6 +63,69 @@ _REPEAT_RE = re.compile(r"(.{1,3}?)\1+")
 class _Normalized:
     text: str
     origin: tuple[tuple[int, int], ...]  # normalized index -> (start, end) in source
+
+
+@dataclass(frozen=True)
+class NativeSegment:
+    """A provider segment on the physical source clock; never a subtitle clock."""
+    start_ms: int
+    end_ms: int
+    text: str
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.start_ms < self.end_ms or not self.text.strip():
+            raise ValueError("WITNESS_NATIVE_SEGMENT_INVALID")
+
+
+def segments_srt(segments: tuple[NativeSegment, ...]) -> str:
+    def stamp(ms: int) -> str:
+        hours, rest = divmod(ms, 3600000)
+        minutes, rest = divmod(rest, 60000)
+        seconds, millis = divmod(rest, 1000)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+    return "\n\n".join(f"{i}\n{stamp(s.start_ms)} --> {stamp(s.end_ms)}\n{s.text}"
+        for i, s in enumerate(segments, 1)) + "\n"
+
+
+def _phonetic_normalize(norm: _Normalized, symbols: dict[str, str]) -> _Normalized:
+    chars = []
+    for char in norm.text:
+        tokens = _pinyin(char) if script_profile(char)["han"] else None
+        if tokens and len(tokens) == 1:
+            token = tokens[0]
+            if token not in symbols:
+                symbols[token] = chr(0xF0000 + len(symbols))
+            chars.append(symbols[token])
+        else:
+            chars.append(char)
+    return _Normalized("".join(chars), norm.origin)
+
+
+def agreement_key(text: str) -> str:
+    """R2 compares normalized words, not two different homophonic guesses."""
+    return _normalize(text).text
+
+
+def reading_key(text: str) -> str:
+    """The comparison's own normalized reading, used by the R2 registry gate."""
+    normalized = _normalize(text).text
+    return " ".join(_pinyin(normalized) or list(normalized))
+
+
+def native_script_mismatch(
+    final_srt_text: str, segments: tuple[NativeSegment, ...],
+    expected_scripts: frozenset[str] = frozenset(),
+) -> bool:
+    """Reject an unsupported script even when no cue aligns to the observation.
+
+    Validated language observations may explicitly allow another script. Han
+    characters shared with Japanese cannot make unsupported kana acceptable.
+    """
+    if not expected_scripts:
+        expected_scripts = frozenset(k for k, v in script_profile(final_srt_text).items()
+            if v and k != "other")
+    return any(count and script not in expected_scripts and script != "other"
+        for script, count in script_profile("".join(s.text for s in segments)).items())
 
 
 def _canon_witness(text: str) -> str:
@@ -148,16 +214,30 @@ def find_witness_disagreements(
     witness_srt_text: str,
     *,
     intro_offset_ms: int,
+    native_segments: tuple[NativeSegment, ...] | None = None,
+    observation_window_ms: tuple[int, int] | None = None,
+    expected_scripts: frozenset[str] = frozenset(),
+    include_rejected: bool = False,
 ) -> list[dict[str, Any]]:
     """Return one nomination per span-level wording disagreement."""
 
     if type(intro_offset_ms) is not int or intro_offset_ms < 0:
         raise ValueError("WITNESS_DISAGREEMENT_INTRO_OFFSET_INVALID")
+    if native_segments is not None:
+        if observation_window_ms is None or not 0 <= observation_window_ms[0] < observation_window_ms[1]:
+            raise ValueError("WITNESS_OBSERVATION_WINDOW_REQUIRED")
+        witness_srt_text = segments_srt(native_segments)
     final_cues = [c for c in parse_srt_cues(final_srt_text) if c.text.strip()]
     witness_cues = [c for c in parse_srt_cues(witness_srt_text) if c.text.strip()]
     witness_texts = [_canon_witness(c.text) for c in witness_cues]
     final_norm = [_normalize(c.text) for c in final_cues]
     witness_norm = [_normalize(t) for t in witness_texts]
+    if native_segments is not None:
+        # Align at the existing toneless-pinyin equivalence level. This also
+        # aligns traditional/simplified forms without a partial lookup table.
+        symbols: dict[str, str] = {}
+        final_norm = [_phonetic_normalize(n, symbols) for n in final_norm]
+        witness_norm = [_phonetic_normalize(n, symbols) for n in witness_norm]
     nominations: list[dict[str, Any]] = []
 
     for final_ids, witness_ids in _components(final_cues, witness_cues, intro_offset_ms):
@@ -222,7 +302,25 @@ def find_witness_disagreements(
     unique: dict[str, dict[str, Any]] = {}
     for nom in nominations:
         unique.setdefault(nom["nomination_id"], nom)
-    return list(unique.values())
+    result = list(unique.values())
+    if native_segments is None:
+        return result  # BCUT's existing comparison contract is unchanged.
+    assert observation_window_ms is not None
+    lo, hi = observation_window_ms
+    mismatch = native_script_mismatch(final_srt_text, native_segments, expected_scripts)
+    for nomination in result:
+        cue = final_cues[nomination["cue_index"] - 1]
+        start = cue.start_ms + intro_offset_ms
+        end = cue.end_ms + intro_offset_ms
+        total = max(len(cue.text), 1)
+        a = start + (end - start) * nomination["final_span_start_codepoint"] / total
+        b = start + (end - start) * max(nomination["final_span_end_codepoint"],
+            nomination["final_span_start_codepoint"] + 1) / total
+        reason = ("WITNESS_SCRIPT_MISMATCH" if mismatch else
+            "NEAR_WINDOW_EDGE" if start < lo or end > hi
+            or a - lo < _EDGE_TOLERANCE_MS or hi - b < _EDGE_TOLERANCE_MS else None)
+        nomination["reject_reason"] = reason
+    return result if include_rejected else [n for n in result if n["reject_reason"] is None]
 
 
 def _merge_close_ops(opcodes):
@@ -335,7 +433,7 @@ def to_priority_findings(
     nominations: Sequence[Mapping[str, Any]], *,
     final_srt_text: str, witness_srt_sha256: str,
 ) -> list[dict[str, Any]]:
-    """Raw priority rows for ``audit_final_subtitles(extra_raw_findings=...)``.
+    """Legacy row projection for the discovery registry; never mutation authority.
 
     The row names both candidates; the exact-final reviewer must hear the audio
     and choose.  ``mutation_authorized`` stays False: the witness is evidence.
@@ -358,6 +456,8 @@ def to_priority_findings(
                 "kind": PROVENANCE_KIND,
                 "nomination_id": nom["nomination_id"],
                 "mutation_authorized": False,
+                **({"decision_authority": "NONE_DISCOVERY_ONLY"}
+                   if os.environ.get("AUTOSLICE_FINAL_REVIEW_MODE") == "per_finding" else {}),
                 "evidence_source": EVIDENCE_SOURCE,
                 "current_srt_sha256": current_sha,
                 "witness_srt_sha256": witness_srt_sha256,

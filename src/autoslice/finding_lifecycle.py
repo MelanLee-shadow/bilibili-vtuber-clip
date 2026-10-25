@@ -6,7 +6,7 @@ by the existing release predicate and EDIT still needs apply + whole review.
 """
 from __future__ import annotations
 
-from .review_errors import ContractRejection
+from .review_errors import ContractRejection as ContractRejection
 
 from collections.abc import Mapping
 from copy import deepcopy
@@ -178,7 +178,7 @@ def true_block_evidence(adjudication):
     from .llm_client import extract_json_object
     from .semantic_terminal_adjudication import (validate_terminal_answer, terminal_prompt_matches,
                                                  written_meaning_evidence)
-    from .targeted_relisten import validate_no_gain
+    from .targeted_relisten import validate_current_no_gain
     from .context_assisted_audio import text_sha
     review = adjudication.get("terminal_review")
     if not isinstance(review, Mapping):
@@ -189,7 +189,7 @@ def true_block_evidence(adjudication):
             raise LifecycleError("FINDING_D_ORIGINAL_BINDING_DRIFT")
     if not terminal_prompt_matches(request, prompt):
         raise LifecycleError("FINDING_D_ORIGINAL_BINDING_DRIFT")
-    validate_no_gain(request["audio_gain_termination"], request["check_request"])
+    validate_current_no_gain(request["audio_gain_termination"], request["check_request"])
     answer = extract_json_object(raw)
     if validate_terminal_answer(request, answer, prompt=prompt) != "UNRESOLVABLE":
         raise LifecycleError("FINDING_D_WRITTEN_MEANING_ERROR_REQUIRED")
@@ -300,20 +300,33 @@ def reenter_terminal_review(finding, *, check_request, no_gain_proof, clip_conte
     if previous not in {State.KEEP, State.TRUE_BLOCK}:
         return finding
     from .context_assisted_audio import digest, text_sha
-    from .targeted_relisten import validate_no_gain
+    from .targeted_relisten import validate_current_no_gain
     prior = finding.get('exact_release_adjudication') or finding.get('context_audio_adjudication') or {}
     request = (prior.get('terminal_review') or {}).get('request')
     if not isinstance(request, Mapping):
         raise ContractRejection('FINDING_REENTRY_ORIGINAL_TERMINAL_REQUIRED')
-    old = validate_no_gain(request['audio_gain_termination'], request['check_request'])
-    new = validate_no_gain(no_gain_proof, check_request)
+    old = validate_current_no_gain(request['audio_gain_termination'], request['check_request'])
+    new = validate_current_no_gain(no_gain_proof, check_request)
     old_ids = {row['observation_id'] for row in old['projection']['observations']}
     new_ids = {row['observation_id'] for row in new['projection']['observations']}
     changes = []
-    if request.get('srt_sha256') != text_sha(check_request['whole_clip_current_srt']):
-        changes.append('CURRENT_TEXT')
-    if request.get('clip_context_sha256') != digest(dict(clip_context or {})):
-        changes.append('CLIP_CONTEXT')
+    previous_check = request['check_request']
+    if 'finding_context' in check_request:
+        from .finding_context import context_for_check, local_material_view, physical_question, validate_context_for_check
+        if physical_question(previous_check) != physical_question(check_request):
+            raise ContractRejection('FINDING_REENTRY_QUESTION_DRIFT')
+        # A legacy saved request is projected from its own retained SRT. Its
+        # receipt/proof bytes are never rewritten to impersonate a v2 request.
+        previous_context = previous_check.get('finding_context') or context_for_check(previous_check)
+        validate_context_for_check(previous_check, previous_context)
+        validate_context_for_check(check_request, check_request['finding_context'])
+        if local_material_view(previous_context) != local_material_view(check_request['finding_context']):
+            changes.append('LOCAL_TEXT')
+    else:
+        if request.get('srt_sha256') != text_sha(check_request['whole_clip_current_srt']):
+            changes.append('CURRENT_TEXT')
+        if request.get('clip_context_sha256') != digest(dict(clip_context or {})):
+            changes.append('CLIP_CONTEXT')
     if request['check_request'].get('proposed_cue') != check_request.get('proposed_cue'):
         changes.append('CANDIDATE')
     if new_ids - old_ids:

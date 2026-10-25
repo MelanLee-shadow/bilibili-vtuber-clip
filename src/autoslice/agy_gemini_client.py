@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from src.autoslice import gemini_backup_policy
+from src.autoslice import cpa_gemini_client
 from src.autoslice.structured_output import (
     agy_structured_args, current_contract, gemini_format, format_retry_call,
     contract_receipt,
@@ -224,10 +225,11 @@ class AgyRun:
     launch_error_type: str | None = None
     launch_error: BaseException | None = None
     format_rejected: bool = False
+    transport_receipt: cpa_gemini_client.JsonMap | None = None
 
     @property
     def launched(self) -> bool:
-        return self.completed is not None
+        return self.completed is not None and self.transport_receipt is None
 
     def partial_output(self) -> tuple[str, str]:
         """(stdout, stderr) salvaged from a timed-out run; empty otherwise."""
@@ -296,6 +298,11 @@ def run_local_agy(
     env: Mapping[str, str] | None = None,
     command_runner: Callable[..., subprocess.CompletedProcess] | None = None,
     response_validator: Callable[[subprocess.CompletedProcess], object] | None = None,
+    cpa_prompt: str | None = None,
+    cpa_files: Sequence[Path] = (),
+    cpa_output_path: Path | None = None,
+    cpa_response_mime_type: str | None = "application/json",
+    cpa_response_schema: cpa_gemini_client.JsonMap | None = None,
 ) -> AgyRun:
     """Run agy locally, never raising for absence/timeout/spawn failure.
 
@@ -304,6 +311,27 @@ def run_local_agy(
     seams keep working after this extraction.
     """
 
+    if cpa_gemini_client.enabled():
+        if cpa_prompt is None:
+            raise ValueError("CPA_GEMINI_REQUEST_DESCRIPTION_REQUIRED")
+        model = list(argv)[list(argv).index('--model') + 1]
+        schema = cpa_response_schema
+        if schema is None and '--json-schema' in argv:
+            schema = json.loads(Path(list(argv)[list(argv).index('--json-schema') + 1]).read_text(encoding='utf-8'))
+        completion = cpa_gemini_client.generate_files(
+            prompt=cpa_prompt, files=cpa_files, model=model,
+            purpose="local_agy_compatibility", timeout_seconds=timeout,
+            response_mime_type=cpa_response_mime_type, response_schema=schema)
+        if cpa_output_path is not None:
+            cpa_output_path.write_text(completion.text, encoding='utf-8')
+        Path(cwd, 'cpa-gemini.receipt.json').write_text(
+            json.dumps(dict(completion.receipt), sort_keys=True), encoding='utf-8')
+        # Compatibility container only; no process or AGY tool trace is claimed.
+        completed = subprocess.CompletedProcess(list(argv), 0, completion.text, '')
+        if response_validator is not None:
+            response_validator(completed)
+        return AgyRun(completed=completed, failure_category=None,
+                      transport_receipt=completion.receipt)
     runner = command_runner or subprocess.run
     format_rejected = False
     kwargs: dict[str, Any] = {
@@ -316,7 +344,8 @@ def run_local_agy(
     if env is not None:
         kwargs["env"] = dict(env)
     try:
-        with runtime_provider_slot(timeout_seconds=provider_wait_for_call(timeout)):
+        with runtime_provider_slot(provider='agy', modality='audio_video',
+                                   timeout_seconds=provider_wait_for_call(timeout)) as lease:
             if response_validator is None:
                 completed = runner(list(argv), **kwargs)
             else:
@@ -343,6 +372,14 @@ def run_local_agy(
                             'model': list(argv)[list(argv).index('--model') + 1],
                             'schema_sha256': _evidence_file_sha256(Path(list(argv)[list(argv).index('--json-schema') + 1]))
                                 if '--json-schema' in argv else None}, indent=2), encoding='utf-8')
+            if lease is not None:
+                if completed.returncode != 0:
+                    lease.report({'status': 'FAILED', 'provider_error_code': classify_agy_failure(
+                        completed.returncode, completed.stdout or '', completed.stderr or '')})
+                try:
+                    lease.report(json.loads(completed.stdout or '{}'))
+                except (ValueError, TypeError):
+                    pass
     except (OSError, ProviderSlotTimeout, subprocess.TimeoutExpired) as exc:
         return AgyRun(
             completed=None,
@@ -375,6 +412,8 @@ FREE_KEY_ENV_NAMES: tuple[str, ...] = (
 def free_api_keys() -> list[str]:
     """Distinct configured free keys, in policy order. Values are never logged."""
 
+    if cpa_gemini_client.enabled():
+        return ["CPA_MANAGED"]  # Compatibility token, never a Google credential.
     return list(
         dict.fromkeys(
             value
@@ -511,6 +550,17 @@ def run_gemini_key_ladder(
         same round .
     """
 
+    if cpa_gemini_client.enabled():
+        # Exactly one dispatch. No client key reads, strikes, cooldown or paid gate.
+        outcome = LadderOutcome(configured_key_count=0)
+        try:
+            outcome.observed = observe("CPA_MANAGED")
+        except Exception as exc:
+            if record_failure is not None:
+                record_failure(GeminiAttemptFailure("UNKNOWN", 0, 1, classify(exc), exc))
+            return outcome
+        outcome.accepted_key_tier = "UNKNOWN"
+        return outcome
     rounds = (
         1
         if quota_fastpath
@@ -851,6 +901,27 @@ def generate_content(
         request_bytes = json.dumps(request_body, ensure_ascii=False).encode("utf-8")
         if len(request_bytes) > max_request_bytes:
             raise RuntimeError("GEMINI_API_REQUEST_TOO_LARGE")
+        if cpa_gemini_client.enabled():
+            import time
+            started, cpa_status = time.monotonic(), 'TRANSPORT_ERROR'
+            try:
+                completion = cpa_gemini_client.generate_native(
+                    model=model, body=request_body, purpose="generate_content",
+                    timeout_seconds=timeout_seconds)
+                cpa_status = completion.receipt['http_status']
+                return completion.payload
+            except Exception as exc:
+                cpa_status = getattr(exc, 'code', cpa_status)
+                raise
+            finally:
+                if any(part_mime.startswith('audio/') for _, part_mime in payloads):
+                    from src.autoslice.cpa_runtime import record_cpa_event
+                    fields = {'provider': 'gemini_api', 'model': model,
+                        'transport': 'cpa_gemini_native', 'status': cpa_status,
+                        'observation_input_sha256': observation_input_sha256,
+                        'format_attempt': physical_attempt, 'elapsed_seconds': round(time.monotonic() - started, 3)}
+                    record_cpa_event('audio_model_request', fields)
+                    record_cpa_event('audio_http_attempt', fields)
         request = urllib.request.Request(
             GEMINI_API_URL.format(model=urllib.parse.quote(model, safe="")),
             data=request_bytes,
@@ -858,7 +929,10 @@ def generate_content(
         )
         transport_timeout = min(600, max(30, int(timeout_seconds)))
         with runtime_provider_slot(
-            timeout_seconds=provider_wait_for_call(transport_timeout)
+            timeout_seconds=provider_wait_for_call(transport_timeout),
+            provider='gemini', modality=('audio_video' if any(mime.startswith('video/') for _, mime in payloads)
+                else 'audio' if any(mime.startswith('audio/') for _, mime in payloads)
+                else 'vision' if payloads else 'text'),
         ):
             import time
             started, status = time.monotonic(), 'TRANSPORT_ERROR'

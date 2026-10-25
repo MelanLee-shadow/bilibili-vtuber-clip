@@ -1,7 +1,7 @@
 """Append-only persona facts extracted from sealed final subtitles.
 
 Ledger, migration and projection primitives (design section 3, B1).
-Extraction/screening remain B2 stubs; no production consumer is connected.
+Extraction/screening are standalone B2 functions; no production consumer is connected.
 
 Invariants carried by the types rather than by comments:
 
@@ -422,13 +422,15 @@ def screen_proposals(
 ) -> tuple[ScreenOutcome, ...]:
     """Deterministic screen; can propose, append evidence or screen out, never accept."""
 
-    raise NotImplementedError
+    from .persona_fact_extraction import screen
+    return screen(proposals, ledger=ledger, sealed=sealed).outcomes
 
 
 def observations_from_corrections(sealed: SealedFinalSubtitle) -> tuple[DirectionalSurfaceObservation, ...]:
     """Turn correction records into interval-scoped observations for owner review."""
 
-    raise NotImplementedError
+    from .persona_fact_extraction import observations_from_corrections as observations
+    return observations(sealed)
 
 
 def append_screened(
@@ -440,7 +442,8 @@ def append_screened(
 ) -> PersonaFactLedger:
     """Append PROPOSED / EVIDENCE_APPENDED rows; SCREENED_OUT stays in the receipt."""
 
-    raise NotImplementedError
+    from .persona_fact_extraction import append_screened as append
+    return append(ledger, proposals, outcomes, recorded_at=recorded_at)
 
 
 def apply_review_decisions(

@@ -407,4 +407,5 @@ def test_historical_current_report_persists_json_and_renders_v1_v2(
     assert "v1 仍是唯一的选片、排序与配额口径" in markdown
     assert "UNAVAILABLE: PRODUCTION_TOPIC_HOST_INPUT_PRODUCERS_NOT_WIRED" in markdown
     latest = (tmp_path / "reports" / "latest.md").read_text(encoding="utf-8")
-    assert "不参与选片、配额、发布或上传门" in latest
+    assert "产出 0｜发布核验 0" in latest
+    assert "选片 v1 / v2" not in latest  # detailed comparison stays in the sidecar report

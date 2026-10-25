@@ -42,8 +42,12 @@ def model_ladder(model: str | None = None) -> tuple[str, ...]:
     return (model,)
 
 
-def resolve_models(value: str | None = None) -> tuple[str, ...]:
+def resolve_models(value: str | None = None, *, exact_model: bool = False) -> tuple[str, ...]:
     selected = (value or TOP_CPA_MODEL).split()
+    if exact_model:
+        if not value or len(selected) != 1 or selected[0] not in CPA_MODEL_LADDER:
+            raise ValueError('CPA_EXACT_MODEL_REQUIRES_ONE_CANONICAL_MODEL')
+        return tuple(selected)
     # Compatibility with explicitly supplied non-production test/experiment chains.
     return model_ladder(selected[0]) if len(selected) == 1 else tuple(selected)
 
@@ -72,6 +76,8 @@ def cpa_call_timeout_seconds(env: Mapping[str, str] | None = None, *, models: in
 if __name__ == '__main__':
     if sys.argv[1] == 'models':
         print(' '.join(resolve_models(sys.argv[2] if len(sys.argv) > 2 else None)))
+    elif sys.argv[1] == 'exact-model':
+        print(' '.join(resolve_models(sys.argv[2] if len(sys.argv) > 2 else None, exact_model=True)))
     elif sys.argv[1] == 'timeout':
         print(attempt_timeout_seconds())
     elif sys.argv[1] == 'deadline':

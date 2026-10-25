@@ -19,6 +19,53 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MEMORY_LEDGER = REPO_ROOT / "assets/lidousha/speech_memory_ledger.v1.json"
 
 
+@pytest.mark.parametrize('kind', ['danmaku', 'superchat'])
+def test_xml_chat_writer_and_continuation_share_content_identity(tmp_path, monkeypatch, kind):
+    from src.autoslice.chat_authority import apply_authoritative_chat_evidence
+    from src.autoslice.jingting_chunker import parse_srt_cues
+    text = '小豆老公；； 直女不是你老公'
+    canonical = '小豆老公；； 侄女不是你老公'
+    xml = tmp_path / '22966160_20261024-19-31-06.xml'
+    event = (f'<d p="1.000,1,25,16777215,0,0,0,0">{text}</d>' if kind == 'danmaku'
+             else f'<sc ts="1.000" user="读者">{text}</sc>')
+    xml.write_bytes(_xml_payload(event))
+    piece = {**_piece(xml), 'start_ms': 0, 'end_ms': 30000}
+    spec = {'pieces': [piece]}
+    draft = '1\n00:00:05,000 --> 00:00:09,000\n小豆老公侄女不是你老公\n\n'
+    support = draft.replace('小豆老公侄女不是你老公', canonical)
+    _, chat = producer_text_pipeline._collect_timeline_chat(spec, [30000])
+    output, audit = apply_authoritative_chat_evidence(draft, chat, support_srt_texts=[support])
+    assert audit['applied'], audit
+    row = audit['applied'][0]
+    assert row['exact_text'] == chat[0].text == canonical
+    assert row['evidence_id'] == chat[0].evidence_id
+    kwargs = {'srt_text': output, 'clip_context': {'whole_clip_draft_srt': draft},
+              'authoritative_chat': chat, 'independent_support_srts': [support]}
+    producer_text_pipeline._validate_source_stage_chat_reads(audit['applied'], **kwargs)
+    assert parse_srt_cues(output)[0].text == canonical
+    # Restore the actual old responsible collector mechanism. The writer's
+    # existing spelling projection then disagrees at the real continuation gate.
+    with monkeypatch.context() as old:
+        old.setattr(producer_text_pipeline, 'prepare_chat_evidence', list)
+        _, raw_chat = producer_text_pipeline._collect_timeline_chat(spec, [30000])
+    with pytest.raises(producer_text_pipeline.CurrentTextContinuationError,
+                       match='CURRENT_SOURCE_STAGE_APPLIED_UNSUPPORTED'):
+        producer_text_pipeline._validate_source_stage_chat_reads(
+            audit['applied'], **{**kwargs, 'authoritative_chat': raw_chat})
+    # Source-byte drift must still fail even when normalized words and IDs stay
+    # identical. Restoring an equivalent spelling is not authority to rebind SHA.
+    xml.write_bytes(_xml_payload(event.replace('直女', '侄女')))
+    _, drifted = producer_text_pipeline._collect_timeline_chat(spec, [30000])
+    if kind == 'danmaku':
+        assert drifted[0].evidence_id == chat[0].evidence_id
+    # XML SC event IDs also bind source bytes, so that lane rejects at identity.
+    reason = ('CURRENT_SOURCE_STAGE_APPLIED_CHAT_OR_TEXT_DRIFT' if kind == 'danmaku'
+              else 'CURRENT_SOURCE_STAGE_APPLIED_UNSUPPORTED')
+    with pytest.raises(producer_text_pipeline.CurrentTextContinuationError, match=reason):
+        producer_text_pipeline._validate_source_stage_chat_reads(
+            audit['applied'], **{**kwargs, 'authoritative_chat': drifted})
+
+
 def _xml_payload(*rows: str) -> bytes:
     return ("<?xml version='1.0' encoding='utf-8'?><i>" + "".join(rows) + "</i>").encode("utf-8")
 

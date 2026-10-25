@@ -434,16 +434,26 @@ def test_identical_persisted_judge_content_replays_once_per_cold_read(monkeypatc
     monkeypatch.setattr(spr, "compile_judge_scope", replay)
     spr.validate_persisted_judge_scopes({"a": node})
     spr.validate_persisted_judge_scopes({"a": node})
-    assert len(calls) == 2  # outside a cold read every validation replays
+    assert len(calls) == 1  # v5 retains successful complete-input checks per process
     with cold_read_session():
         spr.validate_persisted_judge_scopes({"a": node})
         spr.validate_persisted_judge_scopes({"b": [copy.deepcopy(node)]})
-    assert len(calls) == 3  # same content, one replay inside the session
-    monkeypatch.setattr(spr, "compile_judge_scope", lambda *_args: {"span_compilation": {}})
+    assert len(calls) == 1  # a cold-read session cannot invalidate unchanged evidence
+    # A different immutable input still reaches the original compiler; failed
+    # checks never become successful memo entries, even within one cold read.
+    changed_bare = {"cue": bare["cue"] + " changed"}
+    changed_unsigned = {**unsigned, "judge_sha256": spr.digest(changed_bare)}
+    changed_outcome = {**changed_unsigned, "outcome_sha256": spr.digest(changed_unsigned)}
+    changed = {**changed_bare, "span_compilation": changed_outcome}
+    def reject(*_args):
+        calls.append(1)
+        return {"span_compilation": {}}
+    monkeypatch.setattr(spr, "compile_judge_scope", reject)
     with cold_read_session():
         for _ in range(2):  # a failed replay is never remembered
             with pytest.raises(ValueError, match="SPAN_COMPILATION_REPLAY_DRIFT"):
-                spr.validate_persisted_judge_scopes({"a": node})
+                spr.validate_persisted_judge_scopes({"a": changed})
+    assert len(calls) == 3
 
 
 # --- an unfinished review stage persisted by the gate (姐姐位 post-run) -------

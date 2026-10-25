@@ -31,7 +31,13 @@ repo_python() {
 # No implicit downgrade to GPT-5.6/5.5/5.4 and no automatic Astra escalation.
 # A top-model pin still uses the shared ladder; explicit experimental routes stay pinned.
 POLICY="$(dirname "$0")/../src/autoslice/cpa_model_ladder.py"
-MODELS="$(python3 "$POLICY" models "${3:-${CPA_CHAT_MODELS:-${CPA_CHAT_MODEL:-}}}")"
+if [ "${6:-}" = --exact-model ]; then
+  MODELS="$(python3 "$POLICY" exact-model "${3:-}")"
+elif [ -n "${6:-}" ]; then
+  echo "unknown CPA model routing option" >&2; exit 2
+else
+  MODELS="$(python3 "$POLICY" models "${3:-${CPA_CHAT_MODELS:-${CPA_CHAT_MODEL:-}}}")"
+fi
 EFFORT="${4:-${CPA_REASONING_EFFORT:-medium}}"
 ATTEMPTS_PER_MODEL="${5:-3}"
 

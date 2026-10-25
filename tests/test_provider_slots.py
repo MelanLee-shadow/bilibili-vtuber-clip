@@ -82,10 +82,10 @@ def test_provider_permit_releases_after_exception(tmp_path: Path, monkeypatch: p
         assert lease.slot_index == 0
 
 
-@pytest.mark.parametrize("value", ["0", "65", "not-an-int"])
+@pytest.mark.parametrize("value", ["0", "-1", "not-an-int"])
 def test_provider_capacity_env_is_strict(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: str) -> None:
     monkeypatch.setenv("AUTOSLICE_PROVIDER_CONCURRENCY", value)
-    with pytest.raises(ProviderSlotError, match="1 to 64"):
+    with pytest.raises(ProviderSlotError, match="positive integer"):
         with provider_slot(tmp_path):
             pass
 
@@ -221,7 +221,7 @@ def test_provider_slot_rejects_post_flock_path_replacement(
     def replace_after_lock(descriptor: int, operation: int) -> None:
         nonlocal replaced
         real_flock(descriptor, operation)
-        if not replaced and operation & provider_slots.fcntl.LOCK_EX:
+        if not replaced and slot.exists() and os.fstat(descriptor).st_ino == slot.stat().st_ino and operation & provider_slots.fcntl.LOCK_EX:
             replaced = True
             slot.unlink()
             slot.write_bytes(b"replacement")

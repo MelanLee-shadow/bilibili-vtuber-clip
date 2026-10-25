@@ -1,8 +1,8 @@
 """Channel census: coarse per-window scorecard grades -> where-to-look clues.
 
-Offline generator (design: ``docs/design/channel-knowledge.md``).  Nothing in
-the production pipeline imports this module.  Transcription/window labeling and
-the production asset loader remain later-stage stubs.
+Offline generator and optional recall input (design: ``docs/design/channel-knowledge.md``).
+Transcription/window labeling is available through the offline CLI. Only recall
+consumes the generated asset; scoring and release gates do not read it.
 
 The census measures recorded streams with the *same* dimensions that
 ``selection_scorecard`` uses for candidates, so "what makes a good slice" keeps
@@ -18,12 +18,13 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 import hashlib
 import json
 from pathlib import Path
+import re
 import unicodedata
-from typing import Literal, Protocol, cast, get_args
+from typing import Literal, Protocol, TypeAlias, cast, get_args
 
 from src.autoslice.selection_scorecard import DIMENSION_WEIGHTS
 
@@ -32,6 +33,9 @@ CLUE_SET_SCHEMA = "channel-census-clues.v1"
 GENERATOR_VERSION = "channel-census-clues.v1"
 CENSUS_CLUES_ASSET_KEY = "selection_census_clues"
 CENSUS_CONFIG_ASSET_KEY = "channel_census_config"
+CENSUS_CONFIG_SCHEMA = "channel-census-config.v1"
+MAX_CENSUS_INPUT_CHARS = 2500
+CensusJSON: TypeAlias = None | bool | int | float | str | list["CensusJSON"] | dict[str, "CensusJSON"]
 
 # A five-minute window is not a candidate: whether a stranger can follow a
 # clip depends on the final boundary, so ``self_contained`` is never graded.
@@ -132,6 +136,7 @@ CLUE_PREAMBLE_ZH = (
     "排除或限额；普查频率不能代替本次候选的片内证据。"
 )
 DUPLICATE_HANDWRITTEN_SECTION_REASON = "DUPLICATE_HANDWRITTEN_CLUE_SECTION"
+HANDWRITTEN_CLUE_SECTION_HEADING = "## 去哪找：李豆沙的看点线索（2026-10-25 录播普查）"
 
 # Declaration order is descriptive and stable, never a value ordering.
 ACTIVITY_ORDER: tuple[HostActivity, ...] = get_args(HostActivity)
@@ -363,7 +368,84 @@ def build_census_label_prompt(
     ``config.metric_dimension_section_heading``; nothing is restated here.
     """
 
-    raise NotImplementedError
+    lint_census_config(config, metric_text=metric_text)
+    section = extract_metric_section(metric_text, heading=config.metric_dimension_section_heading)
+    dimensions = json.dumps(dict.fromkeys(CENSUS_WINDOW_DIMENSIONS), ensure_ascii=False)
+    return (
+        f"## 通用窗口合同\n主播：{host_display_name}\n"
+        "输入为 window_id、起止秒、粗转写（最多2500字）、弹幕条数、asr_missing。"
+        "粗 ASR 不补造，只评本窗证据；朗读、引述、角色台词和播放内容不算主播本人立场。"
+        "缺转写写“转写缺失”；不能评的维度写 null（未测），不写0。无转写证据时所有维度为 null。\n"
+        "只返回一个严格 JSON 对象，字段恰为：window_id（照抄）、host_activity、"
+        "secondary_activities（数组）、topic（不超过12字）、grades、audience_interest_hits（id数组）、"
+        "persons（现实中被提到或在场的具体他人数组）、address_terms（实际称呼数组）、"
+        "trigger_kinds（数组）、quoted_or_roleplay（布尔）、summary（不超过20字）。"
+        "不产出 Tier、分数、candidate_quality 或综合价值结论。\n"
+        "主活动为占时最多的活动，其他活动写 secondary_activities。活动闭集："
+        + ", ".join(a for a in ACTIVITY_ORDER if a != "UNSPECIFIED")
+        + "。触发来源闭集：" + ", ".join(get_args(TriggerKind)) + "。\n\n"
+        + section + "\n"
+        "窗口规则：只用0–3档，不给4，不评 self_contained；档义以以上 metric 原文为准。"
+        f"grades 的键必须恰为：{dimensions}。每个档位的持久化 basis 为 CENSUS_LABEL。\n\n"
+        "## 受众兴趣索引\n"
+        + json.dumps([asdict(i) for i in config.audience_interests], ensure_ascii=False)
+        + "\n"
+    )
+
+
+def extract_metric_section(metric_text: str, *, heading: str) -> str:
+    """Return an exact Markdown section, through subheadings but not its next peer."""
+
+    lines = metric_text.splitlines(keepends=True)
+    matches = [i for i, line in enumerate(lines) if line.strip() == heading]
+    if len(matches) != 1 or not re.match(r"^#{1,6} ", heading):
+        raise ValueError("CENSUS_METRIC_SECTION_NOT_UNIQUE")
+    start = matches[0]
+    level = len(heading.split(" ", 1)[0])
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        if match := re.match(r"^(#{1,6})\s", lines[i]):
+            if len(match[1]) <= level:
+                end = i
+                break
+    return "".join(lines[start:end])
+
+
+def lint_census_config(config: CensusConfig, *, metric_text: str) -> None:
+    section = extract_metric_section(metric_text, heading=config.metric_dimension_section_heading)
+    lines = section.splitlines()
+    starts = [i for i, line in enumerate(lines)
+              if line.startswith(config.metric_audience_paragraph_marker)]
+    if not config.metric_audience_paragraph_marker or len(starts) != 1:
+        raise ValueError("CENSUS_AUDIENCE_PARAGRAPH_NOT_UNIQUE")
+    start = starts[0]
+    end = next((i for i in range(start + 1, len(lines))
+                if re.match(r"^(?:\d+[.)]\s|#{1,6}\s)", lines[i])), len(lines))
+    paragraph = "\n".join(lines[start:end])
+    ids: set[str] = set()
+    for interest in config.audience_interests:
+        if (not interest.interest_id.strip() or interest.interest_id in ids or
+                not interest.label_zh.strip() or not interest.description_zh.strip()):
+            raise ValueError("INVALID_CENSUS_AUDIENCE_INTEREST")
+        ids.add(interest.interest_id)
+        if interest.label_zh not in paragraph:
+            raise ValueError(f"CENSUS_INTEREST_NOT_IN_METRIC: {interest.label_zh}")
+
+
+def parse_census_config(raw: object, *, profile_id: str) -> CensusConfig:
+    row = _json_object(raw)
+    if row.get("schema_version") != CENSUS_CONFIG_SCHEMA:
+        raise ValueError("INVALID_CENSUS_CONFIG_SCHEMA")
+    if row.get("profile_id") != profile_id:
+        raise ValueError("CENSUS_PROFILE_MISMATCH")
+    interests = row.get("audience_interests")
+    if not isinstance(interests, list):
+        raise ValueError("INVALID_CENSUS_AUDIENCE_INTERESTS")
+    return CensusConfig(profile_id, tuple(
+        AudienceInterest(_json_text(item, "interest_id"), _json_text(item, "label_zh"),
+                         _json_text(item, "description_zh")) for item in interests
+    ), _json_text(row, "metric_dimension_section_heading"),
+        _json_text(row, "metric_audience_paragraph_marker"))
 
 
 def build_census_windows(
@@ -371,10 +453,109 @@ def build_census_windows(
     *,
     recording_group: str,
     window_seconds: int,
+    duration_ms: int | None = None,
+    danmaku_starts_ms: Sequence[int] = (),
+    asr_missing: bool = False,
 ) -> tuple[CensusWindowInput, ...]:
     """Assign each cue to the window containing its start (cues are not split)."""
 
-    raise NotImplementedError
+    if type(window_seconds) is not int or window_seconds <= 0:
+        raise ValueError("INVALID_CENSUS_WINDOW_SECONDS")
+    for cue in cues:
+        if (type(cue.start_ms) is not int or type(cue.end_ms) is not int or
+                cue.start_ms < 0 or cue.end_ms <= cue.start_ms or not isinstance(cue.text, str)):
+            raise ValueError("INVALID_CENSUS_CUE")
+    if duration_ms is None:
+        duration_ms = max((cue.end_ms for cue in cues), default=0)
+    if type(duration_ms) is not int or duration_ms < 0:
+        raise ValueError("INVALID_CENSUS_DURATION")
+    if any(c.start_ms >= duration_ms for c in cues):
+        raise ValueError("CENSUS_CUE_OUTSIDE_RECORDING")
+    if any(type(t) is not int or not 0 <= t < duration_ms for t in danmaku_starts_ms):
+        raise ValueError("CENSUS_DANMAKU_OUTSIDE_RECORDING")
+    width = window_seconds * 1000
+    count = (duration_ms + width - 1) // width
+    buckets: list[list[CensusTranscriptCue]] = [[] for _ in range(count)]
+    for cue in sorted(cues, key=lambda c: (c.start_ms, c.end_ms, c.text)):
+        buckets[cue.start_ms // width].append(cue)
+    counts = Counter(t // width for t in danmaku_starts_ms)
+    return tuple(CensusWindowInput(
+        f"{recording_group}:{i:04}", recording_group, i * window_seconds,
+        min((i + 1) * window_seconds, (duration_ms + 999) // 1000),
+        tuple(bucket), counts[i], asr_missing,
+    ) for i, bucket in enumerate(buckets))
+
+
+def census_window_text(window: CensusWindowInput) -> str:
+    return "\n".join(c.text for c in window.cues)[:MAX_CENSUS_INPUT_CHARS]
+
+
+def parse_census_window_label(
+    raw: object, *, window: CensusWindowInput, config: CensusConfig,
+) -> CensusWindow:
+    """Validate the exact model JSON contract before it can become a completed stage."""
+
+    row = _json_object(raw)
+    if set(row) != {"window_id", "host_activity", "secondary_activities", "topic", "grades",
+                    "audience_interest_hits", "persons", "address_terms", "trigger_kinds",
+                    "quoted_or_roleplay", "summary"}:
+        raise ValueError("INVALID_CENSUS_LABEL_FIELDS")
+    if row["window_id"] != window.window_id:
+        raise ValueError("CENSUS_LABEL_WINDOW_MISMATCH")
+    activity = _json_text(row, "host_activity")
+    activities = tuple(a for a in ACTIVITY_ORDER if a != "UNSPECIFIED")
+    secondary = _json_strings(row, "secondary_activities")
+    triggers = _json_strings(row, "trigger_kinds")
+    hits = _json_strings(row, "audience_interest_hits")
+    if activity not in activities or any(a not in activities or a == activity for a in secondary):
+        raise ValueError("INVALID_HOST_ACTIVITY")
+    if any(t not in get_args(TriggerKind) for t in triggers):
+        raise ValueError("INVALID_CENSUS_TRIGGER")
+    if any(h not in {i.interest_id for i in config.audience_interests} for h in hits):
+        raise ValueError("INVALID_CENSUS_INTEREST_HIT")
+    grades = _json_object(row["grades"])
+    if set(grades) != set(CENSUS_WINDOW_DIMENSIONS):
+        raise ValueError("INVALID_WINDOW_DIMENSIONS")
+    parsed_grades = tuple(DimensionGrade(
+        d, None if grades[d] is None else _coarse_grade(cast(int, grades[d])), "CENSUS_LABEL",
+    ) for d in CENSUS_WINDOW_DIMENSIONS)
+    text = census_window_text(window)
+    if (window.asr_missing or not text.strip()) and any(g.grade is not None for g in parsed_grades):
+        raise ValueError("CENSUS_GRADE_WITHOUT_TRANSCRIPT")
+    topic = _json_text(row, "topic", allow_empty=True)
+    summary = _json_text(row, "summary", allow_empty=True)
+    if len(topic) > 12 or len(summary) > 20 or type(row["quoted_or_roleplay"]) is not bool:
+        raise ValueError("INVALID_CENSUS_LABEL_TEXT")
+    return CensusWindow(
+        window.window_id, window.recording_group, window.start_s, window.end_s,
+        window.asr_missing, len(text), cast(HostActivity, activity),
+        cast(tuple[HostActivity, ...], secondary), topic, parsed_grades, hits,
+        _json_strings(row, "persons"), _json_strings(row, "address_terms"),
+        cast(tuple[TriggerKind, ...], triggers), row["quoted_or_roleplay"], summary,
+    )
+
+
+def _json_object(raw: object) -> dict[str, CensusJSON]:
+    if not isinstance(raw, dict) or any(not isinstance(k, str) for k in raw):
+        raise ValueError("INVALID_CENSUS_JSON_OBJECT")
+    return cast(dict[str, CensusJSON], raw)
+
+
+def _json_text(raw: object, key: str, *, allow_empty: bool = False) -> str:
+    value = _json_object(raw).get(key)
+    if not isinstance(value, str) or (not allow_empty and not value.strip()):
+        raise ValueError(f"INVALID_CENSUS_TEXT: {key}")
+    return value
+
+
+def _json_strings(raw: object, key: str) -> tuple[str, ...]:
+    value = _json_object(raw).get(key)
+    if not isinstance(value, list) or any(not isinstance(v, str) or not v.strip() for v in value):
+        raise ValueError(f"INVALID_CENSUS_STRING_ARRAY: {key}")
+    result = cast(list[str], value)
+    if len(set(result)) != len(result):
+        raise ValueError(f"DUPLICATE_CENSUS_STRING: {key}")
+    return tuple(result)
 
 
 def adapt_legacy_census_label(
@@ -434,9 +615,11 @@ def generate_census_clues(
     *,
     config: CensusConfig,
     manifest: CensusInputManifest,
+    metric_text: str = "",
 ) -> CensusClueSet:
     """Deterministic clue generation (design §2.3); no model call."""
 
+    refuse_if_handwritten_clue_section(metric_text, section_heading=HANDWRITTEN_CLUE_SECTION_HEADING)
     if config.profile_id != manifest.profile_id:
         raise ValueError("CENSUS_PROFILE_MISMATCH")
     if len({w.window_id for w in windows}) != len(windows):
@@ -602,7 +785,95 @@ def render_census_report(windows: Sequence[CensusWindow], clue_set: CensusClueSe
 def load_census_clue_set(path: Path, *, profile_id: str) -> tuple[CensusClueSet | None, CensusCluesStatus]:
     """Fail-open loader: absent/invalid assets yield ``(None, status)``, never raise."""
 
-    raise NotImplementedError
+    return load_census_recall_input(path, profile_id=profile_id)[0:2]
+
+
+def load_census_recall_input(
+    path: Path | None, *, profile_id: str,
+) -> tuple[CensusClueSet | None, CensusCluesStatus, str]:
+    """Read once: the returned digest identifies exactly the parsed input bytes."""
+
+    if path is None:
+        return None, "ABSENT", ""
+    try:
+        payload = path.read_bytes()
+    except FileNotFoundError:
+        return None, "ABSENT", ""
+    except OSError:
+        return None, "INVALID", ""
+    digest = hashlib.sha256(payload).hexdigest()
+    try:
+        row = _json_object(json.loads(payload))
+        _clue_keys(row, CensusClueSet)
+        if row["schema_version"] != CLUE_SET_SCHEMA:
+            raise ValueError("INVALID_CLUE_SET_SCHEMA")
+        asset_profile = _json_text(row, "profile_id")
+        if asset_profile != profile_id:
+            return None, "PROFILE_MISMATCH", digest
+        if row["preamble_zh"] != CLUE_PREAMBLE_ZH:
+            raise ValueError("INVALID_CLUE_PREAMBLE")
+        prov = _json_object(row["provenance"])
+        _clue_keys(prov, ClueProvenance)
+        provenance = ClueProvenance(
+            _json_text(prov, "census_id"), _json_text(prov, "census_date"),
+            _clue_sha256(prov, "input_sha256"), _json_text(prov, "generator_version"),
+            _clue_sha256(prov, "label_prompt_sha256"), _clue_count(prov, "window_count"),
+            _clue_count(prov, "valid_window_count"),
+        )
+        if provenance.valid_window_count > provenance.window_count:
+            raise ValueError("INVALID_CLUE_WINDOW_COUNTS")
+        raw_clues = row["clues"]
+        if not isinstance(raw_clues, list):
+            raise ValueError("INVALID_CLUES")
+        clues: list[CensusClue] = []
+        for raw_clue in raw_clues:
+            clue = _json_object(raw_clue)
+            _clue_keys(clue, CensusClue)
+            evidence = _json_object(clue["evidence"])
+            _clue_keys(evidence, EvidenceRatio)
+            ratio = EvidenceRatio(_clue_count(evidence, "numerator"),
+                                  _clue_count(evidence, "denominator"),
+                                  _json_text(evidence, "definition_zh"))
+            if ratio.numerator > ratio.denominator:
+                raise ValueError("INVALID_CLUE_RATIO")
+            clues.append(CensusClue(
+                _json_text(clue, "clue_id"), cast(ClueKind, _json_text(clue, "kind")),
+                _json_strings(clue, "dimension_pointers"),
+                cast(tuple[HostActivity, ...], _json_strings(clue, "host_activities")),
+                _json_text(clue, "observation_question"), _json_strings(clue, "recognition_cues"),
+                ratio, _json_strings(clue, "example_window_ids"),
+                cast(GradeBasis, _json_text(clue, "measurement_basis")),
+            ))
+        if len({c.clue_id for c in clues}) != len(clues):
+            raise ValueError("DUPLICATE_CLUE_ID")
+        result = CensusClueSet(CLUE_SET_SCHEMA, asset_profile, provenance, CLUE_PREAMBLE_ZH, tuple(clues))
+        render_census_clue_block(result)
+        return result, "VALID", digest
+    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
+        return None, "INVALID", digest
+
+
+def _clue_keys(
+    row: dict[str, CensusJSON],
+    cls: type[CensusClueSet | ClueProvenance | CensusClue | EvidenceRatio],
+) -> None:
+    # Exact schemas also reject smuggled weight/exclusion fields at every level.
+    if set(row) != {field.name for field in fields(cls)}:
+        raise ValueError("INVALID_CLUE_FIELDS")
+
+
+def _clue_count(row: dict[str, CensusJSON], key: str) -> int:
+    value = row.get(key)
+    if type(value) is not int or value < 0:
+        raise ValueError("INVALID_CLUE_COUNT")
+    return value
+
+
+def _clue_sha256(row: dict[str, CensusJSON], key: str) -> str:
+    value = _json_text(row, key)
+    if re.fullmatch(r"[0-9a-f]{64}", value) is None:
+        raise ValueError("INVALID_CLUE_SHA256")
+    return value
 
 
 def refuse_if_handwritten_clue_section(metric_text: str, *, section_heading: str) -> None:

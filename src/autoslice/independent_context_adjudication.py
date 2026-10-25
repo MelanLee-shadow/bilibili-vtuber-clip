@@ -213,6 +213,18 @@ def _source_context_media_binding(
 
 
 
+def _bound_derived_media_sha256(path_value: object, expected: object) -> str | None:
+    """Reopen bound derived bytes without moving their provenance identity."""
+    if not isinstance(path_value, str) or not isinstance(expected, str):
+        return None
+    from .bound_media_recovery import resolve_bound_media
+    try:
+        physical = resolve_bound_media(Path(path_value), expected)
+    except (ValueError, OSError):
+        return None
+    return _file_sha256(str(physical))
+
+
 def _final_recut_media_binding(
     current_request: Mapping[str, Any], media_path: str, media_sha: str,
     provenance_path: Path, provenance: Mapping[str, Any],
@@ -234,13 +246,13 @@ def _final_recut_media_binding(
             or not all(isinstance(row, Mapping) for row in pieces)
             or not _path_matches(final.get("output_path"), media_path)
             or not _same_digest(final.get("output_sha256"), media_sha)
-            or not _same_digest(_file_sha256(media_path), media_sha)):
+            or not _same_digest(_bound_derived_media_sha256(media_path, media_sha), media_sha)):
         return None
     parent_path = final.get("source_path")
     if (not isinstance(parent_path, str) or Path(parent_path).is_symlink()
             or _path_matches(parent_path, media_path)):
         return None
-    parent_sha = _file_sha256(parent_path)
+    parent_sha = _bound_derived_media_sha256(parent_path, final.get("source_sha256"))
     parent_proof_path = Path(parent_path).with_suffix(".provenance.json")
     parent_proof = _read_json(str(parent_proof_path))
     # Normal final recuts are made from the producer's padded concatenation.
@@ -366,6 +378,7 @@ def _range_media_source_binding(
     pieces: list[dict[str, Any]] = []
     seen_piece_paths: set[str] = set()
     seen_piece_inodes: set[tuple[int, int]] = set()
+    seen_recovered_inodes: set[tuple[int, int]] = set()
     previous_end_by_source: dict[str, int] = {}
     for input_row in padded["inputs"]:
         if not isinstance(input_row, Mapping) or not isinstance(input_row.get("path"), str):
@@ -373,20 +386,38 @@ def _range_media_source_binding(
         piece_path = Path(input_row["path"])
         # _file_sha256 rejects links, but check the path before resolving it so
         # a symlink cannot pass the provenance path comparison below.
-        if piece_path.is_symlink() or not piece_path.is_file():
+        if piece_path.is_symlink():
+            return None
+        physical_piece = piece_path
+        if not piece_path.exists():
+            from .bound_media_recovery import resolve_bound_media
+            try:
+                physical_piece = resolve_bound_media(piece_path, input_row.get("sha256"))
+            except (ValueError, OSError):
+                return None
+        original_present = physical_piece.absolute() == piece_path.absolute()
+        if not physical_piece.is_file() or physical_piece.is_symlink():
             return None
         piece_key = str(piece_path)
         try:
-            piece_stat = piece_path.stat()
+            piece_stat = physical_piece.stat()
         except OSError:
             return None
         piece_identity = str(piece_path.resolve())
         inode_identity = (piece_stat.st_dev, piece_stat.st_ino)
-        if piece_identity in seen_piece_paths or inode_identity in seen_piece_inodes:
+        if (piece_identity in seen_piece_paths or inode_identity in seen_piece_inodes
+                or (original_present and inode_identity in seen_recovered_inodes)):
             return None
         seen_piece_paths.add(piece_identity)
-        seen_piece_inodes.add(inode_identity)
-        piece_sha = _file_sha256(piece_key)
+        # A runtime copy can serve several distinct, non-overlapping logical
+        # pieces with identical bytes. Keep original path/clock provenance and
+        # reject aliases of any extant original in either iteration order;
+        # recovery placement is not a piece ID.
+        if original_present:
+            seen_piece_inodes.add(inode_identity)
+        else:
+            seen_recovered_inodes.add(inode_identity)
+        piece_sha = _file_sha256(str(physical_piece))
         if piece_sha is None or not _same_digest(input_row.get("sha256"), piece_sha):
             return None
 
@@ -1168,6 +1199,53 @@ def _validate_range_acoustic_observation(
     }, None
 
 
+def _bound_range_hashes(bindings: Mapping, roles: tuple[str, ...],
+                        input_role: str) -> tuple[dict[str, str | None], bool]:
+    from .bound_media_recovery import BoundMediaUnavailable, audio_recipe, resolve_bound_media
+
+    hashes = {role: _file_sha256(bindings.get(f"{role}_path")) for role in roles}
+    # Reconstruction recipes are data from the immutable writer input. Check
+    # every non-media binding before using any of its fields as a recipe.
+    media = {"source_media", "audio_clip"}
+    if any(not _same_digest(bindings.get(f"{role}_sha256"), hashes[role])
+           for role in roles if role not in media):
+        return hashes, False
+    for role in media:
+        raw_path = bindings.get(f"{role}_path")
+        if isinstance(raw_path, str):
+            path = Path(raw_path)
+            if (path.exists() or path.is_symlink()) and not _same_digest(
+                    bindings.get(f"{role}_sha256"), hashes[role]):
+                return hashes, False  # tamper/read drift is never a cache miss
+    doc = _read_json(bindings.get(f"{input_role}_path")) or {}
+    recipe = None
+    if input_role == "segmented_input":
+        if str(bindings.get("audio_clip_path") or "").endswith(".mp4"):
+            recipe = audio_recipe(doc.get("source_media"), doc.get("source_target_ms"), "black_frame")
+    else:
+        witness = doc.get("witness_request") or {}
+        offset = doc.get("source_media_timeline_offset_ms")
+        if (isinstance(witness, Mapping) and type(offset) is int
+                and type(witness.get("matched_start_ms")) is int
+                and type(witness.get("matched_end_ms")) is int):
+            recipe = audio_recipe(
+                {"path": doc.get("source_media_path"), "sha256": doc.get("source_media_sha256")},
+                [witness["matched_start_ms"] + offset, witness["matched_end_ms"] + offset],
+                "native_exact_mp3")
+    missing = False
+    for role in media:
+        path, expected = bindings.get(f"{role}_path"), bindings.get(f"{role}_sha256")
+        if not isinstance(path, str) or not isinstance(expected, str):
+            continue
+        try:
+            resolved = resolve_bound_media(Path(path), expected,
+                recipe=recipe if role == "audio_clip" else None)
+            hashes[role] = _file_sha256(str(resolved))
+        except BoundMediaUnavailable:
+            missing = True
+    return hashes, missing
+
+
 def validate_native_range_context_observation(
     srt_text: str,
     current_request: Mapping[str, Any],
@@ -1190,7 +1268,9 @@ def validate_native_range_context_observation(
         "source_media", "reviewed_srt", "raw_response",
     )
     paths = {role: bindings.get(f"{role}_path") for role in roles}
-    hashes = {role: _file_sha256(path) for role, path in paths.items()}
+    hashes, missing = _bound_range_hashes(bindings, roles, "input")
+    if missing:
+        return None, "BOUND_MEDIA_REACQUISITION_REQUIRED"
     if any(value is None for value in hashes.values()) or any(
         not _same_digest(bindings.get(f"{role}_sha256"), hashes[role])
         for role in roles
@@ -1316,8 +1396,10 @@ def validate_native_range_context_observation(
     ):
         return None, "NATIVE_RANGE_PROVIDER_ARTIFACT_DRIFT"
     try:
+        from .bound_media_recovery import resolve_bound_media
+        audio_path = resolve_bound_media(Path(paths["audio_clip"]), hashes["audio_clip"])
         rebuilt = exact_target_evidence(
-            metadata, audio=Path(paths["audio_clip"]).read_bytes(),
+            metadata, audio=audio_path.read_bytes(),
             source_sha256=hashes["source_media"], start_ms=prepared.physical_start_ms,
             end_ms=prepared.physical_end_ms,
             prefer_provider_text=native.get("transcript_basis") == "provider_full_crop_text",
@@ -1528,7 +1610,9 @@ def validate_segmented_range_context_observation(
     roles = ("segmented_input", "execution", "raw_response", "provider_stdout",
              "prompt", "audio_clip", "source_media", "reviewed_srt")
     paths = {role: bindings.get(f"{role}_path") for role in roles}
-    hashes = {role: _file_sha256(path) for role, path in paths.items()}
+    hashes, missing = _bound_range_hashes(bindings, roles, "segmented_input")
+    if missing:
+        return None, "BOUND_MEDIA_REACQUISITION_REQUIRED"
     if any(value is None for value in hashes.values()) or any(
         not _same_digest(bindings.get(f"{role}_sha256"), hashes[role]) for role in roles
     ):

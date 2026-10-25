@@ -21,13 +21,13 @@ FINDING = {"cue_index": 2, "suspect": "了", "suggestion": "说了",
            "proposed_full_cue": "说了", "repair_class": "spoken_unit"}
 
 
-def missing_proposal_case():
+def missing_proposal_case(*, clip_context=None):
     finding = {"cue_index": 2, "suspect": "了", "suggestion": None,
                "proposed_full_cue": None, "repair_class": "phonetic"}
     from src.autoslice.final_review_auditor import _candidate_blind_missing_proposal_scaffold
     request = build_context_adjudication_request(
         SOURCE, _candidate_blind_missing_proposal_scaffold(SOURCE, finding),
-        source_media_timeline_offset_ms=30000,
+        source_media_timeline_offset_ms=30000, clip_context=clip_context,
     )
     gate = {"schema_version": "subtitle-missing-proposal-cpa-convergence.v1",
             "status": "UNRESOLVED", "decision": "UNRESOLVED", "needs_audio": True,

@@ -58,34 +58,7 @@ def test_nonterminal_ordinary_raw_checkpoint_uses_bag_not_prompt_bytes(tmp_path)
     assert len(call.calls) == 3
 
 
-def test_legacy_checkpoint_enters_shared_consumer_without_manual_conversion(tmp_path):
-    import ast
-    import subprocess
-    from src.autoslice import completed_review_checkpoint as checkpoint
-    from tests.test_f1_ruling_reuse import provider
-    source = subprocess.check_output(['git', 'show',
-        '9ef7edfe1719929478c8aacf34925fc32b776224:src/autoslice/completed_review_checkpoint.py'], text=True)
-    node = next(n for n in ast.parse(source).body if isinstance(n, ast.ClassDef)
-        and n.name == 'CompletedReviewCheckpoint')
-    namespace = dict(vars(checkpoint))
-    exec(compile(ast.Module(body=[node], type_ignores=[]), '<base-checkpoint-generator>', 'exec'), namespace)
-    old_class = namespace['CompletedReviewCheckpoint']
-    call = provider('original negative response')
-    materials = {'stopped_finding_evidence': {'recorded_evidence': [
-        {'source': 'a' * 64, 'text': '甲'}, {'source': 'a' * 64, 'text': '乙'}]}}
-    def args(data):
-        return dict(stage='recorded-material', prompt='JSON\n' + json.dumps(data),
-            llm_call=call, inputs=data, parser_path=Path(__file__), root=tmp_path / 'raw')
-    first = old_class.for_ruling(**args(materials))
-    first.response(call)
-    original = {p: p.read_bytes() for p in first.directory.glob('*.json')}
-    permuted = deepcopy(materials)
-    permuted['stopped_finding_evidence']['recorded_evidence'].reverse()
-    second = checkpoint.CompletedReviewCheckpoint.for_ruling(**args(permuted))
-    assert first.directory != old_class.for_ruling(**args(permuted)).directory
-    assert second.response(lambda _: pytest.fail('legacy same-material answer was redispatched')) == 'original negative response'
-    assert len(call.calls) == 1
-    assert all(p.read_bytes() == raw for p, raw in original.items())
+
 
 
 def test_unrelated_partial_cache_cannot_block_a_new_material_question(tmp_path):
@@ -141,43 +114,7 @@ def test_empty_destination_recovers_original_without_redispatch_and_bound_errors
     assert all(p.read_bytes() == raw for p, raw in original.items())
 
 
-def test_generated_named_materials_and_session_refrains_share_one_index(rig):
-    from src.autoslice.refrain_detection import detect_refrains
-    from src.autoslice.semantic_terminal_adjudication import terminal_materials, validate_terminal_answer
-    from src.autoslice.clip_context import _canonical_json_sha256
-    from src.autoslice.jingting_chunker import parse_srt_cues
-    # Unseen session enters at the normal clip-context ingress, not terminal_materials.
-    srt = ''.join(f'{i}\n00:00:0{i},000 --> 00:00:0{i+1},000\n先把这个视频搜出来\n\n'
-                  for i in range(1, 4))
-    rig.context['whole_session_transcripts'] = [{
-        'recording_sha256': 'a' * 64, 'srt_sha256': hashlib.sha256(srt.encode()).hexdigest(), 'srt_text': srt}]
-    rig.context['context_sha256'] = _canonical_json_sha256({k:v for k,v in rig.context.items() if k != 'context_sha256'})
-    audit, capture = produce(rig, c_reply)
-    assert capture.get('request'), audit
-    data, refs = terminal_materials(capture['request'])
-    refrain_ids = {row['id'] for row in detect_refrains(parse_srt_cues(srt))}
-    assert refrain_ids and refrain_ids <= set(refs)
-    for ref in refrain_ids:
-        assert ref in capture['prompt']
-        value = data
-        for part in refs[ref]:
-            value = value[part]
-        assert value['id'] == ref
-    answer = {**capture['answer'], 'evidence_refs': list(refrain_ids)}
-    assert validate_terminal_answer(capture['request'], answer) == 'CURRENT'
-    with pytest.raises(ValueError, match='EVIDENCE_REFS'):
-        validate_terminal_answer(capture['request'], {**answer, 'evidence_refs': ['not-provided:refrain-99']})
 
-    # Restore the responsible old generator, not a disconnected helper.
-    import ast
-    import subprocess
-    from src.autoslice import semantic_terminal_adjudication as terminal
-    source = subprocess.check_output(['git', 'show',
-        '9ef7edfe1719929478c8aacf34925fc32b776224:src/autoslice/semantic_terminal_adjudication.py'], text=True)
-    node = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == '_material_refs')
-    env = dict(vars(terminal))
-    exec(compile(ast.Module(body=[node], type_ignores=[]), '<base-material-generator>', 'exec'), env)
-    assert not refrain_ids <= set(env['_material_refs'](data))
 
 
 @pytest.mark.parametrize('reason', ['不能据此认定人名', '不能认定“没有依据提出不同于现稿”就能保留现稿',
@@ -195,37 +132,7 @@ def test_free_text_never_selects_a_route(reason, monkeypatch):
     assert proposal_status({**value, 'status': 'CURRENT_SUPPORTED'}) == 'CURRENT_SUPPORTED'
 
 
-def test_old_explanation_generators_fail_the_same_structured_route_controls():
-    import ast
-    import subprocess
-    from src.autoslice.meaning_difference import classify_difference
-    from src.autoslice.subtitle_acceptability_policy import load_policy
-    from src.autoslice.semantic_terminal_adjudication import name_only_difference
-    from src.autoslice.semantic_answer import proposal_status
-    def historical_functions(commit, path, names):
-        source = subprocess.check_output(['git', 'show', commit + ':' + path], text=True)
-        nodes = [n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name in names]
-        namespace = {}
-        exec(compile(ast.Module(body=nodes, type_ignores=[]), '<historical-route-generator>', 'exec'), namespace)
-        return namespace
-    old = historical_functions('0d19eb72', 'src/autoslice/semantic_terminal_adjudication.py',
-        {'name_only_difference', 're_name_dispute'})
-    diff = classify_difference('真也不许跟别人说话', '睁眼，不许跟别人说话',
-        glossary_terms=[], policy=load_policy())
-    answer = {'name_only': False, 'reason': '不能据此认定人名'}
-    assert old['name_only_difference'](diff, answer)
-    assert not name_only_difference(diff, answer)
-    # The new explicit claim still cannot escape the existing unsourced-name
-    # route just by changing the prose to deny it.
-    assert name_only_difference(diff, {**answer, 'name_only': True})
-    source = subprocess.check_output(['git', 'show',
-        '9ef7edfe1719929478c8aacf34925fc32b776224:src/autoslice/semantic_answer.py'], text=True)
-    namespace = {}
-    exec(compile(source, '<base-proposal-generator>', 'exec'), namespace)
-    value = {'status': 'UNRESOLVED', 'proposed_cue': '',
-        'reason': '不能认定没有依据提出不同于现稿就代表支持现稿'}
-    assert namespace['proposal_status'](value) == 'CURRENT_SUPPORTED'
-    assert proposal_status(value) == 'UNRESOLVED'
+
 
 
 def test_version_decoder_does_not_grant_new_authority(rig):

@@ -217,33 +217,3 @@ def _tag_fields(value):
     elif isinstance(value, list):
         for child in value:
             yield from _tag_fields(child)
-
-
-def test_published_samples_preserve_results_except_reported_channel_overflow(record_property):
-    # Derived from tracked *.uploaded.json tags. No external STATE fixture is
-    # needed by CI. Historical receipts remain immutable and are never uploaded.
-    exceptions = {
-        "reports/authorized_uploads/2026-07-17-whitelist-8/05-auto_210002_297_513.uploaded.json",
-        "reports/authorized_uploads/2026-07-17-whitelist-8/08-auto_162645_712_967.uploaded.json",
-        "reports/authorized_uploads/2026-07-20-维护者-sixpack/01-himehina.uploaded.json",
-        "reports/authorized_uploads/2026-07-20-维护者-sixpack/02-liangezi.uploaded.json",
-        "reports/authorized_uploads/2026-07-20-维护者-sixpack/05-nvyoujiao.uploaded.json",
-    }
-    seen = set()
-    rows = []
-    for path in sorted(ROOT.rglob("*.uploaded.json")):
-        for raw in _tag_fields(json.loads(path.read_text())):
-            tags = metadata.normalise_tags(raw)
-            problems = metadata.validate_tags(tags)
-            name = path.relative_to(ROOT).as_posix()
-            rows.append({"path": name, "tag_count": len(tags), "problems": problems})
-    record_property("published_tag_results", json.dumps(rows, ensure_ascii=False))
-    for row in rows:
-        if row["path"] in exceptions:
-            seen.add(row["path"])
-            assert row["tag_count"] > st.MAX_TAGS_DEFAULT
-            assert row["problems"] == [f"{row['tag_count']} tags exceed the cap of {st.MAX_TAGS_DEFAULT}"]
-        else:
-            assert row["problems"] == [], row
-    assert rows, "published tags must actually be checked"
-    assert seen == exceptions

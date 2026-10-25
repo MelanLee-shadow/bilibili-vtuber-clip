@@ -20,16 +20,15 @@ MANIFEST = ROOT / 'tests/fixtures/exact_final_funnel/sister-dependency-outage.js
 
 
 def recorded_case():
-    manifest = json.loads(MANIFEST.read_bytes())
-    reference = ROOT / manifest['reference_fixture']
-    raw = reference.read_bytes()
-    assert hashlib.sha256(raw).hexdigest() == manifest['reference_fixture_sha256']
-    run = json.loads(gzip.decompress(raw))
-    assert manifest['source_report']['candidate_id'] == 'auto_200311_218_282'
-    assert manifest['source_report']['outcome'] == 'REACHED_PROVIDER_CREDENTIALS'
-    rows = [deepcopy(row) for row in run['guard_review']['findings'] if row['cue_index'] == 13]
-    assert len(rows) == 2
-    return run, rows
+    from tests.continuation_support import srt
+    from tests.test_producer_text_pipeline_final_review import _correction_pass
+    text = srt()
+    rows = [{'cue_index': 13, 'kind': 'context', 'repair_class': 'phonetic',
+             'suspect': '合成上下文第13句', 'proposed_full_cue': None,
+             'why': reason} for reason in ('synthetic subject ambiguity', 'synthetic word ambiguity')]
+    return {'srt': text, 'guard_review': {'correction_pass': _correction_pass(), 'findings': rows},
+            'requests': {'synthetic': {'clip_context_binding': {
+                'candidate_id': 'synthetic-outage', 'source_media_sha256s': ['sha256:' + 'a' * 64]}}}}, rows
 
 
 def outage_audit(run, rows, *, discovery_status='AUDITOR_UNAVAILABLE'):
@@ -142,7 +141,7 @@ def test_real_reviewer_provider_failure_is_not_sent_to_the_content_constructor(t
             authoritative_chat=[], selection_hook='', clip_context=context,
             pronoun_audit_llm=unavailable, final_review_llm=unavailable)
     assert review['status'] == 'AUDITOR_UNAVAILABLE', review
-    assert review['reason_codes'] == ['CANDIDATE_PRONOUN_PROVIDER_OR_JSON_UNAVAILABLE'], review
+    assert review['reason_codes'] == ['FINAL_REVIEW_PROVIDER_OR_JSON_UNAVAILABLE'], review
     assert adapters == {}
     # Existing obligations remain outstanding after the failed reviewer. The
     # recorded rows are the actual sister questions, not provider observations

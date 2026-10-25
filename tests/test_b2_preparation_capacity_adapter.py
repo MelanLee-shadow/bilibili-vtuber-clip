@@ -48,7 +48,7 @@ def _free(monkeypatch: pytest.MonkeyPatch, free: int) -> None:
 def test_configured_reserve_blocks_even_when_old_scratch_budget_would_fit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("AUTOSLICE_MIN_FREE_BYTES", str(16 * GIB))
+    monkeypatch.setenv("AUTOSLICE_OPERATIONAL_RESERVE_BYTES", str(16 * GIB))
     _free(monkeypatch, 4 * GIB)
     target = tmp_path / "release-v7-e428-a1"
     with pytest.raises(PackageImportError) as failure:
@@ -56,13 +56,13 @@ def test_configured_reserve_blocks_even_when_old_scratch_budget_would_fit(
     assert failure.value.code == "INSUFFICIENT_DISK_SPACE"
     assert not target.exists()
     assert list(tmp_path.iterdir()) == []
-    assert os.environ["AUTOSLICE_MIN_FREE_BYTES"] == str(16 * GIB)
+    assert os.environ["AUTOSLICE_OPERATIONAL_RESERVE_BYTES"] == str(16 * GIB)
 
 
 def test_budget_counts_history_scratch_and_configured_reserve_at_exact_boundary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("AUTOSLICE_MIN_FREE_BYTES", str(16 * GIB))
+    monkeypatch.setenv("AUTOSLICE_OPERATIONAL_RESERVE_BYTES", str(16 * GIB))
     budget = GIB + 2000 + SCRATCH
     _free(monkeypatch, budget + 16 * GIB)
     receipt = successor.preparation_capacity(_frozen(), tmp_path / "release-v7-e428-a1")
@@ -82,7 +82,7 @@ def test_budget_counts_history_scratch_and_configured_reserve_at_exact_boundary(
 def test_one_byte_below_combined_budget_fails_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("AUTOSLICE_MIN_FREE_BYTES", str(16 * GIB))
+    monkeypatch.setenv("AUTOSLICE_OPERATIONAL_RESERVE_BYTES", str(16 * GIB))
     _free(monkeypatch, GIB + 2000 + SCRATCH + 16 * GIB - 1)
     with pytest.raises(PackageImportError) as failure:
         successor.preparation_capacity(_frozen(), tmp_path / "release-v7-e428-a1")
@@ -95,9 +95,10 @@ def test_native_unset_default_is_not_silently_changed(
 ) -> None:
     # Synthetic environment only, not an alteration of the production reserve.
     monkeypatch.delenv("AUTOSLICE_MIN_FREE_BYTES", raising=False)
-    _free(monkeypatch, GIB + 2000 + SCRATCH)
+    monkeypatch.delenv("AUTOSLICE_OPERATIONAL_RESERVE_BYTES", raising=False)
+    _free(monkeypatch, GIB + 2000 + SCRATCH + 2 * GIB)
     receipt = successor.preparation_capacity(_frozen(), tmp_path / "release-v7-e428-a1")
-    assert receipt["volumes"][0]["reserve_bytes"] == 0
+    assert receipt["volumes"][0]["reserve_bytes"] == 2 * GIB
     assert receipt["scratch_allowance_bytes"] == SCRATCH
     assert "AUTOSLICE_MIN_FREE_BYTES" not in os.environ
 

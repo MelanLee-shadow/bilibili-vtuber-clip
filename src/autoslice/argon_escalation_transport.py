@@ -138,6 +138,13 @@ class ArgonHttpTransport:
         return self._exchange("GET", f"models/{MODEL}", None, {}, timeout_s)
 
     def _exchange(self, method, path, body, route_copy, timeout_s):
+        from . import cpa_gemini_client
+        if cpa_gemini_client.enabled():
+            if method != 'POST' or path != f'models/{MODEL}:generateContent':
+                cpa_gemini_client.require_operation('argon_' + method + '_' + path.split('?')[0])
+            completion = cpa_gemini_client.generate_native(
+                model=MODEL, body=strict_json(body), purpose='argon_realtime', timeout_seconds=timeout_s)
+            return HttpResponse(200, canonical(completion.payload))
         require(
             type(timeout_s) in (int, float) and math.isfinite(timeout_s) and 0 < timeout_s <= 600,
             "HTTP_TIMEOUT_INVALID",

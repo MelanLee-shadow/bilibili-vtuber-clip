@@ -128,16 +128,16 @@ def test_generic_thanks_has_no_unbound_name_slot(text):
 
 def test_generic_gift_detector_retires_its_old_nomination_without_hiding_model_risk():
     from src.autoslice.editorial_subtitle import GIFT_NOMINATION_REASON, withdrawn_generic_gift_nomination
-    from src.autoslice.final_review_auditor import _merged_raw_findings
+    from src.autoslice.final_review_auditor import _normalize_discovery_materials
     from src.autoslice.jingting_chunker import parse_srt_cues
     text = '1\n00:00:00,000 --> 00:00:02,000\n谢谢你的礼物\n'
     old = {'cue': 1, 'kind': 'entity', 'repair_class': 'editorial_rendering',
            'suspect': '谢谢你的礼物', 'why': GIFT_NOMINATION_REASON, 'proposed_full_cue': None}
     assert withdrawn_generic_gift_nomination(old, text)
-    assert _merged_raw_findings([], [old], parse_srt_cues(text), current_srt_text=text) == []
+    assert _normalize_discovery_materials([], [old], parse_srt_cues(text), current_srt_text=text) == []
     critical = {**old, 'content_risk': 'factual_error', 'risk_basis': 'Specific identity evidence contradicts this statement.'}
     assert not withdrawn_generic_gift_nomination(critical, text)
-    assert _merged_raw_findings([critical], [old], parse_srt_cues(text), current_srt_text=text) == [critical]
+    assert _normalize_discovery_materials([critical], [old], parse_srt_cues(text), current_srt_text=text) == [critical]
 
 
 def test_early_stage_defers_without_false_mutation_and_unbound_events_never_nominate():

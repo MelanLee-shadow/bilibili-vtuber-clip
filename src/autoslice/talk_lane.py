@@ -1358,9 +1358,9 @@ def _apply_optional_talk_spec_fields(
     spec: dict[str, object],
     item: dict,
 ) -> None:
-    # Preserve declared watched-media ownership at the ordinary spec handoff.
+    # Preserve the clip form and watched-media ownership at the ordinary spec handoff.
     # The materializer validates the binding; missing evidence must still block.
-    for key in ("watched_media", "nested_media_caption_dedup", "nested_media_acoustic"):
+    for key in ("clip_profile", "watched_media", "nested_media_caption_dedup", "nested_media_acoustic"):
         if key in item:
             spec[key] = copy.deepcopy(item[key])
     slot = item.get("cover_diversity_slot")

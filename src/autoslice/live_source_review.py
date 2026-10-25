@@ -6,6 +6,8 @@ already supplied source observations into fail-closed review evidence.
 
 from __future__ import annotations
 
+from src.autoslice.cpa_gemini_client import valid_lrc_transport
+
 import difflib
 import json
 from dataclasses import replace
@@ -742,6 +744,7 @@ def _verify_live_performance_observation(
             provider_fallback_used=manifest.get("provider_fallback_used"),
             agy_failure_category=manifest.get("agy_failure_category"),
             sandbox=manifest.get("sandbox"),
+            cpa_transport_valid=valid_lrc_transport(manifest),
         )
         if isinstance(manifest, Mapping)
         else "manifest is not a mapping"

@@ -593,7 +593,7 @@ def _bound_profile(
         repo = _deployment_repository(runtime_root)
         profile = load_channel_profile(repo_root=repo, profile_binding=expected)
         actual = binding_for_profile(profile)
-        require_profile_binding(actual, expected)
+        require_profile_binding(task_binding=expected, current_binding=actual, repo_root=repo)
     except (OSError, TypeError, ValueError) as exc:
         _fail("bound channel profile is unavailable or differs from expected binding", exc)
     return profile, expected
@@ -614,14 +614,17 @@ def _bound_profile_target_root(runtime_root: Path, profile) -> tuple[str, ...]:
 
 def _require_result_profile_binding(
     result: Mapping[str, object], expected: Mapping[str, object], *, label: str,
+    repo_root: Path | None = None,
 ) -> None:
     try:
-        from src.autoslice.channel_profile import require_profile_binding
+        from src.autoslice.channel_profile import require_record_profile_binding
 
-        require_profile_binding(result.get("profile_binding"), expected)
+        require_record_profile_binding(record_binding=result.get("profile_binding"),
+                                       task_binding=expected, repo_root=repo_root)
         summary = result.get("summary")
         if isinstance(summary, Mapping) and "profile_binding" in summary:
-            require_profile_binding(summary["profile_binding"], expected)
+            require_record_profile_binding(record_binding=summary["profile_binding"],
+                                           task_binding=expected, repo_root=repo_root)
     except (TypeError, ValueError) as exc:
         _fail(f"{label} is missing or differs from expected profile binding", exc)
 
@@ -1026,7 +1029,7 @@ def export_bundle(
     result_copy = _json_object(result, label="producer result")
     bound_profile, profile_binding = _bound_profile(root, expected_profile_binding)
     _require_result_profile_binding(
-        result_copy, profile_binding, label="producer result profile_binding"
+        result_copy, profile_binding, label="producer result profile_binding", repo_root=bound_profile.repo_root
     )
     job = _identity(job_id, label="job_id")
     attempt = _identity(attempt_id, label="attempt_id")
@@ -1128,6 +1131,8 @@ def export_bundle(
         "payload_files": len(files),
         "payload_bytes": total_bytes,
     }
+    if bound_profile.binding_extension is not None:
+        document["profile_binding_extensions"] = [bound_profile.binding_extension.as_dict()]
     document["manifest_sha256"] = _manifest_digest(document)
     bundle_manifest = bundle / BUNDLE_FILENAME
     _create_only(
@@ -1415,7 +1420,7 @@ def import_bundle(
     bundle, document = _read_bundle_manifest(Path(bundle_dir))
     bound_profile, profile_binding = _bound_profile(root, expected_profile_binding)
     _require_result_profile_binding(
-        document, profile_binding, label="bundle profile_binding"
+        document, profile_binding, label="bundle profile_binding", repo_root=bound_profile.repo_root
     )
     result, candidate_id, date, lane = _validate_context(
         document, runtime_root=root, job_id=expected_job_id,
@@ -1423,7 +1428,7 @@ def import_bundle(
         input_sha256=expected_input_sha256,
     )
     _require_result_profile_binding(
-        result, profile_binding, label="bundle result profile_binding"
+        result, profile_binding, label="bundle result profile_binding", repo_root=bound_profile.repo_root
     )
     # Validate worker-declared external input preimages before inspecting or
     # materializing any candidate payload.  These paths are provenance only;
@@ -1532,7 +1537,8 @@ def import_bundle(
         _fail("prepared deployment authority differs from controller")
     try:
         from src.autoslice.channel_profile import binding_for_profile, require_profile_binding
-        require_profile_binding(binding_for_profile(bound_profile), profile_binding)
+        require_profile_binding(task_binding=profile_binding,
+            current_binding=binding_for_profile(bound_profile), repo_root=bound_profile.repo_root)
         fresh = prepare_delivery(
             runtime_root=root,
             lane=str(prepared_metadata["lane"]),

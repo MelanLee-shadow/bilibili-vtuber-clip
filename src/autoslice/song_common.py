@@ -327,6 +327,7 @@ def validate_audio_lrc_execution_metadata(
     provider_fallback_used: object,
     agy_failure_category: object,
     sandbox: object,
+    cpa_transport_valid: bool = False,
 ) -> str | None:
     """Validate the provider lane without weakening the shared v5 proof.
 
@@ -344,7 +345,7 @@ def validate_audio_lrc_execution_metadata(
             or agy_rc != 0
             or provider_fallback_used is not False
             or agy_failure_category is not None
-            or sandbox is not True
+            or (sandbox is not True and not (sandbox is False and cpa_transport_valid))
         ):
             return "audio aligner AGY execution metadata is invalid"
         return None

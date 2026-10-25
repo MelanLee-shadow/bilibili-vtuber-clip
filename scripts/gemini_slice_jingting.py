@@ -220,10 +220,14 @@ def sha256_file(path: str | Path) -> str:
 
 
 def gemini_key() -> str:
+    if agy_gemini_client.cpa_gemini_client.enabled():
+        return "CPA_MANAGED"
     return os.environ.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY_2") or ""
 
 
 def gemini_keys() -> list[str]:
+    if agy_gemini_client.cpa_gemini_client.enabled():
+        return ["CPA_MANAGED"]
     return list(
         dict.fromkeys(
             value
@@ -1300,6 +1304,21 @@ def run_agy(
     state or shortening the independent song audio/LRC proof budget.
     """
 
+    if agy_gemini_client.cpa_gemini_client.enabled():
+        srt_text = Path(srt_path).read_text(encoding='utf-8')
+        completion = agy_gemini_client.cpa_gemini_client.generate_files(
+            prompt=agy_prompt(srt_text, as_of_date=recording_date_from_path(Path(slice_path))),
+            files=[Path(slice_path)], model=AGY_MODEL, purpose='jingting',
+            timeout_seconds=process_timeout_seconds or parse_timeout_seconds(print_timeout or AGY_TIMEOUT) + 120,
+            response_mime_type=None)
+        corrected = restore_draft_timing(srt_text, strip_markdown_fence(completion.text))
+        Path(out_path).write_text(corrected if corrected.endswith('\n') else corrected + '\n', encoding='utf-8')
+        Path(out_path).with_suffix('.manifest.json').write_text(json.dumps({
+            'provider': 'agy', 'model': AGY_MODEL, 'agy_sandbox': False,
+            'slice_sha256': sha256_file(slice_path), 'draft_srt_sha256': sha256_file(srt_path),
+            'output_srt_sha256': sha256_file(out_path), 'transport_receipt': dict(completion.receipt)},
+            ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        return str(Path(out_path).parent)
     agy_bin = shutil.which(AGY_BIN) or AGY_BIN
     if not os.path.exists(agy_bin):
         raise FileNotFoundError(f"agy binary not found: {AGY_BIN}")
@@ -1359,8 +1378,9 @@ def run_agy(
     started = utc_now()
     try:
         with runtime_provider_slot(
-            timeout_seconds=provider_wait_for_call(effective_process_timeout)
-        ):
+            timeout_seconds=provider_wait_for_call(effective_process_timeout),
+            provider="agy", modality="audio_video",
+        ) as lease:
             proc = subprocess.run(
                 cmd,
                 cwd=job_dir,
@@ -1369,6 +1389,17 @@ def run_agy(
                 text=True,
                 timeout=effective_process_timeout,
             )
+            if lease is not None:
+                if proc.returncode != 0:
+                    lease.report({"status": "FAILED", "provider_error_code": agy_gemini_client.classify_agy_failure(
+                        proc.returncode, proc.stdout or '', proc.stderr or '')})
+                    retry_after = agy_quota_retry_after_seconds('\n'.join((proc.stdout or '', proc.stderr or '')))
+                    if retry_after is not None:
+                        lease.report({"retry_after_seconds": retry_after})
+                try:
+                    lease.report(json.loads(proc.stdout or '{}'))
+                except (ValueError, TypeError):
+                    pass
     except ProviderSlotTimeout as exc:
         from src.autoslice.source_context_executor import AgyRunnerError
 
@@ -1456,6 +1487,23 @@ def run_gemini_api(slice_path: str, srt_path: str, out_path: str) -> str:
     key in the manifest or diagnostic.
     """
 
+    if agy_gemini_client.cpa_gemini_client.enabled():
+        # Keep this lane's own model/prompt identity; only its transport changes.
+        with tempfile.TemporaryDirectory(prefix='cpa-jingting-') as raw_dir:
+            audio = Path(raw_dir) / 'input.mp3'
+            if not extract_audio(slice_path, str(audio)):
+                raise RuntimeError('CPA_GEMINI_AUDIO_EXTRACTION_FAILED')
+            draft = Path(srt_path).read_text(encoding='utf-8')
+            corrected = gemini_correct(str(audio), draft, 'CPA_MANAGED',
+                as_of_date=recording_date_from_path(Path(slice_path)))
+            corrected = restore_draft_timing(draft, corrected)
+        Path(out_path).write_text(corrected if corrected.endswith('\n') else corrected + '\n', encoding='utf-8')
+        Path(out_path).with_suffix('.manifest.json').write_text(json.dumps({
+            'provider': 'gemini_api', 'model': GEMINI_MODEL, 'transport': 'cpa_gemini_native',
+            'key_tier': 'UNKNOWN', 'slice_sha256': sha256_file(slice_path),
+            'draft_srt_sha256': sha256_file(srt_path), 'output_srt_sha256': sha256_file(out_path)},
+            ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        return str(Path(out_path).parent)
     keys = gemini_keys()
     if not keys:
         raise RuntimeError("Gemini API fallback unavailable: no configured key")

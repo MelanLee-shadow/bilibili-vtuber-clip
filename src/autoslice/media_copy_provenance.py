@@ -47,6 +47,8 @@ def file_snapshot(path: Path, expected_sha256: str | None = None) -> dict:
 
 def record_source_read(path: Path, expected_sha256: str) -> None:
     """Observe only files actually consumed by the existing provenance reader."""
+    from .validation_memo import note_hashed_file
+    note_hashed_file(path, expected_sha256)
     reads = _READS.get()
     if reads is None:
         return

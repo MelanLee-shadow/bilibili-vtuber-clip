@@ -3,6 +3,7 @@ from pathlib import Path
 import hashlib
 import json
 import shutil
+from typing import TypeAlias
 import pytest
 import scripts.build_manual_review_manifest as manual_review_manifest
 from src.autoslice.addressee_attribution import rebuild_speaker_evidence
@@ -14,6 +15,9 @@ from src.autoslice.producer_delivery_transaction import DeliveryArtifact, deploy
 from src.autoslice.repository_asset_authority import _canonical_sha256
 import src.autoslice.normal_first_publication_media_successor as normal_media_successor
 from src.autoslice.channel_envelope import render_talk_title_prefix
+
+Json: TypeAlias = "None | bool | int | float | str | list[Json] | dict[str, Json]"
+JsonMap: TypeAlias = dict[str, Json]
 
 TITLE = render_talk_title_prefix() + "手动包审计闭环用例标题够长了"
 HOOK = "测试主播当场语塞三秒，弹幕全体起立。"
@@ -27,7 +31,7 @@ def _sha(path: Path) -> str:
 def _receipt(
     *,
     title: str = TITLE,
-    speaker_evidence: dict[str, object] | None = None,
+    speaker_evidence: JsonMap | None = None,
     speaker_transcript: str | None = None,
     transcript: str = TRANSCRIPT,
 ) -> dict:
@@ -87,8 +91,8 @@ def _package(
         f"1\n00:00:00,000 --> 00:00:02,000\n{TRANSCRIPT}\n".encode("utf-8"),
     )
     text_srt_sha = "sha256:" + _sha(srt)
-    speaker_record_fields: dict[str, object]
-    speaker_evidence: dict[str, object] | None = None
+    speaker_record_fields: JsonMap
+    speaker_evidence: JsonMap | None = None
     speaker_transcript: str | None = None
     if speaker_finalized:
         speaker_srt = w(
@@ -244,7 +248,7 @@ def _package(
 
 
 
-def _prepared_successor_authority(candidate_id: str = "manual_cand_9") -> dict[str, object]:
+def _prepared_successor_authority(candidate_id: str = "manual_cand_9") -> JsonMap:
     return {
         "schema_version": "new-bv-same-bv-publication-authority.v1",
         "candidate_id": candidate_id,
@@ -296,7 +300,7 @@ def _prepared_successor_fixture(
     keep_story_contract: bool = False,
     include_cover_network: bool = False,
     include_extended_talk_roles: bool = False,
-) -> tuple[Path, Path, dict[str, object], Path]:
+) -> tuple[Path, Path, JsonMap, Path]:
     """Build a producer-shaped prepared handle and package under one runtime root."""
 
     tmp_path.mkdir(parents=True, exist_ok=True)

@@ -17,9 +17,8 @@ from src.autoslice.chat_evidence import (
     _render_srt,
     _request_sha256,
     _validated_entity_verdict,
-    canonicalize_hard_surfaces,
+    prepare_chat_evidence,
     normalize_chat_text,
-    sanitize_chat_display_text,
 )
 from src.autoslice.chat_read_aloud_candidates import (
     find_best_read_aloud_candidate as _find_best_read_aloud_candidate,
@@ -945,25 +944,7 @@ def apply_authoritative_chat_evidence(
     read question missing only its final particle with the reply in one cue.
     """
 
-
-
-
-
-
-
-    evidence = [
-        ChatEvidence(
-            item.kind,
-            item.offset_ms,
-            canonicalize_hard_surfaces(sanitize_chat_display_text(item.text)),
-            sanitize_chat_display_text(item.sender, max_chars=100),
-            item.source,
-            item.source_sha256,
-            item.source_event_id,
-        )
-        for item in evidence
-        if sanitize_chat_display_text(item.text)
-    ]
+    evidence = prepare_chat_evidence(evidence)
     cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
     if any(type(index) is not int or not 1 <= index <= len(cues) for index in protected_cue_indexes):
         raise ValueError('CHAT_PROTECTED_CUE_INDEX_INVALID')

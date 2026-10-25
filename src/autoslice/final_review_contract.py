@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from .review_evidence_store import cold_input
+from .canonical_json_hash import canonical_sha256
+from .validation_memo import memoized_validation
 
 import hashlib
 import re
@@ -49,6 +51,8 @@ class FinalReviewContractError(ValueError):
 
 
 @cold_input
+@memoized_validation(lambda audit, expected_srt_sha256, allow_pending=False:
+    canonical_sha256([audit.get('exact_final_cpa_self_heal'), expected_srt_sha256, allow_pending], allow_nan=True))
 def _validate_exact_final_cpa_self_heal(
     audit: Mapping[str, object],
     *,
@@ -480,6 +484,16 @@ def validate_final_review_release(
     from src.autoslice.final_review_meaning_policy import POLICY_VERSION
     if not isinstance(audit, Mapping) or audit.get("meaning_policy") != POLICY_VERSION:
         raise FinalReviewContractError("FINAL_REVIEW_MEANING_POLICY_REVIEW_REQUIRED")
+
+    if audit.get("final_review_mode") == "per_finding" or "finding_closure" in audit:
+        from src.autoslice.finding_closure import ClosureContractError
+        from src.autoslice.finding_closure_ports import RetainedObject
+        from src.autoslice.finding_closure_shell import validate_published_closure
+        try:
+            validate_published_closure(RetainedObject.from_value(dict(audit)),
+                                      expected_srt_sha256=expected_srt_sha256)
+        except ClosureContractError as exc:
+            raise FinalReviewContractError(str(exc).split(":", 1)[0]) from exc
 
     if isinstance(audit, Mapping) and audit.get("schema_version") == "b2-caption-final-review-successor.v1":
         from src.autoslice.b2_caption_formal_successor import (
@@ -986,7 +1000,7 @@ def is_sub18_context_meaning_equivalent_keep(finding: object) -> bool:
             and isinstance(receipt, Mapping)):
         return False
     proof = receipt.get("no_gain_proof")
-    if (isinstance(proof, Mapping) and proof.get('proof_kind') == relisten.LOOP_STOP_KIND
+    if (isinstance(proof, Mapping) and proof.get('proof_kind') in {relisten.LOOP_STOP_KIND, 'TASK_STOP'}
             and not adjudication.get('terminal_review')):
         return False  # A loop-stop proof cannot fall back to an unjudged legacy keep.
     consistency = receipt.get("context_consistency")
@@ -1022,7 +1036,10 @@ def is_sub18_context_meaning_equivalent_keep(finding: object) -> bool:
             and receipt.get("no_gain_proof_sha256") == proof.get("proof_sha256")
             and sorted(consistency["no_gain_context_refs"]) == sorted(proof.get("context_sources") or {})
             and proof.get("material_exhaustion") is not None
-            and relisten._valid_exhaustion(proof["material_exhaustion"], proof["projection"])
+            and (relisten.validate_current_no_gain(proof,
+                    adjudication['terminal_review']['request']['check_request']) == proof
+                if proof.get('proof_kind') == 'TASK_STOP'
+                else relisten._valid_exhaustion(proof["material_exhaustion"], proof["projection"]))
             and receipt.get("material_exhaustion") == proof["material_exhaustion"])
     except (KeyError, TypeError, ValueError, AttributeError):
         return False

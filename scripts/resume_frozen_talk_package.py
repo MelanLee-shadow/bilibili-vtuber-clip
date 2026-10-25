@@ -69,6 +69,13 @@ from scripts.produce_slice_package import (
 )
 from scripts.apply_speaker_turn_overrides import SPEAKER_SUBTITLE_STYLE_ID
 from src.autoslice.branding_intro import BrandingIntroError, require_branding_intro
+from src.autoslice.clip_profile import (
+    CLIP_PROFILE_FIELD,
+    ClipProfileError,
+    clip_profile_from_spec,
+    requires_intro,
+    spec_clip_profile_transcription,
+)
 from src.autoslice.chat_authority import reconcile_pending_text_overrides
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.review_evidence import SourceCue
@@ -668,7 +675,16 @@ def _materialize_resume_transaction(
         },
     }
     try:
-        branding_intro = require_branding_intro(ROOT)
+        # The hash-bound producer spec's clip_profile decides the intro.
+        producer_spec = _read_json(ctx.paths["producer_spec"], label="producer spec")
+        clip_form = clip_profile_from_spec(producer_spec, lane="talk")
+        profile_document = spec_clip_profile_transcription(producer_spec, lane="talk")
+    except ClipProfileError as exc:
+        raise FrozenTalkResumeError(f"producer spec clip profile is invalid: {exc}") from exc
+    if profile_document is not None:
+        preliminary_record[CLIP_PROFILE_FIELD] = profile_document
+    try:
+        branding_intro = require_branding_intro(ROOT) if requires_intro(clip_form) else None
     except BrandingIntroError as exc:
         raise FrozenTalkResumeError(f"branding intro unavailable: {exc}") from exc
     burned_record = _burn_preview_subtitles(

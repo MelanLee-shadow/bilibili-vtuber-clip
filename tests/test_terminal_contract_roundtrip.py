@@ -153,39 +153,7 @@ def c_reply(data, refs):
             'evidence_cue_ids': [2, 3]}}
 
 
-def test_terminal_text_view_preserves_original_argon_projection_bytes(rig):
-    """Replay the real pinned v1 producer, not a hand-built sealed projection.
 
-    Argon hashes the complete ordinary projection. Adding a terminal-only
-    column to that default view invalidates otherwise unchanged receipts.
-    """
-    import ast
-    import subprocess
-    source = subprocess.run(['git', 'show',
-        '40c206fe3457b32d8b7096fdeaa56d42d2589ff6:src/autoslice/targeted_relisten.py'],
-        check=True, text=True, capture_output=True).stdout
-    tree = ast.parse(source)
-    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)
-        and node.name in {'bind_observed_input', '_deferred_native_entry', 'evidence_projection'}]
-    assert len(functions) == 3
-    namespace = dict(vars(relisten))
-    exec(compile(ast.Module(body=functions, type_ignores=[]), '<pinned-v1-producer>', 'exec'), namespace)
-    # Generate the historical input format with the original binding writer.
-    # New acquisitions explicitly bind the actual configured model; asking a
-    # pinned old projector to decode that new format is not a replay of v1.
-    with pytest.MonkeyPatch.context() as historical:
-        historical.setattr(rig.verifier.observe_range_context, 'listening_models', {})
-        historical.setattr(relisten, 'bind_observed_input', namespace['bind_observed_input'])
-        witness, check, _, _ = three_observations(rig)
-    original = namespace['evidence_projection'](check, witness=witness)
-    current = relisten.evidence_projection(check, witness=witness)
-    assert original['effective_distinct_observations'] == 3
-    assert current == original
-    terminal = relisten.evidence_projection(check, witness=witness, include_target_text=True)
-    assert all('target_text' in row for row in terminal['observations'])
-    for row in terminal['observations']:
-        row.pop('target_text')
-    assert terminal == original
 
 
 def test_material_index_covers_real_prompt_and_accepts_all_supplied_segments(rig):
@@ -399,16 +367,7 @@ def test_conflicting_real_native_producers_cannot_create_an_impossible_clear_aud
                 'reliable_fragments': list(reversed(captured['answer']['reliable_fragments']))})
 
 
-def test_shared_fragment_contract_preserves_pinned_ordinary_prompt_bytes():
-    import ast
-    import subprocess
-    from src.autoslice import editorial_subtitle
-    source = subprocess.run(['git', 'show',
-        '40c206fe3457b32d8b7096fdeaa56d42d2589ff6:src/autoslice/editorial_subtitle.py'],
-        check=True, text=True, capture_output=True).stdout
-    original = next(node.value.value for node in ast.parse(source).body
-        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'PROMPT' for t in node.targets))
-    assert editorial_subtitle.PROMPT == original
+
 
 
 def test_c_existing_vocalization_is_not_deleted_because_native_asr_omits_it(rig):

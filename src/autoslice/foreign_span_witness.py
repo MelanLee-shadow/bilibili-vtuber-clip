@@ -267,6 +267,8 @@ def _observe_with_agy(
             print_timeout=_AGY_TIMEOUT,
         ),
         cwd=job_dir,
+        **({'cpa_prompt': prompt, 'cpa_files': [audio_path], 'cpa_output_path': verdict_path}
+           if agy_gemini_client.cpa_gemini_client.enabled() else {}),
         env=agy_subprocess_env(),
         timeout=parse_timeout_seconds(_AGY_TIMEOUT) + 120,
     )
@@ -358,6 +360,8 @@ def _observe_audio(
         observation = _observe_with_agy(audio_path=audio_path, prompt=prompt,
             **({"parse_observation": parse_observation, "model": model} if algorithm_id else {}))
     except Exception as agy_exc:
+        if agy_gemini_client.cpa_gemini_client.enabled():
+            raise
         if not _gemini_keys():
             raise
         fallback_observation, key_tier = _observe_with_key_ladder(
@@ -392,8 +396,11 @@ def _observe_audio(
         identity=identity,
         observation=observation,
         source_provenance={
-            "kind": "live_accepted_agy_process",
-            "process_returncode": 0,
+            "kind": "live_accepted_cpa_gemini" if agy_gemini_client.cpa_gemini_client.enabled() else "live_accepted_agy_process",
+            "process_returncode": None if agy_gemini_client.cpa_gemini_client.enabled() else 0,
+            **({'transport_receipt': json.loads((audio_path.parent / f'{audio_path.stem}.agy-job' /
+                'cpa-gemini.receipt.json').read_text(encoding='utf-8'))}
+               if agy_gemini_client.cpa_gemini_client.enabled() else {}),
         },
     )
     return observation, "agy", None, cache_evidence

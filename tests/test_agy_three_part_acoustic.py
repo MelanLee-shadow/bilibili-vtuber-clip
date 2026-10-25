@@ -239,7 +239,7 @@ def test_callbacks_bind_prompt_and_attachment_hashes_before_agy_dispatch(tmp_pat
     )
     identity = callbacks.runtime_identity
     assert identity["transport"] == "agy_three_part"
-    binding = identity["transport_binding"]
+    binding = callbacks.transport_audit
     assert len(binding["job_dir"]) > 256
     assert binding["job_dir"].startswith(str(evidence_root))
     assert all(str(Path(argv[-1]).parent) == binding["job_dir"] for argv in binding["ffmpeg"]["argv"])
@@ -329,7 +329,7 @@ def test_structured_transport_binds_schema_flags_log_and_terminal_metadata(tmp_p
     assert parsed_stdout == [_provider_json()]
     assert len(agy_calls) == 1
 
-    binding = callbacks.runtime_identity["transport_binding"]
+    binding = callbacks.transport_audit
     assert binding["output_format"] == adapter.STRUCTURED_OUTPUT_FORMAT
     assert binding["structured_schema_version"] == adapter.STRUCTURED_SCHEMA_VERSION
     assert binding["structured_schema_sha256"].startswith("sha256:")
@@ -381,7 +381,7 @@ def test_structured_schema_hash_drift_blocks_dispatch(tmp_path, monkeypatch):
         descriptor=descriptor, candidate_id="candidate", observation_id="schema-drift",
         evidence_root=tmp_path / "evidence", cpa_call=cpa,
     )
-    binding = callbacks.runtime_identity["transport_binding"]
+    binding = callbacks.transport_audit
     job_dir = Path(str(binding["job_dir"]))
     schema_path = job_dir / adapter.STRUCTURED_SCHEMA_FILENAME
     schema_path.write_text(schema_path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
@@ -524,7 +524,7 @@ def test_structured_terminal_failure_stays_unknown_without_cpa_or_retry(tmp_path
     assert evidence["http_status"] == 503
     assert cpa_calls == []
     assert len(agy_calls) == 1
-    process_path = Path(str(first.runtime_identity["transport_binding"]["job_dir"])) / "PROCESS.json"
+    process_path = Path(str(first.transport_audit["job_dir"])) / "PROCESS.json"
     process = json.loads(process_path.read_text(encoding="utf-8"))
     assert process["structured_result"] == {
         "status": "INVALID",
@@ -577,10 +577,10 @@ def test_legacy_text_completion_replay_remains_explicit_and_immutable(tmp_path, 
     )
     first_result = first.observe_audio(_request(descriptor, first.runtime_identity))
     assert first_result["status"] == "OBSERVED"
-    assert first.runtime_identity["transport_binding"].get("output_format") is None
+    assert first.transport_audit.get("output_format") is None
     assert agy_calls[0][agy_calls[0].index('--output-format') + 1] == 'stream-json'
     assert '--json-schema' in agy_calls[0]
-    job_dir = Path(first.runtime_identity["transport_binding"]["job_dir"])
+    job_dir = Path(first.transport_audit["job_dir"])
     assert (job_dir / "agy.stdout").read_text(encoding="utf-8") == _legacy_provider_json()
 
     monkeypatch.setattr(
@@ -619,7 +619,7 @@ def test_voice_reference_prompt_identity_is_forwarded_to_agy_runtime(tmp_path, m
     assert callbacks.runtime_identity["cpa_prompt_sha256"] == (
         "sha256:" + hashlib.sha256(voice_cpa.encode()).hexdigest()
     )
-    prompt_path = Path(callbacks.runtime_identity["transport_binding"]["job_dir"]) / "prompt.md"
+    prompt_path = Path(callbacks.transport_audit["job_dir"]) / "prompt.md"
     assert "UNALIGNED VOICE REFERENCE" in prompt_path.read_text(encoding="utf-8")
 
 
@@ -657,7 +657,7 @@ def test_voice_reference_attachment_binding_reaches_fake_agy_transport(
 
     assert observed["status"] == "OBSERVED"
     assert len(agy_calls) == 1
-    binding = callbacks.runtime_identity["transport_binding"]
+    binding = callbacks.transport_audit
     prompt_path = Path(str(binding["job_dir"])) / "prompt.md"
     assert "UNALIGNED VOICE REFERENCE" in prompt_path.read_text(encoding="utf-8")
     process = json.loads((prompt_path.parent / "PROCESS.json").read_text(encoding="utf-8"))
@@ -710,7 +710,7 @@ def test_completed_job_replays_exact_stdout_across_callbacks_without_new_agy(
         evidence_root=tmp_path / "evidence", cpa_call=cpa_changed,
     )
     assert second.runtime_identity["identity_sha256"] != first.runtime_identity["identity_sha256"]
-    assert second.runtime_identity["transport_binding"] == first.runtime_identity["transport_binding"]
+    assert second.transport_audit == first.transport_audit
     second_result = second.observe_audio(_request(descriptor, second.runtime_identity))
     assert second_result["status"] == "OBSERVED"
     attempts = second_result["evidence"]["provider_attempts"]
@@ -745,7 +745,7 @@ def test_completed_job_raw_stdout_drift_is_unknown_without_new_agy(tmp_path, mon
         evidence_root=tmp_path / "evidence", cpa_call=cpa,
     )
     first.observe_audio(_request(descriptor, first.runtime_identity))
-    stdout_path = Path(str(first.runtime_identity["transport_binding"]["job_dir"])) / "agy.stdout"
+    stdout_path = Path(str(first.transport_audit["job_dir"])) / "agy.stdout"
     stdout_path.write_text(_provider_json() + "\nraw drift", encoding="utf-8")
     monkeypatch.setattr(
         adapter.agy_gemini_client, "run_local_agy",
@@ -786,7 +786,7 @@ def test_running_job_is_unknown_without_redispatch_across_callbacks(tmp_path, mo
         evidence_root=tmp_path / "evidence", cpa_call=cpa,
     )
     first.observe_audio(_request(descriptor, first.runtime_identity))
-    process_path = Path(str(first.runtime_identity["transport_binding"]["job_dir"])) / "PROCESS.json"
+    process_path = Path(str(first.transport_audit["job_dir"])) / "PROCESS.json"
     process = json.loads(process_path.read_text(encoding="utf-8"))
     process["status"] = "AGY_RUNNING"
     process_path.write_text(json.dumps(process), encoding="utf-8")
@@ -948,7 +948,7 @@ def test_source_hash_change_gets_new_attachment_identity(tmp_path, monkeypatch):
         evidence_root=tmp_path / "evidence", cpa_call=cpa,
     )
     assert first.runtime_identity["identity_sha256"] != second.runtime_identity["identity_sha256"]
-    assert first.runtime_identity["transport_binding"]["job_dir"] != second.runtime_identity["transport_binding"]["job_dir"]
+    assert first.transport_audit["job_dir"] != second.transport_audit["job_dir"]
 
 
 def test_narrow_target_wav_cannot_claim_full_context_clock(tmp_path, monkeypatch):
@@ -1022,8 +1022,8 @@ def test_observer_prompt_change_changes_normal_identity(tmp_path, monkeypatch):
         observer_prompt=adapter.OBSERVER_PROMPT + "\nPrompt revision.",
     )
     assert first.runtime_identity["identity_sha256"] != second.runtime_identity["identity_sha256"]
-    assert first.runtime_identity["transport_binding"]["attachment_prompt_sha256"] != (
-        second.runtime_identity["transport_binding"]["attachment_prompt_sha256"]
+    assert first.transport_audit["attachment_prompt_sha256"] != (
+        second.transport_audit["attachment_prompt_sha256"]
     )
 
 

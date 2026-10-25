@@ -269,7 +269,10 @@ def test_normal_discovery_keeps_current_gate_when_history_nominates_same_cue(tmp
     monkeypatch.setattr(pipeline, "discover_candidate_pronoun_findings", lambda *_a, **_kw: ([], {}))
 
     def discovery(_srt, **kwargs):
-        seen.extend(kwargs["extra_raw_findings"])
+        if "discovery_batch" in kwargs:
+            seen.extend(json.loads(n.payload_json) for n in kwargs["discovery_batch"].nominations)
+        else:
+            seen.extend(kwargs["extra_raw_findings"])
         raise pipeline.FinalReviewAuditError("FIXTURE_DISCOVERY_BOUNDARY")
 
     monkeypatch.setattr(pipeline, "audit_final_subtitles", discovery)

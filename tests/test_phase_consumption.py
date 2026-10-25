@@ -159,7 +159,9 @@ def test_new_scoped_initial_gate_is_available_before_normal_range_selector(tmp_p
         if 'span_review'in raw:raw['span_review']['target_needs_audio']=True
         return json.dumps(raw)
     observer=Observers();observer.observe_range_context=lambda **kw: (_ for _ in ()).throw(AssertionError('NO_NEW_AUDIO'))
-    _,ad,*_=run_case(model=llm,verifier=observer)
+    from tests.test_span_phoneme_resolution import SOURCE_SHA
+    _,ad,*_=run_case(model=llm,verifier=observer, clip_context={
+        'candidate_id': 'synthetic-phase', 'pieces': [{'source_media_sha256': SOURCE_SHA}]})
     assert not ad['repaired']
     assert any('CPA 补听范围选择'in p for p in calls), {'calls':len(calls),'audit':ad}
     persist_review_audit(tmp_path/'initial-history.json',ad);assert cold(tmp_path/'initial-history.json').returncode==0

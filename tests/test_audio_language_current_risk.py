@@ -1,4 +1,6 @@
 """Discovery -> saved authority -> ordinary current risk, with no real provider."""
+
+from src.autoslice.discovery_channels import batch_from_rows
 import hashlib
 import json
 from copy import deepcopy
@@ -11,6 +13,7 @@ from src.autoslice import producer_text_pipeline as pipeline
 from src.autoslice import final_review_auditor as auditor
 from src.autoslice import producer_package_finalization as finalization
 from tests.test_audio_language_discovery import srt, scan
+from tests.test_final_review_meaning_policy import equivalent
 from tests.test_producer_text_pipeline_final_review import _correction_pass, _adapters
 
 
@@ -74,7 +77,8 @@ def test_new_saved_discovery_reaches_exact_and_postburn_risk(tmp_path, monkeypat
         assert "audio/text semantic conflict" in prompt or "local observation unresolved" in prompt
         return json.dumps({"findings": [{"cue": 1, "content_risk": risk,
                                          "risk_basis": "当前句的具体冲突" if risk != "noncritical_uncertainty"
-                                         else "名字或犹疑未知，未发现原意、事实或伤害错误"}]})
+                                         else "名字或犹疑未知，未发现原意、事实或伤害错误",
+                                         "meaning_equivalence": equivalent("名字或犹疑的未知细节", "当前句的主体、动作及所指保留") if risk == "noncritical_uncertainty" else None}]})
     def unresolved(text, finding, **_kwargs):
         acoustics.append(finding)
         return text, {"status": "UNCERTAIN", "repaired": False}
@@ -87,16 +91,16 @@ def test_new_saved_discovery_reaches_exact_and_postburn_risk(tmp_path, monkeypat
         source_media_sha256=media_sha, timeline_offset_ms=2000,
         final_review_llm=review, pronoun_audit_llm=lambda _: '{}')
     assert len(prompts) == 2
-    assert exact["release_gate"] == ("PASS" if risk == "noncritical_uncertainty" else "BLOCK"), exact
-    assert len(acoustics) == (0 if risk == "noncritical_uncertainty" else 1)
+    assert exact["release_gate"] == "BLOCK", exact  # An unresolved word decision remains pending.
+    assert len(acoustics) == 1
     # The very same saved evidence enters the postburn consumer after reopen.
     prompts.clear()
     rows = auditor.audit_final_subtitles(
         current, llm_call=review, extract_json=json.loads, candidate_context_text=context,
-        extra_raw_findings=nominees, prioritize_extra_raw_findings=True)
+        discovery_batch=batch_from_rows(nominees))
     blocked, disclosed = finalization._postburn_current_risk_partition(rows)
-    assert bool(blocked) is (risk != "noncritical_uncertainty")
-    assert bool(disclosed) is (risk == "noncritical_uncertainty")
+    assert bool(blocked) is True
+    assert disclosed == []  # Risk equivalence alone cannot close a pending word question.
     assert saved == before
 
 
@@ -153,7 +157,8 @@ def test_real_postburn_entry_consumes_saved_discovery_and_replays_completed_risk
             return '{"findings":[]}'
         return json.dumps({"findings": [{"cue": 2, "content_risk": risk,
                                          "risk_basis": "当前句具体原意、事实或伤害冲突" if risk != "noncritical_uncertainty"
-                                         else "正常未知而无具体原意、事实或伤害风险"}]})
+                                         else "正常未知而无具体原意、事实或伤害风险",
+                                         "meaning_equivalence": equivalent("未知的声音细节", "当前句的主体、动作及所指保留") if risk == "noncritical_uncertainty" else None}]})
     llm.cpa_cache_identity = identity.cpa_cache_identity
     llm.provider_runtime_binding = identity.provider_runtime_binding
     monkeypatch.setattr(finalization, "build_final_review_llm_call", lambda: llm)
@@ -171,13 +176,10 @@ def test_real_postburn_entry_consumes_saved_discovery_and_replays_completed_risk
             # retaining the completed postburn receipt as historical evidence.
             audit["final_review_audit"]["postburn_subtitle_audio_review"] = deepcopy(
                 audit["postburn_subtitle_audio_review"])
-        if risk == "noncritical_uncertainty":
+        with pytest.raises(SystemExit, match="POSTBURN_SUBTITLE_AUDIO_REVIEW_BLOCKED"):
             finalization._run_postburn_subtitle_audio_review(**kwargs)
-        else:
-            with pytest.raises(SystemExit, match="POSTBURN_SUBTITLE_AUDIO_REVIEW_BLOCKED"):
-                finalization._run_postburn_subtitle_audio_review(**kwargs)
         receipt = audit["postburn_subtitle_audio_review"]
-        assert receipt["release_gate"] == ("PASS" if risk == "noncritical_uncertainty" else "BLOCK")
+        assert receipt["release_gate"] == "BLOCK"
         assert receipt["cache_reused"] is replay
         assert len(calls) == 2
     assert (subtitle.read_bytes(), media.read_bytes(), audit["audio_language_discovery_audit"]) == protected
@@ -205,10 +207,11 @@ def test_discovered_critical_cue_cannot_fall_off_ordinary_action_cap(tmp_path, m
             return '{"findings":[]}'
         return json.dumps({"findings": [{"cue": index,
             "content_risk": "factual_error" if all_critical or index == count else "noncritical_uncertainty",
-            "risk_basis": "当前具体事实矛盾" if all_critical or index == count else "仅未知，无具体冲突"}
+            "risk_basis": "当前具体事实矛盾" if all_critical or index == count else "仅未知，无具体冲突",
+            "meaning_equivalence": None if all_critical or index == count else equivalent("未知声音细节", f"当前第{index}句的原意保留")}
             for index in range(1, count + 1)]})
     kwargs = dict(llm_call=risk, extract_json=json.loads, candidate_context_text=context,
-                  extra_raw_findings=rows, prioritize_extra_raw_findings=True)
+                  discovery_batch=batch_from_rows(rows))
     if all_critical:
         with pytest.raises(auditor.FinalReviewAuditError, match="LANGUAGE_CRITICAL_AGENDA_INCOMPLETE"):
             auditor.audit_final_subtitles(text, **kwargs)

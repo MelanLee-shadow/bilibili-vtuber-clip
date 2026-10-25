@@ -10,6 +10,8 @@ wrapper, which injects `_has_exact_av_streams` so tests that patch
 
 from __future__ import annotations
 
+from src.autoslice.cpa_gemini_client import valid_lrc_transport
+
 import json
 import subprocess
 from dataclasses import dataclass
@@ -310,6 +312,7 @@ def _validate_audio_artifacts(
                 provider_fallback_used=audio_manifest.get("provider_fallback_used"),
                 agy_failure_category=audio_manifest.get("agy_failure_category"),
                 sandbox=audio_manifest.get("sandbox"),
+                cpa_transport_valid=valid_lrc_transport(audio_manifest),
             )
             if isinstance(audio_manifest, dict)
             else "manifest is not a mapping"

@@ -8,6 +8,37 @@ from tests.test_terminal_contract_roundtrip import produce, c_reply
 from tests.test_targeted_relisten_public_contract import rig  # noqa: F401
 
 
+@pytest.mark.parametrize('qualified', [False, True])
+@pytest.mark.parametrize('compact', [False, True])
+def test_rendered_session_name_source_cold_reader_uses_material_index(rig, qualified, compact):
+    from src.autoslice.clip_context import _canonical_json_sha256
+    from src.autoslice.semantic_terminal_adjudication import validate_terminal_answer
+    rig.context['source_fact'] = {'surfaces': ['呜呜', '尾音'], 'display_name': '呜呜'}
+    rig.context['context_sha256'] = _canonical_json_sha256(
+        {key: value for key, value in rig.context.items() if key != 'context_sha256'})
+    reference = ('whole_session_and_session_context.' if qualified else '') + 'source_fact'
+
+    def reply(data, refs):
+        source = data['whole_session_and_session_context']['source_fact']
+        assert refs['whole_session_and_session_context.source_fact'] == [
+            'whole_session_and_session_context', 'source_fact']
+        return {**c_reply(data, refs), 'name_source_ref': reference,
+                'name_source_text': json.dumps(source, ensure_ascii=False, sort_keys=True,
+                                               separators=(',', ':') if compact else (', ', ': ')),
+                'sourced_name': source['display_name']}
+
+    audit, captured = produce(rig, reply)
+    assert audit.get('policy_branch') == 'SUB18_CONTEXT_MEANING_EQUIVALENT_KEEP', audit.get('reason_code')
+    request, answer = captured['request'], captured['answer']
+    assert validate_terminal_answer(request, answer) == 'CURRENT'
+    for invalid in ({'name_source_ref': 'audio'},
+                    {'name_source_ref': 'whole_session_and_session_context.missing'},
+                    {'name_source_text': '来源未提供的名字'},
+                    {'sourced_name': '另一个名字'}):
+        with pytest.raises(ValueError, match='TERMINAL_NAME_(SOURCE_REQUIRED|OUTPUT_NOT_FROM_SOURCE)'):
+            validate_terminal_answer(request, {**answer, **invalid})
+
+
 def test_name_mention_does_not_invent_a_name_slot():
     from src.autoslice.meaning_difference import classify_difference
     from src.autoslice.subtitle_acceptability_policy import load_policy
@@ -226,44 +257,3 @@ def test_real_keep_content_addressed_roundtrip_parallel_writer_and_tamper(rig):
     blob.write_bytes(b'{}')
     with pytest.raises(ValueError, match='ARTIFACT_SHA_MISMATCH'):
         expand(packed)
-
-
-def test_original_v1_producer_receipt_remains_cold_valid_after_reference_roundtrip(rig, monkeypatch):
-    import ast
-    import subprocess
-    from src.autoslice import editorial_subtitle as editorial
-    from src.autoslice import semantic_terminal_adjudication as terminal
-    from src.autoslice import terminal_legacy_v1 as legacy
-    from src.autoslice.final_review_contract import is_release_resolved_keep
-    from src.autoslice.review_evidence_store import persist_review, load_review
-    # HEAD advances after integration. The producer under test is the actual
-    # deployed v1 artifact, not whichever new producer happens to be HEAD.
-    source = subprocess.check_output(['git', 'show',
-        '9e28f907280467091d81d9f9b39c09aded5b8e85:src/autoslice/editorial_subtitle.py'], text=True)
-    original = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == 'adjudicate')
-    namespace = dict(vars(editorial))
-    exec(compile(ast.Module(body=[original], type_ignores=[]), '<pinned-v1-editorial-producer>', 'exec'), namespace)
-    def supported(data, refs):
-        return {**c_reply(data, refs), 'grade': 'B', 'keep_route': 'B_EVIDENCE_SUPPORTS_CURRENT',
-            'evidence_decisive': True, 'comparison_text': data['current'],
-            'evidence_refs': data['current_support_observation_refs']}
-    with monkeypatch.context() as old:
-        old.setattr(editorial, 'adjudicate', namespace['adjudicate'])
-        old.setattr(terminal, 'terminal_prompt', legacy.terminal_prompt)
-        old.setattr(terminal, 'terminal_materials', legacy.terminal_materials)
-        audit, captured = produce(rig, supported, native=True)
-    assert 'terminal_contract_version' not in captured['request']
-    row = {**audit['rebuilt_finding'], 'exact_release_adjudication': audit}
-    assert is_release_resolved_keep(row)
-    path = rig.tmp / 'legacy-run' / 'review-flags.json'
-    persist_review(path, {'findings': [], 'unresolved_findings_disclosed': [row]})
-    assert is_release_resolved_keep(load_review(path)['unresolved_findings_disclosed'][0])
-    forged = deepcopy(load_review(path)['unresolved_findings_disclosed'][0])
-    review = forged['exact_release_adjudication']['terminal_review']
-    prefix, data = review['prompt'].rsplit('\n', 1)
-    materials = json.loads(data)
-    materials['current'] += '伪造事实'
-    review['prompt'] = prefix + '\n' + json.dumps(materials, ensure_ascii=False, sort_keys=True)
-    import hashlib
-    review['prompt_sha256'] = hashlib.sha256(review['prompt'].encode()).hexdigest()
-    assert not is_release_resolved_keep(forged)

@@ -10,6 +10,8 @@ hidden dual-media sentinel may seal the short-lived raw-AV capability.
 """
 from __future__ import annotations
 
+from src.autoslice.cpa_gemini_client import enabled as cpa_gemini_enabled
+
 from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import json
 import os
@@ -32,6 +34,7 @@ from src.autoslice.gemini_file_api import configured_free_keys
 PROVIDER = "gemini_api"
 VIDEO_FPS = 5.0
 ENDPOINT_FAMILY = "files_api_generate_content_static_5fps"
+CPA_ENDPOINT_FAMILY = "cpa_native_inline_generate_content_static_5fps"
 CAPABILITY_ID = "gemini-api-files-dual-media"
 ENABLED_ENV = "AUTOSLICE_FINAL_MEDIA_GEMINI_API_ENABLED"
 MODEL_ENV = "AUTOSLICE_FINAL_MEDIA_GEMINI_API_MODEL"
@@ -50,6 +53,11 @@ _BACKOFF = {
 }
 _MAX_EXECUTABLE_BYTES = 32_000_000
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+
+
+def selected_endpoint_family(environment: Mapping[str, str] | None = None) -> str:
+    """Capability proof follows the wire protocol; ruling/model identity does not."""
+    return CPA_ENDPOINT_FAMILY if cpa_gemini_enabled(environment) else ENDPOINT_FAMILY
 
 
 class FinalMediaReviewGeminiApiRuntimeError(ValueError):
@@ -192,8 +200,10 @@ def _manifest(
     root: Path, environment: Mapping[str, str]
 ) -> tuple[dict[str, object], int]:
     model = _model(environment)
-    keys = configured_free_keys(environment)
-    if not keys:
+    from .cpa_gemini_client import enabled
+    cpa_managed = enabled(environment)
+    keys = [] if cpa_managed else configured_free_keys(environment)
+    if not keys and not cpa_managed:
         raise _error(
             "FINAL_MEDIA_REVIEW_GEMINI_API_KEYS_MISSING",
             "at least one configured free Gemini API key is required",
@@ -232,11 +242,11 @@ def _manifest(
         {
             "schema_version": SENTINEL_RUNTIME_SCHEMA_VERSION,
             **({"code_binding": code_binding} if code_binding is not None else {}),
-            "capability_id": CAPABILITY_ID,
+            "capability_id": "gemini-cpa-native-dual-media" if cpa_managed else CAPABILITY_ID,
             "provider": PROVIDER,
             "transport": "content_bound_command",
             "model": model,
-            "endpoint_family": ENDPOINT_FAMILY,
+            "endpoint_family": selected_endpoint_family(environment),
             "runner": {
                 "path": runner.relative_to(root).as_posix(),
                 "sha256": runner_sha,
@@ -365,7 +375,7 @@ def ensure_gemini_api_sentinel_runtime(
         "created": created,
         "provider_calls": 0,
         "configured_free_key_count": key_count,
-        "paid_backup_allowed": False,
+        "paid_backup_allowed": 'UNKNOWN' if cpa_gemini_enabled(selected) else False,
         "path": str(path),
         "sha256": _sha256(path),
         "bytes": path.stat().st_size,
@@ -377,6 +387,8 @@ def ensure_gemini_api_sentinel_runtime(
 
 
 __all__ = [
+    "CPA_ENDPOINT_FAMILY",
+    "selected_endpoint_family",
     "ADAPTER_RELATIVE",
     "CAPABILITY_ID",
     "ENABLED_ENV",

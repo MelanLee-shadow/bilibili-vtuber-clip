@@ -43,6 +43,14 @@ from src.autoslice.branding_intro import (
     pin_existing_delivery_intro,
     require_branding_intro,
 )
+from src.autoslice.clip_profile import (
+    ClipProfile,
+    ClipProfileError,
+    clip_profile_from_document_holder,
+    default_clip_profile,
+    intro_binding_problem,
+    requires_intro,
+)
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.repository_asset_authority import (
     RepositoryAssetAuthorityError,
@@ -733,8 +741,13 @@ def _existing_delivery_branding_context(
     authority_publish_path: Path | None,
     recovery_authority_path: Path | None,
     branding_intro: Mapping[str, object] | None,
+    clip_profile: ClipProfile | None = None,
 ) -> tuple[Mapping[str, object] | None, dict[str, object] | None]:
     """Return a normal or prior-delivery-pinned intro context before mutation.
+
+    ``clip_profile`` is the correction record's declared form (talk default).
+    A form that takes no intro corrects without one, and its delivery
+    authority must not carry an intro binding.
 
     The mutable correction ``record_path`` is intentionally never accepted as
     authority: a prior failed correction may already have rewritten it.  An
@@ -757,7 +770,12 @@ def _existing_delivery_branding_context(
                 "delivery branding authority was supplied but the delivery video does not yet exist"
             )
         return branding_intro, None
+    form = clip_profile if clip_profile is not None else default_clip_profile("talk")
     if recovery_authority_path is not None:
+        if not requires_intro(form):
+            raise DeliveryBrandingAuthorityError(
+                "recovery branding authority applies only to a clip form that takes the intro"
+            )
         working_record = _read_regular_json(
             working_record_path, label="current correction record"
         )
@@ -831,6 +849,21 @@ def _existing_delivery_branding_context(
             "delivery authority record/publish burned hashes do not agree"
         )
     prior_binding = burned_preview.get("branding_intro")
+    if not requires_intro(form):
+        problem = intro_binding_problem(form, prior_binding, intro_mandatory=False)
+        if problem is not None:
+            raise DeliveryBrandingAuthorityError(
+                f"{problem}: delivery authority record carries a branding intro binding"
+            )
+        return None, {
+            "schema_version": "delivery-branding-authority.v1",
+            "record_path": str(authority_record_path),
+            "record_sha256": "sha256:" + _sha256(authority_record_path),
+            "publish_path": str(authority_publish_path),
+            "publish_sha256": actual_publish_hash,
+            "burned_video_sha256": record_burned_sha,
+            "branding_intro": None,
+        }
     if not isinstance(prior_binding, Mapping):
         raise DeliveryBrandingAuthorityError(
             "delivery authority record has no branding intro binding"
@@ -864,6 +897,13 @@ def _verify_reburn_kept_authorized_intro(
         return
     expected = authority.get("branding_intro")
     actual = burned_preview.get("branding_intro")
+    if expected is None and "branding_intro" in authority:
+        # The authorized delivery takes no intro; the reburn must not add one.
+        if actual is not None:
+            raise DeliveryBrandingAuthorityError(
+                "reburn added a branding intro to a delivery whose clip form takes none"
+            )
+        return
     if not isinstance(expected, Mapping) or not isinstance(actual, Mapping):
         raise DeliveryBrandingAuthorityError(
             "reburn has no branding intro binding for an existing delivery"
@@ -888,10 +928,12 @@ def _prepare_correction_branding(
     authority_record_path: Path | None,
     authority_publish_path: Path | None,
     recovery_authority_path: Path | None,
+    clip_profile: ClipProfile | None = None,
 ) -> tuple[Mapping[str, object] | None, dict[str, object] | None]:
     """Resolve and pin delivery branding before any correction output is written."""
 
-    resolved_branding_intro = require_branding_intro(ROOT)
+    form = clip_profile if clip_profile is not None else default_clip_profile("talk")
+    resolved_branding_intro = require_branding_intro(ROOT) if requires_intro(form) else None
     return _existing_delivery_branding_context(
         delivery=delivery,
         working_record_path=working_record_path,
@@ -900,6 +942,7 @@ def _prepare_correction_branding(
         authority_publish_path=authority_publish_path,
         recovery_authority_path=recovery_authority_path,
         branding_intro=resolved_branding_intro,
+        clip_profile=form,
     )
 
 
@@ -1297,9 +1340,11 @@ def main(
                 authority_record_path=args.delivery_authority_record,
                 authority_publish_path=args.delivery_authority_publish,
                 recovery_authority_path=args.recovery_branding_authority,
+                clip_profile=clip_profile_from_document_holder(record, lane="talk"),
             )
         except (
             BrandingIntroError,
+            ClipProfileError,
             DeliveryBrandingAuthorityError,
             DeliveryCopyError,
         ) as exc:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from src.autoslice.discovery_channels import batch_from_rows
+
 from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256, sha256_ref
 from .finding_lifecycle import is_finding_failure
 
@@ -63,6 +65,11 @@ from src.autoslice.cover_punch_semantics import (
 from src.autoslice.branding_intro import (
     BrandingIntroError,
     load_branding_intro_policy,
+)
+from src.autoslice.clip_profile import (
+    CLIP_PROFILE_FIELD, ClipProfile, clip_profile_from_spec, default_clip_profile,
+    holder_clip_profile_transcription, render_clip_profile, requires_intro,
+    spec_clip_profile_transcription,
 )
 from src.autoslice.cover_route_evidence import (
     validate_cover_route_decision,
@@ -212,6 +219,8 @@ from src.autoslice.story_contract import (
     cover_story_contract_binding_matches,
 )
 from src.autoslice.clip_context import validate_clip_context
+from src.autoslice.producer_stage_log import producer_stage
+from src.autoslice.canonical_json_hash import canonical_sha256
 
 ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(ROOT)
@@ -354,18 +363,21 @@ def _require_delivery_branding_intro(
     *,
     delivery_lane: str,
     branding_intro: dict[str, object] | None,
+    clip_profile: ClipProfile | None = None,
 ) -> None:
     """Reject a missing intro at the producer's final delivery boundary.
 
-    Shadow/test and song callers must identify their lane explicitly.  The
-    generic burn adapter still accepts ``None`` for those non-talk paths; a
-    production talk finalization cannot use that legacy shape.
+    The declared form decides the intro. Undeclared talk/song callers keep
+    the historical lane default; shadow retains its test policy exemption.
     """
 
     lane = str(delivery_lane or "").strip().lower()
     if lane not in _DELIVERY_LANES:
         raise SystemExit(f"DELIVERY_LANE_INVALID: {delivery_lane!r}")
-    if lane == "talk" and _branding_intro_required_for_talk() and branding_intro is None:
+    form = clip_profile or default_clip_profile("song" if lane == "song" else "talk")
+    if not requires_intro(form) and branding_intro is not None:
+        raise SystemExit("BRANDING_INTRO_FORBIDDEN_FOR_PROFILE")
+    if requires_intro(form) and lane == "talk" and _branding_intro_required_for_talk() and branding_intro is None:
         raise SystemExit("BRANDING_INTRO_REQUIRED_FOR_TALK_DELIVERY")
 
 
@@ -2077,14 +2089,7 @@ def _register_exact_final_cpa_repairs(
             raise ValueError("EXACT_FINAL_SURFACE_REGISTRATION_INVALID")
         matched_start = delivery_start_ms + local_start
         matched_end = delivery_start_ms + local_end
-        repair_sha256 = "sha256:" + hashlib.sha256(
-            json.dumps(
-                repair,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
+        repair_sha256 = "sha256:" + canonical_sha256(repair, allow_nan=True)
         superseded_indexes: list[int] = []
         for index, row in enumerate(rows):
             if not isinstance(row, dict) or row.get("reconciliation"):
@@ -2440,6 +2445,24 @@ def _run_exact_final_review_gate_body(
     reviewer = run_exact_final_review or (adapters.run_exact_final_review if adapters else None)
     if reviewer is None:
         raise SystemExit("FINAL_REVIEW_EXACT_FINALIZER_MISSING")
+    if os.environ.get("AUTOSLICE_FINAL_REVIEW_MODE") == "per_finding":
+        from src.autoslice.finding_closure_shell import (
+            PackageCall, PerFindingReviewer, run_package_closure,
+        )
+        if not isinstance(reviewer, PerFindingReviewer):
+            raise SystemExit("FINDING_CLOSURE_TYPED_REVIEWER_REQUIRED")
+        review_offset = final_start
+        if text_recovery_only and isinstance(recut, CurrentTextReviewArtifacts):
+            current_cues = [c for c in parse_srt_cues(recut.subtitle_path.read_text(encoding="utf-8")) if c.text.strip()]
+            if not current_cues:
+                raise SystemExit("CURRENT_TEXT_SOURCE_CLOCK_EMPTY")
+            review_offset = final_start - current_cues[0].start_ms
+            if review_offset < 0 or current_cues[-1].end_ms + review_offset != final_end:
+                raise SystemExit("CURRENT_TEXT_SOURCE_CLOCK_INTERVAL_DRIFT")
+        return run_package_closure(PackageCall(reviewer, cid, out_root, recut.subtitle_path,
+            chat_authority_audit, chat_authority_path, review_offset, final_end,
+            recut.redelivery_baseline_audit, recut.redelivery_baseline_audit_path, before_review,
+            text_recovery_only=text_recovery_only))
     self_heal_passes: list[dict[str, object]] = []
     previous_self_heal = chat_authority_audit.get("exact_final_cpa_self_heal")
     prior_self_heal_runs = retained_runs(previous_self_heal)
@@ -2568,7 +2591,9 @@ def _run_exact_final_review_gate_body(
                 final_end,
             )
         from src.autoslice.span_finding_obligations import enforce_review as enforce_span_review
-        audit = enforce_span_review(final_text, chat_authority_audit, audit)
+        with producer_stage("exact_final_review.postprocess.span_obligations"):
+            audit = enforce_span_review(final_text, chat_authority_audit, audit,
+                                        timeline_offset_ms=review_timeline_offset_ms)
         if "span_obligation_review" in audit:
             chat_authority_audit["span_obligation_closures"] = deepcopy(audit["span_obligation_review"]["closures"])
             chat_authority_audit["span_unapplied_questions"] = deepcopy(audit["span_obligation_review"]["span_unapplied_questions"])
@@ -2588,7 +2613,8 @@ def _run_exact_final_review_gate_body(
         )
         if isinstance(previous_postburn, Mapping):
             audit["postburn_subtitle_audio_review"] = deepcopy(previous_postburn)
-        convergence_memos = collect_exact_final_convergence_memos(audit)
+        with producer_stage("exact_final_review.postprocess.convergence"):
+            convergence_memos = collect_exact_final_convergence_memos(audit)
         if convergence_memos:
             existing_memos = chat_authority_audit.get(
                 "exact_final_cpa_convergence_memos"
@@ -2658,7 +2684,8 @@ def _run_exact_final_review_gate_body(
             "soft_repair_pass_target": EXACT_FINAL_CPA_SELF_HEAL_MAX_REPAIR_PASSES,
             "policy": "SOFT_PROGRESS_REQUIRED",
         }
-        persist_review_audit(review_audit_path, audit)
+        with producer_stage("exact_final_review.postprocess.persist"):
+            persist_review_audit(review_audit_path, audit)
         expected_srt_sha256 = "sha256:" + hashlib.sha256(
             final_bytes
         ).hexdigest()
@@ -2666,8 +2693,9 @@ def _run_exact_final_review_gate_body(
         protected = frozenset(human_protected_indexes(
             chat_authority_audit.get('human_sequence_alignment') or {}, final_text,
             timeline_offset_ms=final_start))
-        repaired_text, repairs = _apply_exact_final_cpa_repairs(
-            final_text, audit, clip_context=clip_context, protected_cue_indexes=protected)
+        with producer_stage("exact_final_review.postprocess.repairs"):
+            repaired_text, repairs = _apply_exact_final_cpa_repairs(
+                final_text, audit, clip_context=clip_context, protected_cue_indexes=protected)
         proposed_sha256 = hashlib.sha256(repaired_text.encode('utf-8')).hexdigest()
         returning_memos = (_matching_cycle_return_memos(repairs, convergence_memos,
             prior_memo_ids=prior_convergence_memo_ids, input_srt_sha256=expected_srt_sha256)
@@ -2676,18 +2704,21 @@ def _run_exact_final_review_gate_body(
             or (returning_memos and len(returning_memos) == len(repairs)))
             and (proposed_sha256 not in reviewed_hashes
             or (returning_memos and len(returning_memos) == len(repairs))))
-        terminal_pass_receipts.append(review_pass_receipt(pass_index=pass_index + 1,
-            srt_text=final_text, audit=audit,
-            repaired_text=repaired_text if ordinary_progress else final_text,
-            repairs=repairs if ordinary_progress else []))
+        with producer_stage("exact_final_review.postprocess.pass_receipt"):
+            terminal_pass_receipts.append(review_pass_receipt(pass_index=pass_index + 1,
+                srt_text=final_text, audit=audit,
+                repaired_text=repaired_text if ordinary_progress else final_text,
+                repairs=repairs if ordinary_progress else []))
         if not ordinary_progress and unresolved_review_rows(audit):
-            audit = terminalize_review(final_text, audit, pass_receipts=terminal_pass_receipts,
-                adapters=terminal_adapters)
+            with producer_stage("exact_final_review.postprocess.terminal_funnel"):
+                audit = terminalize_review(final_text, audit, pass_receipts=terminal_pass_receipts,
+                    adapters=terminal_adapters)
             # Terminal B keeps are new adjudications of the same outstanding
             # span questions. Feed them back to the ordinary closure consumer
             # before G; retaining the pre-terminal proof leaves those actual
             # obligations pending despite the completed full-CURRENT ruling.
-            audit = enforce_span_review(final_text, chat_authority_audit, audit)
+            audit = enforce_span_review(final_text, chat_authority_audit, audit,
+                                        timeline_offset_ms=review_timeline_offset_ms)
             if 'span_obligation_review' in audit:
                 chat_authority_audit['span_obligation_closures'] = deepcopy(audit['span_obligation_review']['closures'])
                 chat_authority_audit['span_unapplied_questions'] = deepcopy(audit['span_obligation_review']['span_unapplied_questions'])
@@ -3356,6 +3387,7 @@ def _build_and_burn_record(
     branding_intro: dict[str, object] | None,
     adapters: ProducerFinalizationAdapters,
     delivery_lane: str = "talk",
+    clip_profile: ClipProfile | None = None,
     talk_filler_audit_path: Path | None = None,
     candidate_id: str | None = None,
     render_revision_marker: str | None = None,
@@ -3363,6 +3395,7 @@ def _build_and_burn_record(
     _require_delivery_branding_intro(
         delivery_lane=delivery_lane,
         branding_intro=branding_intro,
+        clip_profile=clip_profile,
     )
     media_path = recut.media_path
     subtitle_path = recut.subtitle_path
@@ -3451,6 +3484,9 @@ def _build_and_burn_record(
         "subtitle_timing_qa": timing_qa,
         "boundary_audit": audit,
     }
+    if clip_profile is not None:
+        # Only explicit declarations are transcribed: legacy record bytes stay unchanged.
+        record[CLIP_PROFILE_FIELD] = render_clip_profile(clip_profile)
     roles = chat_authority_audit.get("caption_audio_roles")
     if (isinstance(roles, Mapping)
             and roles.get("final_srt_sha256") == record["artifact_hashes"]["subtitle_sha256"]
@@ -4493,8 +4529,11 @@ def _run_postburn_subtitle_audio_review(
                     editorial_rendered_cues=editorial_cues,
                     source_media_timeline_offset_ms=timeline_offset_ms,
                     candidate_risk_llm_call=replay_or_complete_candidate_risk,
-                    extra_raw_findings=review_extra_findings,
-                    prioritize_extra_raw_findings=bool(review_extra_findings),
+                    **({"discovery_batch": batch_from_rows(
+                        review_extra_findings, context=clip_context, source_offset_ms=timeline_offset_ms)}
+                        if os.environ.get("AUTOSLICE_FINAL_REVIEW_MODE") == "per_finding" else {
+                            "extra_raw_findings": review_extra_findings,
+                            "prioritize_extra_raw_findings": bool(review_extra_findings)}),
                 )
                 cached_parser_recovery = bool(completed_raw_pending or (
                     cached_review.get("status") == "AUDITOR_UNAVAILABLE"
@@ -4562,8 +4601,11 @@ def _run_postburn_subtitle_audio_review(
                 candidate_context=clip_context,
                 editorial_rendered_cues=editorial_cues,
                 source_media_timeline_offset_ms=timeline_offset_ms,
-                extra_raw_findings=review_extra_findings,
-                prioritize_extra_raw_findings=bool(review_extra_findings),
+                **({"discovery_batch": batch_from_rows(
+                    review_extra_findings, context=clip_context, source_offset_ms=timeline_offset_ms)}
+                    if os.environ.get("AUTOSLICE_FINAL_REVIEW_MODE") == "per_finding" else {
+                        "extra_raw_findings": review_extra_findings,
+                        "prioritize_extra_raw_findings": bool(review_extra_findings)}),
             )
     except Exception as exc:
         if error is None:
@@ -4580,6 +4622,17 @@ def _run_postburn_subtitle_audio_review(
     # Every open witness nomination must be on the exact-final agenda. One the
     # reviewer dropped, capped or could not parse is an unresolved wording
     # question, never silent: the receipt blocks release on it.
+    # R2: a lone ASR disagreement is material, not an open task. Keep the
+    # raw nomination for diagnostics; enforce the existing unqueued-task gate
+    # only on nominations the registry actually admitted (possibly via A/G).
+    material_only_witness_ids: list[str] = []
+    if os.environ.get("AUTOSLICE_FINAL_REVIEW_MODE") == "per_finding":
+        admitted_witness_cues = {row.get("cue_index") for row in discovered_findings
+            if isinstance(row, Mapping) and "I" in (row.get("discovery_task") or {}).get("channels", ())}
+        material_only_witness_ids = [row["nomination_id"] for row in open_witness_nominations
+            if row["cue_index"] not in admitted_witness_cues]
+        open_witness_nominations = [row for row in open_witness_nominations
+            if row["nomination_id"] not in material_only_witness_ids]
     queued_witness_ids = {
         (row.get("candidate_provenance") or {}).get("nomination_id")
         for row in findings if isinstance(row, Mapping)
@@ -4607,6 +4660,7 @@ def _run_postburn_subtitle_audio_review(
         "witness_disagreement": {
             "schema_version": "postburn-witness-disagreement.v1",
             "nomination_count": len(witness_nominations),
+            "material_only_nomination_ids": material_only_witness_ids,
             "decided_nomination_ids": sorted(decided_witness_ids),
             "open_nomination_ids": [row["nomination_id"] for row in open_witness_nominations],
             "unqueued_nomination_ids": unqueued_witness,
@@ -5173,10 +5227,18 @@ def finalize_producer_package(
         and options.substrate != "reviewed-baseline-replay"
     ):
         raise SystemExit("REPLAY_C12_PRIVATE_PROJECTION_SUBSTRATE_INVALID")
+    profile_lane = "song" if str(delivery_lane or "").strip().lower() == "song" else "talk"
+    clip_form = clip_profile_from_spec(spec, lane=profile_lane)
     _require_delivery_branding_intro(
         delivery_lane=delivery_lane,
         branding_intro=branding_intro,
+        clip_profile=clip_form,
     )
+    if completed is not None and (
+        spec_clip_profile_transcription(spec, lane=profile_lane)
+        != holder_clip_profile_transcription(completed.record, lane=profile_lane)
+    ):
+        raise SystemExit("CLIP_PROFILE_INVALID: prepared record differs from its spec")
     if options.prepare_only and str(delivery_lane).strip().lower() == "talk":
         # Preparation requires this runtime seal even when all media/CPA work
         # succeeds.  Resolve it now using the preparation consumer's exact
@@ -5326,6 +5388,7 @@ def finalize_producer_package(
             branding_intro=branding_intro,
             adapters=adapters,
             delivery_lane=delivery_lane,
+            clip_profile=clip_form if CLIP_PROFILE_FIELD in spec else None,
             talk_filler_audit_path=talk_filler_audit_path,
             candidate_id=cid,
             render_revision_marker=render_revision_marker,

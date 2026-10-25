@@ -774,14 +774,17 @@ def call_file_model(
     poll_interval_seconds: float = 2.0,
     transport: GeminiFileTransport | None = None,
     sleeper: Callable[[float], None] = time.sleep,
+    environment: Mapping[str, str] | None = None,
 ) -> GeminiFileCallOutcome:
     """Upload exact bytes, wait for ACTIVE, generate, and attempt cleanup."""
 
+    from . import cpa_gemini_client
+    cpa_managed = cpa_gemini_client.enabled(environment)
     if (
         _MODEL_RE.fullmatch(model) is None
         or _MIME_RE.fullmatch(mime_type) is None
         or not prompt.strip()
-        or not key
+        or (not key and not cpa_managed)
         or (
             mime_type.startswith("video/")
             and (
@@ -800,6 +803,30 @@ def call_file_model(
             "model, MIME type, video FPS, prompt, key, or timeout configuration is invalid",
             phase="local_request",
         )
+    if cpa_managed:
+        with _stable_file(media_path, expected_sha256=expected_sha256, expected_bytes=expected_bytes) as stable:
+            data, _ = cpa_gemini_client.file_part(media_path, mime_type)
+            if hashlib.sha256(data).hexdigest() != stable.sha256:
+                raise ValueError('CPA_GEMINI_INPUT_DRIFT')
+            import base64
+            part: cpa_gemini_client.JsonObject = {'inline_data': {'mime_type': mime_type,
+                'data': base64.b64encode(data).decode('ascii')}}
+            if video_fps is not None:
+                part['video_metadata'] = {'fps': video_fps}
+            completion = cpa_gemini_client.generate_native(model=model,
+                body={'contents': [{'parts': [{'text': prompt}, part]}],
+                    'generationConfig': build_generation_config(model=model, response_mime_type=None)},
+                purpose='file_model_inline', timeout_seconds=timeout_seconds, environment=environment)
+            return GeminiFileCallOutcome(completion.text, {
+                'provider': 'gemini_api', 'model': model, 'transport': 'cpa_gemini_native',
+                'media_sha256': stable.sha256, 'media_bytes': stable.size, 'mime_type': mime_type,
+                'video_fps': video_fps, 'active_state': 'INLINE', 'poll_count': 0,
+                'http_request_count': 1, 'cleanup_status': 'NO_REMOTE_FILE_CREATED',
+                'response_text_sha256': hashlib.sha256(completion.text.encode()).hexdigest(),
+                'response_payload_sha256': completion.receipt['response_sha256'],
+                'key_tier': 'UNKNOWN', 'key_name': 'UNKNOWN', 'key_ordinal': None,
+                'configured_free_key_count': 0, 'paid_backup_used': 'UNKNOWN',
+                'cpa_transport_receipt': dict(completion.receipt)})
     selected = transport or UrllibGeminiFileTransport()
     resource: dict[str, object] | None = None
     cleanup_status = "NOT_STARTED"
@@ -972,6 +999,12 @@ def run_free_key_file_call(
 ) -> GeminiFileCallOutcome:
     """Try configured free keys only; never read or spend the paid backup key."""
 
+    from . import cpa_gemini_client
+    if cpa_gemini_client.enabled(environment):
+        return call_file_model(media_path=media_path, expected_sha256=expected_sha256,
+            expected_bytes=expected_bytes, mime_type=mime_type, prompt=prompt, key='', model=model,
+            video_fps=video_fps, timeout_seconds=timeout_seconds, poll_timeout_seconds=poll_timeout_seconds,
+            environment=environment)
     keys = configured_free_keys(environment)
     if not keys:
         raise GeminiFileApiError(

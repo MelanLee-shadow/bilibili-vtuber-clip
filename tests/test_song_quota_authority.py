@@ -12,6 +12,15 @@ from scripts import session_autoslice as runner
 from src.autoslice import candidate_selection, reporting, talk_quota_authority as authority
 
 
+from tests.quota_support import synthetic_quota_authority
+
+@pytest.fixture(autouse=True)
+def _synthetic_quota_input(tmp_path, monkeypatch):
+    path = tmp_path / "synthetic-quota-authority.json"
+    path.write_text(json.dumps(synthetic_quota_authority(), ensure_ascii=False))
+    monkeypatch.setattr(authority, "DEFAULT_AUTHORITY_PATH", path)
+
+
 def _candidate(date, index, *, session_hour=21):
     return {
         "cid": f"song_{index}",
@@ -72,7 +81,7 @@ def test_ambiguous_or_missing_date_and_invalid_authority_keep_default(tmp_path, 
     state = {"pending_song": [_candidate("2026-10-21", 0)]}
     monkeypatch.setattr(authority, "DEFAULT_AUTHORITY_PATH", tmp_path / "absent.json")
     assert runner.song_delivery_budget(state) == 1
-    document = authority.load_talk_quota_policy_authority(Path(__file__).resolve().parents[1] / "assets/lidousha/talk_quota_policy_authority.v1.json")
+    document = synthetic_quota_authority()
     duplicate = deepcopy(document["entries"][-1])
     duplicate["entry_id"] += "-duplicate"
     document["entries"].append(duplicate)

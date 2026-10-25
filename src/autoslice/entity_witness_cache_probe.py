@@ -15,6 +15,21 @@ from src.autoslice.acoustic_witness_protocol import BLIND_PINYIN_PROTOCOL
 from src.autoslice.llm_client import extract_json_object
 
 
+def _resolve_narrow_audio(*, path, digest, source, source_sha256, span):
+    """Reopen bound bytes using the validated writer's exact crop recipe."""
+    from src.autoslice.bound_media_recovery import audio_recipe, resolve_bound_media
+    from src.autoslice.evidence_identity import regular_file_sha256
+
+    recipe = audio_recipe(
+        {"path": str(source), "sha256": source_sha256},
+        [span.crop_start_ms, span.crop_end_ms], "black_frame")
+    resolved = resolve_bound_media(path, digest, recipe=recipe)
+    if (any(p.is_symlink() for p in (resolved, *resolved.parents))
+            or regular_file_sha256(resolved) != digest):
+        raise ContractRejection("RELISTEN_NARROW_AUDIO_DRIFT")
+    return resolved
+
+
 def _artifact_by_sha256(
     directory: Path,
     *,
@@ -62,7 +77,7 @@ def _load_manifests(output_dir: Path) -> list[tuple[Path, Mapping[str, Any]]]:
 def probe_cached_local_audio_witness(
     *, verifier: Any, request: Mapping[str, Any]
 ) -> Mapping[str, Any] | None:
-    """Rebind a physically identical witness without crop, writes, or provider I/O.
+    """Rebind identical bytes without provider I/O or historical artifact writes.
 
     Candidate/base/proposed drift is intentionally outside the blind witness
     and remains bound by the CPA judge cache.  This probe binds source bytes,
@@ -173,13 +188,13 @@ def probe_cached_local_audio_witness(
             and verdict.get("timeline_binding") == timeline
         ):
             continue
-        clip = manifest_path.parent / "input.mp4"
-        if not clip.is_file() or clip.is_symlink() or not re.fullmatch(r"[0-9a-f]{64}", audio_sha):
+        original_clip = manifest_path.parent / "input.mp4"
+        if not re.fullmatch(r"[0-9a-f]{64}", audio_sha):
             continue
         try:
-            if audio._sha256(clip) != audio_sha:
-                continue
-        except OSError:
+            clip = _resolve_narrow_audio(path=original_clip, digest=audio_sha,
+                source=verifier.source_media, source_sha256=verifier.source_sha256, span=span)
+        except (OSError, ValueError, RuntimeError):
             continue
         prompt_path = _artifact_by_sha256(
             manifest_path.parent,
@@ -235,7 +250,7 @@ def probe_cached_local_audio_witness(
             **rebound,
             "relisten_artifacts": relisten_artifact_binding(
                 verifier=verifier, audio_path=clip, prompt_path=prompt_path,
-                response_path=response_path),
+                response_path=response_path) | {"audio_path": str(original_clip)},
             "served_from_cache": True,
             "witness_cache_replay": {
                 "schema_version": "witness-metadata-cache-replay.v1",
@@ -273,7 +288,7 @@ def relisten_artifact_binding(*, verifier, audio_path, prompt_path, response_pat
 
 
 def validate_relisten_witness_artifacts(*, request, witness):
-    """Reopen one exact narrow blind acquisition; no scan, crop, write or I/O call.
+    """Reopen one exact narrow acquisition, recovering only missing bound media.
 
     Legacy hash-only witnesses remain available to their existing consumers.
     They cannot establish a new relisten opportunity or an assisted prerequisite
@@ -300,21 +315,27 @@ def validate_relisten_witness_artifacts(*, request, witness):
             or not same_evidence_file(source, binding.get("source_media_sha256"),
                                       recorded_size=recorded[4], recorded_mtime_ns=recorded[5])):
         raise ContractRejection("RELISTEN_NARROW_SOURCE_DRIFT")
-    paths = {}
-    for field, witness_field in (("audio", "audio_clip_sha256"),
-                                 ("prompt", "prompt_sha256"), ("response", "response_sha256")):
-        path = Path(binding[field + "_path"])
-        if (not path.is_file() or path.is_symlink()
-                or audio._sha256(path) != binding.get(field + "_sha256")
-                or binding.get(field + "_sha256") != witness.get(witness_field)):
-            raise ContractRejection("RELISTEN_NARROW_" + field.upper() + "_DRIFT")
-        paths[field] = path
     span = audio._prepare_audio_span(
         request=request, context_mode=True,
         source_media_timeline_offset_ms=request["source_media_timeline_offset_ms"],
         source_duration_ms=binding["source_duration_ms"], witness_mode=True)
     if span is None or span.timeline_binding != witness.get("timeline_binding"):
         raise ContractRejection("RELISTEN_NARROW_CLOCK_DRIFT")
+    paths = {}
+    for field, witness_field in (("audio", "audio_clip_sha256"),
+                                 ("prompt", "prompt_sha256"), ("response", "response_sha256")):
+        path = Path(binding[field + "_path"])
+        if field == "audio":
+            try:
+                path = _resolve_narrow_audio(path=path, digest=binding.get("audio_sha256"),
+                    source=source, source_sha256=binding["source_media_sha256"], span=span)
+            except (OSError, ValueError, RuntimeError) as exc:
+                raise ContractRejection("RELISTEN_NARROW_AUDIO_DRIFT") from exc
+        if (not path.is_file() or path.is_symlink()
+                or audio._sha256(path) != binding.get(field + "_sha256")
+                or binding.get(field + "_sha256") != witness.get(witness_field)):
+            raise ContractRejection("RELISTEN_NARROW_" + field.upper() + "_DRIFT")
+        paths[field] = path
     provider = witness.get("provider")
     if provider not in {"agy", "gemini_api"}:
         raise ContractRejection("RELISTEN_NARROW_PROVIDER_INVALID")
@@ -340,4 +361,5 @@ def validate_relisten_witness_artifacts(*, request, witness):
     if (rebound.get("status") != "OBSERVED"
             or any(witness.get(k) != v for k, v in rebound.items())):
         raise ContractRejection("RELISTEN_NARROW_RAW_VERDICT_DRIFT")
-    return dict(binding)
+    # This is the physical read view; the caller's historical binding stays intact.
+    return dict(binding) | {"audio_path": str(paths["audio"])}

@@ -3,6 +3,8 @@
 Public API: ProviderRoute is the structural (provider, modality) port; Route,
 ProviderWindow and RateFeedback are frozen values. ProviderController.acquire /
 finish implement AIMD per provider/modality (initial window 20, no maximum).
+provider_admission uses the runtime's cross-process window by default, and an
+explicit in-memory controller for isolated callers without a shared runtime.
 provider_admission(provider, modality, *, controller=None) yields a report hook
 for structured provider feedback; nested owners share one lease. FinalReviewCall
 wraps an existing callable with admission only, forwarding metadata and original
@@ -21,8 +23,12 @@ from threading import Condition
 import time
 from typing import Literal, Protocol, cast
 
+from .review_errors import ContractRejection
 
-class ProviderAdmissionError(ValueError):
+Modality = Literal['text', 'audio', 'vision', 'image', 'video', 'audio_video']
+
+
+class ProviderAdmissionError(ContractRejection):
     """Invalid admission bookkeeping or provider feedback."""
 
 
@@ -30,13 +36,13 @@ class ProviderRoute(Protocol):
     @property
     def provider(self) -> str: ...
     @property
-    def modality(self) -> Literal['text', 'audio']: ...
+    def modality(self) -> Modality: ...
 
 
 @dataclass(frozen=True)
 class Route:
     provider: str
-    modality: Literal['text', 'audio']
+    modality: Modality
 
 
 @dataclass(frozen=True)
@@ -55,8 +61,10 @@ class RateFeedback:
 
 class ProviderController:
     """AIMD admission per (provider, modality); no fixed maximum."""
-    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic,
+                 shared_runtime: bool = False) -> None:
         self.clock = clock
+        self.shared_runtime = shared_runtime
         self.condition = Condition()
         self.windows: dict[tuple[str, str], ProviderWindow] = {}
 
@@ -102,40 +110,71 @@ def observed_rate_feedback(value: object) -> RateFeedback:
     elif isinstance(value, Mapping):
         children = [observed_rate_feedback(child) for child in value.values()
                     if isinstance(child, (Mapping, list, tuple))]
-        code = _get(value, 'provider_http_status', _get(value, 'http_status'))
-        quota = _get(value, 'provider_error_code', _get(value, 'error_code'))
+        code = _get(value, 'provider_http_status', _get(value, 'http_status', _get(value, 'code')))
+        quota = _get(value, 'provider_error_code', _get(value, 'error_code', _get(value, 'status')))
         limited = code in (429, '429') or _get(value, 'quota_exhausted') is True or (
             isinstance(quota, str) and quota in {
-                'insufficient_quota', 'quota_exhausted', 'resource_exhausted', 'RESOURCE_EXHAUSTED'})
+                'insufficient_quota', 'quota_exhausted', 'resource_exhausted', 'RESOURCE_EXHAUSTED',
+                'usage_limit_reached', 'rate_limit_exceeded',
+                'AGY_QUOTA_EXHAUSTED', 'AGY_RATE_LIMITED'})
         after = _get(value, 'provider_retry_after_seconds',
                      _get(value, 'retry_after_seconds', _get(value, 'retry_after', 0.0)))
-        children.append(RateFeedback(limited, _seconds(after)))
+        seconds = _seconds(after)
+        successful = _get(value, 'status') not in ('FAILED', 'UNAVAILABLE', 'ERROR')
+        if isinstance(code, int) and code >= 400:
+            successful = False
+        children.append(RateFeedback(limited or seconds > 0, seconds, successful))
     return RateFeedback(any(child.rate_limited for child in children),
-                        max((child.retry_after for child in children), default=0.0))
+                        max((child.retry_after for child in children), default=0.0),
+                        all(child.successful for child in children))
+
+
+def _http_retry_after(error: BaseException | None) -> float:
+    """Only parse the protocol header, never arbitrary exception text."""
+    from email.utils import parsedate_to_datetime
+    headers = getattr(error, 'headers', None)
+    raw = headers.get('Retry-After') if headers is not None else None
+    if not isinstance(raw, str):
+        return 0.0
+    try:
+        return _seconds(float(raw))
+    except ValueError:
+        try:
+            return _seconds(max(0.0, parsedate_to_datetime(raw).timestamp() - time.time()))
+        except (ValueError, TypeError, OverflowError):
+            return 0.0
 
 
 def rate_feedback(error: BaseException | None) -> RateFeedback:
     signals = observed_rate_feedback((
         getattr(error, 'provider_diagnostics', None), getattr(error, 'metadata', None),
-        {'http_status': getattr(error, 'http_status', None),
+        {'http_status': getattr(error, 'http_status', getattr(error, 'status_code', getattr(error, 'code', None))),
          'quota_exhausted': getattr(error, 'quota_exhausted', False),
          'retry_after': getattr(error, 'retry_after', None)},
         {'retry_after_seconds': getattr(error, 'retry_after_seconds', None)},
+        {'retry_after_seconds': _http_retry_after(error)},
     ))
     return RateFeedback(signals.rate_limited, signals.retry_after, error is None)
 
 
-PROVIDER_CONTROLLER = ProviderController()
+PROVIDER_CONTROLLER = ProviderController(shared_runtime=True)
 Report = Callable[[object], None]
 _ADMITTED_PROVIDERS: ContextVar[tuple[tuple[ProviderController, str, str, Report], ...]] = ContextVar(
     'provider_admission_leases', default=())
 
 
 @contextmanager
-def provider_admission(provider: str, modality: Literal['text', 'audio'], *,
+def provider_admission(provider: str, modality: Modality, *,
                        controller: ProviderController | None = None) -> Iterator[Report]:
     """One shared lease for nested acquisition owners; no dispatch or retry."""
     owner = PROVIDER_CONTROLLER if controller is None else controller
+    if owner.shared_runtime:
+        from src.autoslice.provider_slots import configured_runtime_root, runtime_provider_slot
+        if configured_runtime_root() is not None:
+            with runtime_provider_slot(provider=provider, modality=modality) as lease:
+                assert lease is not None
+                yield lease.report
+            return
     for held_owner, held_provider, held_modality, held_report in _ADMITTED_PROVIDERS.get():
         if owner is held_owner and (provider, modality) == (held_provider, held_modality):
             yield held_report
@@ -146,7 +185,8 @@ def provider_admission(provider: str, modality: Literal['text', 'audio'], *,
         nonlocal feedback
         fresh = observed_rate_feedback(value)
         feedback = RateFeedback(feedback.rate_limited or fresh.rate_limited,
-                                max(feedback.retry_after, fresh.retry_after), feedback.successful)
+                                max(feedback.retry_after, fresh.retry_after),
+                                feedback.successful and fresh.successful)
 
     route = Route(provider, modality)
     owner.acquire(route)
@@ -161,7 +201,7 @@ def provider_admission(provider: str, modality: Literal['text', 'audio'], *,
         _ADMITTED_PROVIDERS.reset(token)
         failed = rate_feedback(error)
         owner.finish(route, RateFeedback(feedback.rate_limited or failed.rate_limited,
-            max(feedback.retry_after, failed.retry_after), error is None))
+            max(feedback.retry_after, failed.retry_after), feedback.successful and error is None))
 
 
 class FinalReviewCall:
@@ -182,5 +222,10 @@ class FinalReviewCall:
         return cast(object, getattr(self.primary, name))
 
     def __call__(self, prompt: str) -> str:
+        # Canonical physical transports admit after checkpoint/cache lookup.
+        # Keep this transparent wrapper for identity/introspection, without
+        # charging cache hits or layering another process-local window.
+        if self.controller.shared_runtime and self.provider.startswith('canonical-runtime-cpa:'):
+            return self.primary(prompt)
         with provider_admission(self.provider, 'text', controller=self.controller):
             return self.primary(prompt)

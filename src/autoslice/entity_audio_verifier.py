@@ -991,7 +991,7 @@ def _observe_entity_audio(
     paid_policy_stamp: Mapping[str, Any] | None = None
     provider_failures: list[dict[str, Any]] = []
     response_path = job_dir / "verdict.raw.json"
-    web_outcome = _run_gemini_web_if_enabled(
+    web_outcome = None if agy_gemini_client.cpa_gemini_client.enabled() else _run_gemini_web_if_enabled(
         witness_mode, request, audio_path, job_dir,
         recording_date, provider_failures,
         fallback=_run_gemini_web_fallback, unavailable=web_unavailable,
@@ -1013,7 +1013,7 @@ def _observe_entity_audio(
     )
     if cached_outcome is not None:
         return cached_outcome
-    if os.environ.get(ENTITY_AUDIO_DISABLE_AGY_ENV, "").strip() == "1":
+    if os.environ.get(ENTITY_AUDIO_DISABLE_AGY_ENV, "").strip() == "1" and not agy_gemini_client.cpa_gemini_client.enabled():
         provider_failures.append(
             {
                 "provider": "agy",
@@ -1021,7 +1021,7 @@ def _observe_entity_audio(
                 "attempted": False,
             }
         )
-    elif agy_quota_circuit.is_open():
+    elif agy_quota_circuit.is_open() and not agy_gemini_client.cpa_gemini_client.enabled():
         provider_failures.append(
             {
                 "provider": "agy",
@@ -1050,7 +1050,7 @@ def _observe_entity_audio(
                     }
                 )
         if (agy_output_ready and on_provider_dispatch is not None
-            and agy_gemini_client.local_agy_available(binary)):
+            and (agy_gemini_client.cpa_gemini_client.enabled() or agy_gemini_client.local_agy_available(binary))):
             on_provider_dispatch("agy", model)
         run = agy_gemini_client.run_local_agy(
             agy_gemini_client.agy_argv(
@@ -1061,6 +1061,9 @@ def _observe_entity_audio(
                 print_timeout=timeout,
             ),
             cwd=job_dir,
+            **({'cpa_prompt': prompt, 'cpa_files': [audio_path],
+                'cpa_output_path': verdict_path, 'cpa_response_schema': response_schema}
+               if agy_gemini_client.cpa_gemini_client.enabled() else {}),
             env=agy_subprocess_env(),
             timeout=parse_timeout_seconds(timeout) + 120,
             **({'response_validator': validate_assisted_process} if assisted else {}),
@@ -1097,6 +1100,9 @@ def _observe_entity_audio(
                 "stdout_sha256": hashlib.sha256(completed.stdout.encode("utf-8")).hexdigest(),
                 "stderr_sha256": hashlib.sha256(completed.stderr.encode("utf-8")).hexdigest(),
                 "authority": "DIAGNOSTIC_ONLY",
+                **({'actual_transport': 'cpa_gemini_native', 'inference_process_started': False,
+                    'transport_receipt': dict(run.transport_receipt)}
+                   if run is not None and getattr(run, 'transport_receipt', None) is not None else {}),
                 "structured_output": {'json_mode': False, 'schema': None},
                 "format_attempts_file": str(job_dir / 'agy.format-attempts.json') if assisted else None,
             })
@@ -1139,7 +1145,8 @@ def _observe_entity_audio(
                         }
                     )
 
-    if observed is None and (witness_mode or exact_transcript_mode) and not format_rejected:
+    if (observed is None and (witness_mode or exact_transcript_mode) and not format_rejected
+            and not agy_gemini_client.cpa_gemini_client.enabled()):
         provider = "gemini_api"
         model_used = _entity_api_model()
         api_audio_path = job_dir / "input.gemini-api.mp3"

@@ -1,3 +1,4 @@
+from src.autoslice.discovery_channels import batch_from_rows
 import hashlib
 import json
 from copy import deepcopy
@@ -1367,7 +1368,7 @@ def test_priority_candidates_are_not_crowded_out_by_reviewer_limit():
         source,
         llm_call=_fake_llm(raw),
         extract_json=_extract,
-        extra_raw_findings=[
+        discovery_batch=batch_from_rows([
             {
                 "cue": 2,
                 "kind": "context",
@@ -1376,8 +1377,8 @@ def test_priority_candidates_are_not_crowded_out_by_reviewer_limit():
                 "repair_class": "phonetic",
                 "why": "fidelity candidate",
             }
-        ],
-        prioritize_extra_raw_findings=True,
+        ]),
+
     )
 
     assert findings[0]["cue_index"] == 2
@@ -1585,8 +1586,8 @@ def test_priority_duplicate_plan_reaches_missing_proposal_consumers(monkeypatch,
     findings = audit_final_subtitles(
         source, llm_call=_fake_llm([planned] if plan_lane == "fresh" else []),
         extract_json=_extract,
-        extra_raw_findings=[nomination] + ([planned] if plan_lane == "extra" else []),
-        prioritize_extra_raw_findings=True,
+        discovery_batch=batch_from_rows([nomination] + ([planned] if plan_lane == "extra" else [])),
+
     )
     assert len(findings) == 1
     assert findings[0]["continuation_plan"] == _retry_plan()
@@ -1615,7 +1616,7 @@ def test_priority_duplicate_conflicting_plans_cannot_revive_by_input_order(plan_
                   "repair_class": "phonetic", "why": "同一疑点", "continuation_plan": _retry_plan()}
     conflict = {**nomination, "continuation_plan": _retry_plan("先核对另一项互不相同的框架")}
     candidates = [conflict, deepcopy(nomination)]
-    merged = auditor._merged_raw_findings(
+    merged = auditor._normalize_discovery_materials(
         candidates if plan_lane == "fresh" else [],
         [nomination] + (candidates if plan_lane == "extra" else []),
         auditor.parse_srt_cues(source), prioritize_extra=True, current_srt_text=source,
@@ -1654,7 +1655,7 @@ def test_priority_duplicate_plan_rejects_invalid_or_different_question(mismatch)
         planned["_carryover_replay_remap"] = {"from_cue": 1, "to_cue": 2}
     else:
         planned.update(span_start_codepoint=3, span_end_codepoint=6)
-    merged = auditor._merged_raw_findings(
+    merged = auditor._normalize_discovery_materials(
         [planned], [nomination], auditor.parse_srt_cues(source),
         prioritize_extra=True, current_srt_text=source,
     )
@@ -1669,8 +1670,8 @@ def test_duplicate_microcue_carries_current_history_needs_audio_gate():
         source,
         llm_call=_fake_llm([]),
         extract_json=_extract,
-        extra_raw_findings=[microcue, typed],
-        prioritize_extra_raw_findings=True,
+        discovery_batch=batch_from_rows([microcue, typed]),
+
     )
 
     assert len(findings) == 1
@@ -1696,8 +1697,8 @@ def test_duplicate_history_audio_conflict_cannot_revive_later_authority():
         llm_call=_fake_llm([]),
         extract_json=_extract,
         # A/B are both valid but disagree; the final A must not win by order.
-        extra_raw_findings=[microcue, authority_a, authority_b, deepcopy(authority_a)],
-        prioritize_extra_raw_findings=True,
+        discovery_batch=batch_from_rows([microcue, authority_a, authority_b, deepcopy(authority_a)]),
+
     )
 
     assert len(findings) == 1
@@ -1727,8 +1728,8 @@ def test_duplicate_history_needs_audio_gate_rejects_stale_or_forged_binding(drif
         source,
         llm_call=_fake_llm([]),
         extract_json=_extract,
-        extra_raw_findings=[microcue, typed],
-        prioritize_extra_raw_findings=True,
+        discovery_batch=batch_from_rows([microcue, typed]),
+
     )
 
     assert len(findings) == 1
@@ -1758,7 +1759,7 @@ def test_word_choice_prompt_includes_profile_bound_hard_meme_policy():
 
     assert result["choice"] == "CURRENT"
     assert len(prompts) == 1
-    assert "hard-meme-canon" in prompts[0]
+    assert "频道固定显示规范" in prompts[0]
     assert "「直女」一律写作「侄女」" in prompts[0]
 
 
@@ -2127,7 +2128,7 @@ def test_context_adjudication_applies_only_exact_candidate_and_keeps_timing():
 
 def _failed_independent_routes(request):
     """Actual typed route failures precede the phoneme last-resort fixture."""
-    return [{
+    rows = [{
         "schema_version": "subtitle-span-acoustic-witness.v1",
         "witness_protocol": "candidate_blind_transcript",
         "request_sha256": request["request_sha256"], "status": "UNCERTAIN",
@@ -2137,6 +2138,19 @@ def _failed_independent_routes(request):
         "audio_start_ms": request["matched_start_ms"] + request["source_media_timeline_offset_ms"],
         "audio_end_ms": request["matched_end_ms"] + request["source_media_timeline_offset_ms"],
     } for name in ("mai", "moss")]
+    from src.autoslice.independent_context_adjudication import _digest
+    for row in rows:
+        native = {
+            'status': 'NO_SPEECH_REPORTED', 'authority': 'EVIDENCE_ONLY',
+            'mutation_authorized': False, 'candidate_exposure': 'none',
+            'provider': row['provider'], 'model': row['model'],
+            'source_media_sha256': row['source_media_sha256'],
+            'target_start_ms': row['audio_start_ms'], 'target_end_ms': row['audio_end_ms'],
+            'crop_is_exact_target': True, 'input_audio_sha256': 'b' * 64,
+            'response_sha256': 'c' * 64,
+        }
+        row['native_observation'] = {**native, 'receipt_sha256': _digest(native)}
+    return rows
 
 
 def test_neither_rebuilds_one_third_candidate_then_cpa_judges_it():
@@ -2213,7 +2227,7 @@ def test_neither_rebuilds_one_third_candidate_then_cpa_judges_it():
     assert len(calls) == 3
 
 
-def test_exact_release_adopts_rebuilt_candidate_for_same_run_self_heal():
+def test_exact_release_blocks_unlocalized_rebuild_for_same_run_self_heal():
     source = _srt("前一句", "就是那种生吻", "是深吻还是湿吻")
 
     def witness(request):
@@ -2265,36 +2279,13 @@ def test_exact_release_adopts_rebuilt_candidate_for_same_run_self_heal():
         judge_llm_call=cpa,
     )
 
-    assert resolved == []
-    assert len(unresolved) == 1
-    assert unresolved[0]["proposed_full_cue"] == "就是那种吻"
-    assert unresolved[0]["suspect"] == "生"
-    assert unresolved[0]["suggestion"] == ""
-    adjudication = unresolved[0]["exact_release_adjudication"]
-    assert adjudication["repaired"] is True
-    assert adjudication["request"]["proposed_cue"] == "就是那种吻"
-    assert adjudication["request"][REQUIRE_COMPLETE_UTTERANCE_SUPPORT] is True
-    cpa_judge_prompts = [
-        prompt for prompt in calls if "# 字幕选字裁决" in prompt
-    ]
-    assert len(cpa_judge_prompts) == 2
-    assert all(
-        "exact-final CURRENT 整句闭合要求" in prompt
-        for prompt in cpa_judge_prompts
-    )
-
-    from src.autoslice.producer_package_finalization import (
-        _apply_exact_final_cpa_repairs,
-    )
-
-    healed, repairs = _apply_exact_final_cpa_repairs(
-        source,
-        {"findings": unresolved},
-    )
-    assert "就是那种吻" in healed
-    assert "就是那种生吻" not in healed
-    assert len(repairs) == 1
-    assert repairs[0]["decision_authority"] == "CPA_JUDGE"
+    assert resolved == [] and len(unresolved) == 1
+    adjudication = unresolved[0]['exact_release_adjudication']
+    assert adjudication['repaired'] is False
+    assert adjudication['policy_branch'] == 'SPAN_LOCALIZATION_RESULT_REQUIRED'
+    from src.autoslice.producer_package_finalization import _apply_exact_final_cpa_repairs
+    healed, repairs = _apply_exact_final_cpa_repairs(source, {'findings': unresolved})
+    assert healed == source and repairs == []
 
 
 def test_missing_disclosure_candidate_is_proposed_then_acoustically_judged():
@@ -3304,7 +3295,7 @@ def test_missing_candidate_applies_final_cpa_choice_with_conflict_disclosed():
             "why": "整条语义崩坏",
         },
         entity_verifier=lambda request: _witness(
-            request, "en zan you dian xiang a ta xi"
+            request, "jin tian tian qi hen hao"
         ),
         judge_llm_call=cpa,
     )

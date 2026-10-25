@@ -55,10 +55,8 @@ def sha(raw: bytes) -> str:
 
 def strict_json(raw: bytes | str) -> dict:
     def unique(pairs):
-        result = {}
-        for key, value in pairs:
-            require(key not in result, "DUPLICATE_JSON_KEY")
-            result[key] = value
+        result = dict(pairs)
+        require(len(result) == len(pairs), "DUPLICATE_JSON_KEY")
         return result
 
     try:
@@ -237,6 +235,8 @@ def prepare_audio(spec: AudioSpec) -> tuple[dict, bytes]:
     origin = spec.source_origin_ms
     require(origin <= start <= ta < tb <= end, "TARGET_CONTEXT_MISMATCH")
     path = Path(spec.source_path).expanduser().absolute()
+    from .bound_media_recovery import resolve_bound_media
+    path = resolve_bound_media(path, spec.finding.source_media_sha256)
     require(file_sha(path) == spec.finding.source_media_sha256, "SOURCE_SHA_MISMATCH")
     try:
         handle = wave.open(str(path), "rb")

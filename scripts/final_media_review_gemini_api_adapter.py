@@ -29,6 +29,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from src.autoslice.final_media_review_gemini_api_runtime import (
     ENDPOINT_FAMILY,
+    selected_endpoint_family,
     MODEL_ENV,
     PROVIDER,
     VIDEO_FPS,
@@ -55,7 +56,7 @@ RAW_AV_REQUEST_SCHEMA = "final-media-review-raw-av-request.v3"
 RAW_AV_RESPONSE_SCHEMA = "final-media-review-raw-av-adapter-response.v3"
 RAW_AV_RECEIPT_SCHEMA = "final-media-review-raw-av-adapter-receipt.v3"
 RESULT_SCHEMA = "final-media-perceptual-review-result.v1"
-GEMINI_FILE_HELPER_SHA256 = "58b17a5b1a1be799f3ff57475a328624a6c09934826ab608a0e14de99757cf0b"
+GEMINI_FILE_HELPER_SHA256 = "8bcac1336ea05c2771d6ef1d174343ebd57698b8a6ea5204bdbf86638679adc0"
 _REQUEST_TIMEOUT_ENV = "AUTOSLICE_FINAL_MEDIA_GEMINI_API_TIMEOUT_SECONDS"
 _POLL_TIMEOUT_ENV = "AUTOSLICE_FINAL_MEDIA_GEMINI_API_POLL_TIMEOUT_SECONDS"
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
@@ -531,7 +532,8 @@ def _provider_call(
     )
     error_path = evidence_root / f"{label}-provider-error.json"
     try:
-        free_key_environment = {
+        from src.autoslice.cpa_gemini_client import enabled
+        free_key_environment = environment if enabled(environment) else {
             name: value
             for name in ("GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3")
             if isinstance((value := environment.get(name)), str) and value
@@ -636,7 +638,11 @@ def _provider_call(
         or outcome.evidence.get("mime_type") != mime_type
         or outcome.evidence.get("video_fps")
         != (config.video_fps if mime_type.startswith("video/") else None)
-        or outcome.evidence.get("paid_backup_used") is not False
+        or (outcome.evidence.get("paid_backup_used") is not False
+            and not (outcome.evidence.get('transport') == 'cpa_gemini_native'
+                     and isinstance(outcome.evidence.get('cpa_transport_receipt'), Mapping)
+                     and outcome.evidence['cpa_transport_receipt'].get('status') == 'RESPONDED'
+                     and outcome.evidence['cpa_transport_receipt'].get('identity_model') == config.model))
     ):
         raise AdapterError(
             "GEMINI_API_RESPONSE_INVALID",
@@ -649,6 +655,7 @@ def _sentinel_request(
     *,
     input_path: Path,
     prompt_path: Path,
+    environment: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, object], str]:
     request_bytes = _regular_file(
         request_path, label="sentinel request", maximum=_MAX_JSON_BYTES
@@ -670,7 +677,7 @@ def _sentinel_request(
         set(request) != expected
         or request.get("schema_version") != SENTINEL_REQUEST_SCHEMA
         or request.get("provider") != PROVIDER
-        or request.get("endpoint_family") != ENDPOINT_FAMILY
+        or request.get("endpoint_family") != selected_endpoint_family(environment)
         or not isinstance(request.get("challenge_id"), str)
         or not isinstance(request.get("model"), str)
         or request.get("answer_disclosed_to_adapter") is not False
@@ -751,7 +758,7 @@ def run_sentinel(
         prompt_path, label="sentinel prompt", maximum=1_000_000
     )
     request, request_sha = _sentinel_request(
-        request_path, input_path=media, prompt_path=prompt_path
+        request_path, input_path=media, prompt_path=prompt_path, environment=environment
     )
     _verify_adapter_identity(
         root=root,
@@ -948,7 +955,7 @@ def _final_request(
     if (
         request.get("schema_version") != RAW_AV_REQUEST_SCHEMA
         or request.get("provider") != PROVIDER
-        or request.get("endpoint_family") != ENDPOINT_FAMILY
+        or request.get("endpoint_family") != selected_endpoint_family(environment)
         or not isinstance(request.get("candidate_id"), str)
         or not isinstance(request.get("model"), str)
         or not isinstance(request.get("capability_id"), str)

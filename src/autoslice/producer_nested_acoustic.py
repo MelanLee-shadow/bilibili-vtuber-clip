@@ -3816,7 +3816,9 @@ def caption_audio_roles_after_typed_text(
             }}
 
 
-def caption_audio_roles_context(srt_text: str, roles: object) -> str:
+def caption_audio_roles_context(srt_text: str, roles: object, *,
+                                scope_cue_indexes: tuple[int, ...] | None = None,
+                                source_offset_ms: int = 0) -> str:
     """Render only normalized current roles, excluding model prose."""
     if (not isinstance(roles, Mapping) or roles.get("status") != "EVIDENCE_ONLY"
             or roles.get("mutation_authorized") is not False
@@ -3836,12 +3838,25 @@ def caption_audio_roles_context(srt_text: str, roles: object) -> str:
         if row.get("role") not in _ACOUSTIC_ROLES or row.get("action") != "KEEP":
             return ""
         normalized.append({"cue_index": index, "interval_ms": interval, "role": row["role"]})
+    if scope_cue_indexes is not None:
+        scope=set(scope_cue_indexes)
+        if (not scope or any(type(index) is not int or not 1 <= index <= len(expected) for index in scope)
+                or type(source_offset_ms) is not int):
+            raise ValueError('CAPTION_AUDIO_ROLE_SCOPE_INVALID')
+        # Validate the original full receipt above before projecting C(P).
+        # The whole-SRT hash remains in that receipt; physical role rows are
+        # the only semantic input to this local view.
+        material={"source_media_sha256": roles.get("source_media_sha256"), "clock": "SOURCE",
+            "rows": [{**row, "cue_index": ordinal,
+                      "interval_ms": [value + source_offset_ms for value in row['interval_ms']]}
+                     for ordinal,row in enumerate(normalized,1) if ordinal in scope]}
+    else:
+        material={"final_srt_sha256": roles["final_srt_sha256"],
+                  "source_media_sha256": roles.get("source_media_sha256"), "rows": normalized}
     return ("当前字幕的声源证据（不是人物身份）：source_media=内嵌原片，host=主播，"
             "overlap=两者重叠、不可推断唯一说话人，unknown=缺证据、不可推断。"
             "这些角色只帮助理解语境，不能单独授权删字幕、换字或删音频；所有字幕仍走原有CPA裁决。\n"
-            + json.dumps({"final_srt_sha256": roles["final_srt_sha256"],
-                          "source_media_sha256": roles.get("source_media_sha256"),
-                          "rows": normalized}, ensure_ascii=False, sort_keys=True))
+            + json.dumps(material, ensure_ascii=False, sort_keys=True))
 
 
 def build_runtime_nested_acoustic_observer(
@@ -3970,7 +3985,6 @@ def build_runtime_nested_acoustic_observer(
                 agy_gemini_client.FREE_KEY_ENV_NAMES if credentials.get(name)))
             cpa = build_final_review_llm_call(runtime_root=runtime_root)
             model = _entity_api_model()
-            transport_sha = _sha(Path(agy_gemini_client.__file__))
         except Exception as exc:
             return {"schema_version": AUDIT_SCHEMA, "status": "EVIDENCE_ONLY",
                     "reason_code": "NESTED_ACOUSTIC_RUNTIME_CONFIG_UNAVAILABLE",
@@ -3996,6 +4010,11 @@ def build_runtime_nested_acoustic_observer(
 
         def audio_generate(**arguments):
             attempts.clear()
+            if agy_gemini_client.cpa_gemini_client.enabled():
+                completion = agy_gemini_client.generate_content(key='CPA_MANAGED', **arguments)
+                attempts.append({'transport': 'cpa_gemini_native', 'key_tier': 'UNKNOWN',
+                                 'status': 'RESPONDED'})
+                return completion
             last_quota_error = None
             for slot, key in enumerate(free_keys, start=1):
                 if slot in exhausted_slots:
@@ -4080,7 +4099,6 @@ def build_runtime_nested_acoustic_observer(
                 provider="gemini_api", model=model,
                 transport="src.autoslice.agy_gemini_client.generate_content",
                 transport_module="src.autoslice.agy_gemini_client",
-                transport_module_sha256=transport_sha,
                 playback_locator=playback_locator,
                 **prompt_kwargs,
             )

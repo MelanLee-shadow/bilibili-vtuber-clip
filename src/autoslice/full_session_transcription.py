@@ -276,6 +276,12 @@ def _run_fresh_agy_job(
     from scripts.gemini_slice_jingting import strip_markdown_fence
     from src.autoslice.source_context_executor import AgyRunnerError
 
+    if agy_gemini_client.cpa_gemini_client.enabled():
+        return agy_gemini_client.cpa_gemini_client.generate_files(
+            prompt=prompt, files=[media_path], model=model, purpose=stage,
+            timeout_seconds=poll_deadline_seconds,
+            response_mime_type='application/json' if output_name.endswith('.json') else None).text
+
     def run(cmd: list[str], *, timeout: int = 2400) -> subprocess.CompletedProcess:
         completed = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
         if completed.returncode != 0:
@@ -571,6 +577,8 @@ JSON only, no markdown fences. An empty array is valid if there is none."""
                     raise AgyRunnerError("AGY_EMPTY_OUTPUT", f"fresh transcription produced no valid SRT; see {host}:{job_dir}")
                 return srt_text
             except (AgyRunnerError, RuntimeError) as exc:
+                if agy_gemini_client.cpa_gemini_client.enabled():
+                    raise
                 last_error = exc
                 if getattr(exc, "reason_code", "") == agy_gemini_client.AGY_BINARY_ABSENT:
                     # 远端没装 agy 时不必再打第二次同样的 ssh。
@@ -808,7 +816,11 @@ def _agy_screen_text_lines(host: str, media_path: Path) -> list[str]:
             f"Use only {job_dir}/prompt.md, {job_dir}/input.mp4, and {job_dir}/screen_text.json. "
             "Do not inspect any other file or directory. Do not use shell or terminal."
         )
-        if _is_local_host(host):
+        if agy_gemini_client.cpa_gemini_client.enabled():
+            raw = agy_gemini_client.cpa_gemini_client.generate_files(
+                prompt=prompt, files=[media_path], model=AGY_MODEL,
+                purpose='screen_text', timeout_seconds=1200).text
+        elif _is_local_host(host):
             raw = strip_markdown_fence(
                 _run_local_agy_job(
                     job_dir,

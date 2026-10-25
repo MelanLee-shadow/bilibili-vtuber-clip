@@ -148,7 +148,8 @@ def test_argon_common_queue_wait_and_next_round_admission_retry(scene, monkeypat
         waits.append(timeout)
         return 0.01  # Offline bound, substituted at the common policy seam.
     monkeypatch.setattr(runtime, 'provider_wait_for_call', common_wait)
-    with provider_slot(scene.root / 'runtime', timeout_seconds=0.1):
+    from tests.test_provider_slots_cross_process_admission import saturate
+    with saturate(scene.root / 'runtime'):
         _, first = scene.run(scene.build())
     assert first['argon_escalation']['status'] == 'ADMISSION_PENDING'
     assert first['argon_escalation']['dispatches_this_advance'] == 0
@@ -164,7 +165,8 @@ def test_argon_dispatched_batch_retrieval_caps_queue_and_preserves_original_job(
     from src.autoslice.argon_escalation_runtime import bounded_retrieval
     from src.autoslice.provider_slots import provider_slot
     scene.run()
-    with provider_slot(scene.root / 'runtime', timeout_seconds=0.1):
+    from tests.test_provider_slots_cross_process_admission import saturate
+    with saturate(scene.root / 'runtime'):
         with bounded_retrieval(0.01):
             _, pending = scene.run()
     assert pending['argon_escalation']['status'] == 'ADMISSION_PENDING'

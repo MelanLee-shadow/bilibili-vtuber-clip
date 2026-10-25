@@ -139,7 +139,14 @@ def _build_external_package(tmp_path: Path) -> Fixture:
         staging_package / f"{CANDIDATE}.recut.speaker-final.json", speaker
     )
 
+    from src.autoslice.story_contract import COVER_BINDING_KEYS, cover_story_contract_binding
+    story = {key: None for key in COVER_BINDING_KEYS}
+    story.update(schema_version='lidousha-story-contract.v1', candidate_id=CANDIDATE,
+        selection_hook='她说熊猫头那句', selection_hook_sha256='sha256:' +
+        hashlib.sha256('她说熊猫头那句'.encode()).hexdigest(),
+        selection_scorecard={'total': 91.0})
     cover_generation = {
+        'story_contract': cover_story_contract_binding(story),
         "method": "cpa_repaint",
         "route_decision": "REPAINT",
         "reference_authority": "live_frame",
@@ -229,11 +236,7 @@ def _build_external_package(tmp_path: Path) -> Fixture:
         },
         "subtitle_timing_qa": {"counts": {"cues": 61}},
         "redelivery_baseline": {"status": "BASELINE_BOUND"},
-        "story_contract": {
-            "candidate_id": CANDIDATE,
-            "selection_hook": "她说熊猫头那句",
-            "selection_scorecard": {"total": 91.0},
-        },
+        'story_contract': copy.deepcopy(story),
         "selection_scorecard": {"total": 91.0},
         "session_relation_authority": {"status": "RESOLVED"},
         "publish_staging": publish_staging,
@@ -453,6 +456,10 @@ class StubGateRunner:
             package_root, title, out_path = argv[2], argv[3], Path(argv[4])
             bound_title = self.qc_title if self.qc_title is not None else title
             cover = self.qc_cover or f"{package_root}/{STEM}.cover.png"
+            from scripts.run_title_cover_joint_qc import package_story_context, resolve_package_inputs
+            current_record, current_publish, _ = resolve_package_inputs(Path(package_root), title)
+            story_context = package_story_context(record=current_record,
+                generation=current_publish['cover_generation'], candidate_id=CANDIDATE)
             verdict = {
                 "lidousha_primary": True, "thumbnail_readable": True,
                 "single_clear_hook": True, "text_overcrowded": False,
@@ -481,6 +488,7 @@ class StubGateRunner:
                         "answer": json.dumps(verdict),
                     },
                     "verdict": verdict,
+                    "source_story_context": story_context,
                 },
             )
             return cli.GateResult(0, "status: PASS", "")

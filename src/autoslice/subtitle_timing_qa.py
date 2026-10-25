@@ -289,12 +289,15 @@ def build_ssh_silero_vad_provider(
 
     local_host = host in {"localhost", "127.0.0.1"}
     if remote_script is None:
-        remote_script = os.environ.get("AUTOSLICE_VAD_SCRIPT") or str(
-            Path(__file__).resolve().parents[2]
-            / "scripts"
-            / "silero_vad_spans.py"
-        )
-    resolve_remote_script = False
+        remote_script = os.environ.get("AUTOSLICE_VAD_SCRIPT")
+        if remote_script is None:
+            if local_host:
+                remote_script = str(
+                    Path(__file__).resolve().parents[2]
+                    / "scripts"
+                    / "silero_vad_spans.py"
+                )
+    resolve_remote_script = not local_host and remote_script is None
     vad_python = os.environ.get("AUTOSLICE_VAD_PYTHON")
     if vad_python is None:
         vad_python = (

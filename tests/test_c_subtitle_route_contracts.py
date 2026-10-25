@@ -253,13 +253,15 @@ def test_private_normal_source_survives_external_hardlink_metadata_but_rejects_l
     import os
     from scripts.subtitle_regression_eval import stage_normal_source_media
     from src.autoslice.native_context_witness import build_independent_context_witnesses
-    original = tmp_path / "original.mp4"
-    original.write_bytes(b"Synthetic media bytes for source identity; no provider is called.")
+    from tests.test_media_copy_provenance import fixture_input
+    original, _recording, context, record = fixture_input(tmp_path)
     expected = sha(original.read_bytes())
     before = original.stat()
     out = tmp_path / "private"
     out.mkdir()
-    staged = stage_normal_source_media(original, out, expected)
+    out.chmod(0o700)
+    staged = stage_normal_source_media(original, out, expected,
+        completed_record=record, clip_context=context, candidate_id=context['candidate_id'])
     assert staged.read_bytes() == original.read_bytes()
     assert not os.path.samefile(staged, original)
     after = original.stat()
@@ -292,6 +294,7 @@ def test_private_normal_source_never_overwrites_existing_bad_input(tmp_path, dam
     else:
         target.symlink_to(original)
     with pytest.raises(ValueError):
-        stage_normal_source_media(original, out, sha(b"original"))
+        stage_normal_source_media(original, out, sha(b"original"),
+            completed_record={}, clip_context={}, candidate_id="synthetic")
     assert original.read_bytes() == b"original"
     assert target.is_symlink() if damage == "symlink" else target.read_bytes() == b"bad existing evidence"

@@ -30,6 +30,7 @@ def successor(tmp_path, monkeypatch):
     # Synthetic model response is confined to this test fixture.
     response = {"schema_version": SCHEMA_VERSION, "status": "PASS", "final_punch": {"main": lines[0], "sub": lines[1]},
                 "story_summary": "主播把旧文案换成了新文案", "click_motivation": "观众想知道新文案有哪些变化",
+                "contains_action_or_conflict": True,
                 **{key: True for key in REQUIRED_REVIEW_BOOLEANS}}
     _, proof = review_cover_punch_semantics(
         title=fx["title"], cover_text=parent["cover_text"], story_hook=hook,

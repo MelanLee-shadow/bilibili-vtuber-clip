@@ -4,6 +4,7 @@ import io
 import json
 import threading
 import time
+from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,24 @@ def _write(path: Path, payload: str | bytes) -> Path:
     else:
         path.write_text(payload, encoding="utf-8")
     return path
+
+
+def _assert_routes_parallel(call, *, release, starts, max_active):
+    errors = []
+    threads = [threading.Thread(target=lambda i=i: _call_catching(call, i, errors)) for i in range(2)]
+    try:
+        for thread in threads:
+            thread.start()
+        deadline = time.monotonic() + 5
+        while starts[0] < 2 and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert starts[0] == 2
+        assert max_active[0] == 2
+    finally:
+        release.set()
+        for thread in threads:
+            thread.join(5)
+    assert not errors
 
 
 def _assert_waits_then_succeeds(call: callable, *, runtime: Path) -> None:
@@ -208,7 +227,7 @@ def test_gemini_and_agy_provider_transports_share_bounded_pool(tmp_path: Path, m
         pass
 
 
-def test_two_provider_adapters_share_one_slot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_different_providers_have_independent_windows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runtime = tmp_path / "runtime"
     runtime.mkdir()
     monkeypatch.setenv("AUTOSLICE_BASE", str(runtime))
@@ -231,7 +250,7 @@ def test_two_provider_adapters_share_one_slot(tmp_path: Path, monkeypatch: pytes
         else:
             assert cpa_frame_witness._vision_qa({}, b"jpeg", "fixture", api_base="https://cpa.invalid", api_key="not-a-real-key", model="fixture", timeout_seconds=1, max_tokens=8)["status"] == "OBSERVED"
 
-    _assert_waits_then_succeeds(_attach_observation(call, entered, release, starts, max_active), runtime=runtime)
+    _assert_routes_parallel(call, release=release, starts=starts, max_active=max_active)
 
 
 def test_shared_agy_client_subprocess_is_bounded_and_gemini_releases(
@@ -270,7 +289,7 @@ def test_shared_agy_client_subprocess_is_bounded_and_gemini_releases(
         pass
 
 
-def test_llm_client_and_direct_cpa_adapter_share_one_runtime_pool(
+def test_cpa_text_and_vision_have_independent_windows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runtime = tmp_path / "runtime"
@@ -294,7 +313,7 @@ def test_llm_client_and_direct_cpa_adapter_share_one_runtime_pool(
         else:
             assert cpa_frame_witness._vision_qa({}, b"jpeg", "fixture", api_base="https://cpa.invalid", api_key="not-a-real-key", model="fixture", timeout_seconds=1, max_tokens=8)["status"] == "OBSERVED"
 
-    _assert_waits_then_succeeds(_attach_observation(call, entered, release, starts, max_active), runtime=runtime)
+    _assert_routes_parallel(call, release=release, starts=starts, max_active=max_active)
 
 
 def test_provider_capacity_timeout_has_adapter_specific_failure_semantics(
@@ -309,7 +328,9 @@ def test_provider_capacity_timeout_has_adapter_specific_failure_semantics(
     monkeypatch.setattr(agy_gemini_client, "provider_wait_for_call", lambda *_args, **_kwargs: 0.01)
     monkeypatch.setattr(jingting, "provider_wait_for_call", lambda *_args, **_kwargs: 0.01)
     reference = _write(tmp_path / "reference.png", b"reference")
-    with provider_slot(runtime):
+    with ExitStack() as held:
+        for provider, modality in [('cpa', 'text'), ('cpa', 'vision'), ('cpa', 'image'), ('agy', 'audio_video')]:
+            held.enter_context(provider_slot(runtime, provider=provider, modality=modality))
         cover = cover_generation._call_cpa_image_edit(
             base_url="https://cpa.invalid", api_key="not-a-real-key", reference_path=reference,
             output_path=tmp_path / "output.png", prompt="fixture", request_path=tmp_path / "request.json", response_path=tmp_path / "response.json",

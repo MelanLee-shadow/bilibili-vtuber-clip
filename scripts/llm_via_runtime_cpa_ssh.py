@@ -108,6 +108,7 @@ with tempfile.TemporaryDirectory(prefix="runtime_cpa_review_") as tmp:
                     request["model"],
                     request["effort"],
                     str(request["attempts"]),
+                    *(["--exact-model"] if request.get("exact_model") is True else []),
                 ],
                 check=False,
                 capture_output=True,
@@ -211,6 +212,7 @@ def run_bridge(
     model: str,
     effort: str,
     attempts: int,
+    exact_model: bool = False,
 ) -> dict[str, object]:
     from scripts.cpa_request_body import load_response_format
     request = {
@@ -221,6 +223,10 @@ def run_bridge(
         "attempts": attempts,
         "response_format": load_response_format(prompt_file),
     }
+    if exact_model:
+        from src.autoslice.cpa_model_ladder import resolve_models
+        resolve_models(model, exact_model=True)
+        request["exact_model"] = True
     remote_command = "sudo -n /opt/bilive/autoslice/venv-main/bin/python -B -c " + shlex.quote(
         REMOTE_PROGRAM
     )
@@ -285,6 +291,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", required=True)
     parser.add_argument("--effort", required=True)
     parser.add_argument("--attempts", type=int, default=1)
+    parser.add_argument("--exact-model", action="store_true")
     return parser.parse_args()
 
 
@@ -299,6 +306,7 @@ def main() -> int:
             model=args.model,
             effort=args.effort,
             attempts=args.attempts,
+            exact_model=args.exact_model,
         )
     except RuntimeCpaBridgeError:
         return 1

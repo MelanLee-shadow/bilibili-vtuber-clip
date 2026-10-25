@@ -95,6 +95,19 @@ def same_prompt_materials(left, right):
     return left == right or _json(prompt_material_view(left)) == _json(prompt_material_view(right))
 
 
+def finding_cue_projection(check_request):
+    """Optional v2 cue catalogue; scope is defined only by finding_context.
+
+    Terminal/closed-set renderers use this catalogue when the per-finding
+    scheduler supplies a bound context. Legacy receipts retain their old view.
+    """
+    context = check_request.get('finding_context')
+    if context is None:
+        return None
+    from .finding_context import cue_projection, validate_context_for_check
+    return cue_projection(validate_context_for_check(check_request, context))
+
+
 def terminal_material_index(data, *, named_materials=True):
     """Index exactly the materials rendered by either terminal producer.
 
@@ -137,3 +150,23 @@ def terminal_material_index(data, *, named_materials=True):
     if named_materials:
         visit(data, [])
     return refs
+
+
+def terminal_context_source(data, refs, reference):
+    """Resolve a session source through the producer's actual material index.
+
+    Older answers used bare session field names. Both forms address the same
+    rendered field; arbitrary paths and non-session citations grant no name
+    source authority.
+    """
+    if not isinstance(reference, str):
+        return None
+    path = refs.get(reference)
+    if path is None:
+        path = refs.get('whole_session_and_session_context.' + reference)
+    if not path or path[0] != 'whole_session_and_session_context' or len(path) < 2:
+        return None
+    value = data
+    for part in path:
+        value = value[part]
+    return value

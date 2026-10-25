@@ -132,8 +132,8 @@ def assisted_response_contract(assistance=None):
 
 
 def digest(value):
-    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
-                                    separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+    from .canonical_json_hash import canonical_sha256
+    return canonical_sha256(value)
 
 
 def text_sha(text):

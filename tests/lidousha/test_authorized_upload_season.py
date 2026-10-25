@@ -244,7 +244,11 @@ def _mk(
     season_args=(),
     *,
     video_bytes=b"fake-video-bytes",
+    clip_profile=None,
+    burn_intro=None,
 ):
+    """``clip_profile`` is the record's transcribed form; ``burn_intro`` says
+    whether the synthetic burn carried the intro (default: every non-song)."""
     video = tmp_path / "clip.mp4"
     cover = tmp_path / "clip.cover.png"
     video.write_bytes(video_bytes)
@@ -277,11 +281,19 @@ def _mk(
             "fallback_used": False,
         },
         "upload_tags": {"engine": "test", "status": "OK", "final_tags": TEST_TAGS},
+        **({"clip_profile": clip_profile} if clip_profile is not None else {}),
     }, ensure_ascii=False), encoding="utf-8")
     # Supply synthetic inputs to the real audio gate; do not mock it to PASS.
+    if burn_intro is None:
+        burn_intro = not title.startswith(au.SONG_TITLE_PREFIX)
     audio_bound = bind_synthetic_audio_evidence(
         json.loads(record.read_text(encoding="utf-8")), video=video, subtitle=subtitle,
+        **({} if burn_intro else {"intro_offset_ms": 0}),
     )
+    if not burn_intro:
+        # A real song (SONG-07) or non-protagonist burn records no intro
+        # binding; the package audit rejects one for those clip forms.
+        audio_bound["burned_preview"]["branding_intro"] = None
     record.write_text(json.dumps(audio_bound, ensure_ascii=False), encoding="utf-8")
     (tmp_path / "review_manifest.json").write_text(json.dumps({
         "items": [{

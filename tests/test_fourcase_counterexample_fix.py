@@ -3,6 +3,8 @@
 Set VTUBER_COUNTEREXAMPLE_REPORT to the private frozen fixture report directory.
 Provider replies below are original bytes, not human truth or simulated gate PASS.
 """
+
+from src.autoslice.discovery_channels import batch_from_rows
 import copy
 import hashlib
 import json
@@ -275,7 +277,7 @@ def test_real_adverse_edits_remain_in_current_public_review_after_empty_discover
             'risk_basis':'Recorded conflict between actual before/after text and retained hearing still unresolved.'}
             for r in agenda]})
     findings=audit_final_subtitles(text,llm_call=model,extract_json=json.loads,
-                                  extra_raw_findings=candidates,prioritize_extra_raw_findings=True)
+                                  discovery_batch=batch_from_rows(candidates))
     assert cue in {r['cue_index'] for r in _postburn_current_risk_partition(findings)[0]}
     path=tmp_path/'current-review.json';persist_review_audit(path,{'findings':findings})
     reread=json.loads(path.read_bytes())

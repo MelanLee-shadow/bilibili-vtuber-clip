@@ -24,6 +24,8 @@ def case():
     current = build_context_adjudication_request(
         SRT, _candidate_blind_missing_proposal_scaffold(SRT, finding),
         source_media_timeline_offset_ms=10490,
+        clip_context={'candidate_id': 'synthetic-candidate',
+                      'pieces': [{'source_media_sha256': 'a' * 64}]},
     )
     # Fixture for the original candidate-less request schema, before the
     # CURRENT-only scaffold was introduced.  Production receipts are immutable.
@@ -68,7 +70,10 @@ def test_original_empty_proposal_routes_new_audio_without_rebinding_old_judge(mo
         srt_text=SRT, finding=finding, check_request=current, entity_verifier=verifier,
         llm_call=lambda _: '{"decision":"OBSERVE","first_cue":1,"last_cue":3,"reason":"完整话语"}',
     )
-    assert audit["status"] == "OBSERVED" and audit["mutation_authorized"] is False
+    # The control-flow seam reaches the adapter, but its artifactless result
+    # is not a valid observation and cannot manufacture acoustic success.
+    assert audit['status'] == 'BLOCK' and audit['mutation_authorized'] is False
+    assert audit['reason_code'] == 'SEMANTIC_RANGE_NO_VALID_CONTEXT_EVIDENCE'
     assert observed[0]["range_witness_request"]["cue_indexes"] == [1, 2, 3]
     assert "proposed_cue" not in observed[0]["range_witness_request"]
     assert finding == before

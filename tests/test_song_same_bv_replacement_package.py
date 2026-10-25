@@ -27,6 +27,13 @@ def _media(path: Path, frequency: int = 440) -> None:
     ], check=True, capture_output=True)
 
 
+@pytest.fixture(autouse=True)
+def _synthetic_season_routes(monkeypatch):
+    monkeypatch.setenv('AUTOSLICE_SEASON_IDS', json.dumps({
+        lane: {'season_id': 8110000 + index, 'section_id': 9110000 + index}
+        for index, lane in enumerate(('talk', 'song', 'independent_related'), 1)}))
+
+
 def _case(tmp_path: Path, monkeypatch, *, bvid="BV1FBGw6uE6i", completion_ready=True, long_observation=False):
     fx = _fixture(tmp_path, burn_ass=True)
     # A speech cue uses the actual renderer; preserve a legacy prefixed ASS as

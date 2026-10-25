@@ -117,15 +117,24 @@ def test_corrupt_raw_record_blocks_without_new_call(tmp_path, monkeypatch):
     assert len(calls)==1
 
 
-def test_discovery_receives_actual_failed_questions_before_proposing_fourth_check(tmp_path, monkeypatch):
+@pytest.mark.parametrize('mode', [None, 'per_finding'])
+def test_discovery_receives_actual_failed_questions_before_proposing_fourth_check(tmp_path, monkeypatch, mode):
     from src.autoslice.semantic_retry_progress import retry_context
     monkeypatch.setenv('AUTOSLICE_BASE', str(tmp_path))
+    if mode is None:
+        monkeypatch.delenv('AUTOSLICE_FINAL_REVIEW_MODE', raising=False)
+    else:
+        monkeypatch.setenv('AUTOSLICE_FINAL_REVIEW_MODE', mode)
     calls=[]
     for question in ['是否中文名字', '是否日语词句', '定位哼唱起点']:
         invoke(calls, question=question)
     context = retry_context(SRT, {'source_media_sha256': 'a' * 64}, 0)
-    assert '"unresolved_answers": 3' in context and 'continuation_plan' in context
-    assert all(question in context for question in calls)
+    if mode is None:
+        assert '"unresolved_answers": 3' in context and 'continuation_plan' in context
+        assert all(question in context for question in calls)
+    else:
+        assert context == ''
+        assert all(question not in context for question in calls)
     assert retry_context(SRT, {'source_media_sha256': 'b' * 64}, 0) == ''
     assert len(calls) == 3
 

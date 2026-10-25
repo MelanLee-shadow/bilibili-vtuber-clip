@@ -83,7 +83,17 @@ def callable_identity(value: object) -> object:
         raise ValueError("COVER_CHECKPOINT_CALLABLE_IDENTITY_UNAVAILABLE")
     closure = getattr(function, "__closure__", None)
     wrapped = None
-    if closure and routing is None and runtime is None:
+    if (inspect.isfunction(value) and isinstance(runtime, Mapping)
+            and runtime.get("adapter") == "provider_slots.provider_transport"):
+        callbacks = getattr(value, "_provider_transport_callables", None)
+        if (not isinstance(callbacks, tuple) or len(callbacks) != 2
+                or not inspect.isfunction(callbacks[0])
+                or (callbacks[1] is not None and not inspect.isfunction(callbacks[1]))):
+            raise ValueError("COVER_CHECKPOINT_CALLABLE_BINDING_REQUIRED")
+        # Route metadata never substitutes for the original call/callback
+        # identities, including the original rejection of opaque closures.
+        wrapped = [callable_identity(callback) for callback in callbacks]
+    elif closure and routing is None and runtime is None:
         # The standard provider-slot decorator captures only its underlying
         # function and timeout callback. Bind both, without serializing state
         # (which could contain credentials) from arbitrary injected adapters.
@@ -117,7 +127,7 @@ def generation_identity(*, record: Mapping, media_path: Path, title: str,
         "cover_frame_selection", "cover_screenshot_poster", "cpa_frame_witness", "agy_frame_witness",
         "game_context", "cover_polish_gate", "producer_final_review_transport", "cover_route_policy",
         "cover_package_media_lineage", "channel_profile", "surface_canon", "cover_text_layout",
-        "cover_reference_authority", "qixi_transaction_core", "provider_slots", "visual_witness",
+        "cover_reference_authority", "qixi_transaction_core", "provider_slots", "provider_admission", "visual_witness",
         "agy_gemini_client", "title_cover_candidates", "title_cover_staging",
         "title_cover_quotes", "cover_style", "cover_private_font", "title_cover_package", "title_cover_shabutton", "title_cover_history",
     )

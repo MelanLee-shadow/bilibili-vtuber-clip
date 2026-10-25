@@ -67,7 +67,14 @@ class PreparedCorrectionReviews:
         if controller is None:
             self.receipt['reason_code'] = 'SHARED_PROVIDER_CONTROLLER_NOT_INSTALLED'
             return
-        if not isinstance(provider_call, FinalReviewCall):
+        # C owns routing/hedging and checkpoints; both canonical call types
+        # now use the same admission owner. Keep C's callable intact so its
+        # ruling capture and exact-model dispatch remain visible downstream.
+        canonical_call = isinstance(provider_call, FinalReviewCall)
+        if not canonical_call:
+            from .finding_closure_shell import FinalReviewCall as RoutedFinalReviewCall
+            canonical_call = isinstance(provider_call, RoutedFinalReviewCall)
+        if not canonical_call:
             self.receipt['reason_code'] = 'CANONICAL_PROVIDER_CALL_REQUIRED'
             return
         original = [cue for cue in parse_srt_cues(original_srt_text or srt_text) if cue.text.strip()]

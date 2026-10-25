@@ -218,7 +218,7 @@ def _ruling_response_bytes(request, *, question, material, api_base, model, time
     from .completed_review_checkpoint import ruling_response
     from .llm_client import CpaCompletion
     def send(_prompt):
-        with runtime_provider_slot(timeout_seconds=provider_wait_for_call(timeout_seconds)), observed_model_request(model=model,kind='vision',transport='http_responses'):
+        with runtime_provider_slot(provider='cpa', modality='vision', timeout_seconds=provider_wait_for_call(timeout_seconds)), observed_model_request(model=model,kind='vision',transport='http_responses'):
             with observed_cpa_request(request, timeout=timeout_seconds, model=model, kind='vision') as response:
                 raw = response.read()
         # Preserve all wire bytes, including a malformed/non-UTF8 reply; the

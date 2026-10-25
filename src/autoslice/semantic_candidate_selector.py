@@ -26,6 +26,7 @@ import json
 import os
 import re
 import unicodedata
+from dataclasses import asdict
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -35,6 +36,12 @@ from src.autoslice.boundary_payoff_extension import (
 )
 from src.autoslice.boundary_resolver import AnchorCandidate, BoundaryResolution
 from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.channel_census import (
+    CENSUS_CLUES_ASSET_KEY,
+    RecallClueProvenance,
+    load_census_recall_input,
+    render_census_clue_block,
+)
 from src.autoslice.content_ip_signal import detect_important_content_ips
 from src.autoslice.danmaku_evidence import DanmakuItem, parse_blrec_danmaku_xml
 
@@ -488,6 +495,24 @@ def _slice_selection_metric() -> str:
     return ""
 
 
+def _census_recall_input() -> tuple[str, RecallClueProvenance]:
+    clues, status, digest = load_census_recall_input(
+        CHANNEL_PROFILE.asset_files.get(CENSUS_CLUES_ASSET_KEY), profile_id=CHANNEL_PROFILE.profile_id,
+    )
+    return (
+        render_census_clue_block(clues) if clues is not None else "",
+        RecallClueProvenance(
+            clues.schema_version if clues is not None else "",
+            clues.provenance.census_id if clues is not None else "", digest, status,
+        ),
+    )
+
+
+def _census_recall_diagnostics(provenance: RecallClueProvenance) -> dict[str, str | dict[str, str]]:
+    return {"census_clues_status": provenance.status,
+            "semantic_recall_census_clues": asdict(provenance)}
+
+
 # 共用评分卡量化规则段：既是整场召回 prompt 的一部分，也是狍哥案有界重
 # 评分车道（``rescore_candidate_scorecard``）单候选提卡 prompt 的核心——
 # 两处必须逐字同一份规则，不许各自维护一份漂移的拷贝（design §3.5「复用」）。
@@ -512,7 +537,7 @@ _SCORECARD_RUBRIC_BLOCK = """选片量化表（talk 必填，song 可省略；�
   仅字幕中的“抱抱”“咬一下”等口头说法不能证明发生了实际动作，理由不得补写未证实的表演。
 - tier_basis 只能按事实选择 relationship_chain / explicit_gl_stance / cp_positioning /
   audience_driven_performance / personal_stance / generic_event。
-- dimensions 七项都打 0..4 整数：lidousha_centrality（{CHANNEL_PROFILE.display_name}不可替代性）、stance_intensity、
+- dimensions 七项都打 0..4 整数：lidousha_centrality（主播不可替代性）、stance_intensity、
   audience_salience（频道受众/人物题材显著度）、relationship_interaction、persona_reversal、
   comedic_payoff、self_contained。不要把 ASR/证据可靠性混进内容质量分。
   comedic_payoff 同时评价喜剧与情绪/观点兑现：2是明确但普通的收口，3是强且构成这个主事件主要看点的
@@ -567,6 +592,7 @@ def build_semantic_recall_prompt(
     danmaku_hints: str | None = None,
     semantic_chat_evidence_block: str | None = None,
     scope_note: str | None = None,
+    _census_clue_block: str | None = None,
 ) -> str:
     lines = []
     for position, cue in enumerate(cues, start=1):
@@ -589,8 +615,10 @@ def build_semantic_recall_prompt(
         if metric
         else ""
     )
+    clue_text = _census_recall_input()[0] if _census_clue_block is None else _census_clue_block
+    clue_block = f"\n{clue_text}\n" if clue_text else ""
     scope_block = f"\n召回范围说明:{scope_note}\n" if scope_note else ""
-    return f"""你是{CHANNEL_PROFILE.display_name}(B站虚拟主播)切片频道的选题编辑。下面是一场直播的完整字幕时间轴,每行格式是 #编号 [开始-结束] 文本。{danmaku_block}{semantic_chat_block}{metric_block}{scope_block}{important_ip_block}
+    return f"""你是{CHANNEL_PROFILE.display_name}(B站虚拟主播)切片频道的选题编辑。下面是一场直播的完整字幕时间轴,每行格式是 #编号 [开始-结束] 文本。{danmaku_block}{semantic_chat_block}{metric_block}{clue_block}{scope_block}{important_ip_block}
 
 你的任务:站在一个没看过这场直播的普通观众视角,从整场里选出最值得做成切片的片段(最多 {max_candidates} 个)。
 “最多”是上限，不是必须凑满的数量。**同一场连续事件只能占一个候选**：话题中间即使有短暂停顿、
@@ -697,6 +725,7 @@ def select_semantic_session_candidates(
     semantic_chat_evidence_block: str | None = None,
     semantic_chat_evidence_receipt: Mapping[str, object] | None = None,
     scope_note: str | None = None,
+    _census_input: tuple[str, RecallClueProvenance] | None = None,
 ) -> tuple[list[FullSessionCandidate], dict[str, object]]:
     """Semantic recall over the full session; returns (candidates, diagnostics).
 
@@ -705,15 +734,18 @@ def select_semantic_session_candidates(
     silently happens because the LLM was down).
     """
 
+    clue_block, clue_provenance = _census_recall_input() if _census_input is None else _census_input
     ordered = sorted(cues, key=lambda cue: (cue.source_start_ms, cue.source_end_ms, cue.cue_id))
     if not ordered:
-        return [], {"skipped": [], "raw_candidates": 0, "error": "no cues"}
+        return [], {"skipped": [], "raw_candidates": 0, "error": "no cues",
+                    **_census_recall_diagnostics(clue_provenance)}
     prompt = build_semantic_recall_prompt(
         ordered,
         max_candidates=max_candidates,
         danmaku_hints=danmaku_hints,
         semantic_chat_evidence_block=semantic_chat_evidence_block,
         scope_note=scope_note,
+        _census_clue_block=clue_block,
     )
     completion = call_json(llm_call, prompt, reuse=False)
     payload = extract_json_object(completion)
@@ -918,6 +950,12 @@ def select_semantic_session_candidates(
                 end_cue=int(spec["end_cue"]),
                 receipt=semantic_chat_evidence_receipt,
             )
+            if clue_provenance.status == "VALID":
+                scorecards[anchor.candidate_id]["semantic_recall_census_clues"] = {
+                    "schema_version": clue_provenance.schema_version,
+                    "census_id": clue_provenance.census_id,
+                    "asset_sha256": clue_provenance.asset_sha256,
+                }
         raw_filler_proposals = spec.get("filler_removals")
         if isinstance(raw_filler_proposals, list) and raw_filler_proposals:
             filler_proposals[anchor.candidate_id] = [
@@ -935,6 +973,7 @@ def select_semantic_session_candidates(
         "filler_proposals": filler_proposals,
         "merge_gaps": merge_gap_plans,
         "skipped": skipped,
+        **_census_recall_diagnostics(clue_provenance),
     }
     if semantic_chat_evidence_receipt is not None:
         diagnostics["semantic_chat_evidence"] = dict(semantic_chat_evidence_receipt)
@@ -1028,6 +1067,7 @@ def select_semantic_session_candidates_covered(
     全场弹幕。详见 ``boundary_payoff_extension``。
     """
 
+    census_input = _census_recall_input()
     shards = plan_semantic_recall_shards(cues)
     if not shards:
         return [], {
@@ -1041,6 +1081,7 @@ def select_semantic_session_candidates_covered(
             "filler_proposals": {},
             "merge_gaps": {},
             "skipped": [],
+            **_census_recall_diagnostics(census_input[1]),
         }
     coverage_end_ms = max(cue.source_end_ms for cue in cues)
     danmaku_items, semantic_chat_load_receipt = _load_hash_bound_semantic_chat(danmaku_xml)
@@ -1064,6 +1105,7 @@ def select_semantic_session_candidates_covered(
             danmaku_hints=danmaku_hints,
             semantic_chat_evidence_block=semantic_chat_block,
             semantic_chat_evidence_receipt=semantic_chat_receipt,
+            _census_input=census_input,
         )
         diagnostics = dict(diagnostics)
         selected, payoff_extensions = extend_candidates_for_audience_payoff(
@@ -1136,6 +1178,7 @@ def select_semantic_session_candidates_covered(
             semantic_chat_evidence_block=semantic_chat_block,
             semantic_chat_evidence_receipt=semantic_chat_receipt,
             scope_note=scope_note,
+            _census_input=census_input,
         )
         recalled.extend(shard_selected)
         hooks.update({str(key): str(value) for key, value in (diagnostics.get("hooks") or {}).items()})
@@ -1163,6 +1206,7 @@ def select_semantic_session_candidates_covered(
         }
         receipt = dict(semantic_chat_receipt)
         shard_diagnostic["semantic_chat_evidence"] = receipt
+        shard_diagnostic.update(_census_recall_diagnostics(census_input[1]))
         semantic_chat_receipts.append(receipt)
         shard_diagnostics.append(shard_diagnostic)
 
@@ -1210,6 +1254,7 @@ def select_semantic_session_candidates_covered(
         "filler_proposals": {key: value for key, value in filler_proposals.items() if key in selected_ids},
         "merge_gaps": {key: value for key, value in merge_gaps.items() if key in selected_ids},
         "skipped": skipped,
+        **_census_recall_diagnostics(census_input[1]),
     }
     result_diagnostics["semantic_chat_evidence"] = {
         "schema_version": SEMANTIC_CHAT_EVIDENCE_SCHEMA,

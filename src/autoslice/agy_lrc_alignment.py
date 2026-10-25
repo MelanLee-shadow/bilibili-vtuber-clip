@@ -791,6 +791,9 @@ def _persist_agy_lrc_run(
     os.chmod(output_path, 0o600)
     output_sha = _sha256(output_path)
     manifest_path = job.job_dir / "run.manifest.json"
+    cpa_receipt_path = job.prompt_path.parent / 'cpa-gemini.receipt.json'
+    cpa_receipt = (json.loads(cpa_receipt_path.read_text(encoding='utf-8'))
+                   if agy_gemini_client.cpa_gemini_client.enabled() and cpa_receipt_path.is_file() else None)
     manifest = {
         "schema_version": AGY_AUDIO_LRC_RUN_SCHEMA_VERSION,
         "attempt_id": job.attempt_id,
@@ -802,8 +805,9 @@ def _persist_agy_lrc_run(
         "agy_failure_category": execution.agy_failure_category,
         "agy_failure_detail": execution.agy_failure_detail,
         "gemini_api_raw_attempts": execution.gemini_api_raw_attempts,
-        "sandbox": execution.provider == AGY_AUDIO_LRC_PROVIDER,
-        "direct_audio_input": execution.provider == GEMINI_API_AUDIO_LRC_PROVIDER,
+        "sandbox": execution.provider == AGY_AUDIO_LRC_PROVIDER and cpa_receipt is None,
+        "direct_audio_input": execution.provider == GEMINI_API_AUDIO_LRC_PROVIDER or cpa_receipt is not None,
+        **({'cpa_transport_receipt': cpa_receipt} if cpa_receipt is not None else {}),
         "configured_key_count": execution.configured_key_count,
         "accepted_key_ordinal": execution.accepted_key_ordinal,
         "accepted_key_tier": execution.accepted_key_tier,
@@ -820,7 +824,7 @@ def _persist_agy_lrc_run(
             "audio_duration_ms": job.audio_duration_ms,
             "lyrics_path": str(job.lyrics_path), "lyrics_sha256": _sha256(job.lyrics_path),
             **({"tool_trace_path": str(job.stdout_path), "tool_trace_sha256": _sha256(job.stdout_path)}
-               if execution.provider == AGY_AUDIO_LRC_PROVIDER else {}),
+               if execution.provider == AGY_AUDIO_LRC_PROVIDER and cpa_receipt is None else {}),
         },
         "canonicalization": {
             "strategy": AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY,
@@ -954,7 +958,7 @@ def _run_primary_agy_alignment(
     # 路径解析统一走 agy_gemini_client；本 lane 的缺席措辞仍是 AGY_UNAVAILABLE
     # （song_common 的 transient reason-code 集合读它，不能改名）。
     agy_bin = agy_gemini_client.resolve_local_agy_executable()
-    if not agy_gemini_client.local_agy_available():
+    if not agy_gemini_client.cpa_gemini_client.enabled() and not agy_gemini_client.local_agy_available():
         raise _AgyProviderFailure("AGY_UNAVAILABLE")
     print_timeout = os.environ.get("AGY_LRC_PRINT_TIMEOUT", "30m")
     short_prompt = (
@@ -983,6 +987,9 @@ def _run_primary_agy_alignment(
     run = agy_gemini_client.run_local_agy(
         command,
         cwd=job.prompt_path.parent,
+        **({'cpa_prompt': job.prompt_path.read_text(encoding='utf-8'),
+            'cpa_files': [job.audio_path, job.lyrics_path], 'cpa_output_path': job.provider_raw_output_path}
+           if agy_gemini_client.cpa_gemini_client.enabled() else {}),
         env=agy_env,
         timeout=parse_timeout_seconds(print_timeout) + 120,
     )
@@ -1037,9 +1044,14 @@ def _run_primary_agy_alignment(
     except ValueError as exc:
         raise _AgyProviderFailure("AGY_INVALID_OUTPUT", agy_rc=0) from exc
     try:
-        validate_untimed_audio_tool_trace(completed.stdout, audio_path=job.audio_path,
-            lyrics_path=job.lyrics_path, prompt_path=job.prompt_path,
-            output_path=job.provider_raw_output_path)
+        if getattr(run, 'transport_receipt', None) is not None:
+            agy_gemini_client.cpa_gemini_client.validate_file_receipt(
+                receipt=run.transport_receipt, prompt=job.prompt_path.read_text(encoding='utf-8'),
+                model=AGY_AUDIO_LRC_MODEL, files=[job.audio_path, job.lyrics_path], text=completed.stdout)
+        else:
+            validate_untimed_audio_tool_trace(completed.stdout, audio_path=job.audio_path,
+                lyrics_path=job.lyrics_path, prompt_path=job.prompt_path,
+                output_path=job.provider_raw_output_path)
     except ValueError as exc:
         raise _AgyProviderFailure("AGY_INVALID_OUTPUT", agy_rc=0, detail=str(exc)) from exc
     return payload, completed.returncode
@@ -1124,6 +1136,8 @@ def run_agy_audio_lrc_alignment(
             candidate_id=candidate_id,
         )
     except _AgyProviderFailure as agy_failure:
+        if agy_gemini_client.cpa_gemini_client.enabled():
+            raise
         agy_failure_category = agy_failure.category
         agy_failure_detail = agy_failure.detail
         agy_rc = agy_failure.agy_rc

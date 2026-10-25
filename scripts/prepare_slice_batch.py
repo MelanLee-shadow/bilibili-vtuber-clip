@@ -53,9 +53,16 @@ def main(argv=None):
     if (ROOT/'DEPLOYED_COMMIT').is_file():
         from src.autoslice.runtime_code_lease import pin_version
         pin_version(ROOT)
+    from src.autoslice.channel_profile import (
+        binding_for_profile, load_channel_profile, profile_environment, require_profile_binding,
+    )
+    selected = load_channel_profile(ROOT, profile_binding=batch.get('profile_binding'))
+    require_profile_binding(task_binding=batch.get('profile_binding'),
+                            current_binding=binding_for_profile(selected), repo_root=ROOT)
+    os.environ.update(profile_environment(selected, {}))
     from scripts import session_autoslice as runner
-    from src.autoslice.channel_profile import binding_for_profile, require_profile_binding
-    require_profile_binding(batch.get('profile_binding'),binding_for_profile(runner.CHANNEL_PROFILE))
+    require_profile_binding(task_binding=binding_for_profile(selected),
+                            current_binding=binding_for_profile(runner.CHANNEL_PROFILE), repo_root=ROOT)
     from src.autoslice.runner_batch_dispatch import produce_batch
     from src.autoslice.package_import import atomic_write_bytes
     runtime={**vars(runner),'producer_stop_requested':lambda:False}
@@ -68,6 +75,8 @@ def main(argv=None):
         'batch_sha256':hashlib.sha256(batch_bytes).hexdigest(),
         'profile_binding':batch['profile_binding'],'upload_enabled':False,
         'requested_candidates':[row['cid'] for row in batch['items']], 'results':rows}
+    if selected.binding_extension is not None:
+        result['profile_binding_extensions'] = [selected.binding_extension.as_dict()]
     atomic_write_bytes(args.out_json,(json.dumps(result,ensure_ascii=False,indent=2,sort_keys=True,default=str)+'\n').encode())
     print(json.dumps({'out_json':str(args.out_json),'requested':len(batch['items']),'completed':len(rows),
         'statuses':[row.get('status') for row in rows],'upload_enabled':False},ensure_ascii=False))

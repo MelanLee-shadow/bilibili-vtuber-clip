@@ -398,8 +398,8 @@ class TestTerminalityIsRestored:
         )
         assert row["status"] == "blocked"
 
-    def test_clean_bypass_lets_content_rejection_go_terminal(self):
-        """修复后：旁路不再贡献 JINGTING 码 → 无 transient → 内容否决终态化。"""
+    def test_clean_bypass_keeps_unresolved_alignment_proof_blocked(self):
+        """Clean provenance does not turn an unresolved alignment proof into a performer veto."""
 
         clean = ["SONG_AUDIO_LRC_ALIGNMENT_INVALID"]
 
@@ -412,9 +412,9 @@ class TestTerminalityIsRestored:
                 terminal_performer_rejection_codes=(),
                 infra_transient_reason_codes=JINGTING_INFRA_TRANSIENT_CODES,
             )
-            is True
+            is False
         )
-        assert row["status"] == "candidate_rejected"
+        assert row["status"] == "blocked"
 
     def test_real_provider_outage_still_defers_terminality(self):
         """真的 provider 故障仍然是 transient —— 8/8 的修复方向本身没有被推翻。"""

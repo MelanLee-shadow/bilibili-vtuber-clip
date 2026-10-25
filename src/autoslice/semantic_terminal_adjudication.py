@@ -147,7 +147,15 @@ def independent_wide_identity(row, contract):
         return None
     raw = row.get('raw_observation') or {}
     candidates = [raw, *raw.get('quality_and_provider', [])]
-    identities = {tuple(value.get(key) for key in contract['independence_fields'])
+    def identity(value):
+        fields = contract['independence_fields']
+        raw_identity = tuple(value.get(key) for key in fields)
+        if fields == ['provider', 'model']:
+            from .cpa_gemini_client import enabled, judgment_identity
+            if enabled():
+                return judgment_identity(*raw_identity)
+        return raw_identity
+    identities = {identity(value)
         for value in candidates
         if all(isinstance(value.get(key), str) and value[key].strip()
             for key in contract['independence_fields'])}
@@ -459,7 +467,11 @@ def terminal_materials(request):
     Values are JSON paths into the returned materials, never guessed aliases.
     """
     features = terminal_contract_features(request)
+    from .prompt_materials import finding_cue_projection
+    local_catalogue = finding_cue_projection(request['check_request'])
     if features['legacy_materials']:
+        if local_catalogue is not None:
+            raise ContractRejection('FINDING_TYPED_MATERIALS_REQUIRE_CURRENT_CONTRACT')
         from .terminal_legacy_v1 import terminal_materials as legacy_materials
         return legacy_materials(request)
     policy = validate_policy(request['terminal_policy'])
@@ -467,6 +479,11 @@ def terminal_materials(request):
     proof = request['audio_gain_termination']
     cues = parse_srt_cues(check.get('whole_clip_current_srt', ''))
     refrains = deepcopy(_cached_refrains(check.get('whole_clip_current_srt', ''), json.dumps(policy, sort_keys=True)))
+    if local_catalogue is not None:
+        from .finding_context import digest
+        scope = set(check['finding_context']['scope_cue_indexes'])
+        refrains = [{**row, 'id': 'local-refrain:' + digest({key: value for key, value in row.items() if key != 'id'})}
+                    for row in refrains if scope.intersection(row['cue_indexes'])]
     session_restatements = []
     sessions = request['terminal_context'].get('whole_session_transcripts', [])
     for row in sessions:
@@ -488,6 +505,9 @@ def terminal_materials(request):
         indexes.update(refrain['cue_indexes'])
     context_sources = {key: value['text'] for key, value in proof['context_sources'].items()
         if not key.startswith('cue:') or int(key[4:]) in indexes}
+    if local_catalogue is not None:
+        context_sources = {key: value for key, value in context_sources.items() if not key.startswith('cue:')}
+        context_sources.update(local_catalogue)
     event_sources, events = {}, []
     for event in request.get('events', []):
         source = {key: event[key] for key in ('source', 'source_sha256') if key in event}
@@ -535,6 +555,8 @@ def terminal_materials(request):
         target_material['argon'] = {key: owner_state[key] for key in ('state', 'status', 'reason')
             if key in owner_state}
     data['terminal_group_questions'] = check.get('terminal_group_questions', [])
+    if local_catalogue is not None:
+        data['discovery_nomination_evidence'] = check.get('discovery_nomination_evidence', [])
     data['edit_contract'] = edit_contract(current)
     data['current_support_observation_refs'] = current_support_refs(request,
         legacy=features['legacy_support'])
@@ -547,6 +569,10 @@ def terminal_materials(request):
                 projection=proof['projection'], stopped_sha256=proof.get('stopped_finding_sha256')),
             stop_reason_code=proof['stop_reason_code'])
     data = _without_planning(data)
+    if local_catalogue is not None:
+        from .finding_context import model_data
+        data = model_data(data, source_offset_ms=check['source_media_timeline_offset_ms'])
+        data['whole_clip_scope'] = 'The bound C(P) catalogue is the only cue:N projection; full SRT remains in the original receipt. Context only, not audio truth.'
     refs = _material_refs(data)
     if len(_render_terminal_prompt(data, refs)) > 30_000:
         # Large catalogues use a reference index for repeated support labels,
@@ -574,7 +600,7 @@ def terminal_materials(request):
         _factor_repeated_readings(data)
         _factor_quality_metadata(data)
         refs = _material_refs(data)
-    return data, refs
+    return data, dict(sorted(refs.items())) if local_catalogue is not None else refs
 
 
 def _material_refs(data):
@@ -663,7 +689,7 @@ def _render_terminal_prompt(data, refs, *, lifecycle_policy=False):
 
 
 @cold_input
-def validate_terminal_answer(request, answer, *, prompt=None):
+def validate_terminal_answer(request, answer, *, prompt=None, _defer_editorial_fragments=False):
     from .answer_contract import answer_version, decode_answer
     features = terminal_contract_features(request)
     version = answer_version(request, prompt=prompt)
@@ -679,7 +705,8 @@ def validate_terminal_answer(request, answer, *, prompt=None):
     if version == 'subtitle-terminal-answer.v1' and prompt is not None:
         if not terminal_prompt_matches(request, prompt):
             raise ContractRejection('TERMINAL_ORIGINAL_PROMPT_BINDING_INVALID')
-        available = _material_refs(json.loads(prompt.rsplit('\n', 1)[1]))
+        materials = json.loads(prompt.rsplit('\n', 1)[1])
+        available = _material_refs(materials)
         routes, offered_support = offered_keep_contract({}, legacy_v1_answer=True)
     else:
         materials, available = terminal_materials(request)
@@ -726,9 +753,16 @@ def validate_terminal_answer(request, answer, *, prompt=None):
                 or (current[span[1]:] and not other.endswith(current[span[1]:]))):
             raise ContractRejection('TERMINAL_NAME_SLOT_BINDING_REQUIRED')
     if answer.get('name_source_ref'):
-        value = request['terminal_context'].get(answer['name_source_ref'])
+        from .prompt_materials import terminal_context_source
+        value = terminal_context_source(materials, available, answer['name_source_ref'])
         quote = answer.get('name_source_text')
-        if not isinstance(quote, str) or not quote.strip() or quote not in json.dumps(value, ensure_ascii=False):
+        # Current prompt JSON is compact and sorted; frozen older prompts used
+        # ordinary JSON spacing. Keep literal quotes in either writer format.
+        source_views = (json.dumps(value, ensure_ascii=False),
+                        json.dumps(value, ensure_ascii=False, sort_keys=True),
+                        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')))
+        if (value is None or not isinstance(quote, str) or not quote.strip()
+                or not any(quote in surface for surface in source_views)):
             raise ContractRejection('TERMINAL_NAME_SOURCE_REQUIRED')
         name = answer.get('sourced_name')
         output = check['current_cue']
@@ -762,6 +796,12 @@ def validate_terminal_answer(request, answer, *, prompt=None):
         proposed = check['current_cue'][:start] + str(answer.get('replacement') or '') + check['current_cue'][end:]
         if proposed != check.get('proposed_cue'):
             raise ContractRejection('TERMINAL_PROPOSED_OUTSIDE_CLOSED_SET')
+    if (not _defer_editorial_fragments and choice in {'PROPOSED', 'CONTEXT_FIT'}
+            and not _is_keep(request, answer)):
+        from .editorial_edit_contract import apply_edit
+        from .editorial_subtitle import validate_reliable_fragments
+        validate_reliable_fragments(apply_edit(check['current_cue'], answer),
+                                    answer.get('reliable_fragments'))
     return choice
 
 
@@ -836,8 +876,9 @@ def request_terminal_answer(call, prompt, request, *, wallclock_seconds=None):
             for name, value in getattr(call, '__dict__', {}).items():
                 if send is not call:
                     setattr(send, name, value)
+            typed = terminal_finding_materials(request, getattr(send, 'cpa_cache_identity', None))
             raw, _ = ruling_response(stage='semantic-terminal', prompt=prompt,
-                llm_call=send, inputs={'request': request}, parser_path=Path(__file__),
+                llm_call=send, inputs={'request': request, **({'finding_materials': typed} if typed is not None else {})}, parser_path=Path(__file__),
                 response_schema=terminal_schema(request), name='semantic_terminal')
             # editorial_subtitle.adjudicate records these bytes and invokes
             # validate_terminal_answer on every path, including a cache hit.
@@ -896,12 +937,15 @@ def keep_from_terminal(*, srt_text, finding, request, answer, prompt, raw):
     answer = decode_answer(request, answer, prompt=prompt)
     if validate_terminal_answer(request, answer, prompt=prompt) not in {'CURRENT', 'CONTEXT_FIT'}:
         raise ContractRejection('TERMINAL_KEEP_CHOICE_REQUIRED')
-    from src.autoslice.targeted_relisten import validate_no_gain
-    validate_no_gain(request['audio_gain_termination'], request['check_request'])
+    from src.autoslice.targeted_relisten import validate_current_no_gain
+    validate_current_no_gain(request['audio_gain_termination'], request['check_request'])
     review = {'prompt': prompt, 'raw_completion': raw,
         'prompt_sha256': hashlib.sha256(prompt.encode()).hexdigest(),
         'completion_sha256': hashlib.sha256(raw.encode()).hexdigest(),
         'choice': answer['choice'], 'grade': answer['grade'], 'request': deepcopy(request)}
+    if request['check_request'].get('finding_context') is not None:
+        from .finding_closure_shell import attach_f2_consumption
+        review=attach_f2_consumption(review)
     route = answer['keep_route']
     if route == 'B_EVIDENCE_SUPPORTS_CURRENT':
         row = {**finding.get('_terminal_original_finding', finding),
@@ -990,14 +1034,14 @@ def terminal_keep_matches(row, audit):
     from src.autoslice.final_review_meaning_policy import bind_current_risk
     review = audit['terminal_review']
     request, prompt, raw = review['request'], review['prompt'], review['raw_completion']
-    from src.autoslice.targeted_relisten import validate_no_gain
+    from src.autoslice.targeted_relisten import validate_current_no_gain
     answer = extract_json_object(raw)
     from .answer_contract import decode_answer
     answer = decode_answer(request, answer, prompt=prompt)
     choice = validate_terminal_answer(request, answer, prompt=prompt)
     if choice not in {'CURRENT', 'CONTEXT_FIT'}:
         return False
-    validate_no_gain(request['audio_gain_termination'], request['check_request'])
+    validate_current_no_gain(request['audio_gain_termination'], request['check_request'])
     if (not terminal_prompt_matches(request, prompt)
             or review['prompt_sha256'] != hashlib.sha256(prompt.encode()).hexdigest()
             or review['completion_sha256'] != hashlib.sha256(raw.encode()).hexdigest()
@@ -1037,3 +1081,25 @@ def terminal_keep_failure(row, audit):
     except (ValueError, TypeError, KeyError, AttributeError, OSError) as exc:
         return str(exc) if isinstance(exc, ValueError) and str(exc) else type(exc).__name__
     return 'TERMINAL_KEEP_RECEIPT_BINDING_MISMATCH'
+
+
+def terminal_finding_materials(request, model_identity):
+    """Build the typed key from exactly the materials used by prompt/refs."""
+    check = request.get('check_request') or {}
+    if check.get('finding_context') is None:
+        return None
+    if not isinstance(model_identity, dict) or not model_identity.get('models'):
+        return None  # An unbound transport cannot retain a model-owned answer.
+    from .finding_context import decision_materials
+    data, _ = terminal_materials(request)
+    observations = request['audio_gain_termination']['projection']['observations']
+    candidates = [check.get('current_cue'), check.get('proposed_cue')]
+    candidates.extend(row.get('proposed_full_cue',row.get('proposed_cue'))
+                      for row in check.get('terminal_group_questions', []))
+    return decision_materials(check, data=data,
+        contracts={'terminal_contract_version': request.get('terminal_contract_version', 1),
+                   'terminal_policy': request['terminal_policy'],
+                   'answer_contract_version': request.get('answer_contract_version')},
+        model_identity=model_identity, candidates=candidates,
+        observation_ids=[row['observation_id'] for row in observations] +
+            [row['observation_id'] for row in check.get('discovery_nomination_evidence',[])])

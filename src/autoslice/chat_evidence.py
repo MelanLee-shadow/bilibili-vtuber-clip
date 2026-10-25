@@ -281,6 +281,24 @@ def sanitize_chat_display_text(text: str, *, max_chars: int = 500) -> str:
     return value[:max_chars].strip()
 
 
+def prepare_chat_evidence(evidence: Iterable[ChatEvidence]) -> list[ChatEvidence]:
+    """One content view for chat application and its continuation readers.
+
+    Keep source bytes/hash, event identity and clock intact. The existing
+    display sanitization and hard spelling rules affect both exact_text and
+    evidence_id, so every consumer must use the writer's same view.
+    """
+    return [
+        ChatEvidence(
+            item.kind, item.offset_ms,
+            canonicalize_hard_surfaces(sanitize_chat_display_text(item.text)),
+            sanitize_chat_display_text(item.sender, max_chars=100),
+            item.source, item.source_sha256, item.source_event_id,
+        )
+        for item in evidence if sanitize_chat_display_text(item.text)
+    ]
+
+
 def load_referent_groups(
     path: str | Path, *, include_singletons: bool = False
 ) -> list[ReferentGroup]:

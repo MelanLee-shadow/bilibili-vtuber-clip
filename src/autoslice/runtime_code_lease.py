@@ -1,9 +1,10 @@
-"""Shared lease for readers of the mutable deployed repository.
+"""Shared leases for deployed code readers.
 
 Development worktrees do not use this lease. A deployment takes the exclusive
 side only while replacing the repository. Candidate output/state locks are
 independent. The wrapper uses only the standard library before acquiring the
-lease and loads the target program afresh under it.
+lease and loads the target program afresh under it. Immutable readers instead
+lock their version directory inode, independently of current-link publication.
 """
 from __future__ import annotations
 
@@ -42,34 +43,99 @@ def immutable_version(repo: Path) -> bool:
 
 
 def pin_version(repo: Path) -> None:
+    repo = repo.resolve()
     previous = os.environ.get(VERSION_ENV)
-    if previous and Path(previous).resolve() != repo.resolve():
+    if previous and Path(previous).resolve() != repo:
         raise RuntimeError('RUNTIME_VERSION_CHANGED_WITHIN_TASK')
-    os.environ[VERSION_ENV] = str(repo.resolve())
+    if immutable_version(repo):
+        # A directory inode needs no writable lock-file bootstrap, including
+        # on completed versions installed before version leases existed.
+        if _inherited_lease(repo.parent, directory=True) is None:
+            fd = acquire_version_lease(repo)
+            os.set_inheritable(fd, True)
+            atexit.register(os.close, fd)
+            os.environ[LEASE_ENV] = str(fd)
+        os.environ['AUTOSLICE_RUNTIME_CODE_LEASE_MODE'] = 'shared'
+    os.environ[VERSION_ENV] = str(repo)
 
 
-def _open_lock(path: Path) -> int:
-    fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
+def acquire_version_lease(repo: Path, *, exclusive: bool = False) -> int:
+    """Return a held directory fd; close it only after reading/mutation ends.
+
+    Retirement/replacement must take the nonblocking exclusive side before
+    touching any version bytes, and keep it through the entire operation.
+    Current cannot be retired even when idle. Deployment never retires versions.
+    """
+    repo = repo.resolve()
+    if not immutable_version(repo):
+        raise RuntimeError('RUNTIME_VERSION_INCOMPLETE')
+    version = repo.parent
+    fd = _open_lock(version, directory=True)
+    try:
+        mode = fcntl.LOCK_EX | fcntl.LOCK_NB if exclusive else fcntl.LOCK_SH
+        try:
+            fcntl.flock(fd, mode)
+        except BlockingIOError as exc:
+            raise RuntimeError('RUNTIME_VERSION_IN_USE') from exc
+        actual, expected = os.fstat(fd), version.stat(follow_symlinks=False)
+        if ((actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino)
+                or not immutable_version(repo)):
+            raise RuntimeError('RUNTIME_VERSION_CHANGED_DURING_LEASE')
+        if exclusive and (version.parent.parent / 'current').resolve() == version:
+            raise RuntimeError('RUNTIME_VERSION_CURRENT')
+        if exclusive:
+            # Pre-lease immutable entries still name their physical version
+            # in argv. Preserve them during the first upgrade as well; the
+            # directory flock alone cannot cover already-running old code.
+            marker = os.fsencode(str(version) + '/')
+            processes = [p for p in Path('/proc').iterdir() if p.name.isdecimal()]
+            if len(processes) > 4096:
+                raise RuntimeError('RUNTIME_VERSION_PROCESS_SCAN_FAILED')
+            for process in processes:
+                if int(process.name) == os.getpid():
+                    continue
+                try:
+                    with (process / 'cmdline').open('rb') as stream:
+                        command = stream.read(65537)
+                    if len(command) > 65536:
+                        raise RuntimeError('RUNTIME_VERSION_PROCESS_SCAN_FAILED')
+                    if marker in command:
+                        raise RuntimeError('RUNTIME_VERSION_IN_USE')
+                except FileNotFoundError:
+                    continue
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _open_lock(path: Path, *, directory: bool = False) -> int:
+    flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)
+    if directory:
+        flags |= os.O_DIRECTORY
+    fd = os.open(path, flags)
     info = os.fstat(fd)
-    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+    safe = stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+    if not safe:
         os.close(fd)
         raise RuntimeError('RUNTIME_CODE_LEASE_UNSAFE')
     return fd
 
 
-def _inherited_lease(path: Path) -> int | None:
+def _inherited_lease(path: Path, *, directory: bool = False) -> int | None:
     value = os.environ.get(LEASE_ENV, '')
     if not value.isdecimal():
         return None
     fd = int(value)
     try:
         actual, expected = os.fstat(fd), path.stat(follow_symlinks=False)
-        if not stat.S_ISREG(expected.st_mode) or expected.st_nlink != 1:
+        safe = stat.S_ISDIR(expected.st_mode) if directory else stat.S_ISREG(expected.st_mode) and expected.st_nlink == 1
+        if not safe:
             return None
         if (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino):
             return None
         # Do not trust an environment marker without taking the actual lock.
-        mode = fcntl.LOCK_EX if os.environ.get("AUTOSLICE_RUNTIME_CODE_LEASE_MODE") == "exclusive" else fcntl.LOCK_SH
+        mode = fcntl.LOCK_EX if not directory and os.environ.get("AUTOSLICE_RUNTIME_CODE_LEASE_MODE") == "exclusive" else fcntl.LOCK_SH
         fcntl.flock(fd, mode)
         return fd
     except OSError:

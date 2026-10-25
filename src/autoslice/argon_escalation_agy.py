@@ -105,6 +105,8 @@ def validate_execution(engine, task, manifest, inner, snapshot, *, binding_task=
 
 
 def advance(engine, task_id, *, expected, request_timeout_s=60):
+    if agy.cpa_gemini_client.enabled():
+        agy.cpa_gemini_client.require_operation('argon_attested_agy_lifecycle')
     require(not engine.read_only, "READ_ONLY_ENGINE")
     require(valid_sha(task_id), "TASK_ID_INVALID")
     require(type(request_timeout_s) in (int, float) and math.isfinite(request_timeout_s)

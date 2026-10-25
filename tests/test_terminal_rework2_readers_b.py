@@ -66,8 +66,6 @@ def test_chat_readers_expand_compact_review_after_raw_wire_binding(tmp_path: Pat
         semantic_request_history as history,
         source_checkpoint_parent as checkpoint,
     )
-    from src.autoslice import fastlane_c3_canonical_reclosure as c3
-    from src.autoslice import psp_e266_final_review_successor as psp
     from src.autoslice import reviewed_baseline_replay as replay
 
     path, raw, chat, review = _compact_chat(tmp_path)
@@ -95,12 +93,6 @@ def test_chat_readers_expand_compact_review_after_raw_wire_binding(tmp_path: Pat
     assert retained_path == path and retained_raw == raw
     assert retained_value["final_review_audit"] == review
 
-    c3_value, c3_raw = c3._load_json(path, "C3_CHAT", review=True)
-    assert c3_raw == raw and c3_value["final_review_audit"] == review
-    psp_value = psp._load_json_path(
-        path, expected_sha256=expected, reason_code="TEST", review=True
-    )
-    assert psp_value["final_review_audit"] == review
 
     # This is the same expanded value used by the reviewed replay path; the
     # source reader still retains the unchanged sealed wire bytes separately.
@@ -134,7 +126,6 @@ def test_foreign_failure_reader_expands_compact_audit(tmp_path: Path):
 
 
 def test_replay_authority_and_c2_validator_consume_expanded_chat(tmp_path: Path):
-    from src.autoslice import fastlane_c2_private_authority as c2
     from src.autoslice import reviewed_baseline_replay as replay
     from src.autoslice import reviewed_baseline_replay_authority as authority
 
@@ -155,28 +146,6 @@ def test_replay_authority_and_c2_validator_consume_expanded_chat(tmp_path: Path)
         error=ValueError,
     )
 
-    expected = {**chat, "sha256": binding.sha256}
-    closure = SimpleNamespace(
-        document={
-            "portable_chat_authority": expected,
-            "uniform_host_projection": {
-                "record_ass_sha256": record["artifact_hashes"]["ass_sha256"]
-            },
-        }
-    )
-    c2_record = {
-        "artifact_hashes": {
-            "speaker_review_srt_sha256": None,
-            "ass_sha256": record["artifact_hashes"]["ass_sha256"],
-        }
-    }
-    c2._validate_c2_uniform_host_chat(
-        binding,
-        closure=closure,
-        record=c2_record,
-        load_json=replay._load_json,
-        error=ValueError,
-    )
     assert _sha(raw) == binding.sha256
 
 

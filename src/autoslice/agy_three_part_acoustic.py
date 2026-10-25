@@ -36,8 +36,10 @@ from src.autoslice.nested_media_acoustic_runtime import (
     build_runtime_acoustic_callbacks,
 )
 from src.autoslice.package_import import atomic_write_json
+from src.autoslice.nested_media_acoustic_observer import _transport_protocol
 
 
+TRANSPORT_CONTRACT_VERSION = "agy-three-part.v1"
 SCHEMA = "agy-three-part-acoustic.v1"
 PROCESS_SCHEMA = "agy-three-part-acoustic-process.v1"
 ROLE_ORDER = ("host_enrollment", "independent_source", "current_target")
@@ -599,7 +601,10 @@ def _validate_existing_process(
         payload = json.loads(process_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
         return False
-    if not isinstance(payload, Mapping) or payload.get("transport_binding") != dict(binding):
+    if not isinstance(payload, Mapping):
+        return False
+    saved_binding = payload.get("transport_binding")
+    if not isinstance(saved_binding, Mapping) or _transport_protocol(saved_binding) != _transport_protocol(binding):
         return False
     if (
         not prompt_path.is_file()
@@ -691,7 +696,7 @@ def _transport_binding(
     agy_probe: Mapping[str, object],
     model_value: str,
     timeout_value: str,
-    adapter_source_sha256: str,
+    transport_contract_version: str,
     job_dir: Path,
     output_format: str = LEGACY_OUTPUT_FORMAT,
     schema_sha256: str | None = None,
@@ -724,7 +729,8 @@ def _transport_binding(
             "model": model_value,
             "print_timeout": timeout_value,
         },
-        "adapter_source_sha256": adapter_source_sha256,
+        "transport_contract_version": transport_contract_version,
+        "wire_schema_sha256": _sha_bytes(_structured_schema_text().encode("utf-8")),
         "job_dir": str(job_dir),
     }
     if output_format == STRUCTURED_OUTPUT_FORMAT:
@@ -752,7 +758,7 @@ def _reusable_attempt(
     agy_probe: Mapping[str, object],
     model_value: str,
     timeout_value: str,
-    adapter_source_sha256: str,
+    transport_contract_version: str,
     output_format: str,
     schema_sha256: str | None,
 ) -> PreparedThreePartAttachments | None:
@@ -766,7 +772,7 @@ def _reusable_attempt(
         attachment_prompt_sha256=attachment_prompt_sha256,
         ffmpeg_binary=ffmpeg_binary, ffmpeg_probe=ffmpeg_probe,
         agy_binary=agy_binary, agy_probe=agy_probe, model_value=model_value,
-        timeout_value=timeout_value, adapter_source_sha256=adapter_source_sha256,
+        timeout_value=timeout_value, transport_contract_version=transport_contract_version,
         job_dir=job_dir, output_format=output_format, schema_sha256=schema_sha256,
     )
     old_binding = process.get("transport_binding")
@@ -795,6 +801,8 @@ def _reusable_attempt(
     except AgyThreePartAcousticError:
         valid = False
     if not valid:
+        if isinstance(old_binding, Mapping) and _transport_protocol(old_binding) == _transport_protocol(binding):
+            raise AgyThreePartAcousticError("AGY_ARTIFACT_BINDING_MISMATCH")
         return None
     return PreparedThreePartAttachments(
         job_dir=job_dir, prompt_path=job_dir / "prompt.md", process_path=process_path,
@@ -825,7 +833,8 @@ def _completed_agy_stdout(
         "rc": job_dir / "agy.rc",
     }
     binding = process.get("transport_binding")
-    structured = isinstance(binding, Mapping) and binding.get("output_format") == STRUCTURED_OUTPUT_FORMAT
+    structured = (isinstance(binding, Mapping) and binding.get("output_format") == STRUCTURED_OUTPUT_FORMAT
+                  and process.get('actual_transport') != 'cpa_gemini_native')
     if structured:
         paths["log"] = job_dir / STRUCTURED_LOG_FILENAME
         paths["schema"] = job_dir / STRUCTURED_SCHEMA_FILENAME
@@ -942,19 +951,16 @@ def prepare_three_part_attachments(
     ffmpeg_binary = shutil.which("ffmpeg") or "ffmpeg"
     ffmpeg_probe = _probe_binary_version(ffmpeg_binary)
     agy_probe = _probe_binary_version(binary)
-    adapter_source_sha256 = _sha_file(Path(__file__))
+    transport_contract_version = TRANSPORT_CONTRACT_VERSION
     artifact_seed = {
         "schema_version": SCHEMA,
         "part_order": list(ROLE_ORDER),
         "source_audio_sha256": {str(row["role"]): row["sha256"] for row in source_parts},
         "source_durations_seconds": {str(row["role"]): row["duration_seconds"] for row in source_parts},
         "attachment_prompt_sha256": attachment_prompt_sha256,
-        "ffmpeg_binary": ffmpeg_binary,
-        "ffmpeg_version": ffmpeg_probe,
+        "transport_contract_version": transport_contract_version,
         "model": model_value,
-        "agy_binary": binary,
-        "agy_version": agy_probe,
-        "adapter_source_sha256": adapter_source_sha256,
+        "wire_schema_sha256": _sha_bytes(_structured_schema_text().encode("utf-8")),
     }
     if output_format_value == STRUCTURED_OUTPUT_FORMAT:
         artifact_seed.update({
@@ -973,6 +979,21 @@ def prepare_three_part_attachments(
         canonical_job_dir.is_symlink() or not canonical_job_dir.is_dir()
     ):
         raise AgyThreePartAcousticError("EVIDENCE_ROOT_UNSAFE")
+    for sibling in sorted(base_dir.iterdir()) if base_dir.is_dir() else []:
+        if not sibling.is_dir() or sibling.is_symlink():
+            continue
+        recovered = _reusable_attempt(
+            job_dir=sibling, source_parts=source_parts,
+            attachment_prompt=attachment_prompt,
+            attachment_prompt_sha256=attachment_prompt_sha256,
+            bound_prompt=bound_prompt, ffmpeg_binary=ffmpeg_binary,
+            ffmpeg_probe=ffmpeg_probe, agy_binary=binary, agy_probe=agy_probe,
+            model_value=model_value, timeout_value=timeout_value,
+            transport_contract_version=transport_contract_version,
+            output_format=output_format_value, schema_sha256=schema_sha256,
+        )
+        if recovered is not None:
+            return recovered
     canonical_job_dir.mkdir(parents=True, exist_ok=True)
     try:
         os.chmod(base_dir, 0o700)
@@ -986,7 +1007,7 @@ def prepare_three_part_attachments(
         attachment_prompt_sha256=attachment_prompt_sha256,
         ffmpeg_binary=ffmpeg_binary, ffmpeg_probe=ffmpeg_probe,
         agy_binary=binary, agy_probe=agy_probe, model_value=model_value,
-        timeout_value=timeout_value, adapter_source_sha256=adapter_source_sha256,
+        timeout_value=timeout_value, transport_contract_version=transport_contract_version,
         job_dir=job_dir, output_format=output_format_value, schema_sha256=schema_sha256,
     )
     prompt_path = job_dir / "prompt.md"
@@ -1044,7 +1065,7 @@ def prepare_three_part_attachments(
             bound_prompt=bound_prompt, ffmpeg_binary=ffmpeg_binary,
             ffmpeg_probe=ffmpeg_probe, agy_binary=binary, agy_probe=agy_probe,
             model_value=model_value, timeout_value=timeout_value,
-            adapter_source_sha256=adapter_source_sha256,
+            transport_contract_version=transport_contract_version,
             output_format=output_format_value, schema_sha256=schema_sha256,
         )
         if recovered is not None:
@@ -1060,7 +1081,7 @@ def prepare_three_part_attachments(
             attachment_prompt_sha256=attachment_prompt_sha256,
             ffmpeg_binary=ffmpeg_binary, ffmpeg_probe=ffmpeg_probe,
             agy_binary=binary, agy_probe=agy_probe, model_value=model_value,
-            timeout_value=timeout_value, adapter_source_sha256=adapter_source_sha256,
+            timeout_value=timeout_value, transport_contract_version=transport_contract_version,
             job_dir=job_dir, output_format=output_format_value, schema_sha256=schema_sha256,
         )
         prompt_path = job_dir / "prompt.md"
@@ -1208,6 +1229,20 @@ def build_three_part_callbacks(
         replay_block_reason = "AGY_PROCESS_STATUS_UNUSABLE"
 
     def completion_for_runtime(raw: str) -> str:
+        if process.get('actual_transport') == 'cpa_gemini_native':
+            payload = json.loads(raw)
+            _validate_structured_role_payload(payload)
+            receipt = process.get('cpa_transport_receipt')
+            native_body = agy_gemini_client.cpa_gemini_client.inline_body(
+                prompt=prepared.bound_prompt, model=prepared.model,
+                inline_parts=[(Path(str(row['path'])).read_bytes(), 'audio/wav') for row in prepared.source_parts],
+                generation_config={'responseMimeType': 'application/json',
+                    'responseJsonSchema': STRUCTURED_ROLE_SCHEMA, 'maxOutputTokens': 2048})
+            if (not isinstance(receipt, Mapping) or receipt.get('text_sha256') != hashlib.sha256(raw.encode('utf-8')).hexdigest()
+                    or receipt.get('identity_model') != prepared.model or receipt.get('status') != 'RESPONDED'
+                    or receipt.get('request_sha256') != hashlib.sha256(json.dumps(native_body, ensure_ascii=False).encode('utf-8')).hexdigest()):
+                raise AgyThreePartAcousticError('CPA_GEMINI_RESPONSE_BINDING_MISMATCH')
+            return raw
         if prepared.output_format != STRUCTURED_OUTPUT_FORMAT and '"structured_output"' not in raw:
             return raw
         try:
@@ -1270,6 +1305,24 @@ def build_three_part_callbacks(
             if completion_replay is None:
                 raise AgyThreePartAcousticError("AGY_COMPLETED_RAW_INVALID")
             return completion_for_runtime(completion_replay)
+        if agy_gemini_client.cpa_gemini_client.enabled():
+            dispatch_calls += 1
+            process.update(status='AGY_RUNNING', job_invocations=dispatch_calls,
+                           actual_transport='cpa_gemini_native', inference_process_started=False)
+            _write_process(prepared.process_path, process)
+            completion = agy_gemini_client.cpa_gemini_client.generate(
+                prompt=prepared.bound_prompt, model=prepared.model, purpose='three_part_acoustic',
+                inline_parts=parts, generation_config={'responseMimeType': 'application/json',
+                    'responseJsonSchema': STRUCTURED_ROLE_SCHEMA, 'maxOutputTokens': 2048},
+                timeout_seconds=parse_timeout_seconds(prepared.print_timeout) + 120)
+            _write_text(prepared.job_dir / 'agy.stdout', completion.text)
+            _write_text(prepared.job_dir / 'agy.stderr', '')
+            _write_text(prepared.job_dir / 'agy.rc', '0\n')
+            process.update(status='AGY_COMPLETED', returncode=0,
+                stdout_sha256=_sha_bytes(completion.text.encode('utf-8')),
+                stderr_sha256=_sha_bytes(b''), cpa_transport_receipt=dict(completion.receipt))
+            _write_process(prepared.process_path, process)
+            return completion_for_runtime(completion.text)
         argv = agy_gemini_client.agy_argv(
             prepared.binary, job_dir=prepared.job_dir, model=prepared.model,
             prompt=("Open prompt.md with view_file and follow it exactly. Use only "
@@ -1388,6 +1441,9 @@ def build_three_part_callbacks(
         return [{
             "provider": "agy",
             "transport": "agy_three_part",
+            **({'actual_transport': 'cpa_gemini_native',
+                'cpa_transport_receipt': process.get('cpa_transport_receipt')}
+               if process.get('actual_transport') == 'cpa_gemini_native' else {}),
             "job_invocations": dispatch_calls,
             "historical_job_invocations": historical_job_invocations,
             "replayed_completion": initial_status == "AGY_COMPLETED" and completion_replay is not None,
@@ -1418,7 +1474,6 @@ def build_three_part_callbacks(
         model=runtime_model,
         transport="agy_three_part",
         transport_module="src.autoslice.agy_three_part_acoustic",
-        transport_module_sha256=_sha_file(Path(__file__)),
         transport_binding=prepared.transport_binding,
         observer_prompt=(observer_prompt if observer_prompt is not None else OBSERVER_PROMPT),
         cpa_prompt=(cpa_prompt if cpa_prompt is not None else CPA_PROMPT),

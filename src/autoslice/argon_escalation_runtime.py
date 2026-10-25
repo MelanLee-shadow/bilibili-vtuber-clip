@@ -20,6 +20,7 @@ import time
 
 import hashlib
 import hmac
+import json
 import os
 from pathlib import Path
 from typing import Callable, Mapping
@@ -135,6 +136,9 @@ class ArgonRuntime:
         self.transport_factory = transport_factory or ArgonHttpTransport
 
     def advance(self, *, root: Path, spec: AudioSpec) -> dict:
+        from . import cpa_gemini_client
+        if cpa_gemini_client.enabled():
+            cpa_gemini_client.require_operation('batch_lifecycle')
         store.directory(root)
         with store.locked(root):
             # Bounded: one pass per configured route plus the paid route. Only
@@ -248,7 +252,19 @@ class ArgonRuntime:
                     if remaining is not None:
                         require(method == 'GET', 'ARGON_INRUN_RETRIEVAL_READ_ONLY')
                         timeout_s = min(timeout_s, remaining)
-                    return transport.request(method, path, body, route=route, timeout_s=timeout_s)
+                    from .provider_slots import report_provider_feedback
+                    try:
+                        response = transport.request(method, path, body, route=route, timeout_s=timeout_s)
+                    except BaseException as exc:
+                        report_provider_feedback(exc)
+                        raise
+                    report_provider_feedback({"http_status": response.status})
+                    if response.status >= 400:
+                        try:
+                            report_provider_feedback(json.loads(response.body))
+                        except (ValueError, UnicodeError):
+                            pass
+                    return response
 
             # Per-route engines keep all immutable attempts. Switching is allowed
             # only after a definitive zero-inference refusal (complete 429 or
@@ -542,7 +558,8 @@ class ArgonRuntime:
             else:
                 try:
                     with runtime_provider_slot(
-                        runtime_root=self.base, timeout_seconds=slot_wait_s
+                        runtime_root=self.base, timeout_seconds=slot_wait_s,
+                        provider="gemini", modality="audio",
                     ) as lease:
                         require(lease is not None, "ARGON_PROVIDER_SLOT_REQUIRED")
                         result = advance_engine()

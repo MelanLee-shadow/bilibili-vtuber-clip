@@ -221,7 +221,17 @@ def _requeue_fixture(tmp_path, monkeypatch, record: dict, *, recovery: str):
     monkeypatch.setattr(runner, "ffprobe_ms", lambda _path: 900_000)
     monkeypatch.setattr(runner, "find_danmaku_xml", lambda _path: None)
     monkeypatch.setattr(runner, "find_chat_jsonl", lambda _path: None)
+    from src.autoslice.runner_pipeline_fingerprints import TALK_DEPENDENCY_FIELD, TALK_DEPENDENCY_SCHEMA, TALK_STAGE_ROOTS
+    import hashlib
+    def snapshot(fingerprint):
+        return {"schema_version": TALK_DEPENDENCY_SCHEMA, "candidate_id": record["candidate_id"],
+                "stages": {stage: "sha256:" + hashlib.sha256(
+                    (fingerprint if stage == "speaker" else "unchanged").encode()).hexdigest()
+                           for stage in TALK_STAGE_ROOTS}}
+    current = snapshot(recovery)
+    monkeypatch.setattr(runner, "capture_talk_dependency_snapshot", lambda *_args: current)
     record = dict(record)
+    record[TALK_DEPENDENCY_FIELD] = snapshot(record.get("failure_recovery_fingerprint", recovery))
     record.setdefault("segment", segment.name)
     record.setdefault("start_ms", 62_000)
     record.setdefault("end_ms", 138_000)

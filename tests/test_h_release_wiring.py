@@ -88,7 +88,10 @@ def test_exact_final_entry_discloses_only_the_release_union(rig, monkeypatch, ki
     record = {"exact_final_review": result}
     if kind == "qualifying":
         assert result["status"] == "CLEAN" and result["release_gate"] == "PASS", result.get("reason_codes")
-        assert result["findings"] == [] and result["unresolved_findings_disclosed"] == [row]
+        assert result["findings"] == [] and len(result["unresolved_findings_disclosed"]) == 1
+        disclosed = result["unresolved_findings_disclosed"][0]
+        assert {key: value for key, value in disclosed.items() if key != "lifecycle"} == row
+        assert disclosed["lifecycle"]["state"] == "KEEP"
         validate_final_review_release(result, expected_srt_sha256=result["reviewed_srt_sha256"])
         # G and the package-audit reader (scripts/audit_review_package.py).
         assert unresolved_findings_problem(record) is None
@@ -96,12 +99,12 @@ def test_exact_final_entry_discloses_only_the_release_union(rig, monkeypatch, ki
         # Postburn resolution evidence carries the disclosed H row forward.
         evidence = _current_postburn_resolution_evidence(
             exact_review=result, reviewed_srt_sha256=result["reviewed_srt_sha256"])
-        assert evidence and evidence["resolved_findings"] == [row]
+        assert evidence and evidence["resolved_findings"] == [disclosed]
     else:
         assert result["release_gate"] == "BLOCK"
         assert not result["unresolved_findings_disclosed"]
         assert [f["cue_index"] for f in result["findings"]] == [row["cue_index"]]
-        assert "FINAL_REVIEW_UNRESOLVED_FINDINGS" in result["reason_codes"]
+        assert "FINAL_REVIEW_FINDING_REVIEW_PENDING" in result["reason_codes"]
         with pytest.raises(FinalReviewContractError):
             validate_final_review_release(result)
 

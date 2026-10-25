@@ -42,6 +42,9 @@ CHECK_REQUEST = {
     "context_before": "上一句",
     "context_after": "下一句",
 }
+CHECK_REQUEST["request_sha256"] = hashlib.sha256(json.dumps(
+    CHECK_REQUEST, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+).encode()).hexdigest()
 
 
 def _witness(heard: str, *, audible: bool = True, uncertain=()):
@@ -759,6 +762,7 @@ def test_legacy_cached_audio_request_keeps_receipt_without_provider_retry(
     cache_path = next((tmp_path / "cache" / "judge-verdicts").rglob("*.json"))
     entry = json.loads(cache_path.read_text())
     del entry["verdict"]["needs_audio_requested"]
+    entry["verdict"].pop("span_review_raw_completion", None)
     cache_path.write_text(json.dumps(entry))
     before = cache_path.read_bytes()
 

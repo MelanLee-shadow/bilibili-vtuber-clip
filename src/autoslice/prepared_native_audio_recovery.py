@@ -51,11 +51,119 @@ def _require_bound(path: Path, digest: str) -> None:
         raise ValueError("PREPARED_NATIVE_PARENT_DRIFT")
 
 
+def _require_registered_acquisitions(*, parent: Path, account: Path, manifest: dict) -> None:
+    """Registered metadata cannot become a newly qualified historical hole.
+
+    A retained acquisition binds its original writer location through the
+    audio_source record. Use that sealed record, not today's directory contents
+    or provider/model match, to check an output being inherited again. Partial
+    acquisitions already registered as unusable carry explicit absolute paths.
+    """
+    registered = {}
+    for relative, digest in manifest.get('cache_preimages', {}).items():
+        saved = account / relative
+        if saved.name != 'acquisition.json':
+            continue
+        _require_bound(saved, digest)
+        if parent == account:
+            original = saved
+        else:
+            metadata = _read(saved)
+            original = Path(metadata['paths']['audio_source']['path']).with_name('acquisition.json')
+        registered[original] = digest
+    for record in manifest.get('unusable_caches', {}).values():
+        registered.update({Path(path): digest
+                           for path, digest in record.get('unusable_acquisitions', {}).items()})
+    for path, digest in registered.items():
+        if parent != account and not path.is_relative_to(parent):
+            continue
+        _no_links(path)
+        if not path.is_file():
+            raise ValueError('PREPARED_NATIVE_RANGE_ACQUISITION_MISSING')
+        if 'sha256:' + _sha256(path) != digest:
+            raise ValueError('PREPARED_NATIVE_RANGE_ACQUISITION_DRIFT')
+
+
+def _unavailable_cache(*, root: Path, relative: str, source_sha: str, budget: dict,
+                       manifest: dict | None = None) -> dict | None:
+    """Read eligibility emitted by inheritance; never infer it from absence."""
+    path = root / 'parent.json'
+    if manifest is None:
+        manifest = _read(path) if _present(path) else {}
+    record = manifest.get('unusable_caches', {}).get(relative)
+    if record is None:
+        return None
+    if (manifest.get('schema_version') != 'prepared-native-audio-parents.v1'
+            or manifest.get('source_media_sha256') != source_sha
+            or not record.get('attempts')
+            or not any(p.get('path') == record['parent']
+                and p.get('budget_sha256') == record['budget_sha256']
+                for p in manifest['parents'])
+            or any(a not in budget['attempts'] or a['status'] not in {'OBSERVED', 'TEXT_UNLOCATED'}
+                   for a in record['attempts'])):
+        raise ValueError('PREPARED_NATIVE_UNAVAILABLE_CACHE_IDENTITY_MISSING')
+    for original, digest in record['present'].items():
+        _no_links(Path(original))
+        if _present(Path(original)):
+            _require_bound(Path(original), digest)
+    return record
+
+
+
+def _record_unavailable(*, unusable: dict | None, relative: str, parent: Path,
+                        budget_sha: str, attempt: dict, present: dict[str, str],
+                        acquisitions: dict[str, str] | None = None) -> None:
+    if unusable is None:
+        return
+    record = unusable.setdefault(relative, {
+        'parent': str(parent), 'budget_sha256': budget_sha, 'attempts': [],
+        'present': {}, 'reason_code': 'NATIVE_CACHE_REACQUISITION_REQUIRED',
+    })
+    if record['parent'] != str(parent) or record['budget_sha256'] != budget_sha:
+        raise ValueError('PREPARED_NATIVE_UNAVAILABLE_CACHE_IDENTITY_MISSING')
+    if attempt not in record['attempts']:
+        record['attempts'].append(dict(attempt))
+    record['present'].update(present)
+    if acquisitions is not None:
+        record.setdefault('unusable_acquisitions', {}).update(acquisitions)
+
+
+def _already_unavailable(*, root, relative, record, source_sha, budget, manifest):
+    saved = _unavailable_cache(root=root, relative=relative, source_sha=source_sha,
+                              budget=budget, manifest=manifest)
+    return (saved is not None and all(a in saved['attempts'] for a in record['attempts'])
+            and all(saved.get('unusable_acquisitions', {}).get(path) == digest
+                    for path, digest in record.get('unusable_acquisitions', {}).items()))
+
+
+def qualify_existing_native_audio_account(*, cid, account, source, runtime_root):
+    """SOURCE's inherited-account entry uses the same missing-cache constructor.
+
+    Already qualified accounts stay read-only. Missing registered preimages keep
+    the original strict consumer rejection; only unregistered historical cache
+    holes can first acquire eligibility through ordinary inheritance.
+    """
+    manifest = _read(account / 'parent.json')
+    if any(not (account / relative).is_file() or (account / relative).is_symlink()
+           for relative in manifest['cache_preimages']):
+        return
+    source_sha = _sha256(source)
+    missing = {}
+    receipt, _ = _parent_inputs(parent=account, cid=cid, source=source,
+        source_sha=source_sha, unusable=missing, allow_unavailable_cache=True)
+    if any(not _already_unavailable(root=account, relative=relative, record=record,
+            source_sha=source_sha, budget=receipt['budget'], manifest=manifest)
+           for relative, record in missing.items()):
+        inherit_prepared_native_audio(cid=cid, parent=account, source=source, runtime_root=runtime_root)
+
 
 def _range_acquisition_inputs(
-    *, parent: Path, source: Path, source_sha: str, attempt: dict
+    *, parent: Path, source: Path, source_sha: str, attempt: dict,
+    account_parent: Path | None = None, budget_sha: str = '',
+    allow_unavailable_cache: bool = False, unusable: dict | None = None,
+    origins: dict[str, Path] | None = None, budget: dict | None = None,
 ) -> dict[str, str]:
-    """Validate original AGY acquisitions, independently of current cue projection."""
+    """Validate original range acquisitions, independently of current cue projection."""
     from types import SimpleNamespace
     from src.autoslice.entity_audio_verifier import _source_stat_binding
     from src.autoslice.gemini_range_context import _cache_metadata_valid, _digest_json
@@ -63,7 +171,25 @@ def _range_acquisition_inputs(
     root = (parent / "gemini-range-acquisition" / source_sha[:20]
             / f"{attempt['start_ms']}-{attempt['end_ms']}")
     _no_links(root)
+    account_parent = account_parent or parent
+    relative = str(root.relative_to(account_parent))
+    recorded = (_unavailable_cache(root=account_parent, relative=relative,
+                source_sha=source_sha, budget=budget)
+                if not allow_unavailable_cache and budget is not None else None)
     inventory = {}
+    present = {}
+    acquisitions = {}
+    missing = False
+    matched = False
+    # Symlinks and non-regular occupied artifacts cannot be hidden by a missing
+    # acquisition or by a different provider/model in the same window.
+    for artifact in sorted(root.rglob('*')):
+        _no_links(artifact)
+        if artifact.is_file():
+            if artifact.suffix != '.lock':
+                present[str(artifact)] = 'sha256:' + _sha256(artifact)
+        elif not artifact.is_dir():
+            raise ValueError('PREPARED_NATIVE_RANGE_ACQUISITION_DRIFT')
     for path in sorted(root.glob("*/*/acquisition.json")):
         metadata = _read(path)
         original = dict(metadata)
@@ -72,43 +198,71 @@ def _range_acquisition_inputs(
         if (metadata.get("provider"), metadata.get("model")) != (
                 attempt["provider"], attempt["model"]):
             continue
+        matched = True
         prompt_record = metadata["paths"]["prompt"]
         prompt_path = Path(prompt_record["path"])
-        _require_bound(prompt_path, prompt_record["sha256"])
-        prompt = prompt_path.read_text(encoding="utf-8")
+        _no_links(prompt_path)
+        prompt = prompt_path.read_text(encoding="utf-8") if prompt_path.is_file() else None
+        unavailable: set[str] = set()
+        resolved: dict[str, Path] = {}
         valid = _cache_metadata_valid(path,
             verifier=SimpleNamespace(source_media=source, source_sha256=source_sha,
                 source_stat_binding=_source_stat_binding(source), model=attempt["model"]),
             geometry={"source_target_start_ms": attempt["start_ms"],
                       "source_target_end_ms": attempt["end_ms"]},
-            prompt=prompt, prompt_sha=prompt_record["sha256"])
+            prompt=prompt, prompt_sha=prompt_record["sha256"],
+            inherited_missing=unavailable, resolved=resolved,
+            expected_pair=(attempt['provider'], attempt['model']), original_contract=True)
         if valid is None:
             raise ValueError("PREPARED_NATIVE_RANGE_ACQUISITION_DRIFT")
+        for record in [*metadata['paths'].values(), metadata.get('response_source')]:
+            if isinstance(record, dict) and isinstance(record.get('path'), str):
+                artifact = Path(record['path'])
+                if artifact.is_file():
+                    _require_bound(artifact, record['sha256'])
+                    present[str(artifact)] = 'sha256:' + _sha256(artifact)
+        missing = missing or bool(unavailable)
+        if unavailable:
+            acquisitions[str(path)] = 'sha256:' + _sha256(path)
+            continue  # retain other complete acquisitions in this same window
+        for original, recovered in resolved.items():
+            if origins is not None and Path(original).is_relative_to(parent):
+                origins[str(Path(original).relative_to(account_parent))] = recovered
+                inventory[str(Path(original).relative_to(parent))] = 'sha256:' + _sha256(recovered)
         for artifact in path.parent.rglob("*"):
             if artifact.is_file() and artifact.suffix != ".lock":
                 _no_links(artifact)
                 inventory[str(artifact.relative_to(parent))] = "sha256:" + _sha256(artifact)
-    if not inventory:
-        raise ValueError("PREPARED_NATIVE_RANGE_ACQUISITION_MISSING")
+    if not matched or missing:
+        if not allow_unavailable_cache and (recorded is None or attempt not in recorded['attempts']):
+            raise ValueError("PREPARED_NATIVE_RANGE_ACQUISITION_MISSING")
+        _record_unavailable(unusable=unusable, relative=relative, parent=account_parent,
+            budget_sha=budget_sha, attempt=attempt, present=present, acquisitions=acquisitions)
+        return inventory
     # These bytes restore the original cache protocol. No current range,
     # acquisition, target consumption or subtitle decision is created here.
     return inventory
 
 
 def _parent_inputs(
-    *, parent: Path, cid: str, source: Path, source_sha: str
+    *, parent: Path, cid: str, source: Path, source_sha: str,
+    origins: dict[str, Path] | None = None, unusable: dict | None = None,
+    allow_unavailable_cache: bool = False,
 ) -> tuple[dict | None, dict[str, str]]:
     budget_path = parent / "native-audio-budget.json"
     checkpoint_path = parent / f"{cid}.partial-source-text-checkpoint.json"
     checkpoint = _read(checkpoint_path) if _present(checkpoint_path) else None
     frozen = checkpoint.get("budget") if checkpoint else None
     if not _present(budget_path):
-        if frozen or _present(parent / "native-exact"):
+        if frozen or _present(parent / "native-exact") or _present(parent / 'gemini-range-acquisition'):
             raise ValueError("PREPARED_NATIVE_BUDGET_MISSING_WITH_OBSERVATIONS")
         return None, {}
     budget = _read(budget_path)
     _validate_existing(budget, source_media_sha256=source_sha)
     _validate_budget_history(budget["budget"])
+    if _present(parent / 'parent.json'):
+        _require_registered_acquisitions(parent=parent, account=parent,
+                                        manifest=_read(parent / 'parent.json'))
     if budget["budget"]["source_media"] != str(source):
         raise ValueError("PREPARED_NATIVE_SOURCE_DRIFT")
     if frozen:
@@ -130,11 +284,16 @@ def _parent_inputs(
         provider, model = attempt["provider"], attempt["model"]
         cache_parent = parent
         history = budget["budget"].get("account_history")
-        if history and attempt.get("history_branch_sha256") == history["incoming"]["receipt_sha256"]:
-            cache_parent = parent / "history-cache" / history["plan"]["incoming"]["sha256"][7:]
-        if provider == "agy":
+        from src.autoslice.native_audio_history_reconciliation import cache_branches
+        cache_digest = cache_branches(history).get(attempt.get("history_branch_sha256"))
+        if cache_digest:
+            cache_parent = parent / "history-cache" / cache_digest[7:]
+        if provider in {"agy", "gemini_api"}:
             acquired = _range_acquisition_inputs(
-                parent=cache_parent, source=source, source_sha=source_sha, attempt=attempt)
+                parent=cache_parent, source=source, source_sha=source_sha, attempt=attempt,
+                account_parent=parent, budget_sha=inventory['native-audio-budget.json'],
+                allow_unavailable_cache=allow_unavailable_cache, unusable=unusable,
+                origins=origins, budget=budget['budget'])
             inventory.update({str((cache_parent / relative).relative_to(parent)): digest
                               for relative, digest in acquired.items()})
             continue
@@ -147,19 +306,64 @@ def _parent_inputs(
         receipt = audio.with_suffix(f".audio-evidence.{provider}.json")
         _no_links(audio)
         _no_links(receipt)
-        if not audio.is_file() or not receipt.is_file():
-            raise ValueError("PREPARED_NATIVE_COMPLETED_CACHE_MISSING")
+        if _present(audio) and not audio.is_file():
+            raise ValueError("PREPARED_NATIVE_COMPLETED_CACHE_DRIFT")
+        # Only inheritance can first declare a cache unavailable. A later
+        # read-only checkpoint may consume that explicit declaration, but
+        # cannot use absence to excuse a newly damaged canonical cache.
+        if not allow_unavailable_cache and (not audio.is_file() or not receipt.is_file()):
+            recorded = _unavailable_cache(root=parent, relative=str(audio.parent.relative_to(parent)),
+                                         source_sha=source_sha, budget=budget['budget'])
+            if recorded is None or attempt not in recorded['attempts']:
+                raise ValueError("PREPARED_NATIVE_COMPLETED_CACHE_MISSING")
+        # A dispatch remains historical fact when retention removed its cache.
+        # Validate every remaining receipt before treating absence as recoverable;
+        # missing media must never hide changed non-media evidence.
+        try:
+            saved = _read(receipt) if _present(receipt) else None
+        except (ValueError, TypeError) as exc:
+            raise ValueError("PREPARED_NATIVE_COMPLETED_CACHE_DRIFT") from exc
+        saved_binding = saved.get('binding') if saved is not None else None
+        audio_sha = saved_binding.get('input_audio_sha256') if isinstance(saved_binding, dict) else None
+        if saved is not None and (not isinstance(audio_sha, str) or len(audio_sha) != 64
+                                  or any(c not in "0123456789abcdef" for c in audio_sha)):
+            raise ValueError("PREPARED_NATIVE_COMPLETED_CACHE_DRIFT")
         binding = {
             "contract": CONTRACT,
             "provider": provider,
             "model": model,
-            "input_audio_sha256": _sha256(audio),
+            "input_audio_sha256": audio_sha,
             "duration_ms": attempt["duration_ms"],
             "candidate_exposure": "none",
         }
-        if _cached_secondary(path=receipt, binding=binding, exact_cue=True) is None:
+        if saved is not None and _cached_secondary(path=receipt, binding=binding, exact_cue=True) is None:
             raise ValueError("PREPARED_NATIVE_COMPLETED_CACHE_DRIFT")
-        inventory[str(audio.relative_to(parent))] = "sha256:" + _sha256(audio)
+        resolved = audio
+        if saved is not None and not audio.exists():
+            from src.autoslice.bound_media_recovery import (
+                AudioRecipe, BoundMediaUnavailable, Source, resolve_bound_media,
+            )
+            try:
+                resolved = resolve_bound_media(audio, audio_sha,
+                    root=Path(os.environ['AUTOSLICE_BASE']) if os.environ.get('AUTOSLICE_BASE') else None,
+                    recipe=AudioRecipe(Source(source, source_sha), attempt['start_ms'],
+                                       attempt['end_ms'], 'native_exact_mp3'))
+            except BoundMediaUnavailable:
+                resolved = audio
+        if audio.exists() and saved is not None and _sha256(audio) != audio_sha:
+            raise ValueError("PREPARED_NATIVE_COMPLETED_CACHE_DRIFT")
+        if saved is None or not resolved.is_file():
+            _record_unavailable(unusable=unusable, relative=str(audio.parent.relative_to(parent)),
+                parent=parent, budget_sha=inventory['native-audio-budget.json'], attempt=attempt,
+                present={str(p): 'sha256:' + _sha256(p) for p in (audio, receipt) if p.is_file()})
+            continue
+        _no_links(resolved)
+        if _sha256(resolved) != audio_sha:
+            raise ValueError("PREPARED_NATIVE_COMPLETED_CACHE_DRIFT")
+        audio_relative = str(audio.relative_to(parent))
+        inventory[audio_relative] = "sha256:" + audio_sha
+        if origins is not None:
+            origins[audio_relative] = resolved
         inventory[str(receipt.relative_to(parent))] = "sha256:" + _sha256(receipt)
     return budget, inventory
 
@@ -210,8 +414,11 @@ def inherit_prepared_native_audio(
     """
     _no_links(source)
     source_sha = _sha256(source)
+    origins: dict[str, Path] = {}
+    unusable: dict = {}
     original, inventory = _parent_inputs(
         parent=parent, cid=cid, source=source, source_sha=source_sha,
+        origins=origins, unusable=unusable, allow_unavailable_cache=True,
     )
     base = Path(os.environ.get("AUTOSLICE_BASE", str(runtime_root)))
     if not base.is_absolute():
@@ -246,6 +453,7 @@ def inherit_prepared_native_audio(
             or manifest.get("source_media_sha256") != source_sha
         ):
             raise ValueError("PREPARED_NATIVE_ACCOUNT_SCOPE_DRIFT")
+        _require_registered_acquisitions(parent=parent, account=account, manifest=manifest)
         for relative, digest in manifest["cache_preimages"].items():
             _require_bound(account / relative, digest)
         previous_parent = next(
@@ -264,9 +472,29 @@ def inherit_prepared_native_audio(
             _require_budget_history_extension(previous, original)
         current = _read(receipt_path) if _present(receipt_path) else None
         planned = None
+        current_unusable: dict = {}
         if current is not None:
             _validate_existing(current, source_media_sha256=source_sha)
             _validate_budget_history(current["budget"])
+            for relative in manifest.get('unusable_caches', {}):
+                _unavailable_cache(root=account, relative=relative, source_sha=source_sha,
+                    budget=current['budget'], manifest=manifest)
+            if parent != account:
+                # Joining an output also inherits the destination's historical
+                # attempts. Qualify its unregistered holes under the same
+                # constructor, after enforcing all registered byte preimages.
+                # A cold reader still cannot infer eligibility from absence.
+                _parent_inputs(parent=account, cid=cid, source=source, source_sha=source_sha,
+                    unusable=current_unusable, allow_unavailable_cache=True)
+                current_unusable = {relative: record for relative, record in current_unusable.items()
+                    if not _already_unavailable(root=account, relative=relative, record=record,
+                        source_sha=source_sha, budget=current['budget'], manifest=manifest)}
+            if parent == account:
+                # A re-read of an already declared absence is not a new parent
+                # or a reason to rewrite provenance/forget surviving old bytes.
+                unusable = {relative:record for relative, record in unusable.items()
+                    if not _already_unavailable(root=account, relative=relative, record=record,
+                        source_sha=source_sha, budget=current['budget'], manifest=manifest)}
             existing_history = current["budget"].get("account_history")
             if reconciliation is not None and existing_history:
                 from src.autoslice.native_audio_history_reconciliation import read_bound
@@ -275,16 +503,28 @@ def inherit_prepared_native_audio(
                     raise ValueError("PREPARED_NATIVE_PARENT_DRIFT")
             if original is not None:
                 try:
-                    if current["revision"] >= original["revision"]:
+                    if existing_history:
+                        # Containment, rather than total revision, orders a
+                        # composed account. A larger active parent may omit an
+                        # already retained fork; the fallback keeps both.
+                        try:
+                            _require_budget_history_extension(original, current)
+                        except BudgetReceiptPersistenceError:
+                            _require_budget_history_extension(current, original)
+                            planned = original
+                    elif current["revision"] >= original["revision"]:
                         _require_budget_history_extension(original, current)
                     else:
                         _require_budget_history_extension(current, original)
                         planned = original
                 except BudgetReceiptPersistenceError as fork_error:
                     if existing_history:
-                        raise
-                    from src.autoslice.native_audio_history_reconciliation import build_reconciliation
-                    if reconciliation is not None:
+                        from src.autoslice.native_audio_history_reconciliation import reconcile_active_fork
+                        planned = reconcile_active_fork(
+                            account=account, current=current, incoming=original,
+                            receipt_path=receipt_path, incoming_path=parent / "native-audio-budget.json")
+                    elif reconciliation is not None:
+                        from src.autoslice.native_audio_history_reconciliation import build_reconciliation
                         planned = build_reconciliation(
                             reference=reconciliation,current=current,incoming=original,
                             account=account,manifest=manifest,inventory=inventory,cid=cid,
@@ -308,6 +548,18 @@ def inherit_prepared_native_audio(
         fork_root = (account / "history-cache" / history["plan"]["incoming"]["sha256"][7:]
                      if history else None)
         fork_parent = bool(history and original == history["incoming"])
+        active_fork = None
+        if history and original:
+            for fork in history.get("active_forks", []):
+                if original["receipt_sha256"] == fork["incoming"]["receipt_sha256"]:
+                    fork_root = account / "history-cache" / fork["incoming"]["sha256"][7:]
+                    fork_parent = True
+                    active_fork = fork
+        new_cache_jobs = []
+        if active_fork:
+            for attempt in active_fork['active_budget']['attempts'][active_fork['shared_prefix']['attempts']:]:
+                if attempt['status'] in {'OBSERVED', 'TEXT_UNLOCATED'}:
+                    new_cache_jobs.append(_attempt_cache_job(source_sha, attempt))
         destinations = []
         for relative, digest in inventory.items():
             if relative == "native-audio-budget.json":
@@ -315,12 +567,13 @@ def inherit_prepared_native_audio(
             target = account / relative
             _no_links(target)
             if target.exists() and "sha256:" + _sha256(target) != digest:
-                if not fork_parent:
+                if (not fork_parent or active_fork and not any(
+                        Path(relative).is_relative_to(job) for job in new_cache_jobs)):
                     raise ValueError("PREPARED_NATIVE_PARENT_DRIFT")
             else:
-                destinations.append((target, parent / relative, digest))
+                destinations.append((target, origins.get(relative, parent / relative), digest))
             if fork_parent:
-                destinations.append((fork_root / relative, parent / relative, digest))
+                destinations.append((fork_root / relative, origins.get(relative, parent / relative), digest))
         for target, origin, digest in destinations:
             _no_links(target)
             if target.exists():
@@ -345,19 +598,93 @@ def inherit_prepared_native_audio(
                 atomic_write_bytes(target, origin.read_bytes())
                 _require_bound(target, digest)
             manifest["cache_preimages"][str(target.relative_to(account))] = digest
-        if original is not None:
-            digest = inventory["native-audio-budget.json"]
+        archives = []
+        if original is not None and (parent != account or unusable):
+            archives.append((parent, inventory['native-audio-budget.json']))
+        if current_unusable:
+            archives.append((account, 'sha256:' + _sha256(receipt_path)))
+        for origin_parent, digest in archives:
             archive = account / "parents" / (digest[7:] + ".json")
             archive.parent.mkdir(exist_ok=True)
             _no_links(archive)
             if archive.exists():
                 _require_bound(archive, digest)
             else:
-                atomic_write_bytes(archive, (parent / "native-audio-budget.json").read_bytes())
+                atomic_write_bytes(archive, (origin_parent / "native-audio-budget.json").read_bytes())
                 _require_bound(archive, digest)
-            parent_binding = {"path": str(parent), "budget_sha256": digest}
+            parent_binding = {"path": str(origin_parent), "budget_sha256": digest}
             if parent_binding not in manifest["parents"]:
                 manifest["parents"].append(parent_binding)
+        for holes, remap in ((current_unusable, False), (unusable, fork_parent)):
+            if not holes:
+                continue
+            updated = {}
+            for relative, record in holes.items():
+                # Keep accounting immutable. This manifest describes only cache
+                # eligibility; it is never an OBSERVED receipt or a refund.
+                if remap:
+                    # The v3 view adds the existing branch namespace to original
+                    # v2 IDs. Mirror that representation in cache eligibility,
+                    # without changing either immutable branch receipt.
+                    from src.autoslice.native_audio_history_reconciliation import remap_incoming_attempt
+                    record = {**record, 'attempts': [remap_incoming_attempt(a, original, history)
+                                                   for a in record['attempts']]}
+                elif history:
+                    record = {**record, 'attempts': [a if 'history_branch_sha256' in a else
+                        {**a, 'history_branch_sha256': history['canonical']['receipt_sha256']}
+                        for a in record['attempts']]}
+                from src.autoslice.native_audio_history_reconciliation import cache_branches
+                for unavailable_attempt in record['attempts']:
+                    # Existing immutable branch caches keep their original
+                    # namespace. Only a newly retained active suffix is remapped;
+                    # nesting every old namespace under the new fork loses its
+                    # eligibility at the ordinary cold reader.
+                    job = _attempt_cache_job(source_sha, unavailable_attempt)
+                    digest = cache_branches(history).get(unavailable_attempt.get('history_branch_sha256'))
+                    key = str(Path('history-cache') / digest[7:] / job) if digest else str(job)
+                    for cache_key in dict.fromkeys((key, str(job))):
+                        files = (str(Path(cache_key) / 'input.mp3'),
+                                 str(Path(cache_key) / f"input.audio-evidence.{unavailable_attempt['provider']}.json"))
+                        if unavailable_attempt['provider'] not in {'agy', 'gemini_api'} and all(
+                                name in manifest['cache_preimages'] and (account / name).is_file() for name in files):
+                            continue  # retain the account's byte-bound original copy
+                        _record_unavailable(unusable=updated, relative=cache_key,
+                            parent=Path(record['parent']), budget_sha=record['budget_sha256'],
+                            attempt=unavailable_attempt, present=record['present'],
+                            acquisitions=record.get('unusable_acquisitions'))
+            retained = manifest.setdefault('unusable_caches', {})
+            final_budget = (planned or current or original)['budget']
+            for key, record in updated.items():
+                old = retained.get(key)
+                if old:
+                    attempts = []
+                    for attempt in [*old['attempts'], *record['attempts']]:
+                        if attempt not in final_budget['attempts'] and history and 'history_branch_sha256' not in attempt:
+                            attempt = {**attempt, 'history_branch_sha256': history['canonical']['receipt_sha256']}
+                        if attempt not in final_budget['attempts']:
+                            raise ValueError('PREPARED_NATIVE_UNAVAILABLE_CACHE_IDENTITY_MISSING')
+                        if attempt not in attempts:
+                            attempts.append(attempt)
+                    record['attempts'] = attempts
+                    for field in ('present', 'unusable_acquisitions'):
+                        values = dict(old.get(field, {}))
+                        if any(path in values and values[path] != digest
+                               for path, digest in record.get(field, {}).items()):
+                            raise ValueError('PREPARED_NATIVE_PARENT_DRIFT')
+                        values.update(record.get(field, {}))
+                        if values:
+                            record[field] = values
+                retained[key] = record
+        # A first v2 -> v3 JOIN changes the representation of every canonical
+        # identity, including already qualified holes untouched by this parent.
+        final_budget = (planned or current or original or {}).get('budget', {})
+        if history:
+            for record in manifest.get('unusable_caches', {}).values():
+                record['attempts'] = [a if a in final_budget['attempts'] else
+                    {**a, 'history_branch_sha256': history['canonical']['receipt_sha256']}
+                    for a in record['attempts']]
+                if any(a not in final_budget['attempts'] for a in record['attempts']):
+                    raise ValueError('PREPARED_NATIVE_UNAVAILABLE_CACHE_IDENTITY_MISSING')
         if not _present(manifest_path) or _read(manifest_path) != manifest:
             _write_json_atomic(manifest_path, manifest)
         if planned is not None:
@@ -368,8 +695,15 @@ def inherit_prepared_native_audio(
             receipt_path=receipt_path,
             require_existing=original is not None or current is not None,
         )
-    roots = (fork_root,) if fork_root is not None else ()
+    from src.autoslice.native_audio_history_reconciliation import history_cache_roots
+    roots = history_cache_roots(account, history)
     return PreparedNativeAudioState(account, receipt_path, roots)
+
+
+def _attempt_cache_job(source_sha: str, attempt: dict) -> Path:
+    if attempt['provider'] in {'agy', 'gemini_api'}:
+        return Path('gemini-range-acquisition') / source_sha[:20] / f"{attempt['start_ms']}-{attempt['end_ms']}"
+    return Path('native-exact') / attempt['provider'] / f"{source_sha[:20]}-{attempt['start_ms']}-{attempt['end_ms']}"
 
 
 def join_own_interrupted_account(
@@ -377,11 +711,11 @@ def join_own_interrupted_account(
 ) -> tuple[PreparedNativeAudioState, dict | None]:
     """Join this output root's own earlier account (an interrupted attempt).
 
-    41:1540-1541 / 40:57: occupation and real observations of the stopped run
-    are never re-bought, refunded or reset. The ordinary inheritance is the
+    Occupation and real observations of the stopped run are never refunded or
+    reset. The ordinary inheritance is the
     proof: the account must extend the joined ledger as an exact prefix (or a
-    registered fork) and every OBSERVED/TEXT_UNLOCATED attempt must still have
-    its complete original audio/receipt/range files. Nothing is written to the
+    registered fork). Missing caches retain their attempts but cannot
+    serve observations; ordinary collection must acquire them again. Nothing is written to the
     stopped run's files. When the proof does not hold, nothing is joined and the
     account stays exactly as inherited before (the original refusal).
     """

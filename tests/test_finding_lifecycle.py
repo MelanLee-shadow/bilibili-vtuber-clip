@@ -75,10 +75,10 @@ def test_unfinished_disclosed_row_returns_to_pending_not_pass():
 ])
 def test_release_obligation_preserves_specific_failure_and_integrity(monkeypatch, has_finding,
                                                                    obligation_error, expected):
-    from tests.test_exact_final_funnel import fixture_run
+    from tests.test_producer_current_text_auto_resume import _completed_current_review
     from src.autoslice import span_finding_obligations
     from src.autoslice.final_review_contract import validate_final_review_release, FinalReviewContractError
-    audit = fixture_run()['guard_review']
+    audit, _ = _completed_current_review('1\n00:00:00,000 --> 00:00:00,100\n合成字幕\n')
     audit['findings'] = [unresolved('LlmCallError')] if has_finding else []
     audit['validated_finding_count'] = len(audit['findings'])
     def check_obligations(_audit):
@@ -89,9 +89,9 @@ def test_release_obligation_preserves_specific_failure_and_integrity(monkeypatch
 
 
 def test_stopped_legacy_review_preserves_pending_without_release_authority():
-    from tests.test_exact_final_funnel import fixture_run
+    from tests.test_producer_current_text_auto_resume import _completed_current_review
     from src.autoslice.final_review_contract import validate_final_review_release, FinalReviewContractError
-    audit = fixture_run()['guard_review']
+    audit, _ = _completed_current_review('1\n00:00:00,000 --> 00:00:00,100\n合成字幕\n')
     audit.pop('terminal_funnel', None)
     audit['findings'] = [unresolved()]
     audit['validated_finding_count'] = 1

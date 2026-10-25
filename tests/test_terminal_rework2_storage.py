@@ -144,17 +144,17 @@ def test_script_evidence_readers_expand_compact_records(tmp_path):
     chat_document = {"final_review_audit": original}
     persist_document(chat_path, chat_document)
 
-    from scripts import ab_model_replay_closed_set as ab_replay
+    # Private reader omitted from this distribution.
     from scripts import audit_review_package as package_audit
-    from scripts import build_fastlane_c10_media_successor as c10_builder
+    # Private reader omitted from this distribution.
     from scripts import build_daily_review_manifest as daily_manifest
     from scripts import build_recovery_review_manifest as recovery_manifest
     from scripts import build_manual_review_manifest as manual_manifest
-    from scripts import build_t06_bookshop_same_bv_extension_audio_package as t06_audio
-    from scripts import build_t06_bookshop_same_bv_extension_package as t06_package
+    # Private reader omitted from this distribution.
+    # Private reader omitted from this distribution.
     from scripts import finalize_b2_caption_same_bv_recovery_package as b2_finalizer
     from scripts import finalize_e353_content_package as e353_finalizer
-    from scripts import finalize_t06_bookshop_same_bv_extension_recovery_package as t06_finalizer
+    # Private reader omitted from this distribution.
     from scripts import replay_exact_final_funnel as exact_replay
     from scripts import replay_reviewed_subtitle_baseline as baseline_replay
     from scripts import resume_frozen_talk_package as frozen_resume
@@ -162,17 +162,17 @@ def test_script_evidence_readers_expand_compact_records(tmp_path):
     from scripts import subtitle_regression_eval as regression_eval
 
     readers = (
-        ("ab replay", lambda: ab_replay.load_review(chat_path), chat_document),
+        # Private reader omitted from this distribution.
         ("package audit", lambda: package_audit._load_json(chat_path), chat_document),
-        ("C10 builder", lambda: c10_builder.load_review(chat_path), chat_document),
+        # Private reader omitted from this distribution.
         ("daily manifest", lambda: daily_manifest.load_review(chat_path), chat_document),
         ("recovery manifest", lambda: recovery_manifest._load_json(chat_path), chat_document),
         ("manual manifest", lambda: manual_manifest.load_review(chat_path), chat_document),
-        ("T06 audio", lambda: t06_audio._load(chat_path), chat_document),
-        ("T06 package", lambda: t06_package._load(chat_path), chat_document),
+        # Private reader omitted from this distribution.
+        # Private reader omitted from this distribution.
         ("B2 finalizer", lambda: b2_finalizer._json(chat_path), chat_document),
         ("E353 finalizer", lambda: e353_finalizer._json(chat_path), chat_document),
-        ("T06 finalizer", lambda: t06_finalizer._json(chat_path), chat_document),
+        # Private reader omitted from this distribution.
         ("exact replay", lambda: exact_replay.load_review(review_path), original),
         (
             "baseline replay",
@@ -327,7 +327,7 @@ def test_additional_src_review_readers_expand_compact_records_and_reject_hash_dr
     from dataclasses import replace
 
     from src.autoslice import c6_exact_final_boundary_adapter as c6
-    from src.autoslice import operator_exact_title_source_fact_authority as title
+    # Private reader omitted from this distribution.
     from src.autoslice import producer_prepared_recovery as prepared
     from src.autoslice import retained_source_input as retained
     from src.autoslice import review_package_source_boundary as source_boundary
@@ -412,13 +412,5 @@ def test_additional_src_review_readers_expand_compact_records_and_reject_hash_dr
 
     title_review_path = tmp_path / "title.review-flags.json"
     persist_review(title_review_path, review)
-    assert title._json_file(
-        title_review_path,
-        title.bytes_sha256(title_review_path.read_bytes()),
-        "FINAL_REVIEW",
-        review=True,
-    ) == review
-    with pytest.raises(title.OperatorExactTitleSourceFactAuthorityError, match="HASH_MISMATCH"):
-        title._json_file(
-            title_review_path, "sha256:" + "0" * 64, "FINAL_REVIEW", review=True
-        )
+    # Private reader omitted from this distribution.
+    # Private reader omitted from this distribution.

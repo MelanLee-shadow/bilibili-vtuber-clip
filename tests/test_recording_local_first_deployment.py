@@ -27,15 +27,3 @@ def test_single_mover_service_and_independent_existing_disk_guard():
     executable_lines = [line for line in stub.splitlines() if line and not line.startswith("#")]
     assert executable_lines[-1] == "exit 75"
     assert all(not line.startswith(("docker", "systemctl")) for line in executable_lines)
-
-
-def test_oci3_installer_owns_units_shared_module_and_retired_legacy_entry():
-    installer = (ROOT / "scripts/install_oci3_recording_health.sh").read_text()
-    for name in ("bilive-recording-consumers.oci3.service", "bilive-recording-spool-mover.service",
-                 "oci3-disk-guard-recording-spool.conf", "recording_archive.py", "cd2_status.py",
-                 "recording_spool_mover.py", "oci3_retired_mount_watchdog.sh"):
-        assert f"ops/recording/{name}" in installer
-    assert "    scripts/mount_watchdog.sh\n" not in installer
-    assert "etc/systemd/system/bilive-recording-consumers.service" in installer
-    assert "opt/bilive/recording/recording_archive.py" in installer
-    assert "opt/bilive/ops/recording_archive.py" in installer

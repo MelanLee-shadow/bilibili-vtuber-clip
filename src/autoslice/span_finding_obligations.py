@@ -214,7 +214,36 @@ def _born_questions(value: Mapping, after: str, *, applied: bool) -> dict:
             },
             "resolution": None,
         }
+        if binding["source_offset_ms"]:
+            pending[oid]["source_offset_ms"] = binding["source_offset_ms"]
     return pending
+
+
+def _physical_window(row):
+    offset = row.get("source_offset_ms", 0)
+    return [point + offset for point in row["cue_window_ms"]]
+
+
+def _repair_source_offset(repair, span_value):
+    """Rebase only from the typed writer's validated clock, never text search."""
+    if span_value is not None:
+        return span_value["binding"]["source_offset_ms"]
+    if repair.get("editorial_authority") is not None:
+        from .editorial_subtitle import validate_repair
+        validate_repair(repair)
+        return repair["editorial_authority"]["request"]["source_media_timeline_offset_ms"]
+    for request in (
+        (repair.get("origin_span_adjudication") or {}).get("request"),
+        ((repair.get("judge") or {}).get("span_compilation") or {}).get("request"),
+    ):
+        if (isinstance(request, Mapping) and request.get("current_cue") == repair.get("before")
+                and [request.get("matched_start_ms"), request.get("matched_end_ms")]
+                == [repair.get("matched_start_ms"), repair.get("matched_end_ms")]
+                and type(request.get("source_media_timeline_offset_ms")) is int
+                and digest({k: v for k, v in request.items() if k != "request_sha256"})
+                == request.get("request_sha256")):
+            return request["source_media_timeline_offset_ms"]
+    return None
 
 
 def derive_obligations(
@@ -245,14 +274,28 @@ def derive_obligations(
             raise ValueError("SPAN_OBLIGATION_REPAIR_HISTORY_INVALID")
         index = repair.get("cue_index")
         window = [repair.get("matched_start_ms"), repair.get("matched_end_ms")]
+        value = validate_span_repair(repair)
+        offset = _repair_source_offset(repair, value)
         change_start, change_end, delta = _difference(before, after)
         for oid, row in pending.items():
-            if row["cue_index"] != index or row["status"] == "RESOLVED":
+            if row["status"] == "RESOLVED":
+                continue
+            physical_match = (offset is not None
+                and _physical_window(row) == [point + offset for point in window])
+            if offset is not None and not physical_match:
+                continue
+            if row["cue_index"] != index and not physical_match:
                 continue
             left, right = row["codepoint_span"]
-            if before != row["current_cue"] or window != row["cue_window_ms"]:
+            if before != row["current_cue"] or not (
+                physical_match or (offset is None and window == row["cue_window_ms"])
+            ):
                 row["status"] = "LOCATION_STALE"
                 continue
+            row["cue_index"] = index
+            row["cue_window_ms"] = window
+            if offset is not None and (offset or "source_offset_ms" in row):
+                row["source_offset_ms"] = offset
             origin = repair.get(ORIGIN_FIELD) or {}
             if (
                 oid in [origin.get("obligation_id"), *(origin.get("obligation_ids") or [])]
@@ -276,11 +319,24 @@ def derive_obligations(
             elif change_start >= right:
                 pass
             else:
-                row["status"] = "LOCATION_STALE"
-                continue
+                # An independent valid edit is not a ruling on this question.
+                # Its sealed before/after and exact physical window permit a
+                # fresh whole-current-cue question, not guessed word alignment
+                # or a release. Retain the original question and repair edge.
+                if not after.strip() or row["status"] == "LOCATION_STALE":
+                    row["status"] = "LOCATION_STALE"
+                    continue
+                row["codepoint_span"] = [0, len(after)]
+                row.setdefault("reanchor_chain", []).append({
+                    "repair_sha256": digest(repair),
+                    "before_sha256": text_sha(before), "after_sha256": text_sha(after),
+                    "physical_cue_window_ms": _physical_window(row),
+                    "action": "REVIEW_CURRENT_CUE_REQUIRED",
+                })
             row["current_cue"] = after
             row["base_text_sha256"] = text_sha(after)
-        value = validate_span_repair(repair)
+            a, b = row["codepoint_span"]
+            row["current_text"] = after[a:b]
         if value is None:
             continue
         pending.update(_born_questions(value, after, applied=True))
@@ -290,6 +346,14 @@ def derive_obligations(
             raise ValueError("SPAN_ORPHAN_CLOSURE")
         row = pending[oid]
         adjudication = closure.get("adjudication")
+        request = adjudication.get("request") if isinstance(adjudication, Mapping) else None
+        window = row["cue_window_ms"]
+        if isinstance(request, Mapping):
+            candidate_window = [request.get("matched_start_ms"), request.get("matched_end_ms")]
+            offset = request.get("source_media_timeline_offset_ms")
+            if (type(offset) is int and all(type(p) is int for p in candidate_window)
+                    and [p + offset for p in candidate_window] == _physical_window(row)):
+                window = candidate_window
         if (
             row["status"] != "UNRESOLVED"
             or closure.get("codepoint_span") != row["codepoint_span"]
@@ -297,7 +361,7 @@ def derive_obligations(
                 adjudication,
                 before=row["current_cue"],
                 after=row["current_cue"],
-                window=row["cue_window_ms"],
+                window=window,
                 keep=True,
             )
         ):
@@ -320,6 +384,11 @@ def _finding(row: Mapping) -> dict:
         "obligation_ids": row.get("obligation_ids", [row["obligation_id"]]),
         "source": row["origin"],
     }
+    if row.get("reanchor_chain"):
+        origin["reanchor_chain"] = deepcopy(row["reanchor_chain"])
+    if "source_offset_ms" in row:
+        origin["source_offset_ms"] = row["source_offset_ms"]
+        origin["physical_cue_window_ms"] = _physical_window(row)
     return {
         "cue": row["cue_index"],
         "cue_index": row["cue_index"],
@@ -344,7 +413,7 @@ def _finding(row: Mapping) -> dict:
 
 
 @cold_input
-def pending_findings(srt_text: str, authority: Mapping) -> list[dict]:
+def pending_findings(srt_text: str, authority: Mapping, *, timeline_offset_ms=0) -> list[dict]:
     from src.autoslice.jingting_chunker import parse_srt_cues
 
     repairs = repair_chain(authority)
@@ -384,26 +453,51 @@ def pending_findings(srt_text: str, authority: Mapping) -> list[dict]:
     for row in rows:
         if row["status"] == "RESOLVED":
             continue
-        index = row["cue_index"]
-        if (
-            not 1 <= index <= len(cues)
-            or cues[index - 1].text != row["current_cue"]
-            or [cues[index - 1].start_ms, cues[index - 1].end_ms] != row["cue_window_ms"]
-        ):
+        matches = [(i, cue) for i, cue in enumerate(cues, 1)
+            if cue.text == row["current_cue"]
+            and [cue.start_ms + timeline_offset_ms, cue.end_ms + timeline_offset_ms]
+            == _physical_window(row)]
+        if len(matches) != 1:
             row["status"] = "LOCATION_STALE"
+        else:
+            index, cue = matches[0]
+            row["cue_index"] = index
+            row["cue_window_ms"] = [cue.start_ms, cue.end_ms]
+            if timeline_offset_ms or "source_offset_ms" in row:
+                row["source_offset_ms"] = timeline_offset_ms
         result.append(_finding(row))
     return result
 
 
-def merge_pending(srt_text: str, authority: Mapping, findings: list) -> list:
+def merge_pending(srt_text: str, authority: Mapping, findings: list, *, timeline_offset_ms=0) -> list:
     result = list(findings)
-    for pending in pending_findings(srt_text, authority):
+    for pending in pending_findings(srt_text, authority, timeline_offset_ms=timeline_offset_ms):
         origin = pending[ORIGIN_FIELD]
         matched = None
-        for row in result:
+        pending_ids = set(origin["obligation_ids"])
+        for number, row in enumerate(result):
+            if not isinstance(row, Mapping):
+                continue
+            previous = row.get(ORIGIN_FIELD) or {}
+            previous_ids = {previous.get("obligation_id"), *(previous.get("obligation_ids") or [])}
+            if (pending["span_obligation_status"] != "LOCATION_STALE"
+                    and pending_ids.intersection(previous_ids)
+                    and (row.get("cue_index", row.get("cue")) != pending["cue_index"]
+                         or row.get("base_text_sha256") != pending["base_text_sha256"]
+                         or previous.get("cue_window_ms") != origin["cue_window_ms"])):
+                # Same obligation, new bound representation. Keep the old
+                # finding identifiable in the immutable authority; never
+                # transplant its old decision onto the current text.
+                matched = {**pending, "prior_span_location": {
+                    "finding_sha256": digest(row),
+                    "cue_index": row.get("cue_index", row.get("cue")),
+                    "base_text_sha256": row.get("base_text_sha256"),
+                    "cue_window_ms": previous.get("cue_window_ms"),
+                }}
+                result[number] = matched
+                break
             if (
-                not isinstance(row, Mapping)
-                or row.get("cue_index", row.get("cue")) != pending["cue_index"]
+                row.get("cue_index", row.get("cue")) != pending["cue_index"]
             ):
                 continue
             if row.get("base_text_sha256") not in {None, pending["base_text_sha256"]}:
@@ -444,7 +538,7 @@ def merge_pending(srt_text: str, authority: Mapping, findings: list) -> list:
 
 
 @cold_input
-def enforce_review(srt_text: str, authority: Mapping, audit: dict) -> dict:
+def enforce_review(srt_text: str, authority: Mapping, audit: dict, *, timeline_offset_ms=0) -> dict:
     """Never let a new empty model response erase already born obligations."""
     repairs = repair_chain(authority)
     from src.autoslice.span_phoneme_resolution import validate_question_packet
@@ -496,7 +590,7 @@ def enforce_review(srt_text: str, authority: Mapping, audit: dict) -> dict:
                 adj,
                 before=row["current_cue"],
                 after=row["current_cue"],
-                window=row["cue_window_ms"],
+                window=[p - timeline_offset_ms for p in _physical_window(row)],
                 keep=True,
             ):
                 closures.append(
@@ -512,7 +606,8 @@ def enforce_review(srt_text: str, authority: Mapping, audit: dict) -> dict:
         "span_obligation_closures": closures,
         UNAPPLIED_FIELD: unapplied,
     }
-    audit["findings"] = merge_pending(srt_text, effective, list(audit.get("findings") or []))
+    audit["findings"] = merge_pending(srt_text, effective, list(audit.get("findings") or []),
+                                     timeline_offset_ms=timeline_offset_ms)
     states = derive_obligations(repairs, closures, unapplied)
     proof = {
         "schema_version": "subtitle-span-obligation-review.v1",
@@ -535,6 +630,38 @@ def enforce_review(srt_text: str, authority: Mapping, audit: dict) -> dict:
     return audit
 
 
+def _normalized_persisted_states(proof):
+    """Read pre-clock states using their own sealed birth packet's clock.
+
+    The proof's original bytes and receipt remain authoritative. Only an
+    absent offset has a legacy representation; explicit offsets and every
+    other state field must still equal the ordinary replay result.
+    """
+    from src.autoslice.span_phoneme_resolution import validate_question_packet
+
+    clocks = {}
+    for repair in proof["repairs"]:
+        value = validate_span_repair(repair)
+        if value is not None:
+            clocks[value["receipt_sha256"]] = value["binding"]["source_offset_ms"]
+    for record in proof.get(UNAPPLIED_FIELD, []):
+        value = validate_question_packet(record.get("packet"))
+        clocks[value["receipt_sha256"]] = value["binding"]["source_offset_ms"]
+    stored = proof.get("states")
+    if not isinstance(stored, list):
+        return stored
+    normalized = []
+    for row in stored:
+        if isinstance(row, Mapping) and "source_offset_ms" not in row:
+            origin = row.get("origin")
+            parent = origin.get("parent_scope_sha256") if isinstance(origin, Mapping) else None
+            offset = clocks.get(parent) if isinstance(parent, str) else None
+            if offset:
+                row = {**row, "source_offset_ms": offset}
+        normalized.append(row)
+    return normalized
+
+
 @cold_input
 def validate_release_obligations(audit: Mapping) -> None:
     repairs = repair_chain(audit)
@@ -554,7 +681,7 @@ def validate_release_obligations(audit: Mapping) -> None:
     ):
         raise ValueError("SPAN_OBLIGATION_REVIEW_DRIFT")
     states = derive_obligations(proof["repairs"], proof["closures"], proof.get(UNAPPLIED_FIELD, []))
-    if states != proof.get("states"):
+    if states != _normalized_persisted_states(proof):
         raise ValueError("SPAN_OBLIGATION_STATES_DRIFT")
     if any(r["status"] != "RESOLVED" for r in states):
         from .finding_lifecycle import REVIEW_PENDING

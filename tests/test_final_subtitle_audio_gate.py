@@ -1395,13 +1395,20 @@ def test_postburn_review_reuses_valid_private_cpa_response(
 
 
 def test_postburn_parser_recovery_preserves_original_doubt_without_new_dispatch(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, mode=None
 ) -> None:
     from src.autoslice.final_review_auditor import FinalReviewAuditError
-    from src.autoslice.final_review_discovery_prompt import FINAL_SUBTITLE_AUDIT_PROMPT
+    from src.autoslice.final_review_discovery_prompt import (
+        FINAL_SUBTITLE_AUDIT_PROMPT, LEGACY_FINAL_SUBTITLE_AUDIT_PROMPT)
     from src.autoslice.final_review_schema_retry import schema_repair_prompt
     from src.autoslice.jingting_chunker import parse_srt_cues
 
+    if mode is None:
+        monkeypatch.delenv('AUTOSLICE_FINAL_REVIEW_MODE', raising=False)
+    else:
+        monkeypatch.setenv('AUTOSLICE_FINAL_REVIEW_MODE', mode)
+    prompt_template = (FINAL_SUBTITLE_AUDIT_PROMPT if mode == 'per_finding'
+                       else LEGACY_FINAL_SUBTITLE_AUDIT_PROMPT)
     record, final_srt, media = _postburn_record(tmp_path)
     original_bytes = final_srt.read_bytes()
     calls = []
@@ -1415,7 +1422,10 @@ def test_postburn_parser_recovery_preserves_original_doubt_without_new_dispatch(
     actual_auditor = finalization.audit_final_subtitles
 
     def old_parser(srt_text, *, llm_call, **kwargs):
-        prompt = FINAL_SUBTITLE_AUDIT_PROMPT.format(
+        from src.autoslice.surface_canon import CHANNEL_PROFILE
+        prompt = prompt_template.format(
+            host_name=CHANNEL_PROFILE.display_name,
+            host_short=CHANNEL_PROFILE.short_name,
             max_findings=24,
             numbered="\n".join(f"{i}. {cue.text}" for i, cue in enumerate(parse_srt_cues(srt_text), 1)),
             glossary=kwargs["glossary_text"].strip() or "（无）",
@@ -1458,6 +1468,11 @@ def test_postburn_parser_recovery_preserves_original_doubt_without_new_dispatch(
     assert len(recovered["prior_postburn_subtitle_audio_review"]["cpa_calls"]) == 2
     assert len(calls) == 2
     assert final_srt.read_bytes() == original_bytes
+
+
+def test_per_finding_postburn_parser_recovery_preserves_original_doubt_without_new_dispatch(tmp_path, monkeypatch):
+    test_postburn_parser_recovery_preserves_original_doubt_without_new_dispatch(
+        tmp_path, monkeypatch, mode='per_finding')
 
 def test_postburn_checkpoint_blocks_replay_after_process_death(
     tmp_path: Path, monkeypatch

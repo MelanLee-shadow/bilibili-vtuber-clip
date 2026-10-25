@@ -531,6 +531,8 @@ def _recovery_fixture(
         ),
     )
     monkeypatch.setattr(delivery_recovery, "_runner", runner_stub)
+    monkeypatch.setattr(delivery_recovery, "talk_recovery_dependency_change",
+                        lambda *_args, **_kwargs: (True, {"synthetic": "changed"}, ("producer",)))
     monkeypatch.setattr(
         delivery_recovery.historical_recording_duration,
         "resolve",

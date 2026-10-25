@@ -1095,6 +1095,14 @@ def _command_received_response(completion_file: Path, stderr: str, diagnostics: 
     return bool(provider_failure_status_codes(stderr))
 
 
+def _report_command_admission(stderr: str | None) -> None:
+    """Retain structured per-attempt limits even if a bridge later succeeds."""
+    from .provider_slots import report_provider_feedback
+    for line in (stderr or '').splitlines():
+        if _CPA_COMMAND_ATTEMPT_RX.fullmatch(line.strip()) or PROVIDER_DIAGNOSTIC_MARKER in line:
+            report_provider_feedback(_command_provider_diagnostics(line, None))
+
+
 def _call_command(prompt: str, config: LlmConfig) -> str:
     if not config.command_template:
         raise LlmCallError("command transport requires command_template")
@@ -1146,6 +1154,7 @@ def _call_command(prompt: str, config: LlmConfig) -> str:
             stderr = exc.stderr or ''
             if isinstance(stderr, bytes):
                 stderr = stderr.decode('utf-8', errors='replace')
+            _report_command_admission(stderr)
             diagnostics = _command_provider_diagnostics(stderr, config.command_diagnostic_context)
             response_received = _command_received_response(completion_file, stderr, diagnostics)
             diagnostics.setdefault('provider_error_code', 'LLM_COMMAND_TIMEOUT')
@@ -1158,6 +1167,7 @@ def _call_command(prompt: str, config: LlmConfig) -> str:
                 provider_diagnostics=diagnostics,
                 response_received=response_received,
             ) from exc
+        _report_command_admission(completed.stderr)
         diagnostics = _command_provider_diagnostics(
             completed.stderr,
             config.command_diagnostic_context,

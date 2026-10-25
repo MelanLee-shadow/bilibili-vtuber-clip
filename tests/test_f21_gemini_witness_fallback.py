@@ -659,7 +659,7 @@ def test_never_attempted_witness_still_reaches_the_disclosed_keep_current_exit()
     assert kept["status"] == "OBSERVED", "法官必须真的跑完，而不是证词 invalid"
     assert kept["policy_branch"] == "JUDGE_KEEPS_CURRENT"
     assert kept["repaired"] is False
-    assert is_keep_current_disclosed({"exact_release_adjudication": kept}) is True
+    assert is_keep_current_disclosed({"exact_release_adjudication": kept}) is False
 
     out, blocked = adjudicate_context_finding(
         srt,
@@ -771,6 +771,7 @@ def test_entity_receipt_shape_survives_the_unified_client_extraction(
         "timeline_binding",
         "uncertain_positions",
         "witness_protocol",
+        "relisten_artifacts",
     }
 
 

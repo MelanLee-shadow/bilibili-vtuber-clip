@@ -117,7 +117,7 @@ def test_process_that_exited_is_distinct_from_a_read_error(quiet_case, monkeypat
 
 @pytest.mark.parametrize("comm,argv,busy", [
     ("python3", ["python3", "observer.py", "ffmpeg"], False),
-    ("free_session_au", ["python3", "session_autoslice.py", "grep"], True),
+    (Path("session_autoslice.py").stem[:15], ["python3", "session_autoslice.py", "grep"], True),
     ("produce_slice_p", ["python3", "produce_slice_package.py", "cleanup_preflight"], True),
     ("bash", ["-bash", "-lc", "ffmpeg -metadata comment=grep"], True),
     ("bash", ["bash", "-ls"], True),

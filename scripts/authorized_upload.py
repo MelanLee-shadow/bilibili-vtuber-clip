@@ -143,8 +143,8 @@ def _reconcile_same_bv_cover_publication(**kwargs) -> dict:
 
 
 
+
 SONG_TITLE_PREFIX = "【李豆沙】豆沙歌，"
-SEASON_TITLES = {"talk": "小李切片", "song": "小李歌唱"}
 SEASON_ADD_ALREADY_IN = 20080  # episodes/add: already in the season (idempotent OK)
 VIEW_API = "https://api.bilibili.com/x/web-interface/view?bvid={bvid}"
 TAGS_API = "https://api.bilibili.com/x/tag/archive/tags?bvid={bvid}"
@@ -160,21 +160,6 @@ CREATOR_ARCHIVES_API = (
 QUOTA_FREQUENCY_CODE = 21566
 ROLLING_UPLOAD_LIMIT = 10
 ROLLING_UPLOAD_WINDOW_SECONDS = 24 * 60 * 60
-_SEASON_IDS_ENV = "AUTOSLICE_SEASON_IDS"
-
-
-def expected_season_ids() -> dict:
-    """入集校验的合集/小节 ID——账号专属，强制部署方自填，无默认值。"""
-    raw = os.environ.get(_SEASON_IDS_ENV)
-    if not raw:
-        raise SystemExit(
-            "AUTOSLICE_SEASON_IDS 未配置：发布入集校验需要你自己账号的合集/小节 ID。\n"
-            '格式：{"talk": {"season_id": 0, "section_id": 0}, '
-            '"song": {"season_id": 0, "section_id": 0}}\n'
-            "获取：在创作中心手动把任一稿件加入目标合集，再用 "
-            "scripts/bili_archive_tool.py view 回读该稿件的 season_id/section_id。"
-        )
-    return json.loads(raw)
 # 简介第一行默认带项目署名（README 礼节性请求的默认实现；不想带可改掉）；
 # 频道自己的简介行是身份数据：来自环境变量（见 .env.example），不硬编码。
 PROJECT_ATTRIBUTION_LINE = (
@@ -197,6 +182,15 @@ DEFAULT_DESCRIPTION = EXPECTED_SOURCE + "\n" + SUBMISSION_DESCRIPTION
 from src.autoslice.audience_text import assert_audience_text as _assert_audience_text
 _assert_audience_text(DEFAULT_DESCRIPTION, surface='description')
 from src.autoslice.channel_envelope import EnvelopeError, publish_description_for_title
+from src.autoslice.clip_profile import (
+    CLIP_PROFILE_FIELD,
+    SEASON_TITLES,
+    ClipProfileError,
+    holder_clip_profile_transcription,
+    season_block as clip_season_block,
+    season_block_problems,
+    season_ids,
+)
 
 
 def description_for_title(title: str, *, submission: bool = False) -> str:
@@ -680,6 +674,16 @@ def _validate_v3_package_attestation(
             ]
             problems.append("reviewed SRT fails release validation: " + ",".join(codes))
         record = _load_json_object(record_path, "record", problems)
+        try:
+            transcribed_profile = holder_clip_profile_transcription(
+                record, lane=derive_season_lane(str(manifest.get("title") or "")),
+            )
+        except ClipProfileError as exc:
+            problems.append(f"record clip_profile is invalid: {exc}")
+        else:
+            if ((CLIP_PROFILE_FIELD in record) != (CLIP_PROFILE_FIELD in manifest)
+                    or manifest.get(CLIP_PROFILE_FIELD) != transcribed_profile):
+                problems.append("manifest clip_profile does not match its attested record")
 
 
 
@@ -1083,26 +1087,20 @@ def derive_season_lane(title: str) -> str:
     return "song" if title.startswith(SONG_TITLE_PREFIX) else "talk"
 
 
-def season_block_for(title: str, choice: str) -> dict | None:
-    """The manifest's frozen season binding.  ``none`` opts out explicitly;
-    an explicit talk/song that contradicts the title-derived lane is refused
-    (song titles publish to 小李歌唱, everything else to 小李切片 — no exceptions
-    without changing the title first)."""
-    derived = derive_season_lane(title)
-    if choice == "none":
-        return None
-    if choice == "auto":
-        lane = derived
-    elif choice in SEASON_TITLES:
-        if choice != derived:
-            raise ValueError(
-                f"--season {choice} contradicts the title-derived lane {derived!r}"
-                " — the title decides the season; fix the title instead"
-            )
-        lane = choice
-    else:
-        raise ValueError(f"unknown season choice {choice!r}")
-    return {"lane": lane, "season_title": SEASON_TITLES[lane], "source": f"{choice}:title-prefix"}
+def season_block_for(title: str, choice: str, *, record: dict | None = None) -> dict | None:
+    """The manifest's frozen season binding.  ``none`` opts out explicitly.
+
+    The route is ``season_for`` of the record's transcribed clip profile; an
+    undeclared record defaults to the title-derived lane (song titles publish
+    to 小李歌唱, everything else to 小李切片).  An explicit talk/song that
+    contradicts the derived route is refused."""
+    try:
+        return clip_season_block(
+            title_lane=derive_season_lane(title), choice=choice,
+            holder=record if isinstance(record, dict) else {},
+        )
+    except ClipProfileError as exc:
+        raise ValueError(f"record clip_profile cannot derive a season: {exc}") from exc
 
 
 def validate_season_block(block: object) -> list[str]:
@@ -1234,7 +1232,7 @@ def season_add_flow(
     if not season_id or not section_id:
         result["status"] = "SEASON_NOT_FOUND"
         return result
-    expected_ids = expected_season_ids().get(str(block.get("lane") or ""))
+    expected_ids = season_ids().get(str(block.get("lane") or ""))
     if expected_ids and (
         season_id != expected_ids["season_id"] or section_id != expected_ids["section_id"]
     ):
@@ -1963,7 +1961,10 @@ def make_manifest(args: argparse.Namespace) -> int:
         return 2
     print(f"tags: {len(tags)} from {tags_source}", file=sys.stderr)
     try:
-        season = season_block_for(args.title, args.season)
+        season = season_block_for(args.title, args.season, record=record)
+        clip_profile_document = holder_clip_profile_transcription(
+            record, lane=derive_season_lane(args.title)
+        )
     except ValueError as exc:
         print(f"REFUSE: {exc}", file=sys.stderr)
         return 2
@@ -2008,6 +2009,9 @@ def make_manifest(args: argparse.Namespace) -> int:
         "tags": tags,
         "tags_source": tags_source,
     }
+    if clip_profile_document is not None:
+        # Transcribe before recovery checks so every consumer sees the same form.
+        manifest[CLIP_PROFILE_FIELD] = clip_profile_document
     package_problems = published_recovery.attach_manifest_attestation(manifest, package_root)
     review_payload = _load_json_object(review_manifest, "review manifest", package_problems)
     review_item = _find_review_item(review_payload, package_root, video) if review_payload else None
@@ -2046,9 +2050,7 @@ def make_manifest(args: argparse.Namespace) -> int:
             )
         )
     package_problems.extend(
-        human_review.attach_final_human_review(
-            manifest, args.final_human_review, season_ids=expected_season_ids()
-        )
+        human_review.attach_final_human_review(manifest, args.final_human_review)
     )
     package_problems.extend(_attach_title_cover_qc(manifest, args.title_cover_qc))
     try:
@@ -2122,9 +2124,7 @@ def _make_c1_authorized_projection(
             "tags_source": "c1-public-metadata-seal.v1",
             "recovery_publication_authority": c1_projection.projection_authority(),
         }
-        problems = human_review.attach_final_human_review(
-            manifest, args.final_human_review, season_ids=expected_season_ids()
-        )
+        problems = human_review.attach_final_human_review(manifest, args.final_human_review)
         if problems:
             raise c1_projection.C1TechnicalReceiptError("; ".join(problems))
         c1_projection.validate_authorized_projection_manifest(manifest)
@@ -2250,10 +2250,7 @@ def load_and_verify(
             problems.append(f"manifest publish title violates {code}")
     if "season" in manifest:
         problems.extend(validate_season_block(manifest["season"]))
-        if isinstance(manifest.get("season"), dict) and manifest["season"].get(
-            "lane"
-        ) != derive_season_lane(title):
-            problems.append("manifest season lane contradicts the frozen title")
+        problems.extend(season_block_problems(manifest, title_lane=derive_season_lane(title)))
     if "tags" in manifest:
         problems.extend(validate_tags(manifest["tags"]))
     if manifest.get("manifest_version") == 3:

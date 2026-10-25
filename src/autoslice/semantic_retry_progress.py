@@ -968,11 +968,11 @@ class SemanticAttemptRecorder:
                 request['prior_other_model_answers'] = sorted(other_answers)
             request_sha = digest(request)
             if terminal:
-                from src.autoslice.targeted_relisten import validate_no_gain
+                from src.autoslice.targeted_relisten import validate_current_no_gain
                 proof = getattr(self, 'terminal_no_gain', None)
                 if not isinstance(proof, Mapping):
                     raise RetryNeedsPlan('TERMINAL_NO_GAIN_PROOF_REQUIRED')
-                validate_no_gain(proof, getattr(self, 'terminal_check_request', {}))
+                validate_current_no_gain(proof, getattr(self, 'terminal_check_request', {}))
                 request['terminal_no_gain_proof_sha256'] = proof['proof_sha256']
                 request_sha = digest(request)
             rows = self._entries()
@@ -1176,6 +1176,8 @@ class SemanticAttemptRecorder:
 
 def retry_context(srt_text: str, clip_context: Mapping[str, Any] | None, offset_ms: int) -> str:
     """Give ordinary discovery the actual failures needed to plan a next check."""
+    if os.environ.get("AUTOSLICE_FINAL_REVIEW_MODE") == "per_finding":
+        return ""
     summaries = []
     for index, _cue in enumerate(parse_srt_cues(srt_text), 1):
         recorder = SemanticAttemptRecorder(srt_text=srt_text, finding={'cue_index': index},

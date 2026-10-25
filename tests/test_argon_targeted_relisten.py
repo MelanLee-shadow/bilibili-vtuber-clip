@@ -146,9 +146,8 @@ def install_native_agy(rig, monkeypatch, *, outcome="heard"):
         assert kwargs["umask"] == 0o077
         assert "豆沙" not in prompt and "呜呜" not in prompt and "哼唱" not in prompt
         from src.autoslice.provider_slots import provider_slot, ProviderSlotTimeout
-        with pytest.raises(ProviderSlotTimeout):
-            with provider_slot(rig.tmp / "base", timeout_seconds=0.001):
-                pass
+        from tests.test_provider_slots_cross_process_admission import assert_route_held
+        assert_route_held(rig.tmp / "base", 'agy', 'audio_video')
         calls.append({"argv": argv, "cwd": str(directory),
             "audio_sha256": sha((directory / "input.wav").read_bytes()),
             "prompt_sha256": sha(prompt.encode())})
@@ -499,17 +498,18 @@ def test_assisted_cpa_unknown_stays_on_original_issue_without_argon_or_relisten(
             original_records[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
     assert original_records
     before_judgments = len(all_judge_inputs)
+    original_attempts = set(attempts)
     _, resumed = run_public(rig, FINDING, judge)
     (rig.output / "assisted-cpa-unknown-audit.json").write_text(json.dumps({
         "first":first, "resumed":resumed, "original_unknown_records":original_records,
         "all_judge_inputs":all_judge_inputs, "before_resume_judgments":before_judgments,
         "audio_calls":len(rig.transport.calls), "argon_calls":len(calls)}))
-    assert len(attempts) == 1 and len(rig.transport.calls) == 3
+    assert len(attempts) == len(set(attempts)) and len(rig.transport.calls) == 3
     # Admin ruling (K22 per request, 41「不完整 STARTED 保留未知，不盲重发。」):
     # the UNKNOWN assisted request is never re-sent (attempts stays 1); other
     # routes of the same target may continue with new, different questions.
     new_inputs = all_judge_inputs[before_judgments:]
-    assert not set(new_inputs) & set(attempts)
+    assert not set(new_inputs) & original_attempts
     assert not calls and not provider.calls and resumed["repaired"] is False
     # The normal resume can stop at an earlier existing recorder gate; the
     # original UNKNOWN row, no resends and no false terminal are authoritative.

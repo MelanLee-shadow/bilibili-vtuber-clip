@@ -132,7 +132,6 @@ SCENARIOS = [
     ('tests/test_read_aloud_llm_verifier.py', 'test_weak_context_uses_candidate_blind_audio_then_cpa_highest_probability'),
     ('tests/test_wholepath_phase2_regressions.py', 'test_k21_read_aloud_same_binding_reuses_the_completed_response'),
     ('tests/test_semantic_audio_recovery.py', 'test_corrupt_saved_range_plan_blocks_without_redispatch'),
-    ('tests/test_semantic_candidate_selector.py', 'test_selects_talk_candidate_with_semantic_boundary'),
     ('tests/lidousha/test_semantic_evidence_scorecard_refresh.py', 'test_refreshes_two_known_20260809_candidates_without_rediscovery'),
     ('tests/test_source_context_cpa_refinement.py', 'test_source_context_cpa_is_numbered_text_only_and_preserves_grid'),
     ('tests/lidousha/test_source_fact_review.py', 'test_game_relationship_title_repair_preserves_context_in_final_surface'),

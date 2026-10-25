@@ -4,6 +4,8 @@ This module validates evidence and recommends the authorized stronger model.
 It owns no transport, credential, budget, finding identity or edit authority.
 """
 from copy import deepcopy
+from dataclasses import asdict
+from .validation_memo import memoized_validation
 from collections.abc import Mapping
 
 from . import argon_escalation_storage as store
@@ -159,7 +161,16 @@ def trigger_question_identity(bound, current):
 
 def validate_trigger(root, spec, trigger, *, current_check=None):
     require(trigger.get("schema_version") == SCHEMA, "ARGON_TARGETED_SCHEMA_INVALID")
-    evidence = strict_json(store.get_blob(root, trigger["evidence_sha256"]))
+    raw = store.get_blob(root, trigger["evidence_sha256"])
+    _validate_trigger_bytes(root, spec, trigger, raw, current_check=current_check)
+    return strict_json(raw)
+
+
+@memoized_validation(lambda root, spec, trigger, raw, current_check=None:
+    sha(canonical([str(root.absolute()), {**asdict(spec), 'source_path': str(spec.source_path)}, trigger, sha(raw), current_check])))
+def _validate_trigger_bytes(root, spec, trigger, raw, *, current_check=None):
+    require(trigger.get("schema_version") == SCHEMA, "ARGON_TARGETED_SCHEMA_INVALID")
+    evidence = strict_json(raw)
     expected = {"schema_version": SCHEMA, "finding": spec.finding.binding(),
                 "evidence_sha256": sha(canonical(evidence)),
                 "recommendation": _recommendation(spec, evidence)}
@@ -186,4 +197,4 @@ def validate_trigger(root, spec, trigger, *, current_check=None):
                                     "bound_span": old_span["codepoint_span"],
                                     "current_span": current_span["codepoint_span"] if current_span else None}
                 raise error
-    return evidence
+    return None

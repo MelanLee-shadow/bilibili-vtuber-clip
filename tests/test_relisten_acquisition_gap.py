@@ -275,7 +275,9 @@ def _own_interrupted(tmp_path, monkeypatch, *, damage=None):
                                    receipt_path=own / "native-audio-budget.json")
         _observe(own, source, start=7000, tag="interrupted run real hearing")
         if damage == "original":
-            next((own / "native-exact" / "mai").glob("*-7000-8000/input.audio-evidence.mai.json")).unlink()
+            # Absence now preserves history with an unusable cache (TASK-2).
+            # This negative case still covers an existing damaged original.
+            next((own / "native-exact" / "mai").glob("*-7000-8000/input.audio-evidence.mai.json")).write_bytes(b"drift")
     start_budget(source)
     canonical = inherit_prepared_native_audio(cid="candidate", parent=parent, source=source, runtime_root=runtime)
     return source, runtime, canonical, own
@@ -334,7 +336,7 @@ def test_retained_history_reader_failure_reason_is_persisted():
         recorder.submitted_history()
     event = recorder.audit()["events"][-1]
     assert event["status"] == "SEMANTIC_RETAINED_HISTORY_INVALID"
-    assert event["error_type"] == "ValueError" and event["reason_detail"] == "RETAINED_CPA_FILE_MISSING"
+    assert event["error_type"] == "ContractRejection" and event["reason_detail"] == "RETAINED_CPA_FILE_MISSING"
 
 
 def test_nested_independent_rows_keep_their_own_pre_candidate_binding():

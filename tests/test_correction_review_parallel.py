@@ -158,13 +158,29 @@ def test_native_hard_admission_uses_the_existing_ordered_owner_context():
 
 
 
-def test_ordinary_correction_entry_counts_prefetch_and_current_input_revalidation(monkeypatch):
+def test_ordinary_correction_entry_counts_prefetch_and_current_input_revalidation(monkeypatch, tmp_path, mode=None):
     from src.autoslice import producer_text_pipeline as pipeline
+    from src.autoslice import producer_final_review_transport as transport
+    from src.autoslice.cpa_model_ladder import CPA_MODEL_LADDER
+    from src.autoslice.finding_closure_shell import FinalReviewCall as RoutedFinalReviewCall
+    from tests.test_f1_ruling_reuse import provider
     from tests.test_producer_text_pipeline_final_review import _adapters
+    if mode is None:
+        monkeypatch.delenv('AUTOSLICE_FINAL_REVIEW_MODE', raising=False)
+    else:
+        monkeypatch.setenv('AUTOSLICE_FINAL_REVIEW_MODE', mode)
+    def factory(*, runtime, effort, model=CPA_MODEL_LADDER[0], exact_model=False):
+        original = provider()
+        original.cpa_cache_identity = {'transport': 'recorded', 'models': [model], 'effort': effort}
+        original.pinned_model_route = exact_model
+        return original
+    monkeypatch.setattr(transport, '_local_runtime_call', factory)
+    call = transport.build_final_review_llm_call(runtime_root=tmp_path, runtime_ssh_host='localhost')
+    assert isinstance(call, RoutedFinalReviewCall if mode else shared.FinalReviewCall)
     findings=rows()
     for row,text in zip(findings,'甲乙丙'):
         row.update(proposed_full_cue=text+'好呀',repair_class='phonetic')
-    monkeypatch.setattr(pipeline,'_build_final_review_llm_call',lambda:controlled())
+    monkeypatch.setattr(pipeline,'_build_final_review_llm_call',lambda:call)
     monkeypatch.setattr(pipeline,'audit_final_subtitles',lambda *a,**k:deepcopy(findings))
     monkeypatch.setattr(pipeline,'route_findings',lambda text,rows,**k:(text,{'findings':rows,'applied_count':0}))
     def adjudicate(text,finding,**kwargs):
@@ -182,6 +198,12 @@ def test_ordinary_correction_entry_counts_prefetch_and_current_input_revalidatio
     assert audit['context_adjudication_count']==5
     assert audit['cpa_adjudication_usage']['provider_adjudication_count']==5
     assert audit['correction_review_execution']['input_changed']==2
+    assert audit['correction_review_execution']['prefetched']==3
+
+
+def test_per_finding_correction_entry_keeps_prefetch_and_current_input_revalidation(monkeypatch, tmp_path):
+    test_ordinary_correction_entry_counts_prefetch_and_current_input_revalidation(
+        monkeypatch, tmp_path, mode='per_finding')
 
 
 @pytest.mark.parametrize('repair', [False, True])

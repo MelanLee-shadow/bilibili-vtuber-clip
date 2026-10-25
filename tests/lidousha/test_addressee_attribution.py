@@ -156,8 +156,8 @@ def test_scam_clip_shape_refuses_a_supported_attribution() -> None:
 
     assert not source_fact_review_passes(review)
     assert review["reason_code"] == ADDRESSEE_UNRESOLVED_REASON
-    # 形状矛盾走 provider 重试车道（同一份输入重掷形状，不重掷语义）。
-    assert len(calls) == 1 + 2
+    # A completed semantic contradiction is retained; it must not reroll the provider.
+    assert len(calls) == 1
     assert review["final_selection_hook"] == _SCAM_HOOK  # 未授权不落盘不变式
 
 

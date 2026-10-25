@@ -385,6 +385,7 @@ def consume_source_checkpoint_parent(*, spec, cid, padded, out_root):
     from src.autoslice.retained_source_input import RetainedSourceInput
     from src.autoslice.prepared_native_audio_recovery import (
         PreparedNativeAudioState, _parent_inputs, inherit_prepared_native_audio,
+        qualify_existing_native_audio_account,
     )
     from src.autoslice.producer_delivery_prepare import resolve_talk_delivery_runtime_root
     config = validate_source_checkpoint_parent(spec, runtime=True)
@@ -397,12 +398,13 @@ def consume_source_checkpoint_parent(*, spec, cid, padded, out_root):
     if receipt_path.parent == parent:
         state = inherit_prepared_native_audio(cid=cid, parent=parent, source=padded, runtime_root=runtime)
     else:
-        # The source account is already inherited. Reuse its verified caches
-        # and restore the whole ledger without registering it as its own parent
-        # or requiring a receipt in the later text-only output directory.
+        # Existing qualifications stay read-only; legacy unregistered holes
+        # must first use ordinary inheritance, never a manual initialization.
+        # Registered cache byte loss/drift keeps the original strict rejection.
         from src.autoslice.native_audio_budget_receipt import resume_native_audio_budget
         from src.autoslice.supplement_audio_budget import ensure_budget
         account = receipt_path.parent
+        qualify_existing_native_audio_account(cid=cid, account=account, source=padded, runtime_root=runtime)
         receipt, _ = _parent_inputs(parent=account, cid=cid, source=padded,
                                     source_sha=config["padded_sha256"][7:])
         limits = receipt["budget"]
@@ -411,7 +413,8 @@ def consume_source_checkpoint_parent(*, spec, cid, padded, out_root):
         resume_native_audio_budget(source_media=padded, source_media_sha256=config["padded_sha256"][7:],
                                   receipt_path=receipt_path, require_existing=True)
         history = limits.get("account_history")
-        roots = (account / "history-cache" / history["plan"]["incoming"]["sha256"][7:],) if history else ()
+        from src.autoslice.native_audio_history_reconciliation import history_cache_roots
+        roots = history_cache_roots(account, history)
         state = PreparedNativeAudioState(account, receipt_path, roots)
     proof = {key: copy.deepcopy(config[key]) for key in (
         "source_checkpoint", "live_authority", "native_budget", "cpa_journal",

@@ -1095,6 +1095,65 @@ def compile_no_gain(*, check, recovery, plan, prompt, raw, projection, budget_bi
 
 
 @cold_input
+def compile_task_stop_no_gain(*, check, finding_materials, text_version_sha256, projection=None):
+    """Stop one material version; no round receipt or mutation authority.
+
+    The caller supplies the actually consumed M. Its local text/physical
+    identity is reconstructed here, and audio receipts are reopened by their
+    ordinary owners. A stopped sibling task cannot authorize this task.
+    """
+    from .finding_context import materials_for_check, validate_materials
+    if (not isinstance(check, Mapping)
+            or check.get('request_sha256') != digest({k:v for k,v in check.items() if k != 'request_sha256'})):
+        raise ContractRejection('TASK_STOP_REQUEST_DRIFT')
+    current_sha = text_sha(check['whole_clip_current_srt'])
+    if (not isinstance(text_version_sha256, str)
+            or text_version_sha256.removeprefix('sha256:') != current_sha):
+        raise ContractRejection('TASK_STOP_TEXT_VERSION_DRIFT')
+    material = validate_materials(finding_materials)
+    rebuilt_material = materials_for_check(check, candidates=material['candidates'],
+        observation_ids=material['bound_observation_ids'], contracts=material['contracts'],
+        model_identity=material['model_identity'])
+    if rebuilt_material != material:
+        raise ContractRejection('TASK_STOP_MATERIALS_DRIFT')
+    current = evidence_projection(check, include_target_text=True)
+    if projection is not None:
+        # Older owner projections may omit only the target-text view. Never
+        # trust their derived counts: reopen every original receipt first.
+        has_text = all('target_text' in row for row in projection['observations'])
+        replayed = replay_no_gain_projection({'projection': projection}, check, include_target_text=has_text)
+        expected = current if has_text else evidence_projection(check)
+        if replayed != projection or projection != expected:
+            raise ContractRejection('TASK_STOP_OBSERVATION_DRIFT')
+        current = deepcopy(projection)
+    exhaustion = require_target_material_exhaustion(check, current)
+    models = [{'observation_id': row['observation_id'],
+        'listening_model': row.get('input_information', {}).get('listening_model')
+            or row.get('input_information', {}).get('verified_capability_upgrade')}
+        for row in sorted(current['observations'], key=lambda item: item['observation_id'])]
+    # Missing legacy model identity stays null; neither a request's preferred
+    # model nor a caller label can turn an old observation into a new hearing.
+    exhaustion = {**exhaustion, 'listen_count': current['effective_distinct_observations'],
+        'model_rotation': models, 'unknown_accounting': 'RETAINED'}
+    plan = {'decision': 'NO_NEW_AUDIO', 'no_gain': {
+        'remaining_uncertainty': 'TASK_MATERIAL_EXHAUSTED',
+        'why_audio_cannot_discriminate': '本疑点的必需材料通道已核验；在途和UNKNOWN保留，停止本材料版本不授予改字或发布权。'}}
+    proof = {'schema_version': NO_GAIN_SCHEMA, 'proof_kind': 'TASK_STOP',
+        'authority': 'EVIDENCE_ONLY', 'mutation_authorized': False,
+        'anchor': anchor(check),
+        'finding_key': {key: material[key] for key in ('physical_question_sha256', 'materials_sha256')},
+        'text_version_sha256': current_sha, 'material_exhaustion': exhaustion,
+        'projection': current, 'context_sources': source_catalogue(check), 'plan': plan,
+        'prompt': '', 'raw_completion': json.dumps(plan, ensure_ascii=False, sort_keys=True),
+        'audio_resolution': 'UNRESOLVED_BY_AUDIO', 'literal_transcription_authorized': False,
+        'terminal_route': 'EXISTING_CONTEXT_PHONEME_FIT_THEN_EDITORIAL'}
+    proof['prompt_sha256'] = text_sha(proof['prompt'])
+    proof['raw_sha256'] = text_sha(proof['raw_completion'])
+    proof['proof_sha256'] = digest(proof)
+    return proof
+
+
+@cold_input
 def compile_loop_stop_no_gain(*, check, finding, pass_receipts, projection=None):
     """A stopped run proves no more material *in this run*, never a hearing.
 
@@ -1169,7 +1228,7 @@ def compile_loop_stop_no_gain(*, check, finding, pass_receipts, projection=None)
 
 
 @cold_input
-def validate_no_gain(proof, check):
+def validate_no_gain(proof, check, *, finding_materials=None, text_version_sha256=None):
     if not isinstance(proof, Mapping):
         raise ContractRejection("RELISTEN_NO_GAIN_PROOF_REQUIRED")
     unsigned = {k: v for k, v in proof.items() if k != "proof_sha256"}
@@ -1179,6 +1238,14 @@ def validate_no_gain(proof, check):
             or proof.get("prompt_sha256") != text_sha(proof.get("prompt", ""))
             or proof.get("mutation_authorized") is not False):
         raise ContractRejection("RELISTEN_NO_GAIN_BINDING_DRIFT")
+    if proof.get('proof_kind') == 'TASK_STOP':
+        if finding_materials is None or text_version_sha256 is None:
+            raise ContractRejection('TASK_STOP_CURRENT_MATERIALS_REQUIRED')
+        rebuilt = compile_task_stop_no_gain(check=check, finding_materials=finding_materials,
+            text_version_sha256=text_version_sha256, projection=proof.get('projection'))
+        if rebuilt != proof:
+            raise ContractRejection('TASK_STOP_PROOF_DRIFT')
+        return dict(proof)
     if proof.get('proof_kind') == LOOP_STOP_KIND:
         rebuilt = compile_loop_stop_no_gain(check=check, finding=proof['stopped_finding'],
             pass_receipts=proof['pass_receipts'], projection=proof['projection'])
@@ -1602,7 +1669,7 @@ def close_with_existing_editorial(*, srt_text, finding, recovery_audit, prior, c
     from src.autoslice.acoustic_witness_adjudication import build_witness_request, valid_witness_evidence
     from src.autoslice.editorial_subtitle import adjudicate
     check = recovery_audit["terminal_check_request"]
-    proof = validate_no_gain(recovery_audit["no_gain_proof"], check)
+    proof = validate_current_no_gain(recovery_audit["no_gain_proof"], check)
     bound = build_witness_request(check)
     candidates = [prior.get("verdict")]
     candidates.extend(row.get("verdict", row) for row in check.get("prior_acoustic_observations", [])
@@ -1625,7 +1692,7 @@ def close_with_existing_editorial(*, srt_text, finding, recovery_audit, prior, c
         probe = getattr(entity_verifier, "probe_witness_cache", None)
         result = probe(request) if callable(probe) else None
         if not isinstance(result, Mapping):
-            if proof.get('proof_kind') == LOOP_STOP_KIND:
+            if proof.get('proof_kind') in {LOOP_STOP_KIND, 'TASK_STOP'}:
                 from src.autoslice.acoustic_witness_availability import unavailable_acoustic_witness
                 return unavailable_acoustic_witness(bound)
             if check.get('context_only_range_acoustic_observations'):
@@ -1693,7 +1760,7 @@ def sub18_meaning_equivalent_keep(*, finding, recovery_audit, prior):
             or not current_meaning_equivalent(finding)):
         return None
     check = recovery_audit["terminal_check_request"]
-    proof = validate_no_gain(recovery_audit["no_gain_proof"], check)
+    proof = validate_current_no_gain(recovery_audit["no_gain_proof"], check)
     if proof.get("material_exhaustion") is None:
         return None
     risk = finding["current_content_risk"]
@@ -1825,3 +1892,13 @@ def with_unconsumed_assisted_plan(*, finding, check_request, recorder):
     except (RetryNeedsPlan, ValueError, TypeError, KeyError, OSError, AttributeError):
         return dict(finding)
     return output
+
+
+@cold_input
+def validate_current_no_gain(proof, check):
+    """Current task inputs come from the retained check, never from the proof."""
+    if isinstance(proof, Mapping) and proof.get('proof_kind') == 'TASK_STOP':
+        return validate_no_gain(proof, check,
+            finding_materials=check.get('task_stop_materials'),
+            text_version_sha256=text_sha(check['whole_clip_current_srt']))
+    return validate_no_gain(proof, check)

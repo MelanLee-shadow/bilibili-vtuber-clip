@@ -9,6 +9,7 @@ from tests.test_producer_text_pipeline_final_review import (
     _adapters,
     _correction_pass,
     _legacy_pending_audio_authority,
+    _literal_review_llm,
     _srt,
 )
 
@@ -44,7 +45,7 @@ def test_whole_exact_review_forwards_range_screen_to_normal_adjudicator(monkeypa
         srt_text=srt, correction_audit=_correction_pass(), adapters=_adapters(),
         authoritative_chat=(), selection_hook="", clip_context=context,
         verified_authority_audit=authority,
-        final_review_llm=lambda _prompt: '{"findings": []}',
+        final_review_llm=_literal_review_llm(lambda _prompt: '{"findings": []}'),
         prior_range_screen_context_observations=(observation,),
     )
     assert seen == [(observation,)]

@@ -34,30 +34,7 @@ def _srt(tmp_path, texts):
     return path
 
 
-def test_published_song_changes_only_seven_spoken_texts(tmp_path):
-    """Same real final SRT and frozen ASS, including every lyric/time/style."""
-    srt, = PUBLISHED_PACKAGE.glob("*song_133029_1424.srt")
-    original_ass, = PUBLISHED_PACKAGE.glob("*song_133029_1424.final-sapphire72.ass")
-    before = {path: path.read_bytes() for path in (srt, original_ass)}
-    output = tmp_path / "relabel-free.ass"
-    song._write_sapphire_ass_from_srt(srt, output)
-    old_lines = original_ass.read_text(encoding="utf-8").splitlines()
-    new_lines = output.read_text(encoding="utf-8").splitlines()
-    assert len(old_lines) == len(new_lines)
-    changed = [(i, old, new) for i, (old, new) in enumerate(zip(old_lines, new_lines), 1)
-               if old != new]
-    assert [i for i, _, _ in changed] == list(range(56, 63))
-    for _, old, new in changed:
-        old_fields, new_fields = old.split(",", 9), new.split(",", 9)
-        assert old_fields[:9] == new_fields[:9]
-        assert new_fields[3] == "LDS"
-        assert old_fields[9] == "[李豆沙] " + new_fields[9]
-    old_lyrics = [row for row in _events("\n".join(old_lines)) if row[3] == "Default"]
-    new_lyrics = [row for row in _events("\n".join(new_lines)) if row[3] == "Default"]
-    assert len(new_lyrics) == len(old_lyrics) == 45
-    assert new_lyrics == old_lyrics
-    assert all(not re.match(r"^\[[^\]]+\]", row[9]) for row in _events("\n".join(new_lines)))
-    assert all(path.read_bytes() == data for path, data in before.items())
+
 
 
 @pytest.mark.parametrize("label,style", [

@@ -72,6 +72,7 @@ def build_policy_fingerprint(
         root / "src/autoslice/operator_correction_policy.py",
         root / "src/autoslice/title_policy.py",
         root / "src/autoslice/channel_envelope.py",
+        root / "src/autoslice/clip_profile.py",
         root / "src/autoslice/selection_scorecard.py",
         root / "src/autoslice/addressee_attribution.py",
         root / "src/autoslice/manual_title_keep_authority.py",

@@ -1236,8 +1236,9 @@ def build_runtime_raw_av_executor(
             try:
                 wait = provider_wait_for_call(float(timeout))
                 with runtime_provider_slot(
-                    runtime_root=root, timeout_seconds=wait
-                ):
+                    runtime_root=root, timeout_seconds=wait,
+                    provider=str(capability["provider"]), modality="audio_video",
+                ) as lease:
                     completed = run(
                         argv,
                         check=False,
@@ -1247,6 +1248,14 @@ def build_runtime_raw_av_executor(
                         timeout=timeout,
                         env=child_environment,
                     )
+                    if lease is not None:
+                        if completed.returncode != 0:
+                            lease.report({"status": "FAILED"})
+                        if response_path.is_file() and not response_path.is_symlink() and response_path.stat().st_size <= _MAX_JSON_BYTES:
+                            try:
+                                lease.report(json.loads(response_path.read_text(encoding="utf-8")))
+                            except (OSError, ValueError):
+                                pass
             except ProviderSlotTimeout as exc:
                 raise LlmCallError(
                     "raw-AV provider capacity wait timed out",

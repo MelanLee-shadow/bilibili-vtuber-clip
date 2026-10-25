@@ -773,14 +773,14 @@ def _script() -> Path:
 def pin_request_profile(request: Mapping[str, Any]):
     """Bind task selection before any upstream producer module can import."""
     from src.autoslice.channel_profile import (
-        ChannelProfileError, PROFILE_ENV, PROFILE_MANIFEST_ENV, PROFILE_BINDING_ENV,
+        ChannelProfileError, PROFILE_ENV, PROFILE_MANIFEST_ENV, PROFILE_BINDING_ENV, PROFILE_SNAPSHOT_ENV,
         load_channel_profile, normalize_profile_binding, profile_environment,
     )
     try:
         binding = normalize_profile_binding(request.get("profile_binding"))
         profile = load_channel_profile(worker_repository(Path(request["runtime_root"]), request.get("release_sha256")), profile_binding=binding)
         env = profile_environment(profile, {})
-        for name in (PROFILE_ENV, PROFILE_MANIFEST_ENV, PROFILE_BINDING_ENV):
+        for name in (PROFILE_ENV, PROFILE_MANIFEST_ENV, PROFILE_BINDING_ENV, PROFILE_SNAPSHOT_ENV):
             os.environ[name] = env[name]
         return profile
     except (ChannelProfileError, OSError, ValueError) as exc:
@@ -1073,12 +1073,16 @@ def run_job(
             try:
                 result = (executor or _adapter())(request, jobdir)
                 if result is not None:
-                    from src.autoslice.channel_profile import require_profile_binding
-                    require_profile_binding(result.get("profile_binding"), request["profile_binding"])
+                    from src.autoslice.channel_profile import require_record_profile_binding
+                    require_record_profile_binding(record_binding=result.get("profile_binding"),
+                                            task_binding=request["profile_binding"],
+                                            repo_root=worker_repository(Path(request["runtime_root"]), request.get("release_sha256")))
                     _write(result_path, result, exclusive=True)
-                from src.autoslice.channel_profile import require_profile_binding
+                from src.autoslice.channel_profile import require_record_profile_binding
                 stored_result = _read(result_path, "result")
-                require_profile_binding(stored_result.get("profile_binding"), request["profile_binding"])
+                require_record_profile_binding(record_binding=stored_result.get("profile_binding"),
+                                        task_binding=request["profile_binding"],
+                                        repo_root=worker_repository(Path(request["runtime_root"]), request.get("release_sha256")))
                 result_sha, result_bytes = _result(jobdir)
                 bundle_path, bundle_bytes = _bundle(jobdir)
             except BaseException as exc:

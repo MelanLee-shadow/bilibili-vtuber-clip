@@ -220,4 +220,5 @@ def test_incomplete_positive_cannot_be_saved_as_a_decision(tmp_path):
     kwargs["llm_call"] = incomplete
     with pytest.raises(ValueError, match="POSITIVE_INVALID"):
         review_missing_truth(**kwargs, audit=audit)
-    assert not list((tmp_path / "cache").rglob("*.json"))
+    retained = [json.loads(path.read_bytes()) for path in (tmp_path / "cache").rglob("*.json")]
+    assert retained and all(row.get("schema_version") == "completed-review-response.v1" for row in retained)

@@ -402,7 +402,7 @@ def test_rebuild_current_drift_does_not_waive_usage_history(tmp_path, monkeypatc
         _build(parent, checkpoint, tmp_path / "rebuild", accept_source_endpoint=True)
 
 
-def _resumed_parent(tmp_path, monkeypatch, *, schema="v2"):
+def _resumed_parent(tmp_path, monkeypatch, *, schema="v2", unavailable=False):
     from src.autoslice.prepared_native_audio_recovery import inherit_prepared_native_audio
     from src.autoslice.native_audio_budget_receipt import (
         persist_native_audio_budget_receipt, resume_native_audio_budget,
@@ -414,6 +414,8 @@ def _resumed_parent(tmp_path, monkeypatch, *, schema="v2"):
     cid = raw["candidate_id"]
     native = Path(raw["output_root"]) / cid
     padded = Path(json.loads(checkpoint.read_bytes())["padded"]["path"])
+    if unavailable:
+        next((native / 'native-exact').glob('*/*/input.audio-evidence.*.json')).unlink()
     state = inherit_prepared_native_audio(cid=cid, parent=native, source=padded, runtime_root=tmp_path)
     if schema == "v3":
         # Build an already registered v3 through the ordinary production join;

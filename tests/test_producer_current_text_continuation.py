@@ -142,11 +142,7 @@ def test_invalid_timing_reference_fails_before_current_review(tmp_path, case):
         )
 
 
-def _srt() -> str:
-    return (
-        Path(__file__).resolve().parents[1]
-        / "tests/fixtures/t06_bookshop_same_bv_extension/second.srt"
-    ).read_text(encoding="utf-8")
+from tests.continuation_support import srt as _srt
 
 
 def _valid_authority(tmp_path: Path) -> tuple[dict, dict, str]:
@@ -168,12 +164,8 @@ def _valid_authority(tmp_path: Path) -> tuple[dict, dict, str]:
             payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ).encode()
     )
-    review = json.loads(
-        (
-            Path(__file__).resolve().parents[1]
-            / "tests/fixtures/t06_bookshop_same_bv_extension/second-final-review.json"
-        ).read_text(encoding="utf-8")
-    )
+    from tests.continuation_support import review as synthetic_review
+    review = synthetic_review()
     # Fresh synthetic discovery for continuation-mechanics tests, not an
     # upgrade of the archived file's old resolved/disclosed judgments. Only
     # this low-level provider reply is fixed; real release validators run.
@@ -567,7 +559,7 @@ def test_pending_authority_rejects_unproved_caption_successor(tmp_path, failure)
     elif failure == "profile":
         receipt["caption_display_successors"][0]["normalization_audit"]["authority"] = "invented"
     elif failure == "timing":
-        current = current.replace("00:03:08,900", "00:03:08,901")
+        current = current.replace("00:00:00,000", "00:00:00,001")
     elif failure == "chain":
         receipt["passes"][-1]["output_srt_sha256"] = "sha256:" + "1" * 64
     else:
@@ -591,7 +583,7 @@ def test_caption_successor_rejects_unregistered_text_or_rebound_chain(tmp_path, 
     elif failure == "profile_audit":
         row["normalization_audit"]["authority"] = "invented-authority"
     elif failure == "grid":
-        row["input_srt_text"] = row["input_srt_text"].replace("00:03:08,900", "00:03:08,901")
+        row["input_srt_text"] = row["input_srt_text"].replace("00:00:00,000", "00:00:00,001")
     elif failure == "pass_index":
         row["after_pass_index"] = True
     elif failure == "chain":
@@ -611,11 +603,11 @@ def test_source_clock_typed_suffix_rejects_unproved_bytes_and_timing(tmp_path, f
     reference_sha = _sha(reference.encode())
     current = _srt()
     if failure == "old_bytes":
-        reference = reference.replace("直播间八个人在看我", "不同的原句")
+        reference = reference.replace("合成中间句", "不同的原句")
     elif failure == "repair_window":
         chat["exact_final_cpa_self_heal"]["passes"][-1]["repairs"][0]["matched_end_ms"] += 1
     elif failure == "current_bytes":
-        current = current.replace("00:03:08,900", "00:03:08,901")
+        current = current.replace("00:00:00,000", "00:00:00,001")
     else:
         reference_sha = "0" * 64
     with pytest.raises(pipeline.CurrentTextContinuationError):
@@ -2681,8 +2673,8 @@ def test_current_continuation_consumes_caption_display_canon_before_fresh_review
 
 
 def test_original_historical_fixture_does_not_inherit_current_policy_pass():
-    raw = (Path(__file__).resolve().parents[1]
-        / "tests/fixtures/t06_bookshop_same_bv_extension/second-final-review.json").read_bytes()
+    from tests.continuation_support import review as synthetic_review
+    raw = json.dumps(synthetic_review()).encode()
     historical = json.loads(raw)
     assert "meaning_policy" not in historical
     with pytest.raises(pipeline.FinalReviewContractError, match="FINAL_REVIEW_MEANING_POLICY_REVIEW_REQUIRED"):

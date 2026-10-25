@@ -2,8 +2,9 @@
 
 v2 remains a single strict prefix ledger. A v3 snapshot retains that active
 ledger and immutable original receipts; its accounting view qualifies event
-identity by branch receipt hash. Only an explicit, byte-bound reconciliation
-plan may introduce the second branch. It confers no subtitle/release authority.
+identity by branch receipt hash. Byte-bound reconciliation retains the original
+branches; later active forks are archived and composed by the ordinary join.
+It confers no subtitle/release authority.
 """
 from __future__ import annotations
 
@@ -32,6 +33,45 @@ def history_identity(history):
     return {k: v for k, v in history.items() if k != "active_budget"}
 
 
+def _original_history(history):
+    """The first reconciliation is immutable across later active forks."""
+    return {k: v for k, v in history.items()
+            if k not in {"active_budget", "active_forks", "schema_version"}}
+
+
+def cache_branches(history):
+    """Namespace -> original cache namespace, shared by inventory and consumers."""
+    if not history:
+        return {}
+    return {history["incoming"]["receipt_sha256"]: history["plan"]["incoming"]["sha256"],
+            **{row["incoming"]["receipt_sha256"]: row["incoming"]["sha256"]
+               for row in history.get("active_forks", [])}}
+
+
+def history_cache_roots(account, history):
+    return tuple(account / "history-cache" / digest[7:]
+                 for digest in cache_branches(history).values())
+
+
+def remap_incoming_attempt(attempt, original, history):
+    """Map the original active ID into the union; never edit the old receipt."""
+    old_h = original["budget"].get(HISTORY_KEY)
+    if not old_h:
+        return {**attempt, "history_branch_sha256": history["incoming"]["receipt_sha256"]}
+    if attempt.get("history_branch_sha256") != old_h["canonical"]["receipt_sha256"]:
+        return dict(attempt)
+    for fork in history.get("active_forks", []):
+        if fork["incoming"]["receipt_sha256"] == original["receipt_sha256"]:
+            if attempt["attempt_id"] > fork["shared_prefix"]["attempts"]:
+                return {**attempt, "history_branch_sha256": original["receipt_sha256"]}
+            # A shared prefix can itself belong to an earlier retained fork.
+            plain = {k: v for k, v in attempt.items() if k != "history_branch_sha256"}
+            for row in pack_snapshot(history["active_budget"], history)["attempts"]:
+                if {k: v for k, v in row.items() if k != "history_branch_sha256"} == plain:
+                    return row
+    return dict(attempt)
+
+
 def pack_snapshot(active, history):
     """Derive totals, preserving the original IDs within both branch namespaces."""
     active = deepcopy(dict(active))
@@ -49,6 +89,10 @@ def pack_snapshot(active, history):
             {**row, "history_branch_sha256": h["incoming"]["receipt_sha256"]}
             for row in incoming[name][len(ancestor[name]):]
         ]
+        for fork in h.get("active_forks", []):
+            rows[name].extend(
+                {**row, "history_branch_sha256": fork["incoming"]["receipt_sha256"]}
+                for row in fork["active_budget"][name][fork["shared_prefix"][name]:])
     attempts = rows["attempts"]
     windows = {}
     for row in attempts:
@@ -79,9 +123,13 @@ def validate_snapshot(snapshot):
         _validate_budget_history, _validate_existing, _require_budget_history_extension, _providers,
     )
     h = snapshot.get(HISTORY_KEY)
-    if not isinstance(h, Mapping) or set(h) != {
+    base_keys = {
         "schema_version", "canonical", "incoming", "ancestor", "plan", "plan_reference", "active_budget"
-    } or h["schema_version"] != "native-audio-account-history.v1":
+    }
+    if (not isinstance(h, Mapping) or not (
+            set(h) == base_keys and h["schema_version"] == "native-audio-account-history.v1"
+            or set(h) == base_keys | {"active_forks"}
+            and h["schema_version"] == "native-audio-account-history.v2")):
         _error("structure is invalid")
     source_sha = h["canonical"].get("source_media_sha256")
     for name in ("canonical", "incoming", "ancestor"):
@@ -116,6 +164,7 @@ def validate_snapshot(snapshot):
         # the embedded, unmodified original identity on every cold restoration.
         if plan.get(name, {}).get("receipt_sha256") != h[name]["receipt_sha256"]:
             _error("plan branch binding changed")
+    _validate_active_forks(h, source_sha)
     if pack_snapshot(active, h) != dict(snapshot):
         _error("derived accounting changed")
     if active.get("enforce_limits", False) and (
@@ -140,12 +189,18 @@ def require_extension(old, new):
     if not new_h:
         _error("branch history was removed")
     if old_h:
-        if history_identity(old_h) != history_identity(new_h):
+        if (_original_history(old_h) != _original_history(new_h)
+                or new_h.get("active_forks", [])[:len(old_h.get("active_forks", []))]
+                != old_h.get("active_forks", [])):
             _error("original branch identity changed")
-        _require_budget_history_extension(
-            {"budget":old_h["active_budget"],"providers":_providers(old_h["active_budget"])},
-            {"budget":new_h["active_budget"],"providers":_providers(new_h["active_budget"])})
-        return
+        # The old receipt may be either the writable branch or an original
+        # active fork now retained by the union. Original IDs remain resolvable.
+        for component in [new_h["active_budget"],
+                          *(row["active_budget"] for row in new_h.get("active_forks", []))]:
+            if _is_prefix({"budget": old_h["active_budget"], "providers": _providers(old_h["active_budget"])},
+                          {"budget": component, "providers": _providers(component)}):
+                return
+        _error("prior attempt identity changed")
     for component in (new_h["active_budget"], new_h["incoming"]["budget"]):
         try:
             _require_budget_history_extension(old, {"budget":component,"providers":_providers(component)})
@@ -170,6 +225,148 @@ def read_bound(reference):
     if not isinstance(value, dict):
         _error("reference object is invalid")
     return path, raw, value
+
+
+def _shared_prefix_counts(canonical, incoming):
+    """Compare complete event prefixes, never deduplicate by window or text."""
+    h = canonical[HISTORY_KEY]
+    active = incoming[HISTORY_KEY]["active_budget"]
+    bases = [h["active_budget"], *(row["active_budget"] for row in h.get("active_forks", []))]
+    for key in ("source_media", "max_windows", "max_window_ms", "max_audio_ms"):
+        if active[key] != h["active_budget"][key]:
+            _error("source or limits changed across active forks")
+    if active.get("enforce_limits", False) != h["active_budget"].get("enforce_limits", False):
+        _error("enforcement mode changed across active forks")
+    result = {}
+    for name in ("attempts", "cache_hits", "refusals"):
+        count = 0
+        best = None
+        for base in bases:
+            shared = 0
+            for before, after in zip(base[name], active[name]):
+                if before != after:
+                    break
+                shared += 1
+            if best is None or shared > count:
+                count, best = shared, base
+        if name == "attempts":
+            # A pending reservation is one call whose outcome is unknown, not
+            # proof of two distinct calls. Neither split nor refund it.
+            if any(row["status"] == "DISPATCHED" for row in active[name][:count]):
+                _error("shared pending ancestry needs outcome reconciliation")
+            if count < min(len(best[name]), len(active[name])):
+                keys = {"status", "reason_code", "http_status"}
+                before, after = best[name][count], active[name][count]
+                if {k: v for k, v in before.items() if k not in keys} == {
+                        k: v for k, v in after.items() if k not in keys}:
+                    _error("same active attempt has conflicting outcomes")
+        result[name] = count
+    return result
+
+
+def _validate_active_forks(history, source_sha):
+    from src.autoslice.native_audio_budget_receipt import _validate_existing, _validate_budget_history, _providers
+    forks = history.get("active_forks", [])
+    if not isinstance(forks, list):
+        _error("active forks are invalid")
+    identities = {history[name]["receipt_sha256"] for name in ("canonical", "incoming", "ancestor")}
+    for index, fork in enumerate(forks):
+        if not isinstance(fork, Mapping) or set(fork) != {"canonical", "incoming", "shared_prefix", "active_budget"}:
+            _error("active fork fields are invalid")
+        originals = {}
+        for name in ("canonical", "incoming"):
+            _, _, original = read_bound(fork[name])
+            _validate_existing(original, source_media_sha256=source_sha)
+            _validate_budget_history(original["budget"])
+            if (original["receipt_sha256"] != fork[name].get("receipt_sha256")
+                    or original.get("providers") != _providers(original["budget"])):
+                _error("active fork receipt identity changed")
+            originals[name] = original["budget"]
+        ch, ih = (originals[name].get(HISTORY_KEY) for name in ("canonical", "incoming"))
+        if (not ch or not ih or _original_history(ch) != _original_history(history)
+                or _original_history(ih) != _original_history(history)
+                or ch.get("active_forks", []) != forks[:index]
+                or forks[:len(ih.get("active_forks", []))] != ih.get("active_forks", [])
+                or len(ih.get("active_forks", [])) > index):
+            _error("original branch identity changed")
+        if fork["active_budget"] != ih["active_budget"]:
+            _error("active fork snapshot changed")
+        if (fork["shared_prefix"] != _shared_prefix_counts(originals["canonical"], originals["incoming"])
+                or any(type(value) is not int for value in fork["shared_prefix"].values())):
+            _error("active fork shared prefix changed")
+        if not _is_prefix({"budget": ch["active_budget"], "providers": _providers(ch["active_budget"])},
+                          {"budget": history["active_budget"], "providers": _providers(history["active_budget"])}):
+            _error("active canonical history changed")
+        identity = fork["incoming"]["receipt_sha256"]
+        if identity in identities:
+            _error("duplicate active fork identity")
+        identities.add(identity)
+
+
+def reconcile_active_fork(*, account, current, incoming, receipt_path, incoming_path):
+    """Advance active history or append a byte-bound active branch exactly once.
+
+    Earlier reconciliation receipts and plans remain immutable. Both original
+    v3 receipts are archived verbatim; only the new derived revision is signed.
+    The writable branch keeps its local IDs, while retained suffixes use their
+    original receipt SHA as namespace. Cache namespaces use original raw SHA.
+    """
+    from src.autoslice.native_audio_budget_receipt import _providers, receipt_sha256, _no_links
+    from src.autoslice.package_import import atomic_write_bytes
+    if any(value.get("providers") != _providers(value["budget"]) for value in (current, incoming)):
+        _error("provider summary changed")
+    ch, ih = (value["budget"].get(HISTORY_KEY) for value in (current, incoming))
+    if (not ch or not ih or _original_history(ch) != _original_history(ih)
+            or ch.get("active_forks", [])[:len(ih.get("active_forks", []))] != ih.get("active_forks", [])
+            or len(ih.get("active_forks", [])) > len(ch.get("active_forks", []))):
+        _error("original branch identity changed")
+    # Global revision includes frozen branches, so it cannot order two active
+    # prefixes. A parent may extend active while lacking later frozen forks.
+    # Preserve those forks and advance active normally, without inventing a fork.
+    if _is_prefix({"budget": ch["active_budget"], "providers": _providers(ch["active_budget"])},
+                  {"budget": ih["active_budget"], "providers": _providers(ih["active_budget"])}):
+        snapshot = pack_snapshot(ih["active_budget"], ch)
+        validate_snapshot(snapshot)
+        payload = {"schema_version": SCHEMA, "source_media_sha256": current["source_media_sha256"],
+                   "revision": snapshot["revision"], "providers": _providers(snapshot), "budget": snapshot}
+        payload["receipt_sha256"] = receipt_sha256(payload)
+        return payload
+    counts = _shared_prefix_counts(current["budget"], incoming["budget"])
+    record = {"shared_prefix": counts, "active_budget": deepcopy(ih["active_budget"])}
+    archives = []
+    for name, value, path in (("canonical", current, receipt_path), ("incoming", incoming, incoming_path)):
+        _no_links(path)
+        raw = path.read_bytes()
+        if json.loads(raw) != value:
+            _error("active fork changed before archive")
+        digest = _sha_prefixed(raw)
+        target = account / "parents" / (digest[7:] + ".json")
+        record[name] = {"path": str(target), "sha256": digest, "receipt_sha256": value["receipt_sha256"]}
+        archives.append((target, raw))
+    history = deepcopy(ch)
+    history["schema_version"] = "native-audio-account-history.v2"
+    history.setdefault("active_forks", []).append(record)
+    snapshot = pack_snapshot(ch["active_budget"], history)
+    payload = {"schema_version": SCHEMA, "source_media_sha256": current["source_media_sha256"],
+               "revision": snapshot["revision"], "providers": _providers(snapshot), "budget": snapshot}
+    payload["receipt_sha256"] = receipt_sha256(payload)
+    created = []
+    try:
+        for path, raw in archives:
+            _no_links(path)
+            if path.exists():
+                if path.read_bytes() != raw:
+                    _error("active archive bytes changed")
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                atomic_write_bytes(path, raw)
+                created.append(path)
+        validate_snapshot(snapshot)
+    except (OSError, ValueError, KeyError, TypeError):
+        for path in reversed(created):
+            path.unlink(missing_ok=True)
+        raise
+    return payload
 
 
 def build_reconciliation(*, reference, current, incoming, account, manifest, inventory,
@@ -275,6 +472,10 @@ def discover_registered_ancestor(*, account: Path, manifest, current, incoming,
         return None
     candidates = {}
     for row in manifest["parents"]:
+        if isinstance(row, Mapping) and row.get('path') == str(account):
+            # Self snapshots bind cache qualification, not an independently
+            # retained source directory for the original common-ancestor proof.
+            continue
         digest = row.get("budget_sha256") if isinstance(row, Mapping) else None
         if not isinstance(digest, str) or not digest.startswith("sha256:"):
             continue

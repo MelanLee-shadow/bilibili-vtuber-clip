@@ -6,7 +6,7 @@ import argparse
 import json
 import os
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 from src.autoslice.channel_profile import (
@@ -18,6 +18,9 @@ from src.autoslice.boundary_semantic_review import (
     SEMANTIC_TAIL_TRIM_MAX_MS,
 )
 from src.autoslice.branding_intro import BrandingIntroError, require_branding_intro
+from src.autoslice.clip_profile import (
+    ClipProfile, clip_profile_from_spec, default_clip_profile, requires_intro,
+)
 from src.autoslice.producer_boundary import (
     BOUNDARY_REPAIR_EXTEND_CAP_MAX_MS,
     BOUNDARY_REPAIR_EXTEND_CAP_MS,
@@ -116,6 +119,7 @@ class ProducerRequest:
     text_override_path: Path | None
     subtitle_regression_path: Path | None
     profile_binding: dict[str, str]
+    clip_profile: ClipProfile = field(default_factory=lambda: default_clip_profile("talk"))
 
 
 def parse_producer_args(
@@ -319,10 +323,18 @@ def load_producer_request(
         # parent explicitly passes its frozen selection. Never guess default.
         binding = normalize_profile_binding(spec.get("profile_binding", trusted_parent_profile_binding))
         if trusted_parent_profile_binding is not None:
-            require_profile_binding(binding, trusted_parent_profile_binding)
+            binding = require_profile_binding(task_binding=binding,
+                current_binding=trusted_parent_profile_binding, repo_root=repo_root)
         selected = selected_channel_profile or load_channel_profile(repo_root, profile_binding=binding)
-        require_profile_binding(binding_for_profile(selected), binding)
+        require_profile_binding(task_binding=binding,
+            current_binding=binding_for_profile(selected), repo_root=repo_root)
+        # Re-load against the original task binding to capture the extension
+        # proof even when the CLI imported its selected profile before the spec.
+        verified = load_channel_profile(repo_root, profile_binding=binding)
         spec["profile_binding"] = binding
+        spec.pop("profile_binding_extensions", None)
+        if verified.binding_extension is not None:
+            spec["profile_binding_extensions"] = [verified.binding_extension.as_dict()]
     except ChannelProfileError as exc:
         raise ProducerRuntimePrerequisiteError("channel_profile", str(exc)) from exc
     from src.autoslice.argon_escalation_defaults import (
@@ -418,10 +430,17 @@ def load_producer_request(
         text_override_path=text_override_preflight_path,
         subtitle_regression_path=subtitle_regression_preflight_path,
     )
+    # The spec's one clip_profile declaration decides whether this delivery
+    # carries the channel intro; undeclared specs keep the talk default.
+    clip_profile = clip_profile_from_spec(spec, lane="talk")
     try:
-        branding_intro = require_branding_intro(
-            repo_root,
-            manifest_path=profile_asset_file("branding_intro_manifest"),
+        branding_intro = (
+            require_branding_intro(
+                repo_root,
+                manifest_path=profile_asset_file("branding_intro_manifest"),
+            )
+            if requires_intro(clip_profile)
+            else None
         )
     except BrandingIntroError as exc:
         raise SystemExit(f"BRANDING_INTRO_UNAVAILABLE: {exc}")
@@ -461,6 +480,12 @@ def load_producer_request(
         raise ValueError("PREPARED_RESUME_OPTIONS_REQUIRE_HANDLE")
     out_root = Path(spec["output_root"]) / cid
     out_root.mkdir(parents=True, exist_ok=True)
+    if verified.binding_extension is not None:
+        from src.autoslice.package_import import atomic_write_bytes
+        atomic_write_bytes(out_root / "profile_binding_extensions.json", (json.dumps({
+            "profile_binding": binding,
+            "profile_binding_extensions": spec["profile_binding_extensions"],
+        }, sort_keys=True, indent=2) + "\n").encode())
     if getattr(args, "prepare_only", False):
         from src.autoslice.producer_delivery_prepare import resolve_talk_delivery_runtime_root
         from src.autoslice.producer_delivery_transaction import (
@@ -482,4 +507,5 @@ def load_producer_request(
         text_override_path=text_override_path,
         subtitle_regression_path=subtitle_regression_path,
         profile_binding=binding,
+        clip_profile=clip_profile,
     )

@@ -128,6 +128,35 @@ def test_structured_exception_feedback_is_used():
         assert shared.rate_feedback(error).retry_after == 0
 
 
+def test_closure_and_legacy_share_one_admission_owner_and_failure_taxonomy():
+    from src.autoslice import finding_closure_shell as closure
+    from src.autoslice.review_errors import ContractRejection, ProviderFailure, review_error_record
+    assert closure.ProviderController is shared.ProviderController
+    assert closure.PROVIDER_CONTROLLER is shared.PROVIDER_CONTROLLER
+    assert closure.provider_admission is shared.provider_admission
+    assert closure._feedback is shared.rate_feedback
+    controller = shared.ProviderController()
+    with closure.provider_admission('offline', 'audio', controller=controller) as outer:
+        with shared.provider_admission('offline', 'audio', controller=controller) as inner:
+            assert outer is inner
+            assert controller.windows[('offline', 'audio')].inflight == 1
+    route = shared.Route('offline', 'text')
+    controller.acquire(route)
+    with pytest.raises(shared.ProviderAdmissionError) as caught:
+        controller.finish(route, shared.RateFeedback(retry_after=-1))
+    assert isinstance(caught.value, ContractRejection)
+    assert isinstance(caught.value, closure.failure_types()[0])
+    assert review_error_record(caught.value)['status'] == 'CONTRACT_ERROR'
+    controller.finish(route, shared.RateFeedback(successful=False))
+    failure = ProviderFailure('RECORDED_RATE_LIMIT', provider='offline', metadata={'http_status': 429})
+    wrapped = shared.FinalReviewCall(lambda _: (_ for _ in ()).throw(failure), provider='offline', controller=controller)
+    with pytest.raises(ProviderFailure) as propagated:
+        wrapped('original prompt')
+    assert propagated.value is failure
+    assert review_error_record(failure)['status'] == 'CALL_FAILURE'
+    assert controller.windows[('offline', 'text')].limit == 10
+
+
 def test_wrapper_preserves_raw_subclass_metadata_and_existing_checkpoint_binding(tmp_path):
     from tests.test_f1_ruling_reuse import bound_transport
     from src.autoslice.completed_review_checkpoint import CompletedReviewCheckpoint

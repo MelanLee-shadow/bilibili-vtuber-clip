@@ -199,6 +199,10 @@ def judge_request(request, llm_call: LlmCall, *, provider_label: str, retries: i
             judgment = normalize_judgment(extract_json_object(completion))
             break
         except LlmCallError as exc:
+            if getattr(exc, "cpa_text_retry_reason", None) == "CPA_TEXT_RETRY_EXHAUSTED":
+                # The transport already used the text retry budget for this model.
+                # Let the caller advance its model chain without starting it again.
+                raise
             last_error = exc
             if attempt < retries:
                 # Rate limits (429) and transient 5xx need real BACKOFF — four

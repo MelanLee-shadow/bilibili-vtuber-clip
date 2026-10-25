@@ -110,6 +110,8 @@ def observed_cpa_request(request, *, timeout: float, model: str, kind: str):
                 timer.cancel()
     except Exception as exc:
         status = getattr(exc, "code", status)
+        from src.autoslice.provider_slots import report_provider_feedback
+        report_provider_feedback(exc)
         raise
     finally:
         record_cpa_attempt(model=model, kind=kind, status=status,

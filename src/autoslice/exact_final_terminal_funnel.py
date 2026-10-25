@@ -347,7 +347,7 @@ def terminal_check(srt_text, finding, *, clip_context, offset_ms, ranges=(), sec
 
 @cold_input
 @records_program_errors
-def terminalize_review(srt_text, audit, *, pass_receipts, adapters):
+def terminalize_review(srt_text, audit, *, pass_receipts, adapters, task_materials=None):
     """Visit every unresolved row once. Only real typed keeps move buckets."""
     from .final_review_contract import is_release_resolved_keep
     from .semantic_retry_progress import SemanticAttemptRecorder
@@ -464,8 +464,20 @@ def terminalize_review(srt_text, audit, *, pass_receipts, adapters):
                     # Target-material completion may append its own attempt receipt to
                     # ``row``.  The stopped pass binds the agenda finding that was
                     # actually recorded; the updated check carries the new evidence.
-                    proof = compile_loop_stop_no_gain(check=check, finding=finding,
-                        pass_receipts=pass_receipts)
+                    if task_materials is None:
+                        proof = compile_loop_stop_no_gain(check=check, finding=finding,
+                            pass_receipts=pass_receipts)
+                    else:
+                        # The C owner supplies actual current task materials,
+                        # independently of the proof being constructed.
+                        from .targeted_relisten import compile_task_stop_no_gain
+                        check = dict(check)
+                        check['task_stop_materials'] = task_materials(check, row)
+                        check.pop('request_sha256', None)
+                        check['request_sha256'] = digest(check)
+                        proof = compile_task_stop_no_gain(check=check,
+                            finding_materials=check['task_stop_materials'],
+                            text_version_sha256=text_sha(srt_text))
                     row = reenter_terminal_review(row, check_request=check,
                         no_gain_proof=proof, clip_context=context)
                     call = adapters.get('judge_llm_call')
@@ -530,7 +542,7 @@ def terminalize_review(srt_text, audit, *, pass_receipts, adapters):
                             row.pop(key, None)
                 row['exact_release_adjudication'] = terminal
                 member = {'row': row, 'attempt': {
-                    'cue_index': row['cue_index'], 'original_reason_code': proof['stop_reason_code'],
+                    'cue_index': row['cue_index'], 'original_reason_code': proof.get('stop_reason_code', 'TASK_STOP'),
                     'proof_sha256': proof['proof_sha256'],
                     'reason_code': terminal.get('reason_code') or terminal.get('policy_branch'),
                     'terminal_review': deepcopy(terminal.get('terminal_review'))},

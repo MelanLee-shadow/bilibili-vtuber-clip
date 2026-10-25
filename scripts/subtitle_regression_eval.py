@@ -86,6 +86,11 @@ def load_production_gemini_environment() -> dict:
     from src.autoslice.agy_gemini_client import free_api_keys
     from src.autoslice.gemini_backup_policy import paid_backup_key
 
+    from src.autoslice.cpa_gemini_client import enabled
+    if enabled():
+        return {'source': 'CPA environment', 'loader': 'cpa_gemini_client',
+                'configured_key_count': 'UNKNOWN', 'paid_backup_configured': 'UNKNOWN',
+                'credential_values_recorded': False}
     credentials = load_gemini_credentials()
     if not credentials:
         raise RuntimeError("production Gemini credential file supplied no credentials")
@@ -108,6 +113,29 @@ def observe_gemini_http_attempts(events: list[dict]):
     from src.autoslice.agy_gemini_client import free_api_keys
     from src.autoslice.gemini_backup_policy import paid_backup_key
 
+    from src.autoslice import cpa_gemini_client
+    if cpa_gemini_client.enabled():
+        original_open = cpa_gemini_client._open
+        def observed_cpa(request, *args, **kwargs):
+            row = {'provider': 'gemini_api', 'transport': 'cpa_gemini_native',
+                   'key_tier': 'UNKNOWN', 'key_ordinal': None, 'http_status': None, 'error_type': None}
+            events.append(row)
+            started = time.monotonic()
+            try:
+                response = original_open(request, *args, **kwargs)
+                row['http_status'] = getattr(response, 'status', None)
+                return response
+            except Exception as exc:
+                row.update(http_status=getattr(exc, 'code', None), error_type=type(exc).__name__)
+                raise
+            finally:
+                row['elapsed_seconds'] = round(time.monotonic() - started, 3)
+        cpa_gemini_client._open = observed_cpa
+        try:
+            yield
+        finally:
+            cpa_gemini_client._open = original_open
+        return
     free_keys, paid_key = free_api_keys(), paid_backup_key()
     original = urllib.request.urlopen
 
@@ -691,9 +719,11 @@ def run_package(package: dict, out: Path, code_root: Path, gemini_environment: d
                 "materialization": "INDEPENDENT_BYTE_COPY"}
             checkpoint("SOURCE_MATERIALIZED")
         checkpoint("PREPARED_CONSTRUCTOR_STARTED")
+        from src.autoslice.prepared_native_audio_recovery import PreparedNativeAudioState
+        native_state = PreparedNativeAudioState(out, out / "native-audio-budget.json")
         reviewer = build_prepared_exact_final_reviewer(
             spec=spec, out_root=out, cid=cid, padded=review_media, host="localhost",
-            authority=copy.deepcopy(authority), completed_record=record, adapters=adapters, native_audio_state=None,
+            authority=copy.deepcopy(authority), completed_record=record, adapters=adapters, native_audio_state=native_state,
         )
         run["prepared_source_boundary_clock"] = getattr(reviewer, "source_boundary_clock", None)
         run["preparation_status"] = "PREPARED"

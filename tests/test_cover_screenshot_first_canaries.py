@@ -527,17 +527,17 @@ def test_canary_4_story_reaction_false_no_longer_blocks_the_crop(tmp_path):
 @pytest.mark.parametrize(
     "score,emotional,expected",
     [
-        (4.91, True, "screenshot_direct"),   # 8/8 auto_200130_1323_1603
-        (4.46, True, "screenshot_direct"),   # 8/8 auto_213135_469_710
-        (3.55, False, "screenshot_direct"),  # 8/7 auto_200736_298_383
-        (3.02, False, "screenshot_direct"),  # 8/8 auto_210131_1576_1802
-        (3.46, False, "screenshot_direct"),  # 8/8 auto_230125_960_1072
+        (4.91, True, "cpa_redraw"),
+        (4.46, True, "cpa_redraw"),
+        (3.55, False, "cpa_redraw"),
+        (3.02, False, "cpa_redraw"),
+        (3.46, False, "cpa_redraw"),
     ],
 )
-def test_canary_4b_the_five_demoted_candidates_route_to_screenshot(
+def test_canary_4b_ordinary_talk_auto_prefers_story_redraw_across_scores(
     tmp_path, score, emotional, expected
 ):
-    """8/7–8/8 五条 CROP_NOT_AUTHORIZED 降级案的真实分数重放。"""
+    """Usable faces and high frame scores do not override the ordinary talk route."""
 
     reference = _reference(tmp_path)
     verification = _verified(reference, _REAL_8_8_DEMOTED_VERDICT)
@@ -683,7 +683,7 @@ def test_canary_6_camera_window_branch_is_reachable_in_a_game_scene(tmp_path):
     talk_treatment, talk_route = _route(
         verification=talk_verification, frame_selection=frame_selection
     )
-    assert talk_treatment == "screenshot_direct"
+    assert talk_treatment == "cpa_redraw"
     assert "camera window" not in talk_route["selected_rationale"]
 
 
@@ -883,6 +883,7 @@ def test_canary_7a_verified_usable_vertical_source_can_preserve_screenshot(tmp_p
             "motion_dispersion_frac": 0.21,
         },
         source_frame_size=_VERTICAL_SOURCE_SIZE,
+        cover_mode="screenshot",
     )
     assert treatment == "screenshot_direct"
 
@@ -895,7 +896,7 @@ def test_canary_7a_verified_usable_vertical_source_can_preserve_screenshot(tmp_p
     selected = next(
         row for row in route["alternatives"] if row["status"] == "SELECTED"
     )
-    assert "verified face and faithful crop" in selected["rationale"]
+    assert "mode=screenshot" in selected["rationale"]
     rejected = next(
         row for row in route["alternatives"] if row["treatment"] == "cpa_redraw"
     )
@@ -990,5 +991,5 @@ def test_canary_7c_landscape_and_unknown_geometry_are_not_touched(tmp_path, size
         },
         source_frame_size=size,
     )
-    assert treatment == "screenshot_direct"
+    assert treatment == "cpa_redraw"
     assert route["vertical_source_redraw"] is False

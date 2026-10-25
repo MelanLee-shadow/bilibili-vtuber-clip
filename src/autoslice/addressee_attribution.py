@@ -24,6 +24,7 @@
 """
 
 from __future__ import annotations
+from src.autoslice.finding_context import Relation
 
 import hashlib
 import json
@@ -1084,3 +1085,42 @@ def addressee_prompt_block(speaker_transcript: str | None) -> str:
         "作为下一轮输入，下一轮再对它产出 addressee_attribution 并作 KEEP/REPAIR 裁决。"
         "文案里若确实没有任何归属断言，addressee_attribution 填空数组。\n"
     )
+
+
+def speaker_turn_relations(evidence: SpeakerEvidenceResult, *, current_srt: str) -> list[Relation]:
+    """Return dependency groups only from the owner's validated alignment."""
+    from src.autoslice.jingting_chunker import parse_srt_cues
+
+    if evidence.state == SpeakerEvidenceState.ABSENT_AUTHORIZED:
+        return []
+    document = evidence.speaker_evidence
+    if (evidence.state != SpeakerEvidenceState.PRESENT_VALID
+            or evidence.speaker_evidence_sha256 != 'sha256:' + _sha256_bytes(_canonical_json_bytes(document))):
+        raise SpeakerEvidenceRejected('SPEAKER_DEPENDENCY_BINDING_DRIFT', 'speaker evidence digest differs')
+    alignment = document.get('alignment')
+    if (not isinstance(alignment, Mapping)
+            or document.get('alignment_sha256') != 'sha256:' + _sha256_bytes(_canonical_json_bytes(alignment))):
+        raise SpeakerEvidenceRejected('SPEAKER_DEPENDENCY_BINDING_DRIFT', 'alignment digest differs')
+    cues = parse_srt_cues(current_srt)
+    groups = alignment.get('groups', [])
+    if len(groups) != len(cues) or any(
+            row['source_index'] != index or row['start_ms'] != cue.start_ms or row['end_ms'] != cue.end_ms
+            for index, (row, cue) in enumerate(zip(groups, cues, strict=True), 1)):
+        raise SpeakerEvidenceRejected('SPEAKER_CONTEXT_GRID_DRIFT', 'speaker source clock differs')
+    relations: list[Relation] = []
+    active: list[int] = []
+    previous = None
+    for row in groups:
+        speakers = {segment['speaker'] for segment in row['segments']}
+        speaker = next(iter(speakers)) if len(speakers) == 1 else None
+        index = row['source_index']
+        if speaker is None or speaker != previous or (active and index != active[-1] + 1):
+            if len(active) > 1:
+                relations.append({'kind': 'speaker_turn', 'cue_indexes': active})
+            active = []
+        if speaker is not None:
+            active.append(index)
+        previous = speaker
+    if len(active) > 1:
+        relations.append({'kind': 'speaker_turn', 'cue_indexes': active})
+    return relations

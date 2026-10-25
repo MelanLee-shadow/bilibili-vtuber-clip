@@ -254,6 +254,10 @@ def talk_dependency_snapshot(
             "package": ("given_title",),
         }
         config["consumer_inputs"] = {key: record.get(key) for key in input_keys[stage]}
+        if "clip_profile" in record and stage in {"source", "package"}:
+            # Preserve legacy fingerprint inputs, but a declared form must
+            # invalidate intro staging and the final package when it changes.
+            config["consumer_inputs"]["clip_profile"] = record["clip_profile"]
         fingerprints[stage] = dependency_fingerprint(repo_root=repo_root, roots=roots, config=config, parsed=parsed)
     return {"schema_version": TALK_DEPENDENCY_SCHEMA, "candidate_id": candidate_id, "stages": fingerprints}
 
@@ -362,7 +366,7 @@ def song_pipeline_fingerprint(
         "src/autoslice/source_context_executor.py", "src/autoslice/source_context_planner.py",
         "src/autoslice/source_integrity.py", "src/autoslice/style_profile.py",
         "src/autoslice/subtitle_rendering.py", "src/autoslice/title_policy.py",
-        "src/autoslice/channel_envelope.py",
+        "src/autoslice/channel_envelope.py", "src/autoslice/clip_profile.py",
         "src/autoslice/runner_state_writeback.py",
         "src/autoslice/upload_tag_policy.py", "src/autoslice/verified_io.py",
         "src/autoslice/visual_song_discovery.py",

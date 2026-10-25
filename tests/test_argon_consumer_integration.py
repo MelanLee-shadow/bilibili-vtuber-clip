@@ -85,9 +85,8 @@ class NativeProvider:
                 # Real normal provider slot must be held at this exact seam.
                 from src.autoslice.provider_slots import provider_slot, ProviderSlotTimeout
 
-                with pytest.raises(ProviderSlotTimeout):
-                    with provider_slot(Path(os.environ["AUTOSLICE_BASE"]), timeout_seconds=0.001):
-                        pass
+                from tests.test_provider_slots_cross_process_admission import assert_route_held
+                assert_route_held(Path(os.environ["AUTOSLICE_BASE"]), 'gemini', 'audio')
                 return parent.request(method, path, body, route=route, timeout_s=timeout_s)
 
         return Transport()
@@ -749,6 +748,7 @@ def test_genuine_new_argon_material_crosses_existing_three_unresolved_pressure_o
     wrapped = recorder.wrap(old_answer)
     wrapped("prior actual question one")
     wrapped("prior actual question two")
+    wrapped("prior actual question three")
     scene.after_choice = "NEITHER"
     _, result = scene.run(scene.build())
     assert result["witness_judge"]["judge"]["choice"] == "NEITHER", result
@@ -876,7 +876,8 @@ def test_relocated_wrapper_is_same_material_and_semantic_stop_not_another_cpa_vo
 def test_provider_slot_refusal_has_no_remote_submission_and_can_resume_normally(scene):
     from src.autoslice.provider_slots import provider_slot
 
-    with provider_slot(scene.root / "runtime", timeout_seconds=0.1):
+    from tests.test_provider_slots_cross_process_admission import saturate
+    with saturate(scene.root / "runtime"):
         _, first = scene.run(scene.build(slot_wait_s=0.01))
     assert not first["repaired"] and not scene.provider.calls
     _, second = scene.run(scene.build(slot_wait_s=0.01))
@@ -1042,7 +1043,8 @@ def test_completed_native_cache_does_not_need_provider_slot_or_credentials(scene
     scene.run()
     output, audit = scene.run(scene.build())
     count = scene.loader_calls
-    with provider_slot(scene.root / "runtime", timeout_seconds=0.1):
+    from tests.test_provider_slots_cross_process_admission import saturate
+    with saturate(scene.root / "runtime"):
         repeated, again = scene.run(scene.build(slot_wait_s=0.01))
     assert repeated == output and again["repaired"], again
     assert scene.loader_calls == count and len(scene.provider.calls) == 2

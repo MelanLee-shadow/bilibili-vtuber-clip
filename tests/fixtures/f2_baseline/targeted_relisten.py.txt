@@ -906,31 +906,31 @@ def material_exhaustion(projection, *, cue_count, argon_state, cpa_requested_aud
  a text-level "no expected gain" is not exhaustion (公开规则：如果第一次
  无法确定，为什么要用完全相同的听音结果再判断一次？以及，为什么不用不同的时间窗再听
  一次？); only a heard widest block (no wider window left) is. Without such a
- request, 41「没有明显收益时不凑三次」 stays (admin ruling 2026-10-21).
+ request, 41「没有明显收益时不凑三次」 stays (admin ruling).
  """
- distinct = projection["effective_distinct_observations"]
- widest = any(_widest_cue_block(row.get('input_information') or {}, cue_count)
- for row in projection['observations'])
- state = dict(argon_state or {})
- if distinct >= DEFAULT_OPPORTUNITIES:
- if state.get("state") not in {"TERMINAL", "STRUCTURALLY_UNAVAILABLE"}:
- raise ValueError("RELISTEN_NO_GAIN_ARGON_NOT_TERMINAL")
- basis = "DEFAULT_DISTINCT_SPENT_AND_ARGON_" + state["state"]
- elif cpa_requested_audio is not False:
- if not widest:
- raise ValueError("RELISTEN_NO_GAIN_MATERIAL_NOT_EXHAUSTED")
- basis = "EARLY_NO_GAIN_WIDEST_BLOCK_HEARD"
- else:
- basis = "EARLY_NO_GAIN_CPA_DID_NOT_REQUEST_AUDIO"
- return {"schema_version": EXHAUSTION_SCHEMA, "basis": basis,
- "cpa_requested_audio": cpa_requested_audio is not False,
- "effective_distinct_observations": distinct, "default_opportunities": DEFAULT_OPPORTUNITIES,
- "unconsumed_observations": 0, "widest_block_heard": widest, "argon": state}
+    distinct = projection["effective_distinct_observations"]
+    widest = any(_widest_cue_block(row.get('input_information') or {}, cue_count)
+                 for row in projection['observations'])
+    state = dict(argon_state or {})
+    if distinct >= DEFAULT_OPPORTUNITIES:
+        if state.get("state") not in {"TERMINAL", "STRUCTURALLY_UNAVAILABLE"}:
+            raise ValueError("RELISTEN_NO_GAIN_ARGON_NOT_TERMINAL")
+        basis = "DEFAULT_DISTINCT_SPENT_AND_ARGON_" + state["state"]
+    elif cpa_requested_audio is not False:
+        if not widest:
+            raise ValueError("RELISTEN_NO_GAIN_MATERIAL_NOT_EXHAUSTED")
+        basis = "EARLY_NO_GAIN_WIDEST_BLOCK_HEARD"
+    else:
+        basis = "EARLY_NO_GAIN_CPA_DID_NOT_REQUEST_AUDIO"
+    return {"schema_version": EXHAUSTION_SCHEMA, "basis": basis,
+            "cpa_requested_audio": cpa_requested_audio is not False,
+            "effective_distinct_observations": distinct, "default_opportunities": DEFAULT_OPPORTUNITIES,
+            "unconsumed_observations": 0, "widest_block_heard": widest, "argon": state}
 
 
 def _valid_exhaustion(value, projection):
     if value is None:
-        return True  # Proofs compiled before 2026-10-21 replay under their own contract.
+        return True  # Proofs compiled before replay under their own contract.
     if isinstance(value, Mapping) and value.get('basis') == LOOP_STOP_KIND:
         if value.get('scope') == 'TARGET_REQUIRED_CHANNELS':
             target = value.get('target_material') or {}
@@ -1624,7 +1624,7 @@ def close_with_existing_editorial(*, srt_text, finding, recovery_audit, prior, c
 
 
 def sub18_meaning_equivalent_keep(*, finding, recovery_audit, prior):
-    """SUB-18 second terminal form, out of the same no-gain exit (admin 2026-10-21).
+    """SUB-18 second terminal form, out of the same no-gain exit (admin).
 
  公开规则：如果有哪些真的听不清，但是你发现语义完全符合，语境完全符合，不会有
  任何的问题，那么那个小错是可以发的。 Only a noncritical_uncertainty row
@@ -1634,48 +1634,48 @@ def sub18_meaning_equivalent_keep(*, finding, recovery_audit, prior):
  Returns a typed, non-mutating adjudication with the UNRESOLVED_BY_AUDIO
  disclosure, or None (the editorial terminal then applies as before).
  """
- from src.autoslice.final_review_contract import (
- SUB18_KEEP_BRANCH, SUB18_KEEP_RULE, SUB18_KEEP_SCHEMA, is_sub18_context_meaning_equivalent_keep,
- )
- from src.autoslice.final_review_meaning_policy import current_meaning_equivalent
- if (not isinstance(finding, Mapping) or finding.get("content_risk") != "noncritical_uncertainty"
- or not current_meaning_equivalent(finding)):
- return None
- check = recovery_audit["terminal_check_request"]
- proof = validate_no_gain(recovery_audit["no_gain_proof"], check)
- if proof.get("material_exhaustion") is None:
- return None
- risk = finding["current_content_risk"]
- equivalence = risk["meaning_equivalence"]
- receipt = {"schema_version": SUB18_KEEP_SCHEMA, "rule": SUB18_KEEP_RULE,
- "audio_resolution": "UNRESOLVED_BY_AUDIO", "literal_transcription": False,
- "mutation_authorized": False, "content_risk": "noncritical_uncertainty",
- "cue_index": finding["cue_index"], "base_text_sha256": finding["base_text_sha256"],
- "reviewed_srt_sha256": risk["reviewed_srt_sha256"],
- "meaning_equivalence": deepcopy(equivalence),
- "context_consistency": {"status": "CONTEXT_FULLY_CONSISTENT",
- "context_basis": equivalence["context_basis"],
- "evidence_cue_ids": list(equivalence["evidence_cue_ids"]),
- "no_gain_context_refs": sorted(proof.get("context_sources") or {})},
- "no_gain_proof": deepcopy(proof), "no_gain_proof_sha256": proof["proof_sha256"],
- "material_exhaustion": deepcopy(proof["material_exhaustion"])}
- audit = {"schema_version": "subtitle-span-adjudication.v1", "status": "OBSERVED", "repaired": False,
- "timing_immutable": True, "policy_branch": SUB18_KEEP_BRANCH,
- "decision_authority": "CPA_JUDGE", "witness_authority": "EVIDENCE_ONLY",
- "request": deepcopy(dict(check)),
- "mutation_authority": {"schema_version": "subtitle-correction-mutation-authority.v1",
- "status": "NOT_APPLIED", "basis": SUB18_KEEP_BRANCH},
- "sub18_context_meaning_equivalent_keep": receipt,
- "contextual_terminal_handoff": {"status": "SUB18_CONTEXT_MEANING_EQUIVALENT_KEEP",
- "audio_resolution": "UNRESOLVED_BY_AUDIO",
- "no_gain_proof_sha256": proof["proof_sha256"],
- "provider_calls": 0, "literal_transcription": False,
- "apply_required": False}}
- if recovery_audit.get('terminal_review') is not None:
- audit['terminal_review'] = deepcopy(recovery_audit['terminal_review'])
- if not is_sub18_context_meaning_equivalent_keep({**finding, "exact_release_adjudication": audit}):
- return None
- return audit
+    from src.autoslice.final_review_contract import (
+        SUB18_KEEP_BRANCH, SUB18_KEEP_RULE, SUB18_KEEP_SCHEMA, is_sub18_context_meaning_equivalent_keep,
+    )
+    from src.autoslice.final_review_meaning_policy import current_meaning_equivalent
+    if (not isinstance(finding, Mapping) or finding.get("content_risk") != "noncritical_uncertainty"
+            or not current_meaning_equivalent(finding)):
+        return None
+    check = recovery_audit["terminal_check_request"]
+    proof = validate_no_gain(recovery_audit["no_gain_proof"], check)
+    if proof.get("material_exhaustion") is None:
+        return None
+    risk = finding["current_content_risk"]
+    equivalence = risk["meaning_equivalence"]
+    receipt = {"schema_version": SUB18_KEEP_SCHEMA, "rule": SUB18_KEEP_RULE,
+               "audio_resolution": "UNRESOLVED_BY_AUDIO", "literal_transcription": False,
+               "mutation_authorized": False, "content_risk": "noncritical_uncertainty",
+               "cue_index": finding["cue_index"], "base_text_sha256": finding["base_text_sha256"],
+               "reviewed_srt_sha256": risk["reviewed_srt_sha256"],
+               "meaning_equivalence": deepcopy(equivalence),
+               "context_consistency": {"status": "CONTEXT_FULLY_CONSISTENT",
+                                       "context_basis": equivalence["context_basis"],
+                                       "evidence_cue_ids": list(equivalence["evidence_cue_ids"]),
+                                       "no_gain_context_refs": sorted(proof.get("context_sources") or {})},
+               "no_gain_proof": deepcopy(proof), "no_gain_proof_sha256": proof["proof_sha256"],
+               "material_exhaustion": deepcopy(proof["material_exhaustion"])}
+    audit = {"schema_version": "subtitle-span-adjudication.v1", "status": "OBSERVED", "repaired": False,
+             "timing_immutable": True, "policy_branch": SUB18_KEEP_BRANCH,
+             "decision_authority": "CPA_JUDGE", "witness_authority": "EVIDENCE_ONLY",
+             "request": deepcopy(dict(check)),
+             "mutation_authority": {"schema_version": "subtitle-correction-mutation-authority.v1",
+                                    "status": "NOT_APPLIED", "basis": SUB18_KEEP_BRANCH},
+             "sub18_context_meaning_equivalent_keep": receipt,
+             "contextual_terminal_handoff": {"status": "SUB18_CONTEXT_MEANING_EQUIVALENT_KEEP",
+                                             "audio_resolution": "UNRESOLVED_BY_AUDIO",
+                                             "no_gain_proof_sha256": proof["proof_sha256"],
+                                             "provider_calls": 0, "literal_transcription": False,
+                                             "apply_required": False}}
+    if recovery_audit.get('terminal_review') is not None:
+        audit['terminal_review'] = deepcopy(recovery_audit['terminal_review'])
+    if not is_sub18_context_meaning_equivalent_keep({**finding, "exact_release_adjudication": audit}):
+        return None
+    return audit
 
 
 def with_unconsumed_assisted_plan(*, finding, check_request, recorder):

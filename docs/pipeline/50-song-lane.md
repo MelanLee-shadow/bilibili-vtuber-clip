@@ -85,3 +85,10 @@ CLI 参数、模块是否存在和机器强制层以本版源码及 `--help` 为
 
 歌名、标题、封面和发布仍需分别通过 60、70、80、90 步骤。歌切专线只证明歌曲
 内容和时间轴，不产生标题、封面或上传授权。
+
+## 歌词省略的形状
+
+洞＝连续一段未演唱的歌词行；重复段和零散省略分别由
+`song_omission_shape.MIN_REPEATED_SECTION_ROWS`、
+`song_omission_shape.MAX_SMALL_SKIP_ROWS`、`song_omission_shape.MAX_SMALL_SKIPS` 判断。
+洞必须是真没唱，不能用省略掩盖对齐或识别失败。

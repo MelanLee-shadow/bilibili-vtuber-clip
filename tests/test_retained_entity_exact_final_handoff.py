@@ -315,15 +315,21 @@ def test_carried_completion_cannot_be_rewritten_into_a_different_question(tmp_pa
 
 
 @pytest.mark.parametrize("review_builder", [_k04_stopped_review, _unlisted_review])
-def test_exact_final_receives_the_carried_question_and_stays_blocked(tmp_path, monkeypatch, review_builder):
+@pytest.mark.parametrize("mode", [None, "per_finding"])
+def test_exact_final_receives_the_carried_question_and_stays_blocked(tmp_path, monkeypatch, review_builder, mode):
     monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path / "runtime"))
+    if mode is None:
+        monkeypatch.delenv("AUTOSLICE_FINAL_REVIEW_MODE", raising=False)
+    else:
+        monkeypatch.setenv("AUTOSLICE_FINAL_REVIEW_MODE", mode)
     retained, _authority, context = _pending(tmp_path)
     authority = _consume(tmp_path, retained, review_builder(context))
     seen = []
     real = pipeline.audit_final_subtitles
 
     def capture(*args, **kwargs):
-        seen.append(deepcopy(list(kwargs.get("extra_raw_findings") or [])))
+        seen.append([json.loads(n.payload_json) for n in kwargs["discovery_batch"].nominations]
+                    if mode == "per_finding" else list(kwargs["extra_raw_findings"]))
         return real(*args, **kwargs)
 
     monkeypatch.setattr(pipeline, "audit_final_subtitles", capture)

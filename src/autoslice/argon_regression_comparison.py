@@ -1084,7 +1084,6 @@ def execute(args) -> int:
         )
         runtime = out / "runtime-state"
         store.directory(runtime)
-        from .provider_slots import runtime_provider_slot
 
         results = {}
         attempt_id = str(time.time_ns())
@@ -1108,22 +1107,23 @@ def execute(args) -> int:
                         comparison_scope_revision=str(revision_path.resolve()), argon_arm=arm
                     )
                 # The ordinary entry sees only source/candidates, never scoring labels.
-                with runtime_provider_slot(runtime_root=Path(args.runtime_root), timeout_seconds=1):
-                    results[key] = run_package(
-                        plan["packages"][key],
-                        out / key,
-                        code,
-                        readiness["gemini"]
-                        if revision is not None
-                        else {
-                            "source": "lazy canonical loader after authorization",
-                            "configured_key_count": None,
-                            "paid_backup_configured": False,
-                        },
-                        comparison_config=config,
-                        witness_cache_root=Path(baselines[key]["run_path"]).parent,
-                        resume=args.resume_comparison and (out / key).exists(),
-                    )
+                # Only physical transports admit; cache/replay and the package
+                # driver must not reserve a provider window around all workers.
+                results[key] = run_package(
+                    plan["packages"][key],
+                    out / key,
+                    code,
+                    readiness["gemini"]
+                    if revision is not None
+                    else {
+                        "source": "lazy canonical loader after authorization",
+                        "configured_key_count": None,
+                        "paid_backup_configured": False,
+                    },
+                    comparison_config=config,
+                    witness_cache_root=Path(baselines[key]["run_path"]).parent,
+                    resume=args.resume_comparison and (out / key).exists(),
+                )
                 if (
                     revision is not None
                     and results[key].get("ordinary_route_validity", {}).get("status")

@@ -1391,8 +1391,9 @@ def _process_challenge(
         slot = runtime_provider_slot(
             runtime_root=Path(str(runtime["runtime_root"])),
             timeout_seconds=wait,
+            provider=str(runtime["provider"]), modality=str(modality),
         )
-        slot.__enter__()
+        lease = slot.__enter__()
     except (ProviderSlotError, ProviderSlotTimeout):
         return (
             _write_state(
@@ -1456,6 +1457,8 @@ def _process_challenge(
                 env=child_environment,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
+            if lease is not None:
+                lease.report({"status": "FAILED"})
             timed_out = isinstance(exc, subprocess.TimeoutExpired)
             process = _record_adapter_process(
                 response_path, run_root=run_root, attempt=attempt,
@@ -1481,6 +1484,14 @@ def _process_challenge(
             environment=child_environment, dispatched_at=_iso(now),
             elapsed_seconds=time.monotonic() - started, returncode=completed.returncode,
             stdout=completed.stdout, stderr=completed.stderr)
+        if lease is not None:
+            if completed.returncode != 0:
+                lease.report({"status": "FAILED"})
+            if response_path.is_file() and not response_path.is_symlink():
+                try:
+                    lease.report(_read_json(response_path, label="sentinel adapter response"))
+                except FinalMediaReviewModelCapabilitySentinelError:
+                    lease.report({"status": "FAILED"})
         dispatching = {**dispatching, "adapter_process": process}
         if failpoint == f"after_adapter_response:{modality}":
             raise RuntimeError(

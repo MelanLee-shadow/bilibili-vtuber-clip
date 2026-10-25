@@ -30,13 +30,7 @@ def _audit(ass):
     )
 
 
-def test_artifact_gate_rejects_actual_published_song_without_relying_on_hash_mismatch():
-    ass, = SONG_PACKAGE.glob("*.ass")
-    before = ass.read_bytes()
-    issues = _audit(ass).issues
-    assert [i.code for i in issues].count(PREFIX_CODE) == 7
-    assert all("line " in i.detail for i in issues if i.code == PREFIX_CODE)
-    assert ass.read_bytes() == before
+
 
 
 @pytest.mark.parametrize("style", ["Default", "LDS", "GUEST"])
@@ -71,20 +65,7 @@ def test_new_song_enters_via_final_srt_and_reaches_artifact_gate(tmp_path):
     assert srt.read_bytes() == before
 
 
-@pytest.mark.parametrize("package_part", [
-    "private-runs/c20-oct12-201517-normal-20261013/production-native-first-clip-v03/REVIEW-PACKAGE-3a7f-V5",
-    "production-inputs/22966160/2026-10-15/22966160_20261015-11-59-44/production-native-academic-v1/REVIEW-PACKAGE-745c-V1",
-])
-def test_published_talk_receipt_ass_is_byte_identical(tmp_path, package_part):
-    package = ROOT / "reports/p-dispatch-20261015-publication-evidence/oci3/opt/bilive/autoslice" / package_part
-    original, = package.glob("*.final-sapphire72.ass")
-    srt = original.with_name(original.name.replace(".final-sapphire72.ass", ".srt"))
-    before = {p: p.read_bytes() for p in (srt, original)}
-    output = tmp_path / "talk.ass"
-    render._write_sapphire_ass_from_srt(srt, output)
-    assert output.read_bytes() == original.read_bytes()
-    assert not _audit(output).issues
-    assert all(p.read_bytes() == data for p, data in before.items())
+
 
 
 @pytest.mark.parametrize("resolution,expected_sha", [

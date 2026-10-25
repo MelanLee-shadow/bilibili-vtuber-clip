@@ -91,6 +91,10 @@ from src.autoslice.branding_intro import (
     load_branding_intro_policy,
     policy_intros,
 )
+from src.autoslice.clip_profile import (
+    record_intro_gate,
+    requires_intro,
+)
 from src.autoslice.review_package_policy_fingerprint import (
     build_policy_fingerprint,
 )
@@ -2268,17 +2272,22 @@ def audit_package(
         append_original_release_issues(item=item, is_song=is_song, subtitle_path=subtitle_path,
                                        repo_root=ROOT, directory=CHANNEL_PROFILE.asset_directory("reviewed_subtitle_baselines"),
                                        stem=stem, issues=issues, issue_adder=_add_issue)
-        if story_contract_required and not is_song:
-            _audit_talk_branding_intro(
-                item=item,
-                record=record,
-                publish=publish_document,
-                issues=issues,
-                stem=stem,
-                manifest_path=manifest_path,
-                record_path=record_path,
-                publish_path=publish_path,
+        if isinstance(record, Mapping):
+            # One intro gate for every clip form: songs and non-protagonist
+            # related clips are derived members that must carry no intro.
+            clip_form, clip_problem, clip_detail = record_intro_gate(
+                record, lane="song" if is_song else "talk",
             )
+            if clip_problem is not None:
+                _add_issue(issues, clip_problem, stem=stem,
+                           path=record_path or manifest_path, detail=clip_detail)
+            elif clip_form is not None and requires_intro(clip_form) and story_contract_required and not is_song:
+                _audit_talk_branding_intro(
+                    item=item, record=record, publish=publish_document, issues=issues,
+                    stem=stem, manifest_path=manifest_path, record_path=record_path,
+                    publish_path=publish_path,
+                )
+        if story_contract_required and not is_song:
             provenance_path = _resolve(root, f"{stem}.provenance.json")
             provenance = _load_json(provenance_path) if provenance_path else None
             audit_source_truth_owner_attestations(

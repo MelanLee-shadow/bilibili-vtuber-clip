@@ -310,7 +310,10 @@ def _observe_secondary(
 
     with program_error_boundary("secondary.provider", on_error=finish_program_error):
         try:
-            with provider_boundary(provider):
+            from src.autoslice.finding_closure_shell import ensure_provider_calls_allowed
+            from src.autoslice.provider_admission import provider_admission
+            ensure_provider_calls_allowed()
+            with provider_admission(provider, "audio"), provider_boundary(provider):
                 evidence = transcribe_evidence(
                     audio, provider=provider, duration_ms=duration_ms, **kwargs,
                 )

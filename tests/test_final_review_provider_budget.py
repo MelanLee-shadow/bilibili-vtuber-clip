@@ -531,7 +531,7 @@ def _prepare_exact_triple_cache(tmp_path, *, store_second_judge=True):
     return source, finding, clip_context, witness, cached_observation
 
 
-def test_exhausted_budget_replays_exact_source_triple_cache(tmp_path, monkeypatch):
+def test_cached_unlocalized_judge_cannot_authorize_whole_cue_rebuild(tmp_path, monkeypatch):
     import src.autoslice.final_review_auditor as auditor
 
     monkeypatch.setattr(auditor, "MAX_CONTEXT_ADJUDICATIONS", 0)
@@ -565,11 +565,12 @@ def test_exhausted_budget_replays_exact_source_triple_cache(tmp_path, monkeypatc
 
     assert resolved == [] and len(unresolved) == 1
     adjudication = unresolved[0]["exact_release_adjudication"]
-    assert adjudication["repaired"] is True
+    assert adjudication["repaired"] is False
+    assert adjudication["policy_branch"] == "SPAN_LOCALIZATION_RESULT_REQUIRED"
     replay = adjudication["provider_budget_replay"]
     assert replay["provider_call_count"] == 0
     assert replay["witness_cache_hit"] is True
-    assert replay["exact_source_transcript_cache_hit"] is True
+    assert replay["exact_source_transcript_cache_hit"] is False
     assert replay["judge_cache_hit"] is True
     assert adjudication["cpa_resource_pressure"]["provider_calls_this_decision"] == 0
 
@@ -612,10 +613,10 @@ def test_exact_triple_cache_partial_hit_never_crosses_exhausted_budget(
         provider_calls_allowed=False,
     )
     assert resolved == []
-    assert (
-        unresolved[0]["exact_release_adjudication"]["status"]
-        == "SKIPPED_PROVIDER_DISABLED"
-    )
+    decision = unresolved[0]["exact_release_adjudication"]
+    assert decision['status'] == 'OBSERVED' and decision['repaired'] is False
+    assert decision['policy_branch'] == 'SPAN_LOCALIZATION_RESULT_REQUIRED'
+    assert decision['provider_budget_replay']['provider_call_count'] == 0
 
 
 def test_soft_threshold_does_not_drop_new_findings_after_twelve():

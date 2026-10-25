@@ -107,6 +107,12 @@ def ready_input(tmp_path, monkeypatch):
         "other_recognizable_people_or_avatars_visible": False,
         "other_recognizable_people_or_avatars": [],
     }
+    verdict["final_feature_comparisons"] = {
+        category: [{"source_feature": feature, "status": "MATCH",
+                    "final_observation": "Synthetic matching feature in final pixels"}
+                   for feature in features]
+        for category, features in verdict["source_visible_feature_observations"].items()
+    }
     monkeypatch.setattr(cpa_frame_witness, "image_vision_probe", HELPERS["_probe"](verdict))
     final = Path(made["outputs"]["cover"]["path"])
     receipt = verify_final_host_identity(
@@ -115,7 +121,7 @@ def ready_input(tmp_path, monkeypatch):
         reference_path=Path(made["source_inputs"]["reference"]["path"]),
         host_only_required=True,
     )
-    assert receipt["status"] == "PASS"
+    assert receipt["status"] == "PASS", receipt
     witness = private / "witness.json"
     _json(witness, receipt)
     # Fixture StoryContract/route is deliberately minimal. Keep the actual V5

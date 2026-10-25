@@ -16,7 +16,7 @@
   不能靠 `title_llm_call=None` 或手工 JSON 绕过。
 - 公开规则手定标题拥有**正文 authority**：正文逐字保留，不送 LLM 改写，也不套自动标题的
   selection-hook/机器味重写；它不拥有绕过频道 archive envelope 的权限。talk 最终统一补
-  profile 的标题前缀（默认 profile：`【李豆沙】`），song 统一成精确目录式；两者都验 12–49 字、外层空白与括号/引号栈。
+  profile 的标题前缀（默认 profile：`【李豆沙】`），song 统一成精确目录式；两者都验 `assets/lidousha/title_policy.json` 定义的字数范围、外层空白与括号/引号栈。
 - `assets/lidousha/manual_title_overrides.v1.json` 存正文，不存一条可免检的“最终发布标题”。
 - 单个候选若只有**公共生成文案**中的逐字专名裁决，而没有整份字幕/说话人的完整人工复审，
   只能使用
@@ -57,7 +57,7 @@
   维护者/Pro 证据；runtime 重建 transcript/scorecard/entity，并从 Git/deploy-sealed 独立资产重放
   原裁决 prompt 后才可确定性消费，且不得再调 provider。fresh ASR context 只另记 diagnostic SHA，
   不进入裁决 identity。当前唯一 50-codepoint 标题例外也只删除该 candidate、该 exact title/hook/receipt 的
-  `publish_title_length_out_of_bounds`；其他标题规则与其他候选仍按 12–49 字 fail closed。
+  `publish_title_length_out_of_bounds`；其他标题规则与其他候选仍按 `assets/lidousha/title_policy.json` 定义的字数范围 fail closed。
 - 已发布 same-BV 的媒体恢复不得裸抄旧 record 的 `title`，也不得靠操作员逐条补几个可选
   evidence 参数。唯一入口是 deployable
   `assets/lidousha/recovery_publication_authority.v1.json`：它把 exact recovery 集合中的每个

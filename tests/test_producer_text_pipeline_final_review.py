@@ -1,3 +1,4 @@
+from src.autoslice.discovery_channels import batch_from_rows
 from tests.test_final_review_meaning_policy import equivalent
 from src.autoslice.final_review_meaning_policy import POLICY_VERSION as MEANING_POLICY_VERSION
 import ast
@@ -35,6 +36,78 @@ from src.autoslice.producer_boundary_owner_contract import (
     freeze_story_chat_boundary_owners,
 )
 from tests.test_delivery_fast_path import _operator_text_owned_spec
+
+
+@pytest.mark.parametrize("mode", [None, "per_finding"])
+def test_exact_default_retains_asr_ledger_and_range_background(monkeypatch, mode):
+    """Old cue ledgers stay on the legacy path; new tasks require original M."""
+    if mode is None:
+        monkeypatch.delenv("AUTOSLICE_FINAL_REVIEW_MODE", raising=False)
+    else:
+        monkeypatch.setenv("AUTOSLICE_FINAL_REVIEW_MODE", mode)
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _: "")
+    monkeypatch.setattr(pipeline, "discover_candidate_pronoun_findings", lambda *a, **k: ([], {}))
+    row = {"cue": 1, "kind": "context", "repair_class": "phonetic", "why": "历史问题"}
+    authority = {"final_review_audit": {"findings": [
+        {"cue_index": 1, "discovery_task": {"asr_only": True}}]}}
+    monkeypatch.setattr(pipeline, "_pending_current_exact_findings", lambda *a, **k: [row])
+    ranges = ({"observation_id": "retained-range-context"},)
+    captured = {}
+    def background(*args, **kwargs):
+        captured["range_audio"] = kwargs["range_audio"]
+        return "range background", {}
+    monkeypatch.setattr(pipeline, "_bound_source_evidence_context", background)
+    def audit(*args, **kwargs):
+        captured["audit"] = kwargs
+        return []
+    monkeypatch.setattr(pipeline, "audit_final_subtitles", audit)
+    result = pipeline._run_exact_final_release_review(
+        srt_text=_srt("第一句", "第二句", "第三句"), correction_audit=_correction_pass(),
+        adapters=_adapters(), authoritative_chat=(), selection_hook="", clip_context={},
+        verified_authority_audit=authority, prior_range_acoustic_observations=ranges,
+        final_review_llm=lambda _: pytest.fail("model call is forbidden"))
+    if mode is None:
+        assert captured["range_audio"] == list(ranges)
+        assert captured["audit"]["extra_raw_findings"] == [row]
+        assert "discovery_batch" not in captured["audit"]
+        assert "ASR_LEDGER_ORIGINAL_TASK_MATERIAL_REQUIRED" not in result.get("reason_codes", [])
+    else:
+        assert "audit" not in captured
+        assert "ASR_LEDGER_ORIGINAL_TASK_MATERIAL_REQUIRED" in result["reason_codes"]
+
+
+def test_default_auditor_preserves_historical_risk_priming(monkeypatch):
+    from src.autoslice import final_review_auditor as auditor
+    monkeypatch.delenv("AUTOSLICE_FINAL_REVIEW_MODE", raising=False)
+    prompts = []
+    class BeforeModel(BaseException):
+        pass
+    def stop(prompt):
+        prompts.append(prompt)
+        raise BeforeModel
+    with pytest.raises(BeforeModel):
+        auditor.audit_final_subtitles(_srt("第一句"), llm_call=stop, extract_json=json.loads,
+            extra_raw_findings=[{"cue": 1, "kind": "context", "why": "保留原问题"}])
+    assert "本轮需逐项重新评估风险的既有疑点" in prompts[0]
+    assert "保留原问题" in prompts[0]
+    assert "历史疑点按当前全部语境重新判断" in prompts[0]
+
+
+def test_default_auditor_ignores_registry_fields_from_model_row(monkeypatch):
+    from src.autoslice import final_review_auditor as auditor
+    monkeypatch.delenv("AUTOSLICE_FINAL_REVIEW_MODE", raising=False)
+    rows = auditor.audit_final_subtitles(_srt("第一句"),
+        llm_call=lambda _: json.dumps({"findings": [{"cue": 1, "kind": "context",
+            "repair_class": "disclosure_only", "proposed_full_cue": None,
+            "why": "核对原话", "content_risk": "meaning_reversal", "risk_basis": "原意未定",
+            "discovery_task": {"asr_only": True}, "decision_authority": "NONE_DISCOVERY_ONLY",
+            "_discovery_cue_normalization": "untrusted_registry_field"}]}),
+        extract_json=json.loads)
+    assert len(rows) == 1
+    assert "discovery_task" not in rows[0]
+    assert "decision_authority" not in rows[0]
+    assert not rows[0]["force_acoustic"]
+    assert "untrusted_registry_field" not in rows[0].get("input_contract_normalizations", [])
 
 
 def _srt(*texts: str) -> str:
@@ -401,8 +474,8 @@ def test_current_successor_carries_typed_audio_gate_without_relabeling_old_reque
         current_srt,
         llm_call=_literal_review_llm(lambda _prompt: '{"findings": []}'),
         extract_json=json.loads,
-        extra_raw_findings=[microcue, row],
-        prioritize_extra_raw_findings=True,
+        discovery_batch=batch_from_rows([microcue, row]),
+
     )
     assert len(normalized) == 1
     carried = normalized[0]["exact_release_adjudication"]
@@ -1512,17 +1585,7 @@ def test_replay_delivery_review_carries_source_only_boundary_witness():
     )
 
 
-def test_exact_delivery_review_callers_propagate_their_recording_date():
-    qixi_tree = ast.parse(inspect.getsource(qixi_refresh.refresh_terminal_evidence))
-    qixi_call = next(
-        node
-        for node in ast.walk(qixi_tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "exact_delivery_correction_audit"
-    )
-    date_keyword = next(keyword for keyword in qixi_call.keywords if keyword.arg == "recording_date")
-    assert ast.unparse(date_keyword.value) == "RECORDING_DATE"
+
 
 
 def test_final_boundary_review_indexes_exact_post_authority_grid():
@@ -2215,9 +2278,14 @@ def test_exact_final_release_review_binds_explicit_clean_response(
     )
 
 
+@pytest.mark.parametrize("mode", [None, "per_finding"])
 def test_exact_final_release_review_consumes_postburn_rows_as_raw_priority(
-    monkeypatch,
+    monkeypatch, mode,
 ):
+    if mode is None:
+        monkeypatch.delenv("AUTOSLICE_FINAL_REVIEW_MODE", raising=False)
+    else:
+        monkeypatch.setenv("AUTOSLICE_FINAL_REVIEW_MODE", mode)
     monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
     srt = _srt("第一句", "第二句", "第三句")
     row = {
@@ -2232,8 +2300,14 @@ def test_exact_final_release_review_consumes_postburn_rows_as_raw_priority(
     captured: dict[str, object] = {}
 
     def fake_audit(_srt_text, **kwargs):
-        captured["extra_raw_findings"] = list(kwargs["extra_raw_findings"])
-        assert kwargs["prioritize_extra_raw_findings"] is True
+        if mode == "per_finding":
+            captured["discovery_rows"] = [json.loads(n.payload_json) for n in kwargs["discovery_batch"].nominations]
+            assert isinstance(kwargs["discovery_batch"].nominations, tuple)
+            assert "extra_raw_findings" not in kwargs
+        else:
+            captured["discovery_rows"] = kwargs["extra_raw_findings"]
+            assert kwargs["prioritize_extra_raw_findings"] is True
+            assert "discovery_batch" not in kwargs
         return [dict(row)]
 
     monkeypatch.setattr(pipeline, "audit_final_subtitles", fake_audit)
@@ -2273,7 +2347,7 @@ def test_exact_final_release_review_consumes_postburn_rows_as_raw_priority(
         priority_raw_findings=[row],
     )
 
-    assert captured["extra_raw_findings"] == [row]
+    assert captured["discovery_rows"] == [row]
     assert receipt["status"] == "CLEAN"
     assert receipt["release_gate"] == "PASS"
 
@@ -5512,15 +5586,15 @@ def test_p1_fresh_risk_reclassification_keeps_public_adjudication_obligation(tmp
             'proposed_full_cue': None, 'why': '普通口头话', 'content_risk': 'noncritical_uncertainty',
             'risk_basis': '当前整句及语境支持同一喝水请求，仅数量词未确定', 'meaning_equivalence': equivalent()}]})
     rows = audit_final_subtitles(text, llm_call=discover, extract_json=json.loads,
-        extra_raw_findings=[{'cue': 1, 'kind': 'context', 'repair_class': 'phonetic',
+        discovery_batch=batch_from_rows([{'cue': 1, 'kind': 'context', 'repair_class': 'phonetic',
                             'suspect': '喝口水', 'proposed_full_cue': None, 'why': '历史仍需补听',
                             'exact_release_adjudication': {
                                 'request': {'current_cue': '喝口水', 'proposed_candidates': [{'text': '喝口水'}]},
                                 'witness_judge': {'judge': {'choice': 'CURRENT', 'needs_audio': True,
-                                    'reason': '目标窗支持喝口水，旧hou hui shui仍待复核'}}}}])
-    assert '历史仍需补听' in prompts[0]
-    assert '旧hou hui shui仍待复核' in prompts[0]
-    assert 'HISTORICAL_EVIDENCE_ONLY_NOT_MUTATION_AUTHORITY' in prompts[0]
+                                    'reason': '目标窗支持喝口水，旧hou hui shui仍待复核'}}}}]))
+    assert '历史仍需补听' not in prompts[0]
+    assert '旧hou hui shui仍待复核' not in prompts[0]
+    assert 'HISTORICAL_EVIDENCE_ONLY_NOT_MUTATION_AUTHORITY' not in prompts[0]
     assert rows and all(r['content_risk'] == 'noncritical_uncertainty' for r in rows)
     original_rows = json.loads(json.dumps(rows))
     saved = tmp_path / 'fresh-risk-findings.json'
@@ -5622,7 +5696,7 @@ def test_missing_restatement_risk_is_not_silently_downgraded(rows):
     responses = iter([{'findings': []}, {'findings': rows}])
     with pytest.raises(FinalReviewAuditError, match='FINAL_REVIEW_(PRIORITY_RISK_|MEANING_EQUIVALENCE_REQUIRED)'):
         audit_final_subtitles(text, llm_call=lambda _: json.dumps(next(responses)),
-            extract_json=json.loads, extra_raw_findings=proposals)
+            extract_json=json.loads, discovery_batch=batch_from_rows(proposals))
 
 
 def test_restatement_already_rated_by_current_r1_needs_no_followup():
@@ -5635,6 +5709,6 @@ def test_restatement_already_rated_by_current_r1_needs_no_followup():
         llm_call=lambda prompt: prompts.append(prompt) or json.dumps({'findings': [{
             'cue': 1, 'kind': 'context', 'repair_class': 'disclosure_only', 'proposed_full_cue': None,
             'content_risk': 'meaning_reversal', 'risk_basis': '具体否定冲突', 'why': '需要正常裁决'}]}),
-        extract_json=json.loads, extra_raw_findings=proposals)
+        extract_json=json.loads, discovery_batch=batch_from_rows(proposals))
     assert len(prompts) == 1
     assert rows and all(row['content_risk'] == 'meaning_reversal' for row in rows)

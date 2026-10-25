@@ -3,6 +3,8 @@
 Fixtures are trimmed from the 闺蜜 package (BV16vJm6pEZC): final cues in
 delivery time, witness cues in media time (intro offset 2520 ms).
 """
+
+from src.autoslice.discovery_channels import batch_from_rows
 import json
 
 import pytest
@@ -117,7 +119,12 @@ def _reviewer_with_noncritical_risk(prompt):
             "cue": 1, "content_risk": "noncritical_uncertainty",
             "risk_basis": "邻句确认小明和晓明是同一送灯牌者，字形疑点不改变整句所指和谢礼含义。",
             "meaning_equivalence": _equivalence()}]})
-    return '{"findings":[]}'
+    # A independently opens the wording question; I enriches it under R2.
+    return json.dumps({"findings": [{"cue": 1, "kind": "context",
+        "repair_class": "phonetic", "suspect": "明", "proposed_full_cue": "谢谢小红的灯牌",
+        "why": "当前谢礼称呼需核对", "content_risk": "noncritical_uncertainty",
+        "risk_basis": "邻句明确同一送灯牌观众，字形疑点不改变谢礼含义。",
+        "meaning_equivalence": _equivalence()}]})
 
 
 def _wired_finding(final_text, witness_text):
@@ -128,7 +135,7 @@ def _wired_finding(final_text, witness_text):
     rows = to_priority_findings(noms, final_srt_text=final, witness_srt_sha256="sha256:" + "ab" * 32)
     return noms, audit_final_subtitles(
         final, llm_call=_reviewer_with_noncritical_risk, extract_json=json.loads,
-        extra_raw_findings=rows, prioritize_extra_raw_findings=True)
+        discovery_batch=batch_from_rows(rows))
 
 
 def test_nomination_reaches_findings_with_both_candidates_and_cannot_be_waved_through(monkeypatch):
@@ -168,12 +175,19 @@ def _postburn_llm(monkeypatch, calls):
 
     def llm(prompt):
         calls.append(prompt)
+        if "EXACT_FINAL_TYPED_RESOLUTIONS" in prompt:
+            return '{"findings":[]}'
         if "本次只补齐" in prompt:
             return json.dumps({"findings": [{
                 "cue": 4, "content_risk": "noncritical_uncertainty",
                 "risk_basis": "邻句确认小明和晓明是同一送灯牌者，字形疑点不改变整句所指和谢礼含义。",
                 "meaning_equivalence": {**_equivalence(), "evidence_cue_ids": [3, 4]}}]})
-        return '{"findings":[]}'
+        # Independent A discovery makes the later unresolved I material a task.
+        return json.dumps({"findings": [{"cue": 4, "kind": "context",
+            "repair_class": "phonetic", "suspect": "乱码", "proposed_full_cue": "这里有更正需要审看",
+            "why": "当前句子的说法需核对", "content_risk": "noncritical_uncertainty",
+            "risk_basis": "词面疑点不改变整句所指。",
+            "meaning_equivalence": {**_equivalence(), "evidence_cue_ids": [3, 4]}}]})
 
     llm.cpa_cache_identity = {"transport": "cpa_command", "models": ["gpt-6-sol"], "effort": "medium"}
     llm.provider_runtime_binding = {"provider_transport": "runtime_cpa",

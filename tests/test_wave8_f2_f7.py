@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from src.autoslice.discovery_channels import batch_from_rows
+from tests.test_f16_f17_closed_set_evidence import _risk_complete
+
+
 import hashlib
 import json
 from types import SimpleNamespace
@@ -197,10 +201,10 @@ def test_f2_machine_gender_context_yields_bounded_single_and_plural_findings():
     assert all(row["repair_class"] == "phonetic" for row in findings)
     routed = audit_final_subtitles(
         source,
-        llm_call=lambda _prompt: json.dumps({"findings": []}),
+        llm_call=_risk_complete({"findings": []}),
         extract_json=json.loads,
-        extra_raw_findings=findings,
-        prioritize_extra_raw_findings=True,
+        discovery_batch=batch_from_rows(findings),
+
     )
     assert [row["proposed_full_cue"] for row in routed] == [
         "我也觉得她有问题",

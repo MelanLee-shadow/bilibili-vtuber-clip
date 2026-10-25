@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from src.autoslice.cpa_gemini_client import valid_lrc_transport
+
 from dataclasses import dataclass
 import hashlib
 import json
@@ -174,10 +176,15 @@ def _independent_timing_input(run: AudioLrcAlignmentRun, lrc: LrcResult) -> bool
     if lyrics.read_text(encoding="utf-8") != untimed_lrc_text(lrc):
         raise ValueError("observation lyrics contain reference timing or differ from canonical text")
     if run.provider == AGY_AUDIO_LRC_PROVIDER:
-        trace = _require_bound_artifact(evidence.get("tool_trace_path"), evidence.get("tool_trace_sha256"), "audio tool trace")
-        validate_untimed_audio_tool_trace(trace.read_text(encoding="utf-8"), audio_path=audio,
-            lyrics_path=lyrics, prompt_path=Path(run.prompt_path),
-            output_path=Path(run.provider_raw_output_path))
+        if 'cpa_transport_receipt' in manifest:
+            from .cpa_gemini_client import valid_lrc_transport
+            if not valid_lrc_transport(manifest):
+                raise ValueError('CPA_GEMINI_INPUT_RECEIPT_MISMATCH')
+        else:
+            trace = _require_bound_artifact(evidence.get("tool_trace_path"), evidence.get("tool_trace_sha256"), "audio tool trace")
+            validate_untimed_audio_tool_trace(trace.read_text(encoding="utf-8"), audio_path=audio,
+                lyrics_path=lyrics, prompt_path=Path(run.prompt_path),
+                output_path=Path(run.provider_raw_output_path))
     elif run.provider == GEMINI_API_AUDIO_LRC_PROVIDER:
         if str(audio) != run.api_audio_path or evidence.get("audio_sha256") != run.api_audio_sha256:
             raise ValueError("independent timing input differs from submitted API audio")
@@ -497,6 +504,7 @@ def _validate_audio_lrc_artifact_bindings(
             provider_fallback_used=run_manifest.get("provider_fallback_used"),
             agy_failure_category=run_manifest.get("agy_failure_category"),
             sandbox=run_manifest.get("sandbox"),
+            cpa_transport_valid=valid_lrc_transport(run_manifest),
         )
         if isinstance(run_manifest, Mapping)
         else "audio run manifest is not a JSON object"

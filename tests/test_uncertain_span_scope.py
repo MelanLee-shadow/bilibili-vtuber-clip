@@ -1,11 +1,9 @@
-"""E: an answer counts as unresolved for its own bound target span only.
+"""Selected word answers and requested audio are independent retry signals.
 
-41 span_review (target and other relisten questions located separately):
-a PROPOSED/CURRENT answer whose review says the target needs no audio and
-places every audio question outside the bound codepoint span is not an
-unresolved answer for this target; in-span or unlocatable needs stay
-unresolved (guimi cue60: three of six answers asked only about the sentence
-end outside the pronoun span). No provider; protocol-shaped strings only.
+An explicit CURRENT/PROPOSED answer is selected even when another audio
+question remains. NEITHER stays unresolved. This retry classification grants
+no mutation or release authority; target localization is checked separately.
+No provider is called; these are protocol-shaped strings only.
 """
 import json
 
@@ -32,10 +30,10 @@ def test_outside_question_does_not_make_the_target_unresolved():
     assert _uncertain(_answer(questions=[[7, 8]]), _prompt()) is False
 
 
-def test_in_span_or_unbound_needs_stay_unresolved():
-    assert _uncertain(_answer(questions=[[4, 5]]), _prompt()) is True           # inside the target
-    assert _uncertain(_answer(questions=[[3, 5]]), _prompt()) is True           # crosses the boundary
-    assert _uncertain(_answer(questions=[[7, 8]], target_needs_audio=True), _prompt()) is True
+def test_unselected_answers_stay_unresolved_and_selected_answers_do_not():
+    assert _uncertain(_answer(questions=[[4, 5]], choice="NEITHER"), _prompt()) is True           # inside the target
+    assert _uncertain(_answer(questions=[[3, 5]], choice="NEITHER"), _prompt()) is True           # crosses the boundary
+    assert _uncertain(_answer(questions=[[7, 8]], target_needs_audio=True), _prompt()) is False
     assert _uncertain(_answer(questions=[[7, 8]], choice="NEITHER"), _prompt()) is True
-    assert _uncertain(_answer(questions=[[7, 8]], binding_sha="c" * 64), _prompt()) is True
-    assert _uncertain(_answer(questions=[[7, 8]])) is True                      # no bound request
+    assert _uncertain(_answer(questions=[[7, 8]], binding_sha="c" * 64), _prompt()) is False
+    assert _uncertain(_answer(questions=[[7, 8]])) is False                      # no bound request

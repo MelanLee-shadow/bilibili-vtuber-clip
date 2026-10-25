@@ -63,7 +63,9 @@ def execute_request(request: dict, job_dir: Path) -> dict:
     from src.autoslice.channel_profile import binding_for_profile, require_profile_binding
     from src.autoslice.overflow_worker import RuntimePrerequisiteError
     try:
-        require_profile_binding(binding_for_profile(runner.CHANNEL_PROFILE), request["profile_binding"])
+        require_profile_binding(task_binding=request["profile_binding"],
+                                current_binding=binding_for_profile(runner.CHANNEL_PROFILE),
+                                repo_root=selected_profile.repo_root)
     except ValueError as exc:
         raise RuntimePrerequisiteError(f"channel_profile: {exc}", startup_stage="producer_import") from exc
     credentials = runner.load_env_file(root / "cpa.env")
@@ -88,7 +90,9 @@ def execute_request(request: dict, job_dir: Path) -> dict:
     result = produce(request["date"], item, **kwargs)
     # The patched real runner projects its verified selection. Missing result
     # provenance must not be synthesized from the request by the transport.
-    require_profile_binding(result.get("profile_binding"), binding_for_profile(selected_profile))
+    from src.autoslice.channel_profile import require_record_profile_binding
+    require_record_profile_binding(record_binding=result.get("profile_binding"),
+        task_binding=binding_for_profile(selected_profile), repo_root=selected_profile.repo_root)
     if result.get("session_id") is None and item.get("session_id"):
         result["session_id"] = item["session_id"]
     from src.autoslice.overflow_bundle import export_bundle

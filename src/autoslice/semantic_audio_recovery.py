@@ -154,11 +154,11 @@ def _dispatched_since(old_receipt: Mapping[str, Any] | None,
     branch-local: identity is (branch receipt hash, attempt_id)
     (``native_audio_history_reconciliation``), so a bare attempt_id repeats
     across the composed ``budget.attempts``. New reservations are only ever
-    appended to the writable active branch, whose strict extension the caller
-    has already verified; the new rows are read from that branch and tagged
+    appended to the writable active branch, whose strict extension is checked
+    here independently of whole-account containment; new rows are read and tagged
     with its branch hash exactly as the composed view tags them. None means
-    the two ledgers are not comparable (v2 receipt that is no prefix of the
-    new active branch) and the dispatch outcome stays UNKNOWN.
+    the old active ledger is no prefix of the new active branch, and the
+    dispatch outcome stays UNKNOWN.
     """
     from src.autoslice.native_audio_history_reconciliation import HISTORY_KEY, active_snapshot
     old_budget = (old_receipt or {}).get("budget") or {}
@@ -166,12 +166,17 @@ def _dispatched_since(old_receipt: Mapping[str, Any] | None,
     if not new_budget:
         return []
     new_active = active_snapshot(new_budget)
-    if old_budget and HISTORY_KEY not in old_budget and HISTORY_KEY in new_budget:
+    if old_budget:
         from src.autoslice.native_audio_budget_receipt import (
             BudgetReceiptPersistenceError, _providers, _require_budget_history_extension)
+        old_active = active_snapshot(old_budget)
         try:
+            # Whole-account containment can now retain the old receipt as a
+            # frozen active fork. It does not prove that this relisten's writable
+            # branch extends the old one. Ambiguous dispatch deltas stay UNKNOWN.
             _require_budget_history_extension(
-                old_receipt, {"budget": new_active, "providers": _providers(new_active)})
+                {"budget": old_active, "providers": _providers(old_active)},
+                {"budget": new_active, "providers": _providers(new_active)})
         except BudgetReceiptPersistenceError:
             return None
     old_ids = ({r["attempt_id"] for r in active_snapshot(old_budget).get("attempts", [])}

@@ -714,6 +714,22 @@ class _RangeRecoveryAttemptExists(_RangeRecoveryInvalid):
     """The canonical source budget already records this provider/window."""
 
 
+class _NativeAcquisitionIdentityMissing(_RangeRecoveryInvalid):
+    """No original attempt authorizes replay of this acquisition."""
+
+
+class _NativeEnvelopeInvalid(_RangeRecoveryInvalid):
+    reason_code = "NATIVE_RANGE_ENVELOPE_INVALID"
+
+
+def _acquisition_replay_reason(exc: Exception) -> str:
+    if isinstance(exc, _NativeAcquisitionIdentityMissing):
+        return "NATIVE_ACQUISITION_ORIGINAL_IDENTITY_MISSING"
+    if isinstance(exc, FileNotFoundError):
+        return "NATIVE_ACQUISITION_ARTIFACT_REPLAY_REQUIRED"
+    return getattr(exc, "reason_code", None) or "NATIVE_ACQUISITION_LOCAL_CONTRACT_ERROR"
+
+
 def _path_has_symlink(path: Path) -> bool:
     """Reject a path or any existing parent that would redirect a receipt."""
 
@@ -944,6 +960,7 @@ def _materialize_native_range_artifacts(
     output_dir: Path,
     native_observation_cache_root: Path,
     replay_envelope_path: Path | None = None,
+    replay_envelope_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Bind the native writer's original files into the range validator shape.
 
@@ -980,6 +997,20 @@ def _materialize_native_range_artifacts(
     for path in (audio_path, receipt_path, envelope_path):
         if _path_has_symlink(path) or not path.is_file():
             raise _RangeArtifactInvalid("native range writer artifact is missing")
+
+    # A blind cache alias retains its original request and immutable envelope.
+    # It does not require a newly signed copy under the current metadata key.
+    artifact_prepared = prepared
+    if replay_envelope_path is not None:
+        if replay_envelope_sha256 != _source_sha256(envelope_path):
+            raise _RangeArtifactInvalid("native range replay envelope changed")
+        envelope = _load_json_mapping(envelope_path)
+        original = _prepare_request(envelope["request"])
+        geometry_keys = ("matched_start_ms", "matched_end_ms", "context_start_ms",
+                         "context_end_ms", "source_media_timeline_offset_ms")
+        if any(original.request[k] != prepared.request[k] for k in geometry_keys):
+            raise _RangeArtifactInvalid("native range replay geometry changed")
+        artifact_prepared = original
 
     provider_receipt = _load_json_mapping(receipt_path)
     evidence = provider_receipt.get("evidence")
@@ -1028,9 +1059,9 @@ def _materialize_native_range_artifacts(
         "candidate_id": candidate_id,
         "candidate_text_in_request": False,
         "delivery_window": {
-            "cue_indexes": list(prepared.request["cue_indexes"]),
-            "start_ms": prepared.target_start_ms,
-            "end_ms": prepared.target_end_ms,
+            "cue_indexes": list(artifact_prepared.request["cue_indexes"]),
+            "start_ms": artifact_prepared.target_start_ms,
+            "end_ms": artifact_prepared.target_end_ms,
         },
         "publication": "NOT_REQUESTED",
         "reviewed_srt_path": str(reviewed_srt_path),
@@ -1039,8 +1070,8 @@ def _materialize_native_range_artifacts(
         "source_media_sha256": source_sha256,
         "source_media_timeline_offset_ms": prepared.source_offset_ms,
         "srt_mutation": False,
-        "witness_request": dict(prepared.request),
-        "witness_request_sha256": prepared.request_sha256,
+        "witness_request": dict(artifact_prepared.request),
+        "witness_request_sha256": artifact_prepared.request_sha256,
     }
     _persist_immutable_json(input_path, input_doc)
 
@@ -1186,6 +1217,66 @@ def build_independent_context_witnesses(
     def _cache_key(prepared: _PreparedRequest, provider: str) -> str:
         return native_digest(native_acquisition_identity(source_sha256=source_sha256 or "",
             provider=provider, start_ms=prepared.physical_start_ms, end_ms=prepared.physical_end_ms))
+
+    def _cache_recollection(prepared, provider):
+        """An inherited missing cache cannot authorize reuse of its envelope.
+
+        Ordinary acquisition still owns dispatch and charging. A separate output
+        namespace preserves old envelopes, including their original conclusions.
+        The manifest is cache eligibility only; retained ledger identity is checked
+        independently before it can select this path.
+        """
+        manifest_path = native_observation_cache_root / 'parent.json'
+        if not manifest_path.exists():
+            return None
+        manifest = _load_json_mapping(manifest_path)
+        identity = native_acquisition_identity(source_sha256=source_sha256 or '', provider=provider,
+            start_ms=prepared.physical_start_ms, end_ms=prepared.physical_end_ms)
+        job = native_acquisition_path(native_observation_cache_root, identity)
+        record = manifest.get('unusable_caches', {}).get(str(job.relative_to(native_observation_cache_root)))
+        if record is None:
+            return None
+        _validate_recovery_budget_receipt(source_media=source_media,
+            source_sha256=source_sha256, receipt_path=shared_budget_receipt)
+        account = _load_json_mapping(shared_budget_receipt)['budget']
+        from src.autoslice.prepared_native_audio_recovery import _unavailable_cache
+        try:
+            _unavailable_cache(root=native_observation_cache_root,
+                relative=str(job.relative_to(native_observation_cache_root)),
+                source_sha=source_sha256, budget=account, manifest=manifest)
+        except ValueError as exc:
+            if str(exc) == 'PREPARED_NATIVE_UNAVAILABLE_CACHE_IDENTITY_MISSING':
+                raise _NativeAcquisitionIdentityMissing(str(exc)) from exc
+            raise
+        if any(any(a[k] != identity[k] for k in ('provider','model','start_ms','end_ms'))
+               for a in record['attempts']):
+            raise _NativeAcquisitionIdentityMissing('unusable native cache original identity is missing')
+        retry_dir = native_observation_cache_root / 'cache-reacquisition' / native_digest(record)
+        if output_dir == retry_dir:
+            return None
+        exact = output_dir / provider / 'native-context' / f'{prepared.request_sha256}.json'
+        if exact.exists() or exact.is_symlink():
+            # Absence never excuses a damaged or definite failed envelope.
+            # Only a valid old success is ineligible evidence due to cache loss.
+            try:
+                envelope = _load_json_mapping(exact)
+                original = _prepare_request(envelope['request'])
+                valid = (envelope.get('schema_version') == NATIVE_CONTEXT_ENVELOPE_SCHEMA
+                    and original.request == prepared.request
+                    and envelope.get('request_sha256') == prepared.request_sha256
+                    and envelope.get('source_media_sha256') == source_sha256
+                    and envelope.get('audio_start_ms') == prepared.physical_start_ms
+                    and envelope.get('audio_end_ms') == prepared.physical_end_ms
+                    and _native_transcript_witness(request=original.request, prepared=original,
+                        provider=provider, source_sha256=source_sha256,
+                        native_observation=envelope['native_observation']).get('status') == 'OBSERVED')
+            except (OSError, ValueError, KeyError, TypeError):
+                valid = False
+            if not valid:
+                return None
+        return build_independent_context_witnesses(fallback=fallback, source_media=source_media,
+            output_dir=retry_dir, providers=(provider,), budget_receipt_path=shared_budget_receipt,
+            native_observation_cache_root=native_observation_cache_root)
 
 
     def _persist_result(
@@ -1387,6 +1478,10 @@ def build_independent_context_witnesses(
         cached_rows = observe_cached_independent_witnesses(request_mapping)
         results = []
         for provider in provider_names:
+            recollect = _cache_recollection(prepared, provider)
+            if recollect is not None:
+                results.extend(recollect.observe_independent_witnesses(request_mapping))
+                continue
             cached = [
                 row for row in cached_rows
                 if isinstance(row, Mapping) and row.get("status") == "OBSERVED"
@@ -1678,23 +1773,14 @@ def build_independent_context_witnesses(
 
     def _replay_acquisition(prepared, provider, envelope_path):
         """Project the winner into a new receipt; original failures/bills stay sealed."""
-        _validate_recovery_budget_receipt(source_media=source_media,
-            source_sha256=source_sha256, receipt_path=shared_budget_receipt)
-        budget_bytes = shared_budget_receipt.read_bytes()
-        account = json.loads(budget_bytes)["budget"]
-        acquisition = native_acquisition_identity(source_sha256=source_sha256, provider=provider,
-            start_ms=prepared.physical_start_ms, end_ms=prepared.physical_end_ms)
-        attempts = [row for row in account["attempts"] if all(
-            row.get(key) == acquisition[key] for key in ("provider", "model", "start_ms", "end_ms"))]
-        if not attempts:
-            raise _RangeRecoveryInvalid("native acquisition original budget identity is missing")
-        history = {"budget_receipt_path": str(shared_budget_receipt),
-            "budget_receipt_sha256": hashlib.sha256(budget_bytes).hexdigest(),
-            "acquisition_identity": acquisition, "new_provider_calls": 0, "new_audio_ms": 0}
+        original_binding = {}
         if envelope_path.exists() or envelope_path.is_symlink():
-            _, original_sha, original = _read_bound_uncertain_envelope(
-                envelope_path=envelope_path, prepared=prepared, provider=provider,
-                source_sha256=source_sha256)
+            try:
+                _, original_sha, original = _read_bound_uncertain_envelope(
+                    envelope_path=envelope_path, prepared=prepared, provider=provider,
+                    source_sha256=source_sha256)
+            except _RangeRecoveryInvalid as exc:
+                raise _NativeEnvelopeInvalid(str(exc)) from exc
             witness = original["witness"]
             typed_error = witness.get("review_error")
             typed_recovery = (typed_error.get("material_recovery")
@@ -1717,8 +1803,22 @@ def build_independent_context_witnesses(
                 return {**witness, "served_from_cache": True}, {}
             if original.get("native_observation") is not None:
                 raise _RangeRecoveryInvalid("native conflict envelope has an unexpected observation")
-            history.update(original_envelope_path=str(envelope_path),
-                           original_envelope_sha256=original_sha)
+            original_binding.update(original_envelope_path=str(envelope_path),
+                                    original_envelope_sha256=original_sha)
+        _validate_recovery_budget_receipt(source_media=source_media,
+            source_sha256=source_sha256, receipt_path=shared_budget_receipt)
+        budget_bytes = shared_budget_receipt.read_bytes()
+        account = json.loads(budget_bytes)["budget"]
+        acquisition = native_acquisition_identity(source_sha256=source_sha256, provider=provider,
+            start_ms=prepared.physical_start_ms, end_ms=prepared.physical_end_ms)
+        attempts = [row for row in account["attempts"] if all(
+            row.get(key) == acquisition[key] for key in ("provider", "model", "start_ms", "end_ms"))]
+        if not attempts:
+            raise _NativeAcquisitionIdentityMissing("native acquisition original budget identity is missing")
+        history = {"budget_receipt_path": str(shared_budget_receipt),
+            "budget_receipt_sha256": hashlib.sha256(budget_bytes).hexdigest(),
+            "acquisition_identity": acquisition, "new_provider_calls": 0, "new_audio_ms": 0,
+            **original_binding}
         native = read_native_acquisition(source_media=source_media,
             root=native_observation_cache_root, identity=acquisition)
         witness = _native_transcript_witness(request=prepared.request, prepared=prepared,
@@ -1876,8 +1976,15 @@ def build_independent_context_witnesses(
             if isinstance(row, Mapping) and isinstance(row.get("provider"), str)
         }
         observed_rows: list[Mapping[str, Any]] = []
+        recollected_rows = []
         recovery_history: dict[str, dict[str, str]] = {}
         for provider in range_provider_names:
+            recollect = _cache_recollection(prepared, provider)
+            if recollect is not None:
+                recollected_rows.extend(recollect.observe_range_context(
+                    check_request=check_request, range_witness_request=range_witness_request,
+                    provider=provider, cache_only=cache_only))
+                continue
             cached = cached_by_provider.get(provider)
             if cached is not None:
                 observed_rows.append(cached)
@@ -1888,14 +1995,15 @@ def build_independent_context_witnesses(
                 / "native-context"
                 / f"{prepared.request_sha256}.json"
             )
+            replay_error = None
             if cache_only or envelope_path.exists() or envelope_path.is_symlink():
                 try:
                     recovered, history = _replay_acquisition(prepared, provider, envelope_path)
                 except (OSError, ValueError, TypeError, KeyError) as exc:
+                    replay_error = exc
                     if cache_only:
                         observed_rows.append(_independent_uncertain(range_mapping, provider,
-                            ("NATIVE_ACQUISITION_ARTIFACT_REPLAY_REQUIRED" if isinstance(exc, FileNotFoundError)
-                             else "NATIVE_ACQUISITION_LOCAL_CONTRACT_ERROR"), detail=_sanitized_detail(exc),
+                            _acquisition_replay_reason(exc), detail=_sanitized_detail(exc),
                             source_sha256=source_sha256, geometry=geometry))
                         continue
                 else:
@@ -1916,13 +2024,20 @@ def build_independent_context_witnesses(
                         provider=provider,
                         source_sha256=source_sha256,
                     )
-                except _RangeRecoveryInvalid:
+                except _RangeRecoveryInvalid as envelope_error:
+                    try:
+                        _read_bound_uncertain_envelope(envelope_path=envelope_path,
+                            prepared=prepared, provider=provider, source_sha256=source_sha256)
+                    except _RangeRecoveryInvalid:
+                        reason = "NATIVE_RANGE_ENVELOPE_INVALID"
+                    else:
+                        reason = _acquisition_replay_reason(replay_error or envelope_error)
                     observed_rows.append(
                         _independent_uncertain(
                             range_mapping,
                             provider,
-                            "NATIVE_RANGE_ENVELOPE_INVALID",
-                            detail="existing native range envelope cannot be replayed",
+                            reason,
+                            detail=_sanitized_detail(replay_error or envelope_error),
                             source_sha256=source_sha256,
                             geometry=geometry,
                         )
@@ -1992,7 +2107,7 @@ def build_independent_context_witnesses(
             validate_native_range_context_observation,
         )
 
-        output: list[Mapping[str, Any]] = []
+        output: list[Mapping[str, Any]] = list(recollected_rows)
         for row in observed_rows:
             provider = row.get("provider") if isinstance(row, Mapping) else None
             if not isinstance(provider, str) or provider not in provider_names:
@@ -2012,6 +2127,8 @@ def build_independent_context_witnesses(
                 output.append(normalized)
                 continue
             try:
+                replay_binding = (recovery_history.get(provider, {}).get("acquisition_replay")
+                                  or row.get("blind_cache_replay") or {})
                 artifacts = _materialize_native_range_artifacts(
                     check_request=request_mapping,
                     prepared=prepared,
@@ -2020,8 +2137,10 @@ def build_independent_context_witnesses(
                     source_sha256=source_sha256,
                     output_dir=output_dir,
                     native_observation_cache_root=native_observation_cache_root,
-                    replay_envelope_path=(Path(recovery_history[provider]["acquisition_replay"]["replay_envelope_path"])
-                        if "acquisition_replay" in recovery_history.get(provider, {}) else None),
+                    replay_envelope_path=(Path(replay_binding.get("replay_envelope_path")
+                        or replay_binding["envelope_path"]) if replay_binding else None),
+                    replay_envelope_sha256=(replay_binding.get("replay_envelope_sha256")
+                        or replay_binding.get("envelope_sha256")),
                 )
                 validated, reason = validate_native_range_context_observation(
                     str(request_mapping["whole_clip_current_srt"]),
@@ -2055,6 +2174,8 @@ def build_independent_context_witnesses(
                 normalized["served_from_cache"] = True
             normalized.update(recovery_history.get(provider, {}))
             output.append(normalized)
+        output.sort(key=lambda row: range_provider_names.index(row['provider'])
+                    if row.get('provider') in range_provider_names else len(range_provider_names))
         return output
 
     def wrapper(request: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -2129,6 +2250,11 @@ def build_independent_context_witnesses(
         geometry_keys = ("matched_start_ms", "matched_end_ms", "context_start_ms",
                          "context_end_ms", "source_media_timeline_offset_ms")
         for provider, root in ((provider, root) for provider in provider_names for root in roots):
+            recollect = _cache_recollection(prepared, provider)
+            if recollect is not None:
+                if root == roots[0]:
+                    results.extend(recollect.observe_cached_independent_witnesses(request))
+                continue
             folder = root / provider / "native-context"
             exact = folder / f"{prepared.request_sha256}.json"
             # A corrupt exact record remains fail-closed; never wash it through
@@ -2171,7 +2297,8 @@ def build_independent_context_witnesses(
                 if result.get("status") == "OBSERVED" and identity not in seen:
                     seen.add(identity)
                     rebound = {**result, "served_from_cache": True}
-                    if original.request_sha256 != prepared.request_sha256:
+                    if (original.request_sha256 != prepared.request_sha256
+                            or path != output_dir / provider / "native-context" / f"{prepared.request_sha256}.json"):
                         rebound["blind_cache_replay"] = {
                             "basis": "IDENTICAL_SOURCE_AUDIO_AND_CLOCK",
                             "original_request_sha256": original.request_sha256,

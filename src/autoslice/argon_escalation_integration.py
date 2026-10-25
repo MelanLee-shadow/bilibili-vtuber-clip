@@ -8,6 +8,8 @@ human truth, a speaker identity, or an independent mutation authority.
 
 from __future__ import annotations
 
+from .validation_memo import memoized_validation
+
 import copy
 import math
 import os
@@ -178,15 +180,17 @@ def _check_request(request: Mapping) -> None:
 
 def spec_from_envelope(envelope: Mapping) -> AudioSpec:
     b = envelope["source_binding"]
+    from .bound_media_recovery import resolve_bound_media
+    source = resolve_bound_media(Path(b["source_path"]), b["source_media_sha256"])
     return AudioSpec(
-        Path(b["source_path"]),
+        source,
         Finding(b["source_media_sha256"], tuple(b["target_source_ms"]), b["finding_id"]),
         tuple(b["context_source_ms"]),
     )
 
 
-def validate_consumer_evidence(check_request: Mapping, envelope: Mapping) -> dict:
-    """Replay native bytes on every normal CPA/recorder use, including cache hits."""
+def _consumer_evidence_spec(check_request: Mapping, envelope: Mapping) -> AudioSpec:
+    """Resolve the physical source before consulting any successful memo."""
     _check_request(check_request)
     require(
         isinstance(envelope, Mapping) and envelope.get("schema_version") == EVIDENCE_SCHEMA,
@@ -195,7 +199,19 @@ def validate_consumer_evidence(check_request: Mapping, envelope: Mapping) -> dic
     unsigned = dict(envelope)
     supplied = unsigned.pop("envelope_sha256", None)
     require(sha(canonical(unsigned)) == supplied, "ARGON_CONSUMER_ENVELOPE_DRIFT")
-    spec = spec_from_envelope(envelope)
+    return spec_from_envelope(envelope)
+
+
+def _consumer_evidence_key(check_request: Mapping, envelope: Mapping) -> str:
+    spec = _consumer_evidence_spec(check_request, envelope)
+    return sha(canonical([check_request, envelope, str(spec.source_path),
+                          spec.finding.source_media_sha256]))
+
+
+@memoized_validation(_consumer_evidence_key)
+def validate_consumer_evidence(check_request: Mapping, envelope: Mapping) -> dict:
+    """Reuse only validated bytes at the currently resolved physical source."""
+    spec = _consumer_evidence_spec(check_request, envelope)
     contract = argon_consumer_contract(spec)
     offset = check_request["source_media_timeline_offset_ms"]
     require(

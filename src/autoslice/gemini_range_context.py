@@ -22,7 +22,7 @@ import stat
 import uuid
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, NotRequired, TypedDict, cast
 
 from src.autoslice.acoustic_witness_adjudication import build_witness_request
 from src.autoslice.evidence_identity import recorded_source_stat_matches
@@ -212,6 +212,31 @@ def _resend_basis(
                 int(row["attempt_id"]) in claimed and identity not in claimed[int(row["attempt_id"])]
                 for row in prior):
             basis["reason"] = "DISTINCT_REQUEST"
+        if basis["reason"] is None:
+            inherited = (_inherited_range_cache_unavailable(
+                account=directories[0].parent, source_sha256=source_sha256,
+                start_ms=start_ms, end_ms=end_ms, provider=provider, model=model)
+                if directories else None)
+            completed = [a for a in prior if a.get('status') in {'OBSERVED', 'TEXT_UNLOCATED'}]
+            if inherited is not None and completed and all(a in inherited['attempts'] for a in completed):
+                basis.update(reason='NATIVE_CACHE_REACQUISITION_REQUIRED',
+                    unavailable_acquisition_attempt_ids=[int(a['attempt_id'])
+                        for a in inherited['attempts'] if a in prior])
+        if basis["reason"] is None:
+            unavailable = []
+            for row in prior:
+                claim = claimed.get(int(row["attempt_id"]), {}).get(identity)
+                run_dir = claim.get("run_dir") if claim else None
+                if isinstance(run_dir, str):
+                    metadata = _read_json_path(Path(run_dir) / "acquisition.json")
+                    if (metadata and metadata.get("source_media_sha256") == source_sha256
+                            and metadata.get("provider") == provider and metadata.get("model") == model
+                            and metadata.get("source_target_ms") == [start_ms, end_ms]
+                            and _unavailable_acquisition_media(metadata)):
+                        unavailable.append(int(row["attempt_id"]))
+            if unavailable:
+                basis.update(reason="BOUND_MEDIA_REACQUISITION_REQUIRED",
+                             unavailable_acquisition_attempt_ids=unavailable)
     if basis["soft_pressure_exceeded"] and basis.get("reason") is None:
         raise _PriorRequestUnknown(
             SOFT_PRESSURE_NO_NEW_REASON,
@@ -655,13 +680,58 @@ def _acquisition_root(verifier: _LocalAudioVerifier, geometry: Mapping[str, Any]
     )
 
 
+def _bound_media_digest(record: Mapping) -> str | None:
+    from .bound_media_recovery import BoundMediaUnavailable, resolve_bound_media
+    try:
+        path = resolve_bound_media(Path(record["path"]), record["sha256"])
+        return _path_digest(str(path))
+    except (BoundMediaUnavailable, KeyError, TypeError, ValueError):
+        return None
+
+
+def _unavailable_acquisition_media(metadata: Mapping) -> bool:
+    """Only an intact acquisition with absent derived bytes may be recollected."""
+    unsigned = dict(metadata)
+    if unsigned.pop("metadata_sha256", None) != _digest_json(unsigned):
+        return False
+    paths = metadata.get("paths")
+    if not isinstance(paths, Mapping):
+        return False
+    if not {"audio_source", "audio_clip", "actual_provider_audio", "rendered_audio_clip",
+            "prompt", "raw_response", "provider_stdout", "execution"}.issubset(paths):
+        return False
+    missing = False
+    for record in paths.values():
+        if not isinstance(record, Mapping) or not isinstance(record.get("path"), str):
+            return False
+        expected = record.get("sha256")
+        if (not isinstance(expected, str) or len(expected) != 64
+                or any(c not in "0123456789abcdef" for c in expected)):
+            return False
+        path = Path(record["path"])
+        if path.is_symlink():
+            return False
+        if _path_digest(str(path)) == record.get("sha256"):
+            continue
+        if path.exists() or path.suffix not in {".mp4", ".mp3", ".wav"}:
+            return False
+        if _bound_media_digest(record) != record.get("sha256"):
+            missing = True
+    return missing
+
+
 def _cache_metadata_valid(
     path: Path,
     *,
     verifier: _LocalAudioVerifier,
     geometry: Mapping[str, Any],
-    prompt: str,
+    prompt: str | None,
     prompt_sha: str,
+    unavailable: set[str] | None = None,
+    inherited_missing: set[str] | None = None,
+    resolved: dict[str, Path] | None = None,
+    expected_pair: tuple[str, str] | None = None,
+    original_contract: bool = False,
 ) -> dict[str, Any] | None:
     try:
         _ensure_regular(path)
@@ -677,10 +747,21 @@ def _cache_metadata_valid(
         or _digest_json(metadata_without_digest) != stored_metadata_digest
     ):
         return None
-    expected_pair = (metadata.get("provider"), metadata.get("model"))
+    if original_contract:
+        from .context_assisted_audio import PROMPT_CONTRACT as ASSISTED_PROMPT_CONTRACT
+        contract_matches = (
+            metadata.get('prompt_contract') == _PROMPT_CONTRACT
+            and metadata.get('candidate_blind') is True) or (
+            metadata.get('prompt_contract') == ASSISTED_PROMPT_CONTRACT
+            and metadata.get('candidate_blind') is False)
+    else:
+        contract_matches = (
+            metadata.get('prompt_contract') == geometry.get('prompt_contract', _PROMPT_CONTRACT)
+            and metadata.get('candidate_blind') is (geometry.get('context_assistance') is None))
     if (
         metadata.get("schema_version") != _ACQUISITION_SCHEMA
-        or expected_pair not in _provider_model_pairs(verifier)
+        or (metadata.get("provider"), metadata.get("model")) not in (
+            {expected_pair} if expected_pair is not None else _provider_model_pairs(verifier))
         # Content identity: the verifier hashed the current, stat-stable
         # source; the recorded inode/ctime is placement, not evidence identity.
         or metadata.get("source_media_sha256") != verifier.source_sha256
@@ -689,8 +770,7 @@ def _cache_metadata_valid(
         or metadata.get("source_target_ms")
         != [geometry["source_target_start_ms"], geometry["source_target_end_ms"]]
         or metadata.get("prompt_sha256") != prompt_sha
-        or metadata.get("prompt_contract") != geometry.get("prompt_contract", _PROMPT_CONTRACT)
-        or metadata.get("candidate_blind") is not (geometry.get("context_assistance") is None)
+        or not contract_matches
         or metadata.get("status") not in {"OBSERVED", "UNCERTAIN"}
     ):
         return None
@@ -701,11 +781,45 @@ def _cache_metadata_valid(
         "audio_source", "audio_clip", "actual_provider_audio", "rendered_audio_clip",
         "prompt", "raw_response", "provider_stdout", "execution",
     )
+    missing: set[str] = set()
     for role in required:
         record = paths.get(role)
         if not isinstance(record, Mapping) or not isinstance(record.get("path"), str):
             return None
-        actual = _path_digest(record["path"])
+        expected = record.get('sha256')
+        if not isinstance(expected, str) or _HEX_SHA256.fullmatch(expected) is None:
+            return None
+        candidate = Path(record['path'])
+        try:
+            _ensure_regular(candidate, allow_missing=True)
+        except (OSError, _RangeInputInvalid):
+            return None
+        actual = (_bound_media_digest(record) if role in {
+            "audio_source", "audio_clip", "actual_provider_audio", "rendered_audio_clip"
+        } else _path_digest(record["path"]))
+        if resolved is not None and actual == expected and not candidate.exists():
+            from .bound_media_recovery import resolve_bound_media
+            resolved[str(candidate)] = resolve_bound_media(candidate, expected)
+        if actual is None and inherited_missing is not None and not candidate.exists():
+            # Only the inheritance inventory (or its validated manifest reader)
+            # may classify absent non-media artifacts. No replacement bytes or
+            # reconstructed protocol record is created.
+            missing.add(role)
+            inherited_missing.add(role)
+            actual = expected
+        if actual is None and unavailable is not None and role in {
+            "audio_source", "audio_clip", "actual_provider_audio", "rendered_audio_clip"
+        }:
+            from .bound_media_recovery import _no_links
+            candidate = Path(record["path"])
+            expected = record.get("sha256")
+            if (not candidate.exists() and _no_links(candidate)
+                    and isinstance(expected, str) and len(expected) == 64
+                    and all(c in "0123456789abcdef" for c in expected)):
+                # Diagnostic validation only. All other checks below must pass
+                # before _find_cache may classify this as a collection miss.
+                actual = expected
+                unavailable.add(role)
         if actual is None or actual != record.get("sha256"):
             return None
     if paths["audio_clip"] != paths["actual_provider_audio"]:
@@ -727,32 +841,34 @@ def _cache_metadata_valid(
     if Path(rendered_audio).name != "input.mp4":
         return None
     prompt_path = Path(paths["prompt"]["path"])
-    try:
-        if prompt_path.read_text(encoding="utf-8") != prompt:
+    if 'prompt' not in missing:
+        try:
+            if prompt_path.read_text(encoding="utf-8") != prompt:
+                return None
+        except (OSError, UnicodeError):
             return None
-    except (OSError, UnicodeError):
-        return None
     execution = _read_json_path(Path(paths["execution"]["path"]))
-    if not isinstance(execution, Mapping):
+    if 'execution' not in missing and not isinstance(execution, Mapping):
         return None
-    if execution.get("provider") != metadata.get("provider") or execution.get("model") != metadata.get("model"):
-        return None
-    provider_audio_record = execution.get("provider_audio")
-    if not isinstance(provider_audio_record, Mapping) or dict(provider_audio_record) != dict(paths["actual_provider_audio"]):
-        return None
-    if execution.get("response_source") != metadata.get("response_source"):
-        return None
-    if execution.get("provider_route") != metadata.get("provider_route", {}):
-        return None
-    if execution.get("provider_provenance") != metadata.get("provider_provenance", {}):
-        return None
-    response_record = execution.get("response")
-    stdout_record = execution.get("stdout")
-    for record, role in ((response_record, "raw_response"), (stdout_record, "provider_stdout")):
-        if not isinstance(record, Mapping) or paths[role] != dict(record):
+    if isinstance(execution, Mapping):
+        if execution.get("provider") != metadata.get("provider") or execution.get("model") != metadata.get("model"):
             return None
+        provider_audio_record = execution.get("provider_audio")
+        if not isinstance(provider_audio_record, Mapping) or dict(provider_audio_record) != dict(paths["actual_provider_audio"]):
+            return None
+        if execution.get("response_source") != metadata.get("response_source"):
+            return None
+        if execution.get("provider_route") != metadata.get("provider_route", {}):
+            return None
+        if execution.get("provider_provenance") != metadata.get("provider_provenance", {}):
+            return None
+        response_record = execution.get("response")
+        stdout_record = execution.get("stdout")
+        for record, role in ((response_record, "raw_response"), (stdout_record, "provider_stdout")):
+            if not isinstance(record, Mapping) or paths[role] != dict(record):
+                return None
     raw = _read_json_path(Path(paths["raw_response"]["path"]))
-    if metadata.get("raw_is_json") is True and not isinstance(raw, Mapping):
+    if 'raw_response' not in missing and metadata.get("raw_is_json") is True and not isinstance(raw, Mapping):
         return None
     response_source = metadata.get("response_source")
     if response_source is not None:
@@ -760,11 +876,20 @@ def _cache_metadata_valid(
             return None
         source_path = response_source.get("path")
         source_sha = response_source.get("sha256")
-        if not isinstance(source_path, str) or _path_digest(source_path) != source_sha:
+        if not isinstance(source_path, str) or not isinstance(source_sha, str) or _HEX_SHA256.fullmatch(source_sha) is None:
             return None
-        if metadata.get("raw_is_json") is True:
+        try:
+            _ensure_regular(Path(source_path), allow_missing=True)
+        except (OSError, _RangeInputInvalid):
+            return None
+        source_missing = inherited_missing is not None and not Path(source_path).exists()
+        if source_missing:
+            inherited_missing.add('response_source')
+        elif _path_digest(source_path) != source_sha:
+            return None
+        if metadata.get("raw_is_json") is True and not source_missing:
             source_raw = _read_transport_json(Path(source_path))
-            if not isinstance(source_raw, Mapping) or source_raw != raw:
+            if not isinstance(source_raw, Mapping) or ('raw_response' not in missing and source_raw != raw):
                 return None
     elif metadata.get("raw_is_json") is True:
         # A successful parsed response must retain the original transport
@@ -835,9 +960,54 @@ def _provider_route_metadata(outcome: Any, provider: str) -> dict[str, Any]:
     return route
 
 
+class _InheritedRangeAttempt(TypedDict):
+    attempt_id: int
+    provider: str
+    model: str
+    start_ms: int
+    end_ms: int
+
+
+class _InheritedRangeCache(TypedDict):
+    attempts: list[_InheritedRangeAttempt]
+    unusable_acquisitions: NotRequired[dict[str, str]]
+
+
+def _inherited_range_cache_unavailable(
+    *, account: Path, source_sha256: str, start_ms: int, end_ms: int,
+    provider: str | None = None, model: str | None = None,
+) -> _InheritedRangeCache | None:
+    from .prepared_native_audio_recovery import _read, _unavailable_cache
+    from .native_audio_budget_receipt import _validate_existing, _validate_budget_history
+    manifest_path = account / 'parent.json'
+    if not manifest_path.exists() and not manifest_path.is_symlink():
+        return None
+    manifest = _read(manifest_path)
+    key = str(Path('gemini-range-acquisition') / source_sha256[:20] / f'{start_ms}-{end_ms}')
+    if key not in manifest.get('unusable_caches', {}):
+        return None
+    receipt = _read(account / 'native-audio-budget.json')
+    _validate_existing(receipt, source_media_sha256=source_sha256)
+    _validate_budget_history(receipt['budget'])
+    record = _unavailable_cache(root=account, relative=key, source_sha=source_sha256,
+        budget=receipt['budget'], manifest=manifest)
+    if record is None:
+        return None
+    if any(a['start_ms'] != start_ms or a['end_ms'] != end_ms for a in record['attempts']):
+        raise ValueError('PREPARED_NATIVE_UNAVAILABLE_CACHE_IDENTITY_MISSING')
+    if provider is not None and not any((a['provider'], a['model']) == (provider, model)
+                                      for a in record['attempts']):
+        return None
+    return cast(_InheritedRangeCache, record)
+
+
 def _find_cache(
-    *, verifier: _LocalAudioVerifier, geometry: Mapping[str, Any], prompt: str, prompt_sha: str
+    *, verifier: _LocalAudioVerifier, geometry: Mapping[str, Any], prompt: str, prompt_sha: str,
+    receipt_path: Path | None = None,
 ) -> dict[str, Any] | None:
+    inherited = (_inherited_range_cache_unavailable(account=receipt_path.absolute().parent,
+        source_sha256=verifier.source_sha256, start_ms=int(geometry['source_target_start_ms']),
+        end_ms=int(geometry['source_target_end_ms'])) if receipt_path is not None else None)
     root = _acquisition_root(verifier, geometry, prompt_sha)
     if root.is_symlink():
         raise _RangeInputInvalid("GEMINI_RANGE_CACHE_INVALID", f"acquisition root is a symlink: {root}")
@@ -881,6 +1051,16 @@ def _find_cache(
             prompt_sha=prompt_sha,
         )
         if metadata is None:
+            eligible = (inherited is not None and any(
+                (a['provider'], a['model']) == identity for a in inherited['attempts'])
+                and inherited.get('unusable_acquisitions', {}).get(str(path)) == 'sha256:' + _sha256(path))
+            inherited_missing: set[str] | None = set() if eligible else None
+            unavailable: set[str] = set()
+            intact_without_media = _cache_metadata_valid(path, verifier=verifier,
+                geometry=geometry, prompt=prompt, prompt_sha=prompt_sha, unavailable=unavailable,
+                inherited_missing=inherited_missing)
+            if intact_without_media is not None and (unavailable or inherited_missing):
+                continue  # keep the old acquisition; ordinary collection writes a new run
             raise _RangeInputInvalid(
                 "GEMINI_RANGE_CACHE_INVALID",
                 f"current provider/model acquisition artifacts failed validation: {path}",
@@ -1252,7 +1432,7 @@ def _materialize_current_observation(
         "prompt_path": str(paths["prompt"]["path"]),
         "prompt_sha256": _file_sha(Path(paths["prompt"]["path"])),
         "audio_clip_path": str(paths["audio_clip"]["path"]),
-        "audio_clip_sha256": _file_sha(Path(paths["audio_clip"]["path"])),
+        "audio_clip_sha256": _bound_media_digest(paths["audio_clip"]),
         "source_media_path": str(verifier.source_media),
         "source_media_sha256": verifier.source_sha256,
         "reviewed_srt_path": str(reviewed_srt),
@@ -1340,7 +1520,8 @@ def observe_gemini_range_context(
         budget = _prepare_budget(verifier, Path(budget_receipt_path))
 
         cached = _find_cache(
-            verifier=verifier, geometry=geometry, prompt=prompt, prompt_sha=prompt_sha
+            verifier=verifier, geometry=geometry, prompt=prompt, prompt_sha=prompt_sha,
+            receipt_path=Path(budget_receipt_path),
         )
         if cached is not None:
             try:

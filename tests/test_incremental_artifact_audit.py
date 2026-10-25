@@ -934,5 +934,5 @@ def test_incremental_receipt_cannot_satisfy_final_review_gate(tmp_path: Path) ->
         review_results={"subtitle": {"status": "PASS", "scope": "WHOLE_CLIP"}},
         sealed_by="Codex root",
     )
-    with pytest.raises(FinalReviewContractError, match="FINAL_REVIEW_AUDIT_SCHEMA_INVALID"):
+    with pytest.raises(FinalReviewContractError, match="FINAL_REVIEW_MEANING_POLICY_REVIEW_REQUIRED"):
         validate_final_review_release(receipt)

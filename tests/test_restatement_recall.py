@@ -282,7 +282,9 @@ def test_producer_text_pipeline_wires_restatement_findings_into_review_closure()
         is delivery_fast_path.discover_priority_findings
     )
     source = inspect.getsource(producer_text_pipeline.run_text_pipeline)
-    assert "discover_priority_findings" in source
+    assert "_build_exact_final_review_callback" in source
+    assert "discover_priority_findings" in inspect.getsource(
+        producer_text_pipeline._build_exact_final_review_callback)
     assert "merge_restatement_priority_findings" in inspect.getsource(
         delivery_fast_path.discover_priority_findings
     )

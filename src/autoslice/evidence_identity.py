@@ -100,6 +100,8 @@ def regular_file_sha256(path: Path, *, fresh: bool = False) -> str | None:
                     and cached.cached_at_ns <= read_started_ns
                     and max(info.st_mtime_ns, info.st_ctime_ns) + _RACY_WINDOW_NS
                     < min(cached.read_started_ns, cached.cached_at_ns)):
+                from .validation_memo import note_hashed_file
+                note_hashed_file(target, cached.digest)
                 return cached.digest
             digest = hashlib.sha256()
             with target.open("rb") as handle:
@@ -109,6 +111,8 @@ def regular_file_sha256(path: Path, *, fresh: bool = False) -> str | None:
                 return None  # changed while reading: not one stable piece of evidence
             value = digest.hexdigest()
             _MEMO[key] = _HashMemoEntry(value, read_started_ns, time_ns())
+            from .validation_memo import note_hashed_file
+            note_hashed_file(target, value)
             return value
     except OSError:
         return None
@@ -133,6 +137,8 @@ def file_sha256(path: Path, *, fresh: bool = False) -> str:
         raise EvidenceFileChangedError("evidence file changed during hashing")
     if value is None:
         raise OSError("evidence file is unreadable, non-regular or changed during hashing")
+    from .validation_memo import note_hashed_file
+    note_hashed_file(source, value)
     return value
 
 

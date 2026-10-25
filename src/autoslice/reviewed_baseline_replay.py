@@ -21,6 +21,10 @@ from typing import Any, Callable, Mapping, Sequence
 
 from src.autoslice.cpa_model_ladder import TOP_CPA_MODEL, cpa_call_timeout_seconds
 from src.autoslice.deployed_code_root import deployed_code_root
+from src.autoslice.clip_profile import (
+    ClipProfile, ClipProfileError, clip_profile_from_document_holder, intro_binding_problem,
+    requires_intro, CLIP_PROFILE_FIELD, spec_clip_profile_declaration,
+)
 from src.autoslice.branding_intro import pin_existing_delivery_intro, require_branding_intro
 from src.autoslice.recut_materialization import (
     _accurate_reencode_recut_command,
@@ -800,11 +804,19 @@ def replay_publish_adapter(
 
 
 def _replay_branding_intro(
-    *, runtime_authority_root: Path, burned: object
-) -> dict[str, object]:
-    """Rebind one subtitle replay to the intro already sealed in its record."""
+    *, runtime_authority_root: Path, burned: object, clip_profile: ClipProfile | None = None,
+) -> dict[str, object] | None:
+    """Rebind one subtitle replay to the intro already sealed in its record.
+
+    A sealed clip whose declared form takes no intro replays without one, and
+    its record must not carry an intro binding either.
+    """
 
     recorded_intro = burned.get("branding_intro") if isinstance(burned, Mapping) else None
+    if clip_profile is not None and not requires_intro(clip_profile):
+        if intro_binding_problem(clip_profile, recorded_intro, intro_mandatory=False):
+            raise ReviewedBaselineReplayError("REPLAY_BRANDING_FORBIDDEN_FOR_PROFILE")
+        return None
     if not isinstance(recorded_intro, Mapping):
         raise ReviewedBaselineReplayError("REPLAY_BRANDING_AUTHORITY_MISSING")
     try:
@@ -1116,6 +1128,10 @@ def synthesize_replay_spec_and_finalize_private(
     from src.autoslice.reviewed_text_only_speaker_successor import (
         build_text_only_speaker_successor_fields,
     )
+    try:
+        replay_clip_profile = clip_profile_from_document_holder(record, lane="talk")
+    except ClipProfileError as exc:
+        raise ReviewedBaselineReplayError("REPLAY_CLIP_PROFILE_INVALID") from exc
     spec = build_reviewed_baseline_replay_spec(
         date=plan.date, candidate_id=plan.candidate_id, output_root=out_root,
         story=story, normalized_piece=normalized_piece, spec_piece=spec_piece,
@@ -1125,6 +1141,9 @@ def synthesize_replay_spec_and_finalize_private(
         error_factory=ReviewedBaselineReplayError,
         recovery_publication_authority=recovery_publication_authority,
     )
+    if CLIP_PROFILE_FIELD in record:
+        spec[CLIP_PROFILE_FIELD] = spec_clip_profile_declaration(replay_clip_profile)
+        spec["watched_media"] = replay_clip_profile.watched_media
     c12_delivery_projection = build_c12_final_delivery_projection(
         candidate_id=plan.candidate_id,
         config=plan.baseline.config,
@@ -1208,7 +1227,8 @@ def synthesize_replay_spec_and_finalize_private(
     # never a substitute for reviewing the newly materialized SRT bytes.
     run = finalizer or finalize_producer_package
     branding_intro = _replay_branding_intro(
-        runtime_authority_root=runtime_authority_root, burned=burned
+        runtime_authority_root=runtime_authority_root, burned=burned,
+        clip_profile=replay_clip_profile,
     )
     if speaker_python_revalidate is not None:
         # The explicit private-preflight launcher is outside the staged tree.

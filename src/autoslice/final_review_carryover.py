@@ -463,6 +463,12 @@ def checkpoint_final_review_carryover(
     stale-guards them exactly like a fresh LLM finding.
     """
 
+    if audit.get("final_review_mode") == "per_finding":
+        # Only a validated new journal retires the legacy writer. Existing
+        # sidecars remain readable and are never deleted or re-signed.
+        from src.autoslice.final_review_contract import validate_final_review_release
+        validate_final_review_release(audit, expected_srt_sha256=audit.get("reviewed_srt_sha256"))
+        return 0
     checkpoint = carryover_checkpoint_path(path)
     rows = _deduplicated_rows(
         [
@@ -483,6 +489,10 @@ def checkpoint_final_review_carryover(
 def persist_final_review_carryover(path: Path, audit: Mapping[str, Any]) -> int:
     """Persist B's confirmed findings without losing an unconsumed prior round."""
 
+    if audit.get("final_review_mode") == "per_finding":
+        from src.autoslice.final_review_contract import validate_final_review_release
+        validate_final_review_release(audit, expected_srt_sha256=audit.get("reviewed_srt_sha256"))
+        return 0
     prior_rows = load_final_review_carryover(path)
     checkpoint_rows = _load_carryover_rows(
         carryover_checkpoint_path(path),

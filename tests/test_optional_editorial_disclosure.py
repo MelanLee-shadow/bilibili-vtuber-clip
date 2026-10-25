@@ -1,4 +1,6 @@
 """Current content judgment and optional presentation transport are separate."""
+
+from src.autoslice.discovery_channels import batch_from_rows
 import copy
 import hashlib
 import json
@@ -9,6 +11,8 @@ from src.autoslice import final_review_auditor as auditor
 from src.autoslice.final_review_contract import (
     current_noncritical_editorial_assessment, is_noncritical_disclosed,
 )
+from src.autoslice.final_review_meaning_policy import POLICY_VERSION
+from tests.test_final_review_meaning_policy import equivalent
 
 
 SRT = "1\n00:00:01,000 --> 00:00:03,000\n谢谢\n"
@@ -22,6 +26,7 @@ def _current_finding(risk="noncritical_uncertainty"):
             "suspect": "谢谢", "proposed_full_cue": None,
             "why": "尾音词形不能确定", "content_risk": risk,
             "risk_basis": "主体可靠，尾音未知不足认定关键漏义",
+            "meaning_equivalence": equivalent("尾音词形", "说话人表达感谢"),
         }]}, ensure_ascii=False), extract_json=json.loads,
     )[0]
 
@@ -35,7 +40,7 @@ def _unknown_optional_attempt():
                             "request_sha256": "997699dc" + "a" * 56}]}}
 
 
-def test_completed_current_judgment_skips_optional_retry_without_resolving_unknown(monkeypatch):
+def test_completed_current_judgment_does_not_resolve_unknown_without_provider_permission(monkeypatch):
     finding = _current_finding()
     finding["exact_release_adjudication"] = _unknown_optional_attempt()
     before = copy.deepcopy(finding)
@@ -44,12 +49,12 @@ def test_completed_current_judgment_skips_optional_retry_without_resolving_unkno
     monkeypatch.setattr(auditor.ContextAdjudicationBudget, "adjudicate", forbidden)
     pending, resolved = auditor.adjudicate_exact_release_findings(
         SRT, [finding], entity_verifier=forbidden, judge_llm_call=forbidden,
+        provider_calls_allowed=False,
     )
-    assert resolved == [] and pending == [before]
+    assert resolved == [] and len(pending) == 1
     assert finding == before
-    assert current_noncritical_editorial_assessment(pending[0], expected_srt_sha256=SHA)
-    assert is_noncritical_disclosed(pending[0])
-    assert pending[0]["exact_release_adjudication"]["semantic_retry_progress"]["status"] == "CALL_OUTCOME_UNKNOWN"
+    assert pending[0]["exact_release_adjudication"]["status"] == "SKIPPED_PROVIDER_DISABLED"
+    assert finding["exact_release_adjudication"]["semantic_retry_progress"]["status"] == "CALL_OUTCOME_UNKNOWN"
 
 
 @pytest.mark.parametrize("change", ["missing", "historical", "srt", "cue", "base", "basis",
@@ -79,8 +84,8 @@ def test_stale_whole_srt_reaches_mandatory_adjudicator(monkeypatch):
     calls = []
     def blocked(self, source, row):
         calls.append(source)
-        return {"status": "ERROR", "repaired": False}
-    monkeypatch.setattr(auditor.ContextAdjudicationBudget, "adjudicate", blocked)
+        return lambda: {"status": "ERROR", "repaired": False}
+    monkeypatch.setattr(auditor.ContextAdjudicationBudget, "prepare", blocked)
     pending, _ = auditor.adjudicate_exact_release_findings(
         SRT.replace("03,000", "04,000"), [finding], entity_verifier=None,
     )
@@ -91,17 +96,18 @@ def test_history_label_cannot_create_a_current_content_assessment():
     historical = {"cue": 1, "kind": "context", "repair_class": "editorial_rendering",
         "suspect": "谢谢", "proposed_full_cue": None, "why": "old doubt",
         "content_risk": "noncritical_uncertainty", "risk_basis": "old opinion"}
-    findings = auditor.audit_final_subtitles(SRT, llm_call=lambda _: '{"findings": []}',
-        extract_json=json.loads, extra_raw_findings=[historical])
-    assert len(findings) == 1
-    assert "current_content_risk" not in findings[0]
-    assert not current_noncritical_editorial_assessment(findings[0])
+    with pytest.raises(auditor.FinalReviewAuditError, match="FINAL_REVIEW_PRIORITY_RISK_INCOMPLETE"):
+        auditor.audit_final_subtitles(SRT, llm_call=lambda _: '{"findings": []}',
+            extract_json=json.loads, discovery_batch=batch_from_rows([historical]))
 
 
 def test_release_checks_current_risk_hash_and_keeps_boundary_mandatory():
     from src.autoslice.final_review_contract import FinalReviewContractError, validate_final_review_release
     finding = _current_finding()
-    finding["exact_release_adjudication"] = _unknown_optional_attempt()
+    finding["exact_release_adjudication"] = {
+        "status": "OBSERVED", "repaired": False, "timing_immutable": True,
+        "policy_branch": "JUDGE_KEEPS_CURRENT", "mutation_authority": {"status": "NOT_APPLIED"},
+    }
     grid = "sha256:" + "d" * 64
     boundary = {"status": "PASS", "review_scope": "final_delivery",
         "request_sha256": "sha256:" + "e" * 64, "cue_grid_sha256": grid,
@@ -114,7 +120,7 @@ def test_release_checks_current_risk_hash_and_keeps_boundary_mandatory():
             "source_request_sha256": "sha256:" + "0" * 64,
             "source_cue_grid_sha256": "sha256:" + "1" * 64,
             "source_final_start_ms": 1000, "source_final_end_ms": 3000, "reason_codes": []}}
-    audit = {"schema_version": "final-review-audit.v2", "reviewed_srt_sha256": SHA,
+    audit = {"schema_version": "final-review-audit.v2", "meaning_policy": POLICY_VERSION, "reviewed_srt_sha256": SHA,
         "status": "CLEAN", "release_gate": "PASS", "discovery": {"status": "COMPLETE"},
         "correction_mutation_authority": {"schema_version": "subtitle-correction-mutation-audit.v1", "status": "PASS"},
         "findings": [], "validated_finding_count": 0, "unresolved_findings_disclosed": [finding],

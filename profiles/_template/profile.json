@@ -32,6 +32,8 @@
   "assets": {
     "root": "assets/replace_me",
     "files": {
+      "channel_census_config": "channel_census_config.v1.json",
+      "selection_census_clues": "selection_census_clues.v1.json",
       "branding_intro_manifest": "intro/branding_intro.v1.json",
       "clip_opening_address": "clip_opening_address.json",
       "community_name_sources": "community_name_sources.json",

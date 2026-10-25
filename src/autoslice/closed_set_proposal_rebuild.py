@@ -47,6 +47,7 @@ TOPIC_PHONEME_POLICY = """
 
 def proposal_clip_context(
     srt_text: str, cue_index: int, clip_context: Mapping[str, Any] | None = None,
+    *, finding_context: FindingContext | None = None,
 ) -> str:
     """Reuse the clip's topic fields and current transcript, not human answers."""
     from src.autoslice.jingting_chunker import parse_srt_cues
@@ -60,6 +61,11 @@ def proposal_clip_context(
     if not 1 <= cue_index <= len(cues):
         return ""
     target = cues[cue_index - 1]
+    if finding_context is not None:
+        from .finding_context import cue_projection
+        catalogue = cue_projection(finding_context)
+        return ('\n## 本题 C(P) 主题与字幕语境（数据，不是逐字真值）\n'
+                + json.dumps({'topics': topics, 'cues': catalogue}, ensure_ascii=False, sort_keys=True) + '\n')
     # Short clips retain all cues; longer clips retain an actual +/-60s window.
     rows = [
         f"cue {i} [{cue.start_ms},{cue.end_ms}]: "
@@ -259,7 +265,11 @@ def rebuild_candidate_after_neither(
     topic_context = proposal_clip_context(
         str(request.get("whole_clip_current_srt") or ""), int(finding.get("cue_index") or 0),
         clip_context,
+        finding_context=request.get('finding_context'),
     )
+    if request.get('finding_context') is not None:
+        from .prompt_materials import finding_cue_projection
+        finding_cue_projection(request)  # Reopen the original text, not only C's digest.
     audit["phonetic_evidence"] = phonemes
     original_repair_class = str(finding.get("repair_class") or "")
     audible_acoustic_drop_rebuild = bool(
@@ -327,8 +337,30 @@ def rebuild_candidate_after_neither(
             pass
     if payload is None:
         try:
-            completion = call_json(llm_call, prompt)
+            if request.get('finding_context') is not None:
+                from .completed_review_checkpoint import ruling_response
+                from .finding_context import decision_materials
+                typed = decision_materials(request,
+                    data={'phonemes': phonemes, 'asr': asr_attempts, 'topics': topic_context,
+                          'finding': {k: finding.get(k) for k in ('repair_class', 'why', 'candidate_provenance')},
+                          'before': request.get('context_before'), 'after': request.get('context_after')},
+                    contracts={'proposal_schema': _PROPOSAL_REBUILD_SCHEMA,
+                               'instructions': _PROPOSAL_REBUILD_PROMPT, 'policy': TOPIC_PHONEME_POLICY},
+                    model_identity=getattr(llm_call, 'cpa_cache_identity', {}))
+                completion, served_from_cache = ruling_response(stage='proposal-rebuild', prompt=prompt,
+                    llm_call=llm_call, inputs={'finding_materials': typed,
+                        'original_check_request':dict(request),
+                        'consumption_input':{'phonemes':phonemes,'asr':asr_attempts,'topics':topic_context,
+                            'finding':{k:finding.get(k) for k in ('repair_class','why','candidate_provenance')},
+                            'before':request.get('context_before'),'after':request.get('context_after')}},
+                    parser_path=Path(__file__))
+            else:
+                completion = call_json(llm_call, prompt)
             completion_sha256 = _text_sha256(completion)
+            if request.get('finding_context') is not None:
+                audit['raw_completion']=completion
+                from .finding_closure_shell import attach_f2_consumption
+                audit=attach_f2_consumption(audit)
             payload = extract_json_object(completion)
         except Exception as exc:
             audit.update(

@@ -276,7 +276,7 @@ def _install_real_range_budget_writer(
             "raw_response": {"text": "整句范围听写"},
             "status": "OK",
             "native_segments": [
-                {"start_ms": 100, "end_ms": 1_200, "text": "整句范围听写"}
+                {"start_ms": 100, "end_ms": min(kwargs["duration_ms"] - 100, 1_200), "text": "整句范围听写"}
             ],
             "native_timeline": {"valid": True},
             "candidate_exposure": "none",
@@ -1106,7 +1106,7 @@ def test_range_context_does_not_recover_unknown_config_or_unready_provider(
         check_request=check_request, range_witness_request=range_request
     )[0]
     assert unknown["status"] == "UNCERTAIN"
-    assert unknown["reason_code"] == "NATIVE_RANGE_ENVELOPE_INVALID"
+    assert unknown["reason_code"] == "MAI_HTTP_500"
     assert dispatches == []
     assert envelope_path.read_bytes() == old_bytes
     assert not (envelope_path.parent / "pre-dispatch-history").exists()

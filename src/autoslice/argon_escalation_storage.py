@@ -86,7 +86,11 @@ def directory(path: Path) -> None:
 
 
 def read(path: Path) -> bytes:
-    return _read(path)
+    raw = _read(path)
+    from .validation_memo import note_hashed_file, capturing_validation
+    if capturing_validation():
+        note_hashed_file(path, sha(raw))
+    return raw
 
 
 def _read(path: Path, *, allow_replaced: bool = False) -> bytes:
@@ -277,6 +281,8 @@ def get_blob(root: Path, digest: str) -> bytes:
     require(valid_sha(digest), "ARTIFACT_SHA_INVALID")
     raw = _read(root / "blobs" / f"{digest}.bin", allow_replaced=True)
     require(sha(raw) == digest, "ARTIFACT_SHA_MISMATCH")
+    from .validation_memo import note_hashed_file
+    note_hashed_file(root / "blobs" / f"{digest}.bin", digest)
     return raw
 
 

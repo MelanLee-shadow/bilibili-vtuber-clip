@@ -13,7 +13,7 @@ def outcome(function, *args, **kwargs):
     try:
         return ("OK", function(*args, **kwargs))
     except (ValueError, TypeError, KeyError) as exc:
-        return (type(exc).__name__, str(exc))
+        return ("ValueError" if isinstance(exc, ValueError) else type(exc).__name__, str(exc))
 
 
 def json_bytes(value):

@@ -14,6 +14,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.run_auto_review_shadow_pipeline import _parse_srt, run_shadow_pipeline
+from src.autoslice.branding_intro import require_branding_intro
+from src.autoslice.clip_profile import default_clip_profile, requires_intro
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.auto_review import DecisionAction
 from src.autoslice.boundary_resolver import AnchorCandidate, BoundaryResolution
@@ -795,9 +797,13 @@ def main(argv: list[str] | None = None) -> int:
 
 
 
-    branding_intro = None
-    if args.branding_intro_manifest is not None:
-        print('branding intro manifest ignored: songs ship without the intro (公开规则)')
+    song_form = default_clip_profile("song")
+    if requires_intro(song_form):
+        branding_intro = require_branding_intro(ROOT, manifest_path=args.branding_intro_manifest)
+    else:
+        branding_intro = None
+        if args.branding_intro_manifest is not None:
+            print('branding intro manifest ignored: songs ship without the intro (公开规则)')
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     canonical_lrc_result, canonical_lrc_provenance_path = _prepare_canonical_lrc_input(args)

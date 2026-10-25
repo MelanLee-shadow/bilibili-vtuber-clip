@@ -923,7 +923,8 @@ def test_instance_evidence_is_consumed_without_rewriting_provider_completion(tmp
     assert observer["evidence"]["provider_evidence_field"] == "instance_evidence"
     assert cpa["evidence"]["cpa_completion"] == raw_cpa
     assert cpa["evidence"]["cpa_evidence_field"] == "instance_evidence"
-    assert "response_adapter_sha256" in callbacks.runtime_identity
+    assert "response_adapter_contract_version" in callbacks.runtime_identity
+    assert "response_adapter_sha256" not in callbacks.runtime_identity
 
 
 @pytest.mark.parametrize("invalid_evidence", [{}, None, " ", False, []])

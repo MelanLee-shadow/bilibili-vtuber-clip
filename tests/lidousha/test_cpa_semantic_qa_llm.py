@@ -542,6 +542,7 @@ def test_judge_falls_back_to_second_model_when_primary_rate_limited(tmp_path, mo
         "--api-base", "https://cpa.test/v1", "--api-key-env", "CPA_API_KEY",
     ])
     assert rc == 0
-    assert "gpt-5.5" in calls and calls.count("gpt-5.6-luna") == 2  # retries then fallback
+    from src.autoslice.infra_retry_policy import CPA_TEXT_MAX_ATTEMPTS
+    assert "gpt-5.5" in calls and calls.count("gpt-5.6-luna") == CPA_TEXT_MAX_ATTEMPTS
     saved = json.loads(response_path.read_text())
     assert saved["provider"]["name"] == "llm:gpt-5.5"  # evidence names the model that actually answered

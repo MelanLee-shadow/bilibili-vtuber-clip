@@ -20,7 +20,11 @@ DEFAULT = (ROOT / 'profiles/lidousha/profile.json').read_bytes()
 
 @pytest.fixture(autouse=True)
 def isolated_profile_selectors(monkeypatch):
-    for name in ("AUTOSLICE_PROFILE", "AUTOSLICE_PROFILE_MANIFEST", "AUTOSLICE_PROFILE_BINDING"):
+    from src.autoslice import native_audio_runtime
+    monkeypatch.setattr(native_audio_runtime, "native_audio_readiness", lambda _root: [{"ready": True}])
+    for name in ("AUTOSLICE_PROFILE", "AUTOSLICE_PROFILE_MANIFEST", "AUTOSLICE_PROFILE_BINDING",
+                 "AUTOSLICE_PROFILE_MANIFEST_SNAPSHOT"):
+        monkeypatch.setenv(name, os.environ.get(name, ''))
         monkeypatch.delenv(name, raising=False)
 
 

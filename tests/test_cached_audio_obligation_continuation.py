@@ -9,11 +9,11 @@ from src.autoslice.final_review_provider_budget import ContextAdjudicationBudget
 from tests.test_semantic_audio_recovery import SOURCE, missing_proposal_case
 
 
-def _budget(verifier, adjudicate, *, allowed=True):
+def _budget(verifier, adjudicate, *, allowed=True, clip_context=None):
     return ContextAdjudicationBudget(
         limit=12, initial_provider_adjudication_count=81,
         provider_calls_allowed=allowed, entity_verifier=verifier,
-        clip_context=None, source_media_timeline_offset_ms=30000,
+        clip_context=clip_context, source_media_timeline_offset_ms=30000,
         judge_llm_call=lambda _: json.dumps({
             "decision": "OBSERVE", "first_cue": 1, "last_cue": 3,
             "reason": "完整话语补听",
@@ -24,7 +24,9 @@ def _budget(verifier, adjudicate, *, allowed=True):
 
 @pytest.mark.parametrize("allowed", [True, False])
 def test_pending_audio_uses_live_normal_range_or_stays_offline(allowed):
-    finding, request = missing_proposal_case()
+    context = {'candidate_id': 'synthetic-cached-audio',
+               'pieces': [{'source_media_sha256': 'a' * 64}]}
+    finding, request = missing_proposal_case(clip_context=context)
     original = deepcopy(finding)
     seen = []
     cache_reads = []
@@ -57,7 +59,7 @@ def test_pending_audio_uses_live_normal_range_or_stays_offline(allowed):
             }
         return adjudicate_context_finding(srt, row, **kwargs)
 
-    budget = _budget(verifier, adjudicate, allowed=allowed)
+    budget = _budget(verifier, adjudicate, allowed=allowed, clip_context=context)
     first = budget.adjudicate(SOURCE, finding)
     repeated = budget.adjudicate(SOURCE, finding)
 

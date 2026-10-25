@@ -7,11 +7,15 @@ finding. It does not make the rest of the utterance correct or authorize release
 
 from __future__ import annotations
 
+from .validation_memo import memoized_validation
+
 from .review_errors import ContractRejection
 
 from .review_evidence_store import cold_input
 
 from collections.abc import Mapping
+from typing import cast
+from .finding_context import JsonValue
 from copy import deepcopy
 import hashlib
 import difflib
@@ -27,11 +31,8 @@ SCOPE_FIELD = "span_review"
 
 
 def digest(value: object) -> str:
-    return hashlib.sha256(
-        json.dumps(
-            value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
-        ).encode()
-    ).hexdigest()
+    from .canonical_json_hash import canonical_sha256
+    return canonical_sha256(value)
 
 
 def text_sha(text: str) -> str:
@@ -795,6 +796,8 @@ def _outside_question(binding, request, interval, reason, references, comparison
 
 def compile_resolution(request: Mapping, witness: Mapping, judge: Mapping, routes: Mapping) -> dict:
     """Pure terminal rule. All selectors and receipts are replayed by consumers."""
+    if 'ruling_projection_inputs' in judge:
+        return _compile_projected_resolution(request,witness,judge,routes)
     binding = edit_binding(request)
     if binding is None:
         raise ContractRejection("SPAN_NOT_A_REPLACEMENT")
@@ -1193,6 +1196,43 @@ def compile_resolution(request: Mapping, witness: Mapping, judge: Mapping, route
     return result
 
 
+def _compile_projected_resolution(request: Mapping, witness: Mapping, judge: Mapping, routes: Mapping) -> dict[str, JsonValue]:
+    from .finding_closure_ports import RetainedObject
+    from .finding_closure_shell import consumed_ruling_from_document,validate_ruling_projection
+    document=RetainedObject.from_value(judge.get('consumed_ruling'))
+    inputs=RetainedObject.from_value(judge['ruling_projection_inputs'])
+    original=consumed_ruling_from_document(document)
+    current=validate_ruling_projection(document,inputs)
+    data=inputs.value()['consumption_input']
+    if current.check.value()!=dict(request) or data['witness']!=dict(witness):
+        raise ContractRejection('SPAN_RULING_PROJECTION_CURRENT_INPUT_DRIFT')
+    old_data=original.inputs.value()['consumption_input']
+    bare={k:v for k,v in judge.items() if k not in {
+        'consumed_ruling','ruling_projection_inputs','span_compilation','span_compilation_required'}}
+    if bare.get('span_review_raw_completion')!=original.raw_completion:
+        raise ContractRejection('SPAN_RULING_PROJECTION_RAW_DRIFT')
+    # The original compiler still checks original request SHA, raw scope,
+    # phonemes, routes, UNKNOWN and all observation selectors without changes.
+    old_request=original.check.value();old_witness=old_data['witness']
+    authority=compile_resolution(old_request,old_witness,bare,
+        route_state(old_request,old_witness,old_request.get('independent_asr_evidence'),None))
+    binding=edit_binding(request)
+    old_binding=authority['binding']
+    if binding is None or any(binding[k]!=old_binding[k] for k in (
+            'current_cue_sha256','proposed_cue_sha256','codepoint_span','current_span','replacement',
+            'physical_cue_window_ms')):
+        raise ContractRejection('SPAN_RULING_PROJECTION_TARGET_DRIFT')
+    if digest({k:v for k,v in request.items() if k!='request_sha256'})!=request.get('request_sha256'):
+        raise ContractRejection('SPAN_REQUEST_DRIFT')
+    result={**authority,'schema_version':'subtitle-span-context-projection.v1',
+        'original_resolution':authority,'consumed_ruling':document.value(),
+        'binding':binding,'request':deepcopy(dict(request)),'witness':deepcopy(dict(witness)),
+        'judge':deepcopy(dict(judge)),'route_state':deepcopy(dict(routes))}
+    result.pop('receipt_sha256',None)
+    result['receipt_sha256']=digest(result)
+    return cast(dict[str, JsonValue],result)
+
+
 @cold_input
 def validated_resolution(
     value: Mapping,
@@ -1202,7 +1242,7 @@ def validated_resolution(
     window: tuple[int, int] | None = None,
     srt_text: str | None = None,
 ) -> dict:
-    if not isinstance(value, Mapping) or value.get("schema_version") != SCHEMA:
+    if not isinstance(value, Mapping) or value.get("schema_version") not in {SCHEMA, "subtitle-span-context-projection.v1"}:
         raise ContractRejection("SPAN_RESOLUTION_MISSING")
     rebuilt = compile_resolution(
         value["request"], value["witness"], value["judge"], value["route_state"]
@@ -1352,6 +1392,7 @@ def minimal_edit_binding(request: dict, finding: Mapping) -> dict | None:
     return edit_binding(request, {"span_start_codepoint": start, "span_end_codepoint": end})
 
 
+@memoized_validation(lambda request, witness, judge: digest([request, witness, judge]))
 def compile_judge_scope(request: Mapping, witness: Mapping, judge: Mapping) -> dict:
     """Seal an outcome for this original judge, including text-first/cache returns.
 
@@ -1391,14 +1432,44 @@ def compile_judge_scope(request: Mapping, witness: Mapping, judge: Mapping) -> d
     return {**bare, "span_compilation": outcome}
 
 
+@memoized_validation(lambda node: digest(node))
+def _validate_persisted_scope(node):
+    """One successful scope replay per content and unchanged file dependencies."""
+    outcome = node['span_compilation']
+    bare = {k: v for k, v in node.items() if k != "span_compilation"}
+    if (outcome.get("judge_sha256") != digest(bare)
+        or outcome.get("outcome_sha256") != digest({k:v for k,v in outcome.items() if k != "outcome_sha256"})):
+        raise ContractRejection("SPAN_COMPILATION_IDENTITY_DRIFT")
+    historical = outcome.get("compiler_revision") in {None, "durable-native-routes.v2"}
+    if historical and outcome.get("resolution") is None:
+        # Historical negative diagnostics retain original identities
+        # and never grant a repair. A newer native adapter can give
+        # a different refusal reason; do not mutate that old record.
+        raw = bare.get("span_review_raw_completion")
+        if (not isinstance(outcome.get("blocked_reason"), str)
+                or not outcome["blocked_reason"]
+                or not isinstance(raw, str)
+                or text_sha(raw) != outcome.get("completion_sha256")
+                or outcome.get("request_sha256") != bare.get("check_request_sha256")
+                or digest({k:v for k,v in outcome["request"].items() if k != "request_sha256"})
+                    != outcome.get("request_sha256")):
+            raise ContractRejection("SPAN_LEGACY_NEGATIVE_IDENTITY_INVALID")
+    else:
+        expected = compile_judge_scope(outcome["request"], outcome["witness"], bare)
+        if historical:
+            legacy = expected.get("span_compilation", {})
+            legacy.pop("compiler_revision", None)
+            if outcome.get("compiler_revision") is not None:
+                legacy["compiler_revision"] = outcome["compiler_revision"]
+            legacy.pop("outcome_sha256", None)
+            legacy["outcome_sha256"] = digest(legacy)
+        if expected.get("span_compilation") != outcome:
+            raise ContractRejection("SPAN_COMPILATION_REPLAY_DRIFT")
+
+
 @cold_input
 def validate_persisted_judge_scopes(value: object) -> int:
     """Replay per-judge outcomes from persisted review/typed history, no models."""
-    from src.autoslice.continuation_subchecks import session_memo
-
-    # Within one producer cold read, identical persisted judge content that
-    # already replayed exactly is not recompiled by the next ingress validator.
-    replayed = session_memo("span_judge_scope_replay")
     seen = set()
     def visit(node):
         if isinstance(node, Mapping):
@@ -1411,41 +1482,9 @@ def validate_persisted_judge_scopes(value: object) -> int:
                 if not isinstance(outcome, Mapping) or outcome.get("schema_version") != "span-judge-compilation.v1":
                     raise ContractRejection("SPAN_COMPILATION_SCHEMA_INVALID")
                 key = digest(node)
-                if key not in seen and replayed is not None and key in replayed:
-                    seen.add(key)
                 if key not in seen:
-                    bare = {k: v for k, v in node.items() if k != "span_compilation"}
-                    if (outcome.get("judge_sha256") != digest(bare)
-                        or outcome.get("outcome_sha256") != digest({k:v for k,v in outcome.items() if k != "outcome_sha256"})):
-                        raise ContractRejection("SPAN_COMPILATION_IDENTITY_DRIFT")
-                    historical = outcome.get("compiler_revision") in {None, "durable-native-routes.v2"}
-                    if historical and outcome.get("resolution") is None:
-                        # Historical negative diagnostics retain original identities
-                        # and never grant a repair. A newer native adapter can give
-                        # a different refusal reason; do not mutate that old record.
-                        raw = bare.get("span_review_raw_completion")
-                        if (not isinstance(outcome.get("blocked_reason"), str)
-                                or not outcome["blocked_reason"]
-                                or not isinstance(raw, str)
-                                or text_sha(raw) != outcome.get("completion_sha256")
-                                or outcome.get("request_sha256") != bare.get("check_request_sha256")
-                                or digest({k:v for k,v in outcome["request"].items() if k != "request_sha256"})
-                                    != outcome.get("request_sha256")):
-                            raise ContractRejection("SPAN_LEGACY_NEGATIVE_IDENTITY_INVALID")
-                    else:
-                        expected = compile_judge_scope(outcome["request"], outcome["witness"], bare)
-                        if historical:
-                            legacy = expected.get("span_compilation", {})
-                            legacy.pop("compiler_revision", None)
-                            if outcome.get("compiler_revision") is not None:
-                                legacy["compiler_revision"] = outcome["compiler_revision"]
-                            legacy.pop("outcome_sha256", None)
-                            legacy["outcome_sha256"] = digest(legacy)
-                        if expected.get("span_compilation") != outcome:
-                            raise ContractRejection("SPAN_COMPILATION_REPLAY_DRIFT")
+                    _validate_persisted_scope(node)
                     seen.add(key)
-                    if replayed is not None:
-                        replayed[key] = True
             for name, item in node.items():
                 if name != "span_compilation":
                     visit(item)

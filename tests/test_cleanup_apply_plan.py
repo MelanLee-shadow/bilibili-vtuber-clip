@@ -437,6 +437,7 @@ def test_reuses_live_embedding_without_unlocking_it(case, monkeypatch):
         assert subprocess_attempt(case["root"]).stdout.strip() == "runner lock busy"
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Native delete CLI requires Linux structured process scan")
 def test_inherited_fd_native_cli_and_parent_lock_lifetime(case):
     fd = os.open(case["root"] / "runner.lock", os.O_RDWR | os.O_CREAT, 0o600)
     try:

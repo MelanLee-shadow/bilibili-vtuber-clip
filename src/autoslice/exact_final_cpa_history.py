@@ -500,10 +500,8 @@ def ordered_successors(rows: list[dict], input_sha256: str) -> list[dict]:
 
 
 def _sha(value: object) -> str:
-    return "sha256:" + hashlib.sha256(json.dumps(
-        value, ensure_ascii=False, allow_nan=False, sort_keys=True,
-        separators=(",", ":"),
-    ).encode()).hexdigest()
+    from .canonical_json_hash import canonical_sha256
+    return "sha256:" + canonical_sha256(value)
 
 
 def retained_runs(previous: object) -> list[dict[str, object]]:
