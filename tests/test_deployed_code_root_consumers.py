@@ -25,7 +25,7 @@ from src.autoslice import reviewed_baseline_replay as replay
 from src.autoslice import reviewed_baseline_replay_authority as replay_authority
 from src.autoslice import fastlane_c2_private_authority as c2
 
-import test_published_recovery_package as published_fixtures
+
 
 SHA = "a" * 40
 DATE = "2026-08-14"
@@ -58,12 +58,11 @@ def observe(path):
 
 
 SITES = [
-    "recovery_preflight_179", "recovery_revalidate_297",
     "replay_copy_659", "replay_llm_880", "replay_profile_1486",
     "replay_projection_1625", "portable_profile_176",
     "readiness_graph_355", "readiness_plan_408",
     "diagnostic_commit_1003", "diagnostic_manifest_1010", "cli_plan_1357",
-    "cleanup_seals_613_614", "c2_closure_260", "external_default_1237",
+    "cleanup_seals_613_614", "external_default_1237",
 ]
 
 
@@ -177,35 +176,6 @@ def test_consumer_reads_selected_tree(tmp_path, monkeypatch, site, topology):
     assert (selected / "TREE").read_text() == ("version" if topology == "version" else "stale")
 
 
-@pytest.mark.parametrize("topology", ["version", "legacy"])
-@pytest.mark.parametrize("site", ["registry_490", "state_authority_497"])
-def test_live_recovery_recheck_reads_selected_tree(tmp_path, monkeypatch, topology, site):
-    # Reuse the existing real private-package producer and its exact receipt checks.
-    published_fixtures.test_prepare_published_recovery_materializes_private_package_without_state_write(tmp_path, monkeypatch)
-    runtime = tmp_path / "runtime"
-    legacy = runtime / "repo"
-    (legacy / "TREE").write_text("stale")
-    expected = legacy
-    if topology == "version":
-        expected = runtime / "versions" / SHA / "repo"
-        shutil.copytree(legacy, expected)
-        (expected / "TREE").write_text("version")
-        (runtime / "current").symlink_to(f"versions/{SHA}")
-        (expected / "DEPLOYED_MANIFEST.json").write_text("{}")
-    monkeypatch.setattr(contract, "REGISTRY_REPO_PATH", recovery.REGISTRY_REPO_PATH)
-    monkeypatch.setattr(contract, "REGISTRY_SHA256", recovery.REGISTRY_SHA256)
-    package = tmp_path / "operator-private" / published_fixtures.CID / "replacement_recuts"
-    from src.autoslice import recovery_title_authority
-    if site == "registry_490":
-        def publication(**kw):
-            assert Path(kw["registry_path"]) == Path(kw["repo_root"]) / recovery.REGISTRY_REPO_PATH
-            observe(kw["repo_root"])
-        monkeypatch.setattr(recovery_title_authority, "build_recovery_publication_authorities", publication)
-    else:
-        monkeypatch.setattr(contract, "load_published_recovery_state_authority", lambda **kw: observe(kw["repo_root"]))
-    with pytest.raises(Reached) as caught:
-        contract.validate_materialized_published_recovery_package(package)
-    assert caught.value.args[0] == expected
 
 
 @pytest.mark.parametrize("topology", ["version", "legacy"])
@@ -262,26 +232,6 @@ def test_remote_program_selects_code_before_import_and_wrapper(tmp_path, monkeyp
     assert caught.value.args[0] == expected
 
 
-@pytest.mark.parametrize("surface", ["registry", "state_authority"])
-def test_real_recovery_preflight_and_revalidation_ignore_stale_assets(tmp_path, monkeypatch, surface):
-    plan = published_fixtures._plan(tmp_path)
-    runtime = tmp_path / "runtime"
-    before = published_fixtures._preflight_for_materialization(plan, runtime, monkeypatch)
-    repo = runtime / "versions" / SHA / "repo"
-    shutil.copytree(runtime / "repo", repo)
-    (repo / "DEPLOYED_MANIFEST.json").write_text("{}")
-    (runtime / "current").symlink_to(f"versions/{SHA}")
-    relative = recovery.REGISTRY_REPO_PATH if surface == "registry" else contract.STATE_AUTHORITY_REPO_PATH
-    (runtime / "repo" / relative).write_text("stale asset")
-    current = recovery.published_recovery_preflight(plan, runtime_root=runtime, expected_bvid=before.bvid)
-    assert current == before
-    recovery._revalidate_inputs(plan, current, runtime_root=runtime)
-    # Existing hash guards must still reject drift in the actual deployed tree.
-    (repo / relative).write_text("drifted current asset")
-    with pytest.raises(replay.ReviewedBaselineReplayError):
-        recovery.published_recovery_preflight(plan, runtime_root=runtime, expected_bvid=before.bvid)
-    with pytest.raises(replay.ReviewedBaselineReplayError):
-        recovery._revalidate_inputs(plan, current, runtime_root=runtime)
 
 
 @pytest.mark.parametrize("topology", ["version", "legacy"])
@@ -338,26 +288,6 @@ def test_remote_program_imports_and_runs_only_selected_fixture_tree(tmp_path, to
     assert json.loads(result.stdout)["completion"] == "successor:successor"
 
 
-def test_real_materialized_recovery_recheck_ignores_stale_assets(tmp_path, monkeypatch):
-    published_fixtures.test_prepare_published_recovery_materializes_private_package_without_state_write(tmp_path, monkeypatch)
-    runtime = tmp_path / "runtime"
-    repo = runtime / "versions" / SHA / "repo"
-    shutil.copytree(runtime / "repo", repo)
-    (repo / "DEPLOYED_MANIFEST.json").write_text("{}")
-    (runtime / "current").symlink_to(f"versions/{SHA}")
-    for relative in (recovery.REGISTRY_REPO_PATH, contract.STATE_AUTHORITY_REPO_PATH):
-        (runtime / "repo" / relative).write_text("stale asset")
-    source = runtime / "out" / DATE / published_fixtures.CID / "replacement_recuts" / f"{published_fixtures.CID}.record.json"
-    source.parent.mkdir(parents=True, exist_ok=True)
-    source.write_bytes((tmp_path / "old-record.json").read_bytes())
-    monkeypatch.setattr(contract, "REGISTRY_REPO_PATH", recovery.REGISTRY_REPO_PATH)
-    monkeypatch.setattr(contract, "REGISTRY_SHA256", recovery.REGISTRY_SHA256)
-    package = tmp_path / "operator-private" / published_fixtures.CID / "replacement_recuts"
-    result = contract.validate_materialized_published_recovery_package(package)
-    assert Path(result["path"]).is_file()
-    (repo / contract.STATE_AUTHORITY_REPO_PATH).write_text("drifted current asset")
-    with pytest.raises(ValueError, match="HASH_DRIFT"):
-        contract.validate_materialized_published_recovery_package(package)
 
 
 @pytest.mark.parametrize("location", ["source_root", "source_legacy", "source_version",

@@ -347,7 +347,7 @@ def _prepared_mechanical_package(
 
     from scripts.build_manual_review_manifest import build_manual
     from src.autoslice import mechanical_delivery_review as mechanical
-    from tests.test_manual_review_manifest import _prepared_successor_fixture
+    from tests.manual_review_support import _prepared_successor_fixture
 
     package, prepared_path, authority, runtime = _prepared_successor_fixture(
         tmp_path, monkeypatch

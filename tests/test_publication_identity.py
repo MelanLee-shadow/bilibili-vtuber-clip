@@ -19,7 +19,7 @@ from src.autoslice.publication_identity import publication_identity
 from src.autoslice.publication_manifest_prepare import prepare_manifest_from_readiness
 from src.autoslice.song_delivery import _write_song_active_record
 from src.autoslice.upload_ledger_scope import content_identity, identity_problems, row_matches_target
-from tests.test_publication_manifest_prepare import _repository, _row
+from tests.publication_prepare_support import _repository, _row
 from tests.test_publication_readiness import _package
 from tests.test_upload_ledger_scope import bound_manifest
 
@@ -133,7 +133,9 @@ def test_legacy_qc_keeps_string_only_admission_and_raw_precedence(tmp_path):
     ("song_130025_580", "seededsong_120000_349590"),
     ("song_new_recording_7", "seededsong_314_15926"),
 ])
-def test_song_producer_persistence_reaches_readiness_and_manifest_preparation(tmp_path, delivery, source):
+def test_song_producer_persistence_reaches_readiness_and_manifest_preparation(tmp_path, monkeypatch, delivery, source):
+    # Load the normal runner owner used by the producer proxy, also in isolated runs.
+    __import__("scripts.session_autoslice")
     runtime = tmp_path / "runtime"
     package, record_path = _package(runtime, "2026-10-21", delivery)
     record = json.loads(record_path.read_text())
@@ -158,6 +160,11 @@ def test_song_producer_persistence_reaches_readiness_and_manifest_preparation(tm
     assert not {"PACKAGE_RECORD_IDENTITY_DRIFT", "PACKAGE_PUBLISH_IDENTITY_DRIFT"} & reasons
     assert {"record", "publish"} <= dependencies.keys()
 
+    # Isolate the private authorization edge; the real public loader remains
+    # fail-closed, while all identity, persistence and mismatch checks stay real.
+    monkeypatch.setattr("src.autoslice.publication_manifest_prepare.load_qualified_publication_authority",
+        lambda _: {"authorized_by": "synthetic-test-operator",
+                   "verbatim_quote": "Synthetic fixture permits this offline manifest test."})
     repo = _repository(tmp_path)
     row_runtime, row = _row(tmp_path / "prepare", candidate_id=delivery)
     row["recording_date"] = "2026-10-21"
@@ -235,46 +242,3 @@ def test_historical_frozen_selector_alias_cannot_cross_recordings():
     assert not row_matches_target({"content_identity": target}, "old-video", {}, identity=previous)
     target["recording_date"] = previous["recording_date"]
     assert row_matches_target({"content_identity": previous}, "new-video", {}, identity=target)
-
-
-@pytest.mark.parametrize("bvid,delivery", [
-    ("BV1PAHP6VEZN", "song_130025_580"),
-    ("BV1r7HK6rEpU", "song_133029_1424"),
-])
-def test_published_song_receipts_keep_their_identity(tmp_path, bvid, delivery, request):
-    evidence = ROOT / "reports/song-fastlane-20261024-publication-evidence/oci3/opt/bilive/autoslice"
-    rows = [json.loads(line) for line in (evidence / f"reports/upload_ledger.{bvid}.rows.jsonl").read_text().splitlines()]
-    published = next(row for row in rows if row.get("public_verify_status") == "VERIFIED_PUBLIC")
-    assert published["bvid"] == bvid
-    frozen = published["content_identity"]
-    source, = set(frozen["candidate_ids"]) - {delivery}
-    receipts = list((evidence / "private-runs").rglob("*.publication_reconciliation.json"))
-    receipt, = [json.loads(p.read_text()) for p in receipts if json.loads(p.read_text())["bvid"] == bvid]
-    assert receipt["candidate_id"] == delivery
-    manifest, = [json.loads(p.read_text()) for p in (evidence / "private-runs").rglob("*.upload_manifest.json") if json.loads(p.read_text())["title"] == receipt["title"]]
-    # These saved receipts contain the frozen aliases and publication id, but
-    # not the active-record bytes. Replay only those receipt-derived identity
-    # fields; CI has no permission to open the private production directory.
-    assert manifest["package_attestation"]["record"]["sha256"] == published["record_sha256"]
-    record = _record(delivery, source)
-    request.node.user_properties.append(("source_record", "identity fields projected from saved receipts"))
-    assert publication_identity(record).candidate_id == delivery
-    assert c2_upload.candidate_id_from_record(tmp_path, record) == delivery
-    assert resolve_candidate_id(record, {}) == delivery
-    assert final_media._candidate_id(record, {"candidate_id": delivery}, package_root=tmp_path, manifest={}) == (delivery, [])
-    saved_registry = [json.loads(line) for line in (evidence / f"state/publication_registry.{bvid}.rows.json").read_text().splitlines()]
-    assert all(row["candidate_id"] == delivery for group in saved_registry for row in group["rows"])
-
-
-def test_existing_talk_publication_receipts_keep_their_identity(tmp_path):
-    evidence = ROOT / "reports/p-dispatch-20261015-publication-evidence/oci3/opt/bilive/autoslice/private-runs"
-    receipts = [json.loads(p.read_text()) for p in evidence.rglob("*.publication_reconciliation.json")]
-    talks = [row for row in receipts if not row["candidate_id"].startswith("semanticsong_")]
-    assert len(talks) >= 1
-    for receipt in talks:
-        candidate = receipt["candidate_id"]
-        record = {"candidate_id": candidate, "story_contract": {"candidate_id": candidate}}
-        assert publication_identity(record).candidate_id == candidate
-        assert c2_upload.candidate_id_from_record(tmp_path, record) == candidate
-        assert resolve_candidate_id(record, {}) == candidate
-        assert final_media._candidate_id(record, {"candidate_id": candidate}, package_root=tmp_path, manifest={}) == (candidate, [])

@@ -19,7 +19,7 @@ from ops.recording.cd2_status import CD2Error, CD2Status, GrpcWeb, UPLOAD, decod
 from src.autoslice.source_integrity import audit_finalized_recording_inventory
 
 
-RELATIVE = "2026-10-24/22966160_20261024-20-00-00.flv"
+RELATIVE = f"2026-10-24/{identity.ROOM}_20261024-20-00-00.flv"
 
 
 class FakeCD2:
@@ -43,7 +43,7 @@ class FakeCD2:
 
     def refresh(self, path):
         self.refresh_calls.append(path)
-        relative = path.split("/22966160/", 1)[1]
+        relative = path.split(f"/{identity.ROOM}/", 1)[1]
         local_view = self.archive_root / identity.ROOM / relative
         return {"id": "provider-id:" + relative, "fullPathName": path,
                 "size": local_view.stat().st_size + (1 if self.mode == "size_mismatch" else 0),
@@ -63,12 +63,12 @@ def recording(tmp_path, monkeypatch):
              "finalized": {RELATIVE: {"source_size": source.stat().st_size,
                                         "source_mtime_ns": source.stat().st_mtime_ns,
                                         "target_sha256": identity.sha256_file(source.with_suffix(".mp4")),
-                                        "target": "/adapter/Videos/22966160/" + RELATIVE[:-4] + ".mp4",
+                                        "target": f"/adapter/Videos/{identity.ROOM}/" + RELATIVE[:-4] + ".mp4",
                                         "finalized_at": "2026-10-24T21:00:00Z"}},
              "source_dispositions": {}}
     state_path = tmp_path / "state" / "adapter-state.json"
     identity.atomic_json(state_path, state)
-    cloud = tmp_path / "mount" / "115open" / "李豆沙录播-oci3"
+    cloud = tmp_path / "mount" / identity.ARCHIVE_ROOT.relative_to(identity.CLOUD_MOUNT)
     cloud.mkdir(parents=True)
     client = FakeCD2(cloud)
     monkeypatch.setattr(spool_module, "require_cloud_mount", lambda *args: None)

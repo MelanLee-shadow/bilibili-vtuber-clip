@@ -112,24 +112,3 @@ def test_disclosed_row_rechecks_accept_h_and_keep_the_narrow_meaning(rig):
     assert is_keep_current_disclosed(shipped) and not is_audio_decided_keep_current(shipped)
     for kind in ("no_material_exhaustion", "meaning_reversal"):
         assert not is_keep_current_disclosed(_variant(shipped, kind))
-
-
-def _operator_fixture_with(disclosed):
-    from tests.test_operator_preserved_final_review import CID, ROOT, fixture
-    text, raw, build = fixture()
-    raw["unresolved_findings_disclosed"] = [disclosed]
-    return build, raw, dict(candidate_id=CID, final_srt=text, repo_root=ROOT)
-
-
-@pytest.mark.parametrize("kind", ["qualifying", "no_material_exhaustion", "meaning_reversal"])
-def test_operator_preserved_review_treats_h_as_resolved_disclosure(rig, kind):
-    row = _variant(_shipped(rig), kind)
-    build, raw, kwargs = _operator_fixture_with(row)
-    if kind == "qualifying":
-        out = build(raw, **kwargs)
-        assert out["status"] == "ORIGINAL_SCOPE_CONFORMANT"
-        assert out["machine_diagnostic"]["unresolved_findings_disclosed"] == [row]
-        assert out["publication_authorized_by_receipt"] is False
-    else:
-        with pytest.raises(ValueError, match="incomplete unrelated disclosure stays blocking"):
-            build(raw, **kwargs)

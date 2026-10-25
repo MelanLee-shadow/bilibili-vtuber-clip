@@ -24,7 +24,7 @@ from src.autoslice.argon_escalation_integration import (
 )
 from src.autoslice.argon_escalation_witness import ArgonEscalationWitness, ProviderTransportError
 from test_argon_consumer_integration import scene, offline
-from test_argon_admission_review import admission, FROZEN
+from tests.argon_admission_support import admission, SYNTHETIC_METADATA
 from test_argon_escalation_witness import case, FakeProvider
 
 
@@ -68,7 +68,7 @@ def complete_public(scene, monkeypatch, route):
         assert not (Path(kwargs['cwd']) / 'agy-input').exists()
         scene.relocation_catalog.append(argv)
         raw = (b'gemini-4-argon\tGemini 4 Argon\n' if route in {'native', 'api_quota'}
-               else FROZEN['native']['stdout'].encode())
+               else SYNTHETIC_METADATA['native']['stdout'].encode())
         return subprocess.CompletedProcess(argv, 0, raw, b'')
 
     def audio(argv, **kwargs):

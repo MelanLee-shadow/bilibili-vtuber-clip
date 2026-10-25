@@ -26,7 +26,7 @@ from src.autoslice.argon_escalation_defaults import (
     PRODUCTION_ARGON_ESCALATION, apply_production_argon_default,
 )
 from src.autoslice.argon_escalation_witness import ArgonEscalationWitness, HttpResponse
-from test_argon_admission_review import admission  # noqa: F401  (fixture)
+from tests.argon_admission_support import admission  # noqa: F401  (fixture)
 from test_argon_consumer_integration import offline  # noqa: F401  (autouse fixture)
 from test_argon_escalation_witness import case  # noqa: F401  (fixture)
 

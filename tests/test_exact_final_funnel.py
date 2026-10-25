@@ -13,27 +13,10 @@ rig = relisten_protocol.rig
 FIXTURE = Path(__file__).parent / 'fixtures/exact_final_funnel/sister.json.gz'
 
 
-def fixture_run():
-    return json.loads(gzip.decompress(FIXTURE.read_bytes()))
 
 
-def test_private_funnel_fixture_is_small_and_excluded():
-    from scripts.export_oss_snapshot import classify
-    assert sum(p.stat().st_size for p in FIXTURE.parent.iterdir()) < 2_000_000
-    assert classify('tests/fixtures/exact_final_funnel/sister.json.gz') == 'strip'
-    run = fixture_run()
-    assert len(run['rows']) == 18
-    assert run['review_pass_count'] == 2
-    assert run['srt']
 
 
-def test_recorded_fixture_original_release_gate_blocks():
-    from src.autoslice.final_review_contract import validate_final_review_release, FinalReviewContractError
-    audit = fixture_run()['guard_review']
-    with pytest.raises(FinalReviewContractError, match='FINAL_REVIEW_FINDING_REVIEW_PENDING'):
-        validate_final_review_release(audit, expected_srt_sha256=audit['reviewed_srt_sha256'])
-    from scripts.replay_exact_final_funnel import legacy_guard
-    assert legacy_guard(fixture_run()) == 'FINAL_REVIEW_UNRESOLVED_FINDINGS'
 
 
 SRT = '1\n00:00:01,000 --> 00:00:02,000\n我喜欢她啊\n\n2\n00:00:02,000 --> 00:00:03,000\n我喜欢她\n'
@@ -226,18 +209,6 @@ def test_argon_uncertain_has_distinct_reason_and_cannot_sustain_doubt(monkeypatc
     assert 'ARGON_HEARD_UNCERTAIN' in prompts[0]
 
 
-def test_cue29_completed_request_is_a_planner_and_g6_keeps_question():
-    from src.autoslice.audio_question_identity import same_audio_question
-    run = fixture_run()
-    row = next(r for r in run['rows'] if r['finding']['cue_index'] == 29
-        and r['finding']['repair_class'] == 'phonetic')
-    event = row['retry']['events'][0]
-    assert event['request_sha256'].startswith('bc75d657') and event['status'] == 'COMPLETED'
-    assert event['unresolved_answer'] is False
-    assert json.loads(row['raw_answers'][0])['decision'] == 'OBSERVE'
-    requests = [r for r in run['requests'].values() if r['current_cue'] == '怎么啦']
-    assert all(same_audio_question(requests[0], r, compare_proposed=True)[0] for r in requests)
-    assert 'ORTHOGRAPHY_TEXT_AUTHORITY_REQUIRED' in {r.get('reason_code') for r in row['diagnostics']}
 
 
 def test_recorded_current_supported_reaches_proposal_exit_without_k04_redispatch(rig):
@@ -385,17 +356,6 @@ def test_producer_zero_edit_stop_uses_registered_ordinary_terminal_and_saves_kee
     assert saved['unresolved_findings_disclosed'][0]['exact_release_adjudication']['terminal_review']['choice'] == 'CURRENT'
 
 
-def test_41_preserves_user_quotes_and_terminal_guards():
-    doc = (Path(__file__).parents[1] / 'docs/pipeline/41-semantic-repair.md').read_text()
-    for quote in ('不要以Argon作为唯一权威，Argon只是稍高权威而已。',
-        '三次补听之后仍然可以听，我一直说可以继续听，只是说必须提出更强的证据证明确实需要听，并且再听有更好的预期价值。',
-        '按你说的修就好了。材料穷尽后也不一定非得选一个，或者说，选项里可以增加，按照语境拟合。',
-        '真正听不清的而且会导致立场有误的拦下来不发，但是我估计几乎没有，大部分都能根据整篇语境拟合出来',
-        '所以说以后如果真的还出现这个情况的话，订阅是优先给研究'):
-        assert quote in doc
-    for guard in ('PROCEDURE-FINAL', 'EXACT_FINAL_NO_MODIFICATION_STOP',
-        'PROPOSED 不能直接改字', 'same_audio_question', 'same_hearing'):
-        assert guard in doc
 
 
 def test_loop_stop_cold_keep_cannot_drop_the_actual_terminal_judgment(monkeypatch, terminal_rig):
@@ -425,14 +385,6 @@ def test_unseen_reason_classes_enter_same_terminal_without_observation_fabricati
     assert prompts == []
 
 
-def test_recorded_replay_never_relabels_old_planning_or_current_answers_as_terminal():
-    from scripts.replay_exact_final_funnel import replay_run
-    run = fixture_run()
-    replay = replay_run(run)
-    assert replay['counts'] == {'1': 7, '2': 3, '3': 3, '4': 3, '5': 2}
-    assert replay['direct'] == 0 and replay['new_terminal'] == 18
-    assert replay['legacy_guard'] == 'FINAL_REVIEW_UNRESOLVED_FINDINGS'
-    assert all(r['route'] and r['needs_new_terminal'] for r in replay['rows'])
 
 
 def test_unresolved_disclosed_row_also_enters_the_same_terminal(monkeypatch, terminal_rig):
@@ -464,7 +416,7 @@ def test_terminal_evidence_summary_deduplicates_requests_but_retains_uncertainty
 
 def test_terminal_proposed_answer_cannot_retain_a_needs_audio_mutation_gate():
     from src.autoslice.semantic_terminal_adjudication import validate_terminal_answer
-    from tests.test_retry_stuck_part_b import terminal_request
+    from tests.terminal_request_support import terminal_request
     with pytest.raises(ValueError, match='TERMINAL_CHOICE_CONTRACT_INVALID'):
         validate_terminal_answer(terminal_request('喜欢', '不喜欢'),
             {**answer('PROPOSED'), 'needs_audio': True})

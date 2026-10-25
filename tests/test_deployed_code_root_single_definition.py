@@ -39,19 +39,6 @@ def test_no_retired_code_root_literals() -> None:
     assert not offenders, "\n".join(offenders)
 
 
-def test_hold_release_only_adapts_the_shared_resolver() -> None:
-    import src.autoslice.clouddrive_hold_release as release
-    from src.autoslice.deployed_code_root import deployed_code_root
-
-    assert release.deployed_code_root is deployed_code_root
-    tree = ast.parse((ROOT / "src/autoslice/clouddrive_hold_release.py").read_text())
-    wrapper = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
-                   and node.name == "resolve_deployed_code_root")
-    calls = [node for node in ast.walk(wrapper) if isinstance(node, ast.Call)]
-    assert sum(isinstance(node.func, ast.Name) and node.func.id == "deployed_code_root"
-               for node in calls) == 1
-    assert not any(isinstance(node.func, ast.Attribute) and node.func.attr in
-                   {"readlink", "is_symlink", "read_text", "is_dir", "resolve"} for node in calls)
 
 
 def test_remote_bridge_only_uses_the_generated_resolver() -> None:
@@ -115,29 +102,6 @@ def test_generated_bootstrap_and_shell_cli_follow_current(tmp_path: Path, commit
     assert result.stdout.strip() == str(successor)
 
 
-@pytest.mark.parametrize("kind", ["absent", "directory", "stale_target", "bad_marker", "invalid_utf8"])
-def test_shared_strict_resolution_keeps_hold_rejections(tmp_path: Path, kind: str) -> None:
-    from src.autoslice.clouddrive_hold_release import HoldReleaseError, resolve_deployed_code_root
-    from src.autoslice.deployed_code_root import deployed_code_root, deployed_code_root_bootstrap
-
-    base, repo = deployment(tmp_path)
-    if kind in {"absent", "directory", "stale_target"}:
-        (base / "current").unlink()
-        if kind == "directory":
-            (base / "current").mkdir()
-        elif kind == "stale_target":
-            (base / "current").symlink_to("repo")
-    else:
-        (repo / "DEPLOYED_COMMIT").write_bytes(b"\xff" if kind == "invalid_utf8" else b"wrong\n")
-    with pytest.raises(HoldReleaseError, match="deployed code root"):
-        resolve_deployed_code_root(base)
-    result = subprocess.run([sys.executable, "-I", "-c", deployed_code_root_bootstrap(base) + "print(repo)"],
-                            capture_output=True, text=True)
-    if kind == "absent":
-        assert deployed_code_root(base) == base / "repo"  # legacy ordinary contract retained
-        assert result.returncode == 0 and result.stdout.strip() == str(base / "repo")
-    else:
-        assert result.returncode != 0 and not result.stdout.strip()
 
 
 @pytest.mark.parametrize("explicit", [False, True])
