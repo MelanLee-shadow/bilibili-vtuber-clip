@@ -2051,3 +2051,40 @@ def proposal_materials_seed(tmp_path,monkeypatch):
 register('missing_proposal_bootstrap.ProposalAudioPromptPayload.missing_from','<FALSE>',proposal_materials_seed,
          change(['prompt'],'{}'),complete_proposal_materials,lambda value:value is True,
          'one material is omitted from the ordinary producer prompt')
+
+
+def consumer_evidence_spec(row):
+    from src.autoslice.argon_escalation_integration import _consumer_evidence_spec
+    return _consumer_evidence_spec(row['check'], row['envelope'])
+
+
+for code, field, value in (
+    ('ARGON_CONSUMER_SCHEMA_INVALID', 'schema_version', 'other'),
+    ('ARGON_CONSUMER_ENVELOPE_DRIFT', 'envelope_sha256', '0' * 64),
+):
+    register('argon_escalation_integration._consumer_evidence_spec', code,
+             argon_seed, change(['envelope', field], value), consumer_evidence_spec)
+
+
+def typed_word_materials_seed(tmp_path, monkeypatch):
+    from tests.test_wpb_live_wiring import bound
+    from tests.lidousha.test_acoustic_witness_adjudication import _semantic_cache_witness
+    from src.autoslice.acoustic_witness_adjudication import word_choice_contract
+    check, witness = bound(), _semantic_cache_witness()
+    contract = word_choice_contract(llm_call=lambda _: '{}', check_request=check, witness=witness)
+    return dict(check_request=check, witness=witness, context_before='', context_after='',
+        structured_chat_context='', model_identity={'transport': 'fixture', 'models': ['bounded'], 'effort': 'high'},
+        decision_contract=contract.decision_contract, allowed_choices=contract.choices,
+        candidates=contract.candidates, require_complete_support=contract.require_complete_support,
+        dependencies=contract.dependencies)
+
+
+def typed_word_materials_consume(row):
+    from src.autoslice.acoustic_witness_adjudication import _semantic_fingerprint_payload
+    return _semantic_fingerprint_payload(**row)
+
+
+register('acoustic_witness_adjudication._semantic_fingerprint_payload',
+         'WORD_CHOICE_MATERIAL_DEPENDENCIES_REQUIRED', typed_word_materials_seed,
+         change(['dependencies'], None), typed_word_materials_consume,
+         description='remove the authority views consumed by the ordinary typed word prompt')

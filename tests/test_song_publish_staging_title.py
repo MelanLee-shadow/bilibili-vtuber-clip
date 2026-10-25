@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from scripts import run_auto_review_shadow_pipeline as shadow_pipeline
+from scripts import session_autoslice as runner
 from src.autoslice import song_lane
 from src.autoslice.song_name_authority import (
     AUDIO_ALIGNMENT_MODEL_SUFFIX,

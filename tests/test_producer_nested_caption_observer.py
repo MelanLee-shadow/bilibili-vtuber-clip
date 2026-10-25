@@ -354,8 +354,8 @@ def test_unknown_or_rejected_visual_dispatch_is_not_retried_as_infrastructure(tm
 
 @pytest.mark.parametrize('reason', ['CAPTION_OBSERVER_PROVIDER_UNAVAILABLE: HTTP 507', 'CAPTION_OBSERVER_PROVIDER_RETRY_BACKOFF'])
 def test_visual_provider_wait_stays_in_ordinary_infrastructure_lane(reason):
-    from src.autoslice.talk_lane import classify_talk_failure
-    result = classify_talk_failure('CaptionDedupError: ' + reason)
+    from scripts import session_autoslice as runner
+    result = runner.classify_talk_failure('CaptionDedupError: ' + reason)
     assert result['failure_kind'] == 'provider_transient'
     assert result['failure_stage'] == 'caption_observer'
     assert result['failure_recoverable'] is True

@@ -64,3 +64,35 @@ def review():
                 'source_final_start_ms': 0, 'source_final_end_ms': 37500, 'reason_codes': []},
         },
     }
+
+
+def assert_text_recovery_keeps_release_blocked(tmp_path):
+    """Exercise the normal gate with synthetic pending-boundary authority."""
+    import pytest
+    from src.autoslice import producer_package_finalization as finalization
+    from src.autoslice.final_review_contract import FinalReviewContractError, validate_final_review_release
+    from src.autoslice.final_review_meaning_policy import POLICY_VERSION
+
+    subtitle = tmp_path / 'current.srt'
+    subtitle.write_text('1\n00:00:00,000 --> 00:00:01,000\n保留正文\n')
+    current_sha = 'sha256:' + hashlib.sha256(subtitle.read_bytes()).hexdigest()
+    audit = {
+        'schema_version': 'final-review-audit.v2', 'meaning_policy': POLICY_VERSION,
+        'status': 'FLAGGED', 'release_gate': 'BLOCK',
+        'reason_codes': ['FINAL_REVIEW_BOUNDARY_SEMANTIC_BLOCKED'],
+        'reviewed_srt_sha256': current_sha, 'discovery': {'status': 'COMPLETE'},
+        'correction_mutation_authority': {'schema_version': 'subtitle-correction-mutation-audit.v1', 'status': 'PASS'},
+        'findings': [], 'validated_finding_count': 0,
+        'boundary_semantic_review': {'status': 'BLOCK', 'reason_codes': ['CURRENT_TEXT_REQUIRES_SOURCE_REVIEW']},
+    }
+    kwargs = dict(cid='current', out_root=tmp_path, final_start=4000, final_end=5000,
+        recut=finalization.CurrentTextReviewArtifacts(subtitle),
+        chat_authority_audit={}, chat_authority_path=tmp_path / 'authority.json',
+        run_exact_final_review=lambda *_: audit, text_recovery_only=True)
+    result = finalization._run_exact_final_review_gate(**kwargs)
+    assert result['pre_boundary_text_recovery']['status'] == 'TEXT_COMPLETE_BOUNDARY_PENDING'
+    with pytest.raises(FinalReviewContractError, match='BOUNDARY_SEMANTIC_BLOCKED'):
+        validate_final_review_release(result, expected_srt_sha256=current_sha)
+    audit['reviewed_srt_sha256'] = 'sha256:' + '0' * 64
+    with pytest.raises(SystemExit, match='SRT_BINDING_MISMATCH'):
+        finalization._run_exact_final_review_gate(**kwargs)
