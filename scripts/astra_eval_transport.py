@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Task-private CPA Responses transport with measured model/usage metadata.
 
-Runs on runtime host; credentials stay in the existing runtime loader. It never calls
+Runs on OCI3; credentials stay in the existing runtime loader. It never calls
 an upstream provider directly, never falls back to GPT-5, and never prints keys
 or private reasoning content. Used for controlled model/effort experiments.
 """
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import runpy
 from pathlib import Path
 import sys
 import time
@@ -45,9 +46,17 @@ def main() -> None:
         or not 0 < len(req["prompt"]) <= 150000
     ):
         raise ValueError("INVALID_ASTRA_EVALUATION_REQUEST")
-    sys.path.insert(0, "/opt/bilive/autoslice/repo")
+    resolver = Path(__file__).resolve().parents[1] / "src/autoslice/deployed_code_root.py"
+    if not resolver.is_file():
+        # Standalone experiment copy: load only the stdlib resolver from the
+        # published pointer, then validate it before importing runtime code.
+        resolver = Path("/opt/bilive/autoslice/current/repo/src/autoslice/deployed_code_root.py")
+    contract = runpy.run_path(str(resolver))
+    repo = contract["deployed_code_root"](Path("/opt/bilive/autoslice"))
+    sys.path.insert(0, str(repo))
     from src.autoslice.llm_client import runtime_cpa_command_environment
     from src.autoslice.provider_slots import runtime_provider_slot
+    from src.autoslice.structured_output import openai_format, output_contract
 
     env = runtime_cpa_command_environment(Path("/opt/bilive/autoslice"))
     key = env["CPA_API_KEY"]
@@ -57,6 +66,8 @@ def main() -> None:
             "input": req["prompt"],
             "reasoning": {"effort": req["effort"]},
             "max_output_tokens": 16000,
+            **({'text': {'format': openai_format(output_contract())}}
+               if 'json' in req['prompt'].lower() else {}),
         },
         ensure_ascii=False,
     ).encode()

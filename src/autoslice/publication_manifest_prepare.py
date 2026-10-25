@@ -14,6 +14,7 @@ from src.autoslice.publication_authority import (
     load_qualified_publication_authority,
 )
 from src.autoslice.publication_readiness import READY_TO_PREPARE
+from src.autoslice.publication_identity import publication_identity
 
 RESULT_SCHEMA_VERSION = "pipeline-publication-manifest-prepare-result.v1"
 _REQUIRED_DEPENDENCIES = frozenset(
@@ -109,10 +110,17 @@ def prepare_manifest_from_readiness(
             reason_codes=["MANIFEST_PREPARATION_INPUT_INVALID"],
             detail=str(exc)[:512],
         )
-    if (
-        str(publish.get("candidate_id") or candidate_id) != candidate_id
-        or str(record.get("candidate_id") or candidate_id) != candidate_id
-    ):
+    try:
+        identity = publication_identity(record)
+        identity_matches = (
+            identity.matches_publish_candidate(publish.get("candidate_id") or None, candidate_id)
+            and str(identity.record_candidate_id or candidate_id) == candidate_id
+            and (not identity.selector_aliases
+                 or record.get("recording_date") in (None, row.get("recording_date")))
+        )
+    except ValueError:
+        identity_matches = False
+    if not identity_matches:
         return _result(
             "BLOCKED_INPUT",
             reason_codes=["MANIFEST_PREPARATION_IDENTITY_MISMATCH"],

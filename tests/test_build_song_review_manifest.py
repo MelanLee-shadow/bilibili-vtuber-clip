@@ -8,6 +8,12 @@ from pathlib import Path
 import pytest
 
 import scripts.build_song_review_manifest as builder
+from src.autoslice.producer_delivery_transaction import (
+    DeliveryArtifact,
+    prepare_delivery,
+)
+from src.autoslice.prepared_review_recovery import historical_prepared_review
+from src.autoslice.repository_asset_authority import _canonical_sha256
 from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
@@ -29,7 +35,13 @@ def _write_json(path: Path, payload: dict) -> None:
     )
 
 
-def _fixture(tmp_path: Path) -> dict:
+def _fixture(
+    tmp_path: Path,
+    *,
+    burn_ass: bool = False,
+    network: bool = False,
+    source_candidate_id: str = SOURCE_CANDIDATE_ID,
+) -> dict:
     delivery_root = tmp_path / "channel" / "2026-07-25"
     source_root = tmp_path / "source"
     delivery_root.mkdir(parents=True)
@@ -96,7 +108,7 @@ def _fixture(tmp_path: Path) -> dict:
     }
     record = {
         "delivery_candidate_id": CANDIDATE_ID,
-        "source_candidate_id": SOURCE_CANDIDATE_ID,
+        "source_candidate_id": source_candidate_id,
         "artifact_hashes": hashes,
         "publish_staging": {
             "status": "STAGED",
@@ -107,12 +119,29 @@ def _fixture(tmp_path: Path) -> dict:
     }
     publish = {
         "schema_version": "shadow-publish-draft.v1",
-        "candidate_id": SOURCE_CANDIDATE_ID,
+        "candidate_id": source_candidate_id,
         "title": TITLE,
         "upload_enabled": False,
         "artifact_hashes": hashes,
         "cover_generation": generation,
     }
+    if network:
+        from src.autoslice.publish_staging_paths import current_editorial_binding
+        generation["final_cover"] = str(source_paths["cover"])
+        for role in ("request", "response"):
+            path = source_root / "evidence" / f"{source_candidate_id}.{role}.json"
+            _write_json(path, {"original": role})
+            generation[role + "_path"] = str(path)
+            generation[role + "_sha256"] = _sha(path)
+        record["candidate_id"] = source_candidate_id
+        record["subtitle_path"] = str(source_paths["subtitle"])
+        staging = record["publish_staging"]
+        staging.update(candidate_id=source_candidate_id, cover_path=str(source_paths["cover"]),
+            cover_status="AI_COVER_READY", publish_json_path=str(source_paths["publish"]))
+        staging["current_binding"] = current_editorial_binding(record, staging, candidate_id=source_candidate_id)
+        generation["input_binding"] = {k:v for k,v in staging["current_binding"].items() if k != "cover_sha256"}
+        publish.update({k:staging.get(k) for k in ("cover_status", "current_binding", "title_selection", "title_generation_attempts")})
+        publish["subtitle_sha256"] = _sha(source_paths["subtitle"])
     _write_json(artifact_paths["active_record"], record)
     _write_json(source_paths["active_record"], record)
     _write_json(artifact_paths["publish"], publish)
@@ -164,13 +193,20 @@ def _fixture(tmp_path: Path) -> dict:
             },
         },
     }
+    if burn_ass:
+        from src.autoslice.subtitle_rendering import _write_sapphire_ass_from_srt
+        ass = source_root / "actual-burn.ass"
+        _write_sapphire_ass_from_srt(source_paths["subtitle"], ass)
+        output = recut_manifest["verified_output_binding"]
+        output["burn_transform"] = {"subtitle_style": "lidousha-final-sapphire72"}
+        output["artifacts"].update({"ass_path": str(ass), "ass_sha256": _sha(ass)})
     _write_json(artifact_paths["recut_manifest"], recut_manifest)
     _write_json(source_paths["recut_manifest"], recut_manifest)
     completion["recut_manifest_sha256"] = _sha(
         source_paths["recut_manifest"]
     )
 
-    summary = {"records": [{"candidate_id": SOURCE_CANDIDATE_ID}]}
+    summary = {"records": [{"candidate_id": source_candidate_id}]}
     summary_path = source_root / "summary.json"
     _write_json(summary_path, summary)
 
@@ -226,7 +262,7 @@ def _fixture(tmp_path: Path) -> dict:
         "delivered_sidecar_hashes": delivered_hashes,
         "selector_summary_path": str(summary_path),
         "selector_summary_sha256": _sha(summary_path),
-        "selector_record_candidate_id": SOURCE_CANDIDATE_ID,
+        "selector_record_candidate_id": source_candidate_id,
         "song_completion_evidence": completion,
     }
     state_path = tmp_path / "state" / "2026-07-25.json"
@@ -271,6 +307,120 @@ def _build(
     )
 
 
+def _prepared_fixture(
+    fx: dict, tmp_path: Path, *, selector_candidate_id: str = SOURCE_CANDIDATE_ID
+) -> dict[str, object]:
+    """Prepare the fixture's existing Song bytes without materializing targets."""
+
+    runtime = tmp_path
+    repo = runtime / "repo"
+    repo.mkdir()
+    deployed_commit = "2" * 40
+    authority_body = {
+        "schema_version": "deployed-authority-manifest.v1",
+        "deployed_commit": deployed_commit,
+        "entries": {"docs/pipeline/50-song-lane.md": {
+            "bytes": 1,
+            "sha256": "sha256:" + "a" * 64,
+        }},
+    }
+    authority = dict(authority_body)
+    authority["manifest_sha256"] = _canonical_sha256(authority_body)
+    (repo / "DEPLOYED_COMMIT").write_text(deployed_commit + "\n", encoding="utf-8")
+    (repo / "DEPLOYED_AUTHORITY_MANIFEST.json").write_text(
+        json.dumps(authority), encoding="utf-8"
+    )
+
+    selector_root = (
+        runtime / "production-inputs" / "2026-07-25" / "song-selector" / selector_candidate_id
+    )
+    selector_root.mkdir(parents=True)
+    publish_path = selector_root / "source.publish.json"
+    selector_publish = json.loads(
+        fx["source_paths"]["publish"].read_text(encoding="utf-8")
+    )
+    selector_publish["candidate_id"] = selector_candidate_id
+    _write_json(publish_path, selector_publish)
+    summary = {
+        "records": [{
+            "candidate_id": selector_candidate_id,
+            "decision_action": "AUTO_UPLOAD",
+            "reason_codes": [],
+            "materialized_recut": {
+                "status": "MATERIALIZED",
+                "candidate_id": selector_candidate_id,
+                "publish_staging": {
+                    "status": "STAGED",
+                    "title": TITLE,
+                    "upload_enabled": False,
+                    "publish_json_path": str(publish_path),
+                },
+            },
+        }]
+    }
+    summary_path = selector_root / "summary.json"
+    _write_json(summary_path, summary)
+
+    delivery_root = runtime / "lidousha" / "2026-07-25"
+    basename = BASENAME
+    target_for = {
+        role: delivery_root / f"{basename}{suffix}"
+        for role, suffix in builder.REQUIRED_ROLES.items()
+    }
+    manifest_source = selector_root / "intended.delivery.manifest.json"
+    manifest_artifacts = {
+        role: {
+            "path": str(target_for[role]),
+            "sha256": _sha(fx["source_paths"][role]),
+            "source_path": str(fx["source_paths"][role]),
+            "source_sha256": _sha(fx["source_paths"][role]),
+        }
+        for role in builder.REQUIRED_ROLES
+    }
+    _write_json(
+        manifest_source,
+        {
+            "schema_version": "verified-song-delivery.v1",
+            "status": "DELIVERED_NO_UPLOAD",
+            "candidate_id": CANDIDATE_ID,
+            "upload_enabled": False,
+            "artifacts": manifest_artifacts,
+            "absent_artifacts": {},
+        },
+    )
+    target_for["delivery_manifest"] = delivery_root / f"{basename}.delivery.manifest.json"
+    artifacts = [
+        DeliveryArtifact(
+            role,
+            fx["source_paths"][role],
+            target_for[role],
+            _sha(fx["source_paths"][role]),
+        )
+        for role in builder.REQUIRED_ROLES
+    ]
+    artifacts.append(
+        DeliveryArtifact(
+            "delivery_manifest",
+            manifest_source,
+            target_for["delivery_manifest"],
+            _sha(manifest_source),
+        )
+    )
+    handle = prepare_delivery(
+        runtime_root=runtime,
+        lane="song",
+        candidate_id=CANDIDATE_ID,
+        artifacts=artifacts,
+    )
+    return {
+        "runtime": runtime,
+        "handle": handle,
+        "summary": summary_path,
+        "summary_sha": _sha(summary_path),
+        "package": tmp_path / "prepared-portable",
+    }
+
+
 def test_builds_portable_no_upload_song_review_package(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -292,6 +442,189 @@ def test_builds_portable_no_upload_song_review_package(
         fx["package"] / f"{BASENAME}.delivery.manifest.json"
     ).is_file()
     assert (fx["package"] / "review_manifest.json").is_file()
+
+
+def test_song_package_preserves_actual_hash_bound_burn_ass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fx = _fixture(tmp_path, burn_ass=True)
+    manifest = _build(fx, monkeypatch)
+    item = manifest["items"][0]
+    source = fx["source_paths"]["subtitle"].parent / "actual-burn.ass"
+    assert (fx["package"] / item["ass_path"]).read_bytes() == source.read_bytes()
+    assert item["ass_sha256"] == _sha(source)
+
+
+def test_builds_portable_song_package_from_prepared_handle_without_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fx = _fixture(tmp_path)
+    prepared = _prepared_fixture(fx, tmp_path)
+    monkeypatch.setattr(
+        builder, "validate_cover_route_decision", lambda *_a, **_k: True
+    )
+    monkeypatch.setattr(
+        builder,
+        "validate_rendered_text_pixel_evidence",
+        lambda *_a, **_k: True,
+    )
+
+    manifest = builder.build_prepared(
+        prepared["package"],
+        prepared_manifest_path=prepared["handle"].manifest_path,
+        prepared_manifest_sha256="sha256:" + prepared["handle"].prepared_sha256,
+        selector_summary_path=prepared["summary"],
+        selector_summary_sha256=prepared["summary_sha"],
+        candidate_id=CANDIDATE_ID,
+        recording_date="2026-07-25",
+        runtime_root=prepared["runtime"],
+        completion_verifier=lambda _record: fx["completion"],
+    )
+
+    assert manifest["upload_allowed"] is False
+    assert manifest["batch_status"] == "prepared_no_target"
+    assert "state_sha256" not in manifest["delivery_authority"]
+    assert manifest["delivery_authority"]["authority_kind"] == "prepared_no_target"
+    assert manifest["prepared_authority"]["target_materialized"] is False
+    assert (
+        prepared["package"] / manifest["items"][0]["prepared_manifest"]
+    ).is_file()
+    assert (
+        prepared["package"] / manifest["items"][0]["selector_summary"]
+    ).is_file()
+
+
+def test_prepared_builder_refuses_tampered_staged_role(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fx = _fixture(tmp_path)
+    prepared = _prepared_fixture(fx, tmp_path)
+    document = json.loads(prepared["handle"].manifest_path.read_text(encoding="utf-8"))
+    staged_video = Path(
+        next(
+            row["staged_path"]
+            for row in document["artifacts"]
+            if row["role"] == "video"
+        )
+    )
+    staged_video.write_bytes(b"tampered")
+    with pytest.raises(builder.SongReviewManifestError, match="preflight"):
+        builder.build_prepared(
+            prepared["package"],
+            prepared_manifest_path=prepared["handle"].manifest_path,
+            prepared_manifest_sha256="sha256:" + prepared["handle"].prepared_sha256,
+            selector_summary_path=prepared["summary"],
+            selector_summary_sha256=prepared["summary_sha"],
+            candidate_id=CANDIDATE_ID,
+            recording_date="2026-07-25",
+            runtime_root=prepared["runtime"],
+            completion_verifier=lambda _record: fx["completion"],
+        )
+
+
+def test_prepared_builder_refuses_wrong_selector_summary_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fx = _fixture(tmp_path)
+    prepared = _prepared_fixture(fx, tmp_path)
+    with pytest.raises(builder.SongReviewManifestError, match="hash mismatch"):
+        builder.build_prepared(
+            prepared["package"],
+            prepared_manifest_path=prepared["handle"].manifest_path,
+            prepared_manifest_sha256="sha256:" + prepared["handle"].prepared_sha256,
+            selector_summary_path=prepared["summary"],
+            selector_summary_sha256="sha256:" + "0" * 64,
+            candidate_id=CANDIDATE_ID,
+            recording_date="2026-07-25",
+            runtime_root=prepared["runtime"],
+            completion_verifier=lambda _record: fx["completion"],
+        )
+
+
+def test_prepared_builder_refuses_summary_outside_registered_scope(
+    tmp_path: Path,
+) -> None:
+    fx = _fixture(tmp_path)
+    prepared = _prepared_fixture(fx, tmp_path)
+    outside = tmp_path / "summary.json"
+    outside.write_bytes(prepared["summary"].read_bytes())
+    with pytest.raises(builder.SongReviewManifestError, match="outside BASE"):
+        builder.build_prepared(
+            prepared["package"],
+            prepared_manifest_path=prepared["handle"].manifest_path,
+            prepared_manifest_sha256="sha256:" + prepared["handle"].prepared_sha256,
+            selector_summary_path=outside,
+            selector_summary_sha256=_sha(outside),
+            candidate_id=CANDIDATE_ID,
+            recording_date="2026-07-25",
+            runtime_root=prepared["runtime"],
+            completion_verifier=lambda _record: fx["completion"],
+        )
+
+
+def test_prepared_cli_selects_private_handle_builder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fx = _fixture(tmp_path)
+    prepared = _prepared_fixture(fx, tmp_path)
+    monkeypatch.setattr(
+        builder, "validate_cover_route_decision", lambda *_a, **_k: True
+    )
+    monkeypatch.setattr(
+        builder,
+        "validate_rendered_text_pixel_evidence",
+        lambda *_a, **_k: True,
+    )
+    called: dict[str, object] = {}
+
+    def fake_build_prepared(package_root: Path, **kwargs: object) -> dict:
+        called["package_root"] = package_root
+        called.update(kwargs)
+        package_root.mkdir()
+        (package_root / "review_manifest.json").write_text("{}", encoding="utf-8")
+        return {}
+
+    monkeypatch.setattr(builder, "build_prepared", fake_build_prepared)
+    monkeypatch.setattr(
+        builder,
+        "run_canonical_auditor",
+        lambda _root: {"passed": True},
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "build_song_review_manifest.py",
+            str(prepared["package"]),
+            "--prepared-manifest",
+            str(prepared["handle"].manifest_path),
+            "--prepared-manifest-sha256",
+            "sha256:" + prepared["handle"].prepared_sha256,
+            "--selector-summary",
+            str(prepared["summary"]),
+            "--selector-summary-sha256",
+            prepared["summary_sha"],
+            "--candidate-id",
+            CANDIDATE_ID,
+            "--date",
+            "2026-07-25",
+            "--base",
+            str(prepared["runtime"]),
+        ],
+    )
+    assert builder.main() == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "PACKAGE_AUDIT_PASS_NO_UPLOAD"
+    assert called["candidate_id"] == CANDIDATE_ID
+
+
+def test_song_package_refuses_changed_burn_ass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fx = _fixture(tmp_path, burn_ass=True)
+    source = fx["source_paths"]["subtitle"].parent / "actual-burn.ass"
+    source.write_text("changed burn subtitles")
+    with pytest.raises(builder.SongReviewManifestError, match="hash"):
+        _build(fx, monkeypatch)
 
 
 def _seal_talk_refresh_block(state: dict, *, recording_date: str) -> str:
@@ -358,7 +691,8 @@ def test_build_attaches_native_host_only_v4_binding(
     }
     calls: list[tuple[Path, str]] = []
 
-    def materialize(*, root: Path, item: dict, generation: dict) -> dict:
+    def materialize(*, root: Path, item: dict, generation: dict, allow_song: bool) -> dict:
+        assert allow_song is True
         assert generation["final_cover_sha256"].startswith("sha256:")
         calls.append((root, str(item["candidate_id"])))
         return expected
@@ -651,3 +985,118 @@ def test_refresh_rolls_back_all_authorities_on_commit_failure(
 
     assert {path: path.read_bytes() for path in watched} == before
     assert not fx["package"].exists()
+
+
+@pytest.mark.parametrize("prepared_mode", [False, True])
+def test_both_song_builders_close_original_cover_network_for_real_qc(
+    tmp_path, monkeypatch, prepared_mode
+):
+    fx = _fixture(tmp_path, network=True)
+    if prepared_mode:
+        prepared = _prepared_fixture(fx, tmp_path)
+        monkeypatch.setattr(builder, "validate_cover_route_decision", lambda *_a, **_k: True)
+        monkeypatch.setattr(
+            builder, "validate_rendered_text_pixel_evidence", lambda *_a, **_k: True
+        )
+        result = builder.build_prepared(
+            prepared["package"],
+            prepared_manifest_path=prepared["handle"].manifest_path,
+            prepared_manifest_sha256="sha256:" + prepared["handle"].prepared_sha256,
+            selector_summary_path=prepared["summary"],
+            selector_summary_sha256=prepared["summary_sha"],
+            candidate_id=CANDIDATE_ID,
+            recording_date="2026-07-25",
+            runtime_root=prepared["runtime"],
+            completion_verifier=lambda _record: fx["completion"],
+        )
+        root = prepared["package"]
+    else:
+        result = _build(fx, monkeypatch)
+        root = fx["package"]
+    from scripts.run_title_cover_joint_qc import resolve_package_inputs
+
+    item = result["items"][0]
+    assert (root / item["cover_request"]).read_bytes() == Path(
+        json.loads((root / item["publish_json"]).read_bytes())["cover_generation"]["request_path"]
+    ).read_bytes()
+    assert (root / item["cover_response"]).is_file()
+    assert resolve_package_inputs(root, TITLE)[2] == root / item["cover"]
+
+
+@pytest.mark.parametrize("drift", [None, "asset", "seal"])
+def test_old_prepared_review_retains_original_seal_and_current_asset_checks(tmp_path, drift):
+    import shutil
+
+    fx = _fixture(tmp_path)
+    prepared = _prepared_fixture(fx, tmp_path)
+    runtime = prepared["runtime"]
+    repo = runtime / "repo"
+    original = json.loads((repo / "DEPLOYED_AUTHORITY_MANIFEST.json").read_bytes())
+    # Make the fixture's authority asset real before freezing its original seal.
+    asset = repo / "docs/pipeline/50-song-lane.md"
+    asset.parent.mkdir(parents=True)
+    asset.write_bytes(b"a")
+    original["entries"]["docs/pipeline/50-song-lane.md"] = {"bytes": 1, "sha256": _sha(asset)}
+    body = {k: v for k, v in original.items() if k != "manifest_sha256"}
+    original["manifest_sha256"] = _canonical_sha256(body)
+    _write_json(repo / "DEPLOYED_AUTHORITY_MANIFEST.json", original)
+    # Create a genuine prepare under that exact original authority.
+    prepared["handle"] = prepare_delivery(
+        runtime_root=runtime,
+        lane="song",
+        candidate_id=CANDIDATE_ID,
+        artifacts=[
+            DeliveryArtifact(
+                "video",
+                fx["source_paths"]["video"],
+                runtime / "lidousha/review.mp4",
+                _sha(fx["source_paths"]["video"]),
+            )
+        ],
+    )
+    old = runtime / "versions" / ("2" * 40) / "repo"
+    shutil.copytree(repo, old)
+    _write_json(old / "DEPLOYED_MANIFEST.json", {})
+    current = json.loads((repo / "DEPLOYED_AUTHORITY_MANIFEST.json").read_bytes())
+    current["deployed_commit"] = "3" * 40
+    current["manifest_sha256"] = _canonical_sha256(
+        {k: v for k, v in current.items() if k != "manifest_sha256"}
+    )
+    _write_json(repo / "DEPLOYED_AUTHORITY_MANIFEST.json", current)
+    (repo / "DEPLOYED_COMMIT").write_text("3" * 40 + "\n")
+    if drift == "asset":
+        asset.write_bytes(b"b")
+    elif drift == "seal":
+        (old / "DEPLOYED_AUTHORITY_MANIFEST.json").write_bytes(b"{}")
+    handle = prepared["handle"]
+    if drift:
+        with pytest.raises(builder.SongReviewManifestError):
+            builder._prepared_handle_bindings(
+                runtime_root=runtime,
+                prepared_manifest_path=handle.manifest_path,
+                prepared_manifest_sha256="sha256:" + handle.prepared_sha256,
+            )
+    else:
+        from src.autoslice.qixi_transaction_core import exclusive_runner_commit
+
+        result = builder._prepared_handle_bindings(
+            runtime_root=runtime,
+            prepared_manifest_path=handle.manifest_path,
+            prepared_manifest_sha256="sha256:" + handle.prepared_sha256,
+        )
+        assert result[2]["deployed_authority"]["commit"] == "2" * 40
+        with exclusive_runner_commit(runtime) as lease:
+            reviewed = historical_prepared_review(handle, lease)
+        assert reviewed.document["lane"] == "song"
+        assert len(reviewed.checked) == len(reviewed.document["artifacts"])
+        # The normal materialization preflight is deliberately still strict.
+        from src.autoslice.producer_delivery_transaction import (
+            preflight_prepared_delivery,
+            ProducerDeliveryTransactionError,
+        )
+
+        with (
+            exclusive_runner_commit(runtime) as lease,
+            pytest.raises(ProducerDeliveryTransactionError, match="authority preimage"),
+        ):
+            preflight_prepared_delivery(handle=handle, lease=lease)

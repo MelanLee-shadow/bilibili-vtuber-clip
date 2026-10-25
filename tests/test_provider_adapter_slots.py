@@ -140,13 +140,13 @@ def test_cpa_vision_pool_waits_and_releases_after_failure(tmp_path: Path, monkey
 
     def call(_index: int) -> None:
         receipt = cpa_frame_witness._vision_qa(
-            {}, b"jpeg", "fixture", api_base="https://cpa.invalid", api_key="not-a-real-key", model="fixture", timeout_seconds=1, max_tokens=8
+            {}, b"jpeg-" + str(_index).encode(), "fixture", api_base="https://cpa.invalid", api_key="not-a-real-key", model="fixture", timeout_seconds=1, max_tokens=8
         )
         assert receipt["status"] == "OBSERVED"
 
     _assert_waits_then_succeeds(_attach_observation(call, entered, release, starts, max_active), runtime=runtime)
     monkeypatch.setattr(cpa_frame_witness.urllib.request, "urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
-    assert cpa_frame_witness._vision_qa({}, b"jpeg", "fixture", api_base="https://cpa.invalid", api_key="not-a-real-key", model="fixture", timeout_seconds=1, max_tokens=8)["status"] == "UNAVAILABLE"
+    assert cpa_frame_witness._vision_qa({}, b"failed-jpeg", "fixture", api_base="https://cpa.invalid", api_key="not-a-real-key", model="fixture", timeout_seconds=1, max_tokens=8)["status"] == "UNAVAILABLE"
     with provider_slot(runtime):
         pass
 

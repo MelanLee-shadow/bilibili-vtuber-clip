@@ -6,6 +6,7 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 
+from src.autoslice.channel_envelope import talk_envelope_violations
 from src.autoslice.source_fact_review import (
     deterministic_text_narrowing_title_policy_exception_applies,
 )
@@ -35,6 +36,9 @@ def candidate_title_policy_violations(
         validate_candidate_title_surface(candidate_id, title)
     except TitlePolicyError:
         codes.append("candidate_public_or_reviewed_title_surface_conflict")
+    if lane == "talk":
+        # Every declared partner must resolve to the structured registry.
+        codes.extend(code for code in talk_envelope_violations(title) if code not in codes)
     if deterministic_text_narrowing_title_policy_exception_applies(
         source_fact_review,
         candidate_id=candidate_id,

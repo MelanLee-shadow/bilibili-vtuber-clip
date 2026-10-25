@@ -350,10 +350,9 @@ def test_shadow_cannot_change_v1_order_quota_bytes_or_release_gate(
     assert [row["cid"] for row in shadow_state["talk_backlog"]] == [
         row["cid"] for row in control_state["talk_backlog"]
     ]
-    def quota_bytes(value):
-        return json.dumps(
-            value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
+    quota_bytes = lambda value: json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
     assert quota_bytes(shadow_state["talk_quota_policy_disclosure"]) == quota_bytes(
         control_state["talk_quota_policy_disclosure"]
     )

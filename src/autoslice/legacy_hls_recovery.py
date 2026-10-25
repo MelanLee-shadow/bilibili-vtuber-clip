@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import errno
-import hashlib
 import json
 import os
 import re
@@ -34,11 +34,8 @@ def _run(command: Sequence[str], *, timeout: int) -> subprocess.CompletedProcess
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return "sha256:" + digest
 
 
 def _playlist_media_name(playlist: Path, raw_media: Path) -> None:

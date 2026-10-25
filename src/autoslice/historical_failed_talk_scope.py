@@ -1700,6 +1700,7 @@ def repair_covers(
     *,
     automatic_maintenance: bool,
     candidate_ids: tuple[str, ...] | None,
+    state_transition: Callable[..., dict] | None = None,
 ) -> None:
     if not automatic_maintenance:
         return
@@ -1714,7 +1715,10 @@ def repair_covers(
         # must instead requeue through the sealed full-producer path next tick.
         return
     if candidate_ids is None:
-        _runner.repair_covers(date, state)
+        _runner.repair_covers(
+            date, state,
+            **({"state_transition": state_transition} if state_transition is not None else {}),
+        )
         return
     allowed = set(candidate_ids)
     scoped = {
@@ -1725,4 +1729,7 @@ def repair_covers(
         and _runner.cover_repair_needed(date, record)
     }
     if scoped:
-        _runner.repair_covers(date, state, candidate_ids=scoped)
+        _runner.repair_covers(
+            date, state, candidate_ids=scoped,
+            **({"state_transition": state_transition} if state_transition is not None else {}),
+        )

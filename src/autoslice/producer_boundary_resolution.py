@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -138,11 +139,11 @@ def _replayed_search_scope(
     return expected_search_scope, True
 
 
-from src.autoslice.recovery_title_authority import (  # noqa: E402
+from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
     validate_recovery_publication_authority,
 )
-from src.autoslice.subtitle_timing_qa import sanitize_cue_timing  # noqa: E402
+from src.autoslice.subtitle_timing_qa import sanitize_cue_timing
 
 
 _MANUAL_END_MODES = frozenset(
@@ -428,6 +429,242 @@ def _boundary_delivery_cues(
     return [cue for cue in cues if cue.end_ms <= snapped_end_ms]
 
 
+def _current_delivery_closure_binding(
+    *,
+    closure_cue: object,
+    snapped_end_ms: int,
+    current_delivery_cues: Sequence[object] | None,
+    current_delivery_projection: Mapping[str, object] | None,
+    media_end_ms: int | None = None,
+) -> tuple[str, dict[str, object]]:
+    """Bind current terminal text to the selected source-domain endpoint."""
+    source_start = getattr(closure_cue, "start_ms", None)
+    source_end = getattr(closure_cue, "end_ms", None)
+    source_text = str(getattr(closure_cue, "text", "") or "")
+    source_text_sha256 = "sha256:" + hashlib.sha256(source_text.encode("utf-8")).hexdigest()
+    if current_delivery_cues is None:
+        return source_text, {
+            "schema_version": "current-delivery-closure-binding.v1",
+            "status": "NOT_APPLICABLE",
+            "role": "SOURCE_CLOSURE_LEGACY",
+            "source_start_ms": source_start,
+            "source_end_ms": source_end,
+            "source_closure_text_sha256": source_text_sha256,
+            "current_delivery_closure_text_sha256": source_text_sha256,
+        }
+    if (
+        isinstance(source_start, bool)
+        or not isinstance(source_start, int)
+        or isinstance(source_end, bool)
+        or not isinstance(source_end, int)
+        or source_end <= source_start
+        or source_end != snapped_end_ms
+        or not source_text.strip()
+    ):
+        raise SystemExit("BOUNDARY_CURRENT_DELIVERY_CLOSURE_SOURCE_INVALID")
+    if not isinstance(current_delivery_projection, Mapping):
+        raise SystemExit("BOUNDARY_CURRENT_DELIVERY_CLOSURE_PROJECTION_INVALID")
+    projection = current_delivery_projection
+    exact: list[object] = []
+    terminal_count = 0
+    max_current_end: int | None = None
+    crossing = False
+    for cue in current_delivery_cues:
+        start = getattr(cue, "start_ms", None)
+        end = getattr(cue, "end_ms", None)
+        text = str(getattr(cue, "text", "") or "")
+        if (
+            isinstance(start, bool)
+            or not isinstance(start, int)
+            or isinstance(end, bool)
+            or not isinstance(end, int)
+            or end <= start
+            or not text.strip()
+        ):
+            raise SystemExit("BOUNDARY_CURRENT_DELIVERY_CLOSURE_CUE_INVALID")
+        max_current_end = end if max_current_end is None else max(max_current_end, end)
+        if end == source_end:
+            terminal_count += 1
+        if start < source_end < end:
+            crossing = True
+        if start == source_start and end == source_end:
+            exact.append(cue)
+    if max_current_end is None:
+        raise SystemExit("BOUNDARY_CURRENT_DELIVERY_CLOSURE_UNBOUND")
+    current_source_end = source_end
+    # Timing QA can hold the unchanged final caption into the already covered
+    # tail air. This does not move the source sentence or the media endpoint.
+    # Require its original start/text, a unique overlap, and the current row's
+    # exact projection below; an overlapping different utterance still blocks.
+    if max_current_end > source_end:
+        terminal = [
+            cue for cue in current_delivery_cues
+            if cue.start_ms == source_start and cue.end_ms == max_current_end
+            and str(cue.text) == source_text
+        ]
+        overlap = [
+            cue for cue in current_delivery_cues
+            if cue.start_ms < source_end and cue.end_ms > source_start
+        ]
+        reviewed_end = projection.get("source_final_end_ms")
+        if (
+            len(terminal) == len(overlap) == 1
+            and isinstance(media_end_ms, int) and not isinstance(media_end_ms, bool)
+            and isinstance(reviewed_end, int) and not isinstance(reviewed_end, bool)
+            and max_current_end <= min(media_end_ms, reviewed_end)
+            and isinstance(projection.get("rows"), list)
+        ):
+            exact = terminal
+            terminal_count = 1
+            current_source_end = max_current_end
+    if max_current_end != current_source_end:
+        reason = "CROSSING" if crossing else "TIMING_DRIFT"
+        raise SystemExit(
+            f"BOUNDARY_CURRENT_DELIVERY_CLOSURE_{reason}: "
+            f"current_last_end={max_current_end} source_end={source_end}"
+        )
+    if len(exact) > 1 or terminal_count > 1:
+        raise SystemExit(
+            "BOUNDARY_CURRENT_DELIVERY_CLOSURE_AMBIGUOUS: "
+            f"source=[{source_start},{source_end}] terminal_matches={terminal_count}"
+        )
+    if not exact:
+        reason = "TIMING_DRIFT" if terminal_count else "UNBOUND"
+        raise SystemExit(
+            f"BOUNDARY_CURRENT_DELIVERY_CLOSURE_{reason}: "
+            f"source=[{source_start},{source_end}]"
+        )
+    current_cue = exact[0]
+    current_text = str(getattr(current_cue, "text", "") or "")
+    current_index = str(getattr(current_cue, "index", ""))
+    if not current_index:
+        raise SystemExit("BOUNDARY_CURRENT_DELIVERY_CLOSURE_CUE_INVALID")
+    current_text_sha256 = "sha256:" + hashlib.sha256(current_text.encode("utf-8")).hexdigest()
+    projection_rows = projection.get("rows")
+    if projection_rows is not None and not isinstance(projection_rows, list):
+        raise SystemExit("BOUNDARY_CURRENT_DELIVERY_CLOSURE_PROJECTION_INVALID")
+    projection_rows_verified = False
+    if isinstance(projection_rows, list):
+        matching_rows = [
+            row
+            for row in projection_rows
+            if isinstance(row, Mapping)
+            and str(row.get("cue_index", "")) == current_index
+            and row.get("source_start_ms") == source_start
+            and row.get("source_end_ms") == current_source_end
+        ]
+        if len(matching_rows) != 1:
+            reason = "AMBIGUOUS" if len(matching_rows) > 1 else "UNBOUND"
+            raise SystemExit(
+                f"BOUNDARY_CURRENT_DELIVERY_CLOSURE_{reason}: "
+                f"projection_row_matches={len(matching_rows)}"
+            )
+        projection_row = matching_rows[0]
+        if projection_row.get("text_sha256") != current_text_sha256:
+            raise SystemExit(
+                "BOUNDARY_CURRENT_DELIVERY_CLOSURE_TEXT_HASH_DRIFT: "
+                f"cue_index={current_index}"
+            )
+        projection_rows_verified = True
+    return current_text, {
+        "schema_version": "current-delivery-closure-binding.v1",
+        "status": "PASS",
+        "role": "CURRENT_FINAL_DELIVERY_TEXT",
+        "source_start_ms": source_start,
+        "source_end_ms": source_end,
+        "current_source_end_ms": current_source_end,
+        "unchanged_caption_tail_in_covered_media": current_source_end != source_end,
+        "current_cue_index": current_index,
+        "source_closure_text_sha256": source_text_sha256,
+        "current_delivery_closure_text_sha256": current_text_sha256,
+        "projected_source_cue_grid_sha256": projection.get(
+            "projected_source_cue_grid_sha256"
+        ),
+        "projection_rows_verified": projection_rows_verified,
+    }
+
+
+def _current_delivery_source_extension(
+    *,
+    source_cues: Sequence[object],
+    current_delivery_cues: Sequence[object] | None,
+    current_delivery_projection: Mapping[str, object] | None,
+    semantic_review: Mapping[str, object] | None,
+    closure_cue: object,
+    snapped_end_ms: int,
+    final_start_ms: int,
+    final_end_ms: int,
+    manual_end_mode: str,
+) -> tuple[Sequence[object] | None, dict[str, object] | None]:
+    """Carry a reviewed source extension as draft, preserving the current prefix.
+
+    Source boundary authority chooses a complete window; it does not approve
+    new subtitle text.  The normal recut/final-review path must review this
+    combined draft before it can acquire delivery authority.
+    """
+    if current_delivery_cues is None or not current_delivery_cues:
+        return current_delivery_cues, None
+    current_end = max(c.end_ms for c in current_delivery_cues)
+    if snapped_end_ms <= current_end:
+        return current_delivery_cues, None
+    if (
+        manual_end_mode != "semantic_lower_bound"
+        or not isinstance(semantic_review, Mapping)
+        or semantic_review.get("schema_version") != "talk-boundary-semantic-review.v1"
+        or semantic_review.get("review_scope") != "source_full_window"
+        or not str(semantic_review.get("request_sha256") or "").startswith("sha256:")
+    ):
+        raise SystemExit("BOUNDARY_CURRENT_DELIVERY_EXTENSION_SOURCE_REVIEW_REQUIRED")
+    _bound_review, reasons = _bind_final_semantic_endpoint(
+        semantic_review=semantic_review, cues=source_cues,
+        closure_cue=closure_cue, snapped_end_ms=snapped_end_ms,
+        final_start_ms=final_start_ms, final_end_ms=final_end_ms,
+    )
+    if reasons:
+        raise SystemExit("BOUNDARY_CURRENT_DELIVERY_EXTENSION_SOURCE_BINDING_INVALID:" + ",".join(reasons))
+    prefix_closures = [c for c in source_cues if c.end_ms == current_end]
+    if len(prefix_closures) != 1:
+        raise SystemExit("BOUNDARY_CURRENT_DELIVERY_EXTENSION_PREFIX_UNBOUND")
+    _prefix_text, prefix_binding = _current_delivery_closure_binding(
+        closure_cue=prefix_closures[0], snapped_end_ms=current_end,
+        current_delivery_cues=current_delivery_cues,
+        current_delivery_projection=current_delivery_projection,
+        media_end_ms=final_end_ms,
+    )
+    if any(c.start_ms < current_end < c.end_ms for c in source_cues):
+        raise SystemExit("BOUNDARY_CURRENT_DELIVERY_EXTENSION_CROSSES_PREFIX")
+    tail = [
+        c for c in source_cues
+        if c.start_ms >= current_end and c.end_ms <= snapped_end_ms
+        and str(c.text).strip()
+    ]
+    if not tail or tail[-1] != closure_cue:
+        raise SystemExit("BOUNDARY_CURRENT_DELIVERY_EXTENSION_TAIL_UNBOUND")
+    combined = [*current_delivery_cues, *tail]
+    return combined, {
+        "schema_version": "current-delivery-source-extension.v1",
+        "status": "PENDING_FINAL_REVIEW",
+        "role": "SOURCE_EXTENSION_DRAFT",
+        "source_start_ms": closure_cue.start_ms,
+        "source_end_ms": closure_cue.end_ms,
+        "current_prefix_end_ms": current_end,
+        "current_prefix_cue_count": len(current_delivery_cues),
+        "current_prefix_cue_grid_sha256": cue_grid_sha256(current_delivery_cues),
+        "current_prefix_closure_binding": prefix_binding,
+        "source_cue_grid_sha256": cue_grid_sha256(source_cues),
+        "source_review_request_sha256": semantic_review["request_sha256"],
+        "source_boundary_endpoint_binding": _bound_review["final_endpoint_binding"],
+        "new_draft_cue_count": len(tail),
+        "new_draft_cue_grid_sha256": cue_grid_sha256(tail),
+        "combined_draft_cue_grid_sha256": cue_grid_sha256(combined),
+        "source_closure_text_sha256": "sha256:" + hashlib.sha256(closure_cue.text.encode("utf-8")).hexdigest(),
+        "current_delivery_closure_text_sha256": None,
+        "delivery_text_authorized": False,
+        "requires_current_complete_final_review": True,
+        "release_gate": "BLOCK",
+    }
+
+
 def _resolved_tail_adjustment(
     spans: list[object],
     cues: list[object],
@@ -506,6 +743,14 @@ def _manual_end_contract(
     prior_piece_duration_ms: int,
     last_piece_start_ms: int,
 ) -> tuple[str | None, int | None, str]:
+    from src.autoslice.first_publication_boundary import bind_published_recall_to_spec
+    # Standalone boundary consumers use the same verified ingress as producer.
+    compiled = dict(spec)
+    try:
+        bind_published_recall_to_spec(compiled)
+    except (ValueError, OSError, TypeError, KeyError) as exc:
+        raise SystemExit(f"MANUAL_EXACT_END_AUTHORITY_INVALID:{exc}") from exc
+    spec = compiled
     mode = str(spec.get("given_end_mode") or "semantic_lower_bound")
     if mode not in _MANUAL_END_MODES:
         raise SystemExit("MANUAL_END_MODE_INVALID")
@@ -947,6 +1192,8 @@ def _repair_boundary(
     boundary_repair_extend_cap_ms: int,
     reviewed_baseline_head_ms: int | None = None,
     protected_blank_windows: Sequence[tuple[int, int]] = (),
+    current_delivery_cues: Sequence[object] | None = None,
+    current_delivery_projection: Mapping[str, object] | None = None,
 ) -> BoundaryResolution:
     audit_path = out_root / f"{cid}.boundary_audit.json"
     boundary_repairs: list[dict] = []
@@ -1031,6 +1278,46 @@ def _repair_boundary(
                 },
             }
         )
+        try:
+            effective_delivery_cues, source_extension = _current_delivery_source_extension(
+                source_cues=cues,
+                current_delivery_cues=current_delivery_cues,
+                current_delivery_projection=current_delivery_projection,
+                semantic_review=semantic_review, closure_cue=closure_cue,
+                snapped_end_ms=snapped, final_start_ms=final_start,
+                final_end_ms=final_end, manual_end_mode=manual_end_mode,
+            )
+            if source_extension is not None:
+                delivery_closure_text = closure_cue.text
+                delivery_closure_binding = source_extension
+            else:
+                delivery_closure_text, delivery_closure_binding = _current_delivery_closure_binding(
+                    closure_cue=closure_cue,
+                    snapped_end_ms=snapped,
+                    current_delivery_cues=current_delivery_cues,
+                    current_delivery_projection=current_delivery_projection,
+                    media_end_ms=final_end,
+                )
+        except SystemExit as exc:
+            audit["current_delivery_closure_binding"] = {
+                "schema_version": "current-delivery-closure-binding.v1",
+                "status": "BLOCK",
+                "role": (
+                    "CURRENT_FINAL_DELIVERY_TEXT"
+                    if current_delivery_cues is not None
+                    else "SOURCE_CLOSURE_LEGACY"
+                ),
+                "source_start_ms": getattr(closure_cue, "start_ms", None),
+                "source_end_ms": getattr(closure_cue, "end_ms", None),
+                "reason": str(exc),
+            }
+            audit_path.write_text(
+                json.dumps(audit, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            raise
+        audit["current_delivery_closure_binding"] = delivery_closure_binding
+        audit["delivery_closure_sentence"] = delivery_closure_text
         if manual_end_authority:
             audit["boundary_authority"] = {
                 "exact_source_pin": ("human_source_exact_pin_plus_semantic_review"),
@@ -1065,7 +1352,7 @@ def _repair_boundary(
         if audit["verdict"] != "ok_sentence_boundary_cut":
             raise SystemExit(f"BOUNDARY_AUDIT_FAILED: {json.dumps(audit, ensure_ascii=False)}")
         delivery_cues, source_cues = _boundary_delivery_and_source_cues(
-            cues,
+            effective_delivery_cues if effective_delivery_cues is not None else cues,
             snapped_end_ms=snapped,
             manual_end_mode=manual_end_mode,
             reviewed_projection_endpoint_ms=reviewed_projection_endpoint_ms,
@@ -1086,7 +1373,7 @@ def _repair_boundary(
             final_start_ms=final_start,
             final_end_ms=final_end,
             snapped_end_ms=snapped,
-            closure_text=closure_cue.text,
+            closure_text=delivery_closure_text,
         )
         red_flags = _suppress_reviewed_baseline_opening_flag(
             audit=audit,
@@ -1232,7 +1519,32 @@ def resolve_producer_boundary(
     adapters: BoundaryResolutionAdapters,
     required_tail_end_ms: int | None = None,
     chat_authority_audit: Mapping[str, object] | None = None,
+    current_delivery_cues: Sequence[object] | None = None,
 ) -> BoundaryResolution:
+    if spec.get("source_witness_extension") is not None:
+        from src.autoslice.source_witness_extension import resolver_source_cues
+        cues = resolver_source_cues(spec, cues=cues, chat_authority_audit=chat_authority_audit)
+    delivery_projection = None
+    if current_delivery_cues is not None:
+        final_review = (
+            chat_authority_audit.get("final_review_audit")
+            if isinstance(chat_authority_audit, Mapping) else None
+        )
+        delivery_projection = (
+            final_review.get("current_delivery_source_projection")
+            if isinstance(final_review, Mapping) else None
+        )
+        if (
+            not isinstance(delivery_projection, Mapping)
+            or delivery_projection.get("schema_version") != "delivery-to-source-timeline-projection.v1"
+            or delivery_projection.get("status") != "PASS"
+            or type(delivery_projection.get("offset_ms")) is not int
+            or delivery_projection["offset_ms"] < 0
+            or delivery_projection.get("cue_count") != len(current_delivery_cues)
+            or delivery_projection.get("projected_source_cue_grid_sha256")
+            != cue_grid_sha256(current_delivery_cues)
+        ):
+            raise SystemExit("BOUNDARY_CURRENT_DELIVERY_PROJECTION_INVALID")
     try:
         exact = resolve_exact_boundary(
             spec=spec,
@@ -1246,6 +1558,8 @@ def resolve_producer_boundary(
         # must never call the live selector, micro-transcriber, or repair loop.
         raise SystemExit(str(exc)) from exc
     if exact is not None:
+        if current_delivery_cues is not None:
+            raise SystemExit("BOUNDARY_CURRENT_DELIVERY_EXACT_REPLAY_UNSUPPORTED")
         audit_path = out_root / f"{cid}.boundary.json"
         audit_path.write_text(
             json.dumps(exact["audit"], ensure_ascii=False, indent=2) + "\n",
@@ -1273,7 +1587,7 @@ def resolve_producer_boundary(
     protected_blank_windows = authorized_final_review_drop_windows(
         chat_authority_audit
     )
-    return _repair_boundary(
+    resolved = _repair_boundary(
         cid=cid,
         out_root=out_root,
         padded_dur=padded_dur,
@@ -1298,4 +1612,21 @@ def resolve_producer_boundary(
         reviewed_baseline_head_ms=initial.reviewed_baseline_head_ms,
         boundary_repair_extend_cap_ms=boundary_repair_extend_cap_ms,
         protected_blank_windows=protected_blank_windows,
+        current_delivery_cues=current_delivery_cues,
+        current_delivery_projection=delivery_projection,
     )
+    if delivery_projection is not None:
+        # Preserve the exact delivery-local input to the normal timing stage.
+        # The downstream replay also verifies its old CPA terminal hash.
+        from dataclasses import replace
+        from src.autoslice.producer_text_pipeline import _render_cues_to_srt
+        offset = int(delivery_projection["offset_ms"])
+        resolved.timing_qa["current_delivery_input_srt_text"] = _render_cues_to_srt([
+            replace(cue, start_ms=cue.start_ms - offset, end_ms=cue.end_ms - offset)
+            for cue in current_delivery_cues
+        ])
+        resolved.audit["current_delivery_source_projection"] = dict(delivery_projection)
+        (out_root / f"{cid}.boundary_audit.json").write_text(
+            json.dumps(resolved.audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+    return resolved

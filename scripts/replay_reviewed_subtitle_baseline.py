@@ -37,6 +37,7 @@ from scripts.suggest_upload_tags import generate_upload_tags
 from src.autoslice.producer_package_finalization import ProducerFinalizationAdapters
 from src.autoslice.producer_text_pipeline import TextPipelineAdapters
 from src.autoslice.branding_intro import BrandingIntroError
+from src.autoslice.deployed_code_root import deployed_code_root
 from src.autoslice.llm_client import LLM_JSON_PARSE_REASON_CODES, LLM_TRANSPORT_REASON_CODES
 from src.autoslice.reviewed_baseline_replay import (
     ReviewedBaselineReplayError, _canonical, _production_llm_call, _safe_directory, _sha,
@@ -54,6 +55,7 @@ from src.autoslice.published_recovery_package import (
 from src.autoslice.reviewed_baseline_replay_transaction import (
     cleanup_prepared_after_image_stage, commit_prepared_after_image, stream_binding,
 )
+from src.autoslice.review_evidence_store import review_from_bytes
 
 _TALK_DISCOVERY_LANES = frozenset({"talk", "semantic_recall", "semantic_recall_sharded"})
 _REPLAY_OWNED_STALE_REASONS = frozenset({
@@ -352,7 +354,7 @@ def _readiness_graph(*, runtime: Path, date: str, candidate_ids: list[str]) -> d
     from src.autoslice.publication_readiness import build_readiness_graph
 
     graph = build_readiness_graph(
-        repository_root=runtime / "repo", runtime_root=runtime,
+        repository_root=deployed_code_root(runtime), runtime_root=runtime,
         recording_dates=frozenset({date}),
         candidate_ids=frozenset(candidate_ids) if candidate_ids else None,
     )
@@ -405,7 +407,7 @@ def _readiness_graph(*, runtime: Path, date: str, candidate_ids: list[str]) -> d
         ):
             try:
                 plan = build_replay_plan(
-                    repo_root=runtime / "repo", out_root=runtime / "out",
+                    repo_root=deployed_code_root(runtime), out_root=runtime / "out",
                     date=date, candidate_id=candidate_id,
                 )
             except ReviewedBaselineReplayError as exc:
@@ -651,8 +653,12 @@ def _read_bound_small_json(path: Path, *, label: str) -> dict[str, object] | Non
     try:
         if regular_binding(path, label=label) != binding:
             return None
-        value = json.loads(b"".join(chunks).decode("utf-8"))
-    except (ReviewedBaselineReplayError, UnicodeDecodeError, json.JSONDecodeError):
+        raw = b"".join(chunks)
+        if path.name.endswith((".review-flags.json", ".chat-authority.json")):
+            value = review_from_bytes(raw, directory=path.parent)
+        else:
+            value = json.loads(raw.decode("utf-8"))
+    except (ReviewedBaselineReplayError, OSError, UnicodeDecodeError, ValueError):
         return None
     return value if isinstance(value, dict) else None
 
@@ -1000,14 +1006,15 @@ def _sanitized_failure_receipt(*, runtime: Path, plan, matrix: list[dict[str, ob
                                 redelivery_baseline_failure_summary: Mapping[str, object] | None = None) -> str:
     """Create one sealed diagnostic receipt without a path, prompt, or error text."""
 
-    deployed = (runtime / "repo" / "DEPLOYED_COMMIT").read_text(encoding="utf-8").strip()
+    repo = deployed_code_root(runtime)
+    deployed = (repo / "DEPLOYED_COMMIT").read_text(encoding="utf-8").strip()
     body = {
         "schema_version": "reviewed-baseline-replay-diagnostic.v1",
         "candidate_id": plan.candidate_id, "recording_date": plan.date,
         "upload_allowed": False, "provider_attempted": provider_attempted,
         "deployed_commit": deployed,
         "deployed_authority_manifest_sha256": regular_binding(
-            runtime / "repo" / "DEPLOYED_AUTHORITY_MANIFEST.json", label="DEPLOYED_MANIFEST"
+            repo / "DEPLOYED_AUTHORITY_MANIFEST.json", label="DEPLOYED_MANIFEST"
         ).sha256,
         "predicate_matrix": matrix,
         "baseline_sha256": str(plan.baseline.config.get("sha256") or ""),
@@ -1354,7 +1361,7 @@ def main(
                 payload, status = direct
                 print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
                 return status
-        plans = [build_replay_plan(repo_root=runtime / "repo", out_root=runtime / "out",
+        plans = [build_replay_plan(repo_root=deployed_code_root(runtime), out_root=runtime / "out",
                                    date=args.date, candidate_id=cid)
                  for cid in args.candidate_id]
         recovery_by_id = {}

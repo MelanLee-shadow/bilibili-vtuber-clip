@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-import time
+import fcntl
+import os
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from src.autoslice.selection_metric_v2_shadow import (
     build_shadow_snapshot,
 )
 from src.autoslice import speaker_manual_review, unreadable_cue_review
+from src.autoslice.talk_quota_authority import resolve_quota_grant
 
 
 _runner = RunnerProxy()
@@ -28,6 +30,125 @@ _runner = RunnerProxy()
 
 def _candidate_id(row: dict) -> str:
     return str(row.get("candidate_id") or row.get("cid") or "")
+
+
+def _observed_delivery_states(attempts: list[dict]) -> dict:
+    """Join actual audit and QC passes only for the same current manifest."""
+    packages, latest_package, latest_candidate, latest_production = {}, {}, {}, {}
+    for row in attempts:
+        candidate = row.get('candidate_id')
+        if row.get('status') == 'RUNNING':
+            continue
+        latest_candidate[candidate] = row
+        if row.get('stage','production') == 'production':
+            latest_production[candidate] = row
+        digest, root = row.get('package_manifest_sha256'), row.get('package_root')
+        if isinstance(digest,str) and len(digest)==64 and isinstance(root,str):
+            key = (candidate,root,digest)
+            latest_package[candidate] = key
+            packages.setdefault(key,{})[row.get('stage')] = row
+    accepted, blocked, waiting = set(), set(), set()
+    for candidate,key in latest_package.items():
+        stages = packages[key]
+        if (stages.get('package_audit',{}).get('status') == 'PACKAGE_AUDIT_PASS'
+                and stages.get('joint_qc',{}).get('status') == 'JOINT_QC_PASS'):
+            accepted.add(candidate)
+        elif any(row.get('status')=='BLOCKED' for row in stages.values()):
+            blocked.add(candidate)
+    for candidate,row in latest_candidate.items():
+        if row.get('status') == 'INFRASTRUCTURE_WAIT':
+            waiting.add(candidate)
+            blocked.discard(candidate)
+        elif row.get('status') == 'BLOCKED':
+            blocked.add(candidate)
+    prepared = {cid for cid,row in latest_production.items()
+                if row.get('status')=='PREPARED_COMPLETE' and cid not in accepted}
+    partial = {cid for cid,row in latest_production.items()
+                if row.get('status')=='PARTIAL_PREPARED' and cid not in accepted}
+    return {'accepted':accepted,'blocked':blocked,'waiting':waiting,'prepared':prepared,'partial':partial}
+
+
+def daily_runtime_report(date: str, state: dict, attempts: list[dict] | None = None) -> str:
+    """One screen of delivery facts and observed per-attempt costs."""
+    rows = [row for key in ("picks", "songs") for row in state.get(key, [])
+            if isinstance(row, dict)]
+    published = sum(row.get("status") == "published" and publication_row_is_verified(row) for row in rows)
+    covered = sum(row.get("status") == "covered_by_publication" and publication_row_is_verified(row) for row in rows)
+    songs = [row for row in state.get("songs", []) if isinstance(row, dict)]
+    delivered_songs = sum(bool(row.get("delivered") or publication_row_is_verified(row)) for row in songs)
+    blocked_songs = sum(row.get("status") == "blocked" for row in songs)
+    delivered_statuses=getattr(_runner,'DELIVERED_TALK_STATUSES',{'ok','review_ready','quarantine'})
+    produced = sum(bool(row.get("delivered") or row.get("status") in delivered_statuses
+                        or publication_row_is_verified(row)) for row in rows)
+    blocked = [row for row in rows if row.get("status") in
+               {"blocked", "failed", "candidate_rejected", "boundary_unrepairable", "quarantine"}]
+    reasons: dict[str, int] = {}
+    for row in blocked:
+        reason = str(row.get("rejection_reason") or row.get("reason_code") or row.get("failure_kind")
+                     or row.get("error") or "未记录原因")
+        reasons[reason] = reasons.get(reason, 0) + 1
+    lines = [f"# {date} 自动切片", "",
+             f"产出 {produced}｜发布核验 {published}｜拦截 {len(blocked)}｜尝试 {len(rows)}",
+             f"{published} 已公开事实 + {covered} 已有稿件覆盖（不计新稿）",
+             f"歌切: {delivered_songs} 交付 / {blocked_songs} 门拦 / {len(songs)} 尝试",
+             "拦截原因：" + ("；".join(f"{_report_cell(reason)[:90]} ×{count}"
+                                     for reason, count in reasons.items()) or "无"), "",
+             "| 最近候选 | 状态 | CPA HTTP 次数（含重试） | 本次耗时 |",
+             "| --- | --- | ---: | ---: |"]
+    for row in rows[-6:]:
+        count = row.get("cpa_http_attempts")
+        elapsed = row.get("production_elapsed_seconds")
+        count_text = str(count) if type(count) is int else "未记录"
+        time_text = f"{elapsed:.1f}s" if type(elapsed) in {int, float} else "未记录"
+        lines.append(f"| {_report_cell(_candidate_id(row))} | {_report_cell(row.get('status'))} | {count_text} | {time_text} |")
+    if not rows:
+        lines.append("| — | 尚无生产尝试 | 未记录 | 未记录 |")
+    if state.get('_runner_state_missing'):
+        lines[2]='登记产出 未记录｜发布核验 未记录｜登记拦截 未记录'
+        lines[3]='当日 runner state 尚未建立；实际普通入口观察列于下方。'
+        lines[4]='歌切登记状态：未记录'
+    if attempts:
+        # Producer observations are not canonical candidate rows or a package
+        # acceptance. In particular rc0/partial prepared never becomes output.
+        lines=lines[:7]
+        current = _observed_delivery_states(attempts)
+        lines += [f"普通入口：已验完整包 {len(current['accepted'])}｜服务待恢复 {len(current['waiting'])}｜"
+            f"私有准备完整 {len(current['prepared'])}（待包验）｜"
+            f"部分准备 {len(current['partial'])}｜"
+            f"阻断 {len(current['blocked'])}｜记录阶段 {len(attempts)}",'',
+            '| 最近候选 / 阶段 | 状态 / 原因 | 已记录模型 CPA/音频 | 已记录HTTP CPA/音频 | 缓存命中 | 阶段耗时 |',
+            '| --- | --- | ---: | ---: | ---: | ---: |']
+        for row in attempts[-6:]:
+            elapsed=row.get('production_elapsed_seconds')
+            duration=f'{elapsed:.1f}s' if type(elapsed) in {int,float} else '进行中'
+            cell=lambda key:str(row[key]) if type(row.get(key)) is int else '未记录'
+            retry = ('；下次 ' + str(row['next_retry_at'])) if row.get('next_retry_at') else ''
+            stage=row.get('stage','production') + (' @ '+row['execution_node'] if row.get('execution_node') else '')
+            lines.append(f"| {_report_cell(_candidate_id(row))} / {_report_cell(stage)} | {_report_cell(row.get('status'))} "
+                f"{_report_cell(row.get('reason_code') or '')}{_report_cell(retry)} | {cell('model_requests_observed')}/{cell('audio_model_requests_observed')} | "
+                f"{cell('cpa_http_attempts_observed')}/{cell('audio_http_attempts_observed')} | {cell('cache_hits_observed')} | {duration} |")
+        lines += ['','CPA 含文字与视觉。计数仅覆盖已记录传输；历史、SSH及自定义传输总数未知。私有准备不等于完整包验收。']
+    return "\n".join(lines) + "\n"
+
+
+def write_runtime_report(runtime_root: Path, date: str, state: dict | None = None) -> None:
+    """The same report consumer for runner and standalone ordinary producers."""
+    from .production_attempts import read_attempts
+    from .package_import import atomic_write_bytes
+    report=runtime_root/'reports'
+    report.mkdir(parents=True,exist_ok=True)
+    fd=os.open(report/'.runtime-report.lock',os.O_WRONLY|os.O_CREAT|getattr(os,'O_NOFOLLOW',0),0o600)
+    try:
+        # Serialize only the small report snapshot/install, never production or
+        # provider work. Independent producer processes can finish concurrently.
+        fcntl.flock(fd,fcntl.LOCK_EX)
+        if state is None:
+            path=runtime_root/'state'/f'{date}.json'
+            state=json.loads(path.read_text()) if path.is_file() else {'_runner_state_missing':True}
+        compact=daily_runtime_report(date,state,read_attempts(runtime_root,date))
+        for name in ('latest.md',f'{date}.md'):
+            atomic_write_bytes(report/name,compact.encode('utf-8'))
+    finally:os.close(fd)
 
 
 def _historical_stable_review_package(row: Mapping[str, object]) -> bool:
@@ -623,7 +744,7 @@ def write_reports(date: str, state: dict) -> None:
     lines += _selection_metric_v2_shadow_section(selection_metric_v2_shadow)
     lines += [
         "",
-        f"## 歌切（每日至多 {_runner.MAX_SONGS_PER_DATE} 个、同日多场共享；按弹幕量排序；已发布歌曲跳过；仅{_runner.PROFILE_DISPLAY_NAME}本人演唱且完整才切；背景音乐/原曲播放/SONG_PARTIAL 均不交付；被拦不占配额、备份自动回填）",
+        f"## 歌切（每日至多 {resolve_quota_grant(date, 'song').cap} 个、同日多场共享；按弹幕量排序；已发布歌曲跳过；仅{_runner.PROFILE_DISPLAY_NAME}本人演唱且完整才切；背景音乐/原曲播放/SONG_PARTIAL 均不交付；被拦不占配额、备份自动回填）",
         "",
     ]
     if songs:
@@ -683,23 +804,15 @@ def write_reports(date: str, state: dict) -> None:
             "",
             "> ⚠ 精确恢复契约尚未闭环：至少一个指定候选缺失、失败、重复或不是 CURRENT+COMPLIANT；不得称为 review_ready。",
         ]
+    lines += ["", "## 每条生产耗时与 CPA HTTP 次数", "",
+              "| 候选 | CPA HTTP 次数（含重试） | 本次耗时 |",
+              "| --- | ---: | ---: |"]
+    for row in [*picks, *songs]:
+        count = row.get("cpa_http_attempts")
+        elapsed = row.get("production_elapsed_seconds")
+        count_text = str(count) if type(count) is int else "未记录"
+        time_text = f"{elapsed:.1f}s" if type(elapsed) in {int, float} else "未记录"
+        lines.append(f"| {_report_cell(_candidate_id(row))} | {count_text} | {time_text} |")
     (delivery / "AUTOSLICE_SUMMARY.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    report = _runner.BASE / "reports" / "latest.md"
-    report.parent.mkdir(parents=True, exist_ok=True)
-    report.write_text(
-        f"# autoslice runner 最新状态\n\n- 时间: {time.strftime('%Y-%m-%d %H:%M:%S %z')}\n"
-        f"- 日期: {date}  状态: {state.get('status')}\n"
-        f"- 谈话: {len(published_deliveries)} 已公开事实 + "
-        f"{len(historical_stable_packages)} 历史稳定审片包 + "
-        f"{len(legacy_deliveries)} 旧版/包状态未知"
-        f"(自修复 {repaired}, 不可修复 {unrepairable}) / "
-        f"{len(picks)} 尝试 (pending {len(state.get('pending_talk', []))})\n"
-        f"- 歌切: {delivered_songs} 交付 / {blocked_songs} 门拦 / {len(songs)} 尝试 (pending {len(state.get('pending_song', []))})\n"
-        f"- 选片影子: v1 生产口径 / v2 "
-        f"{selection_metric_v2_shadow['summary']['available_count']} 可算 + "
-        f"{selection_metric_v2_shadow['summary']['unavailable_count']} 证据不足；"
-        "不参与选片、配额、发布或上传门\n"
-        f"- 交付: {_runner.profile_delivery_root()}/{date}/ (Mac launchd 拉取)\n",
-        encoding="utf-8",
-    )
+    write_runtime_report(_runner.BASE,date,state)

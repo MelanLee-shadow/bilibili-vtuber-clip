@@ -19,6 +19,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Mapping
 
+from src.autoslice.deployed_code_root import deployed_code_root
 from src.autoslice.published_recovery_package_contract import (
     REGISTRY_REPO_PATH,
     REGISTRY_SHA256,
@@ -176,7 +177,7 @@ def published_recovery_preflight(
     runtime = _safe_directory(runtime_root)
     if not expected_bvid.startswith("BV") or len(expected_bvid) != 12:
         raise ReviewedBaselineReplayError("PUBLISHED_RECOVERY_BVID_INVALID")
-    repo = _safe_directory(runtime / "repo")
+    repo = _safe_directory(deployed_code_root(runtime))
     registry = repo / REGISTRY_REPO_PATH
     try:
         authorities = build_recovery_publication_authorities(
@@ -294,7 +295,7 @@ def _revalidate_inputs(
     if record.sha256 != preflight.source_record_sha256:
         raise ReviewedBaselineReplayError("PUBLISHED_RECOVERY_SOURCE_RECORD_DRIFT")
     runtime = _safe_directory(runtime_root)
-    repo = _safe_directory(runtime / "repo")
+    repo = _safe_directory(deployed_code_root(runtime))
     try:
         current = build_recovery_publication_authorities(
             candidate_ids={plan.candidate_id},

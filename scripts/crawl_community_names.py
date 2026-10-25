@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.autoslice.cpa_model_ladder import TOP_CPA_MODEL, cpa_call_timeout_seconds
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.community_name_crawler import (
     CommunityNameError,
@@ -37,7 +38,7 @@ from src.autoslice.timely_term_crawler import (
 PROFILE = load_channel_profile(ROOT)
 DEFAULT_LLM_COMMAND = (
     "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} "
-    "'gpt-6-sol' medium 1"
+    f"'{TOP_CPA_MODEL}' medium 1"
 )
 
 
@@ -140,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
                 LlmConfig(
                     transport="command",
                     command_template=args.llm_command,
-                    timeout_seconds=240.0,
+                    timeout_seconds=cpa_call_timeout_seconds(),
                 )
             )
         raw_client = BoundedHttpClient(

@@ -31,6 +31,11 @@ from src.autoslice.song_repair import (
     build_lrclib_lrc_provider,
     build_netease_lrc_provider,
 )
+from src.autoslice.song_common import LrcResult
+from src.autoslice.song_lrc_provider import (
+    build_static_lrc_provider,
+    load_canonical_lrc_result,
+)
 from src.autoslice.subtitle_timing_qa import build_ssh_silero_vad_provider
 from src.autoslice.term_lexicon import load_discovered_term_lexicon, normalize_text
 from src.autoslice.full_session_transcription import (
@@ -83,6 +88,101 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _prepare_canonical_lrc_input(args: argparse.Namespace) -> tuple[LrcResult | None, Path | None]:
+    """Freeze an explicit LRC and its provenance before any provider call.
+
+    The copied LRC and JSON sidecar are ordinary candidate artifacts.  They
+    identify the lyric input but do not grant audio, live-vocal, boundary, or
+    release authority to the song pipeline.
+    """
+
+    metadata = (
+        args.canonical_lrc_title,
+        args.canonical_lrc_artist,
+        args.canonical_lrc_source_ref,
+    )
+    if args.canonical_lrc_file is None:
+        if any(value is not None for value in metadata):
+            raise SystemExit("canonical LRC metadata requires --canonical-lrc-file")
+        return None, None
+    if not args.canonical_lrc_title:
+        raise SystemExit("--canonical-lrc-title is required with --canonical-lrc-file")
+    if not args.canonical_lrc_source_ref:
+        raise SystemExit("--canonical-lrc-source-ref is required with --canonical-lrc-file")
+    try:
+        raw = args.canonical_lrc_file.read_bytes()
+        result = load_canonical_lrc_result(
+            lrc_path=args.canonical_lrc_file,
+            song_title=args.canonical_lrc_title,
+            artist=args.canonical_lrc_artist,
+            source_ref=args.canonical_lrc_source_ref,
+            raw_bytes=raw,
+        )
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"INVALID_CANONICAL_LRC: {exc}") from exc
+
+    copied_lrc = args.output_dir / "canonical-lrc-input.lrc"
+    if copied_lrc.is_symlink():
+        raise SystemExit(f"CANONICAL_LRC_OUTPUT_IS_SYMLINK: {copied_lrc}")
+    if copied_lrc.exists():
+        if copied_lrc.read_bytes() != raw:
+            raise SystemExit(f"CANONICAL_LRC_OUTPUT_DRIFT: {copied_lrc}")
+    else:
+        copied_lrc.write_bytes(raw)
+    file_sha = hashlib.sha256(raw).hexdigest()
+    copied_sha = _sha256_file(copied_lrc)
+    if copied_sha != file_sha:
+        raise SystemExit(f"CANONICAL_LRC_COPY_SHA_DRIFT: {copied_lrc}")
+
+    provenance_path = args.output_dir / "canonical-lrc-provenance.json"
+    provenance = {
+        "schema_version": "canonical-lrc-input.v1",
+        "provider": result.provider,
+        "input_path": str(args.canonical_lrc_file.resolve()),
+        "copied_path": str(copied_lrc),
+        "file_sha256": file_sha,
+        "copied_file_sha256": copied_sha,
+        "song_title": result.song_title,
+        "artist": result.artist,
+        "source_ref": result.source_ref,
+        "timed_line_count": len(result.lines),
+        "downstream_authority": "candidate_input_only; audio_live_boundary_release_gates_required",
+    }
+    provenance_bytes = (json.dumps(provenance, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
+    if provenance_path.is_symlink():
+        raise SystemExit(f"CANONICAL_LRC_PROVENANCE_IS_SYMLINK: {provenance_path}")
+    if provenance_path.exists() and provenance_path.read_bytes() != provenance_bytes:
+        raise SystemExit(f"CANONICAL_LRC_PROVENANCE_DRIFT: {provenance_path}")
+    if not provenance_path.exists():
+        provenance_path.write_bytes(provenance_bytes)
+    return result, provenance_path
+
+
+def _build_lrc_provider(args: argparse.Namespace, canonical_lrc_result: LrcResult | None):
+    if canonical_lrc_result is not None:
+        # Explicit caller input wins over network discovery for this run.  It
+        # is still only a candidate; ordinary audio-LRC/live/boundary gates
+        # run unchanged downstream.
+        return build_static_lrc_provider(canonical_lrc_result)
+    return (
+        build_netease_lrc_provider()
+        if args.lrc_provider == "netease"
+        else build_lrclib_lrc_provider()
+        if args.lrc_provider == "lrclib"
+        else build_kugou_lrc_provider()
+        if args.lrc_provider == "kugou"
+        else build_composite_lrc_provider(
+            build_netease_lrc_provider(),
+            build_lrclib_lrc_provider(),
+            build_kugou_lrc_provider(),
+        )
+        if args.lrc_provider == "auto"
+        else None
+    )
 
 
 def _build_host_vocal_prover(
@@ -283,6 +383,26 @@ def _write_danmaku_context(path: Path, danmaku_items, start_ms: int, end_ms: int
     return path
 
 
+def _candidate_review_text(candidate: FullSessionCandidate) -> str:
+    """Return the complete ordered source text sent to candidate CPA review.
+
+    ``text_preview`` is intentionally a short manifest/title field on some
+    selector lanes.  It must not become the semantic-review input: a preview
+    can stop before the payoff or the closing correction that establishes the
+    candidate's meaning.  The candidate's bound cue tuple is the source of
+    truth for this request, including after a viewer-context expansion.
+    """
+
+    ordered_cues = sorted(
+        candidate.cues,
+        key=lambda cue: (cue.source_start_ms, cue.source_end_ms, cue.cue_id),
+    )
+    text = "\n".join(cue.text.strip() for cue in ordered_cues if cue.text.strip())
+    if not text:
+        raise ValueError(f"candidate {candidate.anchor.candidate_id} has no non-empty source cues")
+    return text
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Select full-session candidates, run CPA semantic QA, then no-upload shadow review."
@@ -290,6 +410,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-video", type=Path, required=True)
     parser.add_argument("--source-srt", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--runtime-report-root", type=Path,
+        help="Write production-attempt reports here; does not change runtime credentials, caches or authority.",
+    )
     parser.add_argument("--room-id", default=CHANNEL_PROFILE.room_id)
     parser.add_argument("--source-duration-ms", type=int)
     parser.add_argument("--seed-song-candidate-id")
@@ -314,6 +438,23 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=("none", "netease", "lrclib", "kugou", "auto"),
         default="none",
         help="External LRC discovery for repair-first song completeness.",
+    )
+    parser.add_argument(
+        "--canonical-lrc-file",
+        type=Path,
+        help="Caller-supplied timed LRC; overrides network LRC discovery for this run.",
+    )
+    parser.add_argument(
+        "--canonical-lrc-title",
+        help="Canonical song title paired with --canonical-lrc-file.",
+    )
+    parser.add_argument(
+        "--canonical-lrc-artist",
+        help="Optional artist paired with --canonical-lrc-file.",
+    )
+    parser.add_argument(
+        "--canonical-lrc-source-ref",
+        help="Required caller-owned source reference paired with --canonical-lrc-file.",
     )
     parser.add_argument(
         "--agy-audio-lrc-align",
@@ -370,29 +511,62 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _review_selected_candidates(
-    *,
-    args: argparse.Namespace,
-    candidates: list[FullSessionCandidate],
-    cues,
-    source_duration_ms: int,
-    selector_stage: str | None,
-    danmaku_items,
-    host_vocal_prover,
-    branding_intro,
-) -> tuple[list[dict[str, object]], dict[str, object] | None]:
-    lexicon = load_discovered_term_lexicon(args.source_srt)
-    duplicate_corpus = [candidate.anchor.candidate_id for candidate in candidates]
-    records: list[dict[str, object]] = []
-    selected_summary: dict[str, object] | None = None
-    for original_candidate in candidates[: args.max_candidates]:
-        candidate = original_candidate
-        candidate_dir = args.output_dir / original_candidate.anchor.candidate_id
-        cpa_dir = candidate_dir / "cpa"
-        cpa_dir.mkdir(parents=True, exist_ok=True)
+def _review_one_selected_candidate(*, args, original_candidate, lexicon, duplicate_corpus,
+        lrc_provider, cues, source_duration_ms, selector_stage, danmaku_items,
+        host_vocal_prover, branding_intro, canonical_lrc_result, canonical_lrc_provenance_path):
+    candidate = original_candidate
+    candidate_dir = args.output_dir / original_candidate.anchor.candidate_id
+    cpa_dir = candidate_dir / "cpa"
+    cpa_dir.mkdir(parents=True, exist_ok=True)
+    request_json = cpa_dir / f"{candidate.anchor.candidate_id}.cpa.request.json"
+    response_json = cpa_dir / f"{candidate.anchor.candidate_id}.cpa.response.json"
+    candidate_text = _candidate_review_text(candidate)
+    normalized_text = normalize_text(candidate_text, lexicon=lexicon)
+    danmaku_context_json = None
+    if danmaku_items:
+        danmaku_context_json = _write_danmaku_context(
+            cpa_dir / f"{candidate.anchor.candidate_id}.danmaku.json",
+            danmaku_items,
+            candidate.boundary.resolved_start_ms,
+            candidate.boundary.resolved_end_ms,
+        )
+    _run_cpa_script(
+        candidate_id=candidate.anchor.candidate_id,
+        candidate_text=candidate_text,
+        normalized_text=normalized_text,
+        request_json=request_json,
+        response_json=response_json,
+        cpa_command=args.cpa_command,
+        room_id=args.room_id,
+        source_video=args.source_video,
+        source_srt=args.source_srt,
+        start_ms=candidate.boundary.resolved_start_ms,
+        end_ms=candidate.boundary.resolved_end_ms,
+        content_type_hint=candidate.content_type_hint,
+        danmaku_context_json=danmaku_context_json,
+    )
+    # Viewer-perspective retry: when the CPA judge says a viewer could not
+    # follow the clip and names how far the missing context sits, expand
+    # the window once and re-review.  Still fail-closed: if the expanded
+    # window is judged incomplete again, the reason codes stand.
+    expansion_record: dict[str, object] | None = None
+    expanded = _viewer_context_expanded_candidate(
+        candidate, cues, response_json, source_duration_ms=source_duration_ms
+    )
+    if expanded is not None:
+        expansion_record = {
+            "original_candidate_id": original_candidate.anchor.candidate_id,
+            "expanded_candidate_id": expanded.anchor.candidate_id,
+            "original_start_ms": candidate.boundary.resolved_start_ms,
+            "original_end_ms": candidate.boundary.resolved_end_ms,
+            "expanded_start_ms": expanded.boundary.resolved_start_ms,
+            "expanded_end_ms": expanded.boundary.resolved_end_ms,
+        }
+        candidate = expanded
         request_json = cpa_dir / f"{candidate.anchor.candidate_id}.cpa.request.json"
         response_json = cpa_dir / f"{candidate.anchor.candidate_id}.cpa.response.json"
-        normalized_text = normalize_text(candidate.text_preview, lexicon=lexicon)
+        candidate_text = _candidate_review_text(candidate)
+        normalized_text = normalize_text(candidate_text, lexicon=lexicon)
         danmaku_context_json = None
         if danmaku_items:
             danmaku_context_json = _write_danmaku_context(
@@ -403,7 +577,7 @@ def _review_selected_candidates(
             )
         _run_cpa_script(
             candidate_id=candidate.anchor.candidate_id,
-            candidate_text=candidate.text_preview,
+            candidate_text=candidate_text,
             normalized_text=normalized_text,
             request_json=request_json,
             response_json=response_json,
@@ -416,156 +590,100 @@ def _review_selected_candidates(
             content_type_hint=candidate.content_type_hint,
             danmaku_context_json=danmaku_context_json,
         )
-        # Viewer-perspective retry: when the CPA judge says a viewer could not
-        # follow the clip and names how far the missing context sits, expand
-        # the window once and re-review.  Still fail-closed: if the expanded
-        # window is judged incomplete again, the reason codes stand.
-        expansion_record: dict[str, object] | None = None
-        expanded = _viewer_context_expanded_candidate(
-            candidate, cues, response_json, source_duration_ms=source_duration_ms
+    job = candidate.to_source_context_job(source_duration_ms=source_duration_ms)
+    job["room_id"] = args.room_id
+    job["selector_stage"] = selector_stage
+    if selector_stage == "semantic_recall" or expansion_record is not None:
+        # Semantic windows (LLM recall or viewer-context expansion) carry
+        # their own bounds; keyword boundary heuristics become advisory.
+        job["boundary_authority"] = "semantic"
+    if expansion_record is not None:
+        job["viewer_context_expansion"] = expansion_record
+    if args.agy_ssh_host and args.copy_draft_context:
+        raise SystemExit("--agy-ssh-host and --copy-draft-context are mutually exclusive")
+    agy_runner = None
+    if args.copy_draft_context:
+        agy_runner = _copy_draft_runner
+    elif args.agy_ssh_host:
+        agy_runner = _build_ssh_agy_runner(
+            args.agy_ssh_host,
+            danmaku_items=danmaku_items or None,
+            context_start_ms=_int_or_zero(_timeline_value(job, "context_start_ms")),
         )
-        if expanded is not None:
-            expansion_record = {
-                "original_candidate_id": original_candidate.anchor.candidate_id,
-                "expanded_candidate_id": expanded.anchor.candidate_id,
-                "original_start_ms": candidate.boundary.resolved_start_ms,
-                "original_end_ms": candidate.boundary.resolved_end_ms,
-                "expanded_start_ms": expanded.boundary.resolved_start_ms,
-                "expanded_end_ms": expanded.boundary.resolved_end_ms,
-            }
-            candidate = expanded
-            request_json = cpa_dir / f"{candidate.anchor.candidate_id}.cpa.request.json"
-            response_json = cpa_dir / f"{candidate.anchor.candidate_id}.cpa.response.json"
-            normalized_text = normalize_text(candidate.text_preview, lexicon=lexicon)
-            danmaku_context_json = None
-            if danmaku_items:
-                danmaku_context_json = _write_danmaku_context(
-                    cpa_dir / f"{candidate.anchor.candidate_id}.danmaku.json",
-                    danmaku_items,
-                    candidate.boundary.resolved_start_ms,
-                    candidate.boundary.resolved_end_ms,
-                )
-            _run_cpa_script(
-                candidate_id=candidate.anchor.candidate_id,
-                candidate_text=candidate.text_preview,
-                normalized_text=normalized_text,
-                request_json=request_json,
-                response_json=response_json,
+    if lexicon is not None:
+        job["glossary_path"] = str(lexicon.path)
+        job["glossary_sha256"] = hashlib.sha256(lexicon.path.read_bytes()).hexdigest()
+    if canonical_lrc_provenance_path is not None:
+        job["canonical_lrc_provenance_path"] = str(canonical_lrc_provenance_path)
+        job["canonical_lrc_provenance_sha256"] = _sha256_file(canonical_lrc_provenance_path)
+    job["cpa_semantic_request_path"] = str(request_json)
+    job["cpa_semantic_response_path"] = str(response_json)
+    job["duplicate_corpus"] = [item for item in duplicate_corpus if item != candidate.anchor.candidate_id]
+    fresh_transcriber = None
+    if args.agy_ssh_host and candidate.content_type_hint == "talk" and not args.copy_draft_context:
+        fresh_transcriber = _build_ssh_agy_transcribe_runner(
+            args.agy_ssh_host,
+            danmaku_items=danmaku_items or None,
+            window_start_ms=candidate.boundary.next_start_ms
+            if candidate.boundary.next_start_ms is not None
+            else candidate.boundary.resolved_start_ms,
+            source_video=args.source_video,
+        )
+    if args.agy_audio_lrc_align:
+        from src.autoslice.agy_lrc_alignment import run_agy_audio_lrc_alignment
+
+        audio_lrc_aligner = run_agy_audio_lrc_alignment
+    else:
+        audio_lrc_aligner = None
+    summary = run_shadow_pipeline(
+        source_video=args.source_video,
+        source_srt=args.source_srt,
+        refined_srt=None,
+        source_context_job=job,
+        source_context_agy_runner=agy_runner,
+        fresh_talk_transcriber=fresh_transcriber,
+        speech_spans_provider=build_ssh_silero_vad_provider(args.agy_ssh_host) if args.agy_ssh_host else None,
+        room_id=args.room_id,
+        title=normalized_text[:80],
+        output_dir=candidate_dir,
+        no_upload=True,
+        source_context_run_ffmpeg=not args.no_ffmpeg,
+        lrc_provider=lrc_provider,
+        song_hint_llm_call=build_llm_call(
+            LlmConfig(transport="command", command_template=args.song_hint_llm_command, timeout_seconds=180.0)
+        )
+        if args.song_hint_llm_command
+        else None,
+        song_lrc_queries=tuple(args.song_lrc_query),
+        audio_lrc_aligner=audio_lrc_aligner,
+        host_vocal_prover=host_vocal_prover,
+        burn_preview=args.burn_preview,
+        branding_intro=branding_intro,
+        publish_staging=args.publish_staging,
+        title_llm_call=build_llm_call(
+            LlmConfig(transport="command", command_template=args.title_llm_command, timeout_seconds=180.0)
+        )
+        if args.title_llm_command
+        else None,
+        art_direction_llm_call=build_llm_call(
+            LlmConfig(transport="command", command_template=args.cover_art_direction_llm_command, timeout_seconds=180.0)
+        )
+        if args.cover_art_direction_llm_command
+        else None,
+        final_song_lyrics_cpa_runner=(
+            lambda current_job, recut: _run_final_song_lyrics_cpa_script(
+                job=current_job,
+                materialized_recut=recut,
+                candidate_dir=candidate_dir,
                 cpa_command=args.cpa_command,
                 room_id=args.room_id,
                 source_video=args.source_video,
-                source_srt=args.source_srt,
-                start_ms=candidate.boundary.resolved_start_ms,
-                end_ms=candidate.boundary.resolved_end_ms,
-                content_type_hint=candidate.content_type_hint,
-                danmaku_context_json=danmaku_context_json,
+                lexicon=lexicon,
             )
-        job = candidate.to_source_context_job(source_duration_ms=source_duration_ms)
-        job["room_id"] = args.room_id
-        job["selector_stage"] = selector_stage
-        if selector_stage == "semantic_recall" or expansion_record is not None:
-            # Semantic windows (LLM recall or viewer-context expansion) carry
-            # their own bounds; keyword boundary heuristics become advisory.
-            job["boundary_authority"] = "semantic"
-        if expansion_record is not None:
-            job["viewer_context_expansion"] = expansion_record
-        if args.agy_ssh_host and args.copy_draft_context:
-            raise SystemExit("--agy-ssh-host and --copy-draft-context are mutually exclusive")
-        agy_runner = None
-        if args.copy_draft_context:
-            agy_runner = _copy_draft_runner
-        elif args.agy_ssh_host:
-            agy_runner = _build_ssh_agy_runner(
-                args.agy_ssh_host,
-                danmaku_items=danmaku_items or None,
-                context_start_ms=_int_or_zero(_timeline_value(job, "context_start_ms")),
-            )
-        if lexicon is not None:
-            job["glossary_path"] = str(lexicon.path)
-            job["glossary_sha256"] = hashlib.sha256(lexicon.path.read_bytes()).hexdigest()
-        job["cpa_semantic_request_path"] = str(request_json)
-        job["cpa_semantic_response_path"] = str(response_json)
-        job["duplicate_corpus"] = [item for item in duplicate_corpus if item != candidate.anchor.candidate_id]
-        fresh_transcriber = None
-        if args.agy_ssh_host and candidate.content_type_hint == "talk" and not args.copy_draft_context:
-            fresh_transcriber = _build_ssh_agy_transcribe_runner(
-                args.agy_ssh_host,
-                danmaku_items=danmaku_items or None,
-                window_start_ms=candidate.boundary.next_start_ms
-                if candidate.boundary.next_start_ms is not None
-                else candidate.boundary.resolved_start_ms,
-                source_video=args.source_video,
-            )
-        if args.agy_audio_lrc_align:
-            from src.autoslice.agy_lrc_alignment import run_agy_audio_lrc_alignment
-
-            audio_lrc_aligner = run_agy_audio_lrc_alignment
-        else:
-            audio_lrc_aligner = None
-        summary = run_shadow_pipeline(
-            source_video=args.source_video,
-            source_srt=args.source_srt,
-            refined_srt=None,
-            source_context_job=job,
-            source_context_agy_runner=agy_runner,
-            fresh_talk_transcriber=fresh_transcriber,
-            speech_spans_provider=build_ssh_silero_vad_provider(args.agy_ssh_host) if args.agy_ssh_host else None,
-            room_id=args.room_id,
-            title=normalized_text[:80],
-            output_dir=candidate_dir,
-            no_upload=True,
-            source_context_run_ffmpeg=not args.no_ffmpeg,
-            lrc_provider=(
-                build_netease_lrc_provider()
-                if args.lrc_provider == "netease"
-                else build_lrclib_lrc_provider()
-                if args.lrc_provider == "lrclib"
-                else build_kugou_lrc_provider()
-                if args.lrc_provider == "kugou"
-                else build_composite_lrc_provider(
-                    build_netease_lrc_provider(),
-                    build_lrclib_lrc_provider(),
-                    build_kugou_lrc_provider(),
-                )
-                if args.lrc_provider == "auto"
-                else None
-            ),
-            song_hint_llm_call=build_llm_call(
-                LlmConfig(transport="command", command_template=args.song_hint_llm_command, timeout_seconds=180.0)
-            )
-            if args.song_hint_llm_command
-            else None,
-            song_lrc_queries=tuple(args.song_lrc_query),
-            audio_lrc_aligner=audio_lrc_aligner,
-            host_vocal_prover=host_vocal_prover,
-            burn_preview=args.burn_preview,
-            branding_intro=branding_intro,
-            publish_staging=args.publish_staging,
-            title_llm_call=build_llm_call(
-                LlmConfig(transport="command", command_template=args.title_llm_command, timeout_seconds=180.0)
-            )
-            if args.title_llm_command
-            else None,
-            art_direction_llm_call=build_llm_call(
-                LlmConfig(transport="command", command_template=args.cover_art_direction_llm_command, timeout_seconds=180.0)
-            )
-            if args.cover_art_direction_llm_command
-            else None,
-            final_song_lyrics_cpa_runner=(
-                lambda current_job, recut: _run_final_song_lyrics_cpa_script(
-                    job=current_job,
-                    materialized_recut=recut,
-                    candidate_dir=candidate_dir,
-                    cpa_command=args.cpa_command,
-                    room_id=args.room_id,
-                    source_video=args.source_video,
-                    lexicon=lexicon,
-                )
-            ),
-        )
-        record = summary.get("records", [{}])[0]
-        records.append(
-            {
+        ),
+    )
+    record = summary.get("records", [{}])[0]
+    return {
                 "candidate_id": candidate.anchor.candidate_id,
                 "candidate_dir": str(candidate_dir),
                 "selector_stage": selector_stage,
@@ -584,12 +702,92 @@ def _review_selected_candidates(
                 "materialized_recut": record.get("materialized_recut"),
                 "cpa_request_json": str(request_json),
                 "cpa_response_json": str(response_json),
-            }
-        )
-        selected_summary = summary
-        if record.get("decision_action") == "AUTO_UPLOAD":
+            }, summary
+
+
+def _review_selected_candidates(
+    *,
+    args: argparse.Namespace,
+    candidates: list[FullSessionCandidate],
+    cues,
+    source_duration_ms: int,
+    selector_stage: str | None,
+    danmaku_items,
+    host_vocal_prover,
+    branding_intro,
+    canonical_lrc_result: LrcResult | None = None,
+    canonical_lrc_provenance_path: Path | None = None,
+) -> tuple[list[dict[str, object]], dict[str, object] | None]:
+    lexicon = load_discovered_term_lexicon(args.source_srt)
+    duplicate_corpus = [candidate.anchor.candidate_id for candidate in candidates]
+    records: list[dict[str, object]] = []
+    selected_summary: dict[str, object] | None = None
+    lrc_provider = _build_lrc_provider(args, canonical_lrc_result)
+    from contextlib import nullcontext
+    from scripts.gemini_slice_jingting import recording_date_from_path
+    from src.autoslice.production_attempts import observed_production_attempt, record_production_result
+    from src.autoslice.cpa_runtime import record_cpa_event
+    from src.autoslice.song_selector_recovery import selector_recovery, infrastructure_reasons
+    import uuid
+    report_root = getattr(args, 'runtime_report_root', None)
+    runtime = Path(report_root) if report_root is not None else Path(
+        os.environ.get('AUTOSLICE_BASE') or '/opt/bilive/autoslice'
+    )
+    if report_root is not None:
+        runtime.mkdir(parents=True, exist_ok=True)
+    date = recording_date_from_path(args.source_video)
+    for original_candidate in candidates[: args.max_candidates]:
+        cid = original_candidate.anchor.candidate_id
+        lane = original_candidate.content_type_hint
+        recovery_context = (selector_recovery(args.source_video,cid,
+            original_candidate.anchor.anchor_start_ms,original_candidate.anchor.anchor_end_ms)
+            if lane == 'song' else nullcontext(None))
+        observation = (observed_production_attempt(runtime_root=runtime,date=date,candidate_id=cid,
+            lane=lane,stage='song_selector' if lane=='song' else 'selector',
+            trace=runtime/'reports/production-attempt-traces'/(uuid.uuid4().hex+'.jsonl'))
+            if date else nullcontext(None))
+        with observation, recovery_context as recovery:
+            if recovery:
+                recovery.adopt_completed_failure(args.output_dir/'summary.json',args.source_video)
+                restored = recovery.resume_record()
+            else:
+                restored = None
+            if restored is not None:
+                outer = restored
+                record_cpa_event('cache_hit',{'kind':'selector_infrastructure_checkpoint'})
+            else:
+                if recovery: recovery.start()
+                try:
+                    outer, selected_summary = _review_one_selected_candidate(
+                        args=args,original_candidate=original_candidate,lexicon=lexicon,
+                        duplicate_corpus=duplicate_corpus,lrc_provider=lrc_provider,cues=cues,
+                        source_duration_ms=source_duration_ms,selector_stage=selector_stage,
+                        danmaku_items=danmaku_items,host_vocal_prover=host_vocal_prover,
+                        branding_intro=branding_intro,canonical_lrc_result=canonical_lrc_result,
+                        canonical_lrc_provenance_path=canonical_lrc_provenance_path)
+                except (SystemExit,RuntimeError) as exc:
+                    from src.autoslice.song_lane import classify_song_selector_transient
+                    code = classify_song_selector_transient(str(exc))
+                    if recovery is None or code is None:
+                        raise
+                    outer = {'candidate_id':cid,'candidate_dir':str(args.output_dir/cid),
+                        'selector_stage':selector_stage,'decision_action':'BLOCK','reason_codes':[code]}
+                if recovery: outer = recovery.finish(outer)
+            reasons = infrastructure_reasons(outer)
+            ready = outer.get('decision_action') == 'AUTO_UPLOAD'
+            reason_codes = outer.get('reason_codes') or []
+            result = {'status':'INFRASTRUCTURE_WAIT' if reasons and outer.get('next_retry_at')
+                else 'SELECTOR_READY' if ready else 'BLOCKED',
+                'reason_code':reasons[0] if reasons else next((c for c in reason_codes if str(c).startswith('SONG_')),
+                    reason_codes[0] if reason_codes else None)}
+            result.update({key:outer[key] for key in ('transient_retry_count','next_retry_at','next_retry_at_epoch',
+                'retry_after_seconds','recovery_checkpoint') if key in outer})
+            record_production_result({'runtime_stage_result':result})
+        records.append(outer)
+        if outer.get('decision_action') == 'AUTO_UPLOAD':
             break
     return records, selected_summary
+
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
@@ -602,6 +800,7 @@ def main(argv: list[str] | None = None) -> int:
         print('branding intro manifest ignored: songs ship without the intro (公开规则)')
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    canonical_lrc_result, canonical_lrc_provenance_path = _prepare_canonical_lrc_input(args)
     cues = _parse_srt(args.source_srt)
     if not cues:
         raise SystemExit("NO_SOURCE_CUES")
@@ -731,6 +930,8 @@ def main(argv: list[str] | None = None) -> int:
         danmaku_items=danmaku_items,
         host_vocal_prover=host_vocal_prover,
         branding_intro=branding_intro,
+        canonical_lrc_result=canonical_lrc_result,
+        canonical_lrc_provenance_path=canonical_lrc_provenance_path,
     )
 
     final_summary = {
@@ -743,7 +944,15 @@ def main(argv: list[str] | None = None) -> int:
         "records": records,
         "last_shadow_summary": selected_summary,
     }
-    (args.output_dir / "summary.json").write_text(json.dumps(final_summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    from src.autoslice.package_import import atomic_write_bytes
+    summary_path = args.output_dir/'summary.json'
+    raw = (json.dumps(final_summary,ensure_ascii=False,indent=2,sort_keys=True)+'\n').encode()
+    if summary_path.exists() and summary_path.read_bytes() != raw:
+        previous = summary_path.read_bytes()
+        frozen = summary_path.with_name('summary.previous.'+hashlib.sha256(previous).hexdigest()+'.json')
+        if not frozen.exists():
+            with frozen.open('xb') as stream:stream.write(previous)
+    atomic_write_bytes(summary_path,raw)
     print(json.dumps(final_summary, ensure_ascii=False, indent=2))
     return 0
 
@@ -797,7 +1006,9 @@ def _run_cpa_script(
         argv.extend(["--danmaku-context-json", str(danmaku_context_json)])
     if final_song_lyrics_scope:
         argv.append("--final-song-lyrics-scope")
-    completed = subprocess.run(argv, check=False, capture_output=True, text=True)
+    from src.autoslice.cpa_runtime import observation_environment
+    completed = subprocess.run(argv, check=False, capture_output=True, text=True,
+        env={**os.environ,**observation_environment()})
     if completed.returncode != 0:
         raise SystemExit(completed.stderr or f"CPA_SEMANTIC_REVIEW_FAILED rc={completed.returncode}")
 

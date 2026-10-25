@@ -15,6 +15,7 @@ from collections.abc import Collection, Mapping
 from pathlib import Path
 from types import ModuleType
 from typing import NamedTuple
+from src.autoslice.runner_pipeline_fingerprints import TALK_DEPENDENCY_FIELD
 
 
 class _PreparedTalkRequeue(NamedTuple):
@@ -111,21 +112,42 @@ def _prepare_recoverable_talk(
     selected_final_review_retry: bool,
     selected_final_review_lineage_retry: bool,
     provider_budget_history: Collection[object],
+    selected_speaker_hold_retry: bool = False,
+    selected_terminal_regrant_retry: bool = False,
 ) -> _PreparedTalkRequeue | None:
     try:
         current = runtime._runner.talk_pipeline_fingerprint(cid)
         current_recovery = runtime._runner.talk_failure_recovery_fingerprint(
             record.get("failure_kind"), cid
         )
-    except ValueError:
+        dependency_changed, dependency_snapshot, changed_stages = (
+            runtime.talk_recovery_dependency_change(date, record, candidate_id=cid)
+        )
+        # These admitted single-candidate grants already have a typed,
+        # failure-specific fingerprint contract. A legacy stage-baseline
+        # migration must not erase that separately authorized transition.
+        if (
+            selected_source_fact_retry
+            or selected_final_review_retry
+            or selected_final_review_lineage_retry
+            or selected_speaker_hold_retry
+            or selected_terminal_regrant_retry
+        ):
+            dependency_changed = dependency_changed or (
+                record.get("failure_recovery_fingerprint") != current_recovery
+            )
+    except (OSError, ValueError, SyntaxError) as exc:
+        record["recovery_dependency_error"] = f"{type(exc).__name__}: {exc}"
         return None
-    decision = runtime._talk_retry_decision(
-        record,
-        cid=cid,
-        existing_pending=existing_pending,
-        current_recovery=current_recovery,
-        provider_budget_history=provider_budget_history,
-    )
+    try:
+        decision = runtime._talk_retry_decision(
+            record, cid=cid, existing_pending=existing_pending,
+            current_recovery=current_recovery, provider_budget_history=provider_budget_history,
+            dependency_changed=dependency_changed,
+        )
+    except ValueError as exc:
+        record["recovery_dependency_error"] = str(exc)
+        return None
     if decision is None:
         return None
     (
@@ -275,7 +297,6 @@ def _prepare_recoverable_talk(
         + (
             1
             if transient
-            and not changed
             and not cover_route_retry
             and not sanctioned_retry
             and not carryover_retry
@@ -293,6 +314,8 @@ def _prepare_recoverable_talk(
             changed,
             infrastructure_retry,
         ),
+        TALK_DEPENDENCY_FIELD: dependency_snapshot,
+        "retry_changed_stages": list(changed_stages),
         "bcut_srt_path": str(
             runtime._runner.BASE / "cache" / date / f"{segment.stem}.bcut.srt"
         ),
@@ -416,6 +439,22 @@ def requeue_recoverable_talks(
     final_review_scope = runtime._active_selected_final_review_recovery_scope(
         date, state, candidate_ids
     )
+    from src.autoslice.operator_processing_scope import (
+        SPEAKER_HOLD_RECOVERY_GRANT_SCHEMA,
+        SPEAKER_HOLD_RECOVERY_INTENT,
+        STATE_KEY,
+        operator_scope_admission,
+    )
+    speaker_hold_candidates = set()
+    block = state.get(STATE_KEY)
+    if (
+        isinstance(block, Mapping)
+        and block.get("schema_version") == SPEAKER_HOLD_RECOVERY_GRANT_SCHEMA
+        and block.get("intent") == SPEAKER_HOLD_RECOVERY_INTENT
+    ):
+        admission = operator_scope_admission(state, date=date)
+        if admission.admitted and allowed == set(admission.candidate_ids):
+            speaker_hold_candidates = set(admission.outstanding_candidate_ids)
     from src.autoslice.selected_final_review_terminal_regrant import (
         RECOVERY_RECEIPT_FIELD as TERMINAL_REGRANT_RECEIPT_FIELD,
         active_selected_final_review_terminal_regrant_scope,
@@ -511,6 +550,11 @@ def requeue_recoverable_talks(
             selected_final_review_lineage_retry=(
                 selected_final_review_lineage_retry
             ),
+            selected_speaker_hold_retry=(
+                cid in speaker_hold_candidates
+                and record.get("failure_kind") == "speaker_evidence"
+            ),
+            selected_terminal_regrant_retry=selected_terminal_regrant_retry,
             provider_budget_history=provider_budget_history,
         )
         if prepared is None:
@@ -560,6 +604,8 @@ def requeue_recoverable_talks(
             "failure_kind": record.get("failure_kind"),
             "failure_stage": record.get("failure_stage"),
             "failure_fingerprint": record.get("failure_fingerprint"),
+            TALK_DEPENDENCY_FIELD: copy.deepcopy(record.get(TALK_DEPENDENCY_FIELD)),
+            "retry_changed_stages": item.get("retry_changed_stages"),
             "sanctioned_revival_retry": item.get(
                 "sanctioned_revival_retry"
             ),

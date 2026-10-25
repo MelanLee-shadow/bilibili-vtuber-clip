@@ -15,7 +15,7 @@ from src.autoslice import agy_gemini_client
 
 VISUAL_SONG_SCHEMA_VERSION = "visual-song-inventory.v1"
 VISUAL_SONG_PROMPT_VERSION = "lidousha-numbered-song-list.v1"
-DEFAULT_MODEL = "Gemini 3.6 Flash (High)"
+DEFAULT_MODEL = agy_gemini_client.DEFAULT_AGY_FLASH_HIGH
 VISUAL_SONG_AGY_MODEL_ENV = "AUTOSLICE_VISUAL_SONG_AGY_MODEL"
 _RESULT_KEYS = {"song_title", "start_ms", "end_ms", "evidence", "confidence"}
 
@@ -526,19 +526,8 @@ def _run_agy_once(
     )
     try:
         completed = command_runner(
-            [
-                str(agy_bin),
-                "--sandbox",
-                "--dangerously-skip-permissions",
-                "--add-dir",
-                str(job_dir),
-                "--model",
-                config.model,
-                "-p",
-                short_prompt,
-                "--print-timeout",
-                f"{max(1, config.timeout_seconds // 60)}m",
-            ],
+            agy_gemini_client.agy_argv(str(agy_bin), job_dir=job_dir, model=config.model,
+                prompt=short_prompt, print_timeout=f"{max(1, config.timeout_seconds // 60)}m"),
             cwd=str(job_dir),
             check=False,
             capture_output=True,

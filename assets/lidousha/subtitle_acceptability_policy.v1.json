@@ -1,0 +1,51 @@
+{
+  "schema_version": "subtitle-acceptability-policy.v1",
+  "authority": "通用字幕可接受性规则；按公开 40/41 步逐项核对",
+  "terminal_choices": ["CURRENT", "PROPOSED", "CONTEXT_FIT", "UNRESOLVABLE"],
+  "grades": {
+    "A": {"condition": "clear_audio", "action": "verbatim", "min_independent_wide_witnesses": 2, "require_context_and_refrain_agreement": true},
+    "B": {"condition": "unclear_but_evidence_decisive", "action": "best_supported_reading"},
+    "C": {"condition": "unclear_undecidable_meaning_equivalent", "action": "retain_and_make_fluent"},
+    "D": {"condition": "unclear_undecidable_meaning_carrying", "action": "block"}
+  },
+  "hard_prohibitions": {
+    "change_clear_audio": true,
+    "invent_unsourced_entities": true,
+    "unsupported_derogatory_reading": true
+  },
+  "features": {
+    "meaning_carrying": ["negation_polarity", "referent", "number_time", "proper_name", "action", "evaluation_stance", "derogatory", "object_place", "syntax_role", "persona_action", "unclassified_lexical"],
+    "non_meaning_carrying": ["modal_particle", "stutter_repetition", "unfinished_restart", "synonym", "word_order", "filler", "punctuation", "shortening_core_retained"],
+    "negation_polarity": ["不", "没", "无", "别", "未", "不要", "不许", "不是", "禁止", "允许"],
+    "referent": ["我", "你", "您", "他", "她", "它", "谁", "别人", "大家", "我们", "你们", "他们", "她们"],
+    "number_time_pattern": "(?:[-+−]?[0-9]+(?:\\.[0-9]+)?|[零〇一二两三四五六七八九十百千万亿]+)(?:年|月|日|天|时|点|分|秒|个|次|岁)?|昨天|今天|明天|去年|今年|明年|以前|以后",
+    "action": ["去", "来", "买", "卖", "给", "拿", "打", "说", "做", "看", "听", "吃", "喝"],
+    "evaluation_stance": ["好", "差", "喜欢", "讨厌", "支持", "反对", "同意", "拒绝", "愿意", "不愿意"],
+    "derogatory": ["傻逼", "傻子", "白痴", "蠢货", "废物", "恶心", "垃圾", "滚"],
+    "object_place": ["素菜", "素材"],
+    "syntax_role": ["门厅", "听"],
+    "persona_action": ["么么", "摸摸"],
+    "modal_particles": ["了", "啊", "呃", "哦", "吧", "呢", "呀", "啦", "嗯", "噢", "喔", "哎", "诶"],
+    "fillers": ["就是", "那个", "然后"],
+    "synonym_groups": [["说话", "讲话"], ["喝口水", "喝一口水"], ["跟别人", "和别人"]],
+    "word_order_rules": [{"pattern": "^(.*?)(我|你|他|她|它|我们|你们|他们)(也|都)(.*)$", "replacement": "\\1\\3\\2\\4"}],
+    "unfinished_restart_patterns": ["^(?P<stem>(?:我|你|他|她|我们|你们|他们)?(?:听到|听见|看到|看见)(?:我|你|他|她|我们|你们|他们))(?:不许|不是)$"],
+    "shortening_rules": [{"core_pattern": "^(?:我|你|他|她|我们|你们|他们)(?:知道|明白|懂)$", "tail_pattern": "^(?:我|你|他|她|我们|你们|他们)(?:跟|和)(?:我|你|他|她|别人|大家|我们|你们|他们)(?:说的|讲的)$"}]
+  },
+  "c_rendering": {
+    "clear_particles_stutters_restarts": "verbatim_grade_A",
+    "unclear_default": "retain_original_make_fluent",
+    "shorten_only_if_removed_fully_inaudible": true,
+    "require_core_meaning_retained": true,
+    "forbid_new_facts_names_stance": true
+  },
+  "disclosure": {
+    "internal_audio_marker": "UNRESOLVED_BY_AUDIO",
+    "audience_visible_allowed": false,
+    "audience_surfaces": ["subtitle", "title", "cover", "description"],
+    "developer_marker_patterns": ["无法依听音确定", "听不清", "无法确定", "[（(]\\s*[?？]\\s*[）)]", "\\[(?:unclear|inaudible|unintelligible)\\]", "UNRESOLVED(?:_BY_AUDIO)?"]
+  },
+  "unsourced_name": {"retain_current": true, "provide_best_guess_internally": true, "block": false, "invent_entity": false},
+  "refrain": {"min_occurrences": 3, "min_syllables": 5, "min_pinyin_similarity": 0.78, "max_extra_syllables": 3, "require_meaning_equivalence": true},
+  "witness_consistency": {"min_readings": 3, "max_normalized_edit_distance": 0.34, "min_conflicting_pair_fraction": 0.4, "can_raise_question": true, "can_sustain_question_if_inconsistent": false}
+}

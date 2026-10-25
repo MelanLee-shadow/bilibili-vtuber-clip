@@ -1,6 +1,7 @@
 """--smoke-segment 的有界 backfill：单候选 fail-closed 不再让整次冒烟空手。"""
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import scripts.session_autoslice as runner
@@ -30,6 +31,7 @@ def _drive_smoke(monkeypatch, tmp_path, produce_results):
     produced: list[str] = []
 
     def fake_produce(date, item):
+        assert date == "2026-08-01"
         produced.append(item["cid"])
         return produce_results[len(produced) - 1]
 
@@ -99,3 +101,15 @@ def test_smoke_attempts_are_capped_and_failure_reported(
     assert len(produced) == runner.SMOKE_TALK_ATTEMPT_CAP == 3
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "quarantine_rejected"
+
+
+def test_smoke_missing_source_date_refuses_before_provider(monkeypatch, tmp_path):
+    import pytest
+    base = tmp_path / 'runtime'
+    monkeypatch.setattr(runner, 'BASE', base)
+    monkeypatch.setattr(runner, 'bcut_transcribe',
+                        lambda *args: pytest.fail('date must be validated before ASR'))
+    with pytest.raises(SystemExit) as exc:
+        runner.main(['--smoke-segment', str(tmp_path / 'unknown.mp4')])
+    assert exc.value.code == 2
+    assert not base.exists()

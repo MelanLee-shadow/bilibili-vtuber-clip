@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -16,22 +17,90 @@ from src.autoslice.producer_delivery_transaction import (
     DeliveryArtifact,
     PreparedDelivery,
     ProducerDeliveryTransactionError,
+    _runtime_root,
+    _safe_directory,
     _read_document,
     deployment_authority_binding,
     prepare_delivery,
 )
 from src.autoslice.producer_media import (
+    RECUT_PROVENANCE_SCHEMA,
     _validated_burned_artifact,
     _validated_burned_ass_artifact,
 )
 from src.autoslice.final_subtitle_audio_gate import subtitle_audio_artifact_paths
 from src.autoslice.shadow_review import _sha256
+from src.autoslice.publish_staging_paths import validate_staged_editorial_files
 
 
 def _optional(path: Path | None, *, role: str, destination: Path) -> DeliveryArtifact | None:
     if path is None or not path.is_file():
         return None
     return DeliveryArtifact(role, path, destination, "sha256:" + _sha256(path))
+
+
+def _recut_provenance(record: Mapping[str, object]) -> Path | None:
+    """Carry the actual recut source/interval proof into the portable package."""
+    media_value = record.get("media_path")
+    if not media_value:
+        return None
+    media = Path(str(media_value))
+    explicit = record.get("recut_provenance_path")
+    path = Path(str(explicit)) if explicit else media.with_suffix(".provenance.json")
+    if not path.exists() and not explicit:
+        return None
+    if path.is_symlink() or not path.is_file():
+        raise ProducerDeliveryTransactionError("recut provenance source is unsafe or missing")
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        final = document["final_recut"]
+        expected = (record.get("artifact_hashes") or {}).get("video_sha256")
+        actual = _sha256(media)
+        valid = (
+            document.get("schema_version") == RECUT_PROVENANCE_SCHEMA
+            and final.get("output_path") == str(media.resolve())
+            and final.get("output_sha256") == actual
+            and expected == "sha256:" + actual
+        )
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise ProducerDeliveryTransactionError("recut provenance binding is invalid") from exc
+    if not valid:
+        raise ProducerDeliveryTransactionError("recut provenance binding is invalid")
+    return path
+
+
+def resolve_talk_delivery_runtime_root(spec: Mapping[str, object]) -> Path:
+    """Use the same runtime identity before work and during preparation."""
+
+    declared_output = Path(str(spec["output_root"])).expanduser()
+    if not declared_output.is_absolute():
+        raise ProducerDeliveryTransactionError("RUNTIME_PREREQUISITE: output root must be absolute")
+    try:
+        output_root = Path(os.path.abspath(_safe_directory(declared_output)))
+    except ProducerDeliveryTransactionError as exc:
+        raise ProducerDeliveryTransactionError(f"RUNTIME_PREREQUISITE: {exc}") from exc
+    explicit = spec.get("runtime_root")
+    if explicit is None:
+        # Retain the declared ancestors so a symlink runtime cannot disappear
+        # when output_root is resolved for the containment comparison.
+        if len(declared_output.parents) < 2:
+            raise ProducerDeliveryTransactionError("RUNTIME_PREREQUISITE: cannot infer runtime root")
+        runtime_root = declared_output.parents[1]
+    else:
+        raw = str(explicit).strip()
+        if not raw:
+            raise ProducerDeliveryTransactionError("RUNTIME_PREREQUISITE: runtime root is empty")
+        runtime_root = Path(raw).expanduser()
+        if not runtime_root.is_absolute():
+            raise ProducerDeliveryTransactionError("RUNTIME_PREREQUISITE: runtime root must be absolute")
+    try:
+        runtime_root = Path(os.path.abspath(_runtime_root(runtime_root)))
+    except ProducerDeliveryTransactionError as exc:
+        raise ProducerDeliveryTransactionError(f"RUNTIME_PREREQUISITE: {exc}") from exc
+    if not output_root.is_relative_to(runtime_root):
+        raise ProducerDeliveryTransactionError("RUNTIME_PREREQUISITE: output root escapes runtime root")
+    # Keep symlink ancestors visible to deployment_authority_binding.
+    return runtime_root.absolute()
 
 
 def prepare_talk_delivery(
@@ -54,23 +123,11 @@ def prepare_talk_delivery(
 ) -> PreparedDelivery:
     """Create one private Talk handle from finalization's exact artifacts."""
 
-    output_root = Path(str(spec["output_root"])).resolve(strict=True)
-    explicit_runtime_root = spec.get("runtime_root")
-    if explicit_runtime_root is None:
-        # Keep the historical runner layout working for specs emitted before
-        # runtime_root became explicit.  New private output layouts can carry
-        # their actual authority root without changing source containment.
-        runtime_root = output_root.parents[1]
-    else:
-        raw_runtime_root = str(explicit_runtime_root).strip()
-        if not raw_runtime_root:
-            raise ProducerDeliveryTransactionError("runtime root is empty")
-        runtime_root = Path(raw_runtime_root).expanduser()
-        if not runtime_root.is_absolute():
-            raise ProducerDeliveryTransactionError("runtime root must be absolute")
-        # Do not resolve here: deployment_authority_binding/_safe_directory
-        # must still see and reject a symlinked runtime root or ancestor.
-        runtime_root = runtime_root.absolute()
+    try:
+        validate_staged_editorial_files(record, staging, candidate_id=candidate_id, subtitle_path=subtitle_path)
+    except (OSError, ValueError, TypeError) as exc:
+        raise ProducerDeliveryTransactionError(str(exc)) from exc
+    runtime_root = resolve_talk_delivery_runtime_root(spec)
     date = str(spec["date"])
     basename = str(spec.get("delivery_name") or candidate_id)
     delivery = delivery_root / date
@@ -90,6 +147,7 @@ def prepare_talk_delivery(
     ]
     sources: list[tuple[str, Path | None, str]] = [
         ("video", _validated_burned_artifact(dict(record)), ".mp4"),
+        ("source_provenance", _recut_provenance(record), ".provenance.json"),
         ("subtitle", subtitle_path, ".srt"),
         ("uniform_host_ass", _validated_burned_ass_artifact(dict(record)) if speaker_ass is None else None, ".final-sapphire72.ass"),
         ("speaker_srt", speaker_review_srt, ".speaker.srt"),
@@ -104,11 +162,15 @@ def prepare_talk_delivery(
         ("cover_title_mask", Path(str(rendered["mask_path"])) if rendered.get("mask_path") else None, ".cover.title-mask.png"),
         ("cover_pre_overlay", Path(str(generation["pre_overlay_path"])) if generation.get("pre_overlay_path") else None, ".cover.pre-overlay.png"),
         ("cover_route_background", Path(str(generation["ai_background"])) if generation.get("ai_background") else None, ".cover.route-background.png"),
+        ("cover_request", Path(str(generation["request_path"])) if generation.get("request_sha256") else None, ".cover-request.json"),
+        ("cover_response", Path(str(generation["response_path"])) if generation.get("response_sha256") else None, ".cover-response.json"),
         ("publish", Path(str(staging["publish_json_path"])) if staging.get("publish_json_path") else None, ".publish.json"),
         ("record", record_path, ".record.json"),
         ("cover", Path(str(staging["cover_path"])) if staging.get("cover_path") else None, ".cover.png"),
     ]
     sources.extend(subtitle_audio_sources)
+    from .title_cover_package import choice_source_files
+    sources.extend(choice_source_files(generation))
     artifacts = [
         prepared for role, source, suffix in sources
         if (prepared := _optional(source, role=role, destination=delivery / f"{basename}{suffix}")) is not None
@@ -127,7 +189,9 @@ def prepare_talk_delivery(
         artifacts = [
             DeliveryArtifact(
                 row.role, row.source,
-                row.target.with_name(f"retry-{digest}__{row.target.name}"),
+                delivery / ("retry-" + digest + "__" + row.target.relative_to(delivery).parts[0]) / Path(*row.target.relative_to(delivery).parts[1:])
+                if len(row.target.relative_to(delivery).parts) > 1
+                else row.target.with_name(f"retry-{digest}__{row.target.name}"),
                 row.expected_sha256,
             )
             for row in artifacts
@@ -175,6 +239,7 @@ def talk_delivery_summary(
         "boundary_repairs": list(audit.get("boundary_repairs", [])),
         "timing_qa": timing_qa.get("counts"),
         "cover_status": staging.get("cover_status"),
+        "reason_codes": list(staging.get('reason_codes') or []),
         "title": staging.get("title"),
         "delivery": str(Path(str(delivery) + ".mp4")),
         "subtitle": str(Path(str(delivery) + ".srt")),
@@ -207,6 +272,8 @@ def talk_delivery_summary(
 
 
 def emit_talk_delivery_summary(summary: Mapping[str, object]) -> None:
+    from .production_attempts import record_production_result
+    record_production_result(dict(summary))
     print(json.dumps(dict(summary), ensure_ascii=False, indent=2))
 
 

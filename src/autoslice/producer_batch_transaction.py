@@ -13,25 +13,35 @@ import json
 import os
 import re
 import stat
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
 
 from src.autoslice.producer_delivery_transaction import (
     PreparedDelivery,
+    DeliveryArtifact,
     ProducerDeliveryTransactionError,
     _canonical_bytes,
+    _checked_artifacts,
     _fsync_directory,
     _read_document,
     _private_directory,
     _read_regular_bytes,
+    _deployment_repository,
+    _regular_snapshot,
     _write_create_only,
     _write_replace,
+    deployment_authority_binding,
+    load_prepared_delivery,
     materialize_preflight_under_batch,
     preflight_prepared_delivery,
+    prepare_delivery,
 )
 from src.autoslice.qixi_transaction_core import (
+    QixiTransactionCoreError,
     RunnerCommitLease,
+    recovery_reference_write_window,
     require_runner_commit_lease,
 )
 from src.autoslice.runner_state_writeback import (
@@ -43,6 +53,8 @@ from src.autoslice.runner_state_writeback import (
 
 
 PRODUCER_BATCH_JOURNAL_SCHEMA = "producer-batch-journal.v1"
+PRODUCER_RESULT_CHECKPOINT_SCHEMA = "producer-result-checkpoint.v2"
+_LEGACY_RESULT_CHECKPOINT_SCHEMA = "producer-result-checkpoint.v1"
 
 
 class ProducerBatchTransactionError(RuntimeError):
@@ -56,6 +68,290 @@ class PreparedBatchEntry:
     lane: str
     candidate_id: str
     handle: PreparedDelivery
+
+
+def checkpoint_prepared_result(
+    *, entry: PreparedBatchEntry, binding: Mapping[str, object], result: Mapping[str, object],
+    source_dependencies: Mapping[str, object] | None = None,
+    reprepared_from: Mapping[str, str] | None = None,
+) -> None:
+    """Retain a completed producer result before its ordered state callback.
+
+    This sidecar belongs to the existing private prepared handle. It grants
+    no delivery authority and never installs a target. A crash before the
+    callback can replay the exact lane result through the same batch commit.
+    """
+
+    try:
+        with recovery_reference_write_window(entry.handle.runtime_root):
+            _checkpoint_prepared_result_under_reference_window(
+                entry=entry, binding=binding, result=result,
+                source_dependencies=source_dependencies, reprepared_from=reprepared_from,
+            )
+    except QixiTransactionCoreError as exc:
+        raise ProducerBatchTransactionError(f"RUNTIME_PREREQUISITE: {exc}") from exc
+
+
+def _checkpoint_prepared_result_under_reference_window(
+    *, entry: PreparedBatchEntry, binding: Mapping[str, object], result: Mapping[str, object],
+    source_dependencies: Mapping[str, object] | None,
+    reprepared_from: Mapping[str, str] | None,
+) -> None:
+    dependencies = dict(source_dependencies or {})
+    if dependencies and bind_prepared_result_inputs({
+        Path(path): snapshot.get("media") is True for path, snapshot in dependencies.items()
+    }) != dependencies:
+        raise ProducerBatchTransactionError("producer result source dependencies changed before checkpoint")
+
+    document = _read_document(entry.handle)
+    if document["deployed_authority"] != deployment_authority_binding(entry.handle.runtime_root):
+        raise ProducerBatchTransactionError("producer result deployment drifts")
+    manifest_bytes = _read_regular_bytes(_deployment_repository(entry.handle.runtime_root) / "DEPLOYED_AUTHORITY_MANIFEST.json")
+    if _sha(manifest_bytes) != document["deployed_authority"]["authority_manifest_sha256"]:
+        raise ProducerBatchTransactionError("producer result consumer authority drifts")
+    body = {
+        "schema_version": PRODUCER_RESULT_CHECKPOINT_SCHEMA,
+        "binding": dict(binding), "result": dict(result),
+        "source_dependencies": dependencies,
+        "prepared_sha256": f"sha256:{entry.handle.prepared_sha256}",
+        "upload_enabled": False,
+        "deployed_authority_manifest_b64": _b64(manifest_bytes),
+        "reprepared_from": dict(reprepared_from) if reprepared_from is not None else None,
+    }
+    body["checkpoint_sha256"] = _sha(_canonical_bytes(body))
+    digest = hashlib.sha256(_canonical_bytes(dict(binding))).hexdigest()
+    path = entry.handle.manifest_path.parent / f"dispatch-result-{digest}.json"
+    payload = _canonical_bytes(body)
+    try:
+        if path.exists() or path.is_symlink():
+            observed = os.lstat(path)
+            if not stat.S_ISREG(observed.st_mode) or stat.S_IMODE(observed.st_mode) != 0o600:
+                raise ProducerBatchTransactionError("producer result checkpoint is unsafe")
+            if _read_regular_bytes(path) != payload:
+                raise ProducerBatchTransactionError("producer result checkpoint collides")
+        else:
+            _write_create_only(path, payload)
+            _fsync_directory(path.parent)
+    except OSError as exc:
+        raise ProducerBatchTransactionError("producer result checkpoint could not be persisted") from exc
+
+
+def bind_prepared_result_inputs(paths: Mapping[Path, bool]) -> dict[str, object]:
+    """Snapshot actual input paths; large media uses inode/stat identity.
+
+    The boolean marks media. Text is hashed; both kinds bind resolved paths
+    and detect replacement or mutation without treating access time as drift.
+    Prepared artifact bytes still receive their full transaction hash checks.
+    """
+
+    snapshots = {}
+    for path, media in sorted(paths.items()):
+        try:
+            before = path.stat()
+        except FileNotFoundError:
+            snapshots[str(path)] = {"missing": True}
+            continue
+        if not stat.S_ISREG(before.st_mode):
+            raise ProducerBatchTransactionError("producer checkpoint input is not regular")
+        snapshot = {
+            "device": before.st_dev, "inode": before.st_ino, "bytes": before.st_size,
+            "mtime_ns": before.st_mtime_ns, "ctime_ns": before.st_ctime_ns,
+            "resolved_path": str(path.resolve(strict=True)), "media": media,
+        }
+        if not media:
+            snapshot["sha256"] = _sha(path.read_bytes())
+        after = path.stat()
+        if any(getattr(before, key) != getattr(after, key) for key in (
+            "st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns", "st_mode",
+        )):
+            raise ProducerBatchTransactionError("producer checkpoint input changed during binding")
+        snapshots[str(path)] = snapshot
+    return snapshots
+
+
+def load_prepared_result_checkpoint(
+    *, runtime_root: Path, lane: str, candidate_id: str, binding: Mapping[str, object],
+) -> dict | None:
+    """Find only an exact-input completion; legacy bare handles cannot resume."""
+
+    if lane not in {"talk", "song"} or re.fullmatch(r"[A-Za-z0-9_-]{1,96}", candidate_id) is None:
+        raise ProducerBatchTransactionError("producer result identity is unsafe")
+    digest = hashlib.sha256(_canonical_bytes(dict(binding))).hexdigest()
+    root = runtime_root / ".prepared-deliveries" / lane / candidate_id
+    matches = sorted(root.glob(f"*/dispatch-result-{digest}.json"))
+    if not matches:
+        return None
+    validated = [_load_result_checkpoint(path, runtime_root=runtime_root, lane=lane,
+                                         candidate_id=candidate_id, binding=binding)
+                 for path in matches]
+    # Preserve every previous receipt. The only permitted multiple-match
+    # history is a single exact predecessor chain of equivalent re-prepares.
+    by_path = {str(handle.manifest_path): (handle, body) for handle, body in validated}
+    predecessors = set()
+    for _handle, body in validated:
+        previous = body.get("reprepared_from")
+        if previous is None:
+            continue
+        if (not isinstance(previous, dict)
+            or set(previous) != {"manifest_path", "prepared_sha256", "checkpoint_sha256"}
+            or any(not isinstance(value, str) or not value for value in previous.values())):
+            raise ProducerBatchTransactionError("producer result predecessor is invalid")
+        parent = by_path.get(previous["manifest_path"])
+        if parent is None or previous != {
+            "manifest_path": str(parent[0].manifest_path),
+            "prepared_sha256": "sha256:" + parent[0].prepared_sha256,
+            "checkpoint_sha256": parent[1]["checkpoint_sha256"],
+        }:
+            raise ProducerBatchTransactionError("producer result predecessor drifts")
+        predecessors.add(previous["manifest_path"])
+    leaves = [(handle, body) for handle, body in validated if str(handle.manifest_path) not in predecessors]
+    if len(leaves) != 1 or len(predecessors) != len(validated) - 1:
+        raise ProducerBatchTransactionError("producer result checkpoint is ambiguous")
+    handle, body = leaves[0]
+    visited = set()
+    cursor = str(handle.manifest_path)
+    while True:
+        if cursor in visited:
+            raise ProducerBatchTransactionError("producer result checkpoint lineage cycles")
+        visited.add(cursor)
+        previous = by_path[cursor][1].get("reprepared_from")
+        if previous is None:
+            break
+        cursor = previous["manifest_path"]
+    if len(visited) != len(validated):
+        raise ProducerBatchTransactionError("producer result checkpoint lineage is disconnected")
+    current_authority = deployment_authority_binding(runtime_root)
+    if _read_document(handle)["deployed_authority"] == current_authority:
+        return body["result"]
+    return _reprepare_equivalent_result(handle, body, current_authority=current_authority)
+
+
+def _load_result_checkpoint(
+    path: Path, *, runtime_root: Path, lane: str, candidate_id: str,
+    binding: Mapping[str, object],
+) -> tuple[PreparedDelivery, dict]:
+    handle = load_prepared_delivery(runtime_root=runtime_root, manifest_path=path.parent / "prepared.json")
+    if handle.lane != lane or handle.candidate_id != candidate_id:
+        raise ProducerBatchTransactionError("producer result checkpoint identity drifts")
+    observed = os.lstat(path)
+    if not stat.S_ISREG(observed.st_mode) or stat.S_IMODE(observed.st_mode) != 0o600:
+        raise ProducerBatchTransactionError("producer result checkpoint is unsafe")
+    try:
+        body = json.loads(_read_regular_bytes(path).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise ProducerBatchTransactionError("producer result checkpoint is invalid") from exc
+    if not isinstance(body, dict):
+        raise ProducerBatchTransactionError("producer result checkpoint is invalid")
+    unsigned = dict(body)
+    declared = unsigned.pop("checkpoint_sha256", None)
+    fields = {"schema_version", "binding", "result", "source_dependencies", "prepared_sha256", "upload_enabled", "checkpoint_sha256"}
+    if body.get("schema_version") == PRODUCER_RESULT_CHECKPOINT_SCHEMA:
+        fields.update({"deployed_authority_manifest_b64", "reprepared_from"})
+    if (
+        set(body) != fields
+        or body.get("schema_version") not in {PRODUCER_RESULT_CHECKPOINT_SCHEMA, _LEGACY_RESULT_CHECKPOINT_SCHEMA}
+        or body.get("binding") != dict(binding)
+        or body.get("prepared_sha256") != f"sha256:{handle.prepared_sha256}"
+        or body.get("upload_enabled") is not False
+        or declared != _sha(_canonical_bytes(unsigned))
+        or not isinstance(body.get("result"), dict)
+        or body["result"].get("status") != "delivery_prepared_no_target"
+    ):
+        raise ProducerBatchTransactionError("producer result checkpoint authority drifts")
+    # The sidecar cannot substitute a different private handle, even one that
+    # is independently valid. Projection and commit repeat the same checks.
+    from src.autoslice.producer_batch_projection import prepared_batch_entry
+    entry = prepared_batch_entry(
+        runtime_root=runtime_root, lane=lane, candidate_id=candidate_id, result=body["result"],
+    )
+    if entry is None or entry.handle != handle:
+        raise ProducerBatchTransactionError("producer result checkpoint handle drifts")
+    dependencies = body.get("source_dependencies")
+    if not isinstance(dependencies, dict) or any(
+        not isinstance(path, str) or not Path(path).is_absolute() or not isinstance(snapshot, dict)
+        for path, snapshot in dependencies.items()
+    ):
+        raise ProducerBatchTransactionError("producer result source dependencies are invalid")
+    try:
+        fresh = bind_prepared_result_inputs({
+            Path(path): snapshot.get("media") is True for path, snapshot in dependencies.items()
+        })
+    except OSError as exc:
+        raise ProducerBatchTransactionError("producer result source dependencies are unavailable") from exc
+    if fresh != dependencies:
+        raise ProducerBatchTransactionError("producer result source dependencies drift")
+    return handle, body
+
+
+def _reprepare_equivalent_result(
+    handle: PreparedDelivery, body: dict, *, current_authority: dict[str, str],
+) -> dict:
+    """Mint a current handle only after unchanged consumers and native checks.
+
+    The exact stage key permits lookup; it cannot itself grant reuse. The
+    deployment seal covers authority assets, so their complete entry set must
+    also match and native quality/operator consumers must accept current bytes.
+    """
+    old_document = _read_document(handle)
+    original = _unb64(body.get("deployed_authority_manifest_b64"), label="deployed authority")
+    current_repo = _deployment_repository(handle.runtime_root)
+    current = _read_regular_bytes(current_repo / "DEPLOYED_AUTHORITY_MANIFEST.json")
+    if original is None or _sha(original) != old_document["deployed_authority"]["authority_manifest_sha256"] or _sha(current) != current_authority["authority_manifest_sha256"]:
+        raise ProducerBatchTransactionError("producer result checkpoint authority drifts; equivalence evidence missing")
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", str(body["binding"].get("pipeline_fingerprint") or "")) is None:
+        raise ProducerBatchTransactionError("producer result stage dependency evidence is missing")
+    try:
+        old_entries = json.loads(original)["entries"]
+        entries = json.loads(current)["entries"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ProducerBatchTransactionError("producer result consumer authority is invalid") from exc
+    if old_entries != entries:
+        raise ProducerBatchTransactionError("producer result current authority assets changed")
+    # Check actual sealed authority bytes, not only a self-consistent manifest.
+    for relative, entry in entries.items():
+        snapshot = _regular_snapshot(current_repo / relative)
+        if snapshot["size"] != entry["bytes"] or "sha256:" + snapshot["sha256"] != entry["sha256"]:
+            raise ProducerBatchTransactionError("producer result current authority bytes drift")
+    checked = _checked_artifacts(old_document, runtime_root=handle.runtime_root, allow_installed=False)
+    from src.autoslice.producer_completed_prepare_revalidation import validate_completed_prepare_artifacts
+    try:
+        validate_completed_prepare_artifacts(handle, body["result"])
+    except Exception as exc:  # current guard failure must retain the prepared queue
+        raise ProducerBatchTransactionError(f"producer result current native revalidation blocked: {exc}") from exc
+    # Native checks do not hold the filesystem mutex. Protect only the final
+    # unchanged-input check and the two create-only reference publications.
+    try:
+        with recovery_reference_write_window(handle.runtime_root):
+            if bind_prepared_result_inputs({Path(path): snapshot.get("media") is True
+                                           for path, snapshot in body["source_dependencies"].items()}) != body["source_dependencies"]:
+                raise ProducerBatchTransactionError("producer result source dependencies changed during revalidation")
+            if deployment_authority_binding(handle.runtime_root) != current_authority:
+                raise ProducerBatchTransactionError("producer result authority changed during revalidation")
+            fresh = prepare_delivery(
+                runtime_root=handle.runtime_root, lane=handle.lane, candidate_id=handle.candidate_id,
+                artifacts=[DeliveryArtifact(row["role"], Path(row["source_path"]), target, "sha256:" + expected)
+                           for row, _staged, target, expected in checked],
+                deployed_authority=current_authority,
+            )
+            result = deepcopy(body["result"])
+            value = {"manifest_path": str(fresh.manifest_path), "prepared_sha256": "sha256:" + fresh.prepared_sha256,
+                     "upload_enabled": False}
+            if handle.lane == "talk":
+                result["prepared_summary"]["prepared_delivery"] = value
+                if "prepared_delivery" in result:
+                    result["prepared_delivery"] = deepcopy(value)
+            else:
+                result["prepared_delivery"] = value
+            checkpoint_prepared_result(
+                entry=PreparedBatchEntry(handle.lane, handle.candidate_id, fresh), binding=body["binding"],
+                result=result, source_dependencies=body["source_dependencies"],
+                reprepared_from={"manifest_path": str(handle.manifest_path),
+                                "prepared_sha256": "sha256:" + handle.prepared_sha256,
+                                "checkpoint_sha256": body["checkpoint_sha256"]},
+            )
+            return result
+    except QixiTransactionCoreError as exc:
+        raise ProducerBatchTransactionError(f"RUNTIME_PREREQUISITE: {exc}") from exc
 
 
 def _sha(payload: bytes) -> str:

@@ -61,10 +61,9 @@ PREFLIGHT_SCHEMA = "manual-source-fact-rescore-preflight.v1"
 CPA_PROVIDER = MANUAL_RESCORE_PROVIDER
 CPA_MODEL = MANUAL_RESCORE_MODEL
 CPA_TRANSPORT = MANUAL_RESCORE_TRANSPORT
-# llm_via_cpa.sh stops new dispatches after 400s and permits one already
-# running curl to consume up to 180s: <=580s.  The production caller contract
-# is therefore exactly 600s; a shorter value kills valid failover, while a
-# longer value hides drift from the audited recovery lane.
+# This historical pinned-model receipt retains its original timeout binding.
+# Ranked production models use the shared ladder budget in build_llm_call;
+# this legacy model is rejected by the wrapper before any network dispatch.
 CPA_CALLER_TIMEOUT_SECONDS = MANUAL_RESCORE_TIMEOUT_SECONDS
 CPA_COMMAND_TEMPLATE = MANUAL_RESCORE_COMMAND_TEMPLATE
 _CANDIDATE_ID_RE = re.compile(r"auto_[0-9]+_[0-9]+_[0-9]+\Z")
@@ -208,7 +207,7 @@ def _validate_provider_config(value: Mapping[str, object]) -> dict[str, object]:
         or float(timeout) != CPA_CALLER_TIMEOUT_SECONDS
     ):
         raise ManualScorecardRescoreError(
-            "provider caller timeout must be exactly 600s for the <=580s CPA bridge"
+            "provider caller timeout must be exactly 600s for this historical pinned-model contract"
         )
     return {
         "schema_version": PROVIDER_CONFIG_SCHEMA,

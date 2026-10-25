@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from src.autoslice.review_evidence import SourceCue
+from src.autoslice.deployed_code_root import deployed_code_root_bootstrap
 
 SpeechSpansProvider = Callable[[Path, int, int], "list[SpeechSpan]"]
 
@@ -279,7 +280,7 @@ def build_ssh_silero_vad_provider(
     assets/vad/silero_vad.onnx（随仓分发，不要求额外复制到旧 VAD 目录）。
     脚本路径可用 ``AUTOSLICE_VAD_SCRIPT`` 覆盖。localhost/127.0.0.1
     默认使用当前 repo 的随仓脚本和当前解释器；SSH 主机默认使用正常部署的
-    /opt/bilive/autoslice/repo/scripts/silero_vad_spans.py 与
+    deployed_code_root.py 解析的部署树内 scripts/silero_vad_spans.py 与
     /opt/bilive/autoslice/venv-main/bin/python。
 
     Raises RuntimeError on any failure — the caller decides whether timing QA
@@ -288,16 +289,12 @@ def build_ssh_silero_vad_provider(
 
     local_host = host in {"localhost", "127.0.0.1"}
     if remote_script is None:
-        remote_script = os.environ.get("AUTOSLICE_VAD_SCRIPT")
-        if remote_script is None:
-            if local_host:
-                remote_script = str(
-                    Path(__file__).resolve().parents[2]
-                    / "scripts"
-                    / "silero_vad_spans.py"
-                )
-            else:
-                remote_script = "/opt/bilive/autoslice/repo/scripts/silero_vad_spans.py"
+        remote_script = os.environ.get("AUTOSLICE_VAD_SCRIPT") or str(
+            Path(__file__).resolve().parents[2]
+            / "scripts"
+            / "silero_vad_spans.py"
+        )
+    resolve_remote_script = False
     vad_python = os.environ.get("AUTOSLICE_VAD_PYTHON")
     if vad_python is None:
         vad_python = (
@@ -360,11 +357,19 @@ def build_ssh_silero_vad_provider(
                 )
                 if copy.returncode != 0:
                     raise RuntimeError(f"vad wav upload failed: {copy.stderr[-300:]}")
+                if resolve_remote_script:
+                    bootstrap = deployed_code_root_bootstrap() + "print(repo / 'scripts/silero_vad_spans.py')\n"
+                    invocation = (
+                        "script=$(python3 -c " + shlex.quote(bootstrap) + ") && "
+                        + shlex.quote(vad_python) + ' "$script"'
+                    )
+                else:
+                    invocation = f"{shlex.quote(vad_python)} {shlex.quote(remote_script)}"
                 run = subprocess.run(
                     [
                         "ssh",
                         host,
-                        f"{shlex.quote(vad_python)} {shlex.quote(remote_script)} {shlex.quote(remote_wav)}; rc=$?; rm -f {shlex.quote(remote_wav)}; exit $rc",
+                        f"{invocation} {shlex.quote(remote_wav)}; rc=$?; rm -f {shlex.quote(remote_wav)}; exit $rc",
                     ],
                     check=False,
                     capture_output=True,

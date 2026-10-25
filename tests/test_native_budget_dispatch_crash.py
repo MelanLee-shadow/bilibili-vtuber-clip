@@ -22,7 +22,9 @@ def _crash_worker(root: str, provider: str, run: int, before_send: bool) -> None
 
     folder = Path(root)
     source = folder / "synthetic-source.bin"
-    start_budget(source)
+    # This regression intentionally exercises the historical hard retry cap;
+    # ordinary source budgets now use soft pressure by default.
+    start_budget(source, enforce_limits=True)
 
     def extract(_source, target, _start, _end):
         target.write_bytes(b"synthetic audio, not decodable media")
@@ -91,6 +93,7 @@ def test_crash_preserves_history_and_allows_only_bounded_restart(
     assert snapshots[0]["pending_attempts"] == 1, observed
 
 
+
     for count, snapshot in enumerate(snapshots[:3], 1):
         assert snapshot["exitcode"] == 73, observed
         assert snapshot["recorded_attempts"] == count, observed
@@ -102,7 +105,9 @@ def test_crash_preserves_history_and_allows_only_bounded_restart(
     assert len(dispatches) == (0 if before_send else 3), observed
 
 
-def _native_fixture(tmp_path, monkeypatch, provider, *, max_audio_ms=1_000):
+def _native_fixture(
+    tmp_path, monkeypatch, provider, *, max_audio_ms=1_000, enforce_limits=False,
+):
     import hashlib
     from src.autoslice import diarized_transcription as transcriber
     from src.autoslice import native_foreign_witness as native
@@ -113,7 +118,12 @@ def _native_fixture(tmp_path, monkeypatch, provider, *, max_audio_ms=1_000):
     source = tmp_path / "synthetic-source.bin"
     source.write_bytes(b"immutable synthetic input")
     receipt = tmp_path / "evidence/native-audio-budget.json"
-    budget = start_budget(source, max_windows=1, max_audio_ms=max_audio_ms)
+    budget = start_budget(
+        source,
+        max_windows=1,
+        max_audio_ms=max_audio_ms,
+        enforce_limits=enforce_limits,
+    )
     calls = []
     extracted = []
 
@@ -149,7 +159,9 @@ def test_committed_reservation_precedes_dispatch_and_cache_does_not_reserve_agai
     tmp_path, monkeypatch, provider,
 ):
     from src.autoslice.supplement_audio_budget import BudgetExceeded
-    observer, budget, receipt, calls, _ = _native_fixture(tmp_path, monkeypatch, provider)
+    observer, budget, receipt, calls, _ = _native_fixture(
+        tmp_path, monkeypatch, provider, enforce_limits=True,
+    )
     assert observer(start_ms=1_000, end_ms=2_000)["served_from_cache"] is False
     assert observer(start_ms=1_000, end_ms=2_000)["served_from_cache"] is True
     with pytest.raises(BudgetExceeded):
@@ -171,7 +183,9 @@ def test_persistence_failure_stops_before_http_and_keeps_outcome_unresolved(
 ):
     import stat
     from src.autoslice import native_audio_budget_receipt as receipts
-    observer, budget, receipt, calls, extracted = _native_fixture(tmp_path, monkeypatch, provider)
+    observer, budget, receipt, calls, extracted = _native_fixture(
+        tmp_path, monkeypatch, provider, enforce_limits=True,
+    )
     previous = receipt.read_bytes()
     real_fsync, real_replace = os.fsync, os.replace
 
@@ -266,7 +280,9 @@ def test_terminal_write_failure_recovers_cached_result_without_redispatch(
     assert budget.snapshot()["sealed_attempt_count"] == 1
     assert json.loads(receipt.read_bytes())["budget"]["pending_attempt_count"] == 1
     assert observer(start_ms=1_000, end_ms=2_000)["served_from_cache"] is True
-    assert calls == [provider] and extracted == [(1_000, 2_000), (1_000, 2_000)]
+    # The complete audio+response bundle is now published before terminal
+    # accounting, so recovery no longer needs to extract the same audio again.
+    assert calls == [provider] and extracted == [(1_000, 2_000)]
     packet = json.loads(receipt.read_bytes())
     assert packet["budget"]["attempt_count"] == 1
     assert packet["budget"]["pending_attempt_count"] == 0
@@ -314,7 +330,9 @@ def test_restart_recovers_exact_cache_even_with_pending_and_no_balance(
     from src.autoslice import native_foreign_witness as native
     from src.autoslice.supplement_audio_budget import start_budget
 
-    observer, budget, receipt, calls, _ = _native_fixture(tmp_path, monkeypatch, provider)
+    observer, budget, receipt, calls, _ = _native_fixture(
+        tmp_path, monkeypatch, provider, enforce_limits=True,
+    )
     original = receipts._write_atomic
 
     def fail_terminal(path, payload):
@@ -328,7 +346,12 @@ def test_restart_recovers_exact_cache_even_with_pending_and_no_balance(
             observer(start_ms=1_000, end_ms=2_000)
     original_attempt = json.loads(receipt.read_bytes())["budget"]["attempts"][0]
     source = tmp_path / "synthetic-source.bin"
-    restarted = start_budget(source, max_windows=1, max_audio_ms=1_000)
+    restarted = start_budget(
+        source,
+        max_windows=1,
+        max_audio_ms=1_000,
+        enforce_limits=True,
+    )
     fresh = native.build_native_foreign_witness(
         source_media=source, output_dir=receipt.parent, provider=provider,
     )

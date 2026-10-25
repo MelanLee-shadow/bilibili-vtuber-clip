@@ -13,7 +13,6 @@ from src.autoslice.producer_delivery_transaction import (
     _read_regular_bytes,
     load_prepared_delivery,
 )
-from src.autoslice.published_cover_carry import accepted_result_cover_status
 
 
 def _prepared_handle(*, runtime_root: Path, lane: str, candidate_id: str, value: object) -> PreparedBatchEntry:
@@ -44,6 +43,8 @@ def project_materialized_talk(
     runner: object, finalize: Callable[..., None],
 ) -> None:
     """Turn a private Talk summary into its legacy materialized result shape."""
+
+    from src.autoslice.published_cover_carry import accepted_result_cover_status
 
     summary = result.pop("prepared_summary", None)
     if not isinstance(summary, dict):

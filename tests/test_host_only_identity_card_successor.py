@@ -35,7 +35,7 @@ def _inventory(root: Path) -> dict[str, str]:
 
 @pytest.fixture
 def ready_input(tmp_path, monkeypatch):
-    """Synthetic media/vision, real trial rendering and native V4 byte binding."""
+    """Synthetic media/vision, real trial rendering and native V5 byte binding."""
     f = HELPERS["_write_package"](tmp_path)
     HELPERS["_patch_current_contract"](monkeypatch)
     source = f["source"]
@@ -92,6 +92,17 @@ def ready_input(tmp_path, monkeypatch):
         "thumbnail_has_clear_click_hook": True,
         "identity_conflicts": [],
         "composition_conflicts": [],
+        "source_visible_feature_observations": {
+            "clothing": ["白色衣服"],
+            "head_appearance": ["白色头发"],
+            "accessories": ["头戴护目镜"],
+        },
+        "final_feature_matches": {
+            "clothing": True,
+            "head_appearance": True,
+            "accessories": True,
+        },
+        "final_feature_conflicts": [],
         "reason": "Synthetic fixture only, not a real image judgment.",
         "other_recognizable_people_or_avatars_visible": False,
         "other_recognizable_people_or_avatars": [],
@@ -107,7 +118,7 @@ def ready_input(tmp_path, monkeypatch):
     assert receipt["status"] == "PASS"
     witness = private / "witness.json"
     _json(witness, receipt)
-    # Fixture StoryContract/route is deliberately minimal. Keep the actual V4
+    # Fixture StoryContract/route is deliberately minimal. Keep the actual V5
     # validator and package byte binding live, stub only the unrelated routing.
     monkeypatch.setattr(adapter, "validate_cover_route_decision", lambda *a, **k: True)
     monkeypatch.setattr(v4, "validate_cover_route_decision", lambda *a, **k: True)

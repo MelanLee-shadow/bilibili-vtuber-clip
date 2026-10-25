@@ -140,15 +140,21 @@ def build_replay_after_image(
         RECORD_PATH_POINTERS,
         SPEAKER_PATH_POINTERS,
         get_value,
+        pointer_applies,
     )
     target_values = {str(path) for path in targets.values()}
-    for document, pointers in (
-        (record_document, RECORD_PATH_POINTERS),
-        (_load_json(projection.publish, label="PROJECTED_PUBLISH"), PUBLISH_PATH_POINTERS),
-        (_load_json(projection.chat, label="PROJECTED_CHAT"), CHAT_PATH_POINTERS),
-        (_load_json(projection.speaker_manifest, label="PROJECTED_SPEAKER"), SPEAKER_PATH_POINTERS),
+    for kind, document, pointers in (
+        ("record", record_document, RECORD_PATH_POINTERS),
+        ("publish", _load_json(projection.publish, label="PROJECTED_PUBLISH"), PUBLISH_PATH_POINTERS),
+        # The chat authority may carry compact final-review references.  The
+        # binding's raw bytes were already checked by ``_load_json`` before it
+        # expands the co-located evidence store.
+        ("chat", _load_json(projection.chat, label="PROJECTED_CHAT", review=True), CHAT_PATH_POINTERS),
+        ("speaker", _load_json(projection.speaker_manifest, label="PROJECTED_SPEAKER"), SPEAKER_PATH_POINTERS),
     ):
         for pointer in pointers:
+            if not pointer_applies(kind, pointer, document):
+                continue
             value = get_value(document, pointer)
             if not isinstance(value, str) or not value.startswith("/"):
                 continue

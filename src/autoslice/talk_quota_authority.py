@@ -1,4 +1,4 @@
-"""按录制日期的话题配额授权面——cap 与额外席位分数门的唯一政策来源。
+"""按录制日期的配额授权面——话题与歌切名额的唯一政策来源。
 
 `PUBLIC_CASE_ID` 事故：公开规则：8.8切片配额到20条，分数在85分以上即可是一条
 **按日期**的裁定，却被写进了游戏 lane 的全局常量（`GAME_SESSION_TALK_PICK_CAP`
@@ -15,7 +15,7 @@ RESOLVED 的游戏日 **8/7 回溯放宽了**，四条 89.0/87.25/86.75/86.0 因
 1. 本资产：按 `recording_date` + `scope` 的显式授权条目，每条自带 公开规则逐字出处；
 2. `talk_quota_freeze`：候选拿到席位时冻结当时生效的政策，后续 tick 复用冻结值。
 
-**fail-closed**：资产缺该日期条目 → 回落代码默认（5 席 / 无额外席），
+**fail-closed**：资产缺该日期条目 → 回落对应 scope 默认，
 **绝不**回落到「最近一次全局常量」或任何别的日期的条目。
 """
 
@@ -35,7 +35,9 @@ PROFILE_ASSET_KEY = "talk_quota_policy_authority"
 # 基础席位数（= runner.MAX_TALK_PICKS）。1..5 席从不看分数门；把 cap 抬到 5 以上
 # 就是在开「额外席位」，必须同时给出分数门——否则 cap=20/门=null 等于无限放宽。
 BASE_TALK_PICK_CAP = 5
-SCOPES = frozenset({"game", "event", "talk"})
+# Safe fallback for missing/invalid authority; the asset carries its provenance.
+BASE_SONG_PICK_CAP = 1
+SCOPES = frozenset({"game", "event", "talk", "song"})
 _DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -93,9 +95,15 @@ def _gate(value: object, *, label: str) -> float | None:
     return float(value)
 
 
-def _policy_body(payload: Mapping[str, object], *, label: str) -> tuple[int, float | None]:
+def _policy_body(
+    payload: Mapping[str, object], *, label: str, scope: str = "talk"
+) -> tuple[int, float | None]:
     cap = _cap(payload.get("cap"), label=label)
     gate = _gate(payload.get("extra_slot_min_score"), label=label)
+    if scope == "song":
+        if gate is not None:
+            raise TalkQuotaAuthorityError(f"{label} song quota cannot have a score gate")
+        return cap, gate
     if cap > BASE_TALK_PICK_CAP and gate is None:
         # 「日常还是5，并没有分数限制」= 普通日没有额外席，不是额外席位门=0。
         raise TalkQuotaAuthorityError(f"{label} grants extra slots without a score gate")
@@ -116,6 +124,21 @@ def _default_policy_body(payload: Mapping[str, object]) -> tuple[int, float | No
     return cap, gate
 
 
+def _default_song_policy_body(payload: Mapping[str, object]) -> tuple[int, float | None]:
+    """Additive v1 field; legacy talk-only documents retain the safe default."""
+
+    if "song" not in payload:
+        return BASE_SONG_PICK_CAP, None
+    song = payload["song"]
+    if not isinstance(song, Mapping):
+        raise TalkQuotaAuthorityError("default_policy.song missing")
+    cap, gate = _policy_body(song, label="default_policy.song", scope="song")
+    if cap > BASE_SONG_PICK_CAP:
+        raise TalkQuotaAuthorityError("default_policy.song may not widen the base cap")
+    _authority_text(song.get("authority"), label="default_policy.song")
+    return cap, gate
+
+
 def validate_talk_quota_policy_authority(payload: object) -> dict:
     """Structurally validate the authority document; raise on malformation."""
 
@@ -128,6 +151,7 @@ def validate_talk_quota_policy_authority(payload: object) -> dict:
     if not isinstance(default_policy, Mapping):
         raise TalkQuotaAuthorityError("quota authority default_policy missing")
     _default_policy_body(default_policy)
+    _default_song_policy_body(default_policy)
     _authority_text(default_policy.get("authority"), label="default_policy")
     entries = payload.get("entries")
     if not isinstance(entries, list):
@@ -155,7 +179,7 @@ def validate_talk_quota_policy_authority(payload: object) -> dict:
                 f"quota authority duplicate {recording_date}/{scope}"
             )
         seen_scopes.add(key)
-        _policy_body(row, label=entry_id)
+        _policy_body(row, label=entry_id, scope=scope)
         _authority_text(row.get("authority"), label=entry_id)
     return dict(payload)
 
@@ -177,7 +201,7 @@ def resolve_quota_grant(
     recording_date: str | None,
     scope: str,
     *,
-    default_cap: int = BASE_TALK_PICK_CAP,
+    default_cap: int | None = None,
     path: Path | None = None,
 ) -> TalkQuotaGrant:
     """Return the quota grant in force for one recording date and scope.
@@ -189,6 +213,11 @@ def resolve_quota_grant(
     nearest-date, no most-recent-entry and no lane-constant fallback.
     """
 
+    if scope == "song":
+        # The legacy caller override belongs to talk; song has one policy source.
+        default_cap = BASE_SONG_PICK_CAP
+    elif default_cap is None:
+        default_cap = BASE_TALK_PICK_CAP
     try:
         document = load_talk_quota_policy_authority(path)
     except TalkQuotaAuthorityError:
@@ -198,9 +227,16 @@ def resolve_quota_grant(
     if recording_date is not None and _DATE_RX.fullmatch(str(recording_date)):
         for row in document["entries"]:
             if row["recording_date"] == recording_date and row["scope"] == scope:
-                cap, gate = _policy_body(row, label=str(row["entry_id"]))
+                cap, gate = _policy_body(row, label=str(row["entry_id"]), scope=scope)
                 return TalkQuotaGrant(cap, gate, f"asset:{row['entry_id']}")
     # 无该日期条目 → 代码默认与文档默认里更紧的那个，额外席位一律没有。
     # 文档默认只是这条默认的授权出处，不是能悄悄放宽全库的旋钮。
+    if scope == "song":
+        document_cap, _gate_unused = _default_song_policy_body(document["default_policy"])
+        source = (
+            "asset:default_policy.song"
+            if "song" in document["default_policy"] else "default:legacy_song_policy"
+        )
+        return TalkQuotaGrant(min(default_cap, document_cap), None, source)
     document_cap, _gate_unused = _default_policy_body(document["default_policy"])
     return TalkQuotaGrant(min(default_cap, document_cap), None, "asset:default_policy")

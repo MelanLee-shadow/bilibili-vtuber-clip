@@ -8,9 +8,12 @@ still merely a third PROPOSED candidate for the ordinary CPA judge.
 
 from __future__ import annotations
 
+from .review_errors import ContractRejection
+
 import hashlib
 import json
 from typing import Any, Mapping
+from dataclasses import dataclass
 
 from src.autoslice.exact_source_transcript_provider_policy import build_provider_route
 from src.autoslice.exact_source_transcript_provider_policy import valid_provider_route
@@ -37,7 +40,8 @@ _ALGORITHMS = {
     "agy": "agy-exact-final-candidate-blind-target-transcript-v1",
     "gemini_api": "gemini-api-exact-final-candidate-blind-target-transcript-v1",
 }
-_ALLOWED_LANGUAGES = frozenset({"zh", "ja", "en", "mixed", "none"})
+_TRANSCRIPT_LANGUAGES = ("zh", "ja", "en", "mixed", "none")
+_ALLOWED_LANGUAGES = frozenset(_TRANSCRIPT_LANGUAGES)
 _HANDOFF_KEYS = {
     "schema_version", "status", "decision_authority", "authority",
     "mutation_authorized", "candidate_id", "clip_context_sha256",
@@ -106,7 +110,7 @@ def build_exact_source_transcript_request(
             ),
         }
     except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError("EXACT_SOURCE_TRANSCRIPT_GEOMETRY_INVALID") from exc
+        raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_GEOMETRY_INVALID") from exc
     if (
         len(cue_indexes) != 1
         or isinstance(cue_indexes[0], bool)
@@ -118,7 +122,7 @@ def build_exact_source_transcript_request(
         or request["context_end_ms"] < request["matched_end_ms"]
         or request["source_media_timeline_offset_ms"] < 0
     ):
-        raise ValueError("EXACT_SOURCE_TRANSCRIPT_GEOMETRY_INVALID")
+        raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_GEOMETRY_INVALID")
     request["request_sha256"] = _canonical_sha256(request)
     return request
 
@@ -133,6 +137,42 @@ def valid_exact_source_transcript_request(request: Mapping[str, Any]) -> bool:
     return rebuilt == dict(request)
 
 
+@dataclass(frozen=True)
+class ExactTranscriptResponseContract:
+    build_route = staticmethod(build_provider_route)
+
+    @property
+    def report_keys(self):
+        return frozenset(self.response_schema['properties'])
+
+    @property
+    def response_schema(self):
+        from .response_schemas import obj, enum, S, B
+        return obj({"schema_version": enum(PROVIDER_REPORT_SCHEMA), "status": enum("OBSERVED", "UNCERTAIN"),
+                    "target_audible": B, "audible_language": enum(*_TRANSCRIPT_LANGUAGES),
+                    "exact_transcript": S, "reason": S}, closed=True)
+
+    @property
+    def prompt_fragment(self):
+        from .contract_schema_projection import schema_prompt_fields
+        fields=schema_prompt_fields(self.response_schema,
+            descriptions={'exact_transcript':'single-line verbatim target transcript; empty only when no speech',
+                          'reason':'short acoustic note'},
+            enum_separators={'status':' or '},separate_enums={'audible_language'})
+        return '{'+',\n '.join(fields)+'}'
+
+    def accepts_report(self, observed):
+        return (set(observed) == self.report_keys and observed.get("schema_version") == PROVIDER_REPORT_SCHEMA
+                and observed.get("status") == "OBSERVED" and observed.get("target_audible") is True
+                and isinstance(observed.get("exact_transcript"), str)
+                and isinstance(observed.get("reason"), str))
+
+
+def exact_transcript_response_contract():
+    """Provider report, prompt and route projection; sealing retains all authority checks."""
+    return ExactTranscriptResponseContract()
+
+
 def exact_source_transcript_prompt(
     *, request: Mapping[str, Any], timeline_binding: Mapping[str, Any]
 ) -> str:
@@ -140,20 +180,20 @@ def exact_source_transcript_prompt(
 
     source = timeline_binding.get("source_media")
     if not isinstance(source, Mapping):
-        raise ValueError("EXACT_SOURCE_TRANSCRIPT_TIMELINE_INVALID")
+        raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_TIMELINE_INVALID")
     try:
         target_start = int(source["target_start_ms"])
         target_end = int(source["target_end_ms"])
         crop_start = int(source["crop_start_ms"])
         crop_end = int(source["crop_end_ms"])
     except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError("EXACT_SOURCE_TRANSCRIPT_TIMELINE_INVALID") from exc
+        raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_TIMELINE_INVALID") from exc
     if not (
         crop_start <= target_start < target_end <= crop_end
         and target_start - crop_start >= 0
         and target_end - crop_start > target_start - crop_start
     ):
-        raise ValueError("EXACT_SOURCE_TRANSCRIPT_TIMELINE_INVALID")
+        raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_TIMELINE_INVALID")
     marker_start = target_start - crop_start
     marker_end = target_end - crop_start
     return f"""# Candidate-blind exact target transcription
@@ -170,12 +210,7 @@ unheard words, consult subtitles/chat/context text, or choose between any
 candidates (none were supplied).
 
 Reply with exactly one JSON object, no markdown or other text:
-{{"schema_version":"{PROVIDER_REPORT_SCHEMA}",
- "status":"OBSERVED" or "UNCERTAIN",
- "target_audible":true or false,
- "audible_language":"zh"|"ja"|"en"|"mixed"|"none",
- "exact_transcript":"single-line verbatim target transcript; empty only when no speech",
- "reason":"short acoustic note"}}
+{exact_transcript_response_contract().prompt_fragment}
 """
 
 
@@ -233,7 +268,7 @@ def seal_exact_source_transcript_observation(
     """Seal a successful provider observation; it has no mutation authority."""
 
     if not valid_exact_source_transcript_request(request):
-        raise ValueError("EXACT_SOURCE_TRANSCRIPT_REQUEST_INVALID")
+        raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_REQUEST_INVALID")
     transcript = " ".join(str(exact_transcript or "").split())
     try:
         route = (
@@ -245,7 +280,7 @@ def seal_exact_source_transcript_observation(
             )
         )
     except (TypeError, ValueError) as exc:
-        raise ValueError("EXACT_SOURCE_TRANSCRIPT_OBSERVATION_INVALID") from exc
+        raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_OBSERVATION_INVALID") from exc
     if (
         not transcript
         or transcript != str(exact_transcript).strip()
@@ -266,7 +301,7 @@ def seal_exact_source_transcript_observation(
         )
         or key_tier != route.get("accepted_key_tier")
     ):
-        raise ValueError("EXACT_SOURCE_TRANSCRIPT_OBSERVATION_INVALID")
+        raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_OBSERVATION_INVALID")
     prompt = exact_source_transcript_prompt(
         request=request, timeline_binding=timeline_binding
     )
@@ -308,7 +343,7 @@ def valid_exact_source_transcript_observation(
         "response_sha256", "provider", "model", "algorithm_id",
         "audio_start_ms", "audio_end_ms", "timeline_binding", "provider_route",
         "authority", "mutation_authorized", "observation_sha256", "key_tier",
-        "served_from_cache",
+        "served_from_cache", "cache_replay",
     }
     transcript = observation.get("exact_transcript")
     timeline = observation.get("timeline_binding")
@@ -316,7 +351,7 @@ def valid_exact_source_transcript_observation(
     provider = str(observation.get("provider") or "")
     if (
         not set(observation) <= allowed
-        or not (allowed - {"key_tier", "served_from_cache"}) <= set(observation)
+        or not (allowed - {"key_tier", "served_from_cache", "cache_replay"}) <= set(observation)
         or not valid_exact_source_transcript_request(request)
         or observation.get("schema_version") != OBSERVATION_SCHEMA
         or observation.get("status") != "OBSERVED"
@@ -365,6 +400,24 @@ def valid_exact_source_transcript_observation(
         or observation.get("mutation_authorized") is not False
         or ("served_from_cache" in observation and observation["served_from_cache"] is not True)
         or not _sealed(observation, "observation_sha256")
+    ):
+        return False
+    replay = observation.get("cache_replay")
+    if replay is not None and not (
+        isinstance(replay, Mapping)
+        and set(replay) == {
+            "basis", "original_request_sha256", "original_observation_sha256",
+            "original_manifest_sha256", "provider_dispatch_count",
+        }
+        and replay.get("basis") == "IDENTICAL_PROVIDER_INPUT"
+        and replay.get("provider_dispatch_count") == 0
+        and not isinstance(replay.get("provider_dispatch_count"), bool)
+        and observation.get("served_from_cache") is True
+        and replay.get("original_request_sha256") != request["request_sha256"]
+        and all(_valid_digest(replay.get(key)) for key in (
+            "original_request_sha256", "original_observation_sha256",
+            "original_manifest_sha256",
+        ))
     ):
         return False
     return True
@@ -437,7 +490,7 @@ def build_exact_source_transcript_handoff(
         and isinstance(observation_timeline, Mapping)
         and _same_timeline(witness_timeline, observation_timeline)
     ):
-        raise ValueError("EXACT_SOURCE_TRANSCRIPT_HANDOFF_BINDING_INVALID")
+        raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_HANDOFF_BINDING_INVALID")
     witness_sha = _canonical_sha256(dict(witness))
     run_payload = {
         "candidate_id": candidate_id,
@@ -692,3 +745,107 @@ def valid_exact_source_transcript_handoff(
         ):
             return False
     return True
+
+
+def _source_clock_geometry(request: object) -> tuple[int, int, int, int] | None:
+    """Matched and context windows of a physical source request on the source clock."""
+    if not isinstance(request, Mapping):
+        return None
+    keys = ("matched_start_ms", "matched_end_ms", "context_start_ms", "context_end_ms",
+            "source_media_timeline_offset_ms")
+    values = [request.get(key) for key in keys]
+    if any(type(value) is not int for value in values):
+        return None
+    matched_start, matched_end, context_start, context_end, offset = values
+    return (matched_start + offset, matched_end + offset,
+            context_start + offset, context_end + offset)
+
+
+def _same_physical_source_request(saved: object, current: Mapping[str, Any]) -> bool:
+    """G6: one physical source question.  Cue ordinals (they shift after an
+    earlier cue is dropped) and the local clock are representation; the
+    source-clock matched/context windows are the identity."""
+    saved_geometry = _source_clock_geometry(saved)
+    return (saved_geometry is not None
+            and isinstance(saved, Mapping) and saved.get("schema_version") == current.get("schema_version")
+            and saved_geometry == _source_clock_geometry(current))
+
+
+def _source_timeline(binding: object) -> object:
+    return binding.get("source_media") if isinstance(binding, Mapping) else None
+
+
+def exact_source_transcript_context_candidates(
+    handoffs: list[Mapping[str, Any]],
+    *,
+    check_request: Mapping[str, Any],
+    witness: Mapping[str, Any],
+    clip_context: Mapping[str, object] | None,
+) -> list[dict[str, Any]]:
+    """Reuse original target transcripts as evidence, never rebound authority.
+
+    A later finding may propose different words on the same immutable audio.
+    Validate the original sealed handoff against its original SRT, then require
+    the current physical request and observed media/crop to match.  The old CPA
+    decision and old handoff are not relabelled as a decision on the new text.
+    """
+    if not (
+        isinstance(clip_context, Mapping)
+        and _canonical_sha256({key: value for key, value in check_request.items()
+                               if key != "request_sha256"})
+        == _digest(check_request.get("request_sha256"))
+    ):
+        return []
+    try:
+        target = _witness_api().build_witness_request(check_request)
+        physical = build_exact_source_transcript_request(target)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return []
+    if not (
+        _witness_api().valid_witness_evidence(
+            witness, request_sha256=target["request_sha256"]
+        )
+        and witness.get("status") == "OBSERVED"
+        and witness.get("target_audible") is True
+    ):
+        return []
+    candidates, seen = [], set()
+    for handoff in handoffs:
+        if not isinstance(handoff, Mapping):
+            continue
+        original = handoff.get("input_request")
+        original_srt = (
+            original.get("whole_clip_current_srt")
+            if isinstance(original, Mapping) else None
+        )
+        if not (
+            isinstance(original_srt, str)
+            and valid_exact_source_transcript_handoff(
+                handoff, srt_text=original_srt, clip_context=clip_context
+            )
+            and _same_physical_source_request(handoff.get("physical_request"), physical)
+            and _digest(handoff.get("source_media_sha256"))
+            == _digest(witness.get("source_media_sha256"))
+            and _digest(handoff.get("audio_clip_sha256"))
+            == _digest(witness.get("audio_clip_sha256"))
+            and _source_timeline(handoff.get("timeline_binding"))
+            == _source_timeline(witness.get("timeline_binding"))
+        ):
+            continue
+        receipt = handoff["receipt_sha256"]
+        if receipt in seen:
+            continue
+        seen.add(receipt)
+        candidates.append({
+            "text": handoff["proposed_cue"],
+            "source": {
+                "kind": "prior_exact_source_transcript_context",
+                "authority": "EVIDENCE_ONLY",
+                "mutation_authorized": False,
+                "original_handoff_receipt_sha256": receipt,
+                "original_input_request_sha256": handoff["input_request_sha256"],
+                "physical_request_sha256": handoff["physical_request_sha256"],
+                "provider_observation": dict(handoff["provider_observation"]),
+            },
+        })
+    return candidates

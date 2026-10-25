@@ -33,6 +33,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from src.autoslice.channel_profile import LABEL_RE
 from src.autoslice.speaker_common import (
     GUEST_SPEAKER,
     HOST_SPEAKER,
@@ -50,12 +51,6 @@ ADDRESSEE_UNRESOLVED_REASON = "CPA_TEXT_REVIEW_ADDRESSEE_ATTRIBUTION_UNRESOLVED"
 MODE_SPEAKER_LABELLED = "speaker_labelled"
 MODE_UNVERIFIABLE = "unverifiable_no_speaker_transcript"
 
-_SPEAKER_LINE_RE = re.compile(
-    r"^\[("
-    + "|".join(re.escape(value) for value in (HOST_SPEAKER, GUEST_SPEAKER))
-    + r")\]\s*(.*)\Z",
-    re.S,
-)
 _SRT_CLOCK_RE = re.compile(r"(\d{2}):(\d{2}):(\d{2}),(\d{3})\Z")
 _SRT_TIMING_LINE_RE = re.compile(
     r"(\d{2}:\d{2}:\d{2},\d{3})\s+-->\s+"
@@ -241,8 +236,13 @@ def _parse_speaker_srt_bytes(value: bytes) -> list[_SpeakerSegment]:
                 "SPEAKER_SRT_INVALID", f"speaker segment {expected_index} has invalid timing"
             )
         payload = "\n".join(lines[2:]).strip()
-        labelled = _SPEAKER_LINE_RE.fullmatch(payload)
-        if labelled is None or not labelled.group(2).strip():
+        labelled = LABEL_RE.fullmatch(payload)
+        speaker = payload[1:payload.index("]")] if labelled is not None else None
+        if (
+            labelled is None
+            or speaker not in {HOST_SPEAKER, GUEST_SPEAKER}
+            or not labelled.group(2).strip()
+        ):
             raise SpeakerEvidenceRejected(
                 "SPEAKER_SRT_INVALID",
                 f"speaker segment {expected_index} lacks a canonical non-empty label",
@@ -266,7 +266,7 @@ def _parse_speaker_srt_bytes(value: bytes) -> list[_SpeakerSegment]:
                 end=end,
                 start_ms=start_ms,
                 end_ms=end_ms,
-                speaker=labelled.group(1),
+                speaker=speaker,
                 text=labelled.group(2).strip(),
             )
         )

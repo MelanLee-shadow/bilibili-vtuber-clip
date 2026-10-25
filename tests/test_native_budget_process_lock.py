@@ -8,10 +8,11 @@ from pathlib import Path
 import sys
 
 
-def _observer_worker(source: str, output: str, pipe, hold: bool) -> None:
+def _observer_worker(source: str, output: str, pipe, hold: bool, fail: bool = False) -> None:
     from src.autoslice import native_foreign_witness as native
+    from src.autoslice import diarized_transcription
     from src.autoslice.moss_transcription import MOSS_MODEL
-    from src.autoslice.supplement_audio_budget import get_budget, start_budget
+    from src.autoslice.supplement_audio_budget import start_budget
 
     # No model/API may be reached from a synthetic race reproduction.
     def no_network(event, _args):
@@ -29,15 +30,18 @@ def _observer_worker(source: str, output: str, pipe, hold: bool) -> None:
             assert pipe.recv() == "release"
         target.write_bytes(b"synthetic audio, not decodable media")
 
-    def observe_secondary(_audio, **kwargs):
-        budget = get_budget(path)
-        attempt = budget.consume("moss", MOSS_MODEL, kwargs["crop_start_ms"], kwargs["crop_end_ms"])
+    def transcribe(audio, **kwargs):
+        kwargs['before_request']()
         pipe.send({"event": "simulated_dispatch"})
-        budget.finish_attempt(attempt, status="OBSERVED")
-        return {"served_from_cache": False}
+        if fail:
+            from src.autoslice.diarized_transcription import DiarizedTranscriptionError
+            raise DiarizedTranscriptionError("MOSS_HTTP_ERROR", "offline failure", {"http_status":503})
+        return {'provider': 'moss', 'model': MOSS_MODEL,
+                'input_audio_sha256': hashlib.sha256(audio).hexdigest(),
+                'response_sha256': 'c'*64, 'native_segments': []}
 
     native._extract_exact_mp3 = extract
-    native.observe_secondary = observe_secondary
+    diarized_transcription.transcribe_evidence = transcribe
     # Lexical/ASR qualification is unrelated to the accounting race under test.
     native.exact_target_evidence = lambda *args, **kwargs: {"native_segments": []}
     try:
@@ -70,8 +74,8 @@ def _until_done(pipe) -> list[dict]:
             return result
 
 
-def test_parallel_observers_do_not_dispatch_from_one_receipt_twice(tmp_path: Path) -> None:
-    """Hold one real native observer at extraction, then admit a second process."""
+def test_parallel_observers_reuse_published_bundle_without_locking_extraction(tmp_path: Path) -> None:
+    """The second process can finish while the first extracts, with one dispatch."""
     source = tmp_path / "synthetic-source.bin"
     source.write_bytes(b"shared synthetic immutable source")
     output = tmp_path / "evidence"
@@ -109,9 +113,8 @@ def test_parallel_observers_do_not_dispatch_from_one_receipt_twice(tmp_path: Pat
                     "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
         (tmp_path / "OBSERVED.json").write_text(json.dumps(evidence, indent=2) + "\n")
         assert traces["A"][-1]["status"] == "success"
-        assert traces["B"][-1]["status"] == "refused", evidence
-        assert traces["B"][-1]["reason_code"] == "LOCAL_AUDIO_BUDGET_RECEIPT_PERSIST_FAILED"
-        assert not any(e["event"] in {"extraction", "simulated_dispatch"} for e in traces["B"])
+        assert traces["B"][-1]["status"] == "success", evidence
+        assert any(e["event"] == "simulated_dispatch" for e in traces["B"])
         assert observed_dispatches == receipt["budget"]["attempt_count"] == 1
     finally:
         # Only these new synthetic child processes belong to this test.
@@ -260,3 +263,30 @@ def test_fork_child_does_not_inherit_receipt_ownership(tmp_path: Path) -> None:
             worker.join(5)
         parent.close()
         child.close()
+
+
+def test_parallel_process_failure_returns_to_original_owner_without_second_send(tmp_path):
+    source=tmp_path/'source.bin'; source.write_bytes(b'concurrent failure source')
+    output=tmp_path/'out'
+    ctx=multiprocessing.get_context('spawn')
+    pa,ca=ctx.Pipe(); pb,cb=ctx.Pipe()
+    a=ctx.Process(target=_observer_worker,args=(str(source),str(output),ca,True,True))
+    b=ctx.Process(target=_observer_worker,args=(str(source),str(output),cb,False,True))
+    try:
+        a.start(); assert _receive(pa)=={'event':'ready'}
+        b.start(); assert _receive(pb)=={'event':'ready'}
+        pa.send('observe'); assert _receive(pa)=={'event':'extraction'}
+        pb.send('observe'); second=_until_done(pb)
+        pa.send('release'); first=_until_done(pa)
+        a.join(10); b.join(10)
+        assert a.exitcode==b.exitcode==0 and not a.is_alive() and not b.is_alive()
+        assert first[-1]['reason_code']=='NATIVE_ACQUISITION_OWNER_RECOVERY_REQUIRED'
+        assert second[-1]['reason_code']=='MOSS_HTTP_ERROR'
+        assert sum(row['event']=='simulated_dispatch' for row in first+second)==1
+        receipt=json.loads((output/'native-audio-budget.json').read_bytes())
+        assert receipt['budget']['attempt_count']==1
+        assert receipt['budget']['failed_attempt_count']==1
+    finally:
+        for process in (a,b):
+            if process.pid and process.is_alive(): process.terminate(); process.join(5)
+        for pipe in (pa,ca,pb,cb): pipe.close()

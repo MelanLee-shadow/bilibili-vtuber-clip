@@ -14,8 +14,8 @@ occurrence and carries no mechanical mutation authority (sibling lane to
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import datetime as dt
-import hashlib
 import json
 import os
 import re
@@ -400,5 +400,5 @@ def bind_session_theme_hints(
         env_suffix=ENV_SUFFIX,
         runtime_path=state_path,
         committed_path=state_path,
-        digest_file=lambda path: hashlib.sha256(path.read_bytes()).hexdigest(),
+        digest_file=lambda path: _evidence_file_sha256(path),
     )

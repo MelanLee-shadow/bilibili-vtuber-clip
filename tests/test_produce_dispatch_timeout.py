@@ -21,6 +21,7 @@ def _timeout(_date: str, _item: dict, **_kwargs: object) -> dict:
 
 
 def _dispatch(base: Path, item: dict) -> dict:
+    item = {"start_ms": 0, "end_ms": 1_000, **item}
     return produce_dispatch.produce_batch_windowed(
         DATE,
         [item],
@@ -159,15 +160,21 @@ def _dispatch_with_disk_floor(
     free_bytes_fn,
     log,
 ) -> list[dict]:
+    dispatch_items = [
+        {"start_ms": 0, "end_ms": 1_000, **item}
+        for item in items
+    ]
     return produce_dispatch.produce_batch_windowed(
         DATE,
-        items,
+        dispatch_items,
         produce_fn,
         produce_talk_fn=produce_fn,
         produce_song_fn=lambda _date, _item: {},
         base=tmp_path,
         max_parallel=1,
         min_free_bytes=min_free_bytes,
+        operational_reserve_bytes=100,
+        peak_bytes_per_second=0,
         free_bytes_fn=free_bytes_fn,
         log=log,
         talk_pipeline_fingerprint=lambda _candidate_id: PIPELINE_FINGERPRINT,
@@ -202,7 +209,7 @@ def test_disk_floor_under_limit_launches_nothing_and_keeps_queue(
     assert started == []
     assert results == []
     assert items == [{"cid": "first"}, {"cid": "tail"}]
-    assert any("disk free-space floor reached" in message for message in logs)
+    assert any("disk peak capacity unavailable" in message for message in logs)
 
 
 def test_disk_floor_crossing_stops_the_next_candidate_and_keeps_tail(
@@ -211,7 +218,7 @@ def test_disk_floor_crossing_stops_the_next_candidate_and_keeps_tail(
     items = [{"cid": "first"}, {"cid": "tail"}]
     started: list[str] = []
     logs: list[str] = []
-    free_bytes = iter((101, 99))
+    free_bytes = iter((101, 99, 99))
 
     def produce(_date: str, item: dict) -> dict:
         started.append(item["cid"])
@@ -229,4 +236,4 @@ def test_disk_floor_crossing_stops_the_next_candidate_and_keeps_tail(
     assert started == ["first"]
     assert [row["candidate_id"] for row in results] == ["first"]
     assert items == [{"cid": "first"}, {"cid": "tail"}]
-    assert any("free bytes 99 < floor 100" in message for message in logs)
+    assert any("available=99 required=100" in message for message in logs)

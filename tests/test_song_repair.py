@@ -5,13 +5,16 @@ import hashlib
 import os
 import re
 import subprocess
+import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import src.autoslice.song_repair as song_repair
+import src.autoslice.song_performance as song_performance
 import src.autoslice.agy_lrc_alignment as agy_lrc_alignment
+from src.autoslice import agy_gemini_client
 from src.autoslice.agy_lrc_alignment import _prompt as build_agy_audio_lrc_prompt
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.song_repair import (
@@ -170,10 +173,72 @@ def test_agy_sigkill_is_not_misclassified_as_a_timeout():
     )
 
 
+_F1_FIXTURES = Path(__file__).resolve().parent / "lidousha" / "fixtures"
 
 
+def _load_f1_replay_fixture(name: str) -> dict:
+    return json.loads((_F1_FIXTURES / name).read_text(encoding="utf-8"))
 
 
+def test_replay_2026_08_08_gemini_failover_evidence_is_no_longer_discarded():
+    """Offline replay of the real discarded artifact — zero new API calls.
+
+    ``song_210131_1210``  is the one candidate of the two nights
+    that held complete, independently corroborated positive evidence.  AGY was
+    OOM-killed (``agy_rc=-9``), the Gemini API leg took over and returned a
+    full 28-row bundle, and ``song_common.py:335`` rejected the whole thing as
+    "audio aligner Gemini API failover metadata is invalid".  Reverting the F1
+    fix turns this test red.
+
+    Truth-blind: only shapes and verdict fields are asserted.  Lyric strings in
+    the fixture are positional placeholders.
+    """
+
+    manifest = _load_f1_replay_fixture(
+        "song_210131_1210_gemini_failover_run_manifest_20260808.json"
+    )
+    # The captured provenance is exactly the shape the gate used to reject.
+    assert manifest["provider"] == "gemini_api"
+    assert manifest["provider_fallback_used"] is True
+    assert manifest["agy_failure_category"] == "AGY_FAILED_RC"
+    assert manifest["sandbox"] is False
+    assert manifest["agy_rc"] < 0
+
+    assert (
+        song_repair.validate_audio_lrc_execution_metadata(
+            provider=manifest["provider"],
+            model=manifest["model"],
+            agy_rc=manifest["agy_rc"],
+            provider_fallback_used=manifest["provider_fallback_used"],
+            agy_failure_category=manifest["agy_failure_category"],
+            sandbox=manifest["sandbox"],
+        )
+        is None
+    )
+
+    # And what that rejection was throwing away really was a READY live
+    # performance, so the rescue is not merely procedural.
+    alignment = _load_f1_replay_fixture(
+        "song_210131_1210_gemini_failover_alignment_20260808.json"
+    )
+    rows = alignment["observations"]
+    assert len(rows) == 28
+    assert all(row["heard"] is True for row in rows)
+    assert {row["lidousha_role"] for row in rows} == {"SINGING_THIS_LYRIC"}
+    assert alignment["live_arrangement"]["classification"] == "FULL_STUDIO_SEQUENCE"
+    assert alignment["live_arrangement"]["observed_live_song_opening"] is True
+    assert alignment["live_arrangement"]["observed_live_song_ending"] is True
+
+    assert (
+        song_performance.validate_live_performance_observation(
+            alignment["live_performance"],
+            first_lyric_start_ms=min(int(row["live_start_ms"]) for row in rows),
+            last_lyric_end_ms=max(int(row["live_end_ms"]) for row in rows),
+            observations=rows,
+            require_ready=True,
+        )
+        is None
+    )
 
 
 def test_agy_audio_lrc_v5_prompt_marks_media_enum_instructions_untrusted():
@@ -216,12 +281,31 @@ def test_default_profile_keeps_the_pre_profile_audio_lrc_prompt_byte_identical()
     # 这个钉子守的是「换 channel profile 不许悄悄改 prompt」，不是「prompt 永不变」；
     # 蓄意改动照旧连同哈希一起改（先例 1d43398）。
     assert hashlib.sha256(prompt.encode()).hexdigest() == (
-        "739dce86e6f64ac9341b0f57425fb4a1d5a31dc1d77faae0d6b513808d9762ff"
+        "db2464a4547fda9f7993dbc4a67cb9cb630a2ae58301800a1c6ea9b80ed2f0e2"
     )
     assert "live_start_ms <= tail < live_end_ms" in prompt
     assert "voiceprint gate; that speaker-similarity gate is not a singing classifier" in prompt
     assert "`lrc_index` is the only row identity" in prompt
     assert "code restores both fields" in prompt
+
+
+def _successful_audio_trace(cwd):
+    events = []
+    for name, key, filename in [("view_file", "AbsolutePath", "input.mp3"),
+                               ("view_file", "AbsolutePath", "lyrics.jsonl"),
+                               ("write_to_file", "TargetFile", "alignment.json")]:
+        events.append({"event": "step_update", "step_update": {
+            "step_type": "tool", "state": "DONE", "tool_name": name,
+            "tool_info": {"name": name, "parameters": {key: str(Path(cwd, filename))}}}})
+    events.append({"event": "result", "result": {"status": "SUCCESS"}})
+    return "\n".join(json.dumps(e) for e in events)
+
+
+def _stub_complete_song_audio(monkeypatch, duration_ms):
+    def extract(_source, output):
+        output.write_bytes(b"complete-derived-audio")
+        return duration_ms
+    monkeypatch.setattr(agy_lrc_alignment, "_extract_complete_audio", extract)
 
 
 def test_agy_adapter_preserves_provider_echo_and_writes_canonical_projection(tmp_path, monkeypatch):
@@ -242,6 +326,8 @@ def test_agy_adapter_preserves_provider_echo_and_writes_canonical_projection(tmp
     monkeypatch.setenv("AGY_BIN", str(fake_agy))
     monkeypatch.setattr(agy_lrc_alignment, "_duration_ms", lambda _path: 100_000)
 
+    _stub_complete_song_audio(monkeypatch, 100000)
+
     def fake_run(_command, *, cwd, **_kwargs):
         provider_payload = _valid_audio_lrc_api_payload(
             Path(cwd, "prompt.md").read_text(encoding="utf-8"),
@@ -252,7 +338,7 @@ def test_agy_adapter_preserves_provider_echo_and_writes_canonical_projection(tmp
             json.dumps(provider_payload, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
-        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+        return SimpleNamespace(returncode=0, stdout=_successful_audio_trace(cwd), stderr="")
 
     monkeypatch.setattr(agy_lrc_alignment.subprocess, "run", fake_run)
     run = agy_lrc_alignment.run_agy_audio_lrc_alignment(
@@ -291,6 +377,8 @@ def test_agy_job_hardlinks_media_instead_of_copying_it(tmp_path, monkeypatch):
     monkeypatch.setenv("AGY_BIN", str(fake_agy))
     monkeypatch.setattr(agy_lrc_alignment, "_duration_ms", lambda _path: 100_000)
 
+    _stub_complete_song_audio(monkeypatch, 100000)
+
     def fake_run(_command, *, cwd, **_kwargs):
         Path(cwd, "alignment.json").write_text(
             json.dumps(
@@ -301,7 +389,7 @@ def test_agy_job_hardlinks_media_instead_of_copying_it(tmp_path, monkeypatch):
             ),
             encoding="utf-8",
         )
-        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+        return SimpleNamespace(returncode=0, stdout=_successful_audio_trace(cwd), stderr="")
 
     monkeypatch.setattr(agy_lrc_alignment.subprocess, "run", fake_run)
     jobs = tmp_path / "jobs"
@@ -331,6 +419,8 @@ def test_agy_job_falls_back_to_copy_when_hardlink_is_unavailable(tmp_path, monke
 
     monkeypatch.setattr(agy_lrc_alignment.os, "link", deny_link)
 
+    _stub_complete_song_audio(monkeypatch, 100000)
+
     def fake_run(_command, *, cwd, **_kwargs):
         Path(cwd, "alignment.json").write_text(
             json.dumps(
@@ -341,7 +431,7 @@ def test_agy_job_falls_back_to_copy_when_hardlink_is_unavailable(tmp_path, monke
             ),
             encoding="utf-8",
         )
-        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+        return SimpleNamespace(returncode=0, stdout=_successful_audio_trace(cwd), stderr="")
 
     monkeypatch.setattr(agy_lrc_alignment.subprocess, "run", fake_run)
     run = agy_lrc_alignment.run_agy_audio_lrc_alignment(
@@ -421,7 +511,8 @@ def _valid_audio_lrc_api_payload(prompt: str, lrc: LrcResult) -> dict[str, objec
     }
 
 
-def test_audio_lrc_adapter_rotates_gemini_keys_after_agy_failure_and_validator_accepts(tmp_path, monkeypatch):
+@pytest.mark.parametrize("failure_status", [429, 500, 502, 503, 504])
+def test_audio_lrc_adapter_rotates_gemini_keys_after_agy_failure_and_validator_accepts(tmp_path, monkeypatch, failure_status):
     lrc = _japanese_lrc()
     media = tmp_path / "source.mp4"
     media.write_bytes(b"complete-current-media")
@@ -430,7 +521,7 @@ def test_audio_lrc_adapter_rotates_gemini_keys_after_agy_failure_and_validator_a
     monkeypatch.setenv("AGY_BIN", str(fake_agy))
     monkeypatch.setenv("GEMINI_API_KEY", "secret-key-one")
     monkeypatch.setenv("GEMINI_API_KEY_2", "secret-key-two")
-    monkeypatch.delenv("GEMINI_API_KEY_3", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY_3", "secret-key-three")
     monkeypatch.setattr(agy_lrc_alignment, "_duration_ms", lambda _path: 100_000)
     monkeypatch.setattr(
         agy_lrc_alignment.subprocess,
@@ -446,19 +537,19 @@ def test_audio_lrc_adapter_rotates_gemini_keys_after_agy_failure_and_validator_a
 
     def fake_observe(*, audio_path, prompt, key):
         calls.append((audio_path, key))
-        if key == "secret-key-one":
-            raise RuntimeError("first key quota")
+        if key != "secret-key-three":
+            raise urllib.error.HTTPError("https://example.invalid", failure_status, "failed", {}, None)
         return json.dumps(_valid_audio_lrc_api_payload(prompt, lrc), ensure_ascii=False)
 
     monkeypatch.setattr(agy_lrc_alignment, "_extract_complete_audio", fake_extract)
     monkeypatch.setattr(agy_lrc_alignment, "_gemini_api_observe", fake_observe)
     run = agy_lrc_alignment.run_agy_audio_lrc_alignment(media, lrc, "api-fallback", tmp_path / "jobs")
 
-    assert [key for _path, key in calls] == ["secret-key-one", "secret-key-two"]
+    assert [key for _path, key in calls] == ["secret-key-one", "secret-key-two", "secret-key-three"]
     assert run.provider == "gemini_api"
     assert run.provider_fallback_used is True
     assert run.agy_failure_category == "AGY_QUOTA_EXHAUSTED"
-    assert run.accepted_key_ordinal == 2
+    assert run.accepted_key_ordinal == 3
     manifest = json.loads(Path(run.manifest_path).read_text(encoding="utf-8"))
     assert manifest["schema_version"] == "agy-audio-lrc-run.v3"
     assert manifest["provider"] == "gemini_api"
@@ -471,6 +562,7 @@ def test_audio_lrc_adapter_rotates_gemini_keys_after_agy_failure_and_validator_a
         source_media_path=media,
         source_duration_ms=100_000,
         min_matched_ratio=0.55,
+        asr_anchor_cues=_fixture_asr(lrc),
     )
     assert selected[0] == 1.0
 
@@ -483,6 +575,7 @@ def test_audio_lrc_adapter_rotates_gemini_keys_after_agy_failure_and_validator_a
             source_media_path=media,
             source_duration_ms=100_000,
             min_matched_ratio=0.55,
+            asr_anchor_cues=_fixture_asr(lrc),
         )
 
 
@@ -542,6 +635,7 @@ def test_audio_lrc_adapter_rotates_gemini_key_when_ready_evidence_lands_in_gap(
         source_media_path=media,
         source_duration_ms=100_000,
         min_matched_ratio=0.55,
+        asr_anchor_cues=_fixture_asr(lrc),
     )[0] == 1.0
 
 
@@ -807,6 +901,19 @@ def test_audio_lrc_gemini_request_uses_header_and_enforces_20mb_cap(tmp_path, mo
         agy_lrc_alignment._gemini_api_observe(audio_path=audio, prompt="strict", key=secret)
 
 
+def _fixture_asr(lrc, offset_ms=10000):
+    return [SourceCue(f"fixture-asr-{i}", l.time_ms + offset_ms,
+                      l.time_ms + offset_ms + 3000, l.text)
+            for i, l in enumerate(lrc.lines)]
+
+
+def _write_fixture_asr(path, lrc, offset_ms):
+    def timestamp(ms):
+        return f"{ms//3600000:02d}:{ms//60000%60:02d}:{ms//1000%60:02d},{ms%1000:03d}"
+    path.write_text("\n".join(f"{i+1}\n{timestamp(c.source_start_ms)} --> {timestamp(c.source_end_ms)}\n{c.text}\n"
+                            for i,c in enumerate(_fixture_asr(lrc,offset_ms))), encoding="utf-8")
+
+
 def _write_fake_audio_alignment_run(
     tmp_path: Path,
     lrc: LrcResult,
@@ -814,10 +921,13 @@ def _write_fake_audio_alignment_run(
     candidate_id: str = "jp-audio",
     source_duration_ms: int = 100_000,
     offset_ms: int = 10_000,
+    source_media_path: Path | None = None,
 ) -> AudioLrcAlignmentRun:
-    source = tmp_path / "current-full-window.mp4"
+    source = source_media_path or tmp_path / "current-full-window.mp4"
     source.write_bytes(b"current-audio-bound-media")
     source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    # The full-source BCUT fixture is independent of AGY observations below.
+    _write_fixture_asr(source.with_suffix(".srt"), lrc, offset_ms)
     lrc_path = tmp_path / "source.lrc"
     lrc_path.write_text(
         "".join(
@@ -829,11 +939,7 @@ def _write_fake_audio_alignment_run(
     lrc_sha = hashlib.sha256(lrc_path.read_bytes()).hexdigest()
     observations = []
     for index, line in enumerate(lrc.lines):
-        # 回声防御要求逐行残差有真实抖动。首行零抖动、其余 ±120 交替（先负后
-        # 正），残差排序后的中位数在任意行数下都恰等于 offset_ms，既过守卫又
-        # 不动任何精确 offset/边界断言。
-        jitter = 0 if index == 0 else (-120 if index % 2 else 120)
-        start = line.time_ms + offset_ms + jitter
+        start = line.time_ms + offset_ms
         observations.append(
             {
                 "lrc_index": index,
@@ -924,6 +1030,13 @@ def _write_fake_audio_alignment_run(
     provider_raw_output.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
     output = tmp_path / "alignment.canonical.json"
     output.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+    audio = tmp_path / "input.mp3"
+    audio.write_bytes(b"controlled-complete-audio-input")
+    lyrics = tmp_path / "lyrics.jsonl"
+    lyrics.write_text(song_performance.untimed_lrc_text(lrc), encoding="utf-8")
+    trace = tmp_path / "audio-tool-trace.jsonl"
+    trace.write_text(_successful_audio_trace(tmp_path).replace(
+        str(tmp_path / "alignment.json"), str(provider_raw_output)), encoding="utf-8")
     manifest = tmp_path / "run.manifest.json"
     prompt_sha = hashlib.sha256(prompt.read_bytes()).hexdigest()
     provider_raw_output_sha = hashlib.sha256(provider_raw_output.read_bytes()).hexdigest()
@@ -938,6 +1051,18 @@ def _write_fake_audio_alignment_run(
                 "agy_rc": 0,
                 "provider_fallback_used": False,
                 "sandbox": True,
+                "observation_input": {
+                    "protocol": "untimed-lyrics-full-audio.v1",
+                    "source_sha256": source_sha,
+                    "source_offset_ms": 0,
+                    "audio_path": str(audio),
+                    "audio_sha256": hashlib.sha256(audio.read_bytes()).hexdigest(),
+                    "audio_duration_ms": source_duration_ms,
+                    "lyrics_path": str(lyrics),
+                    "lyrics_sha256": hashlib.sha256(lyrics.read_bytes()).hexdigest(),
+                    "tool_trace_path": str(trace),
+                    "tool_trace_sha256": hashlib.sha256(trace.read_bytes()).hexdigest(),
+                },
                 "canonicalization": {
                     "strategy": AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY,
                     "row_identity": "strict_zero_based_lrc_index",
@@ -1185,7 +1310,10 @@ def test_real_bilingual_timed_credits_are_excluded_before_audio_validation(tmp_p
     assert all("Engineer" not in row["text"] for row in report["lyric_lines"])
 
 
-@pytest.mark.parametrize("missing_index", [0, 4, 9], ids=["first-real-lyric", "middle-real-lyric", "tail-real-lyric"])
+
+
+
+@pytest.mark.parametrize("missing_index", [0, 9], ids=["first-real-lyric", "tail-real-lyric"])
 def test_credit_filter_does_not_weaken_real_lyric_heard_gate(tmp_path, missing_index):
     canonical = _anlian_lrc_with_real_bilingual_credits()
     singable = _anlian_singable_lrc()
@@ -1218,9 +1346,53 @@ def test_credit_filter_does_not_weaken_real_lyric_heard_gate(tmp_path, missing_i
     )
 
     assert result.repaired is False
-    assert result.reason_codes == ("SONG_AUDIO_LRC_ALIGNMENT_INVALID",)
+    assert result.reason_codes == ("SONG_AUDIO_LRC_PROOF_UNRESOLVED",)
     failure = next(item for item in result.attempts if item.step == "agy_audio_lrc_alignment")
     assert f"canonical LRC line {missing_index} was not affirmatively heard" in failure.detail
+
+
+@pytest.mark.parametrize("asr_sings_row", [False, True], ids=["really-unsung", "asr-sings-it"])
+def test_credit_filter_middle_missing_lyric_is_a_small_skip_not_a_credit(tmp_path, asr_sings_row):
+    canonical = _anlian_lrc_with_real_bilingual_credits()
+    singable = _anlian_singable_lrc()
+    run = _write_fake_audio_alignment_run(tmp_path, singable, candidate_id="anlian-credit-fixture")
+    payload = json.loads(json.dumps(run.payload))
+    _omit_live_arrangement_rows(payload, (4,))
+    run = _rebind_fake_audio_alignment_run(run, payload)
+    asr = [cue for index, cue in enumerate(_fixture_asr(singable, 10_000)) if asr_sings_row or index != 4]
+
+    result = attempt_song_repair(
+        candidate_id="anlian-credit-fixture",
+        cues=[
+            SourceCue("anlian-0", 10_000, 13_000, singable.lines[0].text, kind="singing"),
+            SourceCue("anlian-1", 17_000, 20_000, singable.lines[1].text, kind="singing"),
+        ],
+        anchor_start_ms=10_000,
+        anchor_end_ms=20_000,
+        source_duration_ms=100_000,
+        output_dir=tmp_path / "repair",
+        lrc_provider=lambda _query: canonical,
+        source_media_path=Path(run.source_path),
+        audio_lrc_aligner=lambda *_args: run,
+        asr_anchor_cues=asr,
+    )
+
+    if asr_sings_row:
+        # A hole must be really unsung: independent ASR singing the row means
+        # the observation dropped her words (SUB-26), not a small skip.
+        assert result.repaired is False
+        failure = next(item for item in result.attempts if item.step == "agy_audio_lrc_alignment")
+        assert "canonical LRC line 4 is in an omitted block but source ASR cue" in failure.detail
+        return
+    assert result.repaired is True, result.attempts
+    report = json.loads(Path(result.lyrics_alignment["alignment_report_path"]).read_text(encoding="utf-8"))
+    assert report["arrangement_completeness"]["classification"] == "COMPLETE_LIVE_ARRANGEMENT"
+    assert [(r["start_lrc_index"], r["end_lrc_index"], r["kind"])
+            for r in report["arrangement_completeness"]["omitted_ranges"]] == [(4, 4, "BOUNDED_SMALL_SKIP")]
+    # The credits are still excluded; only the nine sung lyrics are performed.
+    assert report["line_count"] == 9
+    assert singable.lines[4].text not in [row["text"] for row in report["lyric_lines"]]
+    assert all("Engineer" not in row["text"] for row in report["lyric_lines"])
 
 
 def test_audio_identity_collapses_same_song_provider_variants_and_prefers_lrclib():
@@ -1336,7 +1508,7 @@ def test_audio_identity_accepts_sole_nonzero_candidate_below_general_recall_floo
     """song_230754_1118 案：演唱段落 ASR 严重乱码（旋律拉长音常见
     BCUT 失效模式），provider 搜出的 8 个 LRC 候选里只有《一起长大 (live)》
     命中任何一句（3%），其余全部 0%；旧代码仍按通用 20% 地板把它判成
-    SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS 终态弃选，从未真正调用过 AGY 音频
+    SONG_LRC_REFERENCE_UNRESOLVED 终态弃选，从未真正调用过 AGY 音频
     验证。地板本意是防止在多个同样弱、真正互相竞争的候选间瞎选一个喂给
     AGY；没有第二个候选携带任何证据时不存在"选错候选"的风险，必须放行
     交给下游 AGY 音频 + host-vocal + 现场演出证明去做真正的身份判定。"""
@@ -2216,7 +2388,7 @@ def test_audio_identity_rejects_exact_tie_between_two_curated_identities():
         )
 
 
-def test_sparse_japanese_asr_escalates_current_audio_and_mints_bound_proof(tmp_path):
+def test_sparse_japanese_recall_with_full_asr_mints_bound_proof(tmp_path):
     lrc = _japanese_lrc()
     run = _write_fake_audio_alignment_run(tmp_path, lrc)
     cues = [
@@ -2475,6 +2647,8 @@ def test_complete_live_arrangement_accepts_real_gudan_tail_repeat_omission(tmp_p
         extra_queries=("孤单北半球",),
         source_media_path=Path(run.source_path),
         audio_lrc_aligner=lambda *_args: run,
+        asr_anchor_cues=_fixture_asr(LrcResult(lrc.provider,lrc.song_title,lrc.artist,lrc.source_ref,lrc.lines[:28]),56000)
+            + [SourceCue("talk",251000,254000,"spoken transition")],
     )
 
     assert result.repaired is True
@@ -2683,9 +2857,10 @@ def test_live_arrangement_long_gap_without_closed_instrumental_proof_fails(
     ("mutation", "expected_error"),
     [
         ("few_lines", "too little canonical lyric evidence"),
-        ("random_holes", "multiple omitted canonical blocks"),
-        ("single_repeated_line", "not a repeated canonical section"),
-        ("nonrepeat_middle_break", "not a repeated canonical section"),
+        ("three_line_nonrepeat_break", "not a repeated canonical section"),
+        ("four_small_holes", "more than 3 small omitted canonical holes"),
+        ("two_large_blocks", "multiple omitted canonical blocks"),
+        ("trailing_single_line", "not a repeated canonical section"),
         ("no_actual_tail", "opening or actual live ending was not observed"),
         ("no_post_song_transition", "no proven post-song transition"),
     ],
@@ -2702,12 +2877,15 @@ def test_complete_live_arrangement_negative_shapes_fail_closed(tmp_path, mutatio
     payload["live_arrangement"]["classification"] = "COMPLETE_LIVE_ARRANGEMENT"
     if mutation == "few_lines":
         _omit_live_arrangement_rows(payload, range(7, 36))
-    elif mutation == "random_holes":
-        _omit_live_arrangement_rows(payload, (10, 18))
-    elif mutation == "single_repeated_line":
-        _omit_live_arrangement_rows(payload, (10,))
-    elif mutation == "nonrepeat_middle_break":
-        _omit_live_arrangement_rows(payload, (2,))
+    elif mutation == "three_line_nonrepeat_break":
+        # Rows 1-3 occur once in the LRC: neither small nor repeated.
+        _omit_live_arrangement_rows(payload, (1, 2, 3))
+    elif mutation == "four_small_holes":
+        _omit_live_arrangement_rows(payload, (2, 10, 14, 20))
+    elif mutation == "two_large_blocks":
+        _omit_live_arrangement_rows(payload, (*range(16, 20), *range(30, 36)))
+    elif mutation == "trailing_single_line":
+        _omit_live_arrangement_rows(payload, (35,))
     elif mutation == "no_actual_tail":
         _omit_live_arrangement_rows(payload, range(28, 36))
         payload["live_arrangement"]["observed_live_song_ending"] = False
@@ -2728,6 +2906,48 @@ def test_complete_live_arrangement_negative_shapes_fail_closed(tmp_path, mutatio
         )
 
 
+
+
+@pytest.mark.parametrize(
+    ("omitted", "kinds"),
+    [
+        ((10, 18), ["BOUNDED_SMALL_SKIP", "BOUNDED_SMALL_SKIP"]),
+        ((10,), ["BOUNDED_SMALL_SKIP"]),
+        ((2,), ["BOUNDED_SMALL_SKIP"]),
+        ((4, 5), ["BOUNDED_REPEATED_SECTION"]),
+        ((2, 10, 14, *range(30, 36)),
+         ["BOUNDED_SMALL_SKIP", "BOUNDED_SMALL_SKIP", "BOUNDED_SMALL_SKIP", "TRAILING_REPEATED_SECTION"]),
+    ],
+    ids=["two-single-holes", "single-line-repeated-elsewhere", "single-nonrepeat-line",
+         "two-line-repeat-keeps-legacy-label", "three-small-plus-trailing-repeat"],
+)
+def test_complete_live_arrangement_accepts_bounded_small_skips(tmp_path, omitted, kinds):
+    lrc = _gudan_beibanqiu_studio_lrc()
+    run = _write_fake_audio_alignment_run(tmp_path, lrc, source_duration_ms=297_850, offset_ms=56_000)
+    payload = json.loads(json.dumps(run.payload))
+    payload["live_arrangement"]["classification"] = "INCOMPLETE_OR_FRAGMENT"
+    _omit_live_arrangement_rows(payload, omitted)
+    if 35 in omitted:
+        # The live ending follows the last performed row, not the studio LRC.
+        last = max(i for i, row in enumerate(payload["observations"]) if row["heard"])
+        transition_ms = payload["observations"][last]["live_end_ms"] + 2_000
+        payload["live_arrangement"]["post_song_transition_ms"] = transition_ms
+        payload["post_song_talk_start_ms"] = transition_ms
+
+    result = song_repair.derive_live_arrangement_completeness(
+        observations=payload["observations"],
+        live_arrangement=payload["live_arrangement"],
+        post_song_talk_start_ms=payload["post_song_talk_start_ms"],
+        source_duration_ms=297_850,
+    )
+
+    assert result["classification"] == "COMPLETE_LIVE_ARRANGEMENT"
+    assert [r["kind"] for r in result["omitted_ranges"]] == kinds
+    # The provider label is only an observation; its disagreement is recorded.
+    assert result["model_classification_disagreement"] == "INCOMPLETE_OR_FRAGMENT"
+    # Without a bound source transcript the legacy report shape is kept.
+    assert all(set(r) == {"start_lrc_index", "end_lrc_index", "line_count", "kind"}
+               for r in result["omitted_ranges"])
 
 
 def test_audio_lrc_validator_failure_tries_next_deduped_variant_and_repairs(tmp_path, monkeypatch):
@@ -2776,7 +2996,7 @@ def test_audio_lrc_validator_failure_tries_next_deduped_variant_and_repairs(tmp_
     assert calls == [canonical.source_ref, alternate.source_ref]
     report = json.loads(Path(result.lyrics_alignment["alignment_report_path"]).read_text(encoding="utf-8"))
     assert [attempt["status"] for attempt in report["audio_lrc_variant_attempts"]] == [
-        "CONTENT_OR_ALIGNMENT_REJECTED",
+        "PROOF_UNRESOLVED",
         "ACCEPTED",
     ]
     assert "repeated_section time is outside" in report["audio_lrc_variant_attempts"][0]["reason"]
@@ -2824,6 +3044,32 @@ def test_hash_bound_prior_audio_receipt_survives_later_model_variance(tmp_path):
     assert any(item.step == "agy_audio_lrc_prior_receipt" for item in result.attempts)
 
 
+@pytest.mark.parametrize('damage',['spot','nonconstant_clock'])
+def test_completed_observation_with_unreliable_clock_reuses_asr_without_provider_call(tmp_path,damage):
+    lrc = _japanese_lrc()
+    prior_dir = tmp_path / 'prior';prior_dir.mkdir()
+    run = _write_fake_audio_alignment_run(prior_dir,lrc)
+    payload = json.loads(json.dumps(run.payload))
+    if damage == 'spot':
+        payload['spot_checks'][0]['live_time_ms'] = 1
+    else:
+        payload['observations'][2]['live_start_ms'] += 2000
+        payload['observations'][2]['live_end_ms'] += 2000
+    prior = _rebind_fake_audio_alignment_run(run,payload)
+    original = Path(prior.manifest_path).read_bytes()
+    result = attempt_song_repair(candidate_id='jp-audio',
+        cues=[SourceCue('first',10000,13000,lrc.lines[0].text,kind='singing'),
+              SourceCue('second',17000,20000,lrc.lines[1].text,kind='singing')],
+        anchor_start_ms=10000,anchor_end_ms=20000,source_duration_ms=100000,
+        output_dir=tmp_path/'repair',lrc_provider=lambda q:lrc,source_media_path=Path(prior.source_path),
+        audio_lrc_aligner=lambda *args:pytest.fail('completed same-input observation was redispatched'),
+        prior_audio_lrc_runs=(prior,))
+    assert result.repaired is True
+    assert result.reason_codes == ()
+    assert any(a.step == 'agy_audio_lrc_prior_receipt' for a in result.attempts)
+    assert Path(prior.manifest_path).read_bytes() == original
+
+
 def test_audio_lrc_all_variants_fail_closed_at_hard_cost_cap(tmp_path, monkeypatch):
     canonical = _japanese_lrc()
     variants = [
@@ -2867,7 +3113,7 @@ def test_audio_lrc_all_variants_fail_closed_at_hard_cost_cap(tmp_path, monkeypat
     )
 
     assert result.repaired is False
-    assert result.reason_codes == ("SONG_AUDIO_LRC_ALIGNMENT_INVALID",)
+    assert result.reason_codes == ("SONG_AUDIO_LRC_PROOF_UNRESOLVED",)
     assert len(calls) == 3
     assert any(
         item.step == "agy_audio_lrc_variants_exhausted" and item.status == "FAILED"
@@ -2990,7 +3236,7 @@ def test_instrumental_outro_without_post_song_boundary_fails_closed(tmp_path):
     )
 
     assert result.repaired is False
-    assert result.reason_codes == ("SONG_AUDIO_LRC_ALIGNMENT_INVALID",)
+    assert result.reason_codes == ("SONG_AUDIO_LRC_PROOF_UNRESOLVED",)
 
 
 def test_predominantly_sung_song_accepts_short_embedded_canonical_spoken_passage(tmp_path):
@@ -3291,6 +3537,10 @@ def test_audio_lrc_alignment_mutations_fail_closed(tmp_path, mutation):
         source_media_path=Path(run.source_path),
         audio_lrc_aligner=lambda *_args: run,
     )
+    if mutation in {"bad_tail_spot", "bad_repeated_spot"}:
+        # AGY per-line/spot timestamps no longer override the BCUT clock.
+        assert result.repaired is True
+        return
     assert result.repaired is False
     assert any(item.step == "agy_audio_lrc_alignment" and item.status == "FAILED" for item in result.attempts)
     if mutation == "background_playback":
@@ -3302,7 +3552,7 @@ def test_audio_lrc_alignment_mutations_fail_closed(tmp_path, mutation):
     elif mutation == "ambiguous_lyric_singer":
         assert result.reason_codes == ("SONG_LIVE_PERFORMANCE_UNPROVEN",)
     else:
-        assert result.reason_codes == ("SONG_AUDIO_LRC_ALIGNMENT_INVALID",)
+        assert result.reason_codes == ("SONG_AUDIO_LRC_PROOF_UNRESOLVED",)
 
 
 def test_background_playback_veto_precedes_long_instrumental_gap_validation(tmp_path):
@@ -3738,6 +3988,49 @@ def test_parse_lrc_text_skips_compact_vocaloid_credit_heads():
     ]
 
 
+def test_parse_lrc_text_filters_hxhh_credit_heads_without_overfiltering():
+    lyric_rows = [(f"00:{index:02d}.000", f"synthetic lyric row {index:02d}") for index in range(47)]
+    credit_rows = [
+        ("01:00.000", "人声录音：匿名甲"),
+        ("01:01.000", "宣发：匿名乙"),
+        ("01:02.000", "项目统筹：匿名丙"),
+        ("01:03.000", "项目总监：匿名丁"),
+        ("01:04.000", "出品人：匿名戊"),
+        ("01:05.000", "OP：匿名音乐团队"),
+        ("01:06.000", "SP：匿名发行方"),
+    ]
+    lrc_rows = lyric_rows + credit_rows
+    assert len(lrc_rows) == 54
+    parsed = parse_lrc_text("\n".join(f"[{time}]{text}" for time, text in lrc_rows))
+
+    assert len(parsed) == 47
+    assert [line.text for line in parsed] == [text for _, text in lyric_rows]
+    credit_texts = {text for _, text in credit_rows}
+    assert not credit_texts.intersection(line.text for line in parsed)
+
+    ordinary = parse_lrc_text(
+        "\n".join(
+            f"[05:{index:02d}.000]{text}"
+            for index, text in enumerate(
+                [
+                    "你为我作词作曲，我却唱不出结局",
+                    "宣发让我心慌",
+                    "项目统筹让我迷路",
+                    "OP的灯光落在脸上",
+                    "SP在梦里醒来",
+                ]
+            )
+        )
+    )
+    assert [line.text for line in ordinary] == [
+        "你为我作词作曲，我却唱不出结局",
+        "宣发让我心慌",
+        "项目统筹让我迷路",
+        "OP的灯光落在脸上",
+        "SP在梦里醒来",
+    ]
+
+
 def test_non_lyric_marker_filter_keeps_real_lyric_sentences():
     lrc = (
         "[00:01.00]SOLO\n"
@@ -3961,6 +4254,7 @@ def test_lrc_discovery_round_robins_wrong_visual_results_with_llm_identity(tmp_p
     result = attempt_song_repair(
         candidate_id="wrong-visual-right-llm",
         cues=cues,
+        asr_anchor_cues=_fixture_asr(right),
         anchor_start_ms=20_000,
         anchor_end_ms=50_000,
         source_duration_ms=100_000,
@@ -4108,10 +4402,11 @@ def test_song_boundary_keeps_lrc_instrumental_intro(tmp_path):
     )
 
     assert result.repaired is True
-    # global offset = 50_000 - 7_700 = 42_300; the 1.5s safety lead starts
-    # before LRC zero, retaining the whole instrumental intro.
+
+
+
     assert result.lyrics_alignment["offset_ms"] == 42_300
-    assert result.song_boundary["clip_start_ms"] == 40_800
+    assert result.song_boundary["clip_start_ms"] == 42_000
     assert result.song_boundary["first_lyric_start_ms"] == 50_000
 
 
@@ -4193,26 +4488,246 @@ def _observation_run_for_echo_test(jitter_ms: int):
     return run, lrc
 
 
-def test_observation_alignment_rejects_pure_lrc_timeline_echo():
-    """回声防御：prompt 携带 LRC 时间轴，纯回声（live=LRC+常数、零逐行抖动）
-    不是独立听音证据，真歌规模(≥16行)下必须拒收；带真实抖动的观察照常通过。"""
-    echo_run, echo_lrc = _observation_run_for_echo_test(jitter_ms=0)
-    with pytest.raises(ValueError, match="echo the LRC timeline"):
+@pytest.mark.parametrize("jitter_ms", [0, 120])
+@pytest.mark.parametrize("row_count", [8, 20])
+def test_observation_alignment_requires_independent_input_for_every_clock(jitter_ms, row_count):
+    run, lrc = _observation_run_for_echo_test(jitter_ms=jitter_ms)
+    run.payload["observations"] = run.payload["observations"][:row_count]
+    lrc = LrcResult(lrc.provider, lrc.song_title, lrc.artist, lrc.source_ref, lrc.lines[:row_count])
+    with pytest.raises(ValueError, match="AUDIO_TOOL_CONSUMPTION_UNPROVEN"):
         _build_audio_observation_alignment(
-            run=echo_run,
-            lrc=echo_lrc,
+            run=run,
+            lrc=lrc,
             candidate_id="echo-guard",
             effective_duration_ms=120_000,
         )
 
-    real_run, real_lrc = _observation_run_for_echo_test(jitter_ms=120)
-    observation = _build_audio_observation_alignment(
-        run=real_run,
-        lrc=real_lrc,
-        candidate_id="echo-guard",
-        effective_duration_ms=120_000,
+
+@pytest.mark.parametrize("jitter_ms", [0, 120])
+@pytest.mark.parametrize("row_count", [8, 20])
+def test_ordinary_prior_receipt_reload_skips_unknown_input_without_redispatch(
+    tmp_path, jitter_ms, row_count,
+):
+    lrc = LrcResult("fixture", "fixture song", None, "fixture://song", tuple(
+        LrcLine(1000 + i * 4000, f"歌詞{i}") for i in range(row_count)))
+    valid_dir = tmp_path / "proven"
+    legacy_dir = tmp_path / "legacy"
+    valid_dir.mkdir()
+    legacy_dir.mkdir()
+    proven = _write_fake_audio_alignment_run(valid_dir, lrc)
+    legacy = _write_fake_audio_alignment_run(legacy_dir, lrc)
+    payload = json.loads(json.dumps(legacy.payload))
+    for i, row in enumerate(payload["observations"]):
+        delta = jitter_ms if i % 2 else -jitter_ms
+        row["live_start_ms"] += delta
+        row["live_end_ms"] += delta
+    legacy = _rebind_fake_audio_alignment_run(legacy, payload)
+    manifest_path = Path(legacy.manifest_path)
+    manifest = json.loads(manifest_path.read_text())
+    manifest.pop("observation_input")
+    # Two controlled receipts refer to the same original; each retains its own
+    # immutable media copy, raw answer, and canonical output.
+    manifest["artifacts"]["source_origin_path"] = proven.source_origin_path
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False))
+    untouched = manifest_path.read_bytes()
+    reloaded = agy_lrc_alignment.load_hash_bound_audio_lrc_run(manifest_path)
+    with pytest.raises(ValueError, match="AUDIO_TOOL_CONSUMPTION_UNPROVEN"):
+        song_performance._validated_audio_lrc_selection(
+            run=reloaded, lrc=lrc, candidate_id="jp-audio",
+            source_media_path=Path(proven.source_origin_path), source_duration_ms=100000,
+            min_matched_ratio=0.8,
+        )
+    result = attempt_song_repair(
+        candidate_id="jp-audio",
+        cues=[SourceCue(str(i), line.time_ms + 10000, line.time_ms + 13000,
+                       line.text, kind="singing") for i, line in enumerate(lrc.lines)],
+        anchor_start_ms=11000, anchor_end_ms=18000, source_duration_ms=100000,
+        output_dir=tmp_path / "repair", lrc_provider=lambda _query: lrc,
+        source_media_path=Path(proven.source_origin_path),
+        audio_lrc_aligner=lambda *_args: pytest.fail("reuse proven input before any provider call"),
+        prior_audio_lrc_runs=(reloaded, proven),
     )
-    assert observation.offset_ms in range(9_800, 10_201)
+    assert result.repaired is True
+    report = json.loads(Path(result.lyrics_alignment["alignment_report_path"]).read_text())
+    assert [row["status"] for row in report["audio_lrc_variant_attempts"]] == [
+        "PRIOR_RECEIPT_REJECTED", "PRIOR_RECEIPT_ACCEPTED"]
+    assert "AUDIO_TOOL_CONSUMPTION_UNPROVEN" in report["audio_lrc_variant_attempts"][0]["reason"]
+    assert manifest_path.read_bytes() == untouched
+
+
+def test_primary_lrc_timeline_echo_enters_gemini_fallback_and_keeps_raw_receipt(
+    tmp_path,
+    monkeypatch,
+):
+    echo_run, lrc = _observation_run_for_echo_test(jitter_ms=0)
+    media = tmp_path / "source.mp4"
+    media.write_bytes(b"complete-current-media")
+    fake_agy = tmp_path / "agy"
+    fake_agy.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv("AGY_BIN", str(fake_agy))
+    monkeypatch.setenv("GEMINI_API_KEY", "echo-fallback-key")
+    monkeypatch.delenv("GEMINI_API_KEY_2", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY_3", raising=False)
+    monkeypatch.setattr(agy_lrc_alignment, "_duration_ms", lambda _path: 120_000)
+    monkeypatch.setattr(
+        agy_lrc_alignment,
+        "_extract_complete_audio",
+        lambda _source, target: (target.write_bytes(b"complete-derived-audio") and 120_000),
+    )
+
+    def fake_run(_command, *, cwd, **_kwargs):
+        provider_payload = _valid_audio_lrc_api_payload(
+            Path(cwd, "prompt.md").read_text(encoding="utf-8"), lrc
+        )
+        Path(cwd, "alignment.json").write_text(
+            json.dumps(provider_payload, ensure_ascii=False), encoding="utf-8"
+        )
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(agy_lrc_alignment.subprocess, "run", fake_run)
+
+    def fake_observe(*, prompt, **_kwargs):
+        api_run, _ = _observation_run_for_echo_test(jitter_ms=120)
+        api_payload = json.loads(json.dumps(api_run.payload))
+        api_payload["record"] = _valid_audio_lrc_api_payload(prompt, lrc)["record"]
+        return json.dumps(api_payload, ensure_ascii=False)
+
+    monkeypatch.setattr(agy_lrc_alignment, "_gemini_api_observe", fake_observe)
+    run = agy_lrc_alignment.run_agy_audio_lrc_alignment(
+        media, lrc, "primary-echo-fallback", tmp_path / "jobs"
+    )
+
+    assert run.provider == "gemini_api"
+    assert run.provider_fallback_used is True
+    assert run.agy_failure_category == "AGY_INVALID_OUTPUT"
+    assert Path(run.provider_raw_output_path).name == "alignment.gemini-api.raw.json"
+    manifest = json.loads(Path(run.manifest_path).read_text(encoding="utf-8"))
+    assert manifest["agy_failure_detail"] == "AUDIO_TOOL_TRACE_UNAVAILABLE"
+    assert len(manifest["gemini_api_raw_attempts"]) == 1
+    raw_primary = next((tmp_path / "jobs").rglob("alignment.json"))
+    raw_observations = json.loads(raw_primary.read_text(encoding="utf-8"))["observations"]
+    assert [
+        row["live_start_ms"] - line.time_ms for row, line in zip(raw_observations, lrc.lines)
+    ] == [10_000] * len(lrc.lines)
+
+
+def test_primary_content_negative_echo_does_not_enter_gemini_fallback(
+    tmp_path,
+    monkeypatch,
+):
+    _echo_run, lrc = _observation_run_for_echo_test(jitter_ms=0)
+    media = tmp_path / "source.mp4"
+    media.write_bytes(b"complete-current-media")
+    fake_agy = tmp_path / "agy"
+    fake_agy.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv("AGY_BIN", str(fake_agy))
+    monkeypatch.setenv("GEMINI_API_KEY", "unused-negative-key-one")
+    monkeypatch.setenv("GEMINI_API_KEY_2", "unused-negative-key-two")
+    monkeypatch.delenv("GEMINI_API_KEY_3", raising=False)
+    monkeypatch.setattr(agy_lrc_alignment, "_duration_ms", lambda _path: 120_000)
+    _stub_complete_song_audio(monkeypatch, 120000)
+
+    calls = []
+
+    def fake_run(_command, *, cwd, **_kwargs):
+        provider_payload = _valid_audio_lrc_api_payload(
+            Path(cwd, "prompt.md").read_text(encoding="utf-8"), lrc
+        )
+        for row in provider_payload["observations"]:
+            row.update(
+                lyric_vocal_subject="RECORDED_OR_PLAYBACK_SINGER",
+                lidousha_role="SILENT_OR_NOT_AUDIBLE",
+                same_live_vocal_source_as_lidousha=False,
+                other_singer_or_harmony_audible=False,
+                recorded_or_playback_vocal_audible=True,
+            )
+        provider_payload["live_performance"].update(
+            mode="ORIGINAL_OR_BACKGROUND_PLAYBACK",
+            continuous_live_song_performance=False,
+            same_lidousha_live_performer_across_all_lyrics=False,
+            other_singer_or_harmony_present=False,
+            recorded_or_playback_vocal_present=True,
+        )
+        Path(cwd, "alignment.json").write_text(
+            json.dumps(provider_payload, ensure_ascii=False), encoding="utf-8"
+        )
+        return SimpleNamespace(returncode=0, stdout=_successful_audio_trace(cwd), stderr="")
+
+    monkeypatch.setattr(agy_lrc_alignment.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        agy_lrc_alignment,
+        "_gemini_api_observe",
+        lambda **_kwargs: calls.append("unexpected") or "{}",
+    )
+    run = agy_lrc_alignment.run_agy_audio_lrc_alignment(
+        media, lrc, "primary-playback-echo", tmp_path / "jobs"
+    )
+
+    assert run.provider == "agy"
+    assert run.provider_fallback_used is False
+    assert run.agy_failure_category is None
+    assert run.payload["live_performance"]["mode"] == "ORIGINAL_OR_BACKGROUND_PLAYBACK"
+    assert calls == []
+
+
+@pytest.mark.parametrize("expected_shift", [0, 10000])
+def test_gemini_untimed_audio_allows_legitimate_constant_shift(
+    tmp_path,
+    monkeypatch,
+    expected_shift,
+):
+    _echo_run, lrc = _observation_run_for_echo_test(jitter_ms=0)
+    lrc = LrcResult(lrc.provider, lrc.song_title, lrc.artist, lrc.source_ref,
+        tuple(LrcLine(line.time_ms + 10000 - expected_shift, line.text) for line in lrc.lines))
+    media = tmp_path / "source.mp4"
+    media.write_bytes(b"complete-current-media")
+    fake_agy = tmp_path / "agy"
+    fake_agy.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv("AGY_BIN", str(fake_agy))
+    monkeypatch.setenv("GEMINI_API_KEY", "echo-api-key")
+    monkeypatch.delenv("GEMINI_API_KEY_2", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY_3", raising=False)
+    monkeypatch.setattr(agy_lrc_alignment, "_duration_ms", lambda _path: 120_000)
+    monkeypatch.setattr(
+        agy_lrc_alignment,
+        "_extract_complete_audio",
+        lambda _source, target: (target.write_bytes(b"complete-derived-audio") and 120_000),
+    )
+    monkeypatch.setattr(
+        agy_lrc_alignment.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=1, stdout="AGY failed", stderr=""),
+    )
+    calls = []
+
+    def fake_observe(*, prompt, key, **_kwargs):
+        calls.append(key)
+        payload = json.loads(json.dumps(_echo_run.payload))
+        payload["record"] = _valid_audio_lrc_api_payload(prompt, lrc)["record"]
+        raw = json.dumps(payload, ensure_ascii=False)
+        return raw
+
+    monkeypatch.setattr(agy_lrc_alignment, "_gemini_api_observe", fake_observe)
+    run = agy_lrc_alignment.run_agy_audio_lrc_alignment(
+        media, lrc, "api-constant-shift", tmp_path / "jobs"
+    )
+    from src.autoslice.song_performance import _independent_timing_input
+    assert calls == ["echo-api-key"]
+    assert _independent_timing_input(run, lrc) is True
+    reloaded = agy_lrc_alignment.load_hash_bound_audio_lrc_run(Path(run.manifest_path))
+    assert _independent_timing_input(reloaded, lrc) is True
+    from src.autoslice.song_performance import _validate_audio_lrc_artifact_bindings
+    assert _validate_audio_lrc_artifact_bindings(run=reloaded, lrc=lrc,
+        candidate_id="api-constant-shift", source_media_path=media,
+        source_duration_ms=120000) == 120000
+    observed = _build_audio_observation_alignment(run=reloaded, lrc=lrc,
+        candidate_id="api-constant-shift", effective_duration_ms=120000,
+        asr_anchor_cues=_fixture_asr(lrc, expected_shift))
+    assert observed.offset_ms == expected_shift
+    manifest = json.loads(Path(run.manifest_path).read_text())
+    Path(manifest["observation_input"]["lyrics_path"]).write_text("[00:01] contaminated")
+    with pytest.raises(ValueError):
+        _independent_timing_input(reloaded, lrc)
 
 
 def test_repair_fails_closed_when_nominal_lrc_zero_precedes_source(tmp_path):
@@ -4539,6 +5054,10 @@ def test_audio_lrc_paid_backup_fires_only_after_three_free_chain_strikes(
 ):
     """维护者: the PAID key is a gated last resort, never routine."""
 
+    # This mocked paid-success scenario has its own budget, independent of
+    # another test or an ambient shell setting the daily brake to zero.
+    monkeypatch.setenv("GEMINI_PAID_BACKUP_DAILY_CAP", "10")
+
     import hashlib
 
     import src.autoslice.gemini_backup_policy as backup_policy
@@ -4817,57 +5336,37 @@ def test_validated_audio_lrc_selection_anchors_on_real_2026_07_11_regression_num
     assert offset_provenance["agy_offset_ms"] == 18_000
     assert offset_provenance["asr_offset_ms"] == 17_140
     assert offset_provenance["asr_matched_line_count"] == 10
-    # clip_start_ms is the nominal LRC-zero boundary and must follow the
-    # corrected (earlier, more accurate) anchor too.
+    # clip_start_ms follows the music start — the corrected (earlier, more
+    # accurate) ASR LRC zero, never AGY's later self-reported clock — minus
+    # the recognition tolerance (song_clip_bounds,).
     clip_start_ms = selected[6]
-    assert clip_start_ms == 17_140
+    assert clip_start_ms == 17_140 - 300
 
 
-def test_validated_audio_lrc_selection_falls_back_to_agy_median_without_asr_cues(tmp_path):
+def test_validated_audio_lrc_selection_without_asr_is_pending(tmp_path):
+    from src.autoslice.song_alignment import AsrTimelinePending
     lrc = _japanese_lrc()
     run = _write_fake_audio_alignment_run(tmp_path, lrc, candidate_id="no-asr-anchor", offset_ms=10_000)
-
-    selected = song_repair._validated_audio_lrc_selection(
-        run=run,
-        lrc=lrc,
-        candidate_id="no-asr-anchor",
-        source_media_path=Path(run.source_path),
-        source_duration_ms=100_000,
-        min_matched_ratio=0.55,
-    )
-
-    offset_ms = selected[8]
-    offset_provenance = selected[10]
-    assert offset_ms == 10_000
-    assert offset_provenance["offset_basis"] == "agy_median"
-    assert offset_provenance["agy_offset_ms"] == 10_000
-    assert offset_provenance["asr_offset_ms"] is None
-
-
-def test_validated_audio_lrc_selection_fails_closed_when_asr_anchor_disagrees_with_agy(tmp_path):
-    lrc = _lianai_gaoji_lrc_for_asr_anchor_regression()
-    run = _write_fake_audio_alignment_run(
-        tmp_path,
-        lrc,
-        candidate_id="lianai-gaoji-disagree",
-        source_duration_ms=120_000,
-        offset_ms=18_000,
-    )
-    # A fresh-ASR anchor with an offset >1500ms away from the AGY median must
-    # never be silently accepted OR silently ignored in favor of AGY; code
-    # must fail closed instead of guessing which reading is right.
-    far_asr_cues = _fresh_asr_cues_for_regression_lrc(lrc, asr_offset_ms=10_000)
-
-    with pytest.raises(ValueError, match="disagrees with the AGY median offset"):
+    with pytest.raises(AsrTimelinePending, match="BCUT ASR cues are required"):
         song_repair._validated_audio_lrc_selection(
-            run=run,
-            lrc=lrc,
-            candidate_id="lianai-gaoji-disagree",
-            source_media_path=Path(run.source_path),
-            source_duration_ms=120_000,
-            min_matched_ratio=0.55,
-            asr_anchor_cues=far_asr_cues,
+            run=run, lrc=lrc, candidate_id="no-asr-anchor", source_media_path=Path(run.source_path),
+            source_duration_ms=100_000, min_matched_ratio=0.55,
         )
+
+
+def test_validated_audio_lrc_selection_uses_asr_when_agy_clock_disagrees(tmp_path):
+    lrc = _lianai_gaoji_lrc_for_asr_anchor_regression()
+    run = _write_fake_audio_alignment_run(tmp_path, lrc, candidate_id="lianai-gaoji-disagree",
+        source_duration_ms=120_000, offset_ms=18_000)
+    asr_cues = _fresh_asr_cues_for_regression_lrc(lrc, asr_offset_ms=10_000)
+    # Preserve the independent post-song transition witness.
+    asr_cues.append(SourceCue("talk",102710,105000,"spoken transition"))
+    selected = song_repair._validated_audio_lrc_selection(
+        run=run, lrc=lrc, candidate_id="lianai-gaoji-disagree", source_media_path=Path(run.source_path),
+        source_duration_ms=120_000, min_matched_ratio=0.55, asr_anchor_cues=asr_cues,
+    )
+    assert selected[8] == 10_000
+    assert selected[10]["offset_basis"] == "asr_anchor"
 
 
 def test_attempt_song_repair_report_carries_asr_anchor_offset_provenance_fields(tmp_path):
@@ -4969,6 +5468,7 @@ def test_audio_lrc_quota_rounds_complete_in_run_and_paid_fires(
     """交付事故的类机制修复：免费链纯额度类失败(429)时，
     「同项失败≥3轮」在同一次运行内连续补足，付费兜底随后合规触发
     （触发时 ledger 已有 3 轮完整失败证据 + 每笔入帐）。"""
+    monkeypatch.setenv("GEMINI_PAID_BACKUP_DAILY_CAP", "10")
     import hashlib
 
     import src.autoslice.gemini_backup_policy as backup_policy
@@ -5024,25 +5524,22 @@ def test_audio_lrc_quota_rounds_complete_in_run_and_paid_fires(
 
 
 @pytest.mark.parametrize(
-    ("env_value", "expected_budget"),
+    ("env_value", "expected_level"),
     [
-        (None, 24_576),
-        ("512", 512),
-        ("-1", -1),
-        ("999999", 32_768),
-        ("junk", 24_576),
+        (None, "HIGH"),
+        ("low", "LOW"),
+        ("HIGH", "HIGH"),
     ],
 )
-def test_gemini_api_observe_requests_agy_parity_thinking_budget(
-    tmp_path, monkeypatch, env_value, expected_budget
+def test_gemini_api_observe_requests_level_for_current_song_model(
+    tmp_path, monkeypatch, env_value, expected_level
 ):
-    # AGY runs the same model in High thinking mode; the API request must
-    # carry an explicit budget or long audio gets skimmed into sparse
-    # observations that still pass shape validation.
+    monkeypatch.setattr(agy_lrc_alignment, "GEMINI_API_AUDIO_LRC_MODEL", "gemini-3.6-flash")
+    monkeypatch.delenv("SONG_GEMINI_API_THINKING_BUDGET", raising=False)
     if env_value is None:
-        monkeypatch.delenv("SONG_GEMINI_API_THINKING_BUDGET", raising=False)
+        monkeypatch.delenv("SONG_GEMINI_API_THINKING_LEVEL", raising=False)
     else:
-        monkeypatch.setenv("SONG_GEMINI_API_THINKING_BUDGET", env_value)
+        monkeypatch.setenv("SONG_GEMINI_API_THINKING_LEVEL", env_value)
     audio = tmp_path / "input.mp3"
     audio.write_bytes(b"fake-audio")
     captured: dict[str, object] = {}
@@ -5074,8 +5571,125 @@ def test_gemini_api_observe_requests_agy_parity_thinking_budget(
     assert raw == "{}"
     generation_config = captured["body"]["generationConfig"]
     assert generation_config["thinkingConfig"] == {
-        "thinkingBudget": expected_budget
+        "thinkingLevel": expected_level
     }
+    assert "temperature" not in generation_config
+
+
+@pytest.mark.parametrize("env_value", [None, "512", "-1", "999999"])
+def test_gemini_api_observe_preserves_legacy_budget_model(
+    tmp_path, monkeypatch, env_value
+):
+    monkeypatch.setattr(agy_lrc_alignment, "GEMINI_API_AUDIO_LRC_MODEL", "gemini-2.5-flash")
+    monkeypatch.delenv("SONG_GEMINI_API_THINKING_LEVEL", raising=False)
+    if env_value is None:
+        monkeypatch.delenv("SONG_GEMINI_API_THINKING_BUDGET", raising=False)
+        expected_budget = 24_576
+    else:
+        monkeypatch.setenv("SONG_GEMINI_API_THINKING_BUDGET", env_value)
+        expected_budget = int(env_value)
+    audio = tmp_path / "input.mp3"
+    audio.write_bytes(b"fake-audio")
+    captured: dict[str, object] = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {"candidates": [{"content": {"parts": [{"text": "{}"}]}}]}
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return _Response()
+
+    monkeypatch.setattr(agy_lrc_alignment.urllib.request, "urlopen", fake_urlopen)
+    assert agy_lrc_alignment._gemini_api_observe(
+        audio_path=audio, prompt="prompt", key="secret"
+    ) == "{}"
+    config = captured["body"]["generationConfig"]
+    assert config["thinkingConfig"] == {"thinkingBudget": expected_budget}
+    assert "temperature" not in config
+
+
+@pytest.mark.parametrize("env_value", ["junk", "-2"])
+def test_gemini_api_observe_rejects_invalid_explicit_legacy_budget_before_network(
+    tmp_path, monkeypatch, env_value
+):
+    monkeypatch.setattr(agy_lrc_alignment, "GEMINI_API_AUDIO_LRC_MODEL", "gemini-2.5-flash")
+    monkeypatch.setenv("SONG_GEMINI_API_THINKING_BUDGET", env_value)
+    monkeypatch.delenv("SONG_GEMINI_API_THINKING_LEVEL", raising=False)
+    monkeypatch.setattr(
+        agy_lrc_alignment.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("invalid budget reached the network")
+        ),
+    )
+    audio = tmp_path / "input.mp3"
+    audio.write_bytes(b"fake-audio")
+    with pytest.raises(agy_gemini_client.GeminiRequestConfigError):
+        agy_lrc_alignment._gemini_api_observe(
+            audio_path=audio, prompt="prompt", key="secret"
+        )
+
+
+@pytest.mark.parametrize("level_value", [None, "high"])
+def test_song_level_model_rejects_legacy_budget_override_before_network(
+    tmp_path, monkeypatch, level_value
+):
+    monkeypatch.setattr(agy_lrc_alignment, "GEMINI_API_AUDIO_LRC_MODEL", "gemini-3.6-flash")
+    monkeypatch.setenv("SONG_GEMINI_API_THINKING_BUDGET", "512")
+    if level_value is None:
+        monkeypatch.delenv("SONG_GEMINI_API_THINKING_LEVEL", raising=False)
+    else:
+        monkeypatch.setenv("SONG_GEMINI_API_THINKING_LEVEL", level_value)
+    monkeypatch.setattr(
+        agy_lrc_alignment.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("legacy budget reached the network")
+        ),
+    )
+    audio = tmp_path / "input.mp3"
+    audio.write_bytes(b"fake-audio")
+    with pytest.raises(agy_gemini_client.GeminiRequestConfigError):
+        agy_lrc_alignment._gemini_api_observe(
+            audio_path=audio, prompt="prompt", key="secret"
+        )
+
+
+def test_unknown_song_model_keeps_explicit_thinking_and_rejects_before_network(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(agy_lrc_alignment, "GEMINI_API_AUDIO_LRC_MODEL", "unknown-song-model")
+    monkeypatch.delenv("SONG_GEMINI_API_THINKING_BUDGET", raising=False)
+    monkeypatch.delenv("SONG_GEMINI_API_THINKING_LEVEL", raising=False)
+    monkeypatch.setattr(
+        agy_lrc_alignment.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("unknown song thinking capability reached the network")
+        ),
+    )
+    audio = tmp_path / "input.mp3"
+    audio.write_bytes(b"fake-audio")
+    with pytest.raises(agy_gemini_client.GeminiRequestConfigError, match="unknown model"):
+        agy_lrc_alignment._gemini_api_observe(
+            audio_path=audio, prompt="prompt", key="secret"
+        )
+
+
+def test_song_request_config_error_has_distinct_failure_category():
+    error = agy_gemini_client.GeminiRequestConfigError("invalid request config")
+    assert agy_lrc_alignment._gemini_failure_category(error) == (
+        "GEMINI_API_REQUEST_CONFIG_ERROR"
+    )
 
 
 def test_song_lrc_gemini_api_model_env_override_and_default():
@@ -5104,3 +5718,271 @@ def test_song_lrc_gemini_api_model_env_override_and_default():
         env={**__import__("os").environ, "SONG_LRC_GEMINI_API_MODEL": "gemini-3.5-flash"},
     )
     assert overridden.stdout.strip() == "gemini-3.5-flash", overridden.stderr
+
+
+@pytest.mark.parametrize('model,valid', [
+    ('Gemini 3.8 Flash (High)', True),
+    ('Gemini 3.6 Flash (High)', True),
+    ('unrecorded-invalid-model', False),
+])
+def test_audio_proof_accepts_current_and_completed_model_provenance(model, valid):
+    from src.autoslice.song_common import validate_audio_lrc_execution_metadata
+    error = validate_audio_lrc_execution_metadata(
+        provider='agy', model=model, agy_rc=0, provider_fallback_used=False,
+        agy_failure_category=None, sandbox=True,
+    )
+    assert (error is None) is valid
+
+@pytest.mark.parametrize("failure", ["absent", "audio_error", "reference_read", "late_audio", "self_claim"])
+def test_untimed_audio_requires_actual_completed_read_before_output(tmp_path, failure):
+    from src.autoslice.song_performance import validate_untimed_audio_tool_trace
+    events = [json.loads(line) for line in _successful_audio_trace(tmp_path).splitlines()]
+    if failure == "absent":
+        events.pop(0)
+    elif failure == "audio_error":
+        events[0]["step_update"]["state"] = "ERROR"
+        events[0]["step_update"]["tool_info"]["error"] = {"message": "file exceeds 100MB"}
+    elif failure == "reference_read":
+        events[1]["step_update"]["tool_info"]["parameters"]["AbsolutePath"] = str(tmp_path.parent / "source.lrc")
+    elif failure == "late_audio":
+        events[0], events[2] = events[2], events[0]
+    elif failure == "self_claim":
+        events = [{"event": "result", "result": {"status": "SUCCESS", "response": "I listened to all audio"}}]
+    with pytest.raises(ValueError):
+        validate_untimed_audio_tool_trace("\n".join(json.dumps(e) for e in events),
+            audio_path=tmp_path / "input.mp3", lyrics_path=tmp_path / "lyrics.jsonl",
+            prompt_path=tmp_path / "prompt.md", output_path=tmp_path / "alignment.json")
+
+
+def test_unproven_observation_timing_is_recoverable_not_content_rejection():
+    from src.autoslice.song_alignment import _audio_lrc_infrastructure_reason
+    assert _audio_lrc_infrastructure_reason(ValueError("LRC_TIMELINE_ECHO: alignment pending")) == "AGY_SOURCE_CONTEXT_RUNNER_FAILED"
+    assert _audio_lrc_infrastructure_reason(ValueError("canonical LRC line 0 was not affirmatively heard")) is None
+
+
+def test_ordinary_song_dag_keeps_unproven_clock_pending(tmp_path, monkeypatch):
+    import src.autoslice.song_repair as repair_module
+    media = tmp_path / "source.mp4"
+    media.write_bytes(b"source")
+    calls = []
+    def pending_clock(**_kwargs):
+        raise ValueError("LRC_TIMELINE_ECHO: independent clock unproven")
+    monkeypatch.setattr(repair_module, "_validated_audio_lrc_selection", pending_clock)
+    result = attempt_song_repair(
+        candidate_id="pending-clock", cues=_song_cues(),
+        anchor_start_ms=60000, anchor_end_ms=80000, source_duration_ms=300000,
+        output_dir=tmp_path / "repair", lrc_provider=lambda _query: _matching_lrc(),
+        source_media_path=media, audio_lrc_aligner=lambda *_args: calls.append(1) or object(),
+    )
+    assert calls == [1]
+    assert result.repaired is False
+    assert result.reason_codes == ("AGY_SOURCE_CONTEXT_RUNNER_FAILED",)
+
+
+def test_live_reference_credits_removed_but_intro_and_bridge_retained():
+    from src.autoslice.song_common import _singable_lrc_result, is_lrc_credit_metadata
+    credits = ["音乐总监 : 陈伟伦", "执行制作 : 姚宇 James", "声乐指导 : 馬 RS",
+        "和音 : 梁古驰", "冬不拉 : 陈伟伦", "音乐工程 : 张梁薪",
+        "音频编辑/录音 : 伊乐其/郝博宁/韩宽/罗煜星", "音乐统筹 : 张乐",
+        "舞台总监 : 陈琦沅Kenn", "编舞 : HelloDance马晓龙", "执行编导 : MingM明明@天舞IDG",
+        "舞蹈演员 : 天舞IDG/大喜舞团", "OP/SP : 北京有此山文化传媒有限公司"]
+    lyrics = ["想要当初想要的", "不一样", "woo woo woo", "踏遍万水千山总有一地故乡", "不一样Woo"]
+    lrc = LrcResult("saved", "历历万乡", None, "saved-reference", tuple(
+        LrcLine(i * 1000, text) for i, text in enumerate(credits + lyrics)))
+    normalized, removed = _singable_lrc_result(lrc)
+    assert removed == 13
+    assert [line.text for line in normalized.lines] == lyrics
+    assert not is_lrc_credit_metadata("音乐总监看着我：不一样")
+    assert not is_lrc_credit_metadata("我为你编舞")
+
+
+def test_bound_canonical_projection_does_not_reinterpret_historical_credits(tmp_path):
+    from src.autoslice.song_alignment import validate_audio_lrc_canonical_projection
+    from src.autoslice.song_lrc_provider import parse_lrc_text
+    lrc_path = tmp_path / "source.lrc"
+    lrc_path.write_text("[00:01.340]音乐总监 : 陈伟伦\n[00:08.510]想要当初想要的\n")
+    assert len(parse_lrc_text(lrc_path.read_text())) == 1
+    raw = {"observations": [{"lrc_index": 0, "heard": False}, {"lrc_index": 1, "heard": True}]}
+    bound = LrcResult("bound", "", None, str(lrc_path), tuple(parse_lrc_text(lrc_path.read_text(), exclude_metadata=False)))
+    canonical = song_repair.canonicalize_audio_lrc_observation(raw, bound)
+    assert validate_audio_lrc_canonical_projection(provider_payload=raw, canonical_payload=canonical, lrc_path=lrc_path) == canonical
+
+
+def test_historical_receipt_binding_retains_exact_credit_row_identity(tmp_path):
+    from src.autoslice.song_performance import _validate_audio_lrc_artifact_bindings
+    lrc = _anlian_lrc_with_real_bilingual_credits()
+    run = _write_fake_audio_alignment_run(tmp_path, lrc, candidate_id="historical-credits")
+    assert _validate_audio_lrc_artifact_bindings(run=run, lrc=lrc,
+        candidate_id="historical-credits", source_media_path=Path(run.source_path),
+        source_duration_ms=run.source_duration_ms) == run.source_duration_ms
+
+
+@pytest.mark.parametrize('primary_state', ['offset_jump', 'nonconstant_clock', 'valid', 'content_veto'])
+def test_completed_observation_reuses_bound_asr_without_redispatching_audio(tmp_path, monkeypatch, primary_state):
+    from src.autoslice import agy_lrc_alignment as adapter
+    from src.autoslice.song_performance import _build_audio_observation_alignment
+    from src.autoslice.song_alignment import AsrTimelinePending
+    template, lrc = _observation_run_for_echo_test(jitter_ms=0)
+    media = tmp_path / 'source.mp4'
+    media.write_bytes(b'actual-bound-source')
+    monkeypatch.setattr(adapter, '_duration_ms', lambda _: 120000)
+    _stub_complete_song_audio(monkeypatch, 120000)
+    primary_calls, api_calls = [], []
+    def primary(*, job, **_kwargs):
+        primary_calls.append(job.attempt_id)
+        payload = json.loads(json.dumps(template.payload))
+        payload['record'] = _valid_audio_lrc_api_payload(job.prompt_path.read_text(), lrc)['record']
+        if primary_state in {'offset_jump', 'nonconstant_clock'}:
+            for index, row in enumerate(payload['observations'][10:]):
+                delta = 4000 if primary_state == 'offset_jump' else 4000 + index * 200
+                row['live_start_ms'] += delta
+                row['live_end_ms'] += delta
+        if primary_state == 'content_veto':
+            payload['live_performance']['mode'] = 'RECORDED_OR_PLAYBACK_VOCAL'
+        job.provider_raw_output_path.write_text(json.dumps(payload))
+        job.stdout_path.write_text(_successful_audio_trace(job.prompt_path.parent))
+        return payload, 0
+    def direct(**_kwargs):
+        api_calls.append(True)
+        pytest.fail('a completed, bound performance observation must not be redispatched for its clock')
+    monkeypatch.setattr(adapter, '_run_primary_agy_alignment', primary)
+    monkeypatch.setattr(adapter, '_gemini_api_observe', direct)
+    prior = adapter.run_agy_audio_lrc_alignment(media, lrc, 'clock-resume', tmp_path / 'jobs')
+    paths = [Path(prior.manifest_path), Path(prior.output_path), Path(prior.provider_raw_output_path)]
+    originals = {p: p.read_bytes() for p in paths}
+    if primary_state == 'content_veto':
+        with pytest.raises(ValueError):
+            adapter.run_agy_audio_lrc_alignment(media, lrc, 'clock-resume', tmp_path / 'jobs', prior_agy_run=prior)
+        assert api_calls == [] and len(primary_calls) == 1
+        return
+    with pytest.raises(AsrTimelinePending, match='BCUT ASR cues are required'):
+        _build_audio_observation_alignment(run=prior, lrc=lrc, candidate_id='clock-resume', effective_duration_ms=120000)
+    cues = [SourceCue(cue_id=str(i), source_start_ms=line.time_ms+10000,
+        source_end_ms=line.time_ms+12000, text=line.text, kind='singing') for i,line in enumerate(lrc.lines)]
+    ranked = [(1.0, lrc, song_repair._align_lrc_to_cues(lrc.lines, cues, match_threshold=.45))]
+    for directory in ('ordinary', 'restart'):
+        output = tmp_path / directory
+        output.mkdir()
+        outcome = song_repair._select_audio_lrc(candidate_id='clock-resume', ranked=ranked,
+            prepared_pinned_lrc_results=[lrc], extra_queries=[lrc.song_title], max_audio_lrc_attempts=1,
+            source_media_path=media, source_duration_ms=120000, output_dir=output,
+            audio_lrc_aligner=adapter.run_agy_audio_lrc_alignment, asr_anchor_cues=cues,
+            asr_anchor_srt_path=None, prior_audio_lrc_runs=[prior], min_matched_ratio=.55, attempts=[])
+        assert outcome.selected is not None and outcome.audio_alignment_run.manifest_sha256 == prior.manifest_sha256
+        assert outcome.audio_alignment_run.provider == 'agy'
+        assert _build_audio_observation_alignment(run=prior, lrc=lrc,
+            candidate_id='clock-resume', effective_duration_ms=120000, asr_anchor_cues=cues).offset_ms == 10000
+        assert len(primary_calls) == 1 and api_calls == []
+        assert {p:p.read_bytes() for p in paths} == originals
+    Path(prior.provider_raw_output_path).write_text('{}')
+    with pytest.raises(ValueError, match='sha256 mismatch'):
+        adapter.run_agy_audio_lrc_alignment(media, lrc, 'clock-resume', tmp_path / 'tampered', prior_agy_run=prior)
+    assert len(primary_calls) == 1 and api_calls == []
+
+
+@pytest.mark.parametrize('offset_ms',[0,10000])
+def test_normal_global_shift_keeps_zero_and_constant_with_bound_independent_input(tmp_path,offset_ms):
+    lrc=_japanese_lrc()
+    run=_write_fake_audio_alignment_run(tmp_path,lrc,candidate_id='constant-shift',offset_ms=offset_ms)
+    selected=song_repair._validated_audio_lrc_selection(run=run,lrc=lrc,candidate_id='constant-shift',
+        source_media_path=Path(run.source_path),source_duration_ms=100000,min_matched_ratio=.55,
+        asr_anchor_cues=_fresh_asr_cues_for_regression_lrc(lrc,asr_offset_ms=offset_ms))
+    assert selected[8]==offset_ms
+    assert selected[10]['offset_basis']=='asr_anchor'
+    assert selected[10]['timing_model']=='asr_anchored_sectionwise_shift.v1'
+
+
+def test_normal_asr_report_and_completion_ignore_skewed_agy_clock(tmp_path):
+    from src.autoslice.live_source_review import _verify_lyrics_alignment_proof
+    base=_japanese_lrc()
+    lrc=LrcResult(base.provider,base.song_title,base.artist,base.source_ref,
+        tuple(LrcLine(line.time_ms+2000,line.text) for line in base.lines))
+    run=_write_fake_audio_alignment_run(tmp_path,lrc,candidate_id='nonmedian-report',offset_ms=10000)
+    payload=json.loads(json.dumps(run.payload))
+    payload['observations'][4]['live_start_ms']+=2900
+    payload['observations'][4]['live_end_ms']+=2900
+    run=_rebind_fake_audio_alignment_run(run,payload)
+    selected=song_repair._validated_audio_lrc_selection(run=run,lrc=lrc,candidate_id='nonmedian-report',
+        source_media_path=Path(run.source_origin_path),source_duration_ms=run.source_duration_ms,min_matched_ratio=.55,
+        asr_anchor_cues=_fresh_asr_cues_for_regression_lrc(lrc,asr_offset_ms=10000))
+    assert selected[8]==10000 and selected[10]['offset_basis']=='asr_anchor'
+    output=tmp_path/'normal-output';output.mkdir()
+    result=song_repair._materialize_song_repair(candidate_id='nonmedian-report',output_dir=output,
+        provider_name=None,selected=selected,audio_alignment_run=run,audio_lrc_variant_attempts=[],attempts=[])
+    assert result.repaired and _verify_lyrics_alignment_proof(result.lyrics_alignment,output_dir=output) is None
+
+
+def test_repeated_spot_inside_long_later_lyric_and_raw_report_binding(tmp_path):
+    from src.autoslice.song_completion import _validate_audio_artifacts
+    lrc = _japanese_lrc()
+    run = _write_fake_audio_alignment_run(tmp_path, lrc)
+    payload = json.loads(json.dumps(run.payload))
+    repeated = next(spot for spot in payload["spot_checks"] if spot["name"] == "repeated_section")
+    row = next(row for row in payload["observations"] if row["live_start_ms"] == repeated["live_time_ms"])
+    # The fixture's 7-second spacing leaves room for an actual long lyric.
+    row["live_end_ms"] = row["live_start_ms"] + 6000
+    repeated["live_time_ms"] += 3300
+    run = _rebind_fake_audio_alignment_run(run, payload)
+    selected = song_repair._validated_audio_lrc_selection(
+        run=run, lrc=lrc, candidate_id="jp-audio", source_media_path=Path(run.source_origin_path),
+        source_duration_ms=run.source_duration_ms, min_matched_ratio=.55,
+        asr_anchor_cues=_fresh_asr_cues_for_regression_lrc(lrc,asr_offset_ms=10000),
+    )
+    output = tmp_path / "normal-output"
+    output.mkdir()
+    result = song_repair._materialize_song_repair(
+        candidate_id="jp-audio", output_dir=output, provider_name=None, selected=selected,
+        audio_alignment_run=run, audio_lrc_variant_attempts=[], attempts=[],
+    )
+    report = json.loads(Path(result.lyrics_alignment["alignment_report_path"]).read_text())
+    def validate():
+        failures = []
+        _validate_audio_artifacts(
+            report=report, alignment=result.lyrics_alignment, record={"candidate_id": "jp-audio"},
+            failures=failures, is_int=lambda value: type(value) is int,
+            report_provider=report["audio_alignment_provider"],
+        )
+        return failures
+    assert "SONG_AUDIO_LRC_SPOT_CHECK_BINDING_INVALID" not in validate()
+    report["spot_checks"][2]["live_time_ms"] += 1
+    assert "SONG_AUDIO_LRC_SPOT_CHECK_BINDING_INVALID" in validate()
+
+
+def test_normal_global_shift_retains_physical_source_boundary_guard(tmp_path):
+    base=_japanese_lrc()
+    lrc=LrcResult(base.provider,base.song_title,base.artist,base.source_ref,
+        tuple(LrcLine(line.time_ms+2000,line.text) for line in base.lines))
+    run=_write_fake_audio_alignment_run(tmp_path,lrc,candidate_id='negative-zero',offset_ms=-1000)
+    with pytest.raises(ValueError,match='nominal LRC zero'):
+        song_repair._validated_audio_lrc_selection(run=run,lrc=lrc,candidate_id='negative-zero',
+            source_media_path=Path(run.source_origin_path),source_duration_ms=run.source_duration_ms,min_matched_ratio=.55,
+            asr_anchor_cues=_fresh_asr_cues_for_regression_lrc(lrc,asr_offset_ms=-1000))
+
+
+def test_normal_retry_preserves_newest_completed_failure_and_never_redispatches(tmp_path,monkeypatch):
+    import os
+    lrc=_japanese_lrc()
+    (tmp_path/'old').mkdir();(tmp_path/'new').mkdir()
+    source=tmp_path/'shared-source.mp4'
+    old=_write_fake_audio_alignment_run(tmp_path/'old',lrc,candidate_id='newest-consumed',offset_ms=10000,source_media_path=source)
+    new=_write_fake_audio_alignment_run(tmp_path/'new',lrc,candidate_id='newest-consumed',offset_ms=10000,source_media_path=source)
+    os.utime(old.manifest_path,(100,100));os.utime(new.manifest_path,(200,200))
+    seen=[]
+    def observation(**kwargs):
+        run=kwargs['run'];seen.append(run.manifest_path)
+        raise ValueError('newest spot check pending' if run is new else 'older clock failed')
+    monkeypatch.setattr(song_repair,'_validated_audio_lrc_selection',observation)
+    def forbidden(*_a,**_k):pytest.fail('completed observations must never redispatch')
+    cues=[SourceCue(cue_id=f'cue-{i}',source_start_ms=line.time_ms+10000,
+        source_end_ms=line.time_ms+12000,text=line.text,kind='singing') for i,line in enumerate(lrc.lines)]
+    ranked=[(1.0,lrc,song_repair._align_lrc_to_cues(lrc.lines,cues,match_threshold=.45))]
+    out=tmp_path/'retry';out.mkdir()
+    attempts=[]
+    result=song_repair._select_audio_lrc(candidate_id='newest-consumed',ranked=ranked,
+        prepared_pinned_lrc_results=[lrc],extra_queries=[lrc.song_title],max_audio_lrc_attempts=1,
+        source_media_path=Path(new.source_origin_path),source_duration_ms=new.source_duration_ms,
+        output_dir=out,audio_lrc_aligner=forbidden,asr_anchor_cues=cues,asr_anchor_srt_path=None,
+        prior_audio_lrc_runs=[old,new],min_matched_ratio=.55,attempts=attempts)
+    assert result.repaired is False and seen==[new.manifest_path,old.manifest_path]
+    terminal=[a.detail for a in attempts if a.step=='agy_audio_lrc_alignment'][-1]
+    assert 'newest spot check pending' in terminal and 'older clock failed' not in terminal

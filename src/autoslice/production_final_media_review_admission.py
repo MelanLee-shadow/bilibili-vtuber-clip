@@ -1,4 +1,7 @@
-"""Admit a daily production package into the existing final-media review chain.
+"""Admit a normal package into the existing final-media review chain.
+
+An explicit verified whole-media request may also admit a completed manual
+same-BV package through its existing manifest closure. It remains UNASSESSED.
 
 Ordinary production packages do not require a final-media content review.  The
 admission gate is intentionally narrow and provider-free:
@@ -15,7 +18,7 @@ manifest, publication authority, or human-playback claim.
 """
 from __future__ import annotations
 
-import hashlib
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import json
 import os
 from pathlib import Path
@@ -70,11 +73,8 @@ def _error(
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return digest
 
 
 def _normalize_sha(value: object, *, label: str) -> str:
@@ -239,6 +239,7 @@ def _duration_binding(
 def inspect_production_final_media_review_admission(
     package_root: str | Path,
     candidate_id: str,
+    *, requested_review: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Inspect one daily package without probing media or writing sidecars."""
 
@@ -247,11 +248,15 @@ def inspect_production_final_media_review_admission(
         root, "review_manifest.json", label="daily review manifest"
     )
     manifest = _read_json(manifest_path, label="daily review manifest")
-    if manifest.get("schema_version") != PRODUCTION_REVIEW_MANIFEST_SCHEMA_VERSION:
+    manual = (requested_review is not None and manifest.get("schema_version")
+              == "lidousha-manual-review-manifest.v1")
+    if not manual and manifest.get("schema_version") != PRODUCTION_REVIEW_MANIFEST_SCHEMA_VERSION:
         return _not_required(candidate_id, "NON_PRODUCTION_REVIEW_MANIFEST")
+    expected_status = ("finished_review_package_no_upload_pending_human_review"
+                       if manual else "review_ready")
     if not (
-        manifest.get("status") == "review_ready"
-        and manifest.get("run_mode") == "PRODUCTION_REVIEW"
+        manifest.get("status") == expected_status
+        and manifest.get("run_mode") == ("MANUAL_PRODUCE_REVIEW" if manual else "PRODUCTION_REVIEW")
         and manifest.get("upload_allowed") is False
         and manifest.get("candidate_id") == candidate_id
     ):
@@ -274,7 +279,7 @@ def inspect_production_final_media_review_admission(
     lane = str(item.get("kind") or item.get("classification") or "")
     if lane != "talk":
         return _not_required(candidate_id, "NON_TALK_DAILY_PACKAGE")
-    if item.get("final_media_duration_binding") is None:
+    if not manual and item.get("final_media_duration_binding") is None:
         return _not_required(candidate_id, "NO_PROJECTED_DURATION_BINDING")
 
     sha_map = item.get("sha256")
@@ -306,19 +311,34 @@ def inspect_production_final_media_review_admission(
                 f"{candidate_id} final {key} hash differs from manifest",
             )
     record = _read_json(paths["record"], label="daily final record")
-    duration = _duration_binding(
-        item, record=record, candidate_id=candidate_id
-    )
-    if duration is None or duration.get("duration_witness_mismatch") is not True:
+    if manual:
+        # The normal manual builder does not project the daily duration field.
+        # Replay its existing completed-package closure instead of inventing it.
+        try:
+            order, closures = review._manifest_items(manifest, package_root=root)  # noqa: SLF001
+        except review.FinalHumanReviewError as exc:
+            raise _error(exc.reason_code, exc.detail or str(exc)) from exc
+        if order != [candidate_id]:
+            raise _error("FINAL_MEDIA_REVIEW_PRODUCTION_MANIFEST_IDENTITY_INVALID",
+                         "manual package must identify exactly the requested candidate")
+        duration = {key: closures[candidate_id][key] for key in _DURATION_FIELDS}
+    else:
+        duration = _duration_binding(item, record=record, candidate_id=candidate_id)
+    if duration is None or (requested_review is None and duration.get("duration_witness_mismatch") is not True):
         return _not_required(candidate_id, "NO_DURATION_WITNESS_MISMATCH")
 
-    try:
-        contract_sha, contracts = review._review_contracts()  # noqa: SLF001
-    except review.FinalHumanReviewError as exc:
-        raise _error(exc.reason_code, exc.detail or str(exc)) from exc
-    points = contracts.get(candidate_id)
-    if not bootstrap_is_required(duration, points):
-        return _not_required(candidate_id, "NO_FULL_MEDIA_COMMITTED_REVIEW_POINT")
+    if requested_review is not None:
+        from src.autoslice.requested_final_media_review import validate_request_record, request_contract
+        validate_request_record(requested_review, record, candidate_id=candidate_id)
+        contract_sha, points = request_contract(requested_review, duration["final_duration_ms"])
+    else:
+        try:
+            contract_sha, contracts = review._review_contracts()  # noqa: SLF001
+        except review.FinalHumanReviewError as exc:
+            raise _error(exc.reason_code, exc.detail or str(exc)) from exc
+        points = contracts.get(candidate_id)
+        if not bootstrap_is_required(duration, points):
+            return _not_required(candidate_id, "NO_FULL_MEDIA_COMMITTED_REVIEW_POINT")
     closure = {
         "artifacts": {
             "video": str(relative["video"]),
@@ -332,7 +352,8 @@ def inspect_production_final_media_review_admission(
         "status": "REQUIRED",
         "authority": ADMISSION_AUTHORITY,
         "candidate_id": candidate_id,
-        "reason_code": "COMMITTED_DURATION_MISMATCH_FULL_MEDIA_REVIEW",
+        "reason_code": ("OPERATOR_REQUESTED_WHOLE_FINAL_MEDIA" if requested_review is not None
+                        else "COMMITTED_DURATION_MISMATCH_FULL_MEDIA_REVIEW"),
         "provider_calls": 0,
         "review_contract_sha256": contract_sha,
         "review_points": points,
@@ -358,12 +379,13 @@ def bootstrap_production_final_media_review_job(
     package_root: str | Path,
     candidate_id: str,
     *,
+    requested_review: Mapping[str, object] | None = None,
     probe: Callable[[Path], Mapping[str, object]] = probe_exact_media_clock,
 ) -> dict[str, object]:
     """Create/reuse the generic job only after committed daily admission."""
 
     admission = inspect_production_final_media_review_admission(
-        package_root, candidate_id
+        package_root, candidate_id, requested_review=requested_review
     )
     if admission.get("status") != "REQUIRED":
         return admission
@@ -374,6 +396,7 @@ def bootstrap_production_final_media_review_job(
             package_root=root,
             candidate_id=candidate_id,
             closure=admission["closure"],
+            requested_review=requested_review,
             review_contract_sha256=str(
                 admission["review_contract_sha256"]
             ),

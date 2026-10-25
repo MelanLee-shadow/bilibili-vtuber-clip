@@ -59,7 +59,11 @@ def _new_bv_fixture(
     write_state: bool = True,
     aid: int = 1001,
     published_cid: int = 2002,
+    title: str = TITLE,
 ) -> dict:
+    from src.autoslice.title_policy import publish_title_lane
+
+    lane = publish_title_lane(title)
     base = base or (tmp_path / "autoslice")
     package = base / "out" / date / candidate / "final"
     package.mkdir(parents=True)
@@ -83,12 +87,12 @@ def _new_bv_fixture(
     )
     manifest = {
         "manifest_version": 3,
-        "title": TITLE,
+        "title": title,
         "description": DESCRIPTION,
         "tags": TAGS,
         "video": {"path": str(video), "sha256": _sha(video)},
         "cover": {"path": str(cover), "sha256": _sha(cover)},
-        "season": {"lane": "talk", "season_title": "小主切片"},
+        "season": {"lane": lane, "season_title": "小主切片" if lane == "talk" else "小主歌唱"},
         "package_attestation": {
             "package_root": str(package.resolve()),
             "record": _entry(record),
@@ -99,9 +103,9 @@ def _new_bv_fixture(
         "schema_version": "authorized-upload-public-verify.v2",
         "status": "VERIFIED_PUBLIC",
         "bvid": bvid,
-        "manifest_title": TITLE,
+        "manifest_title": title,
         "expected": {
-            "title": TITLE,
+            "title": title,
             "description": DESCRIPTION,
             "tags": TAGS,
             "tid": 21,
@@ -113,7 +117,7 @@ def _new_bv_fixture(
             "state": 0,
             "aid": aid,
             "cid": published_cid,
-            "title": TITLE,
+            "title": title,
             "desc": DESCRIPTION,
             "tid": 21,
             "copyright": 2,
@@ -123,7 +127,7 @@ def _new_bv_fixture(
         "member_archive": {
             "aid": aid,
             "bvid": bvid,
-            "title": TITLE,
+            "title": title,
             "desc": DESCRIPTION,
             "tag": ",".join(TAGS),
             "tid": 21,
@@ -133,7 +137,7 @@ def _new_bv_fixture(
         "section_api": {
             "code": 0,
             "episode_match_count": 1,
-            "episode_titles": [TITLE],
+            "episode_titles": [title],
         },
         "problems": [],
         "verified_at": "2026-07-29T12:00:00+00:00",
@@ -142,7 +146,7 @@ def _new_bv_fixture(
         "schema_version": "authorized-upload-season-verify.v1",
         "status": "IN_SEASON_PUBLIC",
         "bvid": bvid,
-        "title": TITLE,
+        "title": title,
         "aid": aid,
         "cid": published_cid,
         "verified_at": "2026-07-29T12:00:00+00:00",
@@ -155,7 +159,7 @@ def _new_bv_fixture(
         "bvid": bvid,
         "aid": aid,
         "cid": published_cid,
-        "title": TITLE,
+        "title": title,
         "video_sha256": manifest["video"]["sha256"],
         "cover_sha256": manifest["cover"]["sha256"],
         "manifest": str(manifest_path.resolve()),
@@ -255,7 +259,7 @@ def _install_deployed_registry_authority(fixture: dict) -> Path:
     _write_json(
         repo / "DEPLOYED_MANIFEST.json",
         {
-            "schema_version": "runtime-host-shadow-autoslice-repo-manifest.v1",
+            "schema_version": "oci3-shadow-autoslice-repo-manifest.v1",
             "commit": commit,
             "entries": tree_entries,
             "tree_sha256": tree_sha256,
@@ -1759,6 +1763,342 @@ def _reconcile_missing_state_repair(fixture):
     )
 
 
+def _cover_successor_projection_fixture(tmp_path: Path) -> tuple[dict, dict, Path]:
+    manifest_path = tmp_path / "cover-successor-manifest.json"
+    plan_path = tmp_path / "cover-successor.plan.json"
+    completed_path = tmp_path / "cover-successor.completed.json"
+    manifest = {"title": "封面 successor"}
+    _write_json(manifest_path, manifest)
+    manifest_binding = {"path": str(manifest_path), "sha256": _sha(manifest_path)}
+    new_cover = {"path": str(tmp_path / "cover.png"), "sha256": "a" * 64, "bytes": 10}
+    plan = {
+        "schema_version": "same-bv-cover-repair-plan.v1",
+        "plan_id": "cover-plan-1",
+        "bvid": "BV1TEST000001",
+        "manifest": manifest_binding,
+        "replacement_cover": new_cover,
+        "unchanged_cid": 7000001,
+        "recovery_publication_authority": {
+            "candidate_id": "fixture_cover_successor",
+            "bvid": "BV1TEST000001",
+            "aid": 6000001,
+            # A cover-after-full-repair plan may retain the original
+            # authority's CID; the plan's unchanged_cid and before snapshot
+            # prove the actual predecessor CID.
+            "cid": 6999999,
+        },
+        "before": {"identity": "before", "ok": True},
+    }
+    _write_json(plan_path, plan)
+    completed = {
+        "schema_version": "same-bv-cover-repair-completed.v1",
+        "status": "VERIFIED_FRESH_LIVE",
+        "rc": 0,
+        "remote_mutation": False,
+        "candidate_id": "fixture_cover_successor",
+        "bvid": "BV1TEST000001",
+        "aid": 6000001,
+        "unchanged_cid": 7000001,
+        "old_cover_url": "old-cover",
+        "uploaded_cover_url": "new-cover",
+        "new_cover": new_cover,
+        "manifest": manifest_binding,
+        "plan": {
+            "path": str(plan_path),
+            "sha256": _sha(plan_path),
+            "plan_id": "cover-plan-1",
+        },
+        "live_snapshot": {"identity": "target", "ok": True},
+    }
+    _write_json(completed_path, completed)
+    current = {
+        "schema_version": reconciliation.RECONCILIATION_SCHEMA,
+        "status": "VERIFIED_PUBLIC",
+        "candidate_id": "fixture_cover_successor",
+        "recording_date": "2099-01-02",
+        "bvid": "BV1TEST000001",
+        "aid": 6000001,
+        "cid": 7000001,
+        "title": "封面 successor",
+        "authority": {"path": str(tmp_path / "old.json"), "sha256": "b" * 64},
+    }
+    incoming = dict(current)
+    incoming.update(
+        status="VERIFIED_SAME_BV_COVER",
+        authority={
+            "path": str(completed_path),
+            "sha256": _sha(completed_path),
+            "bytes": completed_path.stat().st_size,
+        },
+    )
+    return current, incoming, completed_path
+
+
+def test_verified_same_bv_cover_successor_accepts_unchanged_cid_and_plan_before(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current, incoming, completed_path = _cover_successor_projection_fixture(tmp_path)
+    completed = json.loads(completed_path.read_text(encoding="utf-8"))
+    plan = json.loads((tmp_path / "cover-successor.plan.json").read_text(encoding="utf-8"))
+    manifest_path = tmp_path / "cover-successor-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    monkeypatch.setattr(
+        reconciliation,
+        "_validate_same_bv_cover_completed",
+        lambda **_: (completed, incoming["bvid"], incoming["aid"], incoming["cid"]),
+    )
+    monkeypatch.setattr(
+        reconciliation,
+        "_repair_bound_object",
+        lambda entry, label: (
+            (manifest_path, manifest)
+            if "manifest" in label
+            else (tmp_path / "cover-successor.plan.json", plan)
+        ),
+    )
+    monkeypatch.setattr(
+        reconciliation,
+        "_candidate_and_date",
+        lambda _manifest: ("fixture_cover_successor", "2099-01-02"),
+    )
+    monkeypatch.setattr(
+        reconciliation,
+        "_snapshot_matches_publication",
+        lambda snapshot, _publication: isinstance(snapshot, dict) and snapshot.get("ok") is True,
+    )
+    monkeypatch.setattr(
+        reconciliation,
+        "_repair_successor_authority_valid",
+        lambda *_args: True,
+    )
+
+    assert reconciliation._verified_same_bv_successor(current, incoming)
+
+    cid_drift = dict(incoming, cid=incoming["cid"] + 1)
+    assert not reconciliation._verified_same_bv_successor(current, cid_drift)
+    title_drift = dict(incoming, title="unexpected title drift")
+    assert not reconciliation._verified_same_bv_successor(current, title_drift)
+    plan["unchanged_cid"] = incoming["cid"] + 1
+    assert not reconciliation._verified_same_bv_successor(current, incoming)
+    monkeypatch.setattr(reconciliation, "_snapshot_matches_publication", lambda *_: False)
+    assert not reconciliation._verified_same_bv_successor(current, incoming)
+
+
+@pytest.mark.parametrize("mutation", [
+    None, "missing_reference", "rejected_receipt", "record_drift", "old_title",
+    "new_title", "source_authority", "cid", "status",
+])
+def test_cover_title_predecessor_requires_bound_verified_title_transaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str | None,
+) -> None:
+    from src.autoslice import authorized_upload_title_repair as title_repair
+
+    current, incoming, _ = _cover_successor_projection_fixture(tmp_path)
+    incoming["title"] = "已验证的新标题"
+    authority = {
+        **{k: current[k] for k in (
+            "candidate_id", "recording_date", "bvid", "aid", "cid"
+        )},
+        "source_publication": current["authority"],
+        "observed_public_title": current["title"], "title": incoming["title"],
+    }
+    reference = {"receipt": "bound receipt", "title_input": "bound input",
+                 "title_result": "bound result"}
+    record_path = tmp_path / "record.json"
+    _write_json(record_path, {"verified_title_repair": reference})
+    manifest = {"package_attestation": {"record": reconciliation._sha_entry(record_path)}}
+    calls = []
+
+    def replay(actual_reference, **kwargs):
+        calls.append((actual_reference, kwargs))
+        if actual_reference != reference or mutation == "rejected_receipt":
+            raise title_repair.TitleRepairError("not a completed bound transaction")
+
+    monkeypatch.setattr(title_repair, "validate_title_repair_successor", replay)
+    if mutation == "missing_reference":
+        _write_json(record_path, {})
+        manifest["package_attestation"]["record"] = reconciliation._sha_entry(record_path)
+    elif mutation == "record_drift":
+        _write_json(record_path, {"verified_title_repair": "changed"})
+    elif mutation == "old_title":
+        authority["observed_public_title"] = "different old title"
+    elif mutation == "new_title":
+        authority["title"] = "different new title"
+    elif mutation == "source_authority":
+        authority["source_publication"] = {"path": "unrelated receipt"}
+    elif mutation == "cid":
+        authority["cid"] += 1
+    elif mutation == "status":
+        current["status"] = "VERIFIED_SAME_BV"
+
+    assert reconciliation._verified_title_predecessor(
+        current, incoming, manifest, authority
+    ) is (mutation is None)
+    if mutation is None:
+        assert calls == [(reference, {
+            "authority": authority, "candidate_id": incoming["candidate_id"],
+            "title": incoming["title"],
+        })]
+
+
+@pytest.mark.parametrize("native_title_binding", [False, True])
+def test_cover_title_predecessor_requires_exact_completion_receipt_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_title_binding: bool,
+) -> None:
+    """A cover-state predecessor is accepted only through its real receipt hash."""
+
+    from src.autoslice import authorized_upload_title_repair as title_repair
+
+    current, incoming, completed_path = _cover_successor_projection_fixture(tmp_path)
+    completion_binding = {
+        "path": str(completed_path.resolve()),
+        "sha256": _sha(completed_path),
+        "bytes": completed_path.stat().st_size,
+    }
+    current.update(
+        status="VERIFIED_SAME_BV_COVER",
+        authority=completion_binding,
+        title="当前封面标题",
+    )
+    incoming.update(title="第二次标题")
+    receipt_path = tmp_path / "second-title-receipt.json"
+    receipt_path.write_text(
+        json.dumps(
+            {"binding": {"predecessor_cover_completed": completion_binding}},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    reference = {
+        "receipt": {
+            "path": str(receipt_path), "sha256": _sha(receipt_path),
+            "bytes": receipt_path.stat().st_size,
+        },
+        "title_input": {"path": str(tmp_path / "title-input.json"), "sha256": "0" * 64},
+        "title_result": {"path": str(tmp_path / "title-result.json"), "sha256": "0" * 64},
+    }
+    if native_title_binding:
+        # Actual title-repair records bind a prefixed SHA without byte count.
+        reference["receipt"] = {
+            "path": str(receipt_path), "sha256": "sha256:" + _sha(receipt_path),
+        }
+    for key in ("title-input", "title-result"):
+        (tmp_path / f"{key}.json").write_text("{}\n", encoding="utf-8")
+    record_path = tmp_path / "current-record.json"
+    _write_json(record_path, {"verified_title_repair": reference})
+    manifest = {"package_attestation": {"record": reconciliation._sha_entry(record_path)}}
+    calls = []
+    monkeypatch.setattr(
+        title_repair,
+        "validate_title_repair_successor",
+        lambda value, **kwargs: calls.append((value, kwargs)),
+    )
+
+    assert reconciliation._verified_title_predecessor(
+        current, incoming, manifest, {"title": incoming["title"]}
+    )
+    assert calls == [(reference, {
+        "authority": {"title": incoming["title"]},
+        "candidate_id": incoming["candidate_id"],
+        "title": incoming["title"],
+    })]
+
+    changed = dict(current, authority=dict(completion_binding, sha256="f" * 64))
+    assert not reconciliation._verified_title_predecessor(
+        changed, incoming, manifest, {"title": incoming["title"]}
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["binding"]["predecessor_cover_completed"] = {
+        **completion_binding, "sha256": "e" * 64
+    }
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    assert not reconciliation._verified_title_predecessor(
+        current, incoming, manifest, {"title": incoming["title"]}
+    )
+
+
+def test_verified_same_bv_successor_keeps_full_title_change_compatibility(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current, _incoming, completed_path = _cover_successor_projection_fixture(tmp_path)
+    manifest_path = tmp_path / "cover-successor-manifest.json"
+    plan_path = tmp_path / "cover-successor.plan.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    completed = json.loads(completed_path.read_text(encoding="utf-8"))
+
+    manifest["title"] = "正常 full successor 标题"
+    _write_json(manifest_path, manifest)
+    replacement = {"video": {"sha256": "v" * 64}, "cover": {"sha256": "c" * 64}}
+    plan.update(
+        schema_version="same-bv-repair-plan.v2",
+        replacement=replacement,
+        manifest={"path": str(manifest_path), "sha256": _sha(manifest_path)},
+    )
+    plan.pop("replacement_cover")
+    _write_json(plan_path, plan)
+    completed.update(
+        schema_version="same-bv-repair-completed.v1",
+        new_cid=7000002,
+        replacement=replacement,
+        manifest={"path": str(manifest_path), "sha256": _sha(manifest_path)},
+        plan={
+            "path": str(plan_path),
+            "sha256": _sha(plan_path),
+            "plan_id": plan["plan_id"],
+        },
+    )
+    completed.pop("unchanged_cid")
+    _write_json(completed_path, completed)
+
+    incoming = dict(
+        current,
+        status="VERIFIED_SAME_BV",
+        cid=7000002,
+        title=manifest["title"],
+        authority={
+            "path": str(completed_path),
+            "sha256": _sha(completed_path),
+            "bytes": completed_path.stat().st_size,
+        },
+    )
+    monkeypatch.setattr(
+        reconciliation,
+        "_validate_same_bv_completed",
+        lambda **_: (completed, incoming["bvid"], incoming["aid"], incoming["cid"]),
+    )
+    monkeypatch.setattr(
+        reconciliation,
+        "_repair_bound_object",
+        lambda entry, label: (
+            (manifest_path, manifest)
+            if "manifest" in label
+            else (plan_path, plan)
+        ),
+    )
+    monkeypatch.setattr(
+        reconciliation,
+        "_candidate_and_date",
+        lambda _manifest: ("fixture_cover_successor", "2099-01-02"),
+    )
+    monkeypatch.setattr(
+        reconciliation,
+        "_snapshot_matches_publication",
+        lambda snapshot, _publication: isinstance(snapshot, dict) and snapshot.get("ok") is True,
+    )
+    monkeypatch.setattr(
+        reconciliation,
+        "_repair_successor_authority_valid",
+        lambda *_args: True,
+    )
+
+    # Full media successor remains allowed to change title; cover-only title
+    # equality is intentionally scoped to the cover branch above.
+    assert current["title"] != incoming["title"]
+    assert reconciliation._verified_same_bv_successor(current, incoming)
+
+
 def test_verified_same_bv_replaces_missing_state_projection_and_resumes(tmp_path):
     fixture = _repair_missing_state_fixture(tmp_path)
     static_before = fixture["registry_path"].read_bytes()
@@ -2068,6 +2408,18 @@ def test_normal_repair_projection_replays_original_receipt_bytes(tmp_path, key):
         validate_new_bv_repair_authority(authority, candidate_id=CANDIDATE, expected_final_title=title)
 
 
+def test_normal_repair_projection_rejects_explicit_null_snapshot(tmp_path):
+    from src.autoslice.new_bv_repair_authority import validate_new_bv_repair_authority, _digest
+
+    _, _, title, authority = _normal_repair_fixture(tmp_path)
+    changed = dict(authority)
+    changed["review_manifest_snapshot"] = None
+    changed.pop("authority_sha256")
+    changed["authority_sha256"] = _digest(changed)
+    with pytest.raises(ValueError, match="snapshot binding"):
+        validate_new_bv_repair_authority(changed, candidate_id=CANDIDATE, expected_final_title=title)
+
+
 def test_normal_repair_projection_requires_the_complete_first_publication(tmp_path):
     from src.autoslice.new_bv_repair_authority import build_new_bv_repair_authority
 
@@ -2077,3 +2429,94 @@ def test_normal_repair_projection_requires_the_complete_first_publication(tmp_pa
     _write_json(source, raw)
     with pytest.raises(ValueError, match="identity drifted"):
         build_new_bv_repair_authority(source, candidate_id=CANDIDATE, title=title)
+
+
+def _bind_historical_review_manifest(
+    fixture: dict,
+    path: Path,
+    *,
+    candidate: str = CANDIDATE,
+    date: str = DATE,
+) -> None:
+    review = {
+        "schema_version": "lidousha-manual-review-manifest.v1",
+        "candidate_id": candidate,
+        "date": date,
+        "recording_date": date,
+        "exact_candidate_ids": [candidate],
+        "selection_contract": {"candidate_ids": [candidate]},
+        "items": [{"candidate_id": candidate}],
+    }
+    _write_json(path, review)
+    manifest = dict(fixture["manifest"])
+    attestation = dict(manifest["package_attestation"])
+    attestation["review_manifest"] = _entry(path)
+    manifest["package_attestation"] = attestation
+    _write_json(fixture["manifest_path"], manifest)
+    fixture["manifest"] = manifest
+    uploaded = dict(fixture["uploaded"])
+    uploaded["manifest_sha256"] = _sha(fixture["manifest_path"])
+    _write_json(fixture["uploaded_path"], uploaded)
+    fixture["uploaded"] = uploaded
+
+
+def test_normal_new_bv_authority_binds_historical_review_snapshot_after_source_drift(
+    tmp_path: Path,
+) -> None:
+    from src.autoslice.new_bv_repair_authority import (
+        build_new_bv_repair_authority,
+        validate_new_bv_repair_authority,
+    )
+
+    fixture = _new_bv_fixture(tmp_path)
+    original_review = tmp_path / "original-review.json"
+    _bind_historical_review_manifest(fixture, original_review)
+    _reconcile_new(fixture)
+    snapshot = tmp_path / "review-manifest-snapshot.json"
+    snapshot.write_bytes(original_review.read_bytes())
+    # The original path is an immutable first-publication binding, but the
+    # current file may have drifted in a portable working copy.  The supplied
+    # snapshot carries the still-bound bytes instead.
+    original_review.write_text("{\"current\":\"portable-copy\"}\n", encoding="utf-8")
+
+    source = reconciliation.authority_sidecar_path(fixture["manifest_path"])
+    title = f"{CHANNEL_PROFILE.talk_title_prefix}请求抱抱，怎么还要加一句咬一下？"
+    authority = build_new_bv_repair_authority(
+        source,
+        candidate_id=CANDIDATE,
+        title=title,
+        review_manifest_snapshot=snapshot,
+    )
+    assert authority["review_manifest_snapshot"] == _entry(snapshot)
+    assert authority["source_publication"] == _entry(source)
+    assert validate_new_bv_repair_authority(
+        authority, candidate_id=CANDIDATE, expected_final_title=title
+    ) == authority
+    snapshot.write_text(snapshot.read_text(encoding="utf-8") + "drift\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="snapshot"):
+        validate_new_bv_repair_authority(
+            authority, candidate_id=CANDIDATE, expected_final_title=title
+        )
+
+
+@pytest.mark.parametrize(
+    ("candidate", "date"),
+    [(CANDIDATE, "2026-07-30"), ("other_candidate", DATE)],
+)
+def test_normal_new_bv_authority_rejects_snapshot_candidate_or_date_drift(
+    tmp_path: Path, candidate: str, date: str,
+) -> None:
+    from src.autoslice.new_bv_repair_authority import build_new_bv_repair_authority
+
+    fixture = _new_bv_fixture(tmp_path)
+    review = tmp_path / "wrong-review.json"
+    _bind_historical_review_manifest(fixture, review, candidate=candidate, date=date)
+    _reconcile_new(fixture)
+    source = reconciliation.authority_sidecar_path(fixture["manifest_path"])
+    with pytest.raises(ValueError, match="candidate/date|candidate differs"):
+        build_new_bv_repair_authority(
+            source,
+            candidate_id=CANDIDATE,
+            title=f"{CHANNEL_PROFILE.talk_title_prefix}请求抱抱，怎么还要加一句咬一下？",
+            review_manifest_snapshot=review,
+        )

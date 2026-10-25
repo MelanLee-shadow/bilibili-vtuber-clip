@@ -15,6 +15,7 @@ auditor and title+cover joint-QC still decide whether those new bytes pass.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import hashlib
 import json
 import os
@@ -58,11 +59,8 @@ def _scope_digest(value: Mapping[str, Any]) -> str:
 
 
 def _sha256(path: Path, *, prefixed: bool = False) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    value = digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    value = digest
     return "sha256:" + value if prefixed else value
 
 

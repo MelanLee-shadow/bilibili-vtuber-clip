@@ -1,6 +1,6 @@
 {
   "schema_version": "lidousha-selection-score-calibration.v1",
-  "authority": "维护者 2026-07-23 plus ChatGPT Pro rubric consultation: Tier is hard admission; effective score is calibrated within tier after uncertainty and same-session fatigue penalties.",
+  "authority": "Channel editorial preference under selection-scorecard-admission.v3: Tier remains hard admission, Tier 1 requires the common quality/content gate, and reviewed within-tier anchors remain unchanged after uncertainty and same-session fatigue penalties. Relationship topics are conditionally preferred and compete with strong personal/event candidates; these weights and anchors are editorial calibration, not an estimated causal or predictive model of views; each strong dimension requires its own content reason.",
   "anchors": [
     {
       "candidate_id": "auto_193450_3573_3665",
@@ -43,7 +43,7 @@
     {
       "higher_candidate_id": "auto_193450_3573_3665",
       "lower_candidate_id": "auto_193450_5341_5459",
-      "reason": "Tier 1 relationship and preference reversal must outrank a Tier 2 sign-off exchange regardless of recall confidence."
+      "reason": "This reviewed example has a Tier 1 relationship/preference reversal with complete in-window payoff, so it outranks the named Tier 2 sign-off example regardless of recall confidence; this concrete anchor does not establish a permanent relationship-category priority."
     }
   ]
 }

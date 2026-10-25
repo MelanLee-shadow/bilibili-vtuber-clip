@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from src.autoslice.deployed_code_root import deployed_code_root
 
 _SHA256 = re.compile(r"(?:sha256:)?[0-9a-f]{64}\Z")
 
@@ -80,7 +81,9 @@ def _validate_chat(
     binding: object, *, record: Mapping[str, object], load_json: Callable[..., dict[str, Any]],
     error: Callable[[str], Exception],
 ) -> None:
-    document = load_json(binding, label="CHAT_AUTHORITY")
+    # ``load_json`` binds the sealed file bytes first; review=True only
+    # expands references in the co-located evidence store for consumption.
+    document = load_json(binding, label="CHAT_AUTHORITY", review=True)
     hashes = record.get("artifact_hashes")
     review = document.get("final_review_audit") if isinstance(document, Mapping) else None
     structured = document.get("structured_chat_binding_audit") if isinstance(document, Mapping) else None
@@ -173,7 +176,7 @@ def _portable_date_root(
     from src.autoslice.channel_profile import load_channel_profile
 
     runtime = safe_directory(runtime_authority_root)
-    repo = safe_directory(runtime / "repo")
+    repo = safe_directory(deployed_code_root(runtime))
     try:
         root = Path(load_channel_profile(repo).delivery_root_for(repo)).absolute()
     except Exception as exc:

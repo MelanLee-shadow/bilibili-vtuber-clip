@@ -29,6 +29,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from src.autoslice.agy_gemini_client import build_generation_config
+
 
 FILES_UPLOAD_URL = (
     "https://generativelanguage.googleapis.com/upload/v1beta/files"
@@ -47,6 +49,7 @@ _MAX_FILE_BYTES = 2_000_000_000
 _MAX_JSON_BYTES = 8_000_000
 _MAX_TEXT_BYTES = 2_000_000
 _CHUNK_BYTES = 1024 * 1024
+_MAX_RAW_ERROR_CHARS = 16_384
 _FILE_NAME_RE = re.compile(r"^files/[A-Za-z0-9._~-]{1,512}$")
 _MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _MIME_RE = re.compile(r"^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$")
@@ -65,6 +68,8 @@ class GeminiFileApiError(RuntimeError):
         ambiguous: bool = False,
         failures: Sequence[Mapping[str, object]] = (),
         cleanup_status: str | None = None,
+        raw_body: str | None = None,
+        response_payload: Mapping[str, object] | None = None,
     ):
         super().__init__(f"{reason_code}: {detail}")
         self.reason_code = reason_code
@@ -74,6 +79,13 @@ class GeminiFileApiError(RuntimeError):
         self.ambiguous = ambiguous
         self.failures = [dict(row) for row in failures]
         self.cleanup_status = cleanup_status
+        # Returned provider bytes kept verbatim (bounded) for the caller's
+        # create-only error record; the summary ``detail`` stays short.
+        self.raw_body = raw_body
+        self.response_payload = (
+            dict(response_payload) if isinstance(response_payload, Mapping) else None
+        )
+        self.http_requests_completed: int | None = None
 
 
 @dataclass(frozen=True)
@@ -156,7 +168,7 @@ def _http_error(
     phase: str,
 ) -> GeminiFileApiError:
     try:
-        body = exc.read(4096).decode("utf-8", errors="replace")
+        body = exc.read(_MAX_RAW_ERROR_CHARS).decode("utf-8", errors="replace")
     except Exception:
         body = ""
     detail = re.sub(r"\s+", " ", body).strip()[:500]
@@ -166,6 +178,7 @@ def _http_error(
         phase=phase,
         http_status=exc.code,
         ambiguous=500 <= exc.code <= 599,
+        raw_body=body or None,
     )
 
 
@@ -227,6 +240,7 @@ def _response_json(response: object, *, phase: str) -> dict[str, object]:
             "GEMINI_API_INVALID_OUTPUT",
             f"{phase} response is not UTF-8 JSON",
             phase=phase,
+            raw_body=data[:_MAX_RAW_ERROR_CHARS].decode("utf-8", errors="replace"),
         ) from exc
     if not isinstance(value, dict):
         raise GeminiFileApiError(
@@ -284,14 +298,15 @@ def _bounded_http_json(
 ) -> dict[str, object]:
     data = response.read(_MAX_JSON_BYTES + 1)
     if not 200 <= response.status <= 299:
-        detail = data.decode("utf-8", errors="replace")[:500]
+        body = data[:_MAX_RAW_ERROR_CHARS].decode("utf-8", errors="replace")
         raise GeminiFileApiError(
             _error_reason(response.status),
-            re.sub(r"\s+", " ", detail).strip()
+            re.sub(r"\s+", " ", body[:500]).strip()
             or f"Gemini API returned HTTP {response.status}",
             phase=phase,
             http_status=response.status,
             ambiguous=500 <= response.status <= 599,
+            raw_body=body or None,
         )
     if not 0 < len(data) <= _MAX_JSON_BYTES:
         raise GeminiFileApiError(
@@ -306,6 +321,7 @@ def _bounded_http_json(
             "GEMINI_API_INVALID_OUTPUT",
             f"{phase} response is not UTF-8 JSON",
             phase=phase,
+            raw_body=data[:_MAX_RAW_ERROR_CHARS].decode("utf-8", errors="replace"),
         ) from exc
     if not isinstance(value, dict):
         raise GeminiFileApiError(
@@ -481,11 +497,10 @@ class UrllibGeminiFileTransport:
                         ]
                     }
                 ],
-                "generationConfig": {
-                    "temperature": 0.1,
-                    "maxOutputTokens": 65_536,
-                    "responseMimeType": "application/json",
-                },
+                "generationConfig": build_generation_config(
+                    model=model,
+                    response_mime_type="application/json",
+                ),
             }
         )
         request = urllib.request.Request(
@@ -864,10 +879,15 @@ def call_file_model(
             http_request_count += 1
             text = _response_text(generated)
             if not text:
+                # A completed, consumed call: keep the returned payload (usage,
+                # finish reason, model version) for the caller's error record.
                 raise GeminiFileApiError(
                     "GEMINI_API_INVALID_OUTPUT",
                     "generateContent returned no bounded text response",
                     phase="generate_content",
+                    response_payload=(
+                        generated if isinstance(generated, Mapping) else None
+                    ),
                 )
             response_sha = hashlib.sha256(
                 json.dumps(
@@ -879,6 +899,8 @@ def call_file_model(
                 ).encode("utf-8")
             ).hexdigest()
         except GeminiFileApiError as exc:
+            # Requests answered before the failing one; cleanup is recorded apart.
+            exc.http_requests_completed = http_request_count
             if resource is not None:
                 try:
                     selected.delete_file(

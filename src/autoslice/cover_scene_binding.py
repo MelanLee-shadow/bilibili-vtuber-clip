@@ -149,6 +149,9 @@ def host_identity_scene_kwargs(
     scene = source_composition_scene_kind(
         cover_generation.get("source_composition_verification")
     )
+    direction = cover_generation.get("art_direction")
+    if isinstance(direction, Mapping) and direction.get("is_song") is True:
+        scene = "song"
     kwargs: dict[str, object] = (
         {} if scene == TALK_SCENE else {"scene_kind": scene}
     )

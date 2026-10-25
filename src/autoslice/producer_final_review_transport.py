@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from src.autoslice.cpa_model_ladder import TOP_CPA_MODEL, cpa_call_timeout_seconds
 from src.autoslice.llm_client import (
     LlmCallError,
     LlmConfig,
@@ -116,6 +117,9 @@ def _bound_call(
     diagnostics.update(bound_runtime_binding)
     call.provider_diagnostics = diagnostics  # type: ignore[attr-defined]
     call.provider_runtime_binding = bound_runtime_binding  # type: ignore[attr-defined]
+    # Logical question policy survives code relocation; execution configuration
+    # remains in provider_runtime_binding and the checkpoint's transport digest.
+    call.semantic_policy_version = "producer-final-review-ruling.v1"  # type: ignore[attr-defined]
     return call
 
 
@@ -132,8 +136,14 @@ def _local_runtime_call(
         "provider_endpoint_path": parsed.path or "/",
         "provider_credential_source": str(runtime / "cpa.env"),
     }
-    script = runtime / "repo" / "scripts" / "llm_via_cpa.sh"
-    model = "gpt-6-sol"
+    from src.autoslice.runtime_code_lease import VERSION_ENV, immutable_version, repository_runtime_root
+    pinned=os.environ.get(VERSION_ENV)
+    repo=Path(pinned) if pinned else runtime/'repo'
+    if pinned and (not repo.is_absolute() or not immutable_version(repo)
+            or repository_runtime_root(repo)!=runtime.resolve()):
+        raise ValueError('FINAL_REVIEW_RUNTIME_VERSION_BINDING_INVALID')
+    script = repo / "scripts" / "llm_via_cpa.sh"
+    model = TOP_CPA_MODEL
     return _bound_call(
         LlmConfig(
             transport="command",
@@ -142,7 +152,7 @@ def _local_runtime_call(
                 "{prompt_file} {completion_file} "
                 f"'{model}' {effort} 1"
             ),
-            timeout_seconds=600.0,
+            timeout_seconds=cpa_call_timeout_seconds(),
             runtime_root=str(runtime),
             command_child_env=child_env,
             command_diagnostic_context=runtime_binding,
@@ -167,7 +177,7 @@ def _remote_runtime_call(
         "provider_runtime_host": ssh_host,
         "provider_credential_source": str(runtime / "cpa.env"),
     }
-    model = "gpt-6-sol"
+    model = TOP_CPA_MODEL
     return _bound_call(
         LlmConfig(
             transport="command",
@@ -178,7 +188,7 @@ def _remote_runtime_call(
                 f"--runtime-root {shlex.quote(str(runtime))} "
                 f"--model {model} --effort {effort} --attempts 1"
             ),
-            timeout_seconds=720.0,
+            timeout_seconds=cpa_call_timeout_seconds() + 1920,
             command_child_env=_without_ambient_cpa_environment(),
             command_diagnostic_context=runtime_binding,
         ),
@@ -217,11 +227,16 @@ def build_final_review_llm_call(
 ) -> Callable[[str], str]:
     """Build the medium-effort exact-final CPA call from canonical runtime."""
 
-    return _build_review_llm_call(
+    call = _build_review_llm_call(
         effort="medium",
         runtime_root=runtime_root,
         runtime_ssh_host=runtime_ssh_host,
     )
+    if not isinstance(getattr(call, "cpa_cache_identity", None), Mapping):
+        return call
+    from .provider_admission import FinalReviewCall
+    host = _resolved_runtime_ssh_host(runtime_ssh_host) or "local"
+    return FinalReviewCall(call, provider="canonical-runtime-cpa:" + host)
 
 
 def build_pronoun_audit_llm_call(

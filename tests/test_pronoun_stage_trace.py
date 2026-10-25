@@ -19,8 +19,8 @@ def _traces(media: Path) -> list[dict]:
     return [json.loads(p.read_text()) for p in sorted(media.with_suffix(".pronoun-trace").glob("*.json"))]
 
 
-def test_aggregate_records_each_pronoun_run_even_when_upstream_cache_hits(tmp_path, monkeypatch):
-    """A cache hit must not conceal the independently repeated final text pass."""
+def test_aggregate_replays_successful_pronoun_after_cold_rebuild(tmp_path, monkeypatch):
+    """The normal entry revalidates the saved answer without resampling it."""
     import scripts.free_asr_client as free
 
     monkeypatch.setenv("AUTOSLICE_DISABLE_TOPIC_ENTITY_GRAPH", "1")
@@ -36,7 +36,7 @@ def test_aggregate_records_each_pronoun_run_even_when_upstream_cache_hits(tmp_pa
     monkeypatch.setattr(free, "transcribe", asr)
 
     def builder(config):
-        stage = len(builders)
+        stage = len(builders) % 2
         builders.append(config)
 
         def call(prompt):
@@ -53,32 +53,282 @@ def test_aggregate_records_each_pronoun_run_even_when_upstream_cache_hits(tmp_pa
     media = tmp_path.resolve() / "input.mp4"
     media.write_bytes(b"synthetic media")
     run = tx._build_aggregate_asr_transcriber("localhost", correct="cpa")
-    cold, warm = run(media), run(media)
-    assert cold != warm  # The diagnostic must not hide the legitimate changed response.
+    cold = run(media)
+    warm = tx._build_aggregate_asr_transcriber("localhost", correct="cpa")(media)
+    assert cold == warm
     assert len(asr_calls) == len(cpa_calls) == 1
-    assert len(pronoun_calls) == 2
+    assert len(pronoun_calls) == 1
     records = _traces(media)
     assert len(records) == 2
     assert {r["output_srt"]["text"] for r in records} == {cold, warm}
     for record in records:
         assert record["outcome"] == "RETURNED"
         assert record["release_authorized"] is False
-        assert record["served_from_cache"] is False
-        assert len(record["calls"]) == 1
         assert record["model_identity"]["models"] == ["gpt-6-sol"]
         assert record["input_srt"]["sha256"] == hashlib.sha256(SRT.encode()).hexdigest()
-        assert record["calls"][0]["prompt"]["text"] == pronoun_calls[0]
-        assert record["calls"][0]["completion"]["text"] in {KEEP, CHANGE}
-        assert record["calls"][0]["outcome"] == "RETURNED"
+        if record["served_from_cache"]:
+            assert record["calls"] == []
+            assert record["cache"]["provider_calls"] == 0
+        else:
+            assert record["calls"][0]["prompt"]["text"] == pronoun_calls[0]
+            assert record["calls"][0]["completion"]["text"] == CHANGE
+            assert record["calls"][0]["outcome"] == "RETURNED"
         assert record["output_srt"]["sha256"] == hashlib.sha256(record["output_srt"]["text"].encode()).hexdigest()
-    assert json.loads(media.with_suffix(".transcription-reuse.json").read_text())["cpa"]["status"] == "HIT"
+    receipt = json.loads(media.with_suffix(".transcription-reuse.json").read_text())
+    assert receipt["cpa"]["status"] == receipt["pronoun"]["status"] == "HIT"
 
 
-def _run(media, callback, srt=SRT, required=True, runner=None):
+def _run(media, callback, srt=SRT, required=True, runner=None, *, resume=None, context_text=""):
     from src.autoslice.pronoun_stage_trace import trace_pronoun_pass
 
     return trace_pronoun_pass(srt, media_path=media, llm_call=callback,
-                              run=runner or tx._cpa_pronoun_ta_pass, required=required)
+                              run=runner or tx._cpa_pronoun_ta_pass, required=required,
+                              resume=resume, context_text=context_text)
+
+
+def _cached_run(media, callback, **kwargs):
+    from src.autoslice.transcription_stage_cache import TranscriptionStageCache
+
+    cache = TranscriptionStageCache(media, b"stable fixture audio")
+    return _run(media, callback, resume=cache, **kwargs), cache
+
+
+def _identified(callback, *, model="gpt-6-sol", effort="low"):
+    callback.cpa_cache_identity = {"transport": "cpa_command", "models": [model], "effort": effort}
+    return callback
+
+
+def test_completed_pronoun_survives_interrupt_before_outer_checkpoint(tmp_path, monkeypatch):
+    from src.autoslice import transcription_stage_cache as stage
+
+    media = tmp_path.resolve() / "interrupted.mp4"
+    calls = []
+
+    def provider(prompt):
+        calls.append(prompt)
+        return CHANGE
+
+    _identified(provider)
+    original = stage.TranscriptionStageCache._record
+
+    def interrupt_after_success(self, name, **fields):
+        if name == "pronoun" and fields.get("persisted"):
+            raise KeyboardInterrupt()
+        return original(self, name, **fields)
+
+    monkeypatch.setattr(stage.TranscriptionStageCache, "_record", interrupt_after_success)
+    with pytest.raises(KeyboardInterrupt):
+        _cached_run(media, provider)
+    original_trace = {p: p.read_bytes() for p in media.with_suffix(".pronoun-trace").iterdir()}
+    assert _traces(media)[0]["outcome"] == "RAISED"
+    monkeypatch.setattr(stage.TranscriptionStageCache, "_record", original)
+    output, cache = _cached_run(media, provider)
+    assert "她说谢谢" in output
+    assert len(calls) == 1
+    assert cache.audit["pronoun"]["provider_calls"] == 0
+    assert all(p.read_bytes() == raw for p, raw in original_trace.items())
+
+
+@pytest.mark.parametrize("change", ["body", "context", "model", "effort", "endpoint", "policy", "parser"])
+def test_pronoun_cache_invalidates_actual_semantic_dependencies(tmp_path, monkeypatch, change):
+    from src.autoslice import transcription_stage_cache as stage
+
+    media = tmp_path.resolve() / "drift.mp4"
+    calls = []
+
+    def provider(prompt):
+        calls.append(prompt)
+        return KEEP
+
+    _identified(provider)
+    _cached_run(media, provider)
+    options = {}
+    if change == "body":
+        options["srt"] = SRT.replace("谢谢", "再见")
+    elif change == "context":
+        options["context_text"] = "当前全文指代的是另一位嘉宾"
+    elif change == "model":
+        _identified(provider, model="different-declared-model")
+    elif change == "effort":
+        _identified(provider, effort="medium")
+    elif change == "endpoint":
+        monkeypatch.setenv("CPA_BASE_URL", "https://fixture.invalid/v2")
+    elif change == "policy":
+        original = stage.inspect.getsource
+        monkeypatch.setattr(stage.inspect, "getsource", lambda function:
+                            original(function) + "\n# changed policy implementation")
+    else:
+        original = stage._file_sha
+        monkeypatch.setattr(stage, "_file_sha", lambda p:
+                            "f" * 64 if p.name == "jingting_chunker.py" else original(p))
+    _, cache = _cached_run(media, provider, **options)
+    assert len(calls) == 2
+    assert cache.audit["pronoun"]["served_from_cache"] is False
+
+
+@pytest.mark.parametrize("identity", [None, {"transport": "cpa_command", "models": [], "effort": "low"}])
+def test_unknown_pronoun_identity_cannot_replay(tmp_path, identity):
+    media = tmp_path.resolve() / "unknown.mp4"
+    calls = []
+
+    def provider(prompt):
+        calls.append(prompt)
+        return KEEP
+
+    provider.cpa_cache_identity = identity
+    _cached_run(media, provider)
+    _, cache = _cached_run(media, provider)
+    assert len(calls) == 2
+    assert cache.audit["pronoun"]["status"] == "DISABLED"
+
+
+@pytest.mark.parametrize("bad_payload", [
+    CHANGE.replace('"occurrence":1', '"occurrence":0'), "not JSON",
+    '{"rewrites":"invalid-list"}',
+    '{"rewrites":[],"note":"cache-test-credential-echo"}',
+])
+def test_cached_raw_answer_is_revalidated_by_current_occurrence_gate(tmp_path, monkeypatch, bad_payload):
+    from src.autoslice import transcription_stage_cache as stage
+    from src.autoslice.transcription_stage_cache import _digest
+
+    monkeypatch.setenv("CPA_API_KEY", "cache-test-credential-echo")
+    media = tmp_path.resolve() / "bad-occurrence.mp4"
+    calls = []
+
+    def provider(prompt):
+        calls.append(prompt)
+        return CHANGE
+
+    _identified(provider)
+    _cached_run(media, provider)
+    path = next((tmp_path / ".transcription-stage-cache/pronoun").glob("*.json"))
+    entry = json.loads(path.read_text())
+    entry["payload"] = bad_payload
+    entry["payload_sha256"] = _digest(entry["payload"])
+    path.write_text(json.dumps(entry))
+    corrupted = path.read_bytes()
+
+    def guarded_digest(value):
+        if "cache-test-credential-echo" in bad_payload:
+            assert value != bad_payload  # Retention must reject before hashing.
+        return _digest(value)
+
+    monkeypatch.setattr(stage, "_digest", guarded_digest)
+    output, cache = _cached_run(media, provider)
+    assert "她说谢谢" in output
+    assert len(calls) == 2
+    assert cache.audit["pronoun"]["status"] == "INVALID_PRESERVED"
+    assert path.read_bytes() == corrupted
+
+
+@pytest.mark.parametrize("reply,calls,reason", [
+    (CHANGE.replace('"occurrence":1', '"occurrence":0'), 1, "CPA_PRONOUN_INVALID_OUTPUT"),
+    ("not JSON", 3, "CPA_PRONOUN_INVALID_OUTPUT"),
+    (llm_client.LlmCallError("fixture transport"), 3, "CPA_PRONOUN_UNAVAILABLE"),
+])
+def test_cache_does_not_change_required_failure_or_retry_count(tmp_path, reply, calls, reason):
+    media = tmp_path.resolve() / "failed-cache.mp4"
+    attempts = []
+
+    def provider(prompt):
+        attempts.append(prompt)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    _identified(provider)
+    with pytest.raises(AgyRunnerError) as exc:
+        _cached_run(media, provider)
+    assert exc.value.reason_code == reason
+    assert len(attempts) == calls
+    assert not list((tmp_path / ".transcription-stage-cache/pronoun").glob("*.json"))
+    assert len(_traces(media)[0]["calls"]) == calls
+
+
+def test_unretained_completion_is_neither_cached_nor_hashed(tmp_path, monkeypatch):
+    secret = "test-pronoun-cache-credential-echo"
+    monkeypatch.setenv("CPA_API_KEY", secret)
+    media = tmp_path.resolve() / "echo-cache.mp4"
+    reply = json.dumps({"rewrites": [], "note": secret})
+    callback = _identified(lambda _: reply)
+    _, cache = _cached_run(media, callback)
+    assert cache.audit["pronoun"]["persisted"] is False
+    assert cache.audit["pronoun"]["payload_sha256"] is None
+    raw = "\n".join(p.read_text() for p in tmp_path.rglob("*.json"))
+    assert secret not in raw
+    assert hashlib.sha256(reply.encode()).hexdigest() not in raw
+    assert not list((tmp_path / ".transcription-stage-cache/pronoun").glob("*.json"))
+
+
+def test_oversized_valid_completion_cannot_be_replayed(tmp_path):
+    media = tmp_path.resolve() / "oversized-cache.mp4"
+    calls = []
+
+    def provider(prompt):
+        calls.append(prompt)
+        return json.dumps({"rewrites": [], "note": "x" * 256_001})
+
+    _identified(provider)
+    _cached_run(media, provider)
+    _, cache = _cached_run(media, provider)
+    assert len(calls) == 2
+    assert cache.audit["pronoun"]["persisted"] is False
+    assert not list((tmp_path / ".transcription-stage-cache/pronoun").glob("*.json"))
+    assert _traces(media)[0]["calls"][0]["completion"]["retention"] == "OMITTED_SIZE"
+
+
+def test_pronoun_cache_storage_failure_preserves_return_and_existing_history(tmp_path, monkeypatch):
+    from src.autoslice import transcription_stage_cache as stage
+
+    media = tmp_path.resolve() / "storage.mp4"
+    real_write = stage._write
+    monkeypatch.setattr(stage, "_write", lambda path, *args, **kwargs:
+                        False if path.parent.name == "pronoun" else real_write(path, *args, **kwargs))
+    output, cache = _cached_run(media, _identified(lambda _: CHANGE))
+    assert "她说谢谢" in output
+    assert cache.audit["pronoun"]["persisted"] is False
+    assert _traces(media)[0]["outcome"] == "RETURNED"
+    trace_dir = media.with_suffix(".pronoun-trace")
+    original_records = {p.name: p.read_bytes() for p in trace_dir.glob("*.json")}
+    monkeypatch.setattr(stage, "_write", lambda *_args, **_kwargs: False)
+    attempts = []
+
+    def failed_provider(prompt):
+        attempts.append(prompt)
+        raise llm_client.LlmCallError("fixture transport")
+
+    with pytest.raises(AgyRunnerError) as exc:
+        _cached_run(media, _identified(failed_provider))
+    assert exc.value.reason_code == "CPA_PRONOUN_UNAVAILABLE"
+    assert len(attempts) == 3
+    current_records = {p.name: p.read_bytes() for p in trace_dir.glob("*.json")}
+    added = current_records.keys() - original_records.keys()
+    assert len(added) == 1
+    assert json.loads(current_records[added.pop()])["outcome"] == "RAISED"
+    assert all(current_records[name] == content for name, content in original_records.items())
+
+
+def test_interrupted_atomic_cache_write_never_installs_partial_result(tmp_path, monkeypatch):
+    from src.autoslice import transcription_stage_cache as stage
+
+    media = tmp_path.resolve() / "atomic.mp4"
+    original = stage.os.link
+
+    def interrupt_link(source, target, **kwargs):
+        if Path(target).parent.name == "pronoun":
+            raise KeyboardInterrupt()
+        return original(source, target, **kwargs)
+
+    monkeypatch.setattr(stage.os, "link", interrupt_link)
+    callback = _identified(lambda _: KEEP)
+    with pytest.raises(KeyboardInterrupt):
+        _cached_run(media, callback)
+    folder = tmp_path / ".transcription-stage-cache/pronoun"
+    assert not list(folder.glob("*.json"))
+    assert not list(folder.glob(".stage-*.tmp"))
+    monkeypatch.setattr(stage.os, "link", original)
+    _, cache = _cached_run(media, callback)
+    assert cache.audit["pronoun"]["persisted"] is True
 
 
 def test_no_pronouns_preserves_bytes_and_records_zero_calls(tmp_path):

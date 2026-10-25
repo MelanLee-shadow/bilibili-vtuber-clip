@@ -1,4 +1,4 @@
-"""Package-contained binding for HOST_ONLY v4 final-pixel evidence.
+"""Package-contained binding for HOST_ONLY v4 and Song v3 pixel evidence.
 
 A v4 receipt is only meaningful when the review package independently binds the
 receipt document and every image whose digest it declares.  This module keeps
@@ -17,13 +17,36 @@ from pathlib import Path
 from typing import Any
 
 from src.autoslice.cover_host_identity_gate import (
+    AUTHORITY,
+    SCHEMA_VERSION,
     HOST_ONLY_AUTHORITY,
     HOST_ONLY_SCHEMA_VERSION,
+    LEGACY_HOST_ONLY_SCHEMA_VERSION,
 )
 
 BINDING_ITEM_KEY = "host_only_v4_binding"
 BINDING_SCHEMA_VERSION = "lidousha-host-only-v4-package-binding.v1"
 BINDING_ISSUE_CODE = "COVER_HOST_ONLY_V4_PACKAGE_BINDING_MISSING_OR_INVALID"
+SONG_BINDING_ITEM_KEY = "song_source_final_identity_binding"
+SONG_BINDING_SCHEMA_VERSION = "lidousha-song-cover-identity-package-binding.v1"
+FROZEN_HOST_ONLY_V4_SCHEMA = "lidousha-cover-final-host-identity-verification.v4"
+FROZEN_HOST_ONLY_V4_AUTHORITY = (
+    "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_PROMINENCE_AND_HOST_ONLY_COMPARISON"
+)
+
+
+def package_binding_contract(generation: Mapping[str, object]) -> tuple[str, str, str, str] | None:
+    """Select existing v4 or actual Song v3 authority without relabeling it."""
+    proof = generation.get("final_host_identity_verification")
+    if not isinstance(proof, Mapping):
+        return None
+    if proof.get("schema_version") in {HOST_ONLY_SCHEMA_VERSION,LEGACY_HOST_ONLY_SCHEMA_VERSION}:
+        return BINDING_ITEM_KEY, BINDING_SCHEMA_VERSION, str(proof['schema_version']), HOST_ONLY_AUTHORITY
+    direction = generation.get("art_direction")
+    if (proof.get("schema_version") == SCHEMA_VERSION and proof.get("scene_kind") == "song"
+            and isinstance(direction, Mapping) and direction.get("is_song") is True):
+        return SONG_BINDING_ITEM_KEY, SONG_BINDING_SCHEMA_VERSION, SCHEMA_VERSION, AUTHORITY
+    return None
 
 
 class HostOnlyV4PackageBindingError(ValueError):
@@ -190,6 +213,9 @@ def build_binding(
     reference_bytes: bytes,
     final_cover_path: str,
     final_cover_bytes: bytes,
+    binding_schema_version: str = BINDING_SCHEMA_VERSION,
+    receipt_schema_version: str = HOST_ONLY_SCHEMA_VERSION,
+    receipt_authority: str = HOST_ONLY_AUTHORITY,
 ) -> dict[str, object]:
     """Return the exact manifest item binding consumed by the auditor."""
 
@@ -201,7 +227,7 @@ def build_binding(
     ):
         _canonical_relative(value, label=label)
     return {
-        "schema_version": BINDING_SCHEMA_VERSION,
+        "schema_version": binding_schema_version,
         "candidate_id": candidate_id,
         "receipt_path": receipt_path,
         "receipt_sha256": sha256_bytes(receipt_bytes),
@@ -211,8 +237,8 @@ def build_binding(
         "reference_sha256": sha256_bytes(reference_bytes),
         "final_cover_path": final_cover_path,
         "final_cover_sha256": sha256_bytes(final_cover_bytes),
-        "receipt_schema_version": HOST_ONLY_SCHEMA_VERSION,
-        "receipt_authority": HOST_ONLY_AUTHORITY,
+        "receipt_schema_version": receipt_schema_version,
+        "receipt_authority": receipt_authority,
     }
 
 
@@ -221,28 +247,40 @@ def validate_package_binding(
     root: Path,
     item: Mapping[str, object],
     generation: Mapping[str, object],
+    frozen_published_v4: bool = False,
 ) -> None:
-    """Recompute every v4 package surface and raise on the first drift."""
+    """Recompute every supported identity surface and raise on drift."""
 
     verification = generation.get("final_host_identity_verification")
     if not isinstance(verification, Mapping):
         raise HostOnlyV4PackageBindingError("v4 verification is absent")
-    if verification.get("schema_version") != HOST_ONLY_SCHEMA_VERSION:
-        raise HostOnlyV4PackageBindingError("verification is not HOST_ONLY v4")
-    if verification.get("authority") != HOST_ONLY_AUTHORITY:
+    contract = package_binding_contract(generation)
+    legacy_v4 = bool(
+        frozen_published_v4
+        and verification.get("schema_version") == FROZEN_HOST_ONLY_V4_SCHEMA
+    )
+    if contract is None and legacy_v4:
+        # Only the original published title-replay caller enables this. Keep
+        # the original generation; neither materialization nor new QC uses it.
+        contract = (BINDING_ITEM_KEY, BINDING_SCHEMA_VERSION,
+                    FROZEN_HOST_ONLY_V4_SCHEMA, FROZEN_HOST_ONLY_V4_AUTHORITY)
+    if contract is None:
+        raise HostOnlyV4PackageBindingError("verification has no portable identity contract")
+    item_key, binding_schema, receipt_schema, authority = contract
+    if verification.get("authority") != authority:
         raise HostOnlyV4PackageBindingError("v4 verification authority is invalid")
 
-    binding = item.get(BINDING_ITEM_KEY)
+    binding = item.get(item_key)
     if not isinstance(binding, Mapping):
         raise HostOnlyV4PackageBindingError("manifest item lacks HOST_ONLY v4 binding")
-    if binding.get("schema_version") != BINDING_SCHEMA_VERSION:
+    if binding.get("schema_version") != binding_schema:
         raise HostOnlyV4PackageBindingError("HOST_ONLY v4 binding schema is invalid")
     candidate_id = item.get("candidate_id") or item.get("id")
     if not isinstance(candidate_id, str) or binding.get("candidate_id") != candidate_id:
         raise HostOnlyV4PackageBindingError("HOST_ONLY v4 candidate binding drifts")
-    if binding.get("receipt_schema_version") != HOST_ONLY_SCHEMA_VERSION:
+    if binding.get("receipt_schema_version") != receipt_schema:
         raise HostOnlyV4PackageBindingError("bound receipt schema drifts")
-    if binding.get("receipt_authority") != HOST_ONLY_AUTHORITY:
+    if binding.get("receipt_authority") != authority:
         raise HostOnlyV4PackageBindingError("bound receipt authority drifts")
 
     receipt_rel, receipt_bytes = read_package_file_once(
@@ -277,9 +315,14 @@ def validate_package_binding(
         )
     if (
         receipt.get("status") != "PASS"
-        or receipt.get("host_only_required") is not True
+        or ((receipt_schema == HOST_ONLY_SCHEMA_VERSION or legacy_v4)
+            and receipt.get("host_only_required") is not True)
     ):
         raise HostOnlyV4PackageBindingError("canonical receipt is not a HOST_ONLY PASS")
+    if receipt_schema == SCHEMA_VERSION:
+        from src.autoslice.cover_host_identity_gate import validate_final_host_identity_verification
+        if not validate_final_host_identity_verification(generation):
+            raise HostOnlyV4PackageBindingError("Song source/final verdict is invalid")
     declared = {
         "comparison_sha256": receipt.get("comparison_sha256"),
         "reference_sha256": receipt.get("reference_sha256"),
@@ -300,6 +343,27 @@ def validate_package_binding(
         raise HostOnlyV4PackageBindingError(
             "witness image sha256 does not match package comparison bytes"
         )
+    if legacy_v4:
+        verdict = receipt.get("verdict")
+        try:
+            answer = json.loads(str(witness.get("answer") or ""))
+        except ValueError:
+            answer = None
+        true_axes = ("source_lidousha_located", "primary_subject_is_lidousha",
+                     "primary_subject_is_visually_dominant", "primary_subject_face_is_large_and_clear",
+                     "primary_subject_carries_story_reaction", "thumbnail_has_clear_click_hook")
+        false_axes = ("primary_subject_matches_other_source_participant", "excessive_dead_space",
+                      "meaningless_dominant_decoration", "other_recognizable_people_or_avatars_visible")
+        if (not isinstance(verdict, Mapping) or answer != verdict
+                or witness.get("provider") != "cpa" or witness.get("status") != "OBSERVED"
+                or not str(witness.get("model") or "").strip()
+                or any(verdict.get(key) is not True for key in true_axes)
+                or any(verdict.get(key) is not False for key in false_axes)
+                or any(verdict.get(key) != [] for key in
+                       ("identity_conflicts", "composition_conflicts", "other_recognizable_people_or_avatars"))
+                or any(not str(verdict.get(key) or "").strip() for key in
+                       ("primary_subject_identity", "reason"))):
+            raise HostOnlyV4PackageBindingError("frozen v4 original CPA verdict is invalid")
     # Keep these variables live as explicit evidence that all four path fields
     # were resolved through the package root rather than producer paths.
     if len({receipt_rel, comparison_rel, reference_rel, final_rel}) != 4:
@@ -445,10 +509,11 @@ def materialize_package_binding(
     root: Path,
     item: Mapping[str, object],
     generation: Mapping[str, object],
+    allow_song: bool = False,
 ) -> dict[str, object] | None:
-    """Materialize portable v4 evidence for a native review-manifest builder.
+    """Materialize portable identity evidence for a native manifest builder.
 
-    Non-v4 generations return ``None``.  V4 generations fail closed unless the
+    Unrecognized generations return ``None``. Supported receipts fail closed unless the
     declared final cover, reference, comparison, and receipt can all be bound to
     package-contained bytes.
     """
@@ -456,9 +521,13 @@ def materialize_package_binding(
     verification = generation.get("final_host_identity_verification")
     if not isinstance(verification, Mapping):
         return None
-    if verification.get("schema_version") != HOST_ONLY_SCHEMA_VERSION:
+    contract = package_binding_contract(generation)
+    if contract is None:
         return None
-    if verification.get("authority") != HOST_ONLY_AUTHORITY:
+    item_key, binding_schema, receipt_schema, authority = contract
+    if receipt_schema == SCHEMA_VERSION and not allow_song:
+        return None
+    if verification.get("authority") != authority:
         raise HostOnlyV4PackageBindingError("v4 verification authority is invalid")
     candidate_id = item.get("candidate_id") or item.get("id")
     if not isinstance(candidate_id, str) or not candidate_id:
@@ -495,9 +564,10 @@ def materialize_package_binding(
         + "\n"
     ).encode("utf-8")
     evidence_dir = "evidence"
-    receipt_rel = f"{evidence_dir}/{candidate_id}.host-only-v4.json"
-    comparison_rel = f"{evidence_dir}/{candidate_id}.host-only-v4-witness.png"
-    reference_rel = f"{evidence_dir}/{candidate_id}.host-only-v4-reference.png"
+    suffix = "host-only-v4" if receipt_schema == HOST_ONLY_SCHEMA_VERSION else "song-source-final-identity"
+    receipt_rel = f"{evidence_dir}/{candidate_id}.{suffix}.json"
+    comparison_rel = f"{evidence_dir}/{candidate_id}.{suffix}-witness.png"
+    reference_rel = f"{evidence_dir}/{candidate_id}.{suffix}-reference.png"
     _install_package_bytes(root, receipt_rel, receipt_bytes)
     _install_package_bytes(root, comparison_rel, comparison_bytes)
     _install_package_bytes(root, reference_rel, reference_bytes)
@@ -511,8 +581,11 @@ def materialize_package_binding(
         reference_bytes=reference_bytes,
         final_cover_path=final_rel.as_posix(),
         final_cover_bytes=final_bytes,
+        binding_schema_version=binding_schema,
+        receipt_schema_version=receipt_schema,
+        receipt_authority=authority,
     )
     probe_item = dict(item)
-    probe_item[BINDING_ITEM_KEY] = binding
+    probe_item[item_key] = binding
     validate_package_binding(root=root, item=probe_item, generation=generation)
     return binding

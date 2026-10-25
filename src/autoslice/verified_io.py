@@ -8,7 +8,7 @@ song_completion.py imports the three it needs without a cycle.
 
 from __future__ import annotations
 
-import hashlib
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import json
 import re
 from pathlib import Path
@@ -18,14 +18,11 @@ def _matches_sha256(path: Path, expected: str) -> bool:
     expected = expected.removeprefix("sha256:").lower()
     if path.is_symlink() or len(expected) != 64 or not re.fullmatch(r"[0-9a-f]{64}", expected):
         return False
-    digest = hashlib.sha256()
     try:
-        with path.open("rb") as source:
-            for chunk in iter(lambda: source.read(1024 * 1024), b""):
-                digest.update(chunk)
+        digest = _evidence_file_sha256(path, fresh=True)
     except OSError:
         return False
-    return digest.hexdigest() == expected
+    return digest == expected
 
 
 def _canonical_existing_path(path_value: object) -> str | None:

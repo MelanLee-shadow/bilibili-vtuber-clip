@@ -1,0 +1,2 @@
+# JSON Schema assertions in test_structured_output.py.
+jsonschema==4.26.0

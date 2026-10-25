@@ -30,8 +30,15 @@ import argparse
 import hashlib
 import json
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.autoslice.channel_profile import LABEL_RE
 
 MARKER_LABELS = {"A": "李豆沙", "B": "连线"}
 
@@ -39,7 +46,6 @@ MARKER_LABELS = {"A": "李豆沙", "B": "连线"}
 
 
 _MARKER_RE = re.compile(r" ([AB])(?=[ \n，。？！、）]|$)")
-_PREFIX_RE = re.compile(r"^\[([^\]]+)\] ?")
 _WS_RE = re.compile(r"\s+")
 
 
@@ -67,9 +73,12 @@ def parse_srt(raw: str) -> list[Cue]:
 
 
 def split_label(text: str) -> tuple[str | None, str]:
-    match = _PREFIX_RE.match(text)
+    match = LABEL_RE.match(text)
     if match:
-        return match.group(1), text[match.end():]
+        # Compare raw labels, including confidence text, when checking drift.
+        closing = text.index("]")
+        body = text[closing + 1:]
+        return text[1:closing], body[1:] if body.startswith(" ") else body
     return None, text
 
 

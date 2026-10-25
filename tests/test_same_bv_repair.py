@@ -2245,3 +2245,41 @@ def test_protocol_relative_cover_url_survives_journal_resume(tmp_path):
     )
     assert result.state in {"CREATOR_SINGLE_NEW", "SWAP_RETRYABLE"}
     assert adapter.append_calls == 0
+
+
+@pytest.mark.parametrize("tid", [21, 27, 171])
+def test_same_bv_plan_keeps_original_category_through_repair_and_resume(tmp_path, tid):
+    manifest_path, manifest = _manifest(tmp_path)
+    manifest["publish_policy"]["tid"] = tid
+    manifest_path.write_text(json.dumps(manifest))
+    snapshot = _before_snapshot()
+    snapshot["creator"]["metadata"]["tid"] = tid
+    snapshot["public"]["metadata"]["tid"] = tid
+    plan = create_plan(manifest_path=manifest_path, manifest=manifest, bvid=BVID, snapshot=snapshot)
+    assert plan["target_metadata"]["tid"] == tid
+    validate_plan(plan, manifest=manifest)
+    plan_path = tmp_path / "tid.plan.json"
+    journal = tmp_path / "tid.journal.jsonl"
+    write_plan(plan_path, plan)
+    initialise_journal(journal, plan_path, plan)
+    adapter = FakeAdapter(plan)
+    result = run_repair(plan_path=plan_path, journal=journal, manifest=manifest,
+                        adapter=adapter, wait_seconds=0)
+    assert result.state == "VERIFIED"
+    assert plan["target_metadata"]["copyright"] == snapshot["creator"]["metadata"]["copyright"]
+    assert plan["target_metadata"]["source"] == snapshot["creator"]["metadata"]["source"]
+
+
+@pytest.mark.parametrize("field,value", [("tid", 27), ("copyright", 1), ("source", "changed source")])
+def test_same_bv_create_and_validate_plan_refuse_policy_mutation(tmp_path, field, value):
+    manifest_path, manifest = _manifest(tmp_path)
+    snapshot = _before_snapshot()
+    plan = create_plan(manifest_path=manifest_path, manifest=manifest, bvid=BVID, snapshot=snapshot)
+    bad_plan = copy.deepcopy(plan)
+    bad_plan["target_metadata"][field] = value
+    with pytest.raises(PlanInvalid, match="MUST_PRESERVE_ORIGINAL"):
+        validate_plan(bad_plan, manifest=manifest)
+    manifest["publish_policy"][field] = value
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(PlanInvalid, match="MUST_PRESERVE_ORIGINAL"):
+        create_plan(manifest_path=manifest_path, manifest=manifest, bvid=BVID, snapshot=snapshot)

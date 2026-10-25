@@ -72,6 +72,7 @@ from src.autoslice.branding_intro import BrandingIntroError, require_branding_in
 from src.autoslice.chat_authority import reconcile_pending_text_overrides
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.review_evidence import SourceCue
+from src.autoslice.review_evidence_store import load_review
 from src.autoslice.subtitle_regression import (
     verify_subtitle_regression_surfaces,
 )
@@ -133,7 +134,7 @@ def _normalized_sha256(value: object) -> str:
 
 def _read_json(path: Path, *, label: str) -> dict[str, Any]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = load_review(path)
     except (OSError, ValueError) as exc:
         raise FrozenTalkResumeError(f"{label} is unreadable: {path}: {exc}") from exc
     if not isinstance(payload, dict):

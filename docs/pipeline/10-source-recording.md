@@ -1,3 +1,7 @@
+# 当前版本说明
+
+下文保留已公开的完整说明；执行命令前同时阅读文末的接口兼容说明。
+
 # 10 录制与源健康
 
 本文件是源步骤的**分步权威**。录制、生产和发布可以位于不同主机；以当前
@@ -511,3 +515,39 @@ timer每15分钟触发apply；PCM默认90秒/8文件/512MiB，terminal预算180�
 回执在 `recoveries/`。保留小型恢复配方和实际partial子集，媒体直接删除，不制作冷归档。
 `systemctl`返回成功或timer active不代替collector的complete/errors；原系统清理成功也
 不证明本轮GC完整。allocated释放量与实测磁盘净变化分别记录。
+
+## 当前生命周期 GC 接口
+
+原有运行时 GC 设计和可恢复性约束保留在本页。当前实现统一到
+`scripts/runtime_gc.py` → `src/autoslice/runtime_gc.py`；旧的 `terminal_out_gc.py`
+和 `--state-dir / --runtime / --apply / --inventory-only` 参数属于历史接口，
+本版不提供这些入口，不应直接执行下方旧命令。先用 `--help` 核对当前参数。
+
+公开 Linux 调度示例保留在 `config/runtime-gc/`。包装器要求显式设置
+`AUTOSLICE_BASE`、`AUTOSLICE_GC_SCRIPTS`、`AUTOSLICE_GC_PYTHON` 和
+`AUTOSLICE_GC_HOME`；`AUTOSLICE_GC_SCRIPTS` 指向包含完整 `src/` 与 `scripts/`
+的代码树中的 `scripts/`。策略从 `$AUTOSLICE_BASE/runtime-gc.json` 读取，
+其中 `apply_enabled` 必须为 true 才会实际回收；默认计划本身不授予删除权限。
+
+```bash
+python -B scripts/runtime_gc.py --help
+python -B scripts/runtime_gc.py --base /srv/autoslice --home /srv/autoslice-home
+```
+
+第二条是计划入口；按当前实现先核对计划、保留项和发布引用。安装 service/timer
+或设置 `apply_enabled` 由部署者另行授权。本仓示例不会自动安装或运行 GC。
+
+# 10 源媒体与录制健康
+
+本步骤把输入媒体固定成后续步骤可以复现的源。调用方必须记录源文件的内容
+SHA-256、时长、流信息、采样率和可用的绝对时间映射；派生文件不能替代源文件。
+
+源文件应是可读取的普通文件。打开、解码和时间轴探针都必须成功，视频与音频
+时间戳应单调且覆盖声明的区间。缺流、无法解码、时间轴不连续或哈希漂移时，
+本步骤返回 BLOCK，不继续生成候选。
+
+录制根目录、运行主机和缓存位置由调用方配置，文档和产物不得写死本机路径。
+源、缓存、预览和交付包分开保存；覆盖源文件前必须停止并保留可恢复的源快照。
+
+输出至少包含：源媒体身份、内容哈希、流/时间轴摘要、检查结果和下游可消费的
+区间单位。后续步骤只使用这份绑定后的身份，不从文件名或旧记录猜测来源。

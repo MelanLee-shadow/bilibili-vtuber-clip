@@ -2208,46 +2208,20 @@ def test_guard_buy_missing_identity_or_level_fails_closed(tmp_path):
     assert load_chat_jsonl(jsonl, recording_start_ms=start_ms) == []
 
 
-def test_gift_repair_replaces_asr_garbled_tail_on_resolved_verdict():
-    """真实案例：她念读被 ASR 听成「谢谢有人看到你的人鱼」，结构化 SEND_GIFT
-    的 giftName 是「流星雨」。RESOLVED>=0.80 的音频二选一才把 TAIL 换成
-    giftName，且是这一处最小文本替换。"""
+def test_legacy_binary_gift_verdict_cannot_choose_a_nearby_event():
+    """Gift spelling now needs explicit referent proof at exact-final review."""
     source = _srt("谢谢有人看到你的人鱼")
-
+    calls = []
+    def legacy_verifier(request):
+        calls.append(request)
+        return _audio_entity_verifier("流星雨")(request)
     output, audit = apply_authoritative_chat_evidence(
-        source,
-        [ChatEvidence("gift", 0, "流星雨", sender="有***")],
-        entity_verifier=_audio_entity_verifier("流星雨"),
+        source, [ChatEvidence("gift", 0, "流星雨", sender="有***")],
+        entity_verifier=legacy_verifier,
     )
-
-    assert parse_srt_cues(output)[0].text == "谢谢有人看到你的流星雨"
-    row = audit["gift_repairs"][0]
-    assert row["outcome"] == "gift_name_repaired"
-    assert row["gift_name"] == "流星雨"
-    assert row["asr_tail"] == "人鱼"
-    assert row["after"] == "谢谢有人看到你的流星雨"
-    assert row["sender_first_char_match"] is True
-
-
-def test_gift_repair_uncertain_verdict_never_changes_text():
-    source = _srt("谢谢有人看到你的人鱼")
-
-    def uncertain(request):
-        return {
-            "schema_version": "chat-entity-verdict.v1",
-            "request_sha256": request["request_sha256"],
-            "status": "UNCERTAIN",
-            "reason_code": "GIFT_NAME_AUDIO_UNCERTAIN",
-        }
-
-    output, audit = apply_authoritative_chat_evidence(
-        source,
-        [ChatEvidence("gift", 0, "流星雨", sender="有***")],
-        entity_verifier=uncertain,
-    )
-
     assert output == source
-    assert audit["gift_repairs"][0]["outcome"] == "uncertain_no_change"
+    assert audit["gift_repairs"] == []
+    assert calls == []
 
 
 def test_gift_repair_skips_tail_that_matches_a_genuine_sc_or_danmaku_read():
@@ -2832,6 +2806,25 @@ def test_only_zhinv_rule_is_unbypassable_at_final_surface():
     assert [(row["surface"], row["canonical"]) for row in repairs] == [
         ("直女", "侄女")
     ]
+
+
+def test_sc_display_canon_preserves_sender_timing_and_latin_word_boundaries():
+    from src.autoslice.chat_authority import normalize_hard_meme_surfaces
+
+    source = _srt("谢谢银雨泽的 SuperChat，豆沙", "mysuperchat 和 superchatGPT 保留")
+    before = parse_srt_cues(source)
+    output, audit = normalize_hard_meme_surfaces(source)
+    after = parse_srt_cues(output)
+    assert [cue.text for cue in after] == [
+        "谢谢银雨泽的 SC，豆沙", "mysuperchat 和 superchatGPT 保留",
+    ]
+    assert [(cue.start_ms, cue.end_ms) for cue in before] == [
+        (cue.start_ms, cue.end_ms) for cue in after
+    ]
+    assert audit["repairs"][0]["replacements"][0]["authority"] == (
+        "lidousha-caption-display-canon.v1"
+    )
+    assert normalize_hard_meme_surfaces(output)[1]["status"] == "NO_CHANGE"
 
 
 def test_expected_value_canon_reasserts_limo_after_mutable_stages():
@@ -3967,13 +3960,14 @@ def test_time_anchored_thanks_sender_copies_platform_name():
     assert rows[0]["source_event_id"] == "sc-tang"
 
 
-def test_time_anchored_thanks_never_guesses_between_two_senders():
+@pytest.mark.parametrize('event_times', [(1000, 2000), (4500, 4800)])
+def test_time_anchored_thanks_never_guesses_between_two_senders(event_times):
     source = _srt("谢谢桃林的钢镚")
     output, audit = apply_authoritative_chat_evidence(
         source,
         [
-            ChatEvidence("superchat", 1_000, "正文甲", "唐琳韵", source_event_id="a"),
-            ChatEvidence("superchat", 2_000, "正文乙", "淘琳", source_event_id="b"),
+            ChatEvidence("superchat", event_times[0], "正文甲", "唐琳韵", source_event_id="a"),
+            ChatEvidence("superchat", event_times[1], "正文乙", "淘琳", source_event_id="b"),
         ],
     )
 
@@ -4024,22 +4018,82 @@ def test_named_thanks_record_coverage_disclosure_states():
     assert audit["thanks_record_coverage"] == []
 
 
-def test_time_anchored_thanks_respects_causal_floor():
-    """物理不可能约束（维护者 追问）：事件到开口至少 2s——
-    同帧/1s 内开始的感谢线不可能在谢这单，绝不匹配（舰长锚同款纪律）。"""
-
-    # cue1 起点 5_000ms；事件 4_500ms → delta 500ms < 2s 因果下界
+@pytest.mark.parametrize('delta', [500, 1000, 1999])
+def test_short_delay_keeps_record_and_requires_referent_review(delta):
     source = _srt("谢谢桃林的钢镚")
     output, audit = apply_authoritative_chat_evidence(
-        source,
-        [ChatEvidence("superchat", 4_500, "正文", "唐琳韵", source_event_id="a")],
-    )
-    assert "谢谢桃林的钢镚" in output  # 未改
-    assert not [
-        row
-        for row in audit["sender_repairs"]
-        if row.get("alignment_basis") == "time-anchored-platform-sender.v1"
-    ]
-    # 覆盖审计同一因果窗：该事件不算 nearby → RECORD_CHANNEL_ABSENT
-    rows = audit["thanks_record_coverage"]
-    assert rows and rows[0]["status"] == "RECORD_CHANNEL_ABSENT"
+        source, [ChatEvidence("superchat", 5000-delta, "正文", "唐琳韵", source_event_id="a")])
+    assert output == source
+    assert audit['thanks_record_coverage'][0]['status'] == 'RECORD_PRESENT_REFERENT_UNRESOLVED'
+    assert audit['sender_verdict_required'][0]['candidate_event_ids'] == ['a']
+    assert audit['sender_verdict_required'][0]['reason_code'] == 'TIME_ANCHORED_SENDER_REFERENT_REVIEW_REQUIRED'
+
+
+@pytest.mark.parametrize('kind', ['superchat', 'guard'])
+@pytest.mark.parametrize('delta', [-500, 0, 500, 1000, 1999])
+def test_short_delay_ordinary_sender_entry_consumes_cpa_referent_choice(kind, delta):
+    ending = '钢镚' if kind == 'superchat' else '舰长'
+    source = _srt('谢谢晓明的' + ending)
+    requests = []
+    def decide(request):
+        requests.append(request)
+        assert [row['canonical'] for row in request['candidate_entities']] == ['小明子', '晓明']
+        return {'schema_version':'chat-entity-verdict.v1', 'request_sha256':request['request_sha256'],
+                'status':'RESOLVED', 'canonical_entity':'小明子', 'decision_authority':'CPA_JUDGE'}
+    output, audit = apply_authoritative_chat_evidence(source,
+        [ChatEvidence(kind, 5000-delta, ending, '小明子', source_event_id='held-out')], entity_verifier=decide)
+    assert '谢谢小明子的' + ending in output
+    assert len(requests) == 1
+    assert audit['sender_repairs'][0]['cpa_sender_adjudication']['status'] == 'RESOLVED'
+    assert audit['thanks_record_coverage'] == []
+
+
+@pytest.mark.parametrize('kind', ['superchat', 'guard'])
+def test_short_delay_cpa_rejects_single_candidate_without_second_dispatch(kind):
+    ending = '钢镚' if kind == 'superchat' else '舰长'
+    source = _srt('谢谢晓明的' + ending)
+    calls = []
+    def reject(request):
+        calls.append(request)
+        return {'schema_version':'chat-entity-verdict.v1', 'request_sha256':request['request_sha256'],
+                'status':'UNRESOLVED', 'decision_authority':'CPA_JUDGE'}
+    output, audit = apply_authoritative_chat_evidence(source,
+        [ChatEvidence(kind,4500,ending,'小明子',source_event_id='held-out')], entity_verifier=reject)
+    assert output == source and len(calls) == 1 and not audit['sender_repairs']
+    assert audit['thanks_record_coverage'][0]['status'] == 'RECORD_PRESENT_REFERENT_UNRESOLVED'
+
+
+def test_sender_future_event_is_present_but_not_current_candidate():
+    source = _srt('谢谢晓明的钢镚')
+    def forbidden(_):
+        raise AssertionError('future event must not request sender selection')
+    output, audit = apply_authoritative_chat_evidence(source,
+        [ChatEvidence('superchat',20000,'正文','小明子',source_event_id='future')], entity_verifier=forbidden)
+    assert output == source and not audit['sender_repairs']
+    assert audit['thanks_record_coverage'][0]['status'] == 'RECORD_PRESENT_OUTSIDE_WINDOW'
+
+
+@pytest.mark.parametrize('kind', ['superchat', 'guard'])
+@pytest.mark.parametrize('selected', ['小明子', '晓明'])
+def test_short_delay_uses_real_cpa_closed_set_adapter_with_keep_current(kind, selected):
+    from src.autoslice.read_aloud_llm_verifier import build_cpa_read_aloud_verifier
+    ending = '钢镚' if kind == 'superchat' else '舰长'
+    source = _srt('谢谢晓明的' + ending)
+    prompts = []
+    def completion(prompt):
+        prompts.append(prompt)
+        return json.dumps({'ranking': [{'canonical': name, 'p': 0.9 if name == selected else 0.1}
+                                       for name in ['小明子', '晓明']],
+                           'choice': selected, 'reason': '按全部事件和前后语境判指代'}, ensure_ascii=False)
+    output, audit = apply_authoritative_chat_evidence(source,
+        [ChatEvidence(kind,4500,ending,'小明子',source_event_id='held-out')],
+        entity_verifier=build_cpa_read_aloud_verifier(completion))
+    assert len(prompts) == 1
+    assert 'KEEP_CURRENT_UNBOUND' in prompts[0]
+    assert 'display_latency_unobserved' in prompts[0]
+    assert 'Time proximity alone does not establish the sender' in prompts[0]
+    if selected == '小明子':
+        assert '谢谢小明子的' + ending in output and audit['sender_repairs']
+    else:
+        assert output == source and not audit['sender_repairs']
+        assert audit['sender_verdict_required'][0]['cpa_sender_adjudication']['reason_code'] == 'SENDER_CPA_KEEPS_CURRENT_UNBOUND'

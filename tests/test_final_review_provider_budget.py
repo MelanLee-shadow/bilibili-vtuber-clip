@@ -650,6 +650,7 @@ def test_soft_threshold_does_not_drop_new_findings_after_twelve():
         "soft_limit": 12,
         "soft_limit_exceeded": False,
         "provider_calls_this_decision": 1,
+        "counter_kind": "LOGICAL_ADJUDICATION_ADMISSION_NOT_HTTP",
         "reason_code": "WITHIN_SOFT_LIMIT",
     }
     assert results[12]["cpa_resource_pressure"] == {
@@ -657,6 +658,7 @@ def test_soft_threshold_does_not_drop_new_findings_after_twelve():
         "soft_limit": 12,
         "soft_limit_exceeded": True,
         "provider_calls_this_decision": 1,
+        "counter_kind": "LOGICAL_ADJUDICATION_ADMISSION_NOT_HTTP",
         "reason_code": "SOFT_LIMIT_EXCEEDED_CONTINUED",
     }
 
@@ -798,8 +800,8 @@ def test_soft_pressure_reaches_cpa_text_first_without_an_audio_provider():
     def judge(prompt):
         prompts.append(prompt)
         assert "TEXT_FIRST" in prompt
-        assert "单片软资源压力" in prompt
-        assert '\"pressure_multiple\": 1' in prompt
+        assert "单片软资源压力" not in prompt
+        assert '\"pressure_multiple\"' not in prompt
         return json.dumps({"choice": "PROPOSED", "needs_audio": False,
                            "reason": "语境支持歌债"}, ensure_ascii=False)
 
@@ -841,8 +843,12 @@ def test_soft_pressure_cached_judge_survives_counter_only_resume(tmp_path, monke
 
     def judge(prompt):
         calls.append(prompt)
-        return json.dumps({"choice": "CURRENT", "needs_audio": True,
-                           "reason": "bound original audio supports seconds"})
+        return json.dumps({
+            "choice": "CURRENT", "needs_audio": False,
+            "current_utterance_supported": True,
+            "current_utterance_support_reason": "Bound whole utterance is audible",
+            "reason": "bound original audio supports seconds",
+        })
 
     class CachedWitness:
         def __call__(self, request):

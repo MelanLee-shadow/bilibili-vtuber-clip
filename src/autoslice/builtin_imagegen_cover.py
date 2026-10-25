@@ -7,6 +7,7 @@ ordinary source/identity, glyph, story and package gates still apply.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import base64
 import hashlib
 import json
@@ -17,12 +18,23 @@ from typing import Mapping
 
 from PIL import Image, ImageChops, ImageOps
 
+from src.autoslice.cover_text_pixel_evidence import (
+    verify_pre_overlay_route_background,
+    verify_rendered_text_pixel_artifacts,
+)
+
 PROVIDER = "codex_builtin_image_gen"
 METHOD = "image_gen.imagegen"
 TREATMENT = "builtin_imagegen_redraw"
 SCHEMA = "lidousha-builtin-imagegen-source.v1"
 FINAL_COVER_SUCCESSOR_SCHEMA = "b2-e422-builtin-final-cover-renderer-successor.v1"
 FINAL_COVER_SUCCESSOR_STATUS = "PASS_TITLE_RENDERER_ONLY_NO_IMAGE_GENERATION"
+GENERIC_FINAL_COVER_SUCCESSOR_SCHEMA = (
+    "lidousha-builtin-final-cover-renderer-successor.v1"
+)
+GENERIC_FINAL_COVER_SUCCESSOR_STATUS = (
+    "PASS_TITLE_RENDERER_ONLY_NO_IMAGE_GENERATION"
+)
 B2_E422_SUCCESSOR_CANDIDATE_ID = "auto_120029_1409_1578"
 B2_E422_PARENT_MANIFEST_SHA256 = "ba777fe16592f3d21fbe47998eecb85e3e26ab6851f05ec8680d34223aa036cb"
 B2_E422_PARENT_FINAL_COVER_SHA256 = "7c9a2bd2b4551032f3def92add739014d10b6e2108aec16efc09334a516b3d6a"
@@ -47,7 +59,7 @@ def _asset(root: Path, row: object) -> Path:
     path = root / name
     if path.is_symlink() or not path.is_file() or root.resolve() not in path.resolve().parents:
         raise ValueError("BUILTIN_IMAGEGEN_ASSET_NOT_REGULAR")
-    if hashlib.sha256(path.read_bytes()).hexdigest() != _digest(row.get("sha256")):
+    if _evidence_file_sha256(path) != _digest(row.get("sha256")):
         raise ValueError("BUILTIN_IMAGEGEN_ASSET_HASH_DRIFT")
     return path
 
@@ -122,6 +134,254 @@ def _replay_background_transform(
     return rgba.resize(size, _BACKGROUND_RESAMPLE)
 
 
+def _prefixed_sha256(path: Path) -> str:
+    return "sha256:" + _evidence_file_sha256(path)
+
+
+def _validate_generic_successor_pixels(
+    *,
+    root: Path,
+    bundle: object,
+    final_cover: Path,
+    label: str,
+) -> tuple[dict[str, object], list[Path]]:
+    """Validate one hash-bound title-render bundle from a generic successor."""
+
+    if not isinstance(bundle, Mapping):
+        raise ValueError("BUILTIN_IMAGEGEN_GENERIC_SUCCESSOR_PIXELS_INVALID")
+    evidence = bundle.get("evidence")
+    font_row = bundle.get("font")
+    pre_overlay_row = bundle.get("pre_overlay")
+    mask_row = bundle.get("mask")
+    if not all(
+        isinstance(value, Mapping)
+        for value in (evidence, font_row, pre_overlay_row, mask_row)
+    ):
+        raise ValueError("BUILTIN_IMAGEGEN_GENERIC_SUCCESSOR_PIXELS_INVALID")
+    assert isinstance(evidence, Mapping)
+    assert isinstance(font_row, Mapping)
+    assert isinstance(pre_overlay_row, Mapping)
+    assert isinstance(mask_row, Mapping)
+
+    font = _asset(root, font_row)
+    pre_overlay = _asset(root, pre_overlay_row)
+    mask = _asset(root, mask_row)
+    font_name = Path(str(font_row.get("path") or "")).name
+    pre_name = str(pre_overlay_row.get("path") or "")
+    mask_name = str(mask_row.get("path") or "")
+    if (
+        not font_name
+        or evidence.get("font_file_name") != font_name
+        or evidence.get("font_file_sha256") != _prefixed_sha256(font)
+        or evidence.get("pre_overlay_path") != pre_name
+        or evidence.get("mask_path") != mask_name
+        or evidence.get("pre_overlay_sha256") != _prefixed_sha256(pre_overlay)
+        or evidence.get("mask_sha256") != _prefixed_sha256(mask)
+    ):
+        raise ValueError(
+            f"BUILTIN_IMAGEGEN_GENERIC_SUCCESSOR_{label.upper()}_BINDING_INVALID"
+        )
+
+    # The portable manifest stores only relative locators.  Replay against the
+    # resolved sibling assets so the same source bundle remains valid after
+    # package relocation.
+    replay = dict(evidence)
+    replay["pre_overlay_path"] = str(pre_overlay)
+    replay["mask_path"] = str(mask)
+    if not verify_rendered_text_pixel_artifacts(
+        replay,
+        final_cover_path=final_cover,
+        pre_overlay_path=pre_overlay,
+        mask_path=mask,
+        font_path=font,
+        expected_pre_overlay_sha256=_prefixed_sha256(pre_overlay),
+    ):
+        raise ValueError(
+            f"BUILTIN_IMAGEGEN_GENERIC_SUCCESSOR_{label.upper()}_PIXELS_INVALID"
+        )
+    return dict(evidence), [font, pre_overlay, mask]
+
+
+def _validate_generic_final_cover_successor(
+    *,
+    path: Path,
+    source: Mapping[str, object],
+    current_final_cover: Path,
+    successor: Mapping[str, object],
+) -> list[Path]:
+    """Replay a generic zero-call font-overlay successor.
+
+    This deliberately shares the source-manifest envelope with the sealed B2
+    successor while binding every new title-layer artifact to actual pixels.
+    The parent source, identity reference, generated background and tool calls
+    remain byte-for-byte immutable; only ``final_cover`` and this receipt may
+    differ in the successor manifest.
+    """
+
+    if (
+        successor.get("schema_version") != GENERIC_FINAL_COVER_SUCCESSOR_SCHEMA
+        or successor.get("status") != GENERIC_FINAL_COVER_SUCCESSOR_STATUS
+        or successor.get("candidate_id") != source.get("candidate_id")
+        or successor.get("image_generation_calls") != 0
+        or successor.get("provider_calls") != 0
+        or successor.get("pre_overlay_bytes_preserved") is not True
+        or not isinstance(successor.get("old_rendered_text_pixels"), Mapping)
+        or not isinstance(successor.get("new_rendered_text_pixels"), Mapping)
+        or not isinstance(successor.get("old_title_mask"), Mapping)
+        or not isinstance(successor.get("new_title_mask"), Mapping)
+    ):
+        raise ValueError("BUILTIN_IMAGEGEN_GENERIC_SUCCESSOR_INVALID")
+
+    parent_manifest = _asset(path.parent, successor.get("parent_manifest"))
+    parent_source, parent_assets = _read_source(parent_manifest)
+    if parent_source.get("final_cover_successor") is not None:
+        raise ValueError("BUILTIN_IMAGEGEN_FINAL_COVER_SUCCESSOR_CHAIN_UNSUPPORTED")
+    if parent_source.get("candidate_id") != source.get("candidate_id"):
+        raise ValueError("BUILTIN_IMAGEGEN_FINAL_COVER_SUCCESSOR_CANDIDATE_DRIFT")
+
+    expected = dict(parent_source)
+    expected["final_cover"] = source.get("final_cover")
+    expected["final_cover_successor"] = dict(successor)
+    if dict(source) != expected:
+        raise ValueError("BUILTIN_IMAGEGEN_GENERIC_SUCCESSOR_SCOPE_DRIFT")
+
+    parent_final_cover = _asset(parent_manifest.parent, parent_source.get("final_cover"))
+    old_evidence, old_assets = _validate_generic_successor_pixels(
+        root=path.parent,
+        bundle=successor.get("old_rendered_text_pixels"),
+        final_cover=parent_final_cover,
+        label="old",
+    )
+    new_evidence, new_assets = _validate_generic_successor_pixels(
+        root=path.parent,
+        bundle=successor.get("new_rendered_text_pixels"),
+        final_cover=current_final_cover,
+        label="new",
+    )
+    old_mask = _asset(path.parent, successor.get("old_title_mask"))
+    new_mask = _asset(path.parent, successor.get("new_title_mask"))
+    route_background = _asset(path.parent, source.get("background"))
+    old_bundle = successor["old_rendered_text_pixels"]
+    new_bundle = successor["new_rendered_text_pixels"]
+    assert isinstance(old_bundle, Mapping)
+    assert isinstance(new_bundle, Mapping)
+    old_mask_row = old_bundle["mask"]
+    new_mask_row = new_bundle["mask"]
+    assert isinstance(old_mask_row, Mapping)
+    assert isinstance(new_mask_row, Mapping)
+    if (
+        dict(successor["old_title_mask"])
+        != dict(old_mask_row)
+        or dict(successor["new_title_mask"])
+        != dict(new_mask_row)
+    ):
+        raise ValueError("BUILTIN_IMAGEGEN_GENERIC_SUCCESSOR_MASK_BINDING_INVALID")
+
+    parent_manifest_sha = _prefixed_sha256(parent_manifest)
+    parent_final_sha = _prefixed_sha256(parent_final_cover)
+    current_final_sha = _prefixed_sha256(current_final_cover)
+    pre_overlay_sha = successor.get("pre_overlay_sha256")
+    if (
+        successor.get("parent_manifest_sha256") != parent_manifest_sha
+        or successor.get("parent_manifest", {}).get("sha256")
+        != parent_manifest_sha
+        or successor.get("parent_final_cover_sha256") != parent_final_sha
+        or successor.get("current_final_cover_sha256") != current_final_sha
+        or _digest(successor.get("current_final_cover_sha256"))
+        != _digest(source.get("final_cover", {}).get("sha256"))
+        or old_evidence.get("pre_overlay_sha256") != pre_overlay_sha
+        or new_evidence.get("pre_overlay_sha256") != pre_overlay_sha
+        or old_evidence.get("pre_overlay_sha256")
+        != new_evidence.get("pre_overlay_sha256")
+        or _digest(successor.get("old_title_mask", {}).get("sha256"))
+        != _digest(old_evidence.get("mask_sha256"))
+        or _digest(successor.get("new_title_mask", {}).get("sha256"))
+        != _digest(new_evidence.get("mask_sha256"))
+    ):
+        raise ValueError("BUILTIN_IMAGEGEN_GENERIC_SUCCESSOR_HASH_DRIFT")
+
+    old_pre_overlay = _asset(path.parent, old_bundle["pre_overlay"])
+    new_pre_overlay = _asset(path.parent, new_bundle["pre_overlay"])
+    route_background_sha = _prefixed_sha256(route_background)
+    if not (
+        verify_pre_overlay_route_background(
+            route_background_path=route_background,
+            pre_overlay_path=old_pre_overlay,
+            expected_route_background_sha256=route_background_sha,
+            text_backing="outline",
+            scrim=False,
+        )
+        and verify_pre_overlay_route_background(
+            route_background_path=route_background,
+            pre_overlay_path=new_pre_overlay,
+            expected_route_background_sha256=route_background_sha,
+            text_backing="outline",
+            scrim=False,
+        )
+    ):
+        raise ValueError("BUILTIN_IMAGEGEN_GENERIC_SUCCESSOR_PRE_OVERLAY_INVALID")
+
+    title_text_preserved = old_evidence.get("rendered_text") == new_evidence.get(
+        "rendered_text"
+    )
+    render_spec_preserved = old_evidence.get("render_spec_sha256") == new_evidence.get(
+        "render_spec_sha256"
+    )
+    if (
+        successor.get("title_text_preserved") is not title_text_preserved
+        or successor.get("render_spec_preserved") is not render_spec_preserved
+    ):
+        raise ValueError("BUILTIN_IMAGEGEN_GENERIC_SUCCESSOR_RECIPE_CLAIM_INVALID")
+
+    with (
+        Image.open(parent_final_cover) as old_image,
+        Image.open(current_final_cover) as new_image,
+        Image.open(old_mask) as old_mask_image,
+        Image.open(new_mask) as new_mask_image,
+    ):
+        old_rgb = old_image.convert("RGB")
+        new_rgb = new_image.convert("RGB")
+        old_mask_l = old_mask_image.convert("L")
+        new_mask_l = new_mask_image.convert("L")
+        if not (
+            old_rgb.size == new_rgb.size == old_mask_l.size == new_mask_l.size
+            and old_rgb.size == (1920, 1080)
+        ):
+            raise ValueError("BUILTIN_IMAGEGEN_GENERIC_SUCCESSOR_SIZE_DRIFT")
+        difference = ImageChops.difference(old_rgb, new_rgb)
+        difference_bbox = difference.getbbox()
+        changed = [any(pixel) for pixel in difference.getdata()]
+        changed_count = sum(changed)
+        union_mask = ImageChops.lighter(old_mask_l, new_mask_l)
+        outside_count = sum(
+            1
+            for is_changed, mask_value in zip(changed, union_mask.getdata())
+            if is_changed and mask_value == 0
+        )
+    declared_bbox = successor.get("old_vs_new_difference_bbox")
+    declared_count = successor.get("old_vs_new_changed_pixels")
+    declared_outside = successor.get("pixels_changed_outside_union_title_masks")
+    if (
+        difference_bbox is None
+        or not isinstance(declared_bbox, list)
+        or list(difference_bbox) != declared_bbox
+        or not isinstance(declared_count, int)
+        or declared_count != changed_count
+        or not isinstance(declared_outside, int)
+        or declared_outside != outside_count
+        or outside_count != 0
+    ):
+        raise ValueError("BUILTIN_IMAGEGEN_GENERIC_SUCCESSOR_PIXEL_DRIFT")
+    return [
+        parent_manifest,
+        *parent_assets,
+        old_mask,
+        new_mask,
+        *old_assets,
+        *new_assets,
+    ]
+
+
 def _validate_final_cover_successor(
     *,
     path: Path,
@@ -141,6 +401,13 @@ def _validate_final_cover_successor(
         return []
     if not isinstance(successor, Mapping):
         raise ValueError("BUILTIN_IMAGEGEN_FINAL_COVER_SUCCESSOR_INVALID")
+    if successor.get("schema_version") == GENERIC_FINAL_COVER_SUCCESSOR_SCHEMA:
+        return _validate_generic_final_cover_successor(
+            path=path,
+            source=source,
+            current_final_cover=current_final_cover,
+            successor=successor,
+        )
     if (
         successor.get("schema_version") != FINAL_COVER_SUCCESSOR_SCHEMA
         or successor.get("status") != FINAL_COVER_SUCCESSOR_STATUS
@@ -175,15 +442,15 @@ def _validate_final_cover_successor(
     if (
         _digest(successor.get("parent_manifest_sha256"))
         != B2_E422_PARENT_MANIFEST_SHA256
-        or hashlib.sha256(parent_manifest.read_bytes()).hexdigest()
+        or _evidence_file_sha256(parent_manifest)
         != B2_E422_PARENT_MANIFEST_SHA256
         or _digest(successor.get("parent_final_cover_sha256"))
         != B2_E422_PARENT_FINAL_COVER_SHA256
-        or hashlib.sha256(parent_final_cover.read_bytes()).hexdigest()
+        or _evidence_file_sha256(parent_final_cover)
         != B2_E422_PARENT_FINAL_COVER_SHA256
         or _digest(successor.get("current_final_cover_sha256"))
         != B2_E422_CURRENT_FINAL_COVER_SHA256
-        or hashlib.sha256(current_final_cover.read_bytes()).hexdigest()
+        or _evidence_file_sha256(current_final_cover)
         != B2_E422_CURRENT_FINAL_COVER_SHA256
         or _digest(successor.get("pre_overlay_sha256"))
         != B2_E422_PRE_OVERLAY_SHA256
@@ -255,6 +522,7 @@ def _read_source(path: Path) -> tuple[dict, list[Path]]:
         raise ValueError("BUILTIN_IMAGEGEN_CALLS_MISSING")
     assets: list[Path] = []
     previous = None
+    previous_output = None
     for call in calls:
         rows = [call[k] for k in ("invocation", "result", "prompt", "output")]
         paths = [_asset(path.parent, row) for row in rows]
@@ -285,10 +553,33 @@ def _read_source(path: Path) -> tuple[dict, list[Path]]:
         references = call.get("references")
         if not isinstance(references, list) or not references:
             raise ValueError("BUILTIN_IMAGEGEN_REFERENCES_MISSING")
-        assets.extend(_asset(path.parent, ref) for ref in references)
-        if previous is not None and previous not in {_digest(ref["sha256"]) for ref in references}:
+        reference_paths = [_asset(path.parent, ref) for ref in references]
+        assets.extend(reference_paths)
+        reference_hashes = {_digest(ref["sha256"]) for ref in references}
+        derivative = call.get("edit_reference_transform")
+        if derivative is not None:
+            # Editing the canonical resized background is a real descendant
+            # of the prior raw output. Replay its pixels instead of requiring
+            # the raw image to have been supplied to the editing tool.
+            if (
+                not isinstance(derivative, Mapping)
+                or previous_output is None
+                or _digest(derivative.get("parent_output_sha256")) != previous
+                or _digest(derivative.get("reference_sha256")) not in reference_hashes
+            ):
+                raise ValueError("BUILTIN_IMAGEGEN_EDIT_REFERENCE_TRANSFORM_INVALID")
+            reference_path = reference_paths[
+                next(i for i, ref in enumerate(references)
+                     if _digest(ref["sha256"]) == _digest(derivative["reference_sha256"]))
+            ]
+            with Image.open(previous_output) as prior, Image.open(reference_path) as reference:
+                replay = _replay_background_transform({"background_transform": derivative}, prior)
+                if reference.size != replay.size or reference.convert("RGBA").tobytes() != replay.tobytes():
+                    raise ValueError("BUILTIN_IMAGEGEN_EDIT_REFERENCE_PIXEL_DRIFT")
+        elif previous is not None and previous not in reference_hashes:
             raise ValueError("BUILTIN_IMAGEGEN_EDIT_CHAIN_BROKEN")
         previous = output_sha
+        previous_output = output
         assets.extend(paths)
     assets.extend(
         _asset(path.parent, source[k]) for k in ("identity_reference", "background", "final_cover")
@@ -328,7 +619,7 @@ def validate_builtin_imagegen_provenance(
         return False
     try:
         path = manifest_path or Path(str(generation["builtin_imagegen_provenance_path"]))
-        if hashlib.sha256(path.read_bytes()).hexdigest() != _digest(
+        if _evidence_file_sha256(path) != _digest(
             generation["builtin_imagegen_provenance_sha256"]
         ):
             return False
@@ -345,7 +636,7 @@ def validate_builtin_imagegen_provenance(
             if (
                 expected != _digest(generation[hash_key])
                 or current.is_symlink()
-                or hashlib.sha256(current.read_bytes()).hexdigest() != expected
+                or _evidence_file_sha256(current) != expected
             ):
                 return False
         return True

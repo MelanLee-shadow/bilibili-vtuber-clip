@@ -36,6 +36,7 @@ class UploadTagPolicy:
     max_tags_default: int
     max_dynamic_tags: int
     max_tag_chars: int
+    max_dynamic_tag_chars: int
     term_rules: tuple[TermRule, ...]
     important_content_ips: tuple[TermRule, ...]
     known_proper_surfaces_extra: tuple[str, ...]
@@ -99,6 +100,7 @@ def load_upload_tag_policy(path: Path) -> UploadTagPolicy:
         "max_tags_default",
         "max_dynamic_tags",
         "max_tag_chars",
+        "max_dynamic_tag_chars",
         "term_rules",
         "important_content_ips",
         "known_proper_surfaces_extra",
@@ -140,6 +142,10 @@ def load_upload_tag_policy(path: Path) -> UploadTagPolicy:
         raise UploadTagPolicyError(
             "max_tags_default exceeds the base plus dynamic tag slot budget"
         )
+    max_tag_chars = _positive_int(root.get("max_tag_chars"), label="max_tag_chars")
+    max_dynamic_tag_chars = _positive_int(
+        root.get("max_dynamic_tag_chars"), label="max_dynamic_tag_chars"
+    )
     prompt = _string(
         root.get("content_prompt_template"),
         label="content_prompt_template",
@@ -147,6 +153,15 @@ def load_upload_tag_policy(path: Path) -> UploadTagPolicy:
     )
     if not prompt.strip():
         raise UploadTagPolicyError("content_prompt_template must be a non-empty string")
+    # Resolve policy numbers without consuming escaped JSON or input slots.
+    for name, value in {
+        "max_tags_default": max_tags_default,
+        "max_dynamic_tags": max_dynamic_tags,
+        "max_tag_chars": max_tag_chars,
+        "max_dynamic_tag_chars": max_dynamic_tag_chars,
+        "base_tag_count": len(base_tags),
+    }.items():
+        prompt = prompt.replace("{" + name + "}", str(value))
     try:
         rendered = prompt.format(
             existing_tags="EXISTING_TAGS", title="TITLE", srt_text="SRT_TEXT"
@@ -158,11 +173,12 @@ def load_upload_tag_policy(path: Path) -> UploadTagPolicy:
             "content_prompt_template must preserve existing_tags, title, and srt_text"
         )
 
-    return UploadTagPolicy(
+    policy = UploadTagPolicy(
         base_tags=base_tags,
         max_tags_default=max_tags_default,
         max_dynamic_tags=max_dynamic_tags,
-        max_tag_chars=_positive_int(root.get("max_tag_chars"), label="max_tag_chars"),
+        max_tag_chars=max_tag_chars,
+        max_dynamic_tag_chars=max_dynamic_tag_chars,
         term_rules=tuple(rules),
         important_content_ips=tuple(important_content_ips),
         known_proper_surfaces_extra=_string_list(
@@ -183,6 +199,12 @@ def load_upload_tag_policy(path: Path) -> UploadTagPolicy:
         content_prompt_template=prompt,
         source_path=path,
     )
+    from src.autoslice.authorized_upload_metadata import validate_tag_policy_limits
+
+    problems = validate_tag_policy_limits(policy)
+    if problems:
+        raise UploadTagPolicyError("; ".join(problems))
+    return policy
 
 
 def _parse_term_rules(value: object, *, label: str) -> tuple[TermRule, ...]:

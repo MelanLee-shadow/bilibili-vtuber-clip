@@ -30,20 +30,18 @@ from src.autoslice.song_common import (
     LrcLine,
     LrcResult,
     MAX_LIVE_ARRANGEMENT_INTERLINE_GAP_MS,
-    MAX_LIVE_ARRANGEMENT_OMITTED_BLOCKS,
-    MAX_LIVE_ARRANGEMENT_OMITTED_RATIO,
-    MAX_LIVE_ARRANGEMENT_OMITTED_ROWS,
     MAX_READY_CONSECUTIVE_SPOKEN_LYRIC_ROWS,
     MAX_READY_SPOKEN_BLOCKS,
     MAX_READY_SPOKEN_BLOCK_SPAN_MS,
     MAX_READY_SPOKEN_LYRIC_DURATION_MS,
+    MAX_READY_SPOKEN_LYRIC_DURATION_RATIO,
     MIN_LIVE_ARRANGEMENT_DURATION_MS,
     MIN_LIVE_ARRANGEMENT_HEARD_RATIO,
     MIN_LIVE_ARRANGEMENT_HEARD_ROWS,
     MIN_READY_SUNG_LYRIC_RATIO,
     MIN_READY_SUNG_LYRIC_ROWS,
     SelectedSong,
-    normalize_lyric_text,
+    is_lrc_non_lyric_metadata,
     validate_audio_lrc_execution_metadata,
 )
 from src.autoslice.post_song_talk_witness import (
@@ -52,11 +50,19 @@ from src.autoslice.post_song_talk_witness import (
 )
 from src.autoslice.song_instrumental_proof import prove_long_instrumental_spans
 from src.autoslice.song_lrc_provider import parse_lrc_text
+from src.autoslice.song_alignment import validate_audio_lrc_canonical_projection
 from src.autoslice.song_alignment import (
-    ASR_ANCHOR_AGY_AGREEMENT_TOLERANCE_MS,
-    match_lrc_to_fresh_asr_anchor,
-    validate_audio_lrc_canonical_projection,
+    TIMING_MODEL,
+    AsrAnchoredTimeline,
+    asr_cues_sha256,
+    serialize_asr_cue,
+    build_asr_anchored_timeline,
+    AsrTimelinePending,
+    performance_rows_on_asr_clock,
 )
+from src.autoslice.song_clip_bounds import audio_onset_evidence, song_clip_start
+from src.autoslice.song_omission_shape import derive_omission_shape
+from src.autoslice.song_spoken_interlude import lyric_texts
 
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
@@ -98,6 +104,91 @@ def _is_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def untimed_lrc_text(lrc: LrcResult) -> str:
+    """Only exact row identity and lyric text cross the observation boundary."""
+    return "\n".join(json.dumps({"lrc_index": i, "text": line.text}, ensure_ascii=False)
+                     for i, line in enumerate(lrc.lines)) + "\n"
+
+
+def validate_untimed_audio_tool_trace(trace: str, *, audio_path: Path,
+                                    lyrics_path: Path, prompt_path: Path,
+                                    output_path: Path) -> None:
+    """Validate actual AGY tool completion, not the model's listening claim."""
+    allowed = {str(p.resolve()) for p in (audio_path, lyrics_path, prompt_path, output_path)}
+    completed_reads: set[str] = set()
+    wrote_output = False
+    succeeded = False
+    try:
+        events = [json.loads(line) for line in trace.splitlines() if line.strip()]
+    except (ValueError, TypeError) as exc:
+        raise ValueError("AUDIO_TOOL_TRACE_UNAVAILABLE") from exc
+    for event in events:
+        if not isinstance(event, dict):
+            raise ValueError("AUDIO_TOOL_TRACE_UNAVAILABLE")
+        if event.get("event") == "result":
+            succeeded = event.get("result", {}).get("status") == "SUCCESS"
+        step = event.get("step_update", {})
+        if step.get("step_type") != "tool":
+            continue
+        info = step.get("tool_info", {})
+        name = info.get("name", step.get("tool_name"))
+        params = info.get("parameters", {})
+        path = params.get("AbsolutePath") if name == "view_file" else params.get("TargetFile")
+        if name not in {"view_file", "write_to_file"} or not isinstance(path, str):
+            raise ValueError("REFERENCE_TIMING_EXPOSURE_UNKNOWN")
+        path = str(Path(path).resolve())
+        if path not in allowed:
+            raise ValueError("REFERENCE_TIMING_EXPOSED")
+        if step.get("state") != "DONE" or info.get("error"):
+            continue
+        if name == "view_file":
+            completed_reads.add(path)
+        elif path == str(output_path.resolve()):
+            if str(audio_path.resolve()) not in completed_reads:
+                raise ValueError("AUDIO_NOT_CONSUMED_BEFORE_OBSERVATION")
+            wrote_output = True
+    if not succeeded or not wrote_output or not {
+        str(audio_path.resolve()), str(lyrics_path.resolve())
+    }.issubset(completed_reads):
+        raise ValueError("AUDIO_TOOL_CONSUMPTION_UNPROVEN")
+
+
+def _independent_timing_input(run: AudioLrcAlignmentRun, lrc: LrcResult) -> bool:
+    """Optional new receipt; legacy equal timestamps remain unproven, not false."""
+    if not getattr(run, "manifest_path", None):
+        return False
+    manifest_path = _require_bound_artifact(run.manifest_path, run.manifest_sha256, "audio manifest")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    evidence = manifest.get("observation_input")
+    if evidence is None:
+        return False
+    if not isinstance(evidence, dict) or evidence.get("protocol") != "untimed-lyrics-full-audio.v1":
+        raise ValueError("independent timing input protocol is invalid")
+    if evidence.get("source_sha256") != run.source_sha256 or evidence.get("source_offset_ms") != 0:
+        raise ValueError("independent timing input source clock is invalid")
+    audio = _require_bound_artifact(evidence.get("audio_path"), evidence.get("audio_sha256"), "observation audio")
+    lyrics = _require_bound_artifact(evidence.get("lyrics_path"), evidence.get("lyrics_sha256"), "untimed lyrics")
+    duration = evidence.get("audio_duration_ms")
+    if not _is_int(duration) or abs(duration - run.source_duration_ms) > 1000:
+        raise ValueError("independent timing input duration is invalid")
+    if lyrics.read_text(encoding="utf-8") != untimed_lrc_text(lrc):
+        raise ValueError("observation lyrics contain reference timing or differ from canonical text")
+    if run.provider == AGY_AUDIO_LRC_PROVIDER:
+        trace = _require_bound_artifact(evidence.get("tool_trace_path"), evidence.get("tool_trace_sha256"), "audio tool trace")
+        validate_untimed_audio_tool_trace(trace.read_text(encoding="utf-8"), audio_path=audio,
+            lyrics_path=lyrics, prompt_path=Path(run.prompt_path),
+            output_path=Path(run.provider_raw_output_path))
+    elif run.provider == GEMINI_API_AUDIO_LRC_PROVIDER:
+        if str(audio) != run.api_audio_path or evidence.get("audio_sha256") != run.api_audio_sha256:
+            raise ValueError("independent timing input differs from submitted API audio")
+        prompt = _require_bound_artifact(run.prompt_path, run.prompt_sha256, "API prompt").read_text(encoding="utf-8")
+        if untimed_lrc_text(lrc).strip() not in prompt:
+            raise ValueError("API prompt does not contain the bound untimed lyrics")
+    else:
+        raise ValueError("independent timing input provider is invalid")
+    return True
+
+
 def derive_live_arrangement_completeness(
     *,
     observations: object,
@@ -106,15 +197,19 @@ def derive_live_arrangement_completeness(
     source_duration_ms: int,
     spot_checks: object = None,
     live_performance: object = None,
+    timing_alignment: Sequence[Mapping[str, object]] | None = None,
+    asr_anchor_cues: Sequence[SourceCue] | None = None,
 ) -> dict[str, object]:
     """Derive whether the *performed live arrangement* is complete.
 
     A synchronized studio LRC is a canonical text/timing reference, not a
-    command to reproduce every studio repeat.  This gate accepts either the
-    full studio sequence or one complete live arrangement that deliberately
-    omits a bounded repeated section.  The model's classification is only an
-    observation: code recomputes coverage, omission shape, duration, ordering,
-    and the post-song boundary before returning a READY-shaped result.
+    command to reproduce every studio repeat.  Unheard lyric rows are judged
+    only by ``song_omission_shape`` (small skips, repeated sections, spoken
+    interludes and their whole-song budgets).  The model's classification is
+    only an observation, recorded when it disagrees: code recomputes coverage,
+    omission shape, duration, ordering, and the post-song boundary before
+    returning a READY-shaped result.  ``asr_anchor_cues=None`` re-derives a
+    legacy report without its (absent) bound transcript.
     """
 
     if not _is_int(source_duration_ms) or source_duration_ms <= 0:
@@ -147,6 +242,17 @@ def derive_live_arrangement_completeness(
     ):
         raise ValueError("live arrangement canonical observations are missing")
 
+    # All proof modes use one metadata definition. Preserve raw row identities
+    # at the artifact boundary, and count only lyrics inside this calculation.
+    for index, row in enumerate(observations):
+        if not isinstance(row, Mapping) or row.get("lrc_index") != index:
+            raise ValueError(f"live arrangement canonical row {index} is invalid")
+    keep = [i for i, r in enumerate(observations) if not is_lrc_non_lyric_metadata(str(r.get("text", "")))]
+    renumber = {old: new for new, old in enumerate(keep)}
+    observations = [dict(observations[i], lrc_index=renumber[i]) for i in keep]
+    if timing_alignment is not None:
+        timing_alignment = [dict(r, canonical_lrc_index=renumber[int(r["canonical_lrc_index"])])
+                            for r in timing_alignment if int(r["canonical_lrc_index"]) in renumber]
     canonical_count = len(observations)
     heard_rows: list[tuple[int, Mapping[str, object], int, int]] = []
     omitted_indices: list[int] = []
@@ -179,6 +285,9 @@ def derive_live_arrangement_completeness(
                 raise ValueError(f"live arrangement omitted row {index} is not an honest no-audible-lyric row")
             omitted_indices.append(index)
             continue
+        if timing_alignment is not None:
+            heard_rows.append((index, row, 0, 0))
+            continue
         start_ms = row.get("live_start_ms")
         end_ms = row.get("live_end_ms")
         if not (
@@ -209,12 +318,26 @@ def derive_live_arrangement_completeness(
         previous_end_ms = int(end_ms)
 
     heard_count = len(heard_rows)
-    heard_ratio = heard_count / canonical_count
+    heard_ratio = heard_count / max(1, canonical_count)
     if heard_count < MIN_LIVE_ARRANGEMENT_HEARD_ROWS or heard_ratio < MIN_LIVE_ARRANGEMENT_HEARD_RATIO:
         raise ValueError(
             "live arrangement has too little canonical lyric evidence: "
             f"{heard_count}/{canonical_count} rows"
         )
+    if timing_alignment is not None:
+        heard_rows = [
+            (int(r["canonical_lrc_index"]), observations[int(r["canonical_lrc_index"])],
+             int(r["live_time_ms"]), int(r["live_end_ms"])) for r in timing_alignment
+        ]
+        if not heard_rows:
+            raise AsrTimelinePending("alignment pending: no performed rows")
+        for previous, current in zip(heard_rows, heard_rows[1:]):
+            if current[2] <= previous[2] or current[2] < previous[3]:
+                raise AsrTimelinePending("alignment pending: performed rows overlap")
+            gap = current[2] - previous[3]
+            max_interline_gap_ms = max(max_interline_gap_ms, gap)
+            if gap > MAX_LIVE_ARRANGEMENT_INTERLINE_GAP_MS:
+                interline_gap_bounds.append((previous[0], current[0], previous[3], current[2]))
     first_index, _first_row, first_start_ms, _first_end_ms = heard_rows[0]
     last_index, _last_row, _last_start_ms, last_end_ms = heard_rows[-1]
     performed_duration_ms = last_end_ms - first_start_ms
@@ -226,9 +349,9 @@ def derive_live_arrangement_completeness(
     tail_start = (canonical_count * 2) // 3
     heard_indices = {index for index, _row, _start, _end in heard_rows}
     if (
-        first_index != 0
+        first_index > (1 if timing_alignment is not None else 0)
         or not any(middle_start <= index < tail_start for index in heard_indices)
-        or last_index < tail_start
+        or (max(heard_indices) if timing_alignment is not None else last_index) < tail_start
     ):
         raise ValueError("live arrangement does not prove canonical head, middle, and performed tail coverage")
     if (
@@ -237,60 +360,34 @@ def derive_live_arrangement_completeness(
     ):
         raise ValueError("live arrangement opening or actual live ending was not observed")
 
-    omitted_ranges: list[tuple[int, int]] = []
-    for index in omitted_indices:
-        if not omitted_ranges or index != omitted_ranges[-1][1] + 1:
-            omitted_ranges.append((index, index))
-        else:
-            omitted_ranges[-1] = (omitted_ranges[-1][0], index)
-    if len(omitted_ranges) > MAX_LIVE_ARRANGEMENT_OMITTED_BLOCKS:
-        raise ValueError("live arrangement has multiple omitted canonical blocks")
-    if (
-        len(omitted_indices) > MAX_LIVE_ARRANGEMENT_OMITTED_ROWS
-        or len(omitted_indices) / canonical_count > MAX_LIVE_ARRANGEMENT_OMITTED_RATIO
-    ):
-        raise ValueError(
-            "live arrangement omitted canonical block is too large: "
-            f"{len(omitted_indices)}/{canonical_count} rows"
-        )
-
-    heard_text_sequence = [
-        normalize_lyric_text(str(row.get("text") or ""))
-        for _index, row, _start, _end in heard_rows
-    ]
-    derived_ranges: list[dict[str, object]] = []
-    for start_index, end_index in omitted_ranges:
-        omitted_texts = [
-            normalize_lyric_text(str(observations[index].get("text") or ""))
-            for index in range(start_index, end_index + 1)
+    if timing_alignment is not None:
+        # Anchored rows bound a hole's live window by their actual source cue;
+        # unanchored rows by their section-shifted reference time.
+        performed = [
+            (int(r["canonical_lrc_index"]),
+             int(r["cue_start_ms"]) if r.get("matched_cue_id") is not None else int(r["live_time_ms"]),
+             int(r["cue_end_ms"]) if r.get("matched_cue_id") is not None else int(r["live_end_ms"]))
+            for r in timing_alignment
         ]
-        repeated_contiguously = any(
-            heard_text_sequence[start : start + len(omitted_texts)] == omitted_texts
-            for start in range(len(heard_text_sequence) - len(omitted_texts) + 1)
-        )
-        if len(omitted_texts) < 2 or any(not text for text in omitted_texts) or not repeated_contiguously:
-            raise ValueError("live arrangement omitted block is not a repeated canonical section")
-        derived_ranges.append(
-            {
-                "start_lrc_index": start_index,
-                "end_lrc_index": end_index,
-                "line_count": end_index - start_index + 1,
-                "kind": (
-                    "TRAILING_REPEATED_SECTION"
-                    if end_index == canonical_count - 1
-                    else "BOUNDED_REPEATED_SECTION"
-                ),
-            }
-        )
-
-    derived_classification = (
-        "FULL_STUDIO_SEQUENCE" if not omitted_ranges else "COMPLETE_LIVE_ARRANGEMENT"
+    else:
+        performed = [(index, start, end) for index, _row, start, end in heard_rows]
+    shape = derive_omission_shape(
+        lyric_rows=observations, omitted_indices=omitted_indices, performed=performed,
+        raw_index=keep, asr_anchor_cues=asr_anchor_cues,
+        trailing_window_end_ms=transition_ms if _is_int(transition_ms) else None,
     )
-    if claimed_classification != derived_classification:
-        raise ValueError(
-            "live arrangement model classification disagrees with code-derived structure: "
-            f"claimed={claimed_classification} derived={derived_classification}"
+    if shape.speech_cues:
+        # Unlabelled source speech is attributed to the host only inside an
+        # independently proven continuous, solo-host live performance.
+        error = validate_live_performance_observation(
+            live_performance, first_lyric_start_ms=0, last_lyric_end_ms=source_duration_ms,
+            observations=[r for r in observations if r["heard"]],
+            require_ready=True, check_timing=False,
         )
+        if error is not None:
+            raise ValueError(error)
+    derived_ranges = shape.ranges
+    derived_classification = shape.classification
 
     validate_post_song_transition_pair(
         transition_kind=transition_kind,
@@ -330,6 +427,9 @@ def derive_live_arrangement_completeness(
     }
     if instrumental_gap_proof is not None:
         result["instrumental_gap_proof"] = instrumental_gap_proof
+    if claimed_classification != derived_classification:
+        # The provider label is an observation; record disagreement honestly.
+        result["model_classification_disagreement"] = claimed_classification
     return result
 
 
@@ -514,7 +614,7 @@ def _validate_audio_lrc_artifact_bindings(
     }
     if canonicalization != expected_canonicalization:
         raise ValueError("audio run canonicalization manifest is invalid")
-    parsed_lrc = parse_lrc_text(lrc_path.read_text(encoding="utf-8"))
+    parsed_lrc = parse_lrc_text(lrc_path.read_text(encoding="utf-8"), exclude_metadata=False)
     if [(line.time_ms, line.text) for line in parsed_lrc] != [(line.time_ms, line.text) for line in lrc.lines]:
         raise ValueError("bound LRC artifact does not equal the selected canonical LRC")
     if not _is_int(run.source_duration_ms) or abs(run.source_duration_ms - source_duration_ms) > 1_000:
@@ -543,12 +643,24 @@ def _validate_audio_lrc_artifact_bindings(
 
 @dataclass(frozen=True)
 class AudioObservationAlignment:
+    """Validated AGY performance evidence plus the ASR-anchored lyric timeline.
+
+    ``alignment`` rows are the performed lines (repeats included) on the
+    source clock from ``timeline``. AGY supplies the vocalist assertions;
+    its original timestamps are retained only as diagnostics.
+    """
+
     payload: Mapping[str, object]
     alignment: list[dict[str, object]]
     performed_lines: list[LrcLine]
     performed_observations: list[Mapping[str, object]]
     arrangement_completeness: Mapping[str, object]
     offset_ms: int
+    agy_alignment: list[dict[str, object]]
+    timeline: AsrAnchoredTimeline
+    timing_basis: str
+    agy_offset_ms: int
+    asr_cues_sha256: str | None
 
 
 def _build_audio_observation_alignment(
@@ -557,7 +669,15 @@ def _build_audio_observation_alignment(
     lrc: LrcResult,
     candidate_id: str,
     effective_duration_ms: int,
+    asr_anchor_cues: Sequence[SourceCue] = (),
 ) -> AudioObservationAlignment:
+    # Both fresh observations and reloaded receipts need an independent input
+    # clock. Timestamp jitter or a short row list cannot establish its origin.
+    if not _independent_timing_input(run, lrc):
+        raise ValueError(
+            "AUDIO_TOOL_CONSUMPTION_UNPROVEN: independent timing input is required "
+            "(alignment pending)"
+        )
     payload = run.payload
     required_top = {
         "schema_version",
@@ -594,12 +714,10 @@ def _build_audio_observation_alignment(
     observations = payload.get("observations")
     if not isinstance(observations, list) or len(observations) != len(lrc.lines) or len(observations) < 8:
         raise ValueError("audio observation must contain exactly one row per canonical LRC line")
-    alignment: list[dict[str, object]] = []
+    agy_alignment: list[dict[str, object]] = []
     performed_lines: list[LrcLine] = []
     performed_observations: list[Mapping[str, object]] = []
     residuals: list[int] = []
-    previous_start: int | None = None
-    previous_end: int | None = None
     for index, (row, line) in enumerate(zip(observations, lrc.lines)):
         if not isinstance(row, Mapping) or set(row) != {
             "lrc_index",
@@ -616,13 +734,11 @@ def _build_audio_observation_alignment(
             raise ValueError(f"audio observation row {index} does not exactly echo the canonical LRC")
         if not isinstance(row.get("heard"), bool):
             raise ValueError(f"audio observation row {index} heard value is invalid")
+        if is_lrc_non_lyric_metadata(line.text):
+            continue
         if row.get("heard") is not True:
-            live_arrangement = payload.get("live_arrangement")
-            if (
-                not isinstance(live_arrangement, Mapping)
-                or live_arrangement.get("classification") != "COMPLETE_LIVE_ARRANGEMENT"
-            ):
-                raise ValueError(f"canonical LRC line {index} was not affirmatively heard")
+            # Omission authority comes from the shared structural proof below,
+            # never a provider's classification label.
             continue
         start_ms = row.get("live_start_ms")
         end_ms = row.get("live_end_ms")
@@ -631,12 +747,8 @@ def _build_audio_observation_alignment(
             raise ValueError(f"audio observation row {index} timing is invalid")
         if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0.8 <= confidence <= 1.0:
             raise ValueError(f"audio observation row {index} confidence is below 0.8")
-        if previous_start is not None and start_ms <= previous_start:
-            raise ValueError("audio observation starts are not strictly monotonic")
-        if previous_end is not None and previous_end - start_ms > 250:
-            raise ValueError("adjacent audio observations overlap by more than 250ms")
         residuals.append(start_ms - line.time_ms)
-        alignment.append(
+        agy_alignment.append(
             {
                 "lrc_time_ms": line.time_ms,
                 "lrc_text": line.text,
@@ -661,68 +773,130 @@ def _build_audio_observation_alignment(
         )
         performed_lines.append(line)
         performed_observations.append(row)
-        previous_start = start_ms
-        previous_end = end_ms
 
-    if not alignment:
+    if not agy_alignment:
         raise ValueError("live arrangement has no heard canonical lyrics")
     live_performance = payload.get("live_performance")
-    first_lyric_start_ms = int(alignment[0]["cue_start_ms"])
-    last_lyric_end_ms = int(alignment[-1]["cue_end_ms"])
     performance_schema_error = validate_live_performance_observation(
-        live_performance,
-        first_lyric_start_ms=first_lyric_start_ms,
-        last_lyric_end_ms=last_lyric_end_ms,
-        observations=performed_observations,
-        require_ready=False,
+        live_performance, first_lyric_start_ms=0, last_lyric_end_ms=effective_duration_ms,
+        observations=performed_observations, require_ready=False, check_timing=False,
     )
     if performance_schema_error is not None:
         raise ValueError(performance_schema_error)
     performance_error = validate_live_performance_observation(
-        live_performance,
-        first_lyric_start_ms=first_lyric_start_ms,
-        last_lyric_end_ms=last_lyric_end_ms,
-        observations=performed_observations,
-        require_ready=True,
+        live_performance, first_lyric_start_ms=0, last_lyric_end_ms=effective_duration_ms,
+        observations=performed_observations, require_ready=True, check_timing=False,
     )
     if performance_error is not None:
         assert isinstance(live_performance, Mapping)
         raise LivePerformanceRejected(performance_error, live_performance)
 
-    arrangement_completeness = derive_live_arrangement_completeness(
-        observations=observations,
-        live_arrangement=payload.get("live_arrangement"),
-        post_song_talk_start_ms=payload.get("post_song_talk_start_ms"),
-        source_duration_ms=effective_duration_ms,
-        spot_checks=payload.get("spot_checks"),
-        live_performance=payload.get("live_performance"),
+    agy_offset_ms = sorted(residuals)[len(residuals) // 2]
+    timeline, basis, cues_sha, sung_rows = _asr_anchored_timeline(
+        run=run,
+        agy_alignment=agy_alignment,
+        performed_lines=performed_lines,
+        asr_anchor_cues=asr_anchor_cues,
+        effective_duration_ms=effective_duration_ms,
     )
-    offset_ms = sorted(residuals)[len(residuals) // 2]
-    if any(abs(residual - offset_ms) > 1_500 for residual in residuals):
-        raise ValueError("audio observations do not fit one global shift within ±1500ms")
-    # 回声防御：prompt 里带着 LRC 时间轴，模型可以不听音频、把
-    # LRC 时刻加常数原样回吐——那样残差会逐行到毫秒级一致。真实翻唱的逐行
-    # 残差必然抖动（怪獣の花唄实测数百 ms 级）。零抖动=非独立听音证据，拒收。
-    # 阈值 16 行：真实完整歌的 heard 行数远超 16，只有真歌规模的纯回声才可能
-    # 全程到毫秒一致；短合成用例不受影响。
-    if len(residuals) >= 16 and max(residuals) - min(residuals) == 0:
-        raise ValueError(
-            "audio observations echo the LRC timeline exactly; independent listening evidence is required"
+    if not 0 <= timeline.offset_ms < effective_duration_ms:
+        raise ValueError(f"nominal LRC zero {timeline.offset_ms}ms is outside the current source")
+    rows: list[dict[str, object]] = []
+    for placed in timeline.lines:
+        agy_row = sung_rows[placed.position]
+        index = int(agy_row["canonical_lrc_index"])
+        anchor = placed.anchor
+        rows.append(
+            {
+                "lrc_time_ms": placed.line.time_ms,
+                "lrc_text": placed.line.text,
+                "canonical_lrc_index": index,
+                "matched_cue_id": anchor.cue.cue_id if anchor is not None else None,
+                "cue_start_ms": anchor.cue.source_start_ms if anchor is not None else placed.live_start_ms,
+                "cue_end_ms": anchor.cue.source_end_ms if anchor is not None else placed.live_end_ms,
+                "match_ratio": anchor.ratio if anchor is not None else 0.0,
+                "evidence_source": "agy_audio_lrc",
+                "timing_source": "asr_anchor" if anchor is not None else "section_shift",
+                "live_time_ms": placed.live_start_ms,
+                "live_end_ms": placed.live_end_ms,
+                "section_index": placed.section_index,
+                "section_shift_ms": placed.shift_ms,
+                "agy_live_start_ms": agy_row["cue_start_ms"],
+                "agy_live_end_ms": agy_row["cue_end_ms"],
+                **{key: agy_row[key] for key in LYRIC_VOCAL_ASSERTION_KEYS},
+            }
         )
-    lrc_span = performed_lines[-1].time_ms - performed_lines[0].time_ms
-    live_span = int(alignment[-1]["cue_start_ms"]) - int(alignment[0]["cue_start_ms"])
-    if lrc_span < 20_000 or not 0.95 <= live_span / lrc_span <= 1.05:
-        raise ValueError("audio observations imply tempo drift; explicit stretch proof is required")
-    if not 0 <= offset_ms < effective_duration_ms:
-        raise ValueError(f"nominal LRC zero {offset_ms}ms is outside the current source")
+    timed_observations = performance_rows_on_asr_clock(rows, observations)
+    performance_error = validate_live_performance_observation(
+        live_performance, first_lyric_start_ms=0, last_lyric_end_ms=effective_duration_ms,
+        observations=timed_observations, require_ready=True, check_timing=False,
+        check_lyric_timing=True,
+    )
+    if performance_error is not None:
+        raise LivePerformanceRejected(performance_error, live_performance)
+    arrangement_completeness = derive_live_arrangement_completeness(
+        observations=observations, live_arrangement=payload.get("live_arrangement"),
+        post_song_talk_start_ms=payload.get("post_song_talk_start_ms"),
+        source_duration_ms=effective_duration_ms, spot_checks=payload.get("spot_checks"),
+        live_performance=live_performance, timing_alignment=rows,
+        asr_anchor_cues=asr_anchor_cues,
+    )
+    observation_by_index = {
+        row["canonical_lrc_index"]: observation
+        for row, observation in zip(agy_alignment, performed_observations)
+    }
     return AudioObservationAlignment(
         payload=payload,
-        alignment=alignment,
-        performed_lines=performed_lines,
-        performed_observations=performed_observations,
+        alignment=rows,
+        performed_lines=[placed.line for placed in timeline.lines],
+        performed_observations=[observation_by_index[row["canonical_lrc_index"]] for row in rows],
         arrangement_completeness=arrangement_completeness,
-        offset_ms=offset_ms,
+        offset_ms=timeline.offset_ms,
+        agy_alignment=agy_alignment,
+        timeline=timeline,
+        timing_basis=basis,
+        agy_offset_ms=agy_offset_ms,
+        asr_cues_sha256=cues_sha,
     )
+
+
+def _asr_anchored_timeline(
+    *,
+    run: AudioLrcAlignmentRun,
+    agy_alignment: Sequence[Mapping[str, object]],
+    performed_lines: Sequence[LrcLine],
+    asr_anchor_cues: Sequence[SourceCue],
+    effective_duration_ms: int,
+) -> tuple[AsrAnchoredTimeline, str, str | None, list[Mapping[str, object]]]:
+    """Place affirmatively heard lyrics on the independent BCUT clock."""
+
+    sung = [
+        (line, row)
+        for line, row in zip(performed_lines, agy_alignment)
+        if not is_lrc_non_lyric_metadata(line.text)
+    ]
+    sung_lines = [line for line, _row in sung]
+    sung_rows = [row for _line, row in sung]
+    if not asr_anchor_cues:
+        raise AsrTimelinePending("alignment pending: source BCUT ASR cues are required")
+    timeline = build_asr_anchored_timeline(
+        sung_lines, asr_anchor_cues, source_duration_ms=effective_duration_ms
+    )
+    return timeline, "asr_anchor", asr_cues_sha256(asr_anchor_cues), sung_rows
+
+
+def _bound_observation_audio(run: AudioLrcAlignmentRun) -> tuple[Path, str] | None:
+    """The hash-bound complete audio the observation consumed (source clock)."""
+    if getattr(run, "provider", None) == GEMINI_API_AUDIO_LRC_PROVIDER:
+        path, sha = getattr(run, "api_audio_path", None), getattr(run, "api_audio_sha256", None)
+    else:
+        try:
+            manifest = json.loads(Path(run.manifest_path).read_text(encoding="utf-8"))
+            evidence = manifest.get("observation_input") or {}
+            path, sha = evidence.get("audio_path"), evidence.get("audio_sha256")
+        except (AttributeError, OSError, TypeError, ValueError):
+            return None
+    return (Path(path), str(sha)) if isinstance(path, str) and isinstance(sha, str) else None
 
 
 def _finalize_audio_lrc_selection(
@@ -738,33 +912,38 @@ def _finalize_audio_lrc_selection(
     alignment = observation.alignment
     performed_lines = observation.performed_lines
     arrangement_completeness = observation.arrangement_completeness
+    timeline = observation.timeline
     offset_ms = observation.offset_ms
-    agy_offset_ms = offset_ms
-    asr_offset_ms, asr_matched_line_count, _asr_anchor_rejected_reason = match_lrc_to_fresh_asr_anchor(
-        lrc.lines, asr_anchor_cues
-    )
-    offset_basis = "agy_median"
-    if asr_offset_ms is not None:
-        if abs(asr_offset_ms - agy_offset_ms) > ASR_ANCHOR_AGY_AGREEMENT_TOLERANCE_MS:
-            raise ValueError(
-                f"fresh-ASR anchor offset {asr_offset_ms}ms disagrees with the AGY median "
-                f"offset {agy_offset_ms}ms by more than {ASR_ANCHOR_AGY_AGREEMENT_TOLERANCE_MS}ms"
-            )
-        offset_ms = asr_offset_ms
-        offset_basis = "asr_anchor"
-        if not 0 <= offset_ms < effective_duration_ms:
-            raise ValueError(f"nominal LRC zero {offset_ms}ms is outside the current source")
+    asr_based = observation.timing_basis == "asr_anchor"
     offset_provenance: dict[str, object] = {
-        "offset_basis": offset_basis,
-        "agy_offset_ms": agy_offset_ms,
-        "asr_offset_ms": asr_offset_ms,
-        "asr_matched_line_count": asr_matched_line_count,
+        "offset_basis": observation.timing_basis,
+        "agy_offset_ms": observation.agy_offset_ms,
+        "asr_offset_ms": offset_ms if asr_based else None,
+        "asr_matched_line_count": timeline.anchor_count if asr_based else 0,
+        "timing_model": TIMING_MODEL,
+        "anchor_line_count": timeline.anchor_count,
+        "dropped_anchor_count": timeline.dropped_anchor_count,
+        "asr_cues_sha256": observation.asr_cues_sha256,
+        "asr_cue_count": len(asr_anchor_cues),
+        "asr_source_sha256": run.source_sha256,
+        "asr_cues": [serialize_asr_cue(c) for c in asr_anchor_cues],
+        "sections": [
+            {
+                "index": section.index,
+                "shift_ms": section.shift_ms,
+                "anchor_count": len(section.anchors),
+                "max_residual_ms": section.max_residual_ms,
+            }
+            for section in timeline.sections
+        ],
     }
 
-    first_lyric_start_ms = int(alignment[0]["cue_start_ms"])
-    last_lyric_end_ms = int(alignment[-1]["cue_end_ms"])
+    # Bound the actual performed sequence using the independent source clock.
+    first_lyric_start_ms = min(
+        min(int(row["cue_start_ms"]), int(row["live_time_ms"])) for row in alignment
+    )
+    last_lyric_end_ms = max(max(int(row["cue_end_ms"]), int(row["live_end_ms"])) for row in alignment)
     clip_end_ms = int(arrangement_completeness["post_song_transition_ms"])
-    instrumental_spot_end_ms = clip_end_ms
     # The only *independent* check this pair ever gets.  It lives here, not in
     # derive_live_arrangement_completeness, because that function also re-derives
     # stored inventory in song_completion/live_source_review where no fresh-ASR
@@ -792,48 +971,27 @@ def _finalize_audio_lrc_selection(
             raise ValueError("audio spot-check names/results are invalid")
         if not _is_int(time_ms):
             raise ValueError(f"audio spot-check {name} time is outside the performed song")
-        if name == "longest_instrumental_gap":
-            # The longest instrumental can be an intro before the first lyric
-            # or an outro after the last. It still must lie inside the
-            # independently derived full-song boundary.
-            in_allowed_range = offset_ms <= time_ms <= instrumental_spot_end_ms
-        else:
-            in_allowed_range = first_lyric_start_ms <= time_ms <= last_lyric_end_ms
-        if not in_allowed_range:
-            raise ValueError(f"audio spot-check {name} time is outside the performed song")
+        if not 0 <= time_ms <= effective_duration_ms:
+            raise ValueError(f"audio spot-check {name} time is outside the source")
         spots[str(name)] = spot
     if set(spots) != required_spots:
         raise ValueError("audio spot-check set is incomplete")
-    if abs(int(spots["first_line"]["live_time_ms"]) - first_lyric_start_ms) > 1_500:
-        raise ValueError("first-line spot check does not bind the first observed lyric")
-    tail_spot_ms = int(spots["tail"]["live_time_ms"])
-    final_lyric_start_ms = int(alignment[-1]["cue_start_ms"])
-    final_lyric_end_ms = int(alignment[-1]["cue_end_ms"])
-    if not final_lyric_start_ms <= tail_spot_ms < final_lyric_end_ms:
-        raise ValueError("tail spot check does not bind the final observed lyric")
-
-    first_index_by_text: dict[str, int] = {}
-    later_repeat_starts: list[int] = []
-    for index, line in enumerate(performed_lines):
-        normalized = normalize_lyric_text(line.text)
-        if not normalized:
-            continue
-        if normalized in first_index_by_text:
-            later_repeat_starts.append(int(alignment[index]["cue_start_ms"]))
-        else:
-            first_index_by_text[normalized] = index
-    if later_repeat_starts:
-        repeated_spot_ms = int(spots["repeated_section"]["live_time_ms"])
-        if all(abs(repeated_spot_ms - start_ms) > 1_500 for start_ms in later_repeat_starts):
-            raise ValueError("repeated-section spot check does not bind a later repeated lyric occurrence")
-
-    clip_start_ms = offset_ms
-    if not 0 <= clip_start_ms <= offset_ms <= first_lyric_start_ms <= last_lyric_end_ms <= clip_end_ms <= effective_duration_ms:
+    # One start rule (song_clip_bounds): the music start, intro speech and the
+    # recognition tolerance; ``offset_ms`` keeps its meaning (LRC zero on the
+    # live clock) and need not precede a coarse ASR cue boundary.
+    clip_start_ms, clip_start_evidence = song_clip_start(
+        lrc_zero_ms=offset_ms, first_lyric_start_ms=first_lyric_start_ms, cues=asr_anchor_cues,
+        lyrics=lyric_texts(payload["observations"]),
+        audio_onset=audio_onset_evidence(_bound_observation_audio(run),
+                                         estimate_ms=min(offset_ms, first_lyric_start_ms)),
+    )
+    offset_provenance["clip_start_evidence"] = clip_start_evidence
+    if not 0 <= clip_start_ms <= first_lyric_start_ms <= last_lyric_end_ms <= clip_end_ms <= effective_duration_ms:
         raise ValueError("derived full-song boundary ordering is invalid")
-    matched_ratio = len(alignment) / len(performed_lines)
+    matched = [dict(entry) for entry in alignment if entry["matched_cue_id"] is not None]
+    matched_ratio = len(matched) / len(alignment)
     if matched_ratio < min_matched_ratio:
         raise ValueError(f"audio alignment ratio {matched_ratio:.0%} is below {min_matched_ratio:.0%}")
-    matched = [dict(entry) for entry in alignment]
     performed_lrc = LrcResult(
         provider=lrc.provider,
         song_title=lrc.song_title,
@@ -867,6 +1025,15 @@ def _validated_audio_lrc_selection(
     asr_anchor_cues: Sequence[SourceCue] = (),
 ) -> SelectedSong:
     """Validate bound audio evidence and convert it into standard selection."""
+    # A current metadata filter may remove credits from an older reference.
+    # Validate that receipt against its unchanged canonical input; only the
+    # performed timeline drops metadata, retaining original canonical indices.
+    bound_lrc = _require_bound_artifact(run.lrc_path, run.lrc_sha256, "canonical LRC")
+    original_lines = tuple(parse_lrc_text(bound_lrc.read_text(encoding="utf-8"), exclude_metadata=False))
+    if original_lines != lrc.lines and tuple(
+        line for line in original_lines if not is_lrc_non_lyric_metadata(line.text)
+    ) == lrc.lines:
+        lrc = LrcResult(lrc.provider, lrc.song_title, lrc.artist, lrc.source_ref, original_lines)
     effective_duration_ms = _validate_audio_lrc_artifact_bindings(
         run=run,
         lrc=lrc,
@@ -879,6 +1046,7 @@ def _validated_audio_lrc_selection(
         lrc=lrc,
         candidate_id=candidate_id,
         effective_duration_ms=effective_duration_ms,
+        asr_anchor_cues=asr_anchor_cues,
     )
     return _finalize_audio_lrc_selection(
         run=run,
@@ -893,6 +1061,11 @@ def _validated_audio_lrc_selection(
 def _lyric_row_interval(row: Mapping[str, object], index: int) -> tuple[int, int]:
     """Read one strict raw-AGY or projected-report lyric interval."""
 
+    if row.get("timing_source") in {"asr_anchor", "section_shift"}:
+        start, end = row.get("live_time_ms"), row.get("live_end_ms")
+        if not (_is_int(start) and _is_int(end) and 0 <= start < end):
+            raise ValueError(f"live performance lyric row {index} ASR interval is invalid")
+        return start, end
     has_live = "live_start_ms" in row or "live_end_ms" in row
     has_cue = "cue_start_ms" in row or "cue_end_ms" in row
     if has_live and not {"live_start_ms", "live_end_ms"}.issubset(row):
@@ -917,6 +1090,7 @@ def _validate_lyric_vocal_observations(
     observations: object,
     *,
     require_ready: bool,
+    check_timing: bool = True,
 ) -> tuple[bool, bool, bool]:
     """Recompute the singer/role aggregates from every canonical lyric row.
 
@@ -994,7 +1168,7 @@ def _validate_lyric_vocal_observations(
             )
         roles.append(role)
         row_interval: tuple[int, int] | None = None
-        if require_ready:
+        if require_ready and check_timing:
             start_ms, end_ms = _lyric_row_interval(row, index)
             row_interval = (start_ms, end_ms)
             if previous_start_ms is not None and start_ms <= previous_start_ms:
@@ -1009,13 +1183,13 @@ def _validate_lyric_vocal_observations(
             consecutive_spoken_rows = 0
             spoken_block_start_ms = None
         elif role == "PERFORMING_THIS_LYRIC_SPOKEN":
-            if require_ready and consecutive_spoken_rows == 0:
+            if require_ready and check_timing and consecutive_spoken_rows == 0:
                 spoken_blocks += 1
                 assert row_interval is not None
                 spoken_block_start_ms = row_interval[0]
             consecutive_spoken_rows += 1
             longest_spoken_run = max(longest_spoken_run, consecutive_spoken_rows)
-            if require_ready:
+            if require_ready and check_timing:
                 assert row_interval is not None
                 spoken_duration_ms += row_interval[1] - row_interval[0]
                 assert spoken_block_start_ms is not None
@@ -1049,9 +1223,9 @@ def _validate_lyric_vocal_observations(
             )
         if (
             spoken_duration_ms > MAX_READY_SPOKEN_LYRIC_DURATION_MS
-            # Integer cross-multiplication keeps an exact 20% boundary from
-            # becoming 20.000000000000004% through binary float rounding.
-            or spoken_duration_ms * 5 > total_lyric_vocal_duration_ms
+            # Keep the shared rational limit exact at the acceptance boundary.
+            or spoken_duration_ms * MAX_READY_SPOKEN_LYRIC_DURATION_RATIO.denominator
+            > total_lyric_vocal_duration_ms * MAX_READY_SPOKEN_LYRIC_DURATION_RATIO.numerator
         ):
             raise ValueError(
                 "live performance canonical spoken passage is too long by voiced duration: "
@@ -1072,6 +1246,8 @@ def validate_live_performance_observation(
     last_lyric_end_ms: int,
     observations: object,
     require_ready: bool,
+    check_timing: bool = True,
+    check_lyric_timing: bool | None = None,
 ) -> str | None:
     """Validate AGY's anti-background and same-subject singing observation.
 
@@ -1116,6 +1292,7 @@ def validate_live_performance_observation(
         all_same_lidousha, any_other_singer, any_recorded_vocal = _validate_lyric_vocal_observations(
             observations,
             require_ready=require_ready,
+            check_timing=check_timing if check_lyric_timing is None else check_lyric_timing,
         )
         if (
             performance.get("same_lidousha_live_performer_across_all_lyrics") is not all_same_lidousha
@@ -1130,7 +1307,7 @@ def validate_live_performance_observation(
             raise ValueError("live performance lyric span is invalid")
         span = last_lyric_end_ms - first_lyric_start_ms
         sung_intervals: list[tuple[int, int]] = []
-        if require_ready:
+        if require_ready and check_timing:
             sung_intervals = [
                 _lyric_row_interval(row, index)
                 for index, row in enumerate(observations)
@@ -1151,7 +1328,7 @@ def validate_live_performance_observation(
                 or not observation.strip()
             ):
                 raise ValueError(f"live performance evidence[{index}] is invalid")
-            if require_ready and not any(
+            if require_ready and check_timing and not any(
                 start_ms <= int(time_ms) < end_ms
                 for start_ms, end_ms in sung_intervals
             ):
@@ -1160,7 +1337,7 @@ def validate_live_performance_observation(
                 )
             previous_time = int(time_ms)
             buckets.add(min(2, ((int(time_ms) - first_lyric_start_ms) * 3) // max(1, span)))
-        if buckets != {0, 1, 2}:
+        if check_timing and buckets != {0, 1, 2}:
             raise ValueError("live performance evidence must cover lyric head, middle, and tail")
         if require_ready and (
             mode != LIVE_PERFORMANCE_READY_MODE

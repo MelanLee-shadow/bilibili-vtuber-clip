@@ -17,6 +17,7 @@ touched.  A job file is the final commit marker and is written last.
 """
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import hashlib
 import json
@@ -78,11 +79,8 @@ def _sha_bytes(value: bytes) -> str:
 
 
 def _sha_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return digest
 
 
 def _normalize_sha(value: object, *, label: str) -> str:
@@ -555,6 +553,7 @@ def bootstrap_final_media_review_job(
     closure: Mapping[str, object],
     review_contract_sha256: str,
     review_points: object,
+    requested_review: Mapping[str, object] | None = None,
     provider_accepts_bound_source_video: bool = False,
     provider_accepts_bound_audio: bool = False,
     probe: Callable[[Path], Mapping[str, object]] = probe_exact_media_clock,
@@ -569,8 +568,18 @@ def bootstrap_final_media_review_job(
     points = _full_media_contract_points(
         review_points, final_duration_ms=int(closure.get("final_duration_ms") or 0)
     )
-    if not bootstrap_is_required(closure, points):
+    if requested_review is not None:
+        from src.autoslice.requested_final_media_review import validate_request, request_contract
+        validate_request(requested_review, candidate_id=candidate_id)
+        expected_sha, expected_points = request_contract(requested_review, closure.get("final_duration_ms"))
+        if (not points or points != expected_points
+                or review_contract_sha256 != expected_sha):
+            raise _error("FINAL_MEDIA_REVIEW_FULL_COVERAGE_REQUIRED",
+                         "explicit review must bind the requested complete 0..EOS contract")
+    elif not bootstrap_is_required(closure, points):
         return {"status": "NOT_REQUIRED", "job_path": None, "created": False}
+    trigger_codes = (["OPERATOR_REQUESTED_WHOLE_FINAL_MEDIA"] if requested_review is not None
+                     else ["FINAL_MEDIA_REVIEW_LEGACY_DURATION_WITNESS_MISMATCH"])
     contract_sha = _normalize_sha(review_contract_sha256, label="review contract")
     artifacts = closure.get("artifacts")
     if not isinstance(artifacts, Mapping):
@@ -582,6 +591,10 @@ def bootstrap_final_media_review_job(
     subtitle = _package_file(root, artifacts.get("subtitle"), label="final subtitle")
     cover = _package_file(root, artifacts.get("cover"), label="final cover")
     record = _package_file(root, closure.get("record_path"), label="record")
+    if requested_review is not None:
+        from src.autoslice.requested_final_media_review import validate_request_record
+        validate_request_record(requested_review, _read_bounded_json(record, label="final record"),
+                                candidate_id=candidate_id)
     verification = root / "verification"
     if verification.is_symlink() or not verification.is_dir():
         raise _error(
@@ -612,9 +625,7 @@ def bootstrap_final_media_review_job(
         ],
         "bootstrap": {
             "authority": BOOTSTRAP_AUTHORITY,
-            "trigger_reason_codes": [
-                "FINAL_MEDIA_REVIEW_LEGACY_DURATION_WITNESS_MISMATCH"
-            ],
+            "trigger_reason_codes": trigger_codes,
             "content_review_status": "UNASSESSED",
             "provider_calls": 0,
         },
@@ -640,7 +651,7 @@ def bootstrap_final_media_review_job(
     )
     clock_bytes = _json_bytes(clock_doc)
     exact_duration_ms = int(clock["duration_us"]) // 1000
-    trigger_codes = ["FINAL_MEDIA_REVIEW_LEGACY_DURATION_WITNESS_MISMATCH"]
+    trigger_codes = list(trigger_codes)
     current_duration_ms = int(closure["final_duration_ms"])
     if abs(exact_duration_ms - current_duration_ms) > 500:
         trigger_codes.append("FINAL_MEDIA_REVIEW_CURRENT_DURATION_PROBE_MISMATCH")
@@ -687,6 +698,7 @@ def bootstrap_final_media_review_job(
             "authority": BOOTSTRAP_AUTHORITY,
             "trigger_reason_codes": trigger_codes,
             "review_contract_sha256": contract_sha,
+            **({"requested_review": dict(requested_review)} if requested_review is not None else {}),
             "subtitle_review_points": points,
             "duration_binding": {
                 key: closure.get(key)

@@ -1,0 +1,25 @@
+{
+  "source_commit": "8ef35394b84e837dbb1b0a753638a66759dc807d",
+  "files": [
+    {
+      "source_path": "src/autoslice/nonsemantic_sound.py",
+      "fixture_path": "nonsemantic_sound.py.txt",
+      "sha256": "52fa6322d580faab2faff9b9515633e9121373e75cc775e00d743d57e8fac159"
+    },
+    {
+      "source_path": "src/autoslice/closed_set_proposal_rebuild.py",
+      "fixture_path": "closed_set_proposal_rebuild.py.txt",
+      "sha256": "7fbe0c3f729919873fce84ceccae14bf43ded7359a9591142e8015836370678d"
+    },
+    {
+      "source_path": "src/autoslice/targeted_relisten.py",
+      "fixture_path": "targeted_relisten.py.txt",
+      "sha256": "cf3f65503ed7aca6da2328e3c326cd86ebb0a2142a22a5f11c7a5c08502682d8"
+    },
+    {
+      "source_path": "src/autoslice/semantic_terminal_adjudication.py",
+      "fixture_path": "semantic_terminal_adjudication.py.txt",
+      "sha256": "4543b3e9ce02015823462bad967161231e2b210b1422970d9225b2fa2487b61c"
+    }
+  ]
+}

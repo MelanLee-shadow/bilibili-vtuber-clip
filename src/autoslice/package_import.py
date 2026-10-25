@@ -23,6 +23,7 @@ fail-closed：拒绝统一为带 typed ``code`` 的 :class:`PackageImportError`�
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 from .package_import_semantics import package_lane, validate_publish_staging_mirror
 
 import copy
@@ -39,6 +40,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterator, Mapping, Sequence
 
 from src.autoslice import failed_pick_import as _failed_pick
+from src.autoslice.cover_host_identity_gate import HOST_ONLY_SCHEMA_VERSION
 from src.autoslice.batch_terminal_state import (
     REVIEWABLE_BATCH_STATUSES,
     candidate_package_review_allowed,
@@ -69,12 +71,14 @@ from src.autoslice.package_relocation_contract import (
     get_value,
     is_mutable_pointer,
     match_root_role,
+    pointer_applies,
     pointer_text,
     reject_unknown_wsl_paths,
     set_value,
     validate_document_root_roles,
     validate_path_root_role,
 )
+from src.autoslice.review_evidence_store import review_from_bytes
 from src.autoslice.package_publish_mirror import (
     PublishStagingMirrorError,  # noqa: F401 - retained compatibility symbol
     publish_staging_field_sets,
@@ -130,11 +134,8 @@ def sha256_bytes(payload: bytes) -> str:
 
 
 def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return digest
 
 
 def declared_digest(value: object, *, label: str) -> str:
@@ -526,19 +527,43 @@ def _derive_workspace_root(
 # --------------------------------------------------------------------------
 
 
-def load_json_document(path: Path, *, label: str) -> tuple[dict[str, Any], bytes]:
-    payload = require_regular_file(path, label=label).read_bytes()
+def _decode_json_document(
+    payload: bytes,
+    *,
+    label: str,
+    review: bool = False,
+    directory: Path | None = None,
+    path: Path | None = None,
+) -> dict[str, Any]:
     try:
-        document = json.loads(payload.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError) as exc:
+        document = (
+            review_from_bytes(payload, directory=directory or Path.cwd())
+            if review
+            else json.loads(payload.decode("utf-8"))
+        )
+    except (OSError, TypeError, UnicodeDecodeError, ValueError) as exc:
+        location = f": {path}" if path is not None else ""
         raise PackageImportError(
-            "PACKAGE_DOCUMENT_INVALID", f"{label} is not valid JSON: {path}"
+            "PACKAGE_DOCUMENT_INVALID", f"{label} is not valid JSON{location}"
         ) from exc
     if not isinstance(document, dict):
+        location = f": {path}" if path is not None else ""
         raise PackageImportError(
-            "PACKAGE_DOCUMENT_INVALID", f"{label} root is not an object: {path}"
+            "PACKAGE_DOCUMENT_INVALID", f"{label} root is not an object{location}"
         )
-    return document, payload
+    return document
+
+
+def load_json_document(
+    path: Path, *, label: str, review: bool = False
+) -> tuple[dict[str, Any], bytes]:
+    payload = require_regular_file(path, label=label).read_bytes()
+    return (
+        _decode_json_document(
+            payload, label=label, review=review, directory=path.parent, path=path
+        ),
+        payload,
+    )
 
 
 @dataclass(frozen=True)
@@ -590,8 +615,8 @@ def read_package_documents(
     record_path = package_root / f"{candidate_id}.record.json"
     publish_path = package_root / f"{candidate_id}.recut.publish.json"
     speaker_path = package_root / f"{candidate_id}.recut.speaker-final.json"
-    record, _ = load_json_document(record_path, label="record")
-    publish, _ = load_json_document(publish_path, label="publish")
+    record, _ = load_json_document(record_path, label="record", review=True)
+    publish, _ = load_json_document(publish_path, label="publish", review=True)
     speaker: dict[str, Any] | None = None
     if _regular_file(speaker_path):
         speaker, _ = load_json_document(speaker_path, label="speaker manifest")
@@ -611,8 +636,9 @@ def read_package_documents(
                 f"candidate_id={story_candidate!r}, import was asked for "
                 f"{candidate_id!r}",
             )
+    chat_path = locate_chat_authority(package_root, candidate_id)
     chat_authority, _ = load_json_document(
-        locate_chat_authority(package_root, candidate_id), label="chat authority"
+        chat_path, label="chat authority", review=True
     )
     uniform_fallback = uniform_host_fallback_declared(record, chat_authority)
     if uniform_fallback != (speaker is None):
@@ -1100,8 +1126,12 @@ def _changed_pointers(
     return set() if before == after else {pointer}
 
 
-def _allowed_changed_pointer(kind: str, pointer: JsonPointer) -> bool:
-    if is_mutable_pointer(kind, pointer):
+def _allowed_changed_pointer(
+    kind: str, pointer: JsonPointer, document: Mapping[str, Any] | None = None
+) -> bool:
+    # ``document`` is the original document; skill-candidate cover locators
+    # are only mutable for a skill.candidates cover.
+    if is_mutable_pointer(kind, pointer, document):
         return True
     return kind == "record" and pointer in {
         ("speaker_finalization_manifest_sha256",),
@@ -1120,7 +1150,7 @@ def _guard_immutable(
     illegal = sorted(
         pointer_text(pointer)
         for pointer in changed
-        if not _allowed_changed_pointer(kind, pointer)
+        if not _allowed_changed_pointer(kind, pointer, source)
     )
     if illegal:
         raise PackageImportError(
@@ -1169,7 +1199,7 @@ def transform_publish(
     mappings = roots.mappings()
     result = copy.deepcopy(dict(source))
     for pointer in PUBLISH_PATH_POINTERS:
-        if get_value(result, pointer) is None:
+        if get_value(result, pointer) is None or not pointer_applies("publish", pointer, result):
             continue
         set_value(
             result,
@@ -1206,7 +1236,7 @@ def transform_record(
     mappings = roots.mappings()
     result = copy.deepcopy(dict(source))
     for pointer in RECORD_PATH_POINTERS:
-        if get_value(result, pointer) is None:
+        if get_value(result, pointer) is None or not pointer_applies("record", pointer, result):
             continue
         if pointer == ("chat_authority_audit_path",):
             replacement: object = chat_target
@@ -1421,8 +1451,18 @@ def relocate_package(
                 "changed_pointers": sorted(
                     pointer_text(pointer)
                     for pointer in _changed_pointers(
-                        json.loads(current_payloads[kind].decode("utf-8")),
-                        json.loads(payload.decode("utf-8")),
+                        _decode_json_document(
+                            current_payloads[kind],
+                            label=f"current {kind}",
+                            review=kind in {"record", "publish"},
+                            directory=package_root,
+                        ),
+                        _decode_json_document(
+                            payload,
+                            label=f"staged {kind}",
+                            review=kind in {"record", "publish"},
+                            directory=package_root,
+                        ),
                     )
                 ),
             }
@@ -1444,7 +1484,9 @@ def relocate_package(
         # speaker-manifest hash.  Relocation rewrites the manifest's locator
         # fields, so the two hashes legitimately diverge; record the lineage
         # instead of touching frozen evidence (87finish precedent).
-        chat_authority, _ = load_json_document(chat_target, label="chat authority")
+        chat_authority, _ = load_json_document(
+            chat_target, label="chat authority", review=True
+        )
         journal["speaker_manifest_lineage"] = {
             "authority": "preserved_chat_pre_relocation_speaker_manifest",
             "chat_speaker_manifest_sha256": str(
@@ -1584,7 +1626,7 @@ def read_bound_package(
     cover_path = _package_internal_cover(package_root, cover_generation)
     declared_cover = cover_generation.get("final_cover")
     same_stem_cover = package_root / f"{documents.upload_stem}.cover.png"
-    # An absolute historical V4 witness may resolve through its old nested
+    # An absolute historical HOST_ONLY witness may resolve through its old nested
     # alias. The relocated runtime locator can already name the exact flat
     # delivery cover; its own regular-file/hash check below still must pass.
     if str(declared_cover or "") == str(same_stem_cover):
@@ -1592,12 +1634,12 @@ def read_bound_package(
     if str(declared_cover or "") != str(cover_path):
         verification = cover_generation.get("final_host_identity_verification")
         alias = Path(str(declared_cover or ""))
-        # Canonical V4 may name the flat delivery copy while generation keeps
+        # Canonical HOST_ONLY may name the flat delivery copy while generation keeps
         # its relocated covers/ alias. Prove BOTH; never open a producer path.
         canonical_flat_alias = bool(
             isinstance(verification, Mapping)
             and verification.get("schema_version")
-            == "lidousha-cover-final-host-identity-verification.v4"
+            == HOST_ONLY_SCHEMA_VERSION
             and verification.get("final_cover_path") == same_stem_cover.name
             and cover_path == same_stem_cover
             and alias.is_absolute()
@@ -1616,7 +1658,7 @@ def read_bound_package(
         declared_alias = require_regular_file(alias, label="declared package cover alias")
         if sha256_file(declared_alias) != verified["final_cover"]:
             raise PackageImportError(
-                "DECLARED_ARTIFACT_SHA_DRIFT", "declared package cover alias differs from canonical V4 cover"
+                "DECLARED_ARTIFACT_SHA_DRIFT", "declared package cover alias differs from canonical HOST_ONLY cover"
             )
     if sha256_file(
         require_regular_file(same_stem_cover, label="same-stem cover")

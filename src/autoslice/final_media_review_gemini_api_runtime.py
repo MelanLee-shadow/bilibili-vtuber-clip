@@ -10,7 +10,7 @@ hidden dual-media sentinel may seal the short-lived raw-AV capability.
 """
 from __future__ import annotations
 
-import hashlib
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import json
 import os
 from pathlib import Path
@@ -117,11 +117,8 @@ def _safe_root(value: str | Path) -> Path:
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return digest
 
 
 def _bound_regular(
@@ -201,20 +198,26 @@ def _manifest(
             "FINAL_MEDIA_REVIEW_GEMINI_API_KEYS_MISSING",
             "at least one configured free Gemini API key is required",
         )
+    from src.autoslice.final_media_review_code_binding import select_code_repo
+    try:
+        code_repo, code_binding = select_code_repo(
+            root, environment, executing_repo=Path(__file__).resolve().parents[2])
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise _error("FINAL_MEDIA_REVIEW_CODE_BINDING_INVALID", str(exc)) from exc
     runner, runner_sha = _bound_regular(
-        root / RUNNER_RELATIVE,
+        code_repo / RUNNER_RELATIVE.relative_to("repo"),
         label="sentinel runner",
         contained_root=root,
         executable=True,
     )
     adapter, adapter_sha = _bound_regular(
-        root / ADAPTER_RELATIVE,
+        code_repo / ADAPTER_RELATIVE.relative_to("repo"),
         label="Gemini API adapter",
         contained_root=root,
         executable=True,
     )
     _bound_regular(
-        root / HELPER_RELATIVE,
+        code_repo / HELPER_RELATIVE.relative_to("repo"),
         label="Gemini Files API helper",
         contained_root=root,
         executable=False,
@@ -228,6 +231,7 @@ def _manifest(
     return (
         {
             "schema_version": SENTINEL_RUNTIME_SCHEMA_VERSION,
+            **({"code_binding": code_binding} if code_binding is not None else {}),
             "capability_id": CAPABILITY_ID,
             "provider": PROVIDER,
             "transport": "content_bound_command",

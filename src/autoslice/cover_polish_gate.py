@@ -364,6 +364,8 @@ def _materialize_screenshot_polish(
         and evidence_dir is not None
     ):
         polished_path = ai_dir / f"{candidate_id}.screenshot-polished.png"
+        request_path = evidence_dir / f"{candidate_id}.cover-polish-request.redacted.json"
+        response_path = evidence_dir / f"{candidate_id}.cover-polish-response.redacted.json"
         polish_attempted = True
         try:
             cpa_result = image_edit(
@@ -372,14 +374,8 @@ def _materialize_screenshot_polish(
                 reference_path=screenshot_base,
                 output_path=polished_path,
                 prompt=_cover_screenshot_polish_prompt(),
-                request_path=(
-                    evidence_dir
-                    / f"{candidate_id}.cover-polish-request.redacted.json"
-                ),
-                response_path=(
-                    evidence_dir
-                    / f"{candidate_id}.cover-polish-response.redacted.json"
-                ),
+                request_path=request_path,
+                response_path=response_path,
             )
         except Exception as exc:
             cpa_result = {
@@ -394,6 +390,11 @@ def _materialize_screenshot_polish(
             overlay_source = polished_path
             method = "screenshot_polish"
             selected_model = str(cpa_result.get("selected_model") or "cpa")
+            # These exact transport artifacts produced the selected polish
+            # pixels. The current wrapper hashes them and rejects absence.
+            cover_generation.update(
+                request_path=str(request_path), response_path=str(response_path),
+            )
             cover_generation["screenshot_polish"] = {
                 "status": "POLISHED",
                 "image_generation_attempted": True,

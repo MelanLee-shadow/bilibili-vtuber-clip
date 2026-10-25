@@ -13,6 +13,8 @@ import re
 from pathlib import Path
 from typing import Mapping
 
+from src.autoslice.first_publication_boundary import BOUNDARY_FIELDS
+
 SCHEMA_VERSION = "new-bv-same-bv-publication-authority.v1"
 _SOURCE_SCHEMA = "new-bv-publication-reconciliation-authority.v1"
 _FIELDS = frozenset({
@@ -20,6 +22,7 @@ _FIELDS = frozenset({
     "bvid", "aid", "cid", "observed_public_title", "title", "title_mode",
     "source_publication", "authority_sha256",
 })
+_OPTIONAL_FIELDS = frozenset({"review_manifest_snapshot"})
 
 
 class NewBvRepairAuthorityError(ValueError):
@@ -45,7 +48,88 @@ def _digest(value: Mapping[str, object]) -> str:
     return "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
-def _replay_source(binding: object) -> dict:
+def _snapshot_binding(
+    manifest: Mapping[str, object], snapshot: object, *, reconciliation
+) -> dict[str, object]:
+    """Validate a portable copy of the original review-manifest binding.
+
+    The source publication remains the original first-publication closure.  A
+    snapshot is only a date/candidate witness for a portable clone, so its
+    bytes must be exactly those bound by the original manifest.
+    """
+
+    _need(
+        isinstance(snapshot, Mapping)
+        and set(snapshot) == {"path", "sha256", "bytes"},
+        "review manifest snapshot binding is invalid",
+    )
+    path = Path(str(snapshot.get("path") or ""))
+    _regular(path)
+    _need(path.stat().st_size <= 8 * 1024 * 1024, "review manifest snapshot is oversized")
+    actual = reconciliation._sha_entry(path)
+    _need(actual == dict(snapshot), "review manifest snapshot drifted")
+    attestation = manifest.get("package_attestation")
+    _need(isinstance(attestation, Mapping), "first manifest has no package_attestation")
+    original = attestation.get("review_manifest")
+    _need(
+        isinstance(original, Mapping)
+        and set(original) == {"path", "sha256", "bytes"},
+        "first manifest review manifest binding is missing",
+    )
+    original_path = Path(str(original.get("path") or ""))
+    _need(
+        original_path.is_absolute()
+        and not original_path.is_symlink()
+        and re.fullmatch(
+            r"(?:sha256:)?[0-9a-f]{64}", str(original.get("sha256") or "")
+        )
+        and type(original.get("bytes")) is int
+        and original["bytes"] >= 0,
+        "first manifest review manifest binding shape is invalid",
+    )
+    _need(
+        actual["sha256"] == original["sha256"]
+        and actual["bytes"] == original["bytes"],
+        "review manifest snapshot is not the original bound review manifest",
+    )
+    return actual
+
+
+def _candidate_and_date(
+    manifest: Mapping[str, object], snapshot: object | None, *, reconciliation
+) -> tuple[str, str]:
+    if snapshot is None:
+        return reconciliation._candidate_and_date(manifest)
+
+    # Force the existing resolver to consume the supplied historical review
+    # bytes while preserving the original package_root and record bindings.
+    # This keeps the resolver's normal identity rules intact; it only replaces
+    # the stale review-manifest file reference.
+    snapshot_entry = _snapshot_binding(manifest, snapshot, reconciliation=reconciliation)
+    attestation = manifest.get("package_attestation")
+    assert isinstance(attestation, Mapping)
+    shadow = dict(manifest)
+    shadow_attestation = dict(attestation)
+    shadow_attestation["review_manifest"] = snapshot_entry
+    shadow["package_attestation"] = shadow_attestation
+    candidate, date = reconciliation._candidate_and_date(shadow)
+    review = reconciliation._load_object(
+        Path(str(snapshot_entry["path"])), "review manifest snapshot"
+    )
+    reconciliation._validate_review_manifest_candidate(review, candidate)
+    review_dates = {
+        str(review[key])
+        for key in ("date", "recording_date")
+        if key in review
+    }
+    _need(
+        len(review_dates) == 1 and next(iter(review_dates)) == date,
+        "review manifest snapshot candidate/date differs from source",
+    )
+    return candidate, date
+
+
+def _replay_source(binding: object, *, review_manifest_snapshot: object | None = None) -> dict:
     from src.autoslice import publication_reconciliation as reconciliation
 
     _need(isinstance(binding, Mapping) and set(binding) == {"path", "sha256", "bytes"},
@@ -69,7 +153,9 @@ def _replay_source(binding: object) -> dict:
         _regular(p)
         paths[key] = reconciliation._validate_sha_entry(entry, key)
     manifest = reconciliation._load_object(paths["manifest"], "first upload manifest")
-    candidate, date = reconciliation._candidate_and_date(manifest)
+    candidate, date = _candidate_and_date(
+        manifest, review_manifest_snapshot, reconciliation=reconciliation
+    )
     replayed, aid, cid = reconciliation._validate_new_public_evidence(
         manifest=manifest, manifest_path=paths["manifest"], bvid=source.get("bvid"),
         public_verify_path=paths["public_verify"],
@@ -90,12 +176,19 @@ def _replay_source(binding: object) -> dict:
 
 def build_new_bv_repair_authority(
     publication_path: Path, *, candidate_id: str, title: str,
+    review_manifest_snapshot: Path | None = None,
+    published_recall_anchor: bool = False,
 ) -> dict[str, object]:
     from src.autoslice.publication_reconciliation import _sha_entry
 
     _regular(publication_path)
     binding = _sha_entry(publication_path)
-    source = _replay_source(binding)
+    snapshot_binding = None
+    if review_manifest_snapshot is not None:
+        snapshot_path = Path(review_manifest_snapshot)
+        _regular(snapshot_path)
+        snapshot_binding = _sha_entry(snapshot_path)
+    source = _replay_source(binding, review_manifest_snapshot=snapshot_binding)
     value = {
         "schema_version": SCHEMA_VERSION,
         "source_kind": "verified_normal_first_publication",
@@ -104,6 +197,11 @@ def build_new_bv_repair_authority(
         "observed_public_title": source["title"], "title": title,
         "title_mode": "verified_package_repair", "source_publication": binding,
     }
+    if snapshot_binding is not None:
+        value["review_manifest_snapshot"] = snapshot_binding
+    if published_recall_anchor:
+        from src.autoslice.first_publication_boundary import publication_boundary_fields
+        value.update(publication_boundary_fields(value))
     value["authority_sha256"] = _digest(value)
     return validate_new_bv_repair_authority(value, candidate_id=candidate_id,
                                            expected_final_title=title)
@@ -112,11 +210,20 @@ def build_new_bv_repair_authority(
 def validate_new_bv_repair_authority(
     value: object, *, candidate_id: str, expected_final_title: str | None = None,
 ) -> dict[str, object]:
-    from src.autoslice.title_policy import publish_title_policy_violations
+    from src.autoslice.title_policy import publish_title_lane, publish_title_policy_violations
 
-    _need(isinstance(value, Mapping) and set(value) == _FIELDS,
+    _need(
+        isinstance(value, Mapping)
+        and _FIELDS.issubset(value)
+        and set(value).issubset(_FIELDS | _OPTIONAL_FIELDS | BOUNDARY_FIELDS)
+        and (not BOUNDARY_FIELDS.intersection(value) or BOUNDARY_FIELDS.issubset(value)),
           "normal same-BV authority schema invalid")
     authority = dict(value)
+    _need(
+        "review_manifest_snapshot" not in authority
+        or isinstance(authority["review_manifest_snapshot"], Mapping),
+        "review manifest snapshot binding is invalid",
+    )
     digest = authority.pop("authority_sha256")
     _need(digest == _digest(authority), "normal same-BV authority hash invalid")
     authority["authority_sha256"] = digest
@@ -128,12 +235,51 @@ def validate_new_bv_repair_authority(
           "normal same-BV authority candidate/schema drifted")
     title = authority["title"]
     _need(isinstance(title, str) and bool(title)
-          and not publish_title_policy_violations(title, lane="talk")
+          and not publish_title_policy_violations(
+              title, lane=publish_title_lane(str(authority["observed_public_title"])))
           and (expected_final_title is None or title == expected_final_title),
           "normal same-BV successor title invalid or drifted")
-    source = _replay_source(authority["source_publication"])
+    source = _replay_source(
+        authority["source_publication"],
+        review_manifest_snapshot=authority.get("review_manifest_snapshot"),
+    )
     for key in ("candidate_id", "recording_date", "bvid", "aid", "cid"):
         _need(authority[key] == source[key], "normal same-BV target identity drifted")
     _need(authority["observed_public_title"] == source["title"],
           "normal same-BV original title drifted")
+    if BOUNDARY_FIELDS.intersection(authority):
+        from src.autoslice.first_publication_boundary import validate_boundary_fields
+        validate_boundary_fields(authority)
     return authority
+
+
+def replay_first_publication_manifest(authority: Mapping[str, object]) -> dict:
+    """Load the original manifest after replaying the authority closure.
+
+    Callers must validate the authority with
+    :func:`validate_new_bv_repair_authority` first.  This helper deliberately
+    returns the source manifest, rather than a successor package projection,
+    so cover-only consumers can compare immutable media and subtitle bytes.
+    """
+
+    from src.autoslice import publication_reconciliation as reconciliation
+
+    _need(isinstance(authority, Mapping), "normal same-BV authority is invalid")
+    source = _replay_source(
+        authority.get("source_publication"),
+        review_manifest_snapshot=authority.get("review_manifest_snapshot"),
+    )
+    evidence = source.get("evidence")
+    _need(isinstance(evidence, Mapping), "first-publication evidence closure is missing")
+    manifest_entry = evidence.get("manifest")
+    _need(isinstance(manifest_entry, Mapping), "first-publication manifest evidence is missing")
+    for key in ("candidate_id", "recording_date", "bvid", "aid", "cid"):
+        _need(authority.get(key) == source.get(key), "normal same-BV target identity drifted")
+    _need(
+        authority.get("observed_public_title") == source.get("title"),
+        "normal same-BV original title drifted",
+    )
+    return reconciliation._load_object(
+        Path(str(manifest_entry.get("path") or "")),
+        "first upload manifest",
+    )

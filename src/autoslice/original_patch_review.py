@@ -28,7 +28,10 @@ def _bindings(root, audit_path, *, repo_root=ROOT):
         and saved.get("blocking_issue_count") == current.get("blocking_issue_count") == 0,
         "original technical package audit not passed",
     )
-    need(audit_content_binding(saved) == audit_content_binding(current), "technical audit drift")
+    saved_content, current_content = audit_content_binding(saved), audit_content_binding(current)
+    saved_content.pop("root", None)
+    current_content.pop("root", None)
+    need(saved_content == current_content, "technical audit drift")
     return {
         "closure": closure,
         "review_manifest_sha256": sha_file(Path(root) / "review_manifest.json"),

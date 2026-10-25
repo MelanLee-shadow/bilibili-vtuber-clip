@@ -537,6 +537,11 @@ def render_plan(plan: Mapping[str, object], output: Path, *, work_dir: Path) -> 
                 "source_media_sha256": media_hashes[media_path],
                 "source_core_interval_ms": [piece["core_start_ms"], piece["core_end_ms"]],
                 "source_interval_ms": [piece["cut_start_ms"], piece["cut_end_ms"]],
+                "terminal_tail_evidence": (
+                    dict(piece["terminal_tail_evidence"])
+                    if isinstance(piece.get("terminal_tail_evidence"), Mapping)
+                    else None
+                ),
                 "transcript_authorities": list(piece.get("transcript_authorities") or []),
                 "speaker_authority": piece.get("speaker_authority"),
                 "speaker_confidence": piece.get("speaker_confidence"),
@@ -594,6 +599,7 @@ def render_plan(plan: Mapping[str, object], output: Path, *, work_dir: Path) -> 
         "normalized_target": plan["normalized_target"],
         "verified_plan_sha256": plan["verified_plan_sha256"],
         "quality": plan["quality"],
+        "acceptance_status": str(plan.get("acceptance_status") or "READY_FOR_REVIEW"),
         "pieces": piece_records,
         "artifacts": {
             "video": {

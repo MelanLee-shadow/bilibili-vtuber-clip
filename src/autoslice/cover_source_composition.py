@@ -9,6 +9,7 @@ before any image generation is attempted.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import hashlib
 import json
 import math
@@ -178,7 +179,7 @@ def resolve_cover_scene_kind(
 
 
 def _sha256(path: Path) -> str:
-    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    return "sha256:" + _evidence_file_sha256(path)
 
 
 def _canonical_sha256(value: object) -> str:
@@ -846,6 +847,7 @@ def extract_authority_source_crop(
     verification: Mapping[str, object],
     verification_receipt_path: Path,
     verification_receipt_sha256: str,
+    identity_reference_only: bool = False,
 ) -> dict[str, object]:
     """Crop exact reference pixels around the CPA identity bbox.
 
@@ -884,7 +886,7 @@ def extract_authority_source_crop(
             verification_receipt_path=verification_receipt_path,
             verification_receipt_sha256=verification_receipt_sha256,
         )
-    if (
+    if not identity_reference_only and (
         verdict.get("source_face_complete") is not True
         or verdict.get("faithful_crop_can_make_dominant") is not True
     ):
@@ -894,16 +896,29 @@ def extract_authority_source_crop(
         raise ValueError(BBOX_INVALID)
     with Image.open(reference_path) as raw_image:
         source = raw_image.convert("RGB")
-    crop_box = _bbox_crop_box(
-        bbox,
-        width=source.width,
-        height=source.height,
+    # Redraw reference pixels are identity evidence, not a finished 16:9
+    # composition. Expanding a small host window to 16:9 imports adjacent game
+    # characters (including their outfits) into the generator's reference.
+    # Keep the witnessed bbox at its original aspect ratio; the full frame
+    # remains the reference for the separate final identity comparison.
+    crop_box = (
+        (
+            max(0, int(math.floor(bbox[0] * source.width))),
+            max(0, int(math.floor(bbox[1] * source.height))),
+            min(source.width, int(math.ceil(bbox[2] * source.width))),
+            min(source.height, int(math.ceil(bbox[3] * source.height))),
+        )
+        if identity_reference_only
+        else _bbox_crop_box(bbox, width=source.width, height=source.height)
     )
     crop_strategy = "BOUNDED_16_9_FACE_MARGIN"
     foreground_box: list[int] | None = None
     full_frame_degeneracy_avoided = False
     status = IDENTITY_CARD_STATUS
-    if _box_is_full_frame(crop_box, width=source.width, height=source.height):
+    if identity_reference_only:
+        cropped = source.crop(crop_box)
+        crop_strategy = "EXACT_IDENTITY_BBOX_REDRAW_REFERENCE"
+    elif _box_is_full_frame(crop_box, width=source.width, height=source.height):
         identity_crop_box = _bbox_identity_card_crop_box(
             bbox,
             width=source.width,

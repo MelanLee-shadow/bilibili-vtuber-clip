@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .review_evidence_store import cold_input
+
 import hashlib
 import re
 from typing import Mapping
@@ -19,11 +21,20 @@ from src.autoslice.exact_final_witness_authority import (
     GATE_SCHEMA as _HISTORY_CONVERGENCE_GATE_SCHEMA,
     REQUIRED_REASON as _HISTORY_CONVERGENCE_REQUIRED_REASON,
 )
+from src.autoslice.exact_final_convergence import (
+    exact_final_convergence_memo_identity,
+    valid_exact_final_convergence_memo_binding,
+)
 from src.autoslice.unreadable_span_policy import (
     unreadable_cue_drop_audit_problem,
 )
+from src.autoslice.exact_final_cpa_history import (
+    FINAL_IDENTITY_MISMATCH, CHAIN_TERMINAL_MISMATCH,
+    read_successors, ordered_successors,
+)
 
 SCHEMA_VERSION = "final-review-audit.v2"
+CURRENT_UTTERANCE_KEEP_BRANCH = 'JUDGE_KEEPS_CURRENT'
 EXACT_FINAL_CPA_SELF_HEAL_SOFT_REPAIR_PASSES = 5
 # Compatibility for historical callers; this number is no longer a cutoff.
 EXACT_FINAL_CPA_SELF_HEAL_MAX_REPAIR_PASSES = EXACT_FINAL_CPA_SELF_HEAL_SOFT_REPAIR_PASSES
@@ -31,15 +42,18 @@ _SHA256_RX = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class FinalReviewContractError(ValueError):
-    def __init__(self, reason_code: str) -> None:
+    def __init__(self, reason_code: str, **context) -> None:
         self.reason_code = reason_code
-        super().__init__(reason_code)
+        self.context = context
+        super().__init__(reason_code + (f": {context}" if context else ""))
 
 
+@cold_input
 def _validate_exact_final_cpa_self_heal(
     audit: Mapping[str, object],
     *,
     expected_srt_sha256: str | None,
+    allow_pending: bool = False,
 ) -> None:
     receipt = audit.get("exact_final_cpa_self_heal")
     if receipt is None:
@@ -48,12 +62,21 @@ def _validate_exact_final_cpa_self_heal(
         not isinstance(receipt, Mapping)
         or receipt.get("schema_version")
         != "exact-final-cpa-self-heal-audit.v1"
-        or receipt.get("status") != "PASS"
+        or receipt.get("status") not in (
+            {"PASS", "REVIEW_PENDING"} if allow_pending else {"PASS"}
+        )
     ):
         raise FinalReviewContractError(
             "EXACT_FINAL_CPA_SELF_HEAL_AUDIT_INVALID"
         )
-    final_sha256 = str(receipt.get("final_srt_sha256") or "")
+    # A resumed private run may retain actual applied repairs before the next
+    # complete review. Validate that chain against the active bytes without
+    # giving it a release verdict. Public acceptance still requires PASS.
+    final_sha256 = str(
+        expected_srt_sha256
+        if allow_pending and receipt.get("status") == "REVIEW_PENDING"
+        else receipt.get("final_srt_sha256") or ""
+    )
     if (
         _SHA256_RX.fullmatch(final_sha256) is None
         or (
@@ -62,7 +85,7 @@ def _validate_exact_final_cpa_self_heal(
         )
     ):
         raise FinalReviewContractError(
-            "EXACT_FINAL_CPA_SELF_HEAL_FINAL_HASH_MISMATCH"
+            FINAL_IDENTITY_MISMATCH, expected=expected_srt_sha256, actual=final_sha256,
         )
     passes = receipt.get("passes")
     if (
@@ -72,8 +95,18 @@ def _validate_exact_final_cpa_self_heal(
         raise FinalReviewContractError(
             "EXACT_FINAL_CPA_SELF_HEAL_AUDIT_INVALID"
         )
+    from src.autoslice.span_phoneme_resolution import validate_persisted_judge_scopes
+    try:
+        validate_persisted_judge_scopes(receipt)
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        raise FinalReviewContractError("FINAL_REVIEW_SPAN_COMPILATION_INVALID") from exc
     previous_output: str | None = None
-    seen_inputs: set[str] = set()
+    try:
+        successors = read_successors(receipt)
+    except ValueError as exc:
+        raise FinalReviewContractError(str(exc)) from exc
+    seen_hashes: set[str] = set()
+    seen_memo_ids: set[str] = set()
     for expected_index, pass_receipt in enumerate(passes, start=1):
         if (
             not isinstance(pass_receipt, Mapping)
@@ -95,7 +128,6 @@ def _validate_exact_final_cpa_self_heal(
             _SHA256_RX.fullmatch(input_sha256) is None
             or _SHA256_RX.fullmatch(output_sha256) is None
             or input_sha256 == output_sha256
-            or output_sha256 in seen_inputs
             or (
                 previous_output is not None
                 and input_sha256 != previous_output
@@ -106,8 +138,20 @@ def _validate_exact_final_cpa_self_heal(
             raise FinalReviewContractError(
                 "EXACT_FINAL_CPA_SELF_HEAL_AUDIT_INVALID"
             )
-        seen_inputs.add(input_sha256)
         for repair in repairs:
+            if isinstance(repair, Mapping):
+                from src.autoslice.span_finding_obligations import validate_span_repair
+                try:
+                    validate_span_repair(repair)
+                except (ValueError, KeyError, TypeError) as exc:
+                    raise FinalReviewContractError("SPAN_SELF_HEAL_REPAIR_INVALID") from exc
+            if isinstance(repair, Mapping) and (repair.get("repair_class") == "editorial_rendering"
+                                                 or repair.get("editorial_authority") is not None):
+                from src.autoslice.editorial_subtitle import validate_repair
+                try:
+                    validate_repair(repair)
+                except (ValueError, KeyError, TypeError) as exc:
+                    raise FinalReviewContractError("EDITORIAL_SELF_HEAL_INVALID") from exc
             mutation = (
                 repair.get("mutation_authority")
                 if isinstance(repair, Mapping)
@@ -128,9 +172,10 @@ def _validate_exact_final_cpa_self_heal(
                 if isinstance(repair, Mapping)
                 else None
             )
+            from src.autoslice.editorial_subtitle import valid_display_omission_repair
             typed_drop = bool(
                 isinstance(repair, Mapping)
-                and valid_inaudible_drop_repair(repair)
+                and (valid_inaudible_drop_repair(repair) or valid_display_omission_repair(repair))
             )
             witness = (
                 repair.get("acoustic_witness")
@@ -147,6 +192,17 @@ def _validate_exact_final_cpa_self_heal(
                 isinstance(repair, Mapping)
                 and valid_inaudible_override_repair(repair)
             )
+            judge = repair.get("judge") if isinstance(repair, Mapping) else None
+            if (
+                isinstance(judge, Mapping)
+                and judge.get("decision_contract")
+                == "current-proposed-candidate-id-neither.v1"
+                and judge.get("choice") == "PROPOSED"
+                and judge.get("selected_candidate_text") != after
+            ):
+                raise FinalReviewContractError(
+                    "EXACT_FINAL_CPA_SELECTED_TRANSCRIPT_MISMATCH"
+                )
             if (
                 not isinstance(repair, Mapping)
                 or repair.get("schema_version")
@@ -196,10 +252,75 @@ def _validate_exact_final_cpa_self_heal(
                 raise FinalReviewContractError(
                     "EXACT_FINAL_CPA_SELF_HEAL_REPAIR_INVALID"
                 )
+        memo_ids_this_pass: set[str] = set()
+        for repair in repairs:
+            memo_keys = [
+                key
+                for key in (
+                    "exact_final_cpa_cycle_memo",
+                    "exact_final_cpa_convergence_memo",
+                )
+                if repair.get(key) is not None
+            ]
+            if len(memo_keys) > 1:
+                raise FinalReviewContractError(
+                    "EXACT_FINAL_CPA_SELF_HEAL_CYCLE_RETURN_INVALID"
+                )
+            if not memo_keys:
+                continue
+            memo = repair[memo_keys[0]]
+            memo_id = (
+                exact_final_convergence_memo_identity(memo)
+                if isinstance(memo, Mapping)
+                else None
+            )
+            if memo_id is None:
+                raise FinalReviewContractError(
+                    "EXACT_FINAL_CPA_SELF_HEAL_CYCLE_RETURN_BINDING_INVALID"
+                )
+            if memo_id in seen_memo_ids or memo_id in memo_ids_this_pass:
+                raise FinalReviewContractError(
+                    "EXACT_FINAL_CPA_SELF_HEAL_CYCLE_RETURN_MEMO_REPLAY"
+                )
+            if not valid_exact_final_convergence_memo_binding(
+                memo,
+                input_srt_sha256=input_sha256,
+                before_text=repair["before"],
+                after_text=repair["after"],
+                before_sha256=repair["before_sha256"],
+                after_sha256=repair["after_sha256"],
+                matched_start_ms=repair.get("matched_start_ms"),
+                matched_end_ms=repair.get("matched_end_ms"),
+            ):
+                raise FinalReviewContractError(
+                    "EXACT_FINAL_CPA_SELF_HEAL_CYCLE_RETURN_BINDING_INVALID"
+                )
+            memo_ids_this_pass.add(memo_id)
+        if output_sha256 in seen_hashes and len(memo_ids_this_pass) != len(repairs):
+            raise FinalReviewContractError(
+                "EXACT_FINAL_CPA_SELF_HEAL_CYCLE_RETURN_UNAUTHORIZED"
+            )
+        seen_memo_ids.update(memo_ids_this_pass)
+        seen_hashes.add(input_sha256)
+        seen_hashes.add(output_sha256)
         previous_output = output_sha256
+        # Each independently replayed transform must consume the actual prior
+        # bytes. Source extension and visual filtering may occur in either
+        # order; a missing or ambiguous link must never become a release PASS.
+        try:
+            ordered = ordered_successors(successors.get(expected_index, []), previous_output)
+        except ValueError as exc:
+            raise FinalReviewContractError(str(exc), pass_index=expected_index,
+                actual=previous_output,
+                transform_types=[r["schema_version"] for r in successors.get(expected_index, [])]) from exc
+        for successor in ordered:
+            previous_output = successor["output_srt_sha256"]
+            seen_hashes.add(previous_output)
     if previous_output != final_sha256:
         raise FinalReviewContractError(
-            "EXACT_FINAL_CPA_SELF_HEAL_FINAL_HASH_MISMATCH"
+            CHAIN_TERMINAL_MISMATCH, expected=final_sha256, actual=previous_output,
+            pass_index=len(passes),
+            transform_types=[r["schema_version"] for r in successors.get(len(passes), [])],
         )
 
 
@@ -230,6 +351,11 @@ def _validate_review_integrity(audit, *, expected_srt_sha256):
         raise FinalReviewContractError(
             "FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID"
         )
+    from src.autoslice.span_phoneme_resolution import validate_persisted_judge_scopes
+    try:
+        validate_persisted_judge_scopes(audit)
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        raise FinalReviewContractError("FINAL_REVIEW_SPAN_COMPILATION_INVALID") from exc
     if unconsumed_correction_carryover_count(audit):
         raise FinalReviewContractError(
             "FINAL_REVIEW_CARRYOVER_UNCONSUMED"
@@ -344,12 +470,16 @@ def _validate_review_geometry(audit, *, expected_srt_sha256):
         raise FinalReviewContractError(unreadable_problem)
 
 
+@cold_input
 def validate_final_review_release(
     audit: object,
     *,
     expected_srt_sha256: str | None = None,
 ) -> dict[str, object]:
     """Validate a positive receipt; every other state is a release block."""
+    from src.autoslice.final_review_meaning_policy import POLICY_VERSION
+    if not isinstance(audit, Mapping) or audit.get("meaning_policy") != POLICY_VERSION:
+        raise FinalReviewContractError("FINAL_REVIEW_MEANING_POLICY_REVIEW_REQUIRED")
 
     if isinstance(audit, Mapping) and audit.get("schema_version") == "b2-caption-final-review-successor.v1":
         from src.autoslice.b2_caption_formal_successor import (
@@ -394,6 +524,17 @@ def validate_final_review_release(
         from src.autoslice.operator_preserved_final_review import validate_preserved_review
         return validate_preserved_review(audit, expected_srt_sha256=expected_srt_sha256)
     _validate_review_integrity(audit, expected_srt_sha256=expected_srt_sha256)
+    from src.autoslice.span_finding_obligations import validate_release_obligations
+    from .finding_lifecycle import REVIEW_PENDING, release_reason_codes
+    pending_obligations = False
+    try:
+        validate_release_obligations(audit)
+    except (ValueError, KeyError, TypeError) as exc:
+        if str(exc) != REVIEW_PENDING:
+            raise FinalReviewContractError(str(exc)) from exc
+        # An unresolved obligation still blocks release, but it must not hide
+        # a more specific engineering failure or required edit on that finding.
+        pending_obligations = True
     findings = audit.get("findings")
     if not isinstance(findings, list):
         raise FinalReviewContractError("FINAL_REVIEW_FINDINGS_CONTRACT_INVALID")
@@ -405,7 +546,14 @@ def validate_final_review_release(
     ):
         raise FinalReviewContractError("FINAL_REVIEW_FINDINGS_CONTRACT_INVALID")
     if findings:
-        raise FinalReviewContractError("FINAL_REVIEW_UNRESOLVED_FINDINGS")
+        try:
+            codes = release_reason_codes(findings, terminal=bool(audit.get('terminal_funnel')))
+        except ValueError as exc:
+            raise FinalReviewContractError(str(exc)) from exc
+        raise FinalReviewContractError(codes[0] if codes else "FINAL_REVIEW_FINDINGS_CONTRACT_INVALID")
+    if pending_obligations:
+        raise FinalReviewContractError(REVIEW_PENDING)
+
 
 
 
@@ -416,10 +564,22 @@ def validate_final_review_release(
                 "FINAL_REVIEW_FINDINGS_CONTRACT_INVALID"
             )
         for row in disclosed:
-            if not is_keep_current_disclosed(row):
+
+
+
+            if not is_release_resolved_keep(row):
                 raise FinalReviewContractError(
                     "FINAL_REVIEW_FINDINGS_CONTRACT_INVALID"
                 )
+            if isinstance(row, Mapping) and row.get("current_content_risk") is not None:
+                assessment = row["current_content_risk"]
+                if (not isinstance(assessment, Mapping)
+                        or assessment.get("reviewed_srt_sha256") != audit.get("reviewed_srt_sha256")):
+                    raise FinalReviewContractError("FINAL_REVIEW_CURRENT_RISK_DRIFT")
+            if isinstance(row, Mapping) and row.get("candidate_content_risk") is not None:
+                from src.autoslice.final_review_candidate_risk import candidate_risk_assessment_valid
+                if not candidate_risk_assessment_valid(row, srt_sha256=audit.get("reviewed_srt_sha256")):
+                    raise FinalReviewContractError("FINAL_REVIEW_CANDIDATE_RISK_DRIFT")
     _validate_review_geometry(audit, expected_srt_sha256=expected_srt_sha256)
     if audit.get("release_gate") != "PASS" or audit.get("status") != "CLEAN":
         raise FinalReviewContractError("FINAL_REVIEW_RELEASE_GATE_BLOCKED")
@@ -449,7 +609,7 @@ def validate_final_review_release(
 _DECIDED_KEEP_CURRENT_BRANCHES = frozenset(
     {
         # judge 明确选 CURRENT。
-        "JUDGE_KEEPS_CURRENT",
+        CURRENT_UTTERANCE_KEEP_BRANCH,
 
 
 
@@ -595,21 +755,321 @@ def decided_history_convergence_disclosure(
     )
 
 
+def current_noncritical_editorial_assessment(
+    finding: object, *, expected_srt_sha256: str | None = None,
+) -> bool:
+    """A completed current content judgment makes presentation optional.
+
+    This never resolves the transport status of an earlier optional attempt.
+    Other adjudication lanes and any applied mutation keep their own gates.
+    """
+    if not isinstance(finding, Mapping) or finding.get("repair_class") != "editorial_rendering":
+        return False
+    from src.autoslice.final_review_meaning_policy import current_meaning_equivalent
+    if not current_meaning_equivalent(finding, expected_srt_sha256=expected_srt_sha256):
+        return False
+    assessment = finding.get("current_content_risk")
+    digest = assessment.get("reviewed_srt_sha256")
+    if (assessment.get("schema_version") != "subtitle-current-content-risk.v2"
+            or assessment.get("status") != "COMPLETE"
+            or assessment.get("decision_authority") != "CURRENT_FINAL_REVIEW"
+            or _SHA256_RX.fullmatch(str(digest or "")) is None
+            or (expected_srt_sha256 is not None and digest != expected_srt_sha256)
+            or type(finding.get("cue_index")) is not int
+            or finding["cue_index"] < 1
+            or assessment.get("cue_index") != finding["cue_index"]
+            or re.fullmatch(r"[0-9a-f]{64}", str(finding.get("base_text_sha256") or "")) is None
+            or assessment.get("base_text_sha256") != finding["base_text_sha256"]
+            or assessment.get("content_risk") != "noncritical_uncertainty"
+            or finding.get("content_risk") != "noncritical_uncertainty"
+            or not isinstance(finding.get("risk_basis"), str) or not finding["risk_basis"].strip()
+            or assessment.get("risk_basis") != finding["risk_basis"]):
+        return False
+    adjudication = finding.get("exact_release_adjudication")
+    if adjudication is None:
+        adjudication = finding.get("context_audio_adjudication")
+    return adjudication is None or (isinstance(adjudication, Mapping)
+        and adjudication.get("schema_version") == "subtitle-editorial-adjudication.v1"
+        and adjudication.get("status") == "UNCERTAIN"
+        and adjudication.get("repaired") is False
+        and adjudication.get("timing_immutable") is True
+        and not adjudication.get("mutation_authority"))
+
+
+def pending_noncritical_repair(finding: object) -> bool:
+    """Lack of a candidate or plan is never evidence of meaning equivalence."""
+    from src.autoslice.final_review_meaning_policy import current_meaning_equivalent
+    return bool(isinstance(finding, Mapping)
+        and finding.get("content_risk") == "noncritical_uncertainty"
+        and not current_meaning_equivalent(finding))
+
+
+def undecided_witness_nomination(finding: object) -> bool:
+    """An independent-witness wording nomination that no exact adjudication decided.
+
+    维护者 10-16: where the audio is clear the subtitle must be the spoken words.
+    A deterministic nomination from the independent dictation witness therefore
+    cannot be waved through as "non-critical / meaning-equivalent": audio plus
+    the CPA judge must pick CURRENT or the witness wording first. This
+    witness-specific discovery check does not exempt other proposal kinds:
+    final release still requires every doubt to be resolved under
+    ``is_audio_decided_keep_current`` and the ordinary repair gates.
+    """
+    if not isinstance(finding, Mapping):
+        return False
+    provenance = finding.get("candidate_provenance")
+    if not (isinstance(provenance, Mapping)
+            and provenance.get("kind") == "subtitle_audio_witness_disagreement"):
+        return False
+    adjudication = finding.get("exact_release_adjudication")
+    if adjudication is None:
+        adjudication = finding.get("context_audio_adjudication")
+    return not isinstance(adjudication, Mapping) or not adjudication
+
+
+def is_noncritical_disclosed(finding: object) -> bool:
+    """Classify legacy noncritical disclosures without resolving transport loss.
+
+    This compatibility predicate is not release permission. Current final
+    release consumers use ``is_release_resolved_keep`` instead. It does
+    not authorize a mutation or clear an ambiguous historical request.
+    """
+    if not isinstance(finding, Mapping):
+        return False
+    if undecided_witness_nomination(finding):
+        return False
+    from src.autoslice.final_review_meaning_policy import current_meaning_equivalent
+    if not current_meaning_equivalent(finding):
+        return False
+    if (finding.get("content_risk") != "noncritical_uncertainty"
+            or not isinstance(finding.get("risk_basis"), str)
+            or not finding["risk_basis"].strip()):
+        return False
+    from src.autoslice.final_review_candidate_risk import (
+        needs_candidate_content_review, candidate_risk_assessment_valid,
+    )
+    if (finding.get("candidate_content_risk_required") is True
+            and needs_candidate_content_review(finding) and not candidate_risk_assessment_valid(finding)):
+        return False
+    adjudication = finding.get("exact_release_adjudication")
+    if adjudication is None:
+        adjudication = finding.get("context_audio_adjudication")
+    if adjudication is None:
+        adjudication = {}
+    if not isinstance(adjudication, Mapping) or adjudication.get("repaired") is True:
+        return False
+    mutation = adjudication.get("mutation_authority")
+    if isinstance(mutation, Mapping) and mutation.get("status") != "NOT_APPLIED":
+        return False
+    if current_noncritical_editorial_assessment(finding):
+        return True
+    if pending_noncritical_repair(finding):
+        return False
+    if adjudication.get("status") in {"ERROR", "OUTCOME_UNKNOWN", "STARTED", "SKIPPED_PROVIDER_DISABLED"}:
+        return False
+    progress = adjudication.get("semantic_retry_progress")
+    if isinstance(progress, Mapping):
+        if "UNKNOWN" in str(progress.get("status") or ""):
+            return False
+        for event in progress.get("events", []):
+            if isinstance(event, Mapping) and any("UNKNOWN" in str(event.get(key) or "")
+                                                 for key in ("status", "reason_code", "event", "outcome")):
+                return False
+    reason = str(adjudication.get("reason_code") or "")
+    if (adjudication.get('schema_version') == 'subtitle-editorial-adjudication.v1'
+            and adjudication.get('status') == 'UNCERTAIN'
+            and adjudication.get('timing_immutable') is True
+            and reason in {'EDITORIAL_AUDIO_UNAVAILABLE', 'EDITORIAL_FACT_OR_NOOP_INVALID'}):
+        # A failed optional edit grants no mutation. A current, explicit
+        # noncritical ruling can disclose the unchanged text; it is not an
+        # editorial PASS or an assertion that the missing audio was consumed.
+        return True
+    if reason == "RetryNeedsPlan":
+        # Requiring a useful plan for *another* provider call is not a content
+        # error in the unchanged current bytes. A current noncritical ruling
+        # can disclose this deliberate no-dispatch decision without resetting
+        # history or claiming any old request was never sent.
+        events = progress.get("events") if isinstance(progress, Mapping) else None
+        return bool(
+            isinstance(progress, Mapping)
+            and progress.get("schema_version") == "semantic-retry-progress.v1"
+            and progress.get("status") == "CONTINUATION_VALUE_PLAN_REQUIRED"
+            and progress.get("mutation_authorized") is False
+            and isinstance(events, list) and events
+            and all(isinstance(event, Mapping)
+                    and event.get("status") == "CONTINUATION_VALUE_PLAN_REQUIRED"
+                    and type(event.get("provider_calls")) is int and event["provider_calls"] == 0
+                    for event in events)
+        )
+    if any(token in reason.upper() for token in (
+        "TIMEOUT", "CONNECTION", "OUTCOME_UNKNOWN", "PROVIDER_UNAVAILABLE",
+        "RETRYNEEDSPLAN", "UNAVAILABLE", "INVALID", "DRIFT", "CACHEMISS",
+    )):
+        return False
+    if not adjudication:
+        return True
+    timing_immutable = (adjudication.get("timing_immutable") is True
+                        or finding.get("timing_immutable") is True)
+    return (decided_keep_current_adjudication(adjudication, timing_immutable=timing_immutable)
+            or decided_history_convergence_disclosure(adjudication, timing_immutable=timing_immutable))
+
+
 def is_keep_current_disclosed(finding: object) -> bool:
-    """A completed keep-current adjudication ships with disclosure.
+    """Whether a row already sitting in a disclosed list is a legitimate disclosure.
 
-    Requires the full closed-set chain to have OBSERVED with a *decided*
-    KEEP_CURRENT branch, no mutation applied and the timeline untouched.
+    Consumers that re-check an existing ``unresolved_findings_disclosed`` row
+    (continuation input, carryover consumption, postburn evidence, operator
+    preserved review) ask this. It is the legacy noncritical classification
+    plus the release union ``is_release_resolved_keep``: a completed audio
+    KEEP_CURRENT ruling, or SUB-18's exhausted-audio meaning-equivalent keep.
     Infra incompleteness (witness/judge/pinyin backend unavailable, stale
-    base, invalid response, budget skip) stays a blocker: those branches are
-    machinery failing to decide, not a decision.
+    base, invalid response, budget skip) stays a blocker.
 
-    第二个出口是史收敛降级——见
-    ``decided_history_convergence_disclosure``。它只放行「耳朵已给出 OBSERVED
-    观测、见证门用证据否掉改写、零字节变更」的那一半，同一条界线原样成立。
+    It is not the exact-final bucket: deciding whether a *new* row may enter
+    the disclosed list uses ``is_release_resolved_keep`` alone (维护者
+    a bare noncritical / meaning-equivalence label is no ruling).
+    """
+
+    return is_noncritical_disclosed(finding) or is_release_resolved_keep(finding)
+
+
+SUB18_KEEP_BRANCH = "SUB18_CONTEXT_MEANING_EQUIVALENT_KEEP"
+SUB18_KEEP_SCHEMA = "sub18-context-meaning-equivalent-keep.v1"
+SUB18_KEEP_RULE = ('公开规则：如果有哪些真的听不清，但是你发现语义完全符合，语境完全符合，不会有任何的问题，那么那个小错是可以发的。(GOAL-03/SUB-18)')
+
+
+@cold_input
+def is_sub18_context_meaning_equivalent_keep(finding: object) -> bool:
+    """SUB-18 second terminal form: a kept small error that cannot change meaning.
+
+    Only after the audio material is exhausted (the sealed no-gain proof and
+    its material-exhaustion record), only for ``noncritical_uncertainty``
+    (``meaning_reversal`` never), only with complete typed
+    ``subtitle-current-content-risk.v2`` meaning-equivalence evidence bound to
+    the reviewed subtitle, the context basis it cites, and the
+    UNRESOLVED_BY_AUDIO disclosure. Every field is re-checked here; nothing is
+    inferred from a branch name. ``is_audio_decided_keep_current`` keeps its
+    own meaning; release consumers ask for the union below.
+    无增益证明必须是本句的证明（anchor 的当前句与整片字幕哈希须与本行一致），他句的证明不能挪用。
+    """
+
+    def _bare_sha(value):
+        return value.removeprefix("sha256:") if isinstance(value, str) else None
+
+    if not isinstance(finding, Mapping) or finding.get("content_risk") != "noncritical_uncertainty":
+        return False
+    from src.autoslice.final_review_meaning_policy import current_meaning_equivalent
+    from src.autoslice import targeted_relisten as relisten
+    if not current_meaning_equivalent(finding):
+        return False
+    adjudication = finding.get("exact_release_adjudication")
+    if not isinstance(adjudication, Mapping):
+        adjudication = finding.get("context_audio_adjudication")
+    if not isinstance(adjudication, Mapping):
+        return False
+    if adjudication.get('terminal_review'):
+        from src.autoslice.semantic_terminal_adjudication import terminal_keep_matches
+        try:
+            if not terminal_keep_matches(finding, adjudication):
+                return False
+        except (ValueError, TypeError, KeyError, AttributeError):
+            return False
+    mutation = adjudication.get("mutation_authority")
+    receipt = adjudication.get("sub18_context_meaning_equivalent_keep")
+    risk = finding.get("current_content_risk") or {}
+    if not (adjudication.get("schema_version") == "subtitle-span-adjudication.v1"
+            and adjudication.get("policy_branch") == SUB18_KEEP_BRANCH
+            and adjudication.get("repaired") is False
+            and adjudication.get("timing_immutable") is True
+            and isinstance(mutation, Mapping) and mutation.get("status") == "NOT_APPLIED"
+            and mutation.get("basis") == SUB18_KEEP_BRANCH
+            and isinstance(receipt, Mapping)):
+        return False
+    proof = receipt.get("no_gain_proof")
+    if (isinstance(proof, Mapping) and proof.get('proof_kind') == relisten.LOOP_STOP_KIND
+            and not adjudication.get('terminal_review')):
+        return False  # A loop-stop proof cannot fall back to an unjudged legacy keep.
+    consistency = receipt.get("context_consistency")
+    try:
+        return bool(
+            receipt.get("schema_version") == SUB18_KEEP_SCHEMA
+            and receipt.get("rule") == SUB18_KEEP_RULE
+            and receipt.get("audio_resolution") == "UNRESOLVED_BY_AUDIO"
+            and receipt.get("literal_transcription") is False
+            and receipt.get("mutation_authorized") is False
+            and receipt.get("content_risk") == "noncritical_uncertainty"
+            and receipt.get("cue_index") == finding.get("cue_index")
+            and receipt.get("base_text_sha256") == finding.get("base_text_sha256")
+            and receipt.get("reviewed_srt_sha256") == risk.get("reviewed_srt_sha256")
+            and receipt.get("meaning_equivalence") == risk.get("meaning_equivalence")
+            and isinstance(consistency, Mapping)
+            and consistency.get("status") == "CONTEXT_FULLY_CONSISTENT"
+            and consistency.get("context_basis") == (risk.get("meaning_equivalence") or {}).get("context_basis")
+            and consistency.get("evidence_cue_ids") == (risk.get("meaning_equivalence") or {}).get("evidence_cue_ids")
+            and isinstance(consistency.get("no_gain_context_refs"), list) and consistency["no_gain_context_refs"]
+            and isinstance(proof, Mapping)
+            and proof.get("schema_version") == relisten.NO_GAIN_SCHEMA
+            and proof.get("mutation_authorized") is False
+            and proof.get("audio_resolution") == "UNRESOLVED_BY_AUDIO"
+            and proof.get("proof_sha256") == relisten.digest(
+                {k: v for k, v in proof.items() if k != "proof_sha256"})
+            and isinstance(proof.get("anchor"), Mapping)
+            and proof["anchor"].get("current_cue_sha256") == finding.get("base_text_sha256")
+            and _bare_sha(proof["anchor"].get("current_srt_sha256"))
+            and _bare_sha(risk.get("reviewed_srt_sha256"))
+            and _bare_sha(proof["anchor"].get("current_srt_sha256"))
+                == _bare_sha(risk.get("reviewed_srt_sha256"))
+            and receipt.get("no_gain_proof_sha256") == proof.get("proof_sha256")
+            and sorted(consistency["no_gain_context_refs"]) == sorted(proof.get("context_sources") or {})
+            and proof.get("material_exhaustion") is not None
+            and relisten._valid_exhaustion(proof["material_exhaustion"], proof["projection"])
+            and receipt.get("material_exhaustion") == proof["material_exhaustion"])
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return False
+
+
+@cold_input
+def is_release_resolved_keep(finding: object) -> bool:
+    """Union for release consumers: an audio KEEP_CURRENT ruling, or SUB-18's
+    exhausted-audio meaning-equivalent keep (admin ruling)."""
+
+    if isinstance(finding, Mapping):
+        audit = finding.get('exact_release_adjudication') or finding.get('context_audio_adjudication') or {}
+        if isinstance(audit, Mapping) and audit.get('terminal_review'):
+            from src.autoslice.semantic_terminal_adjudication import terminal_keep_matches, KEEP_ROUTES
+            try:
+                if not terminal_keep_matches(finding, audit):
+                    return False
+                from src.autoslice.llm_client import extract_json_object
+                from .answer_contract import decode_answer
+                review = audit['terminal_review']
+                route = decode_answer(review['request'], extract_json_object(review['raw_completion']),
+                    prompt=review['prompt'])['keep_route']
+                return (is_audio_decided_keep_current(finding) if KEEP_ROUTES[route]['branch'] == CURRENT_UTTERANCE_KEEP_BRANCH
+                    else is_sub18_context_meaning_equivalent_keep(finding))
+            except (ValueError, TypeError, KeyError, AttributeError, OSError):
+                return False
+    return is_audio_decided_keep_current(finding) or is_sub18_context_meaning_equivalent_keep(finding)
+
+
+@cold_input
+def is_audio_decided_keep_current(finding: object) -> bool:
+    """Only a completed listening ruling to keep the original text resolves a row.
+
+    No ``is_noncritical_disclosed`` shortcut: a bare ``noncritical_uncertainty``
+    / meaning-equivalence disclosure is an unresolved doubt, not a ruling
+    (维护者). Narrow by design (the audio judge kept CURRENT); release
+    consumers ask the union ``is_release_resolved_keep``.
     """
 
     if not isinstance(finding, Mapping):
+        return False
+    from src.autoslice.final_review_meaning_policy import current_meaning_equivalent
+    from src.autoslice.final_review_candidate_risk import needs_candidate_content_review, candidate_risk_assessment_valid
+    if (finding.get("content_risk") == "noncritical_uncertainty"
+            and finding.get("candidate_content_risk_required") is True
+            and needs_candidate_content_review(finding)
+            and not candidate_risk_assessment_valid(finding)):
         return False
     adjudication = finding.get("exact_release_adjudication")
     if not isinstance(adjudication, Mapping):
@@ -620,12 +1080,59 @@ def is_keep_current_disclosed(finding: object) -> bool:
         adjudication.get("timing_immutable") is True
         or finding.get("timing_immutable") is True
     )
+    if not current_meaning_equivalent(finding):
+        # 41:48-56 : the only retained original that counts as
+        # resolved is an audio ruling of KEEP_CURRENT. A complete exact
+        # listening ruling therefore resolves the row without a separate
+        # meaning-equivalence assessment, but only the strict form: the judge
+        # chose CURRENT on OBSERVED audio under the complete-utterance support
+        # contract. Uncertain keeps, legacy request-less receipts and other
+        # keep branches stay unresolved here.
+        return complete_audio_keep_current_ruling(
+            adjudication, timing_immutable=timing_immutable)
     return decided_keep_current_adjudication(
         adjudication,
         timing_immutable=timing_immutable,
     ) or decided_history_convergence_disclosure(
         adjudication,
         timing_immutable=timing_immutable,
+    )
+
+
+@cold_input
+def complete_audio_keep_current_ruling(
+    adjudication: Mapping[str, object],
+    *,
+    timing_immutable: bool,
+) -> bool:
+    """A completed listening ruling that the original subtitle is what was said.
+
+    Requires the decided CURRENT base (OBSERVED, NOT_APPLIED, timeline
+    untouched), the explicit ``JUDGE_KEEPS_CURRENT`` branch, a request that
+    opted into the complete-utterance support contract and a valid support
+    receipt for that exact request.
+    """
+
+    if adjudication.get('terminal_review'):
+        # The new B object reuses this contract, but its actual final answer
+        # and real observed support must still match in a cold consumer.
+        from src.autoslice.semantic_terminal_adjudication import terminal_keep_matches
+        # The row binding is checked by is_release_resolved_keep; validate the
+        # complete request/answer here too for direct audio-contract callers.
+        request = adjudication['terminal_review']['request']
+        row = {'base_text_sha256': hashlib.sha256(request['current_cue'].encode()).hexdigest()}
+        try:
+            if not terminal_keep_matches(row, adjudication):
+                return False
+        except (ValueError, TypeError, KeyError, OSError):
+            return False
+    request = adjudication.get("request")
+    return bool(
+        adjudication.get("policy_branch") == CURRENT_UTTERANCE_KEEP_BRANCH
+        and isinstance(request, Mapping)
+        and request.get(REQUIRE_COMPLETE_UTTERANCE_SUPPORT) is True
+        and decided_keep_current_adjudication(
+            adjudication, timing_immutable=timing_immutable)
     )
 
 
@@ -658,7 +1165,7 @@ def decided_keep_current_adjudication(
     # KEEP_CURRENT) already carry their own typed decision contract.
     if (
         request.get(REQUIRE_COMPLETE_UTTERANCE_SUPPORT) is not True
-        or adjudication.get("policy_branch") != "JUDGE_KEEPS_CURRENT"
+        or adjudication.get("policy_branch") != CURRENT_UTTERANCE_KEEP_BRANCH
     ):
         # Historical ordinary/context adjudications retain their old contract.
         return True

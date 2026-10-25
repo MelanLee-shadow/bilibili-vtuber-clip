@@ -1,0 +1,38 @@
+{
+  "schema_version": "nonlexical-sound-surfaces.v1",
+  "authority": "SUB-26 vocalizations; policy features.modal_particles/fillers own Chinese particles and fillers",
+  "word_boundary": "Foreign ASR surfaces match only (?<![\\w])surface(?![\\w]) with Unicode word characters; punctuation/space delimit, adjacent kana/Han/Hangul/Latin/digit/underscore do not. No substring conversion in あの人, 아이, uhuru or uh_1.",
+  "laughter_syllables": ["哈", "嘿", "呵", "嘻", "ha"],
+  "vocalizations": ["嘿", "哈", "呵", "嘻", "咳", "哼", "欸", "唉", "额", "嘛"],
+  "vocalization_roles": {
+    "microcue_filler_exclusion": {
+      "purpose": "References into vocalizations for the existing acoustic-discovery filler skip, not another sound inventory. Coughs and other speaker-context vocalizations still need the ordinary blind-audio review; being nonlexical does not authorize skipping that review or dropping a cue. Policy particles/fillers remain policy-derived.",
+      "members": ["嘿", "哈", "呵", "哼", "欸", "唉", "嘛"]
+    }
+  },
+  "restatement_prefix_roles": {
+    "purpose": "Compatibility scope for unbounded prefix scoring, not an additional sound inventory; policy references only apply while present in policy, vocalization references only while in vocalizations. Pure-cue classification always uses the whole definition.",
+    "policy_particles": ["呃", "嗯", "啊", "哦", "哎", "噢", "喔", "诶"],
+    "policy_fillers": ["然后", "就是"],
+    "policy_filler_particle_suffixes": {"然后": "呢"},
+    "vocalization_singles": ["唉", "欸"],
+    "vocalization_runs": ["嘿", "哈", "呵", "哼"]
+  },
+  "hesitations": [
+    {"surface": "어", "spelling": "呃"},
+    {"surface": "아", "spelling": "啊"},
+    {"surface": "으", "spelling": "呃"},
+    {"surface": "음", "spelling": "嗯"},
+    {"surface": "え", "spelling": "呃"},
+    {"surface": "えー", "spelling": "呃"},
+    {"surface": "あ", "spelling": "啊"},
+    {"surface": "あー", "spelling": "啊"},
+    {"surface": "あの", "spelling": "呃"},
+    {"surface": "えっと", "spelling": "呃"},
+    {"surface": "うーん", "spelling": "嗯"},
+    {"surface": "uh", "spelling": "呃"},
+    {"surface": "um", "spelling": "嗯"},
+    {"surface": "er", "spelling": "呃"},
+    {"surface": "hmm", "spelling": "嗯"}
+  ]
+}

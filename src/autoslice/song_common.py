@@ -27,11 +27,13 @@ import os
 import re
 import unicodedata
 from dataclasses import asdict, dataclass
+from fractions import Fraction
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 from src.autoslice.channel_profile import load_channel_profile
-from src.autoslice.song_lrc_metadata import is_lrc_section_metadata
+from src.autoslice.agy_gemini_client import DEFAULT_AGY_FLASH_HIGH
+from src.autoslice.song_lrc_metadata import is_lrc_performer_metadata, is_lrc_section_metadata
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
@@ -63,7 +65,7 @@ AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION = "agy-audio-lrc-observation.v5"
 AGY_AUDIO_LRC_RUN_SCHEMA_VERSION = "agy-audio-lrc-run.v3"
 AGY_AUDIO_LRC_CANONICALIZATION_STRATEGY = "canonical-lrc-by-exact-index.v1"
 AGY_AUDIO_LRC_PROVIDER = "agy"
-AGY_AUDIO_LRC_MODEL = os.environ.get("SONG_LRC_AGY_MODEL", "Gemini 3.6 Flash (High)")
+AGY_AUDIO_LRC_MODEL = os.environ.get("SONG_LRC_AGY_MODEL", DEFAULT_AGY_FLASH_HIGH)
 GEMINI_API_AUDIO_LRC_PROVIDER = "gemini_api"
 # 失败转移用的 Gemini API 型号。env 覆盖位与另两个 Gemini 调用点同款惯例
 # （ENTITY_AUDIO_GEMINI_API_MODEL / JINGTING_GEMINI_MODEL）；该串会写进 run
@@ -100,6 +102,9 @@ MIN_READY_SUNG_LYRIC_ROWS = 7
 MIN_READY_SUNG_LYRIC_RATIO = 0.80
 MAX_READY_CONSECUTIVE_SPOKEN_LYRIC_ROWS = 6
 MAX_READY_SPOKEN_LYRIC_DURATION_MS = 12_000
+# Exact rational so the prompt and the integer duration gate share 20% without
+# introducing float rounding at the acceptance boundary.
+MAX_READY_SPOKEN_LYRIC_DURATION_RATIO = Fraction(1, 5)
 MAX_READY_SPOKEN_BLOCK_SPAN_MS = 15_000
 MAX_READY_SPOKEN_BLOCKS = 1
 LYRIC_VOCAL_ASSERTION_KEYS = {
@@ -110,9 +115,11 @@ LYRIC_VOCAL_ASSERTION_KEYS = {
     "recorded_or_playback_vocal_audible",
 }
 
+COMPLETE_LIVE_WITH_SPOKEN_INTERLUDE = "COMPLETE_LIVE_WITH_SPOKEN_INTERLUDE"
 LIVE_ARRANGEMENT_CLASSIFICATIONS = {
     "FULL_STUDIO_SEQUENCE",
     "COMPLETE_LIVE_ARRANGEMENT",
+    COMPLETE_LIVE_WITH_SPOKEN_INTERLUDE,
     "INCOMPLETE_OR_FRAGMENT",
 }
 LIVE_ARRANGEMENT_TRANSITIONS = {
@@ -129,6 +136,12 @@ MAX_LIVE_ARRANGEMENT_OMITTED_BLOCKS = 1
 MAX_LIVE_ARRANGEMENT_INTERLINE_GAP_MS = 45_000
 MAX_PROVEN_LIVE_INSTRUMENTAL_GAP_MS = 120_000
 MAX_LIVE_ARRANGEMENT_OUTRO_MS = 45_000
+
+
+def prompt_count_word(count: int) -> str:
+    """Render small counts with the spelling used by existing audio prompts."""
+    words = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
+    return words[count] if 0 <= count < len(words) else str(count)
 
 
 class LivePerformanceRejected(ValueError):
@@ -166,8 +179,15 @@ _LRC_CHINESE_CREDIT_HEADS = {
     "监制", "演唱", "原唱", "主唱", "歌手", "艺术家", "表演者", "录音", "录音师", "录音工程", "录音室",
     "混音", "混", "混音师", "混音工程", "混音工程师", "母带", "母带工程", "配唱", "和声", "合声", "吉他", "吉他演奏", "贝斯", "贝斯演奏",
     "鼓", "鼓手", "键盘", "钢琴", "木吉他", "电吉他", "弦乐", "小提琴", "大提琴", "摄影", "封面", "封面设计", "平面设计", "美术", "插画", "设计",
-    "出品", "发行", "版权", "统筹", "企划", "策划", "后期", "特别鸣谢", "鸣谢",
+    "出品", "出品人", "发行", "版权", "统筹", "项目统筹", "项目总监", "宣发", "企划", "策划", "后期", "特别鸣谢", "鸣谢",
+    "人声录音", "音乐总监", "执行制作", "声乐指导", "和音", "冬不拉", "翻唱", "曲绘",
+    "弦乐编写", "弦乐出谱", "制作公司", "营销推广",
+    "音乐工程", "音频编辑", "音乐统筹", "舞台总监", "编舞", "执行编导", "舞蹈演员",
 }
+# A whole-line bracketed notice such as ``【此版本为正式授权翻唱作品】``.
+_LRC_BRACKET_NOTICE = re.compile(
+    r"^[【\[（(]\s*[^】\]）)]*(?:授权|版权|翻唱|声明|此版本|本版本|翻自)[^】\]）)]*[】\])）]$"
+)
 _LRC_ENGLISH_CREDIT_HEADS = {
     "lyrics", "lyric", "lyricist", "lyricists", "songwriter", "songwriters",
     "composer", "composers", "composition", "music", "arranger", "arrangers", "arrangement",
@@ -179,7 +199,7 @@ _LRC_ENGLISH_CREDIT_HEADS = {
     "guitar", "guitars", "acoustic guitar", "electric guitar", "piano", "keyboard", "keyboards", "bass", "drum", "drums",
     "strings", "violin", "cello", "photography", "photographer", "cover art", "art cover",
     "artwork", "illustration", "illustrator", "design", "designer", "special thanks",
-    "acknowledgements", "acknowledgments",
+    "acknowledgements", "acknowledgments", "op", "sp", "op sp",
 }
 _LRC_ENGLISH_BY_CREDIT = re.compile(
     r"^(?:lyrics?|written|songwritten|composed|composition|arranged|produced|performed|recorded|"
@@ -214,7 +234,7 @@ def is_lrc_credit_metadata(text: str) -> bool:
     """
 
     normalized = _normalized_credit_head(text)
-    if _LRC_ENGLISH_BY_CREDIT.match(normalized):
+    if _LRC_ENGLISH_BY_CREDIT.match(normalized) or _LRC_BRACKET_NOTICE.match(normalized):
         return True
     colon_split = re.split(r"[:：]", normalized, maxsplit=1)
     if len(colon_split) != 2 or not colon_split[1].strip():
@@ -224,6 +244,8 @@ def is_lrc_credit_metadata(text: str) -> bool:
         return False
 
     chinese = re.sub(r"[^\u3400-\u9fff、，,/&+]+", "", head)
+    if not re.search(r"[\u3400-\u9fff]", chinese):
+        chinese = ""
     english = re.sub(r"[^a-z\s]+", " ", head)
     english = re.sub(r"\s+", " ", english).strip()
     chinese_credit = bool(chinese) and _is_chinese_credit_head(chinese)
@@ -237,7 +259,8 @@ def is_lrc_credit_metadata(text: str) -> bool:
 
 
 def is_lrc_non_lyric_metadata(text: str) -> bool:
-    return is_lrc_credit_metadata(text) or is_lrc_section_metadata(text)
+    return (is_lrc_credit_metadata(text) or is_lrc_section_metadata(text)
+            or is_lrc_performer_metadata(text))
 
 
 @dataclass(frozen=True)
@@ -316,7 +339,8 @@ def validate_audio_lrc_execution_metadata(
 
     if provider == AGY_AUDIO_LRC_PROVIDER:
         if (
-            model != AGY_AUDIO_LRC_MODEL
+            # Previously completed 3.6 runs keep their recorded provenance.
+            model not in {AGY_AUDIO_LRC_MODEL, "Gemini 3.6 Flash (High)"}
             or agy_rc != 0
             or provider_fallback_used is not False
             or agy_failure_category is not None

@@ -18,6 +18,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from src.autoslice.cpa_model_ladder import cpa_call_timeout_seconds
+
 RESULTS: list[tuple[str, str, str]] = []
 
 
@@ -215,7 +217,7 @@ def _check_local_agy() -> None:
     """Validate the executable used by the native loopback AGY adapter."""
 
     # The native adapter keeps the historical remote-binary override because
-    # runtime host's production install lives at agy.  AGY_BIN remains
+    # OCI3's production install lives at agy.  AGY_BIN remains
     # a useful local preflight override for developer shells.
     configured = (
         os.environ.get("AGY_REMOTE_BIN", "").strip()
@@ -321,7 +323,7 @@ def check_cpa_live() -> None:
             capture_output=True,
             text=True,
             check=False,
-            timeout=240,
+            timeout=cpa_call_timeout_seconds(),
         )
         if probe.returncode == 0 and reply.is_file() and reply.read_text().strip():
             _record("ok", "CPA live", f"回复：{reply.read_text().strip()[:40]}")

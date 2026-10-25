@@ -7,6 +7,7 @@ the existing native title/cover QC consumer and all bound image bytes match.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import copy
 import hashlib
 import json
@@ -342,7 +343,7 @@ def resolve_portable_qc_authority(
         raise TitleCoverQcSuccessorError(
             "portable QC cover basename differs from package cover"
         )
-    portable_cover_sha = _sha256_bytes(portable_cover.read_bytes())
+    portable_cover_sha = _evidence_file_sha256(portable_cover)
     if _strip_sha(receipt.get("cover_sha256"), label="portable QC cover hash") != (
         portable_cover_sha
     ):

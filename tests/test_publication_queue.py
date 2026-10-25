@@ -30,13 +30,19 @@ def _roots(tmp_path: Path) -> tuple[Path, Path]:
 def _manifest(runtime: Path, name: str) -> Path:
     path = runtime / "out" / name / f"{name}.upload_manifest.json"
     path.parent.mkdir(parents=True, exist_ok=True)
+    video = path.with_suffix(".mp4")
+    cover = path.with_suffix(".png")
+    video.write_bytes(name.encode())
+    cover.write_bytes(b"cover")
     path.write_text(
         json.dumps(
             {
                 "manifest_version": 3,
                 "video": {
-                    "sha256": hashlib.sha256(name.encode()).hexdigest()
+                    "sha256": hashlib.sha256(name.encode()).hexdigest(),
+                    "path": str(video),
                 },
+                "cover": {"path": str(cover)},
             }
         )
         + "\n",
@@ -153,6 +159,33 @@ def _append_verified_attempt(
             "public_verify_status": "VERIFIED_PUBLIC",
         },
     )
+
+
+@pytest.mark.parametrize("missing_role", ["video", "cover"])
+def test_retired_posted_media_does_not_starve_another_followup(tmp_path, missing_role):
+    repo, runtime = _roots(tmp_path)
+    retired = _manifest(runtime, "retired")
+    available = _manifest(runtime, "available")
+    ledger = runtime / "reports/upload_ledger.jsonl"
+    _append_posted_attempt(ledger, retired, attempt_id="retired", bvid="BV1RETIRED12")
+    _append_posted_attempt(ledger, available, attempt_id="available", bvid="BV1AVAILABLE")
+    Path(json.loads(retired.read_text())[missing_role]["path"]).unlink()
+    original_ledger = ledger.read_bytes()
+    calls = []
+    result = consume_ready_publication_queue(
+        repository_root=repo, runtime_root=runtime, enabled=True,
+        graph_builder=lambda **_: pytest.fail("available follow-up must precede readiness"),
+        upload_call=lambda argv: calls.append(argv) or 0,
+    )
+    assert result["status"] == "ACTION_COMPLETED"
+    assert result["action"]["manifest"] == str(available)
+    assert result["action"]["bvid"] == "BV1AVAILABLE"
+    assert len(calls) == 1 and str(retired) not in calls[0]
+    held = result["quarantined_attempts"]
+    assert len(held) == 1 and held[0]["attempt_id"] == "retired"
+    assert held[0]["reason_code"] == "POSTED_ARCHIVE_MANIFEST_INVALID"
+    assert f"follow-up {missing_role} is unavailable" in held[0]["detail"]
+    assert ledger.read_bytes() == original_ledger
 
 
 def _append_publication_verified(
@@ -428,7 +461,7 @@ def test_disabled_queue_does_not_read_graph_or_ledger(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("marker", "reason"),
     [
-        ("DISABLED", "PRODUCTION_DISABLED"),
+        ("PUBLISH_PAUSED", "PUBLICATION_PAUSED"),
         ("deploy.guard", "DEPLOYMENT_IN_PROGRESS"),
         ("AUTO_UPLOAD", "LEGACY_AUTO_UPLOAD_MARKER_PRESENT"),
     ],
@@ -500,7 +533,7 @@ def test_posted_unverified_recovery_precedes_new_ready_upload(
     ]
 
 
-def test_unresolved_upload_intent_blocks_all_actions(tmp_path: Path) -> None:
+def test_unresolved_upload_intent_is_quarantined_without_ready_products(tmp_path: Path) -> None:
     repo, runtime = _roots(tmp_path)
     called = False
 
@@ -513,7 +546,7 @@ def test_unresolved_upload_intent_blocks_all_actions(tmp_path: Path) -> None:
         repository_root=repo,
         runtime_root=runtime,
         enabled=True,
-        graph_builder=lambda **_kwargs: pytest.fail("ledger ambiguity is global"),
+        graph_builder=lambda **_kwargs: _graph(),
         upload_call=upload,
         ledger_reader=lambda _path: ([{"video_sha256": "video-sha"}], []),
         ledger_guard=lambda _path, _sha: (
@@ -523,8 +556,8 @@ def test_unresolved_upload_intent_blocks_all_actions(tmp_path: Path) -> None:
         ),
     )
 
-    assert result["status"] == "BLOCKED_LEDGER"
-    assert result["reason_codes"] == ["UPLOAD_ATTEMPT_OUTCOME_UNRESOLVED"]
+    assert result["status"] == "NO_READY_ACTION"
+    assert result["quarantined_attempts"][0]["attempt_id"] == "ambiguous"
     assert result["side_effect_attempted"] is False
     assert called is False
 
@@ -533,7 +566,7 @@ def test_unresolved_upload_intent_blocks_all_actions(tmp_path: Path) -> None:
     "ledger_order",
     [("A", "B"), ("B", "A")],
 )
-def test_unresolved_hash_globally_blocks_posted_recovery_in_any_order(
+def test_unresolved_hash_does_not_block_independent_posted_recovery_in_any_order(
     tmp_path: Path,
     ledger_order: tuple[str, str],
 ) -> None:
@@ -583,11 +616,11 @@ def test_unresolved_hash_globally_blocks_posted_recovery_in_any_order(
     )
 
     assert visited == list(ledger_order)
-    assert result["status"] == "BLOCKED_LEDGER"
-    assert result["reason_codes"] == ["UPLOAD_ATTEMPT_OUTCOME_UNRESOLVED"]
-    assert result["attempt_id"] == "attempt-B"
-    assert result["side_effect_attempted"] is False
-    assert callbacks == {"graph": 0, "upload": 0, "prepare": 0}
+    assert result["status"] == "ACTION_COMPLETED"
+    assert result["action"]["attempt_id"] == "attempt-A"
+    assert result["quarantined_attempts"][0]["attempt_id"] == "attempt-B"
+    assert result["side_effect_attempted"] is True
+    assert callbacks == {"graph": 0, "upload": 1, "prepare": 0}
 
 
 @pytest.mark.parametrize(
@@ -1427,3 +1460,64 @@ def test_invalid_backoff_state_still_blocks_local_preparation(
 
     assert result["status"] == "BLOCKED_BACKOFF_STATE"
     assert result["side_effect_attempted"] is False
+
+
+def test_native_guard_skips_old_unknown_and_continues_independent_ready_tail(tmp_path):
+    repo, runtime = _roots(tmp_path)
+    held, independent = _manifest(runtime, 'held'), _manifest(runtime, 'independent')
+    ledger = runtime / 'reports/upload_ledger.jsonl'
+    fields = _append_started_attempt(ledger, held)
+    # Historical manifest absence is irrelevant to the fresh product's plan.
+    held.unlink()
+    before = ledger.read_bytes()
+    graph = _graph(_ready_row('held', '2026-10-14', held),
+                   _ready_row('independent', '2026-10-13', independent))
+    calls = []
+    result = consume_ready_publication_queue(
+        repository_root=repo, runtime_root=runtime, enabled=True,
+        graph_builder=lambda **_kwargs: graph,
+        upload_call=lambda argv: calls.append(argv) or 8)
+    assert result['status'] == 'QUOTA_BLOCKED'
+    assert calls[0][2] == str(independent)
+    assert result['quarantined_attempts'][0]['attempt_id'] == fields['attempt_id']
+    assert ledger.read_bytes() == before
+    # Recreate the held product with the same bytes identity: it stays held.
+    held = _manifest(runtime, 'held')
+    plan = plan_next_publication_action(repository_root=repo, runtime_root=runtime,
+        graph_builder=lambda **_kwargs: _graph(_ready_row('held', '2026-10-14', held)))
+    assert plan['status'] == 'BLOCKED_CONTENT'
+    assert plan['skipped_content_holds'][0]['attempt_id'] == fields['attempt_id']
+
+
+def test_native_guard_skips_held_preparation_and_selects_independent_record(tmp_path):
+    from src.autoslice.publication_readiness import READY_TO_PREPARE
+    repo, runtime = _roots(tmp_path)
+    ledger = runtime / 'reports/upload_ledger.jsonl'
+    authorized_upload.append_ledger(ledger, {'video_sha256': 'old-video', 'rc': 1,
+        'manifest': '/gone/out/2026-10-14/held/clip.upload_manifest.json'})
+    rows = []
+    for cid in ('held', 'eligible'):
+        record_path = runtime / 'out' / '2026-10-14' / cid / 'record.json'
+        record_path.parent.mkdir(parents=True, exist_ok=True)
+        record_path.write_text(json.dumps({'candidate_id': cid, 'recording_date': '2026-10-14'}))
+        document = {'package_attestation': {'record': {'path': str(record_path)}}}
+        rows.append({'candidate_id': cid, 'recording_date': '2026-10-14', 'lane': 'talk',
+                     'category': READY_TO_PREPARE,
+                     'package_dependencies': {'record': document['package_attestation']['record']['path']}})
+    calls = []
+    result = consume_ready_publication_queue(repository_root=repo, runtime_root=runtime, enabled=True,
+        graph_builder=lambda **_kwargs: _graph(*rows),
+        manifest_prepare_call=lambda row, **_kwargs: calls.append(row['candidate_id']) or {'status': 'PREPARED'},
+        upload_call=lambda _argv: pytest.fail('preparation cannot upload'))
+    assert result['status'] == 'MANIFEST_PREPARED'
+    assert calls == ['eligible']
+    assert any(row.get('candidate_id') == 'held' for row in result['quarantined_attempts'])
+
+
+def test_unidentified_ledger_row_blocks_before_graph(tmp_path):
+    repo, runtime = _roots(tmp_path)
+    authorized_upload.append_ledger(runtime / 'reports/upload_ledger.jsonl', {'rc': 1})
+    result = plan_next_publication_action(repository_root=repo, runtime_root=runtime,
+        graph_builder=lambda **_kwargs: pytest.fail('invalid ledger must precede readiness'))
+    assert result['status'] == 'BLOCKED_LEDGER'
+    assert result['reason_codes'] == ['UPLOAD_LEDGER_INVALID']

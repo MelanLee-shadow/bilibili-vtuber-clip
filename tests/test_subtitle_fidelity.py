@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from src.autoslice.subtitle_fidelity import (
     apply_numeric_fact_provenance_guard,
     apply_impossible_punctuation_guard,
@@ -982,6 +984,37 @@ def test_language_guard_allows_glossary_witnessed_transliteration_fix():
     assert audit["status"] == "CLEAN"
     assert audit["unproven_foreign_introductions"] == []
     assert "ありがとう" in output
+
+
+@pytest.mark.parametrize("foreign", ["主播还没忘记 NUS", "ありがとう", "hello from the other side", "只有中文"])
+def test_language_guard_cue_count_drift_keeps_exact_foreign_intervals(foreign):
+    draft = f"1\n00:00:01,000 --> 00:00:02,000\n{foreign}\n\n2\n00:00:03,000 --> 00:00:04,000\n旁白甲\n\n3\n00:00:04,000 --> 00:00:05,000\n旁白乙\n"
+    final = f"1\n00:00:01,000 --> 00:00:02,000\n{foreign}\n\n2\n00:00:03,000 --> 00:00:05,000\n合并旁白\n"
+    output, audit = apply_source_language_preservation_guard(draft, final)
+    assert output == final and audit["status"] == "CLEAN"
+    assert audit["cue_binding"] == "UNCHANGED_FOREIGN_CUE_INTERVALS"
+    assert audit["draft_cue_count"] == 3 and audit["final_cue_count"] == 2
+
+
+@pytest.mark.parametrize("damage", ["words", "moved", "translated", "removed", "introduced", "empty_witness"])
+def test_language_guard_count_drift_does_not_release_changed_foreign_evidence(damage):
+    draft = "1\n00:00:01,000 --> 00:00:02,000\n主播还没忘记 NUS\n\n2\n00:00:03,000 --> 00:00:04,000\n旁白\n"
+    final = "1\n00:00:01,000 --> 00:00:02,000\n主播还没忘记 NUS\n"
+    if damage == "words":
+        final = final.replace("NUS", "NTU")
+    elif damage == "moved":
+        final = final.replace("01,000", "01,001")
+    elif damage == "translated":
+        final = final.replace("NUS", "新加坡国立大学")
+    elif damage == "removed":
+        final = "1\n00:00:03,000 --> 00:00:04,000\n旁白\n"
+    elif damage == "introduced":
+        draft = draft.replace("NUS", "大学")
+    else:
+        draft = ""
+    _, audit = apply_source_language_preservation_guard(draft, final)
+    assert audit["status"] == "SKIPPED_CUE_COUNT_MISMATCH"
+    assert "cue_binding" not in audit
 
 
 def test_language_guard_still_blocks_unwitnessed_foreign_introduction():

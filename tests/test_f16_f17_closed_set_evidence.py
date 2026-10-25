@@ -183,8 +183,14 @@ def test_multi_edit_fidelity_context_reaches_fresh_judge_without_extra_candidate
         }]}, ensure_ascii=False),
         extract_json=json.loads, draft_fidelity_contexts=contexts,
     )
-    assert len(findings) == 1
-    request = build_context_adjudication_request(srt, findings[0])
+    # The gift-name lane independently nominates the unheard gift tail. It
+    # must retain that question; fidelity must not introduce the multi-edit
+    # proposal as another context candidate or silently replace the gift name.
+    context_findings = [row for row in findings if row["kind"] == "context"]
+    assert len(context_findings) == 1
+    assert all(row.get("suggestion") != "十元SC" for row in findings)
+    finding = context_findings[0]
+    request = build_context_adjudication_request(srt, finding)
     evidence = request["closed_set_structured_evidence"]
     assert evidence["draft_fidelity"]["draft_fidelity_kept"] is True
     assert evidence["draft_fidelity"]["favored_candidate"] == "CURRENT"
@@ -199,7 +205,7 @@ def test_multi_edit_fidelity_context_reaches_fresh_judge_without_extra_candidate
         return json.dumps({"choice": choice, "needs_audio": False})
 
     output, receipt = adjudicate_context_finding(
-        srt, findings[0], judge_llm_call=judge,
+        srt, finding, judge_llm_call=judge,
         entity_verifier=lambda _: pytest.fail("text-first did not request audio"),
     )
     assert len(calls) == 1
@@ -509,6 +515,13 @@ def test_f17_each_target_requires_observed_audio_then_closed_set_judge():
         candidate["candidate_provenance"]["occurrence_positions"]
     )
     assert receipt["witness_judge"]["session_transcript_recurrence_acoustic_gate"]["status"] == "PASS"
+
+
+def test_f17_pure_vocal_fillers_cannot_nominate_lexical_candidates():
+    assert session_transcript_recurrence_candidates(
+        raw_draft_srt=_srt("哼" * 12, "哼" * 9),
+        current_srt=_srt("哼" * 11, "哼" * 8),
+    ) == []
 
 
 def test_f17_receipt_compactor_keeps_occurrence_positions():

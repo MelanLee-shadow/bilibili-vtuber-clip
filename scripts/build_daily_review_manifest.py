@@ -47,6 +47,7 @@ from src.autoslice.review_package_ass_audit import (
     uniform_host_fallback_declared,
 )
 from src.autoslice.review_evidence import SourceCue
+from src.autoslice.review_evidence_store import load_review
 from src.autoslice.addressee_attribution import (
     SpeakerEvidenceRejected,
     rebuild_speaker_evidence,
@@ -465,6 +466,33 @@ def _sync_declared_artifact(
         raise DailyManifestError(f"{label} package repair verification failed")
 
 
+def _sync_cover_network_evidence(
+    *, package_root: Path, generation: dict, upload_stem: str,
+) -> dict[str, str]:
+    """Carry declared request/response bytes through the portable boundary."""
+    # Manual upload stems may contain Chinese text. Keep the existing flat
+    # filename contract; the shared projector checks containment/symlinks.
+    if not upload_stem or Path(upload_stem).name != upload_stem or upload_stem in {".", ".."}:
+        raise DailyManifestError("cover network evidence stem is not one path component")
+    stem = upload_stem
+    fields = {}
+    for role in ("request", "response"):
+        declared = generation.get(f"{role}_path")
+        expected = generation.get(f"{role}_sha256")
+        if declared is None and expected is None:
+            continue
+        if not isinstance(declared, str) or not declared or not expected:
+            raise DailyManifestError(f"cover generation lacks {role} path/hash")
+        relative = f"{stem}.cover-{role}.json"
+        _sync_declared_artifact(
+            package_root=package_root, target=package_root / relative,
+            source=Path(declared), declared_sha256=expected,
+            label=f"cover {role}",
+        )
+        fields[f"cover_{role}"] = relative
+    return fields
+
+
 def _rebuild_package_speaker_evidence(
     *,
     package_root: Path,
@@ -748,7 +776,7 @@ def build(
     if not isinstance(cover_generation, dict):
         raise DailyManifestError("cover generation is not an object")
     record = need(f"{candidate_id}.record.json")
-    record_doc = json.loads(record.read_text(encoding="utf-8"))
+    record_doc = load_review(record)
     final_media_duration_binding = _project_final_media_duration_binding(
         record_doc
     )
@@ -774,7 +802,7 @@ def build(
     chat_path = _package_regular_file(package_root, chat_name, label="chat authority")
     if chat_path is None:
         raise DailyManifestError("portable chat authority is missing")
-    chat_authority_doc = json.loads(chat_path.read_text(encoding="utf-8"))
+    chat_authority_doc = load_review(chat_path)
     # AUTOSLICE_SPEAKER_MODE=auto 翻转后，speaker-finalized
     # 包不再产出旧 sapphire72 统一样式烧录；命名解析必须按同一份自证信号
     # 分岔，镜像 review_package_ass_audit.py 已用的判定，两条审计链才不会
@@ -844,6 +872,11 @@ def build(
             raise DailyManifestError(f"cover artifact package hash drift: {generation_key}")
         return f"covers_ai_original/{basename}"
 
+    from src.autoslice.title_cover_package import choice_manifest_fields
+    try:
+        choice_fields = choice_manifest_fields(cover_generation, package_root=package_root)
+    except ValueError as exc:
+        raise DailyManifestError(f"candidate cover evidence invalid: {exc}") from exc
     cover_pre_overlay = cover_artifact("pre_overlay_path", "pre_overlay_sha256")
     cover_route_background = cover_artifact("ai_background", "ai_background_sha256")
     try:
@@ -914,6 +947,7 @@ def build(
         "cover_title_mask": mask_rel,
         "cover_route_background": cover_route_background,
         **builtin_cover_fields,
+        **choice_fields,
         "record": f"{upload_stem}.record.json",
         **(
             {"final_media_duration_binding": final_media_duration_binding}
@@ -949,6 +983,13 @@ def build(
             "cover": _sha256(package_root / cover_rel),
         },
     }
+    network_fields = _sync_cover_network_evidence(
+        package_root=package_root, generation=cover_generation, upload_stem=upload_stem,
+    )
+    item.update(network_fields)
+    item["sha256"].update({
+        role: _sha256(package_root / relative) for role, relative in network_fields.items()
+    })
     try:
         host_only_binding = materialize_package_binding(
             root=package_root,

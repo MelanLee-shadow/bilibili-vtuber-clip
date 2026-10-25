@@ -1,16 +1,18 @@
-"""Retry checkpoints for successful ordinary BCUT and complete CPA draft stages.
+"""Retry checkpoints for successful ordinary transcription observations.
 
 These are fallible draft observations, never release approvals or human truth.
-The caller reruns preparation, fidelity, pronouns and downstream review. Legacy
+The caller reruns preparation, fidelity, strict parsers and downstream review. Legacy
 SRT files without this binding are deliberately not imported into the cache.
 """
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import fcntl
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -31,7 +33,7 @@ def _digest(value: Any) -> str:
 
 
 def _file_sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return _evidence_file_sha256(path)
 
 
 def _no_links(path: Path) -> None:
@@ -170,6 +172,8 @@ class TranscriptionStageCache:
         fetch: Callable,
         validate: Callable,
         cacheable: Callable = lambda _: True,
+        invalid_cache_errors: tuple[type[Exception], ...] = (),
+        omit_uncacheable_digest: bool = False,
     ):
         started = time.monotonic()
         key = _digest(identity) if identity is not None else None
@@ -183,14 +187,18 @@ class TranscriptionStageCache:
                     if (
                         entry["schema_version"] != SCHEMA
                         or entry["identity"] != identity
+                        or not cacheable(entry["payload"])
                         or entry["payload_sha256"] != _digest(entry["payload"])
                         or entry["status"] != "SUCCESS"
-                        or not cacheable(entry["payload"])
                     ):
                         raise ValueError("checkpoint identity mismatch")
-                    validated = validate(entry["payload"])
+                    raw = entry["payload"]
+                    if isinstance(raw, str) and isinstance(identity.get('model_identity'), dict):
+                        from .llm_client import cached_completion
+                        raw = cached_completion(raw, identity['model_identity'])
+                    validated = validate(raw)
                     cached = (entry, validated)
-                except (OSError, ValueError, KeyError, TypeError):
+                except (OSError, ValueError, KeyError, TypeError) + invalid_cache_errors:
                     state = "INVALID_PRESERVED"
             if cached is not None:
                 entry, validated = cached
@@ -205,7 +213,9 @@ class TranscriptionStageCache:
                 )
                 return validated
             try:
-                payload = fetch()
+                from .completed_review_checkpoint import ruling_material_scope
+                with ruling_material_scope(identity, cache_allowed=identity is not None, retain=cacheable):
+                    payload = fetch()
                 validated = validate(payload)
             except Exception:
                 self._record(
@@ -218,6 +228,14 @@ class TranscriptionStageCache:
                 )
                 raise
             persisted = False
+            # Read under the requested model, write under the actual answer.
+            from src.autoslice.llm_client import completion_identity
+            if identity is not None and getattr(payload, 'answering_model', None):
+                identity = {**identity, 'model_identity': completion_identity(identity.get('model_identity'), payload)}
+                actual_key = _digest(identity)
+                if actual_key != key:
+                    key = actual_key
+                    path = path.parent / (key + '.json') if path is not None else None
             if path is not None and cacheable(payload):
                 persisted = _write(
                     path,
@@ -232,10 +250,11 @@ class TranscriptionStageCache:
                 )
             self._record(
                 stage,
-                served_from_cache=False,
-                provider_calls=1,
+                served_from_cache=bool(getattr(payload, 'ruling_cache_hit', False)),
+                provider_calls=0 if getattr(payload, 'ruling_cache_hit', False) else 1,
                 cache_key=key,
-                payload_sha256=_digest(payload),
+                payload_sha256=(None if omit_uncacheable_digest and not cacheable(payload)
+                                else _digest(payload)),
                 elapsed_seconds=time.monotonic() - started,
                 status=state,
                 persisted=persisted,
@@ -308,6 +327,57 @@ class TranscriptionStageCache:
                 },
             }
         return self._run("cpa", identity, lambda: llm_call(prompt), validate)
+
+    def pronoun(
+        self, *, prompt: str, source_srt: str, llm_call: Callable,
+        fetch: Callable, validate: Callable, implementation: tuple[Callable, ...],
+        retain: Callable[[object], bool],
+    ) -> str:
+        """Reuse a complete raw answer, then apply the current occurrence contract."""
+        from src.autoslice.llm_client import LlmJsonParseError
+        from src.autoslice.source_context_executor import AgyRunnerError
+
+        declared = getattr(llm_call, "cpa_cache_identity", None)
+        identity = None
+        if isinstance(declared, dict):
+            model = {key: declared[key] for key in (
+                "transport", "models", "effort", "api_mode", "max_tokens",
+                "temperature", "api_base_sha256",
+            ) if key in declared}
+            known = (
+                model.get("transport") in {"direct", "cpa_command", "ssh_runtime_cpa"}
+                and isinstance(model.get("models"), list) and bool(model["models"])
+                and all(isinstance(v, str) and v.strip() for v in model["models"])
+                and isinstance(model.get("effort"), str) and bool(model["effort"].strip())
+            )
+            try:
+                if known and all(retain(v) for v in (prompt, source_srt, json.dumps(model))):
+                    identity = {
+                        "schema_version": SCHEMA, "stage": "complete-pronoun-review",
+                        "audio_sha256": self.audio_sha,
+                        "source_srt_sha256": hashlib.sha256(source_srt.encode()).hexdigest(),
+                        "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+                        "model_identity": model,
+                        "cpa_endpoint_sha256": hashlib.sha256(
+                            os.environ.get("CPA_BASE_URL", "").encode()).hexdigest(),
+                        "implementation": {
+                            function.__qualname__: hashlib.sha256(
+                                inspect.getsource(function).encode()).hexdigest()
+                            for function in implementation
+                        },
+                        "transport_implementation": {
+                            name: _file_sha(ROOT / name) for name in (
+                                "src/autoslice/llm_client.py", "scripts/llm_via_cpa.sh",
+                                "src/autoslice/jingting_chunker.py",
+                            )
+                        },
+                    }
+            except (OSError, TypeError, ValueError, UnicodeError):
+                identity = None
+        return self._run(
+            "pronoun", identity, fetch, validate, cacheable=retain,
+            invalid_cache_errors=(AgyRunnerError, LlmJsonParseError), omit_uncacheable_digest=True,
+        )
 
 
 @contextmanager

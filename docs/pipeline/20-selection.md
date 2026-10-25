@@ -1,3 +1,7 @@
+# 当前版本说明
+
+下文保留已公开的完整说明；执行命令前同时阅读文末的接口兼容说明。
+
 # 20 候选召回与选题
 
 本文件是选题步骤的**分步权威**。metric 细则的强权威是
@@ -11,7 +15,7 @@
 
 ## 链路
 
-1. 语义召回为主：`select_semantic_session_candidates`（`src/autoslice/semantic_candidate_selector.py`），关键词只兜底（维护者拍板）。
+1. 语义召回为主：`select_semantic_session_candidates`（`src/autoslice/semantic_candidate_selector.py`），关键词只兜底（公开规则拍板）。
    - 单段超过 45 分钟时，必须按 30 分钟核心窗 + 前后各 2 分钟上下文重叠分别召回，再在整段范围按信心分去重排序；禁止把 2 小时字幕塞进一次调用后，把模型只返回前半场少数候选误当作整场无内容。
    - 每段候选池上限 12 是召回余量，不是交付配额；最终按下节的杂谈/游戏/事件场配额、
      scorecard 硬 Tier 与最低信心门筛选，不为凑数降门槛。不能把杂谈 top-5 套到所有场。
@@ -47,7 +51,7 @@
 - 当前资产的缺省为 5 条、无额外席；已登记的 2026-08-07 game 为 10 条/第 6 席起 85，
   2026-08-08 event 为 15 条/第 6 席起 85，同日 talk 仍独立 5 条。以后具体数字以经授权
   更新的资产为准，不从本段复制旧快照。无条目的游戏/事件日也回落缺省 5 条。
-- 默认总量口径是每天 5 条（维护者 2026-08-18 原话），只有明确特批的日期/范围才独立放宽。
+- 默认总量口径是每天 5 条（公开规则原话），只有明确特批的日期/范围才独立放宽。
   未经另行授权，不能用同日多场或场景分类自动叠出多个 5 条。
   `TalkQuotaPolicy.scope_key` 按录制日期记账；没有日期特批的 event 与 talk 共享普通日额度。
   同一特批范围的多个 session 也共享该范围额度。合法旧准入回执按相同日期与 lane 识别，
@@ -75,7 +79,7 @@
 clean-idle、direct recorder idle、完整的**目标日期**递归录制 tree（room root 可同时含
 其他日期）、canonical adapter-state disposition audit、deployed commit/authority、state 与
 scope 全部重验后创建一次性 receipt。目标日期必须早于 UTC 与北京当天；文件以流式 hash
-绑定，目录/路径/链接漂移均拒绝。receipt 仅绑定哈希和 JSON-pointer diff，不保存 维护者 原话。
+绑定，目录/路径/链接漂移均拒绝。receipt 仅绑定哈希和 JSON-pointer diff，不保存 公开规则原话。
 
 实际启动仍是普通 runner：
 `session_autoslice.py --once --historical-authority <receipt>`。该 flag 只能
@@ -403,7 +407,7 @@ source/state/deploy/adapter 漂移均拒绝重放；live=True/unknown 仍走普�
   NEEDS_REVIEWER_TRUTH`。它既不改旧 scorecard，也不把 terminal receipt 标成 `REFRESHED`。
 - 唯一的窄例外是 `scripts/authorize_selection_support_override.py` 生成的
   `selection-support-only-authority.v1`：只接受 deployed review ruling 中同时出现该 CID
-  的 `修` 和 维护者 的 conditional fastlane line，逐字绑定 current candidate/window/hook、
+ 的 `修` 和 公开规则的 conditional fastlane line，逐字绑定 current candidate/window/hook、
   scorecard、完整 terminal receipt/self-seal/三次 history 与 terminal source-provenance、
   state preimage、deployed seal 和 expiry。默认 dry-run；`--apply` 只在 `tick.lock → RunnerCommitLease` 下 PREPARED→COMMITTED
   并精确 CAS state，永远 `upload_allowed=false`。
@@ -423,7 +427,7 @@ source/state/deploy/adapter 漂移均拒绝重放；live=True/unknown 仍走普�
 - 先在 `assets/lidousha/authorities/` 放置唯一、candidate-scoped 且已提交/已部署
   验真的 `candidate-source-fact-rescore-authority.v1`。authority 必须 hash-bound 绑定
   original/corrected hook、stale scorecard、人工审定的整份最终 SRT 与 cue 数、
-  源录像 identity/绝对区间及 维护者 权威原话。其 scope 只能允许 scorecard
+ 源录像 identity/绝对区间及 公开规则权威原话。其 scope 只能允许 scorecard
   rescore；不得附带 provider 执行、runner state 修改或 publication manifest 权限。
 - `manual_source_fact_scorecard_rescore.py` 默认只做无 provider 副作用的全量 preflight。
   correction-authority 模式的 `--correction-authority`/hash 与旧
@@ -442,3 +446,26 @@ source/state/deploy/adapter 漂移均拒绝重放；live=True/unknown 仍走普�
   输出已存在就拒绝覆盖。后续 producer/record/StoryContract/publish staging 必须
   逐层保留并重算这一 provenance；发现 scorecard 已变但缺少有效 receipt、
   authority 字节漂移或任一嵌入/独立 surface 不一致时必须在生产前拒绝。
+
+## 本版接口兼容说明
+
+本页保留此前公开的完整设计、判例与操作细节。代码已经继续演进：
+CLI 参数、模块是否存在和机器强制层以本版源码及 `--help` 为准；历史回执或
+旧入口名不授予当前执行权。当前补充规则如下；冲突时按当前规则和代码处理。
+
+# 20 候选召回与选题
+
+候选选择由语义召回为主，关键词只作可解释的兜底。实现入口是
+`src/autoslice/semantic_candidate_selector.py`，评分和排序使用
+`src/autoslice/selection_scorecard.py` 的确定性字段。
+
+每个候选必须绑定源媒体身份、绝对起止区间、主题/事件摘要、评分字段和支持它
+的字幕或结构化聊天证据。模型可以给出候选和置信度，但不能用置信度替代评分、
+时间范围或事实证据。
+
+配额由公开配置决定。缺少配置时使用代码声明的默认值；事件、歌切和普通 Talk
+的额度分别计算，不能从分类或同日记录自动叠加出额外席位。人工点名候选只改变
+选择结果，不自动改变分数、边界、字幕或上传权限，并应留下可验证的 override。
+
+选择结果必须是可重建的结构化记录。来源、区间、评分或证据发生漂移时重新计算，
+不要继续消费旧候选。

@@ -2,8 +2,12 @@
   "schema_version": "lidousha-emote-library.v1",
   "enabled": true,
   "policy": {
-    "default": "character_redraw",
-    "note": "表情包只有强理由才可用：切片里李豆沙的反应与某个表情包高度贴合、用它明显比常规人物重绘更传神；拿不准一律人物重绘。replace 与人物重绘互斥（二选一）；companion（表情包与人物同框）仅限分身/复数小李梗、或用熊猫类表情包代画粉丝 kmx（kimo熊，指李豆沙的粉丝们，不是吉祥物）等强理由。歌切封面永不使用表情包。表情包重绘必须轻度：保持原姿势/表情/服饰/配件，只做高清化与背景融合，不改设计；成图中表情包与人物重绘同理，必须占据画面主体。"
+    "authority": "lidousha-title-cover",
+    "selection": "list 2–4 feasible candidates before scoring; prefer emotion-matched emotes",
+    "reason_required": true,
+    "main_emote_no_repeat": "same source session and last five covers",
+    "song": "independent existing song rules; emotes disabled",
+    "identity": "official 25 represents kmx fans; preserve source identity and clean layers"
   },
   "media_root": {
     "env": "AUTOSLICE_EMOTE_DIR",

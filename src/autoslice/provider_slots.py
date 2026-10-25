@@ -20,6 +20,8 @@ from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Iterator, TypeVar
 
+from src.autoslice.deployed_code_root import deployed_code_root
+
 
 class ProviderSlotError(RuntimeError):
     """A provider permit could not be established safely."""
@@ -49,14 +51,21 @@ _CANONICAL_PRODUCTION_ROOT = Path("/opt/bilive/autoslice")
 _ProviderResult = TypeVar("_ProviderResult")
 
 
+
+
+
+
+_MAX_PROVIDER_CAPACITY = 64
+
+
 def provider_capacity() -> int:
-    value = os.environ.get("AUTOSLICE_PROVIDER_CONCURRENCY", "2")
+    value = os.environ.get("AUTOSLICE_PROVIDER_CONCURRENCY", "20")
     try:
         capacity = int(value)
     except ValueError as exc:
-        raise ProviderSlotError("provider concurrency must be an integer from 1 to 5") from exc
-    if not 1 <= capacity <= 5:
-        raise ProviderSlotError("provider concurrency must be an integer from 1 to 5")
+        raise ProviderSlotError(f"provider concurrency must be an integer from 1 to {_MAX_PROVIDER_CAPACITY}") from exc
+    if not 1 <= capacity <= _MAX_PROVIDER_CAPACITY:
+        raise ProviderSlotError(f"provider concurrency must be an integer from 1 to {_MAX_PROVIDER_CAPACITY}")
     return capacity
 
 
@@ -109,7 +118,7 @@ def configured_runtime_root() -> Path | None:
     # A live host must never silently skip permits because an older manual
     # invocation omitted the variable.  Local development remains opt-in: it
     # does not normally have this exact production runtime topology.
-    if _CANONICAL_PRODUCTION_ROOT.is_dir() and (_CANONICAL_PRODUCTION_ROOT / "repo").is_dir():
+    if _CANONICAL_PRODUCTION_ROOT.is_dir() and deployed_code_root(_CANONICAL_PRODUCTION_ROOT).is_dir():
         return _CANONICAL_PRODUCTION_ROOT
     return None
 

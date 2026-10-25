@@ -34,6 +34,7 @@ from src.autoslice.operator_processing_scope import (
     STATE_KEY,
     _validate_grant,
 )
+from src.autoslice.evidence_identity import placement_free
 from src.autoslice.producer_delivery_transaction import deployment_authority_binding
 from src.autoslice.qixi_transaction_core import (
     exclusive_runner_commit,
@@ -641,7 +642,15 @@ def _validate_source_binding(
         recording_root, date=date, room_id=room_id,
         adapter_state_path=adapter_state_path, now=now,
     )
-    if document != observed:
+    # The approved tree is its paths, types, modes, content and restorable
+    # mtimes; a byte-identical restore changes only placement (41).
+    if (document.get("inventory_sha256") != _json_sha(document["entries"])
+            or not isinstance(document["entries"], list)
+            or any(not isinstance(entry, dict) for entry in document["entries"])
+            or {k: v for k, v in document.items() if k not in {"entries", "inventory_sha256"}}
+            != {k: v for k, v in observed.items() if k not in {"entries", "inventory_sha256"}}
+            or [placement_free(entry) for entry in document["entries"]]
+            != [placement_free(entry) for entry in observed["entries"]]):
         raise HistoricalFastlaneAuthorityError("HISTORICAL_FASTLANE_SOURCE_PREIMAGE_DRIFT")
     return observed
 

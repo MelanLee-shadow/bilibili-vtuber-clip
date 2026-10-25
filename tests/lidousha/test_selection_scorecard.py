@@ -6,6 +6,7 @@ import pytest
 from src.autoslice.selection_scorecard import (
     ADMISSION_POLICY_FIELD,
     CURRENT_ADMISSION_POLICY,
+    LEGACY_ADMISSION_POLICY,
     SCHEMA_VERSION,
     SelectionCalibrationPolicyError,
     apply_reviewed_selection_calibration,
@@ -26,6 +27,13 @@ def _raw(*, tier: int, basis: str, dimensions: dict[str, int]) -> dict:
         "dimensions": dimensions,
         "uncertainty_penalty": 2,
         "fatigue_penalty": 1,
+        "candidate_quality": {
+            "watchability": "STRONG",
+            "differentiation": "DISTINCTIVE",
+            "production_disposition": "PRODUCTION",
+            "reason": "候选窗内有明确观点、互动或结果兑现。",
+            "evidence_cues": [10, 12],
+        },
     }
 
 
@@ -204,7 +212,7 @@ def test_legacy_strong_performance_keeps_historic_tier_one_priority() -> None:
     )[0] == 1.0
 
 
-def test_recalibration_rewrites_legacy_admission_to_current_policy() -> None:
+def test_recalibration_preserves_historical_admission_policy() -> None:
     scorecard = _legacy_performance_card(
         lidousha_centrality=3,
         stance_intensity=2,
@@ -221,8 +229,10 @@ def test_recalibration_rewrites_legacy_admission_to_current_policy() -> None:
     )
 
     assert recalibrated is not None
-    assert recalibrated[ADMISSION_POLICY_FIELD] == CURRENT_ADMISSION_POLICY
-    assert recalibrated["tier"] == 2
+    assert ADMISSION_POLICY_FIELD not in recalibrated
+    assert recalibrated == scorecard
+    assert recalibrated["tier"] == 1
+    assert selection_rank_key({"cid": "legacy", "selection_scorecard": recalibrated})[0] == 2.0
     assert selection_scorecard_is_valid(recalibrated)
     assert scorecard == before
 
@@ -242,7 +252,7 @@ def test_hard_tier_beats_higher_numeric_lower_tier() -> None:
         _raw(
             tier=1,
             basis="explicit_gl_stance",
-            dimensions=_dimensions(comedic_payoff=2),
+            dimensions=_dimensions(comedic_payoff=3),
         ),
         start_cue=8,
         end_cue=20,
@@ -331,6 +341,13 @@ def test_722_reviewed_score_anchor_replaces_95_point_overrating() -> None:
             },
             "uncertainty_penalty": 1,
             "fatigue_penalty": 0,
+            "candidate_quality": {
+                "watchability": "STRONG",
+                "differentiation": "DISTINCTIVE",
+                "production_disposition": "PRODUCTION",
+                "reason": "关系联想与男性角色反转在窗内完整兑现。",
+                "evidence_cues": [910, 916, 925],
+            },
         },
         start_cue=900,
         end_cue=950,
@@ -446,3 +463,169 @@ def test_selection_calibration_ordering_constraint_is_executable(tmp_path) -> No
         raised.value.reason_code
         == "SELECTION_CALIBRATION_ORDERING_CONTRADICTED"
     )
+
+
+def test_v3_single_personal_stance_can_reach_tier_one() -> None:
+    scorecard = normalize_selection_scorecard(
+        _raw(
+            tier=1,
+            basis="personal_stance",
+            dimensions=_dimensions(
+                lidousha_centrality=4,
+                stance_intensity=4,
+                relationship_interaction=1,
+                persona_reversal=1,
+                comedic_payoff=3,
+            ),
+        ),
+        start_cue=8,
+        end_cue=20,
+    )
+
+    assert scorecard is not None
+    assert scorecard[ADMISSION_POLICY_FIELD] == CURRENT_ADMISSION_POLICY
+    assert scorecard["tier"] == 1
+    assert scorecard["tier_evidence_cues"] == [10, 12]
+
+
+def test_v3_strong_generic_event_competes_in_same_tier_by_effective_score() -> None:
+    relation = normalize_selection_scorecard(
+        _raw(
+            tier=1,
+            basis="relationship_chain",
+            dimensions=_dimensions(
+                lidousha_centrality=3,
+                stance_intensity=2,
+                audience_salience=2,
+                relationship_interaction=3,
+                persona_reversal=2,
+                comedic_payoff=3,
+                self_contained=3,
+            ),
+        ),
+        start_cue=8,
+        end_cue=20,
+    )
+    generic_raw = _raw(
+        tier=1,
+        basis="generic_event",
+        dimensions=_dimensions(
+            lidousha_centrality=4,
+            stance_intensity=4,
+            audience_salience=4,
+            relationship_interaction=1,
+            persona_reversal=1,
+            comedic_payoff=4,
+            self_contained=4,
+        ),
+    )
+    generic_raw["tier_evidence_cues"] = [11]
+    generic_raw["candidate_quality"]["evidence_cues"] = [11]
+    generic = normalize_selection_scorecard(
+        generic_raw,
+        start_cue=8,
+        end_cue=20,
+    )
+
+    assert relation is not None and generic is not None
+    assert relation["tier"] == generic["tier"] == 1
+    assert generic["effective_score"] > relation["effective_score"]
+    rows = [
+        {"cid": "relationship", "confidence": 0.99, "selection_scorecard": relation},
+        {"cid": "generic-event", "confidence": 0.60, "selection_scorecard": generic},
+    ]
+    assert [row["cid"] for row in sorted(rows, key=selection_rank_key)] == [
+        "generic-event",
+        "relationship",
+    ]
+
+
+def test_v3_weak_cp_does_not_get_automatic_tier_one_priority() -> None:
+    raw = _raw(
+        tier=1,
+        basis="cp_positioning",
+        dimensions=_dimensions(relationship_interaction=2),
+    )
+
+    scorecard = normalize_selection_scorecard(raw, start_cue=8, end_cue=20)
+
+    assert scorecard is not None
+    assert scorecard["tier"] == 2
+    assert "TIER1_ADMISSION_DOWNGRADED" in scorecard["reason_codes"]
+
+
+def test_v3_missing_quality_cannot_admit_tier_one() -> None:
+    raw = _raw(tier=1, basis="personal_stance", dimensions=_dimensions())
+    raw.pop("candidate_quality")
+
+    scorecard = normalize_selection_scorecard(raw, start_cue=8, end_cue=20)
+
+    assert scorecard is not None
+    assert scorecard["tier"] == 2
+    assert "TIER1_COMMON_QUALITY_GATE_FAILED" in scorecard["reason_codes"]
+
+
+def test_v3_quality_evidence_outside_window_is_rejected() -> None:
+    raw = _raw(tier=1, basis="personal_stance", dimensions=_dimensions())
+    raw["candidate_quality"]["evidence_cues"] = [999]
+
+    assert normalize_selection_scorecard(raw, start_cue=8, end_cue=20) is None
+
+
+@pytest.mark.parametrize(
+    ("dimension", "value"),
+    [
+        ("audience_salience", 1),
+        ("self_contained", 2),
+        ("comedic_payoff", 2),
+    ],
+)
+def test_v3_common_dimension_gate_blocks_each_insufficient_dimension(
+    dimension: str, value: int
+) -> None:
+    raw = _raw(
+        tier=1,
+        basis="personal_stance",
+        dimensions=_dimensions(**{dimension: value}),
+    )
+
+    scorecard = normalize_selection_scorecard(raw, start_cue=8, end_cue=20)
+
+    assert scorecard is not None
+    assert scorecard["tier"] == 2
+    assert "TIER1_COMMON_DIMENSION_GATE_FAILED" in scorecard["reason_codes"]
+
+
+def test_v2_card_is_validated_under_original_policy_without_mutation() -> None:
+    scorecard = normalize_selection_scorecard(
+        _raw(
+            tier=1,
+            basis="relationship_chain",
+            dimensions=_dimensions(),
+        ),
+        start_cue=8,
+        end_cue=20,
+    )
+    assert scorecard is not None
+    scorecard[ADMISSION_POLICY_FIELD] = LEGACY_ADMISSION_POLICY
+    scorecard.pop("candidate_quality")
+    before = json.dumps(scorecard, ensure_ascii=False, sort_keys=True)
+
+    assert selection_scorecard_is_valid(scorecard)
+    assert json.dumps(scorecard, ensure_ascii=False, sort_keys=True) == before
+
+
+def test_v2_performance_gate_remains_strict_without_becoming_unknown() -> None:
+    raw = _raw(
+        tier=1,
+        basis="audience_driven_performance",
+        dimensions=_dimensions(comedic_payoff=3),
+    )
+    scorecard = normalize_selection_scorecard(raw, start_cue=8, end_cue=20)
+    assert scorecard is not None
+    scorecard["tier"] = 1
+    scorecard["reason_codes"] = []
+    scorecard[ADMISSION_POLICY_FIELD] = LEGACY_ADMISSION_POLICY
+    scorecard.pop("candidate_quality")
+
+    assert selection_scorecard_is_valid(scorecard) is False

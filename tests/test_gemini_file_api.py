@@ -459,6 +459,9 @@ def test_generate_content_binds_static_video_fps_in_request(monkeypatch):
     part = seen["body"]["contents"][0]["parts"][0]
     assert part["file_data"]["mime_type"] == "video/mp4"
     assert part["video_metadata"] == {"fps": 5.0}
+    generation_config = seen["body"]["generationConfig"]
+    assert "temperature" not in generation_config
+    assert generation_config["maxOutputTokens"] == 65_536
     assert seen["headers"]["X-goog-api-key"] == "secret-key"
     assert "secret-key" not in str(seen["url"])
 

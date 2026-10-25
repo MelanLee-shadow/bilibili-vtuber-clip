@@ -100,6 +100,194 @@ def test_real_adapter_keeps_usage_reported_identity_and_pre_crop_bytes(tmp_path,
     assert "SYNTHETIC_PRIVATE_KEY" not in combined and "DO_NOT_PERSIST" not in combined
 
 
+def test_style_references_use_ordered_image_array_and_redacted_hash_evidence(tmp_path, monkeypatch):
+    reference_bytes = _png()
+    style_one_bytes = _png(size=(40, 28))
+    style_two_bytes = _png(size=(36, 36))
+    reference = tmp_path / "reference.png"
+    style_one = tmp_path / "style-one.png"
+    style_duplicate = tmp_path / "style-duplicate.png"
+    style_two = tmp_path / "style-two.png"
+    style_identity = tmp_path / "style-identity.png"
+    reference.write_bytes(reference_bytes)
+    style_one.write_bytes(style_one_bytes)
+    style_duplicate.write_bytes(style_one_bytes)
+    style_two.write_bytes(style_two_bytes)
+    style_identity.write_bytes(reference_bytes)
+    calls = []
+
+    def respond(request, *, timeout):
+        calls.append(request)
+        return Response({"data": [{"b64_json": base64.b64encode(reference_bytes).decode()}]})
+
+    monkeypatch.setattr(cover.urllib.request, "urlopen", respond)
+    result = cover._call_cpa_image_edit.__wrapped__(
+        base_url="https://synthetic.invalid/v1",
+        api_key="SYNTHETIC_PRIVATE_KEY",
+        reference_path=reference,
+        style_reference_paths=(style_identity, style_one, style_one, style_duplicate, style_two),
+        output_path=tmp_path / "background.png",
+        prompt="Synthetic fixture; not a real character or a production cover.",
+        request_path=tmp_path / "request.json",
+        response_path=tmp_path / "response.json",
+        model_candidates=("gpt-image-2.5-flare",),
+    )
+
+    assert result["status"] == "AI_BACKGROUND_READY"
+    assert len(calls) == 1
+    body = calls[0].data
+    filenames = [b'reference.png', b'style-one.png', b'style-two.png']
+    positions = [body.index(b'filename="' + filename + b'"') for filename in filenames]
+    assert positions == sorted(positions)
+    assert b'name="image[]"' in body
+    assert b'name="image";' not in body
+    assert reference_bytes in body
+    assert style_one_bytes in body
+    assert style_two_bytes in body
+    assert b'style-duplicate.png' not in body
+
+    request_evidence = json.loads((tmp_path / "request.json").read_text())
+    expected_styles = [
+        {
+            "path": str(style_identity),
+            "sha256": "sha256:" + hashlib.sha256(reference_bytes).hexdigest(),
+            "role": "STYLE_ONLY",
+            "status": "NOT_SENT_DEDUPLICATED",
+            "sent": False,
+            "deduplicated": True,
+            "deduplicated_against": {"path": str(reference), "role": "identity"},
+        },
+        {
+            "path": str(style_one),
+            "sha256": "sha256:" + hashlib.sha256(style_one_bytes).hexdigest(),
+            "role": "STYLE_ONLY",
+        },
+        {
+            "path": str(style_one),
+            "sha256": "sha256:" + hashlib.sha256(style_one_bytes).hexdigest(),
+            "role": "STYLE_ONLY",
+            "status": "NOT_SENT_DEDUPLICATED",
+            "sent": False,
+            "deduplicated": True,
+            "deduplicated_against": {"path": str(style_one), "role": "STYLE_ONLY"},
+        },
+        {
+            "path": str(style_duplicate),
+            "sha256": "sha256:" + hashlib.sha256(style_one_bytes).hexdigest(),
+            "role": "STYLE_ONLY",
+            "status": "NOT_SENT_DEDUPLICATED",
+            "sent": False,
+            "deduplicated": True,
+            "deduplicated_against": {"path": str(style_one), "role": "STYLE_ONLY"},
+        },
+        {
+            "path": str(style_two),
+            "sha256": "sha256:" + hashlib.sha256(style_two_bytes).hexdigest(),
+            "role": "STYLE_ONLY",
+        },
+    ]
+    assert request_evidence["reference_image"] == str(reference)
+    assert request_evidence["reference_sha256"] == "sha256:" + hashlib.sha256(reference_bytes).hexdigest()
+    assert request_evidence["style_references"] == expected_styles
+    assert request_evidence["image_inputs"] == [
+        {
+            "path": str(reference),
+            "sha256": request_evidence["reference_sha256"],
+            "role": "identity",
+        },
+        *expected_styles,
+    ]
+    assert result["style_reference_images"] == expected_styles
+    serialized = (tmp_path / "request.json").read_text() + (tmp_path / "response.json").read_text()
+    assert "SYNTHETIC_PRIVATE_KEY" not in serialized
+    assert "api_key\": \"<redacted>\"" in serialized
+
+
+def test_single_reference_keeps_legacy_mapping_and_image_field(tmp_path, monkeypatch):
+    result, _, calls = _run(tmp_path, monkeypatch)
+
+    assert result["status"] == "AI_BACKGROUND_READY"
+    assert len(calls) == 1
+    body = calls[0].data
+    assert b'name="image"; filename="ref.png"' in body
+    assert b'name="image[]"' not in body
+    request_evidence = json.loads((tmp_path / "request.json").read_text())
+    assert "style_references" not in request_evidence
+    assert "image_inputs" not in request_evidence
+    assert "style_reference_images" not in result
+
+
+def test_missing_style_reference_fails_before_provider_with_explicit_zero_calls(tmp_path, monkeypatch):
+    reference = tmp_path / "ref.png"
+    reference.write_bytes(_png())
+    missing = tmp_path / "missing-style.png"
+    calls = []
+
+    def forbidden(request, **_kwargs):
+        calls.append(request)
+        raise AssertionError("provider transport must not run for a missing style reference")
+
+    monkeypatch.setattr(cover.urllib.request, "urlopen", forbidden)
+    result = cover._call_cpa_image_edit.__wrapped__(
+        base_url="https://synthetic.invalid/v1",
+        api_key="SYNTHETIC_PRIVATE_KEY",
+        reference_path=reference,
+        style_reference_paths=(missing, missing),
+        output_path=tmp_path / "background.png",
+        prompt="fixture",
+        request_path=tmp_path / "request.json",
+        response_path=tmp_path / "response.json",
+        model_candidates=("gpt-image-2.5-flare",),
+    )
+
+    assert result["status"] == "FAILED"
+    assert result["reason_code"] == "CPA_IMAGE_EDIT_STYLE_REFERENCE_MISSING"
+    assert result["provider_calls"] == 0
+    assert calls == []
+    request_evidence = json.loads((tmp_path / "request.json").read_text())
+    assert request_evidence["style_references"] == [
+        {"path": str(missing), "sha256": None, "role": "STYLE_ONLY", "status": "MISSING"}
+    ]
+    assert json.loads((tmp_path / "response.json").read_text()) == {"attempts": []}
+    assert not (tmp_path / "background.png").exists()
+    assert "SYNTHETIC_PRIVATE_KEY" not in (tmp_path / "request.json").read_text()
+
+
+def test_identity_duplicate_style_does_not_silently_fallback_to_single_image(tmp_path, monkeypatch):
+    reference = tmp_path / "ref.png"
+    identity_duplicate = tmp_path / "style-copy.png"
+    image = _png()
+    reference.write_bytes(image)
+    identity_duplicate.write_bytes(image)
+    calls = []
+
+    def forbidden(request, **_kwargs):
+        calls.append(request)
+        raise AssertionError("provider transport must not run without an independent style image")
+
+    monkeypatch.setattr(cover.urllib.request, "urlopen", forbidden)
+    result = cover._call_cpa_image_edit.__wrapped__(
+        base_url="https://synthetic.invalid/v1",
+        api_key="SYNTHETIC_PRIVATE_KEY",
+        reference_path=reference,
+        style_reference_paths=(identity_duplicate,),
+        output_path=tmp_path / "background.png",
+        prompt="fixture",
+        request_path=tmp_path / "request.json",
+        response_path=tmp_path / "response.json",
+        model_candidates=("gpt-image-2.5-flare",),
+    )
+
+    assert result["status"] == "FAILED"
+    assert result["reason_code"] == "CPA_IMAGE_EDIT_STYLE_REFERENCE_NOT_DISTINCT"
+    assert result["provider_calls"] == 0
+    assert calls == []
+    request_evidence = json.loads((tmp_path / "request.json").read_text())
+    assert request_evidence["style_references"][0]["status"] == "NOT_SENT_DEDUPLICATED"
+    assert request_evidence["style_references"][0]["sent"] is False
+    assert request_evidence["style_references"][0]["deduplicated"] is True
+
+
 def test_missing_usage_and_upstream_model_remain_unknown(tmp_path, monkeypatch):
     result, _, _ = _run(tmp_path, monkeypatch)
     evidence = json.loads((tmp_path / "response.json").read_text())["attempts"][0]
@@ -172,12 +360,9 @@ def test_explicit_candidate_is_not_implicitly_rerouted(tmp_path, monkeypatch, mo
     assert observed["requested_model"] == model and observed["upstream_identity_verified"] is False
 
 
-def test_default_selection_and_downstream_allowlist_unchanged(monkeypatch):
+def test_default_selection_uses_current_approved_upgrade(monkeypatch):
     monkeypatch.delenv("CPA_IMAGE_MODEL", raising=False)
-    assert cover._cpa_image_model_candidates() == ("gpt-image-2", "gpt-image-1.5")
-    # This change does not authorize model migration or modify the repair gate.
-    source = Path(__file__).resolve().parents[1] / "src/autoslice/cover_repair.py"
-    assert 'if model not in {"gpt-image-2", "gpt-image-1.5"}' in source.read_text()
+    assert cover._cpa_image_model_candidates() == ("gpt-image-2.5", "gpt-image-2")
 
 
 @pytest.mark.parametrize("value", [None, "[]", "not-json"])

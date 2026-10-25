@@ -57,6 +57,157 @@ def _witness(heard: str, *, audible: bool = True, uncertain=()):
     }
 
 
+@pytest.mark.parametrize("protocol", ["text_first", "blind_pinyin", "candidate_blind_transcript"])
+@pytest.mark.parametrize("needs_audio", [False, True])
+def test_every_word_choice_prompt_requests_explicit_audio_routing(protocol, needs_audio):
+    witness = _witness("hai mei you ge zhai ne")
+    if protocol == "text_first":
+        witness = {"status": "UNCERTAIN", "reason_code": "CPA_TEXT_FIRST_NOT_REQUESTED"}
+    elif protocol == "candidate_blind_transcript":
+        witness = {
+            "schema_version": "subtitle-span-acoustic-witness.v1",
+            "witness_protocol": protocol,
+            "status": "OBSERVED",
+            "target_audible": True,
+            "candidate_exposure": "none",
+            "exact_transcript": "还没有歌债呢",
+        }
+    prompts = []
+
+    def judge(prompt):
+        prompts.append(prompt)
+        return json.dumps({
+            "choice": "PROPOSED", "needs_audio": needs_audio,
+            "reason": "还需定位原话" if needs_audio else "现有原话证据足以裁决",
+        })
+
+    verdict = judge_word_choice(
+        llm_call=judge, check_request=CHECK_REQUEST, witness=witness,
+    )
+
+    assert len(prompts) == 1
+    assert '"needs_audio": true或false' in prompts[0]
+    assert "候选排序与这个补听决定分别填写" in prompts[0]
+    assert verdict["needs_audio"] is needs_audio
+    assert verdict["needs_audio_requested"] is needs_audio
+
+
+@pytest.mark.parametrize("choice", ["CURRENT", "PROPOSED"])
+def test_observed_audio_does_not_close_explicit_cpa_request_for_more_audio(choice):
+    allowed, branch, audit = adjudicate_with_witness(
+        check_request=CHECK_REQUEST,
+        witness=_witness("hai mei you ge zhai ne"),
+        llm_call=lambda _: json.dumps({
+            "choice": choice, "needs_audio": True,
+            "reason": "片段没覆盖完整原话，需要听相邻句",
+        }),
+    )
+    assert not allowed
+    assert branch == "JUDGE_REQUESTS_MORE_AUDIO"
+    assert audit["judge"]["needs_audio_requested"] is True
+
+
+def test_explicit_terminal_acoustic_choice_still_applies():
+    allowed, branch, _audit = adjudicate_with_witness(
+        check_request=CHECK_REQUEST,
+        witness=_witness("hai mei you ge zhai ne"),
+        llm_call=lambda _: json.dumps({
+            "choice": "PROPOSED", "needs_audio": False,
+            "reason": "完整原话与候选一致",
+        }),
+    )
+    assert allowed
+    assert branch == "WITNESS_JUDGE_APPLY_PROPOSED"
+
+
+def test_no_new_evidence_stop_does_not_request_same_independent_audio(monkeypatch):
+    import src.autoslice.final_review_auditor as auditor
+
+    srt = "1\n00:00:01,000 --> 00:00:03,000\n还没有歌杂呢\n"
+    finding = {
+        "cue_index": 1, "kind": "phonetic", "suspect": "歌杂",
+        "suggestion": "歌债", "span_start_codepoint": 3,
+        "span_end_codepoint": 5, "proposed_full_cue": "还没有歌债呢",
+        "repair_class": "phonetic",
+    }
+
+    def witness(request):
+        return {
+            "schema_version": "subtitle-span-acoustic-witness.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "UNCERTAIN", "reason_code": "AUDIO_AMBIGUOUS",
+        }
+
+    monkeypatch.setattr(auditor, "adjudicate_with_witness", lambda **kwargs: (
+        False, "JUDGE_NO_NEW_EVIDENCE", {
+            "judge": {"status": "JUDGE_NO_NEW_EVIDENCE", "needs_audio": True},
+        },
+    ))
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("No-new-evidence stop must not request identical audio")
+
+    monkeypatch.setattr(auditor, "independent_asr_candidates", forbidden)
+    kept, audit = auditor.adjudicate_context_finding(
+        srt, finding, entity_verifier=witness, judge_llm_call=forbidden,
+    )
+    assert kept == srt
+    assert audit["repaired"] is False
+    assert audit["policy_branch"] == "JUDGE_NO_NEW_EVIDENCE"
+
+
+def test_registered_person_cannot_be_renamed_by_better_pinyin_and_generic_pronoun():
+    request = dict(
+        CHECK_REQUEST, current_cue="之前，之前小室她在那个商场遇见",
+        proposed_cue="之前，之前小四她在那个商场遇见",
+        suspect="小室", replacement="小四", repair_class="source_backed_entity",
+        context_after="她就顺手抽了两盒",
+    )
+    heard = _witness("zhi qian zhi qian xiao si ta zai nei ge shang chang yu jian")
+    allowed, branch, audit = adjudicate_with_witness(
+        check_request=request, witness=heard,
+        llm_call=lambda _: json.dumps({"choice": "PROPOSED", "reason": "xiao si 更像，小四后面有她"}),
+    )
+    assert not allowed
+    assert branch == "REGISTERED_NAME_REFERENT_DECISION_REQUIRED"
+    assert audit["registered_name_change"]["status"] == "UNRESOLVED"
+
+
+def test_registered_name_literal_exception_remains_cpa_decision():
+    request = dict(
+        CHECK_REQUEST, current_cue="我等了两小室", proposed_cue="我等了两小时",
+        suspect="小室", replacement="小时", context_after="足足等了一百二十分钟",
+    )
+    payload = {
+        "choice": "PROPOSED", "reason": "这里是等待时长，不是人名",
+        "registered_name_decisions": [{
+            "name": "小室", "usage": "LITERAL_NONENTITY", "replacement": "小时",
+            "context_quote": "足足等了一百二十分钟", "reason": "一百二十分钟表示两小时",
+        }],
+    }
+    allowed, _branch, _audit = adjudicate_with_witness(
+        check_request=request, witness=_witness("wo deng le liang xiao shi"),
+        llm_call=lambda _: json.dumps(payload),
+    )
+    assert allowed
+
+
+def test_other_person_requires_actual_independent_context_not_invented_quote():
+    request = dict(CHECK_REQUEST, current_cue="小室去买了", proposed_cue="小四去买了",
+                   suspect="小室", replacement="小四", context_before="今天说的是小四，不是小室")
+    payload = {"choice": "PROPOSED", "registered_name_decisions": [{
+        "name": "小室", "usage": "DIFFERENT_REFERENT", "replacement": "小四",
+        "context_quote": "今天说的是小四，不是小室", "reason": "前一句明确区分这两人",
+    }]}
+    for quoted, expected in [("今天说的是小四，不是小室", True), ("她叫小四", False)]:
+        payload["registered_name_decisions"][0]["context_quote"] = quoted
+        allowed, _branch, _audit = adjudicate_with_witness(
+            check_request=request, witness=_witness("xiao si qu mai le"),
+            llm_call=lambda _: json.dumps(payload),
+        )
+        assert allowed is expected
+
+
 def test_witness_request_strips_every_textual_channel():
     request = build_witness_request(CHECK_REQUEST)
     serialized = json.dumps(request, ensure_ascii=False)
@@ -67,6 +218,56 @@ def test_witness_request_strips_every_textual_channel():
     assert request["source_media_timeline_offset_ms"] == 9_730
     assert request["witness_protocol"] == "blind_pinyin"
     assert request["syllable_count_hint"] == 6
+
+
+def test_judge_converts_source_clock_before_comparing_target_times():
+    request = dict(
+        CHECK_REQUEST, matched_start_ms=89_170, matched_end_ms=90_170,
+        source_media_timeline_offset_ms=29_950,
+    )
+    witness = dict(_witness("ni zhi dao ma"), audio_start_ms=119_120, audio_end_ms=120_120)
+    prompt, *_ = acoustic_witness_adjudication._word_choice_prompt(
+        llm_call=lambda _: "", check_request=request, witness=witness,
+    )
+    assert '"delivery_target_ms": [89170, 90170]' in prompt
+    assert '"expected_source_target_ms": [119120, 120120]' in prompt
+    assert '"source_media_timeline_offset_ms": 29950' in prompt
+    assert "不能把带上下文的裁剪边界当成目标边界" in prompt
+    assert "不证明转写正确" in prompt
+
+
+def test_judge_missing_offset_does_not_invent_source_clock():
+    request = dict(CHECK_REQUEST)
+    request.pop("source_media_timeline_offset_ms")
+    prompt, *_ = acoustic_witness_adjudication._word_choice_prompt(
+        llm_call=lambda _: "", check_request=request, witness=_witness("hai mei you ge zhai ne"),
+    )
+    assert "expected_source_target_ms" not in prompt
+
+
+@pytest.mark.parametrize("text_first,homophone", [(True, True), (True, False), (False, True)])
+def test_text_first_separates_homophone_orthography_from_new_audio(text_first, homophone):
+    request = dict(
+        CHECK_REQUEST,
+        current_cue="他们把我拉出来",
+        proposed_cue="她们把我拉出来" if homophone else "他们把我挖出来",
+        suspect="他" if homophone else "拉",
+        replacement="她" if homophone else "挖",
+        require_complete_utterance_support=True,
+    )
+    witness = (
+        {"status": "UNCERTAIN", "reason_code": "CPA_TEXT_FIRST_NOT_REQUESTED"}
+        if text_first else _witness("ta men ba wo la chu lai")
+    )
+    prompt, *_ = acoustic_witness_adjudication._word_choice_prompt(
+        llm_call=lambda _: "", check_request=request, witness=witness,
+    )
+    assert ("## 同音字形的文字裁决" in prompt) is (text_first and homophone)
+    if text_first and homophone:
+        assert "这不要求默认选 CURRENT" in prompt
+        assert "仍可返回needs_audio=true" in prompt
+        assert "不证明 CURRENT 整句已听证" in prompt
+        assert "不证明实际发音完全相同" in prompt
 
 
 @pytest.mark.parametrize("contamination", [
@@ -366,6 +567,9 @@ def test_blind_protocol_canary_discloses_mismatch_without_overriding_cpa():
     assert audit["witness_conflict_diagnostic"]["additional_support_found"] is False
     assert "witness_conflict_gate" not in audit
     assert "代码计算的双候选拼音贴合" in prompts[0]
+    assert acoustic_witness_adjudication.AUDIO_EVIDENCE_PRIORITY in prompts[0]
+    assert "必须优先在与证人听写拼音相容" not in prompts[0]
+    assert "高可信辅助" not in prompts[0]
 
 
 def test_judge_out_of_set_answer_is_a_refusal():
@@ -538,6 +742,41 @@ def test_equal_low_pinyin_scores_are_disclosed_but_cpa_choice_applies():
     assert audit["witness_conflict_diagnostic"]["additional_support_found"] is False
 
 
+@pytest.mark.parametrize("needs_audio", [True, False])
+def test_legacy_cached_audio_request_keeps_receipt_without_provider_retry(
+    tmp_path, monkeypatch, needs_audio,
+):
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path))
+    calls = []
+
+    def llm(prompt):
+        calls.append(prompt)
+        return json.dumps({"choice": "PROPOSED", "needs_audio": needs_audio})
+
+    llm.cpa_cache_identity = {"models": ["gpt-6-sol"], "effort": "medium"}
+    witness = _witness("hai mei you ge zhai ne")
+    judge_word_choice(llm_call=llm, check_request=CHECK_REQUEST, witness=witness)
+    cache_path = next((tmp_path / "cache" / "judge-verdicts").rglob("*.json"))
+    entry = json.loads(cache_path.read_text())
+    del entry["verdict"]["needs_audio_requested"]
+    cache_path.write_text(json.dumps(entry))
+    before = cache_path.read_bytes()
+
+    applied, branch, audit = adjudicate_with_witness(
+        llm_call=llm, check_request=CHECK_REQUEST, witness=witness,
+    )
+    assert len(calls) == 1
+    assert cache_path.read_bytes() == before
+    assert audit["judge"]["served_from_cache"] is True
+    if needs_audio:
+        assert not applied
+        assert branch == "JUDGE_AUDIO_REQUEST_UNRESOLVED"
+        assert audit["judge"]["needs_audio_request_basis"] == "LEGACY_PARSED_RECEIPT"
+    else:
+        assert applied
+        assert branch == "WITNESS_JUDGE_APPLY_PROPOSED"
+
+
 def test_judge_verdict_cache_round_trip(tmp_path, monkeypatch):
     """维护者 自修复成本令：同一问题（同 prompt_sha）绝不发第二次
     judge 请求。JUDGED 终态入缓存并回放；非 JUDGED 不入；无 AUTOSLICE_BASE
@@ -585,6 +824,276 @@ def test_judge_verdict_cache_round_trip(tmp_path, monkeypatch):
     judge_word_choice(llm_call=counting_llm, **kwargs)
     judge_word_choice(llm_call=counting_llm, **kwargs)
     assert calls["n"] == 5
+
+
+def _bound_request(request):
+    """Bind the same request shape used by the normal context builder."""
+    canonical = dict(request)
+    canonical.pop("request_sha256", None)
+    canonical["request_sha256"] = hashlib.sha256(
+        json.dumps(
+            {key: value for key, value in request.items() if key != "request_sha256"},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return canonical
+
+
+def _semantic_cache_request(**updates):
+    request = {
+        **CHECK_REQUEST,
+        "whole_clip_current_srt": "10.000 --> 12.000\n还没有歌杂呢",
+        "closed_set_structured_evidence": {
+            "events": [{"kind": "chat", "text": "歌债"}],
+        },
+        "prior_acoustic_observations": [
+            {
+                "status": "OBSERVED",
+                "audio_clip_sha256": "b" * 64,
+                "response_sha256": "d" * 64,
+                "heard_pinyin": "hai mei you ge zhai ne",
+            },
+        ],
+        "reason": "同义控制层理由",
+        "evidence_cue_ids": [],
+    }
+    request.update(updates)
+    return _bound_request(request)
+
+
+def _semantic_cache_witness(**updates):
+    return {
+        **_witness("hai mei you ge zhai ne"),
+        "source_media_sha256": "a" * 64,
+        "audio_clip_sha256": "b" * 64,
+        "prompt_sha256": "c" * 64,
+        "response_sha256": "d" * 64,
+        "timeline_binding": {"matched_start_ms": 10_000, "matched_end_ms": 12_000},
+        **updates,
+    }
+
+
+@pytest.mark.parametrize("choice", ["CURRENT", "PROPOSED"])
+def test_semantic_cache_does_not_block_supported_verdict_with_default_audio_flag(
+    tmp_path, monkeypatch, choice
+):
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path))
+    calls = []
+
+    def llm_call(prompt):
+        calls.append(prompt)
+        return json.dumps({
+            "choice": choice,
+            "current_utterance_supported": True,
+            "reason": "现有完整原音证据已支持本次裁决",
+        })
+
+    llm_call.cpa_cache_identity = {"models": ["gpt-6-sol"], "effort": "medium"}
+    witness = _semantic_cache_witness()
+    first = judge_word_choice(
+        llm_call=llm_call,
+        check_request=_semantic_cache_request(reason="第一轮"),
+        witness=witness,
+    )
+    assert first["status"] == "JUDGED"
+    assert first["needs_audio"] is True  # Parser's compatibility default.
+    assert first["needs_audio_requested"] is False
+    second = judge_word_choice(
+        llm_call=llm_call,
+        check_request=_semantic_cache_request(reason="元数据变化"),
+        witness=witness,
+    )
+    assert second["status"] == "JUDGED"
+    assert second["choice"] == choice
+    assert len(calls) == 1
+    assert second["served_from_semantic_cache"] is True
+    assert second["span_review_raw_completion"] == first["span_review_raw_completion"]
+    assert list(
+        (tmp_path / "cache" / "judge-verdicts" / "semantic-no-new").rglob("*.json")
+    )
+
+
+def test_semantic_judge_cache_stops_metadata_only_repetition(tmp_path, monkeypatch):
+    """Controller-only request churn must not dispatch the same unresolved CPA again."""
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path))
+    calls = {"n": 0}
+
+    def counting_llm(_prompt):
+        calls["n"] += 1
+        return json.dumps({
+            "choice": "NEITHER",
+            "needs_audio": True,
+            "reason": f"同一音频仍需不同证据 {calls['n']}",
+        })
+
+    counting_llm.cpa_cache_identity = {"models": ["gpt-6-sol"], "effort": "medium"}
+    witness = _semantic_cache_witness()
+    first_request = _semantic_cache_request(reason="第一轮理由", evidence_cue_ids=[])
+    first = judge_word_choice(
+        llm_call=counting_llm,
+        check_request=first_request,
+        witness=witness,
+    )
+    assert first["status"] == "JUDGED"
+    assert first["choice"] == "NEITHER"
+    assert calls["n"] == 1
+
+    second = judge_word_choice(
+        llm_call=counting_llm,
+        check_request=_semantic_cache_request(
+            reason="控制器重试理由不同",
+            evidence_cue_ids=[70, 72, 73, 74],
+        ),
+        witness=witness,
+    )
+    assert calls["n"] == 1
+    assert second["status"] == "JUDGE_NO_NEW_EVIDENCE"
+    assert second["choice"] == "UNCERTAIN"
+    assert second["reason_code"] == "JUDGE_NO_NEW_EVIDENCE"
+    assert second["needs_audio"] is True
+    assert second["served_from_semantic_cache"] is True
+    links = second["semantic_no_new_evidence"]
+    assert links["original_request_sha256"] == first["check_request_sha256"]
+    assert links["original_prompt_sha256"] == first["prompt_sha256"]
+    assert links["original_completion_sha256"] == first["completion_sha256"]
+    semantic_entries = list(
+        (tmp_path / "cache" / "judge-verdicts" / "semantic-no-new").rglob("*.json")
+    )
+    assert len(semantic_entries) == 1
+
+    allowed, branch, audit = adjudicate_with_witness(
+        llm_call=counting_llm,
+        check_request=_semantic_cache_request(
+            reason="又一次控制器理由",
+            evidence_cue_ids=[70, 72, 73, 74],
+        ),
+        witness=witness,
+    )
+    assert allowed is False
+    assert branch == "JUDGE_NO_NEW_EVIDENCE"
+    assert audit["judge"]["status"] == "JUDGE_NO_NEW_EVIDENCE"
+    assert calls["n"] == 1
+
+
+@pytest.mark.parametrize("change", ["audio", "candidate", "structured", "model"])
+def test_semantic_judge_cache_dispatches_for_substantive_change(tmp_path, monkeypatch, change):
+    """A real evidence/model change remains eligible for a normal CPA call."""
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path))
+    calls = {"n": 0}
+
+    def counting_llm(_prompt):
+        calls["n"] += 1
+        return json.dumps({"choice": "NEITHER", "needs_audio": True})
+
+    counting_llm.cpa_cache_identity = {"models": ["gpt-6-sol"], "effort": "medium"}
+    witness = _semantic_cache_witness()
+    request = _semantic_cache_request(reason="first", evidence_cue_ids=[])
+    first = judge_word_choice(llm_call=counting_llm, check_request=request, witness=witness)
+    assert first["status"] == "JUDGED"
+
+    changed_witness = witness
+    changed_request = request
+    changed_llm = counting_llm
+    if change == "audio":
+        # The exact legacy cache is keyed by effective prompt/model.  Change
+        # the provider-visible transcript witness as well as its audio identity
+        # so this is a genuinely new prompt and semantic evidence fingerprint.
+        changed_witness = _semantic_cache_witness(
+            audio_clip_sha256="e" * 64,
+            heard_pinyin="hai mei you ge cai ne",
+        )
+    elif change == "candidate":
+        changed_request = _semantic_cache_request(
+            proposed_cue="还没有歌财呢", reason="first", evidence_cue_ids=[]
+        )
+    elif change == "structured":
+        changed_request = request
+    elif change == "model":
+        def changed_model_llm(_prompt):
+            calls["n"] += 1
+            return json.dumps({"choice": "NEITHER", "needs_audio": True})
+
+        changed_model_llm.cpa_cache_identity = {
+            "models": ["gpt-6-astra"], "effort": "medium"
+        }
+        changed_llm = changed_model_llm
+
+    second = judge_word_choice(
+        llm_call=changed_llm,
+        check_request=changed_request,
+        witness=changed_witness,
+        structured_chat_context=("新的SC语境" if change == "structured" else ""),
+    )
+    assert calls["n"] == 2
+    assert second["status"] == "JUDGED"
+    assert second.get("served_from_semantic_cache") is not True
+
+
+def test_legacy_exact_judged_cache_replays_without_semantic_fingerprint(
+    tmp_path, monkeypatch,
+):
+    """Legacy exact receipts remain valid without the newer semantic companion."""
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path))
+    calls = []
+
+    def llm(prompt):
+        calls.append(prompt)
+        return json.dumps({"choice": "PROPOSED", "needs_audio": False})
+
+    model_identity = {"models": ["gpt-6-sol"], "effort": "medium"}
+    llm.cpa_cache_identity = model_identity
+    request = _semantic_cache_request(reason="legacy receipt")
+    witness = _semantic_cache_witness()
+    legacy_completion = json.dumps(
+        {"choice": "PROPOSED", "needs_audio": False},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    prompt, _allowed, _contract, _similarities, _candidates = (
+        acoustic_witness_adjudication._word_choice_prompt(
+            llm_call=llm,
+            check_request=request,
+            witness=witness,
+        )
+    )
+    prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    cache_key = hashlib.sha256(json.dumps(
+        {"prompt_sha256": prompt_sha256, "model_identity": model_identity},
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode()).hexdigest()
+    cache_path = (
+        tmp_path / "cache" / "judge-verdicts" / cache_key[:2] / f"{cache_key}.json"
+    )
+    cache_path.parent.mkdir(parents=True)
+    cache_path.write_text(json.dumps({
+        "schema_version": "judge-verdict-cache.v2",
+        "prompt_sha256": prompt_sha256,
+        "model_identity": model_identity,
+        # Deliberately omit semantic_evidence_fingerprint: this is the
+        # pre-semantic legacy exact receipt the reader must still honor.
+        "verdict": {
+            "schema_version": "acoustic-witness-adjudication.v1",
+            "status": "JUDGED",
+            "choice": "PROPOSED",
+            "needs_audio": False,
+            "needs_audio_requested": False,
+            "prompt_sha256": prompt_sha256,
+            "completion_sha256": hashlib.sha256(
+                legacy_completion.encode("utf-8")
+            ).hexdigest(),
+            "check_request_sha256": request["request_sha256"],
+        },
+    }))
+
+    verdict = judge_word_choice(llm_call=llm, check_request=request, witness=witness)
+    assert calls == []
+    assert verdict["status"] == "JUDGED"
+    assert verdict["choice"] == "PROPOSED"
+    assert verdict["served_from_cache"] is True
 
 
 def test_self_inconsistent_witness_is_disclosed_but_not_a_second_text_veto():
@@ -1120,3 +1629,55 @@ def test_judge_ranking_top_choice_wins_and_uncertain_is_not_terminal():
     refusal = call_with({"choice": "UNCERTAIN", "reason": "拒绝排序"})
     assert refusal["status"] == "JUDGE_OUT_OF_SET"
     assert refusal["choice"] == "UNCERTAIN"
+
+
+def test_no_new_evidence_can_consume_saved_independent_receipts_without_audio(monkeypatch):
+    import src.autoslice.final_review_auditor as auditor
+
+    srt = "1\n00:00:01,000 --> 00:00:03,000\n除非你是一个目标\n"
+    finding = {
+        "cue_index": 1, "kind": "phonetic", "suspect": "是一个",
+        "suggestion": "是有一个", "proposed_full_cue": "除非你是有一个目标",
+        "repair_class": "phonetic",
+    }
+    observed, judged = [], []
+
+    def witness(request):
+        return {"schema_version": "subtitle-span-acoustic-witness.v1",
+                "request_sha256": request["request_sha256"],
+                "status": "UNCERTAIN", "reason_code": "AUDIO_AMBIGUOUS"}
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("no-new recovery must not dispatch independent audio")
+
+    def cached(target):
+        observed.append(target)
+        return [{"schema_version": "subtitle-span-acoustic-witness.v1",
+                 "request_sha256": target["request_sha256"], "status": "OBSERVED",
+                 "target_audible": True, "witness_protocol": "candidate_blind_transcript",
+                 "exact_transcript": "除非你是一个目标", "provider": "mai",
+                 "model": "mai-test", "source_media_sha256": "a" * 64,
+                 "audio_start_ms": 1_000, "audio_end_ms": 3_000,
+                 "candidate_exposure": "none", "authority": "EVIDENCE_ONLY",
+                 "mutation_authorized": False, "served_from_cache": True}]
+
+    witness.observe_independent_witnesses = forbidden
+    witness.observe_cached_independent_witnesses = cached
+
+    def adjudicate(**kwargs):
+        judged.append(kwargs)
+        if len(judged) == 1:
+            return False, "JUDGE_NO_NEW_EVIDENCE", {
+                "judge": {"status": "JUDGE_NO_NEW_EVIDENCE", "needs_audio": True}}
+        return False, "JUDGE_KEEPS_CURRENT", {
+            "judge": {"status": "JUDGED", "choice": "CURRENT",
+                      "needs_audio": False, "current_utterance_supported": True}}
+
+    monkeypatch.setattr(auditor, "adjudicate_with_witness", adjudicate)
+    kept, audit = auditor.adjudicate_context_finding(
+        srt, finding, entity_verifier=witness, judge_llm_call=forbidden)
+    assert kept == srt
+    assert len(observed) == 1 and len(judged) == 2
+    assert audit["independent_asr"]["status"] == "OBSERVED"
+    assert audit["independent_asr"]["accepted_observations"][0]["served_from_cache"] is True
+    assert audit["repaired"] is False

@@ -10,10 +10,15 @@ from pathlib import Path
 import pytest
 
 from src.autoslice import llm_client
-from src.autoslice import producer_final_review_transport as transport
+from src.autoslice import qixi_post_correction_public_surface as qixi
 from src.autoslice import provider_slots
 from src.autoslice.provider_slots import ProviderSlotError, ProviderSlotTimeout, provider_slot, provider_wait_for_call, provider_wait_seconds, runtime_provider_slot
 from src.autoslice.qixi_transaction_core import exclusive_runner_commit
+
+
+def test_default_capacity_is_measured_production_twenty(monkeypatch):
+    monkeypatch.delenv('AUTOSLICE_PROVIDER_CONCURRENCY', raising=False)
+    assert provider_slots.provider_capacity() == 20
 
 
 def _hold_slot(root: str, release: object, result: object) -> None:
@@ -77,10 +82,10 @@ def test_provider_permit_releases_after_exception(tmp_path: Path, monkeypatch: p
         assert lease.slot_index == 0
 
 
-@pytest.mark.parametrize("value", ["0", "6", "not-an-int"])
+@pytest.mark.parametrize("value", ["0", "65", "not-an-int"])
 def test_provider_capacity_env_is_strict(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: str) -> None:
     monkeypatch.setenv("AUTOSLICE_PROVIDER_CONCURRENCY", value)
-    with pytest.raises(ProviderSlotError, match="1 to 5"):
+    with pytest.raises(ProviderSlotError, match="1 to 64"):
         with provider_slot(tmp_path):
             pass
 
@@ -108,7 +113,7 @@ def test_live_canonical_runtime_never_silently_bypasses_pool(tmp_path: Path, mon
         assert lease is not None
 
 
-def test_command_adapter_and_publication_review_share_one_runtime_pool(
+def test_command_adapter_and_qixi_default_share_one_runtime_pool(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path))
@@ -117,20 +122,15 @@ def test_command_adapter_and_publication_review_share_one_runtime_pool(
     monkeypatch.setattr(llm_client, "_call_command", lambda _prompt, _config: "ok")
     config = llm_client.LlmConfig(transport="command", command_template="ignored")
     direct_command = llm_client.build_llm_call(config)
-    monkeypatch.delenv("AUTOSLICE_FINAL_REVIEW_SSH_HOST", raising=False)
-    monkeypatch.setattr(
-        transport, "runtime_cpa_command_environment",
-        lambda _root: {"CPA_BASE_URL": "https://runtime.example.test/v1", "CPA_API_KEY": "synthetic-key"},
-    )
-    publication_review = transport.build_publication_llm_call(effort="high")
+    qixi_default = qixi._default_source_fact_llm()
 
     with provider_slot(tmp_path):
         with pytest.raises(llm_client.LlmCallError, match="provider capacity wait timed out"):
             direct_command("one")
         with pytest.raises(llm_client.LlmCallError, match="provider capacity wait timed out"):
-            publication_review("two")
+            qixi_default("two")
     assert direct_command("one") == "ok"
-    assert publication_review("two") == "ok"
+    assert qixi_default("two") == "ok"
 
 
 def test_provider_slot_refuses_symlink_directory(tmp_path: Path) -> None:

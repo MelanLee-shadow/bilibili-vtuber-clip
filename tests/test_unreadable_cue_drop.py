@@ -519,8 +519,10 @@ def test_release_contract_rejects_a_forged_drop_audit():
 
 
 def _clean_audit(text: str) -> dict:
+    from src.autoslice.final_review_meaning_policy import POLICY_VERSION
     return {
         "schema_version": "final-review-audit.v2",
+        "meaning_policy": POLICY_VERSION,
         "status": "CLEAN",
         "release_gate": "PASS",
         "reason_codes": [],
@@ -739,7 +741,9 @@ def test_review_gate_still_blocks_a_machine_undecided_witness(
         audit.update(_flagged_audit([finding], text))
         return audit
 
-    with pytest.raises(SystemExit, match="FINAL_REVIEW_UNRESOLVED_FINDINGS"):
+    # The final funnel cannot turn an unavailable decision into an authorized
+    # drop; it now reports the engineering failure separately from content D.
+    with pytest.raises(SystemExit, match="FINAL_REVIEW_ENGINEERING_FAILURE"):
         finalization._run_exact_final_review_gate(
             cid="candidate",
             out_root=tmp_path,

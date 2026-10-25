@@ -126,19 +126,10 @@ def _validated_present_capability(
         raise _error(exc.reason_code, exc.detail) from exc
 
 
-def ensure_runtime_raw_av_capability(
-    runtime_root: str | Path,
-    *,
-    now: datetime | None = None,
-    environment: Mapping[str, str] | None = None,
-    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
-    validity_seconds: int = DEFAULT_SENTINEL_VALIDITY_SECONDS,
-) -> dict[str, object]:
-    """Accept, bootstrap, wait, or fail one runtime capability deterministically."""
-
-    root = Path(runtime_root).expanduser().absolute()
-    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    existing = _validated_present_capability(root, now=current)
+def validate_final_media_review_routes(
+    environment: Mapping[str, str] | None,
+) -> tuple[bool, bool]:
+    """Validate explicit routes before configuration or capability dispatch."""
     try:
         api_enabled = gemini_api_runtime_enabled(environment)
         web_enabled = gemini_web_runtime_enabled(environment)
@@ -152,6 +143,23 @@ def ensure_runtime_raw_av_capability(
             "FINAL_MEDIA_REVIEW_ROUTE_CONFLICT",
             "direct Gemini API and Gemini Web routes cannot both be enabled",
         )
+    return api_enabled, web_enabled
+
+
+def ensure_runtime_raw_av_capability(
+    runtime_root: str | Path,
+    *,
+    now: datetime | None = None,
+    environment: Mapping[str, str] | None = None,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    validity_seconds: int = DEFAULT_SENTINEL_VALIDITY_SECONDS,
+) -> dict[str, object]:
+    """Accept, bootstrap, wait, or fail one runtime capability deterministically."""
+
+    root = Path(runtime_root).expanduser().absolute()
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    existing = _validated_present_capability(root, now=current)
+    api_enabled, web_enabled = validate_final_media_review_routes(environment)
     if existing is not None:
         return {
             "status": "RAW_AV_CAPABILITY_PRESENT",
@@ -223,6 +231,10 @@ def ensure_runtime_raw_av_capability(
         18_000,
         10_800 + 2 * int(sentinel["timeout_seconds"]) + 300,
     )
+    from src.autoslice.final_media_review_code_binding import child_environment
+    runner_environment = child_environment(
+        _safe_environment(environment, runtime_root=root), root=root,
+        code_binding=sentinel.get("code_binding"))
     try:
         completed = run(
             command,
@@ -231,7 +243,7 @@ def ensure_runtime_raw_av_capability(
             text=True,
             stdin=subprocess.DEVNULL,
             timeout=timeout,
-            env=_safe_environment(environment, runtime_root=root),
+            env=runner_environment,
         )
     except subprocess.TimeoutExpired as exc:
         raise _error(

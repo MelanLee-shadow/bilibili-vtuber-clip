@@ -19,6 +19,7 @@ provider call.
 """
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 from datetime import datetime
 import hashlib
 import json
@@ -102,11 +103,8 @@ def _canonical_sha256(value: object) -> str:
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return digest
 
 
 def _normalize_sha(value: object, *, label: str) -> str:
@@ -296,6 +294,7 @@ def _command_contract(capability: Mapping[str, object]) -> dict[str, object]:
         "timeout_seconds": capability["timeout_seconds"],
         "result_schema_version": capability["result_schema_version"],
         "model_capability_seal": capability["model_capability_seal"],
+        **({"code_binding": capability["code_binding"]} if "code_binding" in capability else {}),
         "model_capability_contract_sha256": (
             model_capability.get("contract_sha256")
             if isinstance(model_capability, Mapping)
@@ -339,6 +338,8 @@ def load_runtime_raw_av_capability(
         "result_schema_version",
         "model_capability_seal",
     }
+    if "code_binding" in value:
+        expected_fields.add("code_binding")
     if set(value) != expected_fields:
         raise _error(
             "FINAL_MEDIA_REVIEW_RAW_AV_CAPABILITY_INVALID",
@@ -404,6 +405,11 @@ def load_runtime_raw_av_capability(
             "FINAL_MEDIA_REVIEW_RAW_AV_CAPABILITY_INVALID",
             "raw-AV executable hash changed",
         )
+    from src.autoslice.final_media_review_code_binding import validate_code_binding
+    try:
+        validate_code_binding(root, value.get("code_binding"), adapter=executable)
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise _error("FINAL_MEDIA_REVIEW_CODE_BINDING_INVALID", str(exc)) from exc
     try:
         model_capability = validate_model_capability_attestation(
             value.get("model_capability_seal"),
@@ -1141,6 +1147,9 @@ def build_runtime_raw_av_executor(
             base_environment.pop(key, None)
     base_environment["AUTOSLICE_BASE"] = str(root)
     base_environment["AUTOSLICE_FINAL_REVIEW_RUNTIME_ROOT"] = str(root)
+    from src.autoslice.final_media_review_code_binding import child_environment
+    base_environment = child_environment(base_environment, root=root,
+                                         code_binding=capability.get("code_binding"))
 
     def executor(
         job: Mapping[str, object],

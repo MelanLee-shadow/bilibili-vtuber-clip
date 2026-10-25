@@ -33,6 +33,10 @@ from src.autoslice.host_only_v4_package_binding import (
 
 
 def validate_package_cover_route(generation, *, root=None, item=None) -> bool:
+    if generation.get("method") == "skill.candidates":
+        from .title_cover_package import package_choice_problems
+        return bool(root is not None and item is not None
+                    and not package_choice_problems(root, item, generation))
     if generation.get("method") != "image_gen.imagegen":
         return validate_cover_route_decision(generation, allow_legacy_v1=False)
     if root is None or item is None:

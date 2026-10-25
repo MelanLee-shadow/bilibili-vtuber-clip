@@ -1,177 +1,23 @@
-"""Candidate-only authority for generated public text, never transcript truth.
-
-This is deliberately narrower than a reviewed-SRT entity projection.  It binds
-one user-adjudicated spelling repair to one candidate, one hash-bound clip
-context, and one original selection hook.  It may constrain generated hook,
-title, cover, and publication text, but it cannot mutate subtitles or speaker
-labels, release a registry hold, or authorize upload.
-"""
-
+"""Public compatibility boundary: candidate-specific text authorities are private."""
 from __future__ import annotations
-
-import hashlib
-import json
 import os
-import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Mapping
-
+from typing import Callable
 from src.autoslice.channel_profile import load_channel_profile
-from src.autoslice.manual_title_source_fact_successor import (
-    ManualTitleSourceFactSuccessorError,
-    accepts_manual_title_source_fact_successor,
-)
-from src.autoslice.repository_asset_authority import (
-    RepositoryAssetAuthorityError,
-    repository_authority_expects_asset,
-    require_repository_asset_authority,
-)
-
 
 ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(ROOT)
-SCHEMA_VERSION = "lidousha-candidate-public-text-surface-authority.v1"
 ALGORITHM_ID = "exact-candidate-generated-surface-resolution.v1"
-MANUAL_TITLE_ALGORITHM_ID = "exact-candidate-manual-title-resolution.v1"
-ROOT_REVIEWED_ALGORITHM_ID = "exact-candidate-root-reviewed-public-surface-resolution.v1"
-ROOT_REVIEWED_CANDIDATE_ID = "__private_authority_unavailable__"
-ROOT_REVIEWED_RECORDING_DATE = "__private_authority_unavailable__"
-ROOT_REVIEWED_CONTEXT_SHA256 = "__private_authority_unavailable__"
-ROOT_REVIEWED_STORY_SHA256 = "__private_authority_unavailable__"
-ROOT_REVIEWED_PROMPT_SHA256 = "__private_authority_unavailable__"
-ROOT_REVIEWED_INTERVAL = "__private_authority_unavailable__"
-ROOT_REVIEWED_SOURCE_PIECES = "__private_authority_unavailable__"
-ROOT_REVIEWED_RULING_SHA256 = "__private_authority_unavailable__"
-ROOT_REVIEWED_RULING_LOCATOR = "__private_authority_unavailable__"
-ROOT_REVIEWED_RULING_QUOTE = "__private_authority_unavailable__"
-ROOT_REVIEWED_RULING_TIMESTAMP = "__private_authority_unavailable__"
-CONSUMPTION_SCHEMA_VERSION = "candidate-public-text-surface-consumption.v1"
 AUTHORITY_DIRECTORY = "candidate_public_text_surface_authorities"
 AUTHORITY_SUFFIX = ".public-text-surface-authority.v1.json"
-AUTHORITY_REQUIRED_CANDIDATES = frozenset(
-    {"auto_173005_934_1166", "auto_210739_1142_1436", "auto_120032_753_816"}
-)
-PUBLIC_ARTIFACT_KINDS = ("selection_hook", "title", "cover", "publication")
-_CANDIDATE_RX = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{2,127}\Z")
-_SHA_RX = re.compile(r"sha256:[0-9a-f]{64}\Z")
-_ROOT_FIELDS = {
-    "schema_version",
-    "algorithm_id",
-    "candidate_binding",
-    "input_surface_binding",
-    "resolved_surfaces",
-    "entity_surface_policy",
-    "scope",
-    "user_authorization",
-    "authority_sha256",
-}
-_MANUAL_TITLE_ROOT_FIELDS = {
-    "schema_version",
-    "algorithm_id",
-    "candidate_binding",
-    "input_surface_binding",
-    "resolved_surfaces",
-    "scope",
-    "user_authorization",
-    "authority_sha256",
-}
-_ROOT_REVIEWED_ROOT_FIELDS = _MANUAL_TITLE_ROOT_FIELDS | {"decision_authorization"}
-_CANDIDATE_FIELDS = {
-    "candidate_id",
-    "recording_date",
-    "clip_context_sha256",
-    "selected_interval",
-    "clip_context_source_pieces",
-}
-_MANUAL_TITLE_CANDIDATE_FIELDS = _CANDIDATE_FIELDS | {
-    "story_contract_sha256",
-    "clip_context_prompt_sha256",
-}
-_SELECTED_INTERVAL_FIELDS = {"absolute_start_ms", "absolute_end_ms"}
-_PIECE_FIELDS = {
-    "recording_basename",
-    "source_media_sha256",
-    "start_ms",
-    "end_ms",
-}
-_INPUT_FIELDS = {
-    "selection_hook",
-    "selection_hook_sha256",
-    "superseded_title",
-    "superseded_title_sha256",
-}
-_RESOLVED_FIELDS = {
-    "selection_hook",
-    "selection_hook_sha256",
-    "title",
-    "title_sha256",
-}
-_ROOT_REVIEWED_RESOLVED_FIELDS = _RESOLVED_FIELDS | {"cover_lines", "cover_lines_sha256"}
-_ENTITY_FIELDS = {
-    "entity_id",
-    "equivalent_surfaces",
-    "required_public_surface",
-    "forbidden_public_surfaces",
-    "exact_substitution",
-}
-_SCOPE_FIELDS = {
-    "artifact_kinds",
-    "subtitle_text_mutation_authorized",
-    "speaker_label_mutation_authorized",
-    "upload_authorized",
-    "registry_hold_released",
-}
-
+_UNAVAILABLE = "PUBLIC_TEXT_PRIVATE_AUTHORITY_UNAVAILABLE"
 
 class CandidatePublicTextSurfaceAuthorityError(ValueError):
-    """The optional candidate authority exists but is invalid or out of scope."""
+    pass
 
-
-def _sha256_text(value: str) -> str:
-    return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
-def _sha256_json(value: object) -> str:
-    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
-        "utf-8"
-    )
-    return "sha256:" + hashlib.sha256(encoded).hexdigest()
-
-
-def _required_object(value: object, fields: set[str], code: str) -> dict[str, object]:
-    if not isinstance(value, Mapping) or set(value) != fields:
-        raise CandidatePublicTextSurfaceAuthorityError(code)
-    return dict(value)
-
-
-def _required_text(value: object, code: str) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise CandidatePublicTextSurfaceAuthorityError(code)
-    return value
-
-
-def _validate_source_pieces(value: object) -> tuple[dict[str, object], ...]:
-    if not isinstance(value, list) or not value:
-        raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_SOURCE_PIECES_INVALID")
-    pieces: list[dict[str, object]] = []
-    for raw in value:
-        piece = _required_object(raw, _PIECE_FIELDS, "PUBLIC_TEXT_SOURCE_PIECE_INVALID")
-        if not (
-            isinstance(piece["recording_basename"], str)
-            and Path(piece["recording_basename"]).name == piece["recording_basename"]
-            and _SHA_RX.fullmatch(str(piece["source_media_sha256"] or ""))
-            and isinstance(piece["start_ms"], int)
-            and not isinstance(piece["start_ms"], bool)
-            and isinstance(piece["end_ms"], int)
-            and not isinstance(piece["end_ms"], bool)
-            and 0 <= piece["start_ms"] < piece["end_ms"]
-        ):
-            raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_SOURCE_PIECE_INVALID")
-        pieces.append(piece)
-    return tuple(pieces)
-
+def _unavailable(*_args, **_kwargs):
+    raise CandidatePublicTextSurfaceAuthorityError(_UNAVAILABLE)
 
 @dataclass(frozen=True, slots=True)
 class CandidatePublicTextSurfaceAuthority:
@@ -199,85 +45,24 @@ class CandidatePublicTextSurfaceAuthority:
 
     @property
     def is_manual_title_resolution(self) -> bool:
-        return self.algorithm_id == MANUAL_TITLE_ALGORITHM_ID
+        _unavailable()
 
     @property
     def is_root_reviewed_resolution(self) -> bool:
-        return self.algorithm_id == ROOT_REVIEWED_ALGORITHM_ID
+        _unavailable()
 
     @property
     def title_source(self) -> str:
-        return (
-            "deterministic_candidate_manual_title_resolution+reviewer_exact_title"
-            if self.is_manual_title_resolution
-            else (
-                "deterministic_candidate_root_reviewed_public_surface_resolution"
-                if self.is_root_reviewed_resolution
-                else "deterministic_candidate_public_surface_resolution+reviewer_exact_substitution"
-            )
-        )
+        _unavailable()
 
     def require_text_surfaces(self, *, surface_type: str, text: str) -> str:
-        """Enforce only generated title/cover spelling, never source transcript."""
-
-        if surface_type != "title_cover" or not isinstance(text, str) or not text:
-            raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_SURFACE_TYPE_INVALID")
-        for surface in self.forbidden_public_surfaces:
-            if surface in text:
-                raise CandidatePublicTextSurfaceAuthorityError(
-                    f"PUBLIC_TEXT_FORBIDDEN_ENTITY_SURFACE:{surface}"
-                )
-        return text
+        _unavailable()
 
     def require_artifact_text(self, *, artifact_kind: str, text: str) -> str:
-        if artifact_kind not in PUBLIC_ARTIFACT_KINDS:
-            raise CandidatePublicTextSurfaceAuthorityError(
-                f"PUBLIC_TEXT_ARTIFACT_OUT_OF_SCOPE:{artifact_kind}"
-            )
-        self.require_text_surfaces(surface_type="title_cover", text=text)
-        if artifact_kind in {"title", "publication"} and text != self.resolved_title:
-            raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_EXACT_TITLE_MISMATCH")
-        if artifact_kind == "cover" and self.resolved_cover_lines and text != "\n".join(self.resolved_cover_lines):
-            raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_EXACT_COVER_MISMATCH")
-        return text
+        _unavailable()
 
     def validate_clip_context_prompt(self, prompt: str) -> None:
-        """Rebind a receipt to the current prompt's mandatory context header."""
-
-        expected_pieces = [dict(piece) for piece in self.source_pieces]
-        fields: dict[str, str] = {}
-        for line in prompt.splitlines():
-            for key in (
-                "clip_context_sha256",
-                "candidate_id",
-                "recording_date",
-                "selection_hook",
-                "source_pieces",
-            ):
-                prefix = key + ": "
-                if line.startswith(prefix) and key not in fields:
-                    fields[key] = line[len(prefix) :]
-        try:
-            prompt_pieces = json.loads(fields.get("source_pieces", ""))
-        except json.JSONDecodeError as exc:
-            raise CandidatePublicTextSurfaceAuthorityError(
-                "PUBLIC_TEXT_CLIP_CONTEXT_PROMPT_INVALID"
-            ) from exc
-        if (
-            fields
-            != {
-                "clip_context_sha256": self.clip_context_sha256,
-                "candidate_id": self.candidate_id,
-                "recording_date": self.recording_date,
-                "selection_hook": self.input_selection_hook,
-                "source_pieces": fields.get("source_pieces", ""),
-            }
-            or prompt_pieces != expected_pieces
-        ):
-            raise CandidatePublicTextSurfaceAuthorityError(
-                "PUBLIC_TEXT_CLIP_CONTEXT_BINDING_MISMATCH"
-            )
-
+        _unavailable()
 
 @dataclass(frozen=True, slots=True)
 class CandidatePublicTextStagingResolution:
@@ -286,7 +71,6 @@ class CandidatePublicTextStagingResolution:
     story_contract: dict[str, object]
     consumption: dict[str, object]
     title_source: str
-
 
 @dataclass(frozen=True, slots=True)
 class CandidatePublicTextTitleState:
@@ -299,688 +83,40 @@ class CandidatePublicTextTitleState:
     title_llm_call: object
     consumption: dict[str, object] | None
 
-
-def _freeze_authority(document: dict[str, object]) -> CandidatePublicTextSurfaceAuthority:
-    if document.get("algorithm_id") == ROOT_REVIEWED_ALGORITHM_ID:
-        return _freeze_root_reviewed_authority(document)
-    if document.get("algorithm_id") == MANUAL_TITLE_ALGORITHM_ID:
-        return _freeze_manual_title_authority(document)
-    candidate = _required_object(
-        document["candidate_binding"], _CANDIDATE_FIELDS, "PUBLIC_TEXT_BINDING_INVALID"
-    )
-    inputs = _required_object(
-        document["input_surface_binding"], _INPUT_FIELDS, "PUBLIC_TEXT_INPUT_INVALID"
-    )
-    resolved = _required_object(
-        document["resolved_surfaces"], _RESOLVED_FIELDS, "PUBLIC_TEXT_RESOLUTION_INVALID"
-    )
-    entity = _required_object(
-        document["entity_surface_policy"], _ENTITY_FIELDS, "PUBLIC_TEXT_ENTITY_POLICY_INVALID"
-    )
-    scope = _required_object(document["scope"], _SCOPE_FIELDS, "PUBLIC_TEXT_SCOPE_INVALID")
-    authorization = _required_object(
-        document["user_authorization"], {"quote", "timestamp"}, "PUBLIC_TEXT_USER_AUTHORITY_INVALID"
-    )
-    candidate_id = _required_text(candidate["candidate_id"], "PUBLIC_TEXT_CANDIDATE_INVALID")
-    selected = _required_object(
-        candidate["selected_interval"],
-        _SELECTED_INTERVAL_FIELDS,
-        "PUBLIC_TEXT_SELECTED_INTERVAL_INVALID",
-    )
-    input_hook = _required_text(inputs["selection_hook"], "PUBLIC_TEXT_INPUT_INVALID")
-    old_title = _required_text(inputs["superseded_title"], "PUBLIC_TEXT_INPUT_INVALID")
-    resolved_hook = _required_text(resolved["selection_hook"], "PUBLIC_TEXT_RESOLUTION_INVALID")
-    resolved_title = _required_text(resolved["title"], "PUBLIC_TEXT_RESOLUTION_INVALID")
-    substitution = _required_object(
-        entity["exact_substitution"], {"from", "to"}, "PUBLIC_TEXT_SUBSTITUTION_INVALID"
-    )
-    source = _required_text(substitution["from"], "PUBLIC_TEXT_SUBSTITUTION_INVALID")
-    target = _required_text(substitution["to"], "PUBLIC_TEXT_SUBSTITUTION_INVALID")
-    equivalents = entity["equivalent_surfaces"]
-    forbidden = entity["forbidden_public_surfaces"]
-    if not (
-        _CANDIDATE_RX.fullmatch(candidate_id)
-        and Path(candidate_id).name == candidate_id
-        and _SHA_RX.fullmatch(str(candidate["clip_context_sha256"] or ""))
-        and isinstance(selected["absolute_start_ms"], int)
-        and not isinstance(selected["absolute_start_ms"], bool)
-        and isinstance(selected["absolute_end_ms"], int)
-        and not isinstance(selected["absolute_end_ms"], bool)
-        and 0 <= selected["absolute_start_ms"] < selected["absolute_end_ms"]
-        and isinstance(equivalents, list)
-        and len(equivalents) == len(set(equivalents))
-        and all(isinstance(value, str) and value for value in equivalents)
-        and isinstance(forbidden, list)
-        and len(forbidden) == len(set(forbidden))
-        and all(isinstance(value, str) and value for value in forbidden)
-        and source in input_hook
-        and source in old_title
-        and resolved_hook == input_hook.replace(source, target)
-        and resolved_title == old_title.replace(source, target)
-        and entity["required_public_surface"] == target
-        and source in forbidden
-        and scope
-        == {
-            "artifact_kinds": list(PUBLIC_ARTIFACT_KINDS),
-            "subtitle_text_mutation_authorized": False,
-            "speaker_label_mutation_authorized": False,
-            "upload_authorized": False,
-            "registry_hold_released": False,
-        }
-    ):
-        raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_AUTHORITY_INVALID")
-    for text, declared in (
-        (input_hook, inputs["selection_hook_sha256"]),
-        (old_title, inputs["superseded_title_sha256"]),
-        (resolved_hook, resolved["selection_hook_sha256"]),
-        (resolved_title, resolved["title_sha256"]),
-    ):
-        if declared != _sha256_text(text):
-            raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_SURFACE_HASH_MISMATCH")
-    _required_text(authorization["quote"], "PUBLIC_TEXT_USER_AUTHORITY_INVALID")
-    timestamp = _required_text(authorization["timestamp"], "PUBLIC_TEXT_USER_AUTHORITY_INVALID")
-    pieces = _validate_source_pieces(candidate["clip_context_source_pieces"])
-    if not any(
-        int(piece["start_ms"]) <= selected["absolute_start_ms"]
-        and selected["absolute_end_ms"] <= int(piece["end_ms"])
-        for piece in pieces
-    ):
-        raise CandidatePublicTextSurfaceAuthorityError(
-            "PUBLIC_TEXT_SELECTED_INTERVAL_OUTSIDE_CONTEXT_PIECES"
-        )
-    try:
-        parsed_timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise CandidatePublicTextSurfaceAuthorityError(
-            "PUBLIC_TEXT_USER_AUTHORITY_INVALID"
-        ) from exc
-    if parsed_timestamp.tzinfo != timezone.utc or not timestamp.endswith("Z"):
-        raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_USER_AUTHORITY_INVALID")
-    return CandidatePublicTextSurfaceAuthority(
-        candidate_id=candidate_id,
-        recording_date=_required_text(candidate["recording_date"], "PUBLIC_TEXT_BINDING_INVALID"),
-        clip_context_sha256=str(candidate["clip_context_sha256"]),
-        source_pieces=pieces,
-        selected_start_ms=int(selected["absolute_start_ms"]),
-        selected_end_ms=int(selected["absolute_end_ms"]),
-        input_selection_hook=input_hook,
-        superseded_title=old_title,
-        resolved_selection_hook=resolved_hook,
-        resolved_title=resolved_title,
-        entity_id=_required_text(entity["entity_id"], "PUBLIC_TEXT_ENTITY_POLICY_INVALID"),
-        equivalent_surfaces=tuple(equivalents),
-        required_public_surface=target,
-        forbidden_public_surfaces=tuple(forbidden),
-        authority_sha256=str(document["authority_sha256"]),
-        user_authorization=authorization,
-    )
-
-
-def _freeze_root_reviewed_authority(document):
-    raise CandidatePublicTextSurfaceAuthorityError("PRIVATE_CANDIDATE_AUTHORITY_UNAVAILABLE")
-
-
-def _freeze_manual_title_authority(
-    document: dict[str, object],
-) -> CandidatePublicTextSurfaceAuthority:
-    """Freeze an exact 维护者 title ruling without pretending it is an entity fix.
-
-    The normal public-text authority exists for a spelling substitution and
-    therefore intentionally requires its substitution to appear in the hook.
-    A full user-specified archive title is a different, much narrower fact:
-    it keeps the source/story bytes unchanged and controls only the public
-    title (with a later cover derived under the normal cover gates).
-    """
-
-    candidate = _required_object(
-        document["candidate_binding"],
-        _MANUAL_TITLE_CANDIDATE_FIELDS,
-        "PUBLIC_TEXT_MANUAL_TITLE_BINDING_INVALID",
-    )
-    inputs = _required_object(
-        document["input_surface_binding"], _INPUT_FIELDS, "PUBLIC_TEXT_INPUT_INVALID"
-    )
-    resolved = _required_object(
-        document["resolved_surfaces"], _RESOLVED_FIELDS, "PUBLIC_TEXT_RESOLUTION_INVALID"
-    )
-    scope = _required_object(document["scope"], _SCOPE_FIELDS, "PUBLIC_TEXT_SCOPE_INVALID")
-    authorization = _required_object(
-        document["user_authorization"], {"quote", "timestamp"}, "PUBLIC_TEXT_USER_AUTHORITY_INVALID"
-    )
-    candidate_id = _required_text(candidate["candidate_id"], "PUBLIC_TEXT_CANDIDATE_INVALID")
-    selected = _required_object(
-        candidate["selected_interval"],
-        _SELECTED_INTERVAL_FIELDS,
-        "PUBLIC_TEXT_SELECTED_INTERVAL_INVALID",
-    )
-    input_hook = _required_text(inputs["selection_hook"], "PUBLIC_TEXT_INPUT_INVALID")
-    old_title = _required_text(inputs["superseded_title"], "PUBLIC_TEXT_INPUT_INVALID")
-    resolved_hook = _required_text(resolved["selection_hook"], "PUBLIC_TEXT_RESOLUTION_INVALID")
-    resolved_title = _required_text(resolved["title"], "PUBLIC_TEXT_RESOLUTION_INVALID")
-    pieces = _validate_source_pieces(candidate["clip_context_source_pieces"])
-    if not (
-        _CANDIDATE_RX.fullmatch(candidate_id)
-        and Path(candidate_id).name == candidate_id
-        and _SHA_RX.fullmatch(str(candidate["clip_context_sha256"] or ""))
-        and _SHA_RX.fullmatch(str(candidate["story_contract_sha256"] or ""))
-        and _SHA_RX.fullmatch(str(candidate["clip_context_prompt_sha256"] or ""))
-        and isinstance(selected["absolute_start_ms"], int)
-        and not isinstance(selected["absolute_start_ms"], bool)
-        and isinstance(selected["absolute_end_ms"], int)
-        and not isinstance(selected["absolute_end_ms"], bool)
-        and 0 <= selected["absolute_start_ms"] < selected["absolute_end_ms"]
-        and resolved_hook == input_hook
-        and scope
-        == {
-            "artifact_kinds": list(PUBLIC_ARTIFACT_KINDS),
-            "subtitle_text_mutation_authorized": False,
-            "speaker_label_mutation_authorized": False,
-            "upload_authorized": False,
-            "registry_hold_released": False,
-        }
-    ):
-        raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_MANUAL_TITLE_AUTHORITY_INVALID")
-    if not any(
-        int(piece["start_ms"]) <= selected["absolute_start_ms"]
-        and selected["absolute_end_ms"] <= int(piece["end_ms"])
-        for piece in pieces
-    ):
-        raise CandidatePublicTextSurfaceAuthorityError(
-            "PUBLIC_TEXT_SELECTED_INTERVAL_OUTSIDE_CONTEXT_PIECES"
-        )
-    for text, declared in (
-        (input_hook, inputs["selection_hook_sha256"]),
-        (old_title, inputs["superseded_title_sha256"]),
-        (resolved_hook, resolved["selection_hook_sha256"]),
-        (resolved_title, resolved["title_sha256"]),
-    ):
-        if declared != _sha256_text(text):
-            raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_SURFACE_HASH_MISMATCH")
-    _required_text(authorization["quote"], "PUBLIC_TEXT_USER_AUTHORITY_INVALID")
-    timestamp = _required_text(authorization["timestamp"], "PUBLIC_TEXT_USER_AUTHORITY_INVALID")
-    try:
-        parsed_timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_USER_AUTHORITY_INVALID") from exc
-    if parsed_timestamp.tzinfo != timezone.utc or not timestamp.endswith("Z"):
-        raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_USER_AUTHORITY_INVALID")
-    return CandidatePublicTextSurfaceAuthority(
-        candidate_id=candidate_id,
-        recording_date=_required_text(candidate["recording_date"], "PUBLIC_TEXT_BINDING_INVALID"),
-        clip_context_sha256=str(candidate["clip_context_sha256"]),
-        source_pieces=pieces,
-        selected_start_ms=int(selected["absolute_start_ms"]),
-        selected_end_ms=int(selected["absolute_end_ms"]),
-        input_selection_hook=input_hook,
-        superseded_title=old_title,
-        resolved_selection_hook=resolved_hook,
-        resolved_title=resolved_title,
-        entity_id="manual-title",
-        equivalent_surfaces=(),
-        required_public_surface=resolved_title,
-        forbidden_public_surfaces=(old_title,),
-        authority_sha256=str(document["authority_sha256"]),
-        user_authorization=authorization,
-        algorithm_id=MANUAL_TITLE_ALGORITHM_ID,
-        story_contract_sha256=str(candidate["story_contract_sha256"]),
-        clip_context_prompt_sha256=str(candidate["clip_context_prompt_sha256"]),
-    )
-
-
-def load_candidate_public_text_surface_authority(
-    candidate_id: str, *, root: Path = ROOT
-) -> CandidatePublicTextSurfaceAuthority | None:
-    """Load exactly the named candidate asset; absence preserves legacy behavior."""
-
-    if (
-        not _CANDIDATE_RX.fullmatch(str(candidate_id or ""))
-        or Path(candidate_id).name != candidate_id
-    ):
+def load_candidate_public_text_surface_authority(candidate_id, *, root=ROOT):
+    if not isinstance(candidate_id, str) or not candidate_id or Path(candidate_id).name != candidate_id:
         return None
-    truth_mode = os.environ.get("AUTOSLICE_HUMAN_TRUTH_MODE", "delivery").strip().lower()
-    if truth_mode not in {"delivery", "withheld"}:
+    mode = os.environ.get("AUTOSLICE_HUMAN_TRUTH_MODE", "delivery").strip().lower()
+    if mode not in {"delivery", "withheld"}:
         raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_HUMAN_TRUTH_MODE_INVALID")
-    if truth_mode == "withheld":
+    if mode == "withheld":
         return None
-    asset_root = CHANNEL_PROFILE.asset_root.relative_to(CHANNEL_PROFILE.repo_root)
-    relative = asset_root / AUTHORITY_DIRECTORY / f"{candidate_id}{AUTHORITY_SUFFIX}"
-    path = root / relative
-    if (
-        candidate_id not in AUTHORITY_REQUIRED_CANDIDATES
-        and not path.exists()
-        and not path.is_symlink()
-    ):
-        # The publication choke point calls this loader for every candidate.
-        # Avoid a repository subprocess for candidates that have no declared
-        # authority at all; every production authority must also be listed in
-        # AUTHORITY_REQUIRED_CANDIDATES, so a deleted required asset still
-        # fails closed below.
-        return None
+    relative = CHANNEL_PROFILE.asset_root.relative_to(CHANNEL_PROFILE.repo_root)
+    path = Path(root) / relative / AUTHORITY_DIRECTORY / (candidate_id + AUTHORITY_SUFFIX)
+    if path.exists() or path.is_symlink():
+        _unavailable()
+    return None
+
+def resolve_candidate_public_text_staging(*, candidate_id, root=ROOT, **_kwargs):
+    load_candidate_public_text_surface_authority(candidate_id, root=root)
+    return None
+
+def candidate_public_text_result_projection(*, work_dir, publish_path, publish):
     try:
-        expected = repository_authority_expects_asset(
-            repo_root=root,
-            relative_path=relative,
-        )
-    except RepositoryAssetAuthorityError as exc:
-        raise CandidatePublicTextSurfaceAuthorityError(
-            "PUBLIC_TEXT_REPOSITORY_AUTHORITY_INVALID"
-        ) from exc
-    if not expected:
-        # Self-consistent worktree bytes are inert until HEAD or a deployed
-        # manifest grants authority to this exact repository-relative path.
-        return None
-    if not (path.exists() or path.is_symlink()):
-        if candidate_id in AUTHORITY_REQUIRED_CANDIDATES:
-            raise CandidatePublicTextSurfaceAuthorityError(
-                "PUBLIC_TEXT_AUTHORITY_REQUIRED_BUT_MISSING"
-            )
-        return None
-    if path.is_symlink() or not path.is_file():
-        raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_AUTHORITY_FILE_INVALID")
-    try:
-        raw = path.read_bytes()
-        require_repository_asset_authority(
-            repo_root=root,
-            relative_path=relative,
-            observed_bytes=raw,
-        )
-        loaded = json.loads(raw.decode("utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_AUTHORITY_UNREADABLE") from exc
-    except RepositoryAssetAuthorityError as exc:
-        raise CandidatePublicTextSurfaceAuthorityError(
-            "PUBLIC_TEXT_AUTHORITY_UNREADABLE_OR_UNSEALED"
-        ) from exc
-    algorithm_id = loaded.get("algorithm_id") if isinstance(loaded, Mapping) else None
-    fields = (
-        _ROOT_REVIEWED_ROOT_FIELDS if algorithm_id == ROOT_REVIEWED_ALGORITHM_ID
-        else (_MANUAL_TITLE_ROOT_FIELDS if algorithm_id == MANUAL_TITLE_ALGORITHM_ID else _ROOT_FIELDS)
-    )
-    document = _required_object(loaded, fields, "PUBLIC_TEXT_AUTHORITY_SCHEMA_INVALID")
-    if document["schema_version"] != SCHEMA_VERSION or document["algorithm_id"] not in {
-        ALGORITHM_ID,
-        MANUAL_TITLE_ALGORITHM_ID, ROOT_REVIEWED_ALGORITHM_ID,
-    }:
-        raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_AUTHORITY_SCHEMA_INVALID")
-    declared = document.pop("authority_sha256")
-    if declared != _sha256_json(document):
-        raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_AUTHORITY_HASH_MISMATCH")
-    document["authority_sha256"] = declared
-    authority = _freeze_authority(document)
-    if authority.candidate_id != candidate_id:
-        raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_CANDIDATE_MISMATCH")
-    return authority
-
-
-def consume_candidate_public_text_surface_authority(
-    authority: CandidatePublicTextSurfaceAuthority,
-    *,
-    candidate_id: str,
-    selection_hook: str,
-    story_contract: Mapping[str, object],
-) -> dict[str, object]:
-    """Validate current source/context inputs and emit a relocation-safe receipt."""
-
-    binding = story_contract.get("clip_context_binding")
-    source_hashes = [str(piece["source_media_sha256"]) for piece in authority.source_pieces]
-    if authority.is_root_reviewed_resolution:
-        prompt = str(story_contract.get("clip_context_prompt") or "")
-        normalized_story = dict(story_contract)
-        normalized_story["selection_hook"] = authority.input_selection_hook
-        if not (
-            candidate_id == authority.candidate_id
-            and story_contract.get("candidate_id") == candidate_id
-            and selection_hook in {authority.input_selection_hook, authority.resolved_selection_hook}
-            and story_contract.get("selection_hook") == selection_hook
-            and story_contract.get("source_media_sha256s") == sorted(set(source_hashes))
-            and isinstance(binding, Mapping)
-            and binding.get("context_sha256") == authority.clip_context_sha256
-            and authority.clip_context_prompt_sha256 == _sha256_text(prompt)
-            and authority.story_contract_sha256 == _sha256_json(normalized_story)
-        ):
-            raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_RUNTIME_BINDING_MISMATCH")
-        return {
-            "schema_version": CONSUMPTION_SCHEMA_VERSION, "status": "CONSUMED",
-            "candidate_id": candidate_id, "authority_sha256": authority.authority_sha256,
-            "algorithm_id": ROOT_REVIEWED_ALGORITHM_ID,
-            "clip_context_sha256": authority.clip_context_sha256,
-            "clip_context_prompt_sha256": _sha256_text(prompt),
-            "selected_interval": {"absolute_start_ms": authority.selected_start_ms, "absolute_end_ms": authority.selected_end_ms},
-            "input_selection_hook_sha256": _sha256_text(authority.input_selection_hook),
-            "observed_selection_hook_sha256": _sha256_text(selection_hook),
-            "resolved_selection_hook": authority.resolved_selection_hook,
-            "resolved_title": authority.resolved_title,
-            "resolved_cover_lines": list(authority.resolved_cover_lines),
-            "subtitle_text_mutation_authorized": False, "speaker_label_mutation_authorized": False,
-            "upload_authorized": False, "registry_hold_released": False,
-            "user_authorization": dict(authority.user_authorization),
-            "decision_authorization": dict(authority.decision_authorization or {}),
-        }
-    if authority.is_manual_title_resolution:
-        prompt = str(story_contract.get("clip_context_prompt") or "")
-        current_story_sha = _sha256_json(dict(story_contract))
-        try:
-            successor_accepted = (
-                current_story_sha != authority.story_contract_sha256
-                and accepts_manual_title_source_fact_successor(
-                    repo_root=ROOT,
-                    candidate_id=candidate_id,
-                    public_text_authority_sha256=authority.authority_sha256,
-                    story_contract=story_contract,
-                )
-            )
-        except ManualTitleSourceFactSuccessorError as exc:
-            raise CandidatePublicTextSurfaceAuthorityError(
-                "PUBLIC_TEXT_MANUAL_TITLE_SUCCESSOR_INVALID"
-            ) from exc
-        if not (
-            candidate_id == authority.candidate_id
-            and story_contract.get("candidate_id") == candidate_id
-                and selection_hook in {authority.input_selection_hook, authority.resolved_selection_hook}
-                and story_contract.get("selection_hook") == selection_hook
-            and story_contract.get("source_media_sha256s") == sorted(set(source_hashes))
-            and isinstance(binding, Mapping)
-            and binding.get("context_sha256") == authority.clip_context_sha256
-            and (authority.story_contract_sha256 == current_story_sha or successor_accepted)
-            and authority.clip_context_prompt_sha256 == _sha256_text(prompt)
-        ):
-            raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_RUNTIME_BINDING_MISMATCH")
-        return {
-            "schema_version": CONSUMPTION_SCHEMA_VERSION,
-            "status": "CONSUMED",
-            "candidate_id": candidate_id,
-            "authority_sha256": authority.authority_sha256,
-            "algorithm_id": authority.algorithm_id,
-            "clip_context_sha256": authority.clip_context_sha256,
-            "clip_context_prompt_sha256": _sha256_text(prompt),
-            "story_contract_sha256": authority.story_contract_sha256,
-            "selected_interval": {
-                "absolute_start_ms": authority.selected_start_ms,
-                "absolute_end_ms": authority.selected_end_ms,
-            },
-            "input_selection_hook_sha256": _sha256_text(selection_hook),
-            "resolved_selection_hook": authority.resolved_selection_hook,
-            "resolved_title": authority.resolved_title,
-            "subtitle_text_mutation_authorized": False,
-            "speaker_label_mutation_authorized": False,
-            "upload_authorized": False,
-            "registry_hold_released": False,
-            "user_authorization": dict(authority.user_authorization),
-            **({"decision_authorization": dict(authority.decision_authorization)} if authority.decision_authorization else {}),
-        }
-    if not (
-        candidate_id == authority.candidate_id
-        and story_contract.get("candidate_id") == candidate_id
-        and story_contract.get("selection_hook") == selection_hook
-        and selection_hook in {authority.input_selection_hook, authority.resolved_selection_hook}
-        and story_contract.get("source_media_sha256s") == sorted(set(source_hashes))
-        and isinstance(binding, Mapping)
-        and binding.get("context_sha256") == authority.clip_context_sha256
-    ):
-        raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_RUNTIME_BINDING_MISMATCH")
-    prompt = str(story_contract.get("clip_context_prompt") or "")
-    authority.validate_clip_context_prompt(prompt)
-    return {
-        "schema_version": CONSUMPTION_SCHEMA_VERSION,
-        "status": "CONSUMED",
-        "candidate_id": candidate_id,
-        "authority_sha256": authority.authority_sha256,
-        "clip_context_sha256": authority.clip_context_sha256,
-        "clip_context_prompt_sha256": _sha256_text(prompt),
-        "selected_interval": {
-            "absolute_start_ms": authority.selected_start_ms,
-            "absolute_end_ms": authority.selected_end_ms,
-        },
-        "input_selection_hook_sha256": _sha256_text(selection_hook),
-        "resolved_selection_hook": authority.resolved_selection_hook,
-        "resolved_title": authority.resolved_title,
-        "subtitle_text_mutation_authorized": False,
-        "speaker_label_mutation_authorized": False,
-        "upload_authorized": False,
-        "registry_hold_released": False,
-        "user_authorization": dict(authority.user_authorization),
-    }
-
-
-def validated_candidate_public_text_result_hook(
-    authority: CandidatePublicTextSurfaceAuthority,
-    *,
-    candidate_id: str,
-    record: object,
-    publish: object,
-) -> str:
-    """Project the resolved hook only from the completed, mutually bound mirrors.
-
-    The queued hook remains the authority's input provenance.  A successful
-    package, however, has already rebuilt its story contract around the
-    resolved public surface.  State/report projection must consume that exact
-    result instead of replaying the queue input.  Any split-brain between the
-    record and publish mirrors blocks the projection rather than leaking the
-    superseded spelling back into a public-facing report.
-    """
-
-    if not isinstance(record, Mapping) or not isinstance(publish, Mapping):
-        raise CandidatePublicTextSurfaceAuthorityError(
-            "PUBLIC_TEXT_RESULT_DOCUMENT_INVALID"
-        )
-    story_contract = record.get("story_contract")
-    publish_staging = record.get("publish_staging")
-    if not isinstance(story_contract, Mapping) or not isinstance(
-        publish_staging, Mapping
-    ):
-        raise CandidatePublicTextSurfaceAuthorityError(
-            "PUBLIC_TEXT_RESULT_MIRROR_MISSING"
-        )
-    if (
-        candidate_id != authority.candidate_id
-        or publish.get("candidate_id") != candidate_id
-        or story_contract.get("candidate_id") != candidate_id
-        or story_contract.get("selection_hook")
-        != authority.resolved_selection_hook
-    ):
-        raise CandidatePublicTextSurfaceAuthorityError(
-            "PUBLIC_TEXT_RESULT_BINDING_MISMATCH"
-        )
-    c6_receipt = publish_staging.get("public_text_surface_authority_consumption")
-    if authority.is_root_reviewed_resolution and isinstance(c6_receipt, Mapping) and c6_receipt.get("schema_version") == "c6-replay-public-text-projection-consumption.v1":
-        try:
-            from src.autoslice.c6_replay_public_text_projection import (
-                validate_c6_replay_public_text_consumption_for_fresh_story,
-            )
-            expected = validate_c6_replay_public_text_consumption_for_fresh_story(
-                c6_receipt, fresh_story=story_contract, authority=authority
-            )
-        except Exception as exc:
-            raise CandidatePublicTextSurfaceAuthorityError(
-                "C6_DERIVED_PUBLIC_TEXT_CONSUMPTION_INVALID"
-            ) from exc
-    else:
-        expected = consume_candidate_public_text_surface_authority(
-            authority,
-            candidate_id=candidate_id,
-            selection_hook=authority.resolved_selection_hook,
-            story_contract=story_contract,
-        )
-    expected_source = authority.title_source
-    expected_status = "RESOLVED_PUBLIC_TEXT_SURFACE_AUTHORITY"
-    if not (
-        publish_staging.get("public_text_surface_authority_consumption")
-        == publish.get("public_text_surface_authority_consumption")
-        == expected
-        and publish_staging.get("title")
-        == publish.get("title")
-        == authority.resolved_title
-        and publish_staging.get("title_source")
-        == publish.get("title_source")
-        == expected_source
-        and publish_staging.get("title_authority_status")
-        == publish.get("title_authority_status")
-        == expected_status
-        and publish_staging.get("title_authority_error") is None
-        and publish.get("title_authority_error") is None
-        and publish_staging.get("upload_enabled") is False
-        and publish.get("upload_enabled") is False
-        and expected.get("upload_authorized") is False
-        and expected.get("registry_hold_released") is False
-    ):
-        raise CandidatePublicTextSurfaceAuthorityError(
-            "PUBLIC_TEXT_RESULT_MIRROR_DRIFT"
-        )
-    authority.require_artifact_text(
-        artifact_kind="publication", text=str(publish["title"])
-    )
-    return authority.resolved_selection_hook
-
-
-def candidate_public_text_result_projection(
-    *, work_dir: Path, publish_path: Path, publish: Mapping[str, object]
-) -> dict[str, object]:
-    """Return a state-safe projection while leaving ordinary candidates unchanged."""
-
-    candidate_id = work_dir.name
-    asset_root = CHANNEL_PROFILE.asset_root.relative_to(CHANNEL_PROFILE.repo_root)
-    authority_path = ROOT / asset_root / AUTHORITY_DIRECTORY / (
-        candidate_id + AUTHORITY_SUFFIX
-    )
-    if (
-        candidate_id not in AUTHORITY_REQUIRED_CANDIDATES
-        and not authority_path.exists()
-        and not authority_path.is_symlink()
-    ):
-        return {}
-    try:
-        authority = load_candidate_public_text_surface_authority(candidate_id)
-        if authority is None:
-            return {}
-        if publish_path.is_symlink() or not publish_path.is_file():
-            raise CandidatePublicTextSurfaceAuthorityError(
-                "PUBLIC_TEXT_RESULT_PUBLISH_FILE_INVALID"
-            )
-        record_path: Path | None = None
-        for suffix in (".recut.publish.json", ".publish.json"):
-            if publish_path.name.endswith(suffix):
-                record_path = publish_path.with_name(
-                    publish_path.name[: -len(suffix)] + ".record.json"
-                )
-                break
-        if record_path is None:
-            raise CandidatePublicTextSurfaceAuthorityError(
-                "PUBLIC_TEXT_RESULT_PUBLISH_NAME_INVALID"
-            )
-        if record_path.is_symlink() or not record_path.is_file():
-            raise CandidatePublicTextSurfaceAuthorityError(
-                "PUBLIC_TEXT_RESULT_RECORD_FILE_INVALID"
-            )
-        try:
-            record = json.loads(record_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            raise CandidatePublicTextSurfaceAuthorityError(
-                "PUBLIC_TEXT_RESULT_RECORD_UNREADABLE"
-            ) from exc
-        hook = validated_candidate_public_text_result_hook(
-            authority,
-            candidate_id=candidate_id,
-            record=record,
-            publish=publish,
-        )
+        load_candidate_public_text_surface_authority(work_dir.name)
     except CandidatePublicTextSurfaceAuthorityError as exc:
-        return {
-            "hook": "",
-            "title": None,
-            "title_authority_status": "UNRESOLVED_PUBLIC_TEXT_RESULT_PROJECTION",
-            "title_authority_error": (
-                f"candidate_public_text_result_projection_failed:{exc}"
-            ),
-        }
-    return {"hook": hook}
+        return {"hook": "", "title": None,
+                "title_authority_status": "UNRESOLVED_PUBLIC_TEXT_RESULT_PROJECTION",
+                "title_authority_error": f"candidate_public_text_result_projection_failed:{exc}"}
+    return {}
 
+def resolve_candidate_public_cover_text(*, candidate_id, default_cover_text):
+    load_candidate_public_text_surface_authority(candidate_id)
+    return default_cover_text
 
-def resolve_candidate_public_text_staging(
-    *,
-    candidate_id: str,
-    selection_hook: str,
-    story_contract: object,
-    story_contract_rebuilder: Callable[[str], dict[str, object]] | None,
-    root: Path = ROOT,
-    public_text_staging_resolver: Callable[..., CandidatePublicTextStagingResolution | None] | None = None,
-) -> CandidatePublicTextStagingResolution | None:
-    """Apply the optional authority before title/source-fact/cover generation.
-
-    ``public_text_staging_resolver`` is an explicit lane hook.  The default
-    remains the strict direct resolver; replay lanes must opt in with a
-    candidate/date-bound proof rather than widening this generic function.
-    """
-
-    authority = load_candidate_public_text_surface_authority(candidate_id, root=root)
-    if authority is None:
-        return None
-    if public_text_staging_resolver is not None:
-        return public_text_staging_resolver(
-            authority=authority,
-            candidate_id=candidate_id,
-            selection_hook=selection_hook,
-            story_contract=story_contract,
-            story_contract_rebuilder=story_contract_rebuilder,
-        )
-    if not isinstance(story_contract, Mapping):
-        raise CandidatePublicTextSurfaceAuthorityError("PUBLIC_TEXT_STORY_CONTRACT_REQUIRED")
-    consume_candidate_public_text_surface_authority(
-        authority,
-        candidate_id=candidate_id,
-        selection_hook=selection_hook,
-        story_contract=story_contract,
-    )
-    if authority.is_manual_title_resolution:
-
-
-
-        return CandidatePublicTextStagingResolution(
-            selection_hook=authority.resolved_selection_hook,
-            title=authority.resolved_title,
-            story_contract=dict(story_contract),
-            consumption=consume_candidate_public_text_surface_authority(
-                authority,
-                candidate_id=candidate_id,
-                selection_hook=authority.resolved_selection_hook,
-                story_contract=story_contract,
-            ),
-            title_source=authority.title_source,
-        )
-    if authority.is_root_reviewed_resolution:
-        # The decision changes generated public wording only.  Rebuilding the
-        # historical StoryContract would expand scope into subtitle/source
-        # truth; retain its bytes except for the explicitly resolved hook.
-        rebuilt = dict(story_contract)
-        rebuilt["selection_hook"] = authority.resolved_selection_hook
-        return CandidatePublicTextStagingResolution(
-            selection_hook=authority.resolved_selection_hook,
-            title=authority.resolved_title,
-            story_contract=rebuilt,
-            consumption=consume_candidate_public_text_surface_authority(
-                authority, candidate_id=candidate_id,
-                selection_hook=authority.resolved_selection_hook, story_contract=rebuilt,
-            ),
-            title_source=authority.title_source,
-        )
-    if story_contract_rebuilder is None:
-        raise CandidatePublicTextSurfaceAuthorityError(
-            "PUBLIC_TEXT_STORY_CONTRACT_REBUILDER_REQUIRED"
-        )
-    rebuilt = story_contract_rebuilder(authority.resolved_selection_hook)
-    consumption = consume_candidate_public_text_surface_authority(
-        authority,
-        candidate_id=candidate_id,
-        selection_hook=authority.resolved_selection_hook,
-        story_contract=rebuilt,
-    )
-    return CandidatePublicTextStagingResolution(
-        selection_hook=authority.resolved_selection_hook,
-        title=authority.resolved_title,
-        story_contract=rebuilt,
-        consumption=consumption,
-        title_source=authority.title_source,
-    )
-
+consume_candidate_public_text_surface_authority = _unavailable
+validated_candidate_public_text_result_hook = _unavailable
+build_public_text_source_fact_context = _unavailable
 
 def resolve_candidate_public_text_title_state(
     *,
@@ -1039,7 +175,7 @@ def resolve_candidate_public_text_title_state(
             title=manual_title,
             selection_hook=selection_hook,
             story_contract=story_contract,
-            title_source="reviewer_manual_override",
+            title_source="operator_manual_override",
             title_authority_status="RESOLVED_MANUAL",
             title_authority_error=None,
             title_llm_call=None,
@@ -1055,70 +191,3 @@ def resolve_candidate_public_text_title_state(
         title_llm_call=title_llm_call,
         consumption=None,
     )
-
-
-def resolve_candidate_public_cover_text(*, candidate_id: str, default_cover_text: str) -> str:
-    """Return the authority-pinned short punch without widening staging scope."""
-
-    authority = load_candidate_public_text_surface_authority(candidate_id)
-    if authority is None or not authority.resolved_cover_lines:
-        return default_cover_text
-    cover_text = "\n".join(authority.resolved_cover_lines)
-    authority.require_artifact_text(artifact_kind="cover", text=cover_text)
-    return cover_text
-
-
-def build_public_text_source_fact_context(
-    authority: CandidatePublicTextSurfaceAuthority,
-    *,
-    clip_context_prompt: str,
-) -> dict[str, object]:
-    """Build the receipt projection without claiming reviewed subtitle authority."""
-
-    manual_title_only = authority.is_manual_title_resolution
-    if manual_title_only:
-        if authority.clip_context_prompt_sha256 != _sha256_text(clip_context_prompt):
-            raise CandidatePublicTextSurfaceAuthorityError(
-                "PUBLIC_TEXT_CLIP_CONTEXT_BINDING_MISMATCH"
-            )
-    else:
-        authority.validate_clip_context_prompt(clip_context_prompt)
-    body: dict[str, object] = {
-        "schema_version": "source-fact-entity-context.v1",
-        "authority_scope": "GENERATED_PUBLIC_TEXT_ONLY_NO_SUBTITLE_OR_SPEAKER_REVIEW",
-        "candidate_id": authority.candidate_id,
-        "public_text_surface_authority_sha256": authority.authority_sha256,
-        "clip_context_prompt_sha256": _sha256_text(clip_context_prompt),
-        "candidate_binding": {
-            "recording_date": authority.recording_date,
-            "clip_context_sha256": authority.clip_context_sha256,
-            "source_pieces": [dict(piece) for piece in authority.source_pieces],
-            "selected_interval": {
-                "absolute_start_ms": authority.selected_start_ms,
-                "absolute_end_ms": authority.selected_end_ms,
-            },
-        },
-        "identity_spelling_rules": ([] if manual_title_only else [
-            {
-                "entity_id": authority.entity_id,
-                "identity_equivalent_surfaces": list(authority.equivalent_surfaces),
-                "reviewed_surface": None,
-                "title_cover_surface": authority.required_public_surface,
-            }
-        ]),
-        "subtitle_text_mutation_authorized": False,
-        "speaker_label_mutation_authorized": False,
-        "upload_authorized": False,
-        "registry_hold_released": False,
-    }
-    if authority.is_root_reviewed_resolution:
-        # The C6 authority contains an explicit operator correction of an
-        # event premise, not an identity-equivalent spelling substitution.
-        # Preserve that already validated, candidate-bound source in the
-        # review input and receipt; it grants no subtitle or speaker powers.
-        body["operator_public_fact_authority"] = {
-            "scope": "USER_STATED_FACTS_FOR_GENERATED_PUBLIC_TEXT_ONLY",
-            "user_authorization": dict(authority.user_authorization),
-            "decision_authorization": dict(authority.decision_authorization or {}),
-        }
-    return {**body, "context_sha256": _sha256_json(body)}

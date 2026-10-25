@@ -337,6 +337,7 @@ def make_ready_audio_alignment_run(
                 **READY_LYRIC_VOCAL_ASSERTIONS,
             }
         )
+    first_ms = int(observations[0]["live_start_ms"])
     last_ms = int(observations[-1]["live_end_ms"])
     if last_ms + 6_000 > source_duration_ms:
         raise ValueError("strict audio-alignment fixture leaves no post-song host anchor")
@@ -391,7 +392,9 @@ def make_ready_audio_alignment_run(
         "post_song_talk_start_ms": last_ms + 2_000,
     }
     prompt_path = output_dir / "prompt.md"
-    prompt_path.write_text("strict AGY v5 test prompt\n", encoding="utf-8")
+    from src.autoslice.song_performance import untimed_lrc_text
+    untimed = untimed_lrc_text(lrc)
+    prompt_path.write_text("strict full-audio synthetic fixture; source offset zero\n" + untimed, encoding="utf-8")
     provider_raw_output = output_dir / "alignment.provider-raw.json"
     _write_json(provider_raw_output, payload)
     provider_raw_sha = _sha(provider_raw_output)
@@ -415,8 +418,23 @@ def make_ready_audio_alignment_run(
     }
     is_gemini_api = provider == "gemini_api"
     api_audio_path = output_dir / "input.complete-audio.mp3"
+    api_audio_path.write_bytes(source_media.read_bytes())  # Explicit synthetic complete-audio fixture.
+    lyrics_path = output_dir / "observation-lyrics.jsonl"
+    lyrics_path.write_text(untimed, encoding="utf-8")
+    trace_path = output_dir / "observation-tool-trace.jsonl"
+    trace = []
+    for name, path in (("view_file", api_audio_path), ("view_file", lyrics_path),
+                       ("write_to_file", provider_raw_output)):
+        trace.append({"step_update": {"step_type": "tool", "state": "DONE", "tool_info": {
+            "name": name, "parameters": {"AbsolutePath" if name == "view_file" else "TargetFile": str(path)}}}})
+    trace.append({"event": "result", "result": {"status": "SUCCESS"}})
+    trace_path.write_text("\n".join(json.dumps(event) for event in trace) + "\n")
+    observation_input = {"protocol": "untimed-lyrics-full-audio.v1", "source_sha256": source_sha,
+                         "source_offset_ms": 0, "audio_path": str(api_audio_path),
+                         "audio_sha256": _sha(api_audio_path), "audio_duration_ms": source_duration_ms,
+                         "lyrics_path": str(lyrics_path), "lyrics_sha256": _sha(lyrics_path),
+                         "tool_trace_path": str(trace_path), "tool_trace_sha256": _sha(trace_path)}
     if is_gemini_api:
-        api_audio_path.write_bytes(source_media.read_bytes())
         artifacts.update(
             {
                 "api_audio_path": str(api_audio_path),
@@ -444,6 +462,7 @@ def make_ready_audio_alignment_run(
         {
             "schema_version": AGY_AUDIO_LRC_RUN_SCHEMA_VERSION,
             "candidate_id": candidate_id,
+            "observation_input": observation_input,
             "provider": provider,
             "model": model,
             "agy_rc": agy_rc,

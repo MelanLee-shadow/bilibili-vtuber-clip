@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import base64 as base64  # compatibility export
 import hashlib
 import json
@@ -58,6 +59,196 @@ from src.autoslice.cpa_image_edit import perform_image_edit
 ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(ROOT)
 PROFILE_ID = CHANNEL_PROFILE.profile_id
+ORDINARY_TALK_STYLE_SCHEMA = "lidousha-cover-art-direction-asset.v1"
+ORDINARY_TALK_STYLE_KEY = "cover_art_direction"
+ORDINARY_TALK_TEXT_PALETTE_SCHEMA = "lidousha-cover-text-palette.v1"
+ORDINARY_TALK_RESEARCH_SCHEMA = "lidousha-cover-research-application.v1"
+ORDINARY_TALK_RESEARCH_VERSION = "public-cover-art-direction.v1"
+ORDINARY_TALK_RESEARCH_SOURCE_PATH = 'assets/lidousha/cover_art_direction.md'
+ORDINARY_TALK_RESEARCH_SOURCE_SHA256 = 'sha256:4363435809aedceb22417fdaa316b5109b90c57c3e12be6ef4d24174d523cd80'
+ORDINARY_TALK_RESEARCH_HANDOFF_PATH = 'assets/lidousha/cover_art_direction.md'
+ORDINARY_TALK_RESEARCH_HANDOFF_SHA256 = 'sha256:4363435809aedceb22417fdaa316b5109b90c57c3e12be6ef4d24174d523cd80'
+ORDINARY_TALK_RESEARCH_PRIMARY_PUBLIC_URLS = (
+    "https://www.bilibili.com/video/BV13Sac66Eji",
+    "https://www.bilibili.com/video/BV1uKuC6hE9j",
+    "https://www.bilibili.com/video/BV1GEYp6NEPJ",
+    "https://www.bilibili.com/video/BV1g8Hp6qEGy",
+    "https://www.bilibili.com/video/BV1PbHt6CEeJ",
+    "https://www.bilibili.com/video/BV1RGY36zETk",
+    "https://www.bilibili.com/video/BV1ScGN6cE47",
+)
+
+
+def ordinary_talk_research_projection() -> dict[str, object]:
+    """Return the deployable projection of the completed cover study.
+
+    Runtime consumers must use this frozen provenance only; they must not read
+    the private research worktree.  The projection records applicability and
+    limits, while the current director makes the per-story semantic choice.
+    """
+
+    return {
+        "schema_version": "lidousha-cover-research-consumer.v1",
+        "version": ORDINARY_TALK_RESEARCH_VERSION,
+        "source_title": "cover_art_direction.md",
+        "source_path": ORDINARY_TALK_RESEARCH_SOURCE_PATH,
+        "source_sha256": ORDINARY_TALK_RESEARCH_SOURCE_SHA256,
+        "handoff_title": "cover_art_direction.md",
+        "handoff_path": ORDINARY_TALK_RESEARCH_HANDOFF_PATH,
+        "handoff_sha256": ORDINARY_TALK_RESEARCH_HANDOFF_SHA256,
+        "primary_public_urls": list(ORDINARY_TALK_RESEARCH_PRIMARY_PUBLIC_URLS),
+        "applicable_to": (
+            "future normal ordinary single-host talk covers; choose the visual "
+            "language and layout from the actual story and source material"
+        ),
+        "limitations": (
+            "descriptive study only; no causal CTR evidence; no fixed style or "
+            "layout ranking; no automatic stranger-comprehension claim"
+        ),
+    }
+
+
+def _ordinary_talk_research_application(
+    value: object = None,
+    *,
+    ordinary_talk: bool = True,
+) -> dict[str, object]:
+    """Normalize one director's binary research applicability choice.
+
+    This is intentionally a provenance record, not a semantic score.  Missing
+    or malformed CPA output stays explicitly ``UNASSESSED`` and never becomes
+    a research PASS merely because the profile asset is present.
+    """
+
+    if not ordinary_talk:
+        return {}
+    choice = value if isinstance(value, Mapping) else {}
+    applicable = choice.get("applicable")
+    reason = choice.get("reason")
+    if isinstance(applicable, bool) and isinstance(reason, str) and reason.strip():
+        status = "APPLY" if applicable else "DO_NOT_APPLY"
+        normalized_reason = reason.strip()
+    else:
+        applicable = None
+        status = "UNASSESSED"
+        normalized_reason = "director CPA did not return one valid applicability choice"
+    projection = ordinary_talk_research_projection()
+    return {
+        "schema_version": ORDINARY_TALK_RESEARCH_SCHEMA,
+        "research_version": projection["version"],
+        "source_path": projection["source_path"],
+        "source_sha256": projection["source_sha256"],
+        "choice": status,
+        "applicable": applicable,
+        "reason": normalized_reason,
+    }
+
+# The art-direction judge may describe a mouth as open while explicitly
+# forbidding a tongue.  The older substring guard treated the forbidden words
+# as unsafe even in that local negative construction, so a valid reaction was
+# silently replaced by the baseline expression.  Keep this deliberately small:
+# accept only an immediate, unambiguous English negative and keep every other
+# occurrence conservative.  The image prompt still carries its unconditional
+# no-tongue rule below.
+_COVER_FORBIDDEN_EXPR_EXTRA = (
+    "show tongue",
+    "showing tongue",
+    "tongue showing",
+    "showtongue",
+    "tongue visible",
+    "visible tongue",
+    "tongue exposed",
+    "exposed tongue",
+    "tongue protruding",
+    "protruding tongue",
+    "tongue displayed",
+    "sexual",
+    "sexually",
+    "sexualized",
+    "sensual",
+    "sultry",
+    "smirk",
+)
+_COVER_FORBIDDEN_EXPR_PATTERNS = tuple(
+    re.compile(re.escape(term), re.IGNORECASE)
+    for term in (*_COVER_FORBIDDEN_EXPR, *_COVER_FORBIDDEN_EXPR_EXTRA)
+) + (
+    re.compile(r"\bstick(?:ing)?\s+out(?:\s+(?:her|its|the))?\s+tongue\b", re.IGNORECASE),
+    re.compile(r"\btongue\s+sticking\s+out\b", re.IGNORECASE),
+)
+_COVER_NEGATED_TERM = "(?:" + "|".join(
+    pattern.pattern for pattern in _COVER_FORBIDDEN_EXPR_PATTERNS
+) + ")"
+_COVER_NEGATION_PREFIX = (
+    r"(?:(?:never|no|without)\s+(?:(?:a|an|the)\s+)?"
+    + rf"(?:{_COVER_NEGATED_TERM}\s+(?:or|and)\s+(?:(?:a|an|the)\s+)?)*"
+    + r"|(?:do\s+not|don't)\s+)"
+)
+_COVER_CLEAR_NEGATION_RE = re.compile(
+    r"(?:^|[^\w])" + _COVER_NEGATION_PREFIX + r"$", re.IGNORECASE,
+)
+_COVER_DOUBLE_NEGATION_RE = re.compile(
+    r"\bnot\s+(?:only\s+)?" + _COVER_NEGATION_PREFIX + r"$", re.IGNORECASE,
+)
+_COVER_AMBIGUOUS_NEGATION_RE = re.compile(
+    r"\b(?:but|however|although|yet)\b",
+    re.IGNORECASE,
+)
+
+
+def _cover_expression_is_forbidden(value: object) -> bool:
+    """Reject positive or ambiguous forbidden expression requests.
+
+    This is a local phrase check, not a general natural-language parser.  A
+    forbidden phrase is allowed only when the same clause immediately places
+    it under ``never``, ``no``, ``without``, ``do not`` or ``don't``.  An
+    adversative continuation such as ``never tongue-out but smug`` is kept
+    fail-closed, as are double negatives and unrecognized wording.
+    """
+
+    if not isinstance(value, str) or not value.strip():
+        return True
+    expression = value.strip()
+    for pattern in _COVER_FORBIDDEN_EXPR_PATTERNS:
+        for match in pattern.finditer(expression):
+            prefix = expression[: match.start()]
+            if not _COVER_CLEAR_NEGATION_RE.search(prefix):
+                return True
+            if _COVER_DOUBLE_NEGATION_RE.search(prefix):
+                return True
+            clause_tail = re.split(r"[.!?;\n]", expression[match.end() :], maxsplit=1)[0]
+            if _COVER_AMBIGUOUS_NEGATION_RE.search(clause_tail):
+                return True
+    return False
+
+
+def ordinary_talk_redraw_text_palette(
+    *, hook_color: str | None = None,
+) -> dict[str, str]:
+    """Resolve a deterministic, contrast-aware text palette for this cover.
+
+    The image generator never draws copy.  The local title renderer records the
+    selected palette with the generation receipt.  Pink/yellow remains a valid
+    legacy choice, but ordinary talk is not forced into that pair: the selected
+    hook color may be any of the existing hook colors and the secondary fill is
+    chosen from the same trusted color table.
+    """
+
+    palettes = {
+        "yellow": ("yellow", "pink"),
+        "pink": ("pink", "yellow"),
+        "purple": ("purple", "yellow"),
+        "blue": ("blue", "yellow"),
+        "orange": ("orange", "yellow"),
+        "red": ("red", "yellow"),
+    }
+    primary, secondary = palettes.get(str(hook_color or ""), palettes["pink"])
+    return {
+        "schema_version": ORDINARY_TALK_TEXT_PALETTE_SCHEMA,
+        "primary": primary,
+        "secondary": secondary,
+        "stroke": "navy",
+    }
 
 def profile_asset_text(key: str) -> str:
     try:
@@ -68,12 +259,225 @@ def profile_asset_text(key: str) -> str:
         return "(资产文件缺失)"
 
 
+def ordinary_talk_redraw_style_binding(
+    *,
+    scene_kind: str | None = None,
+    relationship_visual_required: bool = False,
+    is_song: bool = False,
+    hook_color: str | None = None,
+    style_reference_path: Path | None = None,
+) -> dict[str, object] | None:
+    """Return the profile asset actually available to an ordinary redraw.
+
+    ``None`` means this profile has no optional style asset or that the route
+    is outside ordinary talk redraws.  A mapping with ``status=MISSING`` is
+    intentionally retained for a registered-but-unreadable asset so a later
+    QC gate cannot silently ignore the text art-direction asset.  A separate
+    sample image is optional and its absence does not invalidate that text.
+    """
+
+    normalized_scene = str(scene_kind or "talk").strip().lower()
+    if is_song or normalized_scene == "game" or relationship_visual_required:
+        return None
+    try:
+        path = CHANNEL_PROFILE.asset_file(ORDINARY_TALK_STYLE_KEY, repo_root=ROOT)
+    except (KeyError, ValueError):
+        return None
+    binding: dict[str, object] = {
+        "schema_version": ORDINARY_TALK_STYLE_SCHEMA,
+        "asset_key": ORDINARY_TALK_STYLE_KEY,
+        "path": str(path),
+        "status": "MISSING",
+        "text_palette": ordinary_talk_redraw_text_palette(hook_color=hook_color),
+        "research_projection": ordinary_talk_research_projection(),
+    }
+    try:
+        raw = path.read_bytes()
+        text = raw.decode("utf-8").strip()
+    except (OSError, UnicodeError):
+        binding["reason_code"] = "ASSET_READ_FAILED"
+        return binding
+    binding.update(
+        {
+            "sha256": "sha256:" + hashlib.sha256(raw).hexdigest(),
+            "text": text,
+        }
+    )
+    if text:
+        binding["status"] = "READY"
+    else:
+        binding["reason_code"] = "ASSET_EMPTY"
+    # The successful ordinary recipe used only the current identity frame.
+    # An existing sample file never opts the producer into another input.
+    if style_reference_path is None:
+        return binding
+    reference_path = Path(style_reference_path)
+    try:
+        reference_bytes = reference_path.read_bytes()
+        if not reference_bytes:
+            raise ValueError("empty style reference")
+        binding["reference_image"] = {
+            "asset_key": "cover_style_reference",
+            "path": str(reference_path),
+            "sha256": "sha256:" + hashlib.sha256(reference_bytes).hexdigest(),
+            "role": "STYLE_ONLY",
+        }
+    except (OSError, ValueError):
+        binding["reference_image_unavailable"] = True
+    return binding
+
+
+def _ordinary_talk_redraw_style_prompt(
+    style_binding: Mapping[str, object] | None = None,
+) -> str:
+    """Return the profile-owned visual language for ordinary talk redraws.
+
+    The style asset is deliberately optional for alternate channel profiles and
+    is kept out of song prompts.  Identity, source evidence, and the selected
+    story remain higher-authority inputs than this stylistic preference.
+    """
+
+    if style_binding is not None:
+        if style_binding.get("status") != "READY":
+            return ""
+        style = str(style_binding.get("text") or "").strip()
+    else:
+        try:
+            style = profile_asset_text(ORDINARY_TALK_STYLE_KEY)
+        except (KeyError, ValueError):
+            return ""
+    if not style or style == "(资产文件缺失)":
+        return ""
+    return (
+        "\n\nPROFILE ART-DIRECTION ASSET — ordinary single-host talk AI redraws only:\n"
+        f"{style}\n"
+        "This profile asset is a research-informed option, not a permanent style or layout gate. "
+        "A prior reference may use compact big-headed comic proportions, rounded simplified "
+        "features, thick irregular navy ink and restrained flat shading; use those only when "
+        "the current story and selected visual language call for them. The FIRST image remains "
+        "the sole current identity and outfit reference. Copy no text, costume, props, lightning "
+        "or story from a STYLE ONLY sample.\n"
+        "Apply this visual language only when this prompt is materializing an ordinary talk "
+        "AI redraw. Do not ignore conflicting visual-brief instructions: the current brief "
+        "controls the supported pose, story, visual language and layout for this clip. This "
+        "profile asset controls the drawing style only when that current story-specific choice "
+        "selects it; it is never a permanent style gate. "
+        "optional profile guidance never overrides source-visible identity, outfit, participants, "
+        "StoryContract facts, modality or the no-generated-text contract. Ignore it for song-clean, "
+        "game camera-window, verified relationship, and explicit screenshot routes.\n"
+    )
+
+
+def _ordinary_talk_research_application_prompt(
+    application: Mapping[str, object] | None = None,
+) -> str:
+    """Describe the selected research choice to the actual image generator."""
+
+    record = application if isinstance(application, Mapping) else {}
+    projection = ordinary_talk_research_projection()
+    choice = str(record.get("choice") or "UNASSESSED")
+    reason = str(record.get("reason") or "director CPA choice unavailable")
+    return (
+        "\nRESEARCH APPLICATION FOR THIS ORDINARY TALK COVER — provenance and one "
+        "story-specific choice, never a style score:\n"
+        f"version={projection['version']}; source={projection['source_path']}; "
+        f"source_sha256={projection['source_sha256']}; choice={choice}; reason={reason}\n"
+        "The study supplies editing questions, not a fixed visual template. If choice=APPLY, "
+        "use its questions to make the selected story's subject, response, object, condition "
+        "and modality visible. If choice=DO_NOT_APPLY, choose another visual language or layout "
+        "that better serves this story. If choice=UNASSESSED, preserve the story/source contracts "
+        "and do not claim research support. In every case, do not invent participants, facts, "
+        "outfits, props, text, or present-tense events.\n"
+    )
+
+
+_RESEARCH_STORY_CONTEXT_KEYS = (
+    "candidate_id",
+    "selection_hook",
+    "selection_hook_sha256",
+    "source_media_sha256s",
+    "clip_context_binding",
+    "participants",
+    "relation_state",
+    "cover_fallback_mode",
+    "context_sha256",
+    "editorial_research",
+)
+
+
+def _ordinary_talk_research_story_context(
+    *,
+    title: str,
+    story_hook: str,
+    research_story_context: Mapping[str, object] | None = None,
+    final_srt_text: str | None = None,
+) -> dict[str, object]:
+    """Bind current normal-stage story evidence for the director.
+
+    ``research_story_context`` is the already validated story context used by
+    final QC. The producer may additionally pass the exact current SRT text.
+    A bound SRT hash is checked before its text is exposed to the director; a
+    mismatch stays unavailable instead of silently falling back to the hook.
+    """
+
+    context: dict[str, object] = {
+        "title": title,
+        "selection_hook": story_hook,
+    }
+    bound_srt: Mapping[str, object] | None = None
+    if isinstance(research_story_context, Mapping):
+        projected = {
+            key: research_story_context[key]
+            for key in _RESEARCH_STORY_CONTEXT_KEYS
+            if key in research_story_context
+        }
+        if projected:
+            context["story_context"] = projected
+        candidate_srt = research_story_context.get("final_srt")
+        if isinstance(candidate_srt, Mapping):
+            bound_srt = candidate_srt
+
+    expected_srt_sha = (
+        str(bound_srt.get("sha256"))
+        if isinstance(bound_srt, Mapping) and bound_srt.get("sha256")
+        else None
+    )
+    text = final_srt_text
+    if text is None and isinstance(bound_srt, Mapping):
+        candidate_text = bound_srt.get("text")
+        if isinstance(candidate_text, str):
+            text = candidate_text
+    if isinstance(text, str) and text.strip():
+        observed_srt_sha = "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if expected_srt_sha is not None and expected_srt_sha != observed_srt_sha:
+            context["final_srt"] = {
+                "status": "UNAVAILABLE",
+                "reason_code": "FINAL_SRT_HASH_MISMATCH",
+                "expected_sha256": expected_srt_sha,
+                "observed_sha256": observed_srt_sha,
+            }
+        else:
+            context["final_srt"] = {
+                "status": "AVAILABLE",
+                "sha256": observed_srt_sha,
+                "text": text,
+            }
+    else:
+        reason_code = (
+            str(bound_srt.get("reason_code") or "FINAL_SRT_TEXT_NOT_SUPPLIED")
+            if isinstance(bound_srt, Mapping)
+            else "FINAL_SRT_NOT_SUPPLIED"
+        )
+        context["final_srt"] = {
+            "status": "UNAVAILABLE",
+            "reason_code": reason_code,
+        }
+    return context
+
+
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return digest
 
 
 def _profile_fontsdir(media_path: Path | None = None) -> Path | None:
@@ -90,6 +494,10 @@ class LidoushaCoverArtDirection:
     layout: str          # left-split | right-split | banner | song-clean
     hook_color: str      # key in _COVER_HOOK_COLORS
     is_song: bool
+    # Optional secondary fill used only by the ordinary-talk style asset.  An
+    # empty value preserves the historical cream secondary line for songs,
+    # games, screenshots, and legacy callers.
+    secondary_fill: str = ""
     hook_word: str = ""  # verbatim substring of cover_text to highlight ("" = none)
     line_breaks: tuple[str, ...] = ()  # LLM word-aware line split of cover_text ("" = balancer)
     words: tuple[str, ...] = ()
@@ -122,6 +530,10 @@ class LidoushaCoverArtDirection:
     # by the image prompt; it must not be reduced to a background color choice.
     visual_brief: str = ""
     title_style: str = "outline"  # outline | clean
+    # One bounded semantic choice from the director CPA about whether the
+    # completed cover study is useful for this story.  This never acts as a
+    # score or a substitute for final-pixel QC.
+    research_application: dict[str, object] = field(default_factory=dict)
 
 
 _COVER_TALK_LAYOUTS = ("left-split", "right-split", "banner")
@@ -190,7 +602,7 @@ _COVER_PUNCH_QUOTED_RX = re.compile(r"[“‘「『]([^”’」』]{4,12})[”�
 # Short quoted catchphrases are semantic and visual atoms on a cover.  The
 # July 22 fallback split ``“最最最喜欢”`` in half, which looked like a typo even
 # though every character survived.  Paired short quotes must stay together.
-from src.autoslice.cover_text_layout import (  # noqa: E402
+from src.autoslice.cover_text_layout import (
     _COVER_QUOTED_SPAN_RX,
     _cover_lines_canon,
     _validated_cover_lines,
@@ -224,7 +636,7 @@ def _cover_default_punch(cover_text: str) -> tuple[str, ...]:
         if 4 <= len(clause) <= 12:
             return (clause,)
     hook = _cover_default_hook_word(cover_text)
-    if hook and "\n" not in hook and 2 <= len(hook) <= 12:
+    if hook and "\n" not in hook and 1 <= len(hook) <= 9:
         return (hook,)
     return ()
 
@@ -232,7 +644,7 @@ def _cover_default_punch(cover_text: str) -> tuple[str, ...]:
 def _validated_cover_punch(value: object, cover_text: str) -> tuple[str, ...]:
     """Validate the LLM's initial cover punch **shape** only（v2,）。
 
- main 必填、sub 可选；每行 2-12 字、单物理行、行首禁闭标点/行末禁开标点。任何不合格 → ()
+ main 必填、sub 可选；每行 1–9 字、单物理行、行首禁闭标点/行末禁开标点。任何不合格 → ()
  → 调用方回退确定性兜底。**逐字连续子串已不再是要求**（公开规则裁定；考据与动机转移
  见 `cover_punch_semantics.SCHEMA_VERSION` 注释）：防编造改由终审 `no_fabricated_fact` 承担，
  这一层只保证可渲染。白色奶龙护栏（截在左引号前=截掉一个语义原子）仍在，但只对**确实是原文子串**的片段成立——对自由改写的梗字，原文括号位置说明不了任何事。
@@ -253,9 +665,10 @@ def _validated_cover_punch(value: object, cover_text: str) -> tuple[str, ...]:
         fragment = raw.strip()
         canon = _cover_lines_canon(fragment)
         if (
-            not (2 <= len(canon) <= 12)
+            not (1 <= len(fragment) <= 9)
             or punch_line_em_width(fragment) > PUNCH_LINE_MAX_EM
             or "\n" in fragment
+            or any(c in fragment for c in "，,")
         ):
             return ()
 
@@ -289,6 +702,11 @@ def _cover_art_direction(
     allow_punch: bool = False,
     diversity_slot: int | None = None,
     story_hook: str = "",
+    revision_brief: str = "",
+    scene_kind: str | None = None,
+    relationship_visual_required: bool = False,
+    research_story_context: Mapping[str, object] | None = None,
+    final_srt_text: str | None = None,
 ) -> LidoushaCoverArtDirection:
     """Pick the cover's role/expression/background/layout/hook color.
 
@@ -332,6 +750,13 @@ def _cover_art_direction(
         is_song=is_song,
         hook_word=_cover_default_hook_word(cover_text),
         cover_punch=_cover_default_punch(cover_text) if allow_punch else (),
+        research_application=_ordinary_talk_research_application(
+            ordinary_talk=(
+                not is_song
+                and str(scene_kind or "talk").strip().lower() != "game"
+                and not relationship_visual_required
+            )
+        ),
     )
     if art_direction_llm_call is None:
         if allow_punch and not baseline.is_song:
@@ -342,6 +767,7 @@ def _cover_art_direction(
                 punch=baseline.cover_punch,
                 llm_call=None,
                 punch_validator=_validated_cover_punch,
+                final_srt_text=final_srt_text or "",
             )
             baseline = dataclass_replace(
                 baseline,
@@ -358,9 +784,14 @@ def _cover_art_direction(
                     title=title,
                     cover_text=cover_text,
                     story_hook=story_hook,
+                    revision_brief=revision_brief,
                     baseline=baseline,
                     emote_library=emote_library,
                     allow_punch=allow_punch,
+                    scene_kind=scene_kind,
+                    relationship_visual_required=relationship_visual_required,
+                    research_story_context=research_story_context,
+                    final_srt_text=final_srt_text,
                 )
             )
         )
@@ -370,6 +801,11 @@ def _cover_art_direction(
             cover_text,
             emote_library=emote_library,
             allow_punch=allow_punch,
+            ordinary_talk_redraw=(
+                not is_song
+                and str(scene_kind or "talk").strip().lower() != "game"
+                and not relationship_visual_required
+            ),
         )
         # A partially valid art-direction response used to keep role/hook but
         # silently discard invalid or omitted ``words``/``lines``.  The title
@@ -424,6 +860,7 @@ def _cover_art_direction(
             punch=direction.cover_punch,
             llm_call=art_direction_llm_call,
             punch_validator=_validated_cover_punch,
+            final_srt_text=final_srt_text or "",
         )
         direction = dataclass_replace(
             direction,
@@ -514,10 +951,74 @@ def _cover_art_direction_prompt(
     cover_text: str,
     story_hook: str,
     baseline: LidoushaCoverArtDirection,
+    revision_brief: str = "",
     emote_library: EmoteLibrary | None = None,
     allow_punch: bool = False,
+    scene_kind: str | None = None,
+    relationship_visual_required: bool = False,
+    research_story_context: Mapping[str, object] | None = None,
+    final_srt_text: str | None = None,
 ) -> str:
     persona = profile_asset_text("persona")
+    normalized_scene = str(scene_kind or "talk").strip().lower()
+    talk_redraw_style = (
+        _ordinary_talk_redraw_style_prompt()
+        if (
+            not baseline.is_song
+            and normalized_scene != "game"
+            and not relationship_visual_required
+        )
+        else ""
+    )
+    ordinary_host_redraw = (
+        not baseline.is_song
+        and normalized_scene != "game"
+        and not relationship_visual_required
+    )
+    research_block = (
+        "\n本条普通单人重绘必须给出一次研究适用性选择。研究只提供编辑问题，不预设"
+        "固定画风、固定布局或点击收益；请结合当前 StoryContract 的 selection_hook、"
+        "可用正文/字幕上下文和本条实际素材，判断这些问题是否适用于本条故事。只能返回一个"
+        "二值选择及理由，不要打分、"
+        "不要把资产存在当作研究通过：\n"
+        + json.dumps(ordinary_talk_research_projection(), ensure_ascii=False, sort_keys=True)
+        + "\n输出 research_application: {\"applicable\":true|false,\"reason\":\"...\"}。"
+        "理由必须说明本条谁遇到什么、如何回应、以及当场/过去转述/游戏/假设等模态；"
+        "若不适用，也要说明原因并按故事另选视觉语言。\n"
+        if ordinary_host_redraw
+        else ""
+    )
+    research_story_block = (
+        "\n以下是普通 producer 在当前 stage 已核验的故事语境。标题、selection_hook 和最终 SRT"
+        "是本条真实内容输入；不得用旧 generation rationale、asset/hash 存在或 source-fact KEEP"
+        "替代正文。最终 SRT 不可用或 hash 漂移时，只能保守地标记为未知，不得补写正文：\n"
+        + json.dumps(
+            _ordinary_talk_research_story_context(
+                title=title,
+                story_hook=story_hook,
+                research_story_context=research_story_context,
+                final_srt_text=final_srt_text,
+            ),
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        + "\n请用这些证据选择本条研究是否适用，并说明题封承诺是否被正文支持、画面是否自然、"
+        "陌生观众为何可能点击；这些是当前语义判断，不是 CTR 测量。\n"
+        if ordinary_host_redraw
+        else ""
+    )
+    composition_scope = (
+        "本条普通单人重绘的 visual_brief 只能安排源图绑定的主播。HOST_ONLY 限制参与者身份，"
+        "不限制她的出现次数：可明确画同一主播先评论、后回应的两个时刻，每处保持同一可见穿戴。"
+        "故事中的游戏对白只是被评论的内容，不能把主播画成游戏角色或补画其他参与者。"
+        "可用有来源的无人形屏幕、物件或明确的编辑符号表达她正在评论的内容；不继承源图的"
+        "游戏截图、小窗版式，不复制游戏人物。用具体评论反应、动作和物件关系表达事件，"
+        "不能把故事全部交给字层。物件不能带另一人的嘴、手或脸。姿势应让源中可见的"
+        "服装层次和配饰仍可核实。截图路线另按真实源图处理；不要把截图构图写入重绘说明。\n"
+        if ordinary_host_redraw
+        else "先考虑保留真实截图：按源帧与故事选择上方、下方或侧边文字区；不默认套卡片或图形皮肤。"
+        "visual_brief 仅在需要生图时指导重绘，截图布局和字样选择不依赖它，不要求截图演出所有故事动作。\n"
+    )
     # Sticker catalog only when a library is supplied AND this is a talk cover:
     # song covers never use emotes, and the no-library prompt stays byte-stable.
     emote_block = ""
@@ -530,13 +1031,14 @@ def _cover_art_direction_prompt(
     punch_output_field = ""
     if allow_punch:
         punch_block = (
-            "- cover_punch: **封面主梗字（最高优先，2026-07-20 B站高播放封面调研铁律：封面上的字是 2-12 字的'梗字'，从不是整条标题）**。从封面文案里挑她最出圈的那一句：原话/口癖/质问/反差点（如'什么是侄女''给我整无语了'）。\n **梗字必须扣住本条的具体名场面**（公开规则生豆角案铁律）：main+sub 合起来必须包含核心具象意象——事件里的具体东西/动作/原话（如'生豆角''有骗子！'）；**禁止只用抽象总结词**（'团结默契''下播暗示'这类无画面、换条也能用的词）。若最出圈的感叹句本身抽象，则 main 取具象意象词、sub 取该感叹句（或反之）。\n **梗字不必是标题/封面文案的连续子串，也不必与标题一致重复**（公开规则逐字裁定：「梗字从来没有要求过必须是标题的连续子串吧，我不记得我要求过，事实上很多高播放量的切片，封面字块里的梗字和标题不一致，反而可能承接了一些解释原因或者补充说明的感觉，不需要与标题一致重复。」）。原话直引依然是最好的第一选择，但你也可以改写、缩写、换口语说法；**sub 尤其鼓励承接解释原因或补充说明**，而不是把 main 的词再抄一遍。\n **只能说片里真有的事**：梗字里的每个具体指涉（人/物/动作/数字/结论）都必须由本条标题或切片语境支撑；不得新增没出现过的人物或情节，不得把推测写成已发生的事实，不得升级程度或结果。编造会在终审被 no_fabricated_fact 门拦下。\n 硬约束：main 与 sub 各 2-12 字、各自是一条能直接渲染的物理行（可含标点）；sub 可选（null 或第二行小字）。若直接抽取原文片段，不得停在紧随的引号/书名号/括号成分之前。**几乎永远都写得出来**——按优先级找：含具象意象的她的原话感叹句＞引号里的梗词＞含具象意象的短分句＞你自己写的、有支撑的一句补充说明；只有本条完全无从概括时才允许 main 给 null（极罕见）。梗字模式下 lines/words 仍要照常输出（作回退）。\n"
+            "- cover_punch: **封面主梗字（最高优先，2026-07-20 B站高播放封面调研铁律：封面上的字是 1–9 字的'梗字'，从不是整条标题）**。从封面文案里挑她最出圈的那一句：原话/口癖/质问/反差点（如'什么是侄女''给我整无语了'）。\n **梗字必须扣住本条的具体名场面**（公开规则生豆角案铁律）：main+sub 合起来必须包含核心具象意象——事件里的具体东西/动作/原话（如'生豆角''有骗子！'）；**禁止只用抽象总结词**（'团结默契''下播暗示'这类无画面、换条也能用的词）。若最出圈的感叹句本身抽象，则 main 取具象意象词、sub 取该感叹句（或反之）。\n **梗字不必是标题/封面文案的连续子串，也不必与标题一致重复**（公开规则逐字裁定：「梗字从来没有要求过必须是标题的连续子串吧，我不记得我要求过，事实上很多高播放量的切片，封面字块里的梗字和标题不一致，反而可能承接了一些解释原因或者补充说明的感觉，不需要与标题一致重复。」）。原话直引依然是最好的第一选择，但你也可以改写、缩写、换口语说法；**sub 尤其鼓励承接解释原因或补充说明**，而不是把 main 的词再抄一遍。\n **只能说片里真有的事**：梗字里的每个具体指涉（人/物/动作/数字/结论）都必须由本条标题或切片语境支撑；不得新增没出现过的人物或情节，不得把推测写成已发生的事实，不得升级程度或结果。编造会在终审被 no_fabricated_fact 门拦下。\n 硬约束：main 与 sub 各 1–9 字、各自是一条能直接渲染的物理行（可含标点）；sub 可选（null 或第二行梗字）。若直接抽取原文片段，不得停在紧随的引号/书名号/括号成分之前。**几乎永远都写得出来**——按优先级找：含具象意象的她的原话感叹句＞引号里的梗词＞含具象意象的短分句＞你自己写的、有支撑的一句补充说明；只有本条完全无从概括时才允许 main 给 null（极罕见）。梗字模式下 lines/words 仍要照常输出（作回退）。\n"
         )
         punch_output_field = ',"cover_punch":null|{"main":"...","sub":null|"..."}'
     return (
         f"你在为一条{CHANNEL_PROFILE.display_name}(B站虚拟主播)切片的封面挑选'艺术指导'。只依据人设与本条切片语义选择。\n"
         f"\n{CHANNEL_PROFILE.display_name}人设(权威):\n{persona}\n"
-        "\n硬护栏:表情要贴这条切片里她扮演的角色;默认是软糯清纯邻家女同学(被欺负又软软反击);"
+        "\n硬护栏:表情要贴这条切片里她扮演的角色;本条具体反应优先于人设的默认表情，"
+        "不强制闭嘴、微笑或害羞。没有具体反应时才采用软糯清纯邻家女同学的默认;"
         "机灵鬼怪/得意只在角色需要时用(次要);**永远不要吐舌头**,不要油滑/挑衅/性感/媚。"
         "外观完全由图像参考决定。你未看到参考图，所以 visual_brief 不得描述发色、发型、耳朵、"
         "眼睛颜色、脸部标志、服装或配饰，也不得按角色名或故事里的外号猜测它们。"
@@ -544,14 +1046,17 @@ def _cover_art_direction_prompt(
         "用同一参考形象在不同时刻的动作、表情、节奏表达反差。\n"
         f"\n本切片标题: {title}\n封面文案(分行): {cover_text}\n"
         f"完整 StoryContract selection_hook: {story_hook or '(未提供，按标题裁决)'}\n"
-        "\n以下是可用的默认建议，不是锁定模板。根据故事选择画面组织，不能只靠换色制造多样性:\n"
+        + talk_redraw_style
+        + research_block
+        + research_story_block
+        + "\n以下是可用的默认建议，不是锁定模板。根据故事选择画面组织，不能只靠换色制造多样性:\n"
         f"- layout: {baseline.layout}\n"
         f"- background_style: {baseline.background_style}\n"
         f"- hook_color: {baseline.hook_color}\n"
         "\n请选择/生成以下艺术指导字段:\n"
         "- layout: left-split(人物左/字右)、right-split(人物右/字左)、banner(字上)、footer(字下)。"
         "先决定故事如何被看懂，再为1-2行短文字留区。歌切保留song-clean。\n"
-        "先考虑保留真实截图：按源帧与故事选择上方、下方或侧边文字区；不默认套卡片或图形皮肤。visual_brief 仅在需要生图时指导重绘，截图布局和字样选择不依赖它，不要求截图演出所有故事动作。\n"
+        + composition_scope +
         "- visual_brief: 80-1200字符英文画面导演说明，写明具体故事反差、镜头尺度、构图/主次、"
         "质感和为何有助于观众读懂事件。可用连续漫画、真实场景、纸艺、电影光影等；不强制大头或贴纸描边。"
         "人物仍须清楚可辨且承担反应。不得发明人物/服装/现实事件；时间分格须明确是同一个人的不同时刻，"
@@ -582,9 +1087,11 @@ def _cover_art_direction_prompt(
         "left-split/right-split/song-clean 这类竖窄文字区**必须多分几行、每行更短**(长文案 5-8 行,每行 2-4 字),"
         "让文字铺满整个竖直文字区;banner 是横宽区,行可以长一点(3-4 行)。宁可多一行也不要留一行太长把字压小。\n"
         + emote_block
+        + _cover_revision_brief_prompt(revision_brief)
         + '只输出一个 JSON 对象: {"layout":"...","visual_brief":"...","title_style":"outline|clean","background_style":"source-led","hook_color":"...","role":"...","expression_en":"...","hook_word":"...","scene_props":["..."],"words":["...","..."],"lines":["...","..."]'
         + punch_output_field
         + emote_output_field
+        + (',"research_application":{"applicable":true|false,"reason":"..."}' if ordinary_host_redraw else "")
         + "}"
     )
 
@@ -622,6 +1129,7 @@ def _normalize_cover_art_direction(
     cover_text: str,
     emote_library: EmoteLibrary | None = None,
     allow_punch: bool = False,
+    ordinary_talk_redraw: bool = False,
 ) -> LidoushaCoverArtDirection:
     # Layout and typography are valid choices even for a real screenshot,
     # which does not need an AI scene brief.
@@ -645,9 +1153,7 @@ def _normalize_cover_art_direction(
         background_style = background_style.strip()
 
     expression_en = payload.get("expression_en")
-    if not (isinstance(expression_en, str) and expression_en.strip()) or any(
-        bad in expression_en.lower() for bad in _COVER_FORBIDDEN_EXPR
-    ):
+    if _cover_expression_is_forbidden(expression_en):
         expression_en = baseline.expression_en  # guardrail: reject tongue/油滑/sexy → safe baseline
 
     role = payload.get("role")
@@ -735,23 +1241,26 @@ def _normalize_cover_art_direction(
             if not baseline.is_song and payload.get("title_style") in ("outline", "clean")
             else baseline.title_style
         ),
+        research_application=_ordinary_talk_research_application(
+            payload.get("research_application"),
+            ordinary_talk=ordinary_talk_redraw,
+        ),
     )
 
 
 def _cover_text(title: str) -> str:
-
-
-
-
-    text = title.strip()
-    for prefix in (CHANNEL_PROFILE.song_title_prefix, CHANNEL_PROFILE.talk_title_prefix):
-        if text.startswith(prefix):
-            text = text[len(prefix) :]
-            break
+    from src.autoslice.audience_text import assert_audience_text
+    assert_audience_text(title, surface='cover')
+    # The current talk skill permits name：quote. Song layout retains its
+    # independent historical clause breaks.
+    is_song = _lidousha_is_song_title(title)
+    from src.autoslice.channel_envelope import title_display_body
+    text = title_display_body(title)
     # 歌名的括号限定（场次/晚会）只留在归档标题里；封面上《歌名》必须短而大
     # （7/11 歌切封面被《恋爱告急 (2021浙江卫视跨年演唱会)》单原子压到 46px 保底）。
     text = re.sub(r"《([^》（(]*?)\s*[（(][^()（）》]*[)）]\s*》", r"《\1》", text)
-    text = re.sub(r"\s*[：:]\s*", "\n", text)
+    if is_song:
+        text = re.sub(r"\s*[：:]\s*", "\n", text)
     text = "\n".join(line.strip(" ，,") for line in text.split("\n") if line.strip(" ，,"))
     return text or title.strip()
 
@@ -779,6 +1288,30 @@ _COVER_NO_TEXT_CRITICAL = (
     "The title is added separately afterwards, so the reserved title area must be a graphic background that is "
     "COMPLETELY EMPTY of any glyphs or symbols. Keep the whole composition energetic, cute and eye-catching."
 )
+
+
+def _cover_revision_brief_prompt(revision_brief: str) -> str:
+    """Render an explicit director correction for both cover CPA prompts.
+
+    The brief is intentionally passed through as authored text.  It is a
+    bounded correction channel, so the model can resolve a conflict with an
+    optional ``scene_props`` suggestion without a hard-coded object parser.
+    Empty input returns an empty string to preserve the historical prompts.
+    """
+
+    brief = revision_brief if isinstance(revision_brief, str) else ""
+    if not brief.strip():
+        return ""
+    return (
+        "\n\nEXPLICIT DIRECTOR REVISION BRIEF — CORRECTION OF OPTIONAL VISUAL DETAILS:\n"
+        f"{brief}\n"
+        "Apply this authored correction literally to the visible image. It takes precedence over any "
+        "conflicting optional scene_props or conflicting visual_brief detail only where they conflict. "
+        "This correction cannot override approved story facts, the supplied reference's identity, "
+        "outfit and accessories, or the current story-specific visual choice. Do not invent a new "
+        "participant or story fact, and do not reintroduce a corrected-away object through a prop, "
+        "background or decorative detail.\n"
+    )
 
 
 def _lidousha_emote_cover_prompt(
@@ -840,6 +1373,10 @@ def _cover_prompt(
     cover_text: str,
     art_direction: LidoushaCoverArtDirection | None = None,
     emote: EmoteEntry | None = None,
+    revision_brief: str = "",
+    scene_kind: str | None = None,
+    relationship_visual_required: bool = False,
+    style_binding: Mapping[str, object] | None = None,
 ) -> str:
     """Text-free CPA background prompt, ART-DIRECTED per clip (维护者).
 
@@ -856,7 +1393,10 @@ def _cover_prompt(
     this prompt byte-identical to the pre-emote contract.
     """
     if art_direction is None:
-        art_direction = _cover_art_direction(candidate_id="", title=title, cover_text=cover_text)
+        art_direction = _cover_art_direction(
+            candidate_id="", title=title, cover_text=cover_text,
+            revision_brief=revision_brief,
+        )
     identity_descriptor = _lidousha_identity_descriptor()
     cover_identity_prompt = profile_asset_text("cover_identity_prompt")
     background = _COVER_BG_PHRASES.get(
@@ -864,16 +1404,24 @@ def _cover_prompt(
         art_direction.background_style,
     )
     emote_mode = art_direction.emote_mode if emote is not None else ""
+    revision_block = _cover_revision_brief_prompt(revision_brief)
     if emote_mode == "replace":
-        return final_copy_image_prompt(art_direction, cover_text) + _lidousha_emote_cover_prompt(
+        return final_copy_image_prompt(art_direction, cover_text) + revision_block + _lidousha_emote_cover_prompt(
             emote=emote,
             art_direction=art_direction,
             background=background,
             cover_identity_prompt=cover_identity_prompt,
         )
+    normalized_scene = str(scene_kind or "talk").strip().lower()
+    ordinary_host_redraw = (
+        not art_direction.is_song
+        and normalized_scene != "game"
+        and not relationship_visual_required
+    )
     identity_block = image_identity_prompt(
         profile=CHANNEL_PROFILE, identity_descriptor=identity_descriptor,
         identity_asset=cover_identity_prompt, art_direction=art_direction,
+        allow_secondary_participants=not ordinary_host_redraw,
     )
     if not art_direction.is_song:
         title_zone = _COVER_LAYOUT_RENDER[art_direction.layout]["zone"]
@@ -884,6 +1432,22 @@ def _cover_prompt(
             "with a clean gentle look. Keep the LEFT ~45% a CLEAN calm zone reserved for a title: fill it with "
             f"{background}. Cohesive blue / navy / cream palette, tasteful and pretty rather than loud. "
         )
+    talk_redraw_style = (
+        "\nSELECTED GENERATION SCOPE: ordinary single-host talk AI redraw. "
+        "The source frame supplies identity and outfit, not a game-camera-window "
+        "screenshot composition.\n" + _ordinary_talk_redraw_style_prompt(style_binding)
+        if (
+            not art_direction.is_song
+            and normalized_scene != "game"
+            and not relationship_visual_required
+        )
+        else ""
+    )
+    research_application_block = (
+        _ordinary_talk_research_application_prompt(art_direction.research_application)
+        if ordinary_host_redraw
+        else ""
+    )
     props_block = ""
     if art_direction.scene_props and not art_direction.is_song:
         props = "; ".join(art_direction.scene_props)
@@ -904,7 +1468,17 @@ def _cover_prompt(
             f"sticker's pose, expression and design{caption_note}; do NOT reproduce the inset panel's frame/border "
             f"itself. Reason this companion appears (from the clip): {art_direction.emote_reason}. "
         )
-    return final_copy_image_prompt(art_direction, cover_text) + identity_block + composition + props_block + companion_block + _COVER_NO_TEXT_CRITICAL
+    return (
+        final_copy_image_prompt(art_direction, cover_text)
+        + identity_block
+        + composition
+        + talk_redraw_style
+        + research_application_block
+        + props_block
+        + revision_block
+        + companion_block
+        + _COVER_NO_TEXT_CRITICAL
+    )
 
 
 def _cover_screenshot_polish_prompt() -> str:
@@ -938,8 +1512,8 @@ _COVER_CANVAS = (1920, 1080)
 # blanked a whole unattended batch's covers).  Request the nearest compliant
 # size and normalize the returned image back onto the 1920x1080 overlay canvas.
 _COVER_REQUEST_SIZE = "1920x1088"
-_COVER_PRIMARY_MODEL = "gpt-image-2"
-_COVER_COMPATIBILITY_MODEL = "gpt-image-1.5"
+_COVER_PRIMARY_MODEL = "gpt-image-2.5"
+_COVER_COMPATIBILITY_MODEL = "gpt-image-2"
 
 
 def _cpa_image_model_candidates() -> tuple[str, ...]:
@@ -993,16 +1567,18 @@ def _call_cpa_image_edit(
     base_url: str,
     api_key: str,
     reference_path: Path,
+    style_reference_paths: Sequence[Path] = (),
     output_path: Path,
     prompt: str,
     request_path: Path,
     response_path: Path,
-    timeout_seconds: float = 180.0,
+    timeout_seconds: float = 600.0,
     model_candidates: Sequence[str] | None = None,
     normalize_canvas: Callable[[Path], tuple[int, int]] | None = None,
 ) -> dict[str, object]:
     return perform_image_edit(
         base_url=base_url, api_key=api_key, reference_path=reference_path,
+        style_reference_paths=style_reference_paths,
         output_path=output_path, prompt=prompt, request_path=request_path,
         response_path=response_path, timeout_seconds=timeout_seconds,
         model_candidates=model_candidates or _cpa_image_model_candidates(),
@@ -1013,7 +1589,12 @@ def _call_cpa_image_edit(
     )
 
 
-def _multipart_form_data(*, fields: Mapping[str, str], files: Mapping[str, tuple[str, bytes, str]]) -> tuple[bytes, str]:
+def _multipart_form_data(
+    *,
+    fields: Mapping[str, str],
+    files: Mapping[str, tuple[str, bytes, str]]
+    | Sequence[tuple[str, tuple[str, bytes, str]]],
+) -> tuple[bytes, str]:
     boundary = "----HermesVtuberSliceCoverBoundary"
     chunks: list[bytes] = []
     for name, value in fields.items():
@@ -1025,7 +1606,8 @@ def _multipart_form_data(*, fields: Mapping[str, str], files: Mapping[str, tuple
                 b"\r\n",
             ]
         )
-    for name, (filename, content, content_type) in files.items():
+    file_items = files.items() if isinstance(files, Mapping) else files
+    for name, (filename, content, content_type) in file_items:
         chunks.extend(
             [
                 f"--{boundary}\r\n".encode(),
@@ -1801,6 +2383,9 @@ def _overlay_cover_title(
     """
     from PIL import Image, ImageDraw, ImageOps
 
+    from src.autoslice.audience_text import assert_audience_text
+    assert_audience_text(cover_text, surface='cover')
+
     if art_direction is None:
         art_direction = _cover_art_direction(candidate_id="", title=cover_text, cover_text=cover_text)
     render = _COVER_LAYOUT_RENDER.get(art_direction.layout, _COVER_LAYOUT_RENDER["left-split"])
@@ -1816,7 +2401,10 @@ def _overlay_cover_title(
     angle = 0.0 if art_direction.title_style == "clean" else render["angle"]
     scrim = render["scrim"]
     hook_rgb = _COVER_HOOK_COLORS.get(art_direction.hook_color, _COVER_HOOK_COLORS["yellow"])
-    if art_direction.title_style == "clean":
+    secondary_rgb = _COVER_HOOK_COLORS.get(
+        art_direction.secondary_fill, _COVER_BASE_FILL
+    )
+    if art_direction.title_style == "clean" and not art_direction.secondary_fill:
         hook_rgb = _COVER_BASE_FILL
 
     # 梗字模式（生态调研）：cover_punch 非空时只渲染 1-2 行短梗字
@@ -1836,7 +2424,7 @@ def _overlay_cover_title(
             zone=zone,
             font_path=font_path,
             hook_rgb=hook_rgb,
-            base_fill=_COVER_BASE_FILL,
+            base_fill=secondary_rgb,
             max_size=render["max_size"],
         )
     else:
@@ -1861,7 +2449,7 @@ def _overlay_cover_title(
         lines = _fit_cover_lines(
             cover_text,
             hook_word=art_direction.hook_word,
-            base_fill=_COVER_BASE_FILL,
+            base_fill=secondary_rgb,
             hook_rgb=hook_rgb,
             zone=zone,
             font_path=font_path,
@@ -1973,6 +2561,17 @@ def _overlay_cover_title(
         if not changed:
             break
         layer, title_render_spec = _materialize_current_lines()
+    if art_direction.secondary_fill:
+        # Keep the palette in the replayed render spec as well as the
+        # generation art direction.  The trusted glyph replayer ignores this
+        # metadata for rasterization, but the hash binds the chosen palette to
+        # the exact local text recipe.
+        title_render_spec["text_palette"] = {
+            "schema_version": ORDINARY_TALK_TEXT_PALETTE_SCHEMA,
+            "primary": art_direction.hook_color,
+            "secondary": art_direction.secondary_fill,
+            "stroke": "navy",
+        }
     font_size = max(line["size"] for line in lines)
     if not art_direction.is_song and font_size < COVER_MIN_TALK_FONT_SIZE:
         raise ValueError(
@@ -2045,6 +2644,14 @@ def _overlay_cover_title(
         "title_style": art_direction.title_style,
         "background_style": art_direction.background_style,
         "hook_color": art_direction.hook_color,
+        **(
+            {
+                "secondary_fill": art_direction.secondary_fill,
+                "text_palette": dict(title_render_spec["text_palette"]),
+            }
+            if art_direction.secondary_fill
+            else {}
+        ),
         "hook_word": art_direction.hook_word,
         "role": art_direction.role,
         "expression_en": art_direction.expression_en,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,7 +26,7 @@ def test_runtime_cpa_ssh_bridge_writes_completion_and_safe_diagnostics(
             "completion": '{"findings":[]}',
             "diagnostics": {
                 "provider_transport": "ssh_runtime_cpa",
-                "provider_endpoint_host": "gateway.example.invalid",
+                "provider_endpoint_host": "cpa.example.invalid",
                 "provider_endpoint_path": "/v1",
                 "provider_credential_source": "/opt/bilive/autoslice/cpa.env",
                 "provider_http_status": 200,
@@ -41,15 +42,15 @@ def test_runtime_cpa_ssh_bridge_writes_completion_and_safe_diagnostics(
     result = bridge.run_bridge(
         prompt_file=prompt,
         completion_file=completion,
-        ssh_host="runtime-host",
+        ssh_host="oci3",
         runtime_root=Path("/opt/bilive/autoslice"),
-        model="gpt-6-sol",
+        model="gpt-6-astra",
         effort="medium",
         attempts=1,
     )
 
     assert completion.read_text(encoding="utf-8") == '{"findings":[]}'
-    assert result["provider_endpoint_host"] == "gateway.example.invalid"
+    assert result["provider_endpoint_host"] == "cpa.example.invalid"
     command = observed["command"]
     assert command[:7] == [
         "ssh",
@@ -60,13 +61,18 @@ def test_runtime_cpa_ssh_bridge_writes_completion_and_safe_diagnostics(
         "-o",
         "ConnectTimeout=12",
     ]
+    assert command[7] == "oci3"
+    assert shlex.split(command[8]) == [
+        "sudo", "-n", "/opt/bilive/autoslice/venv-main/bin/python", "-B", "-c", bridge.REMOTE_PROGRAM,
+    ]
     request = json.loads(observed["input"])
     assert request == {
         "attempts": 1,
         "effort": "medium",
-        "model": "gpt-6-sol",
+        "model": "gpt-6-astra",
         "prompt": "review fixture",
         "runtime_root": "/opt/bilive/autoslice",
+        "response_format": None,
     }
     captured = capsys.readouterr()
     marker = bridge.DIAGNOSTIC_MARKER
@@ -87,7 +93,7 @@ def test_runtime_cpa_ssh_bridge_preserves_only_redacted_failure_diagnostics(
             "status": "FAILED",
             "diagnostics": {
                 "provider_transport": "ssh_runtime_cpa",
-                "provider_endpoint_host": "gateway.example.invalid",
+                "provider_endpoint_host": "cpa.example.invalid",
                 "provider_endpoint_path": "/v1",
                 "provider_credential_source": "/opt/bilive/autoslice/cpa.env",
                 "provider_http_status": 401,
@@ -107,9 +113,9 @@ def test_runtime_cpa_ssh_bridge_preserves_only_redacted_failure_diagnostics(
         bridge.run_bridge(
             prompt_file=prompt,
             completion_file=completion,
-            ssh_host="runtime-host",
+            ssh_host="oci3",
             runtime_root=Path("/opt/bilive/autoslice"),
-            model="gpt-6-sol",
+            model="gpt-6-astra",
             effort="medium",
             attempts=1,
         )

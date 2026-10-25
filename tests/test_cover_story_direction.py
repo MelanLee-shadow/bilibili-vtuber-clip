@@ -1,5 +1,6 @@
 """Regression checks for story direction surviving prompt and title rendering."""
 from dataclasses import replace
+import json
 from pathlib import Path
 
 from PIL import Image
@@ -189,6 +190,61 @@ def test_normalized_direction_reaches_image_prompt_with_matching_title_zone():
     assert fallback.visual_brief == ""
 
 
+def test_revision_brief_reaches_art_direction_and_final_image_prompt():
+    from src.autoslice.cover_generation import _cover_art_direction
+
+    brief = (
+        "Do not show a tipped bottle or scattered tablets; preserve the approved meeting story "
+        "and the channel's normal style."
+    )
+    director_prompts = []
+
+    def judge(prompt):
+        director_prompts.append(prompt)
+        return json.dumps(
+            {
+                "visual_brief": (
+                    "An editorial meeting scene with the referenced host reacting clearly, "
+                    "using a restrained normal channel illustration style."
+                ),
+                "scene_props": ["tipped bottle", "scattered tablets"],
+            },
+            ensure_ascii=False,
+        )
+
+    direction = _cover_art_direction(
+        candidate_id="revision-brief",
+        title="meeting cover",
+        cover_text="meeting cover",
+        art_direction_llm_call=judge,
+        revision_brief=brief,
+    )
+    assert director_prompts and brief in director_prompts[0]
+    assert "takes precedence over any conflicting optional scene_props" in director_prompts[0]
+
+    image_prompt = _cover_prompt(
+        title="meeting cover",
+        cover_text="meeting cover",
+        art_direction=direction,
+        revision_brief=brief,
+    )
+    assert brief in image_prompt
+    assert image_prompt.index("STORY PROPS") < image_prompt.index(brief)
+    assert "takes precedence over any conflicting optional scene_props" in image_prompt
+
+    default_prompt = _cover_prompt(
+        title="meeting cover",
+        cover_text="meeting cover",
+        art_direction=direction,
+    )
+    assert default_prompt == _cover_prompt(
+        title="meeting cover",
+        cover_text="meeting cover",
+        art_direction=direction,
+        revision_brief="",
+    )
+
+
 def test_semantic_copy_change_replaces_stale_brief_before_image_prompt():
     import json
     from src.autoslice.cover_generation import _cover_art_direction
@@ -293,7 +349,13 @@ def test_rotated_two_line_title_fits_reserved_vertical_zone(tmp_path, monkeypatc
     assert receipt["font_size"] >= 120
 
 
-def test_usable_calm_source_prefers_direct_even_without_all_story_actions():
+def test_auto_ordinary_talk_prefers_story_redraw_even_with_face_safe_source():
+    """The current auto contract is story-redraw first for ordinary talk.
+
+    A face-safe source frame is still valid identity evidence, but the research
+    questions do not turn that evidence into an implicit screenshot exception.
+    Screenshot routes remain explicit (``cover_mode=screenshot``/``polish``).
+    """
     from src.autoslice.publish_staging import _decide_cover_treatment
     verdict = {"verdict": {"source_face_complete": True,
         "faithful_crop_can_make_dominant": True, "lidousha_bbox_frac": [0.28, 0, 0.85, 1],
@@ -302,11 +364,15 @@ def test_usable_calm_source_prefers_direct_even_without_all_story_actions():
              "motion_dispersion_frac": 0.5489}
     args = dict(cover_mode="auto", is_song=False, punch_allowed=True,
                 frame_selection=frame, source_composition_verification=verdict)
-    assert _decide_cover_treatment(**args)[0] == "screenshot_direct"
+    treatment, reason = _decide_cover_treatment(**args)
+    assert treatment == "cpa_redraw"
+    assert "ordinary talk" in reason
     frame.update(status="OPERATOR_OVERRIDE", candidates=[{"score": None}])
-    assert _decide_cover_treatment(**args)[0] == "screenshot_direct"
-    verdict["verdict"]["source_face_complete"] = False
     assert _decide_cover_treatment(**args)[0] == "cpa_redraw"
+    verdict["verdict"]["source_face_complete"] = False
+    treatment, reason = _decide_cover_treatment(**args)
+    assert treatment == "cpa_redraw"
+    assert "source-composition" in reason
 
 
 def test_clean_screenshot_preserves_source_face_pixels_and_relationship_branch(tmp_path):
@@ -326,3 +392,44 @@ def test_clean_screenshot_preserves_source_face_pixels_and_relationship_branch(t
         art_direction=direction, preserve_full_frame=True)
     assert relationship.get("composition") != "source_frame_with_footer"
     assert relationship["source_frame_transform"]["center_4_3_safe"] is True
+
+
+def test_ordinary_redraw_uses_identity_only_and_preserves_story_reaction():
+    from src.autoslice.cover_generation import ordinary_talk_redraw_style_binding
+
+    binding = ordinary_talk_redraw_style_binding()
+    assert binding["status"] == "READY"
+    assert "reference_image" not in binding
+    direction = replace(
+        BASE, expression_en="wide surprised eyes and a small parted gasp",
+        visual_brief="An expressive waist-up chibi reacting to an unexpected game dialogue.",
+    )
+    prompt = _cover_prompt(
+        title="游戏对白有点暧昧", cover_text="游戏对白有点暧昧",
+        art_direction=direction, style_binding=binding,
+    )
+    assert "ONLY as identity reference" in prompt
+    assert "identity/style reference" not in prompt
+    assert "Discard its background, UI, composition and rendering style" in prompt
+    assert direction.expression_en in prompt
+    assert "No automatic sticker outline, giant floating head, halftone or speed lines" not in prompt
+    assert "big-headed comic proportions" in prompt
+    assert "not the number of depictions" in prompt
+    assert "before/after sequence may show her twice" in prompt
+    assert "No other face, mouth, hand" in prompt
+    assert "rather than leaving the entire story to the title overlay" in prompt
+
+
+def test_director_scope_allows_same_host_sequence_without_game_cast():
+    from src.autoslice.cover_generation import _cover_art_direction_prompt
+
+    prompt = _cover_art_direction_prompt(
+        title="游戏评论之后急忙澄清", cover_text="装侄女？没有在装！",
+        story_hook="她先评论游戏对白，随后回应弹幕并两次否认自己在装。",
+        baseline=BASE,
+    )
+    assert "HOST_ONLY 限制参与者身份" in prompt
+    assert "两个时刻" in prompt
+    assert "不能把主播画成游戏角色或补画其他参与者" in prompt
+    assert "不能把故事全部交给字层" in prompt
+    assert "不能安排游戏画面、小窗、角色头像、回忆分格" not in prompt

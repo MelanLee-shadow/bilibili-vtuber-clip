@@ -650,7 +650,8 @@ def test_talk_projection_uses_same_sealed_binding_for_reused_cover(tmp_path: Pat
     root, date, result, item = _talk_projection_fixture(tmp_path)
     result["cover_status"] = "REUSED_COVER"
     result["prepared_summary"]["cover_status"] = "REUSED_COVER"
-    monkeypatch.setattr(batch_projection, "accepted_result_cover_status", lambda *_args, **_kwargs: "REUSED_COVER")
+    from src.autoslice import published_cover_carry
+    monkeypatch.setattr(published_cover_carry, "accepted_result_cover_status", lambda *_args, **_kwargs: "REUSED_COVER")
     seen = {}
 
     project_materialized_talk(

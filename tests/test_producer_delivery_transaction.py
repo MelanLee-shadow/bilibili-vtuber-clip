@@ -47,6 +47,33 @@ def _seal(root: Path, commit: str = "a" * 40) -> None:
     (repo / "DEPLOYED_AUTHORITY_MANIFEST.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 
+@pytest.mark.parametrize('width',[40,64])
+def test_delivery_authority_uses_pinned_physical_version_and_safe_worker_alias(tmp_path,monkeypatch,width):
+    root=tmp_path/'runtime';root.mkdir();_seal(root,'a'*40)
+    first=root/'versions'/('a'*width)/'repo';first.parent.mkdir(parents=True)
+    (root/'repo').rename(first);(first/'DEPLOYED_MANIFEST.json').write_text('{}')
+    _seal(root,'b'*40);second=root/'versions'/('b'*width)/'repo';second.parent.mkdir(parents=True)
+    (root/'repo').rename(second);(second/'DEPLOYED_MANIFEST.json').write_text('{}')
+    if width==64:
+        (first/'OVERFLOW_RELEASE_SHA256').write_text('a'*64+'\n')
+        (second/'OVERFLOW_RELEASE_SHA256').write_text('b'*64+'\n')
+    (root/'current').symlink_to(second.parent,target_is_directory=True)
+    monkeypatch.setenv('AUTOSLICE_RUNTIME_VERSION_ROOT',str(first))
+    assert deployment_authority_binding(root)['commit']=='a'*40
+    (first/'DEPLOYED_MANIFEST.json').unlink()
+    with pytest.raises(ProducerDeliveryTransactionError,match='incomplete'):
+        deployment_authority_binding(root)
+    (first/'DEPLOYED_MANIFEST.json').write_text('{}')
+    monkeypatch.delenv('AUTOSLICE_RUNTIME_VERSION_ROOT')
+    assert deployment_authority_binding(root)['commit']=='b'*40
+    (root/'current').unlink();(root/'repo').symlink_to(first,target_is_directory=True)
+    assert deployment_authority_binding(root)['commit']=='a'*40
+    external=tmp_path/'other';external.mkdir();_seal(external)
+    monkeypatch.setenv('AUTOSLICE_RUNTIME_VERSION_ROOT',str(external/'repo'))
+    with pytest.raises(ProducerDeliveryTransactionError,match='outside runtime'):
+        deployment_authority_binding(root)
+
+
 def _prepared(tmp_path: Path):
     root = tmp_path / "runtime"
     root.mkdir()
@@ -207,6 +234,151 @@ def test_talk_prepare_keeps_legacy_runtime_root_derivation_without_explicit_root
     assert fixture["handle"].runtime_root == fixture["root"]
 
 
+@pytest.mark.parametrize("runtime", ["current", "missing", "symlink", "wrong_inferred", "outside_output", "relative", "symlink_output", "dot_escape"])
+def test_normal_talk_finalizer_checks_runtime_before_expensive_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runtime: str,
+) -> None:
+    from types import SimpleNamespace
+    from src.autoslice import producer_package_finalization as finalization
+
+    fixture = _talk_preparation_fixture(tmp_path, nested_output=True)
+    spec = dict(fixture["kwargs"]["spec"])
+    if runtime == "missing":
+        spec["runtime_root"] = str(tmp_path / "missing-runtime")
+    elif runtime == "symlink":
+        link = tmp_path / "runtime-link"
+        link.symlink_to(fixture["root"], target_is_directory=True)
+        spec["runtime_root"] = str(link)
+    elif runtime == "wrong_inferred":
+        spec.pop("runtime_root")
+    elif runtime == "outside_output":
+        output = tmp_path / "outside-output"
+        output.mkdir()
+        spec["output_root"] = str(output)
+    elif runtime == "relative":
+        spec["runtime_root"] = "relative-runtime"
+    elif runtime == "symlink_output":
+        output = fixture["root"] / "output-link"
+        output.symlink_to(spec["output_root"], target_is_directory=True)
+        spec["output_root"] = str(output)
+    elif runtime == "dot_escape":
+        (tmp_path / "outside-output").mkdir()
+        spec["output_root"] = str(fixture["root"] / ".." / "outside-output")
+    before = {p: p.read_bytes() for p in fixture["sources"].values()}
+    calls = []
+
+    class ReachedMaterialization(Exception):
+        pass
+
+    def materialize(**_kwargs):
+        calls.append("materialize")
+        raise ReachedMaterialization
+
+    monkeypatch.setattr(finalization, "_materialize_final_recut", materialize)
+    expected = ReachedMaterialization if runtime == "current" else ProducerDeliveryTransactionError
+    with pytest.raises(expected):
+        finalization.finalize_producer_package(
+            options=SimpleNamespace(
+                spec=tmp_path / "spec.json", substrate="existing_srt", prepare_only=True,
+            ),
+            profile_id="lidousha", speaker_subtitle_style_id="style", spec=spec,
+            cid="cid-1", out_root=Path(spec["output_root"]), host="localhost",
+            padded=tmp_path / "padded.mp4", padded_provenance_path=tmp_path / "source.json",
+            piece_provenance_rows=[], final_start=0, final_end=61000, sanitized=[],
+            timing_qa={}, audit={}, text_override_path=None, subtitle_regression_path=None,
+            chat_authority_audit={}, chat_authority_path=tmp_path / "chat.json",
+            branding_intro={}, adapters=None,
+        )
+    assert calls == (["materialize"] if runtime == "current" else [])
+    assert {p: p.read_bytes() for p in before} == before
+
+
+@pytest.mark.parametrize("runtime", ["current", "missing", "symlink", "wrong_inferred", "outside_output", "relative", "symlink_output", "dot_escape"])
+def test_prepare_entry_checks_runtime_before_source_or_text_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runtime: str,
+) -> None:
+    from types import SimpleNamespace
+    from scripts import produce_slice_package as producer
+
+    fixture = _talk_preparation_fixture(tmp_path, nested_output=True)
+    spec = dict(fixture["kwargs"]["spec"])
+    if runtime == "missing":
+        spec["runtime_root"] = str(tmp_path / "missing-runtime")
+    elif runtime == "symlink":
+        link = tmp_path / "runtime-link"
+        link.symlink_to(fixture["root"], target_is_directory=True)
+        spec["runtime_root"] = str(link)
+    elif runtime == "wrong_inferred":
+        spec.pop("runtime_root")
+    elif runtime == "outside_output":
+        output = tmp_path / "outside-output"
+        output.mkdir()
+        spec["output_root"] = str(output)
+    elif runtime == "relative":
+        spec["runtime_root"] = "relative-runtime"
+    elif runtime == "symlink_output":
+        output = fixture["root"] / "output-link"
+        output.symlink_to(spec["output_root"], target_is_directory=True)
+        spec["output_root"] = str(output)
+    elif runtime == "dot_escape":
+        (tmp_path / "outside-output").mkdir()
+        spec["output_root"] = str(fixture["root"] / ".." / "outside-output")
+    request = SimpleNamespace(
+        spec=spec, boundary_repair_extend_cap_ms=0, branding_intro={}, cid="cid-1",
+        out_root=Path(spec["output_root"]), host="localhost",
+        text_override_path=None, subtitle_regression_path=None,
+    )
+    monkeypatch.setattr(producer, "parse_producer_args", lambda *a, **kw: SimpleNamespace(prepare_only=True, spec=tmp_path / "spec.json"))
+    monkeypatch.setattr(producer, "load_producer_request", lambda *a, **kw: request)
+    calls = []
+
+    class ReachedSource(Exception):
+        pass
+
+    def source(**kwargs):
+        calls.append("source")
+        raise ReachedSource
+
+    monkeypatch.setattr(producer, "prepare_source_media", source)
+    monkeypatch.setattr(producer, "run_text_pipeline", lambda **kw: calls.append("text"))
+    expected = ReachedSource if runtime == "current" else ProducerDeliveryTransactionError
+    with pytest.raises(expected):
+        producer.main([])
+    assert calls == (["source"] if runtime == "current" else [])
+
+
+@pytest.mark.parametrize("relocated", [False, True])
+def test_talk_prepare_preserves_bound_recut_provenance_for_ledger_progression(tmp_path: Path, relocated: bool):
+    from src.autoslice import producer_delivery_prepare as prepare
+    from src.autoslice.producer_media import RECUT_PROVENANCE_SCHEMA
+
+    fixture = _talk_preparation_fixture(tmp_path, nested_output=True)
+    media = fixture["sources"]["video"]
+    record = fixture["record"]
+    record["media_path"] = str(media)
+    record["artifact_hashes"]["video_sha256"] = "sha256:" + hashlib.sha256(media.read_bytes()).hexdigest()
+    # Relocation can keep the immutable recut preimage while staging its proof.
+    proof = media.parent / "staged-source-proof.json" if relocated else media.with_suffix(".provenance.json")
+    if relocated:
+        record["recut_provenance_path"] = str(proof)
+    payload = {"schema_version": RECUT_PROVENANCE_SCHEMA,
+               "source_piece": {"source_path": "/source/replay.flv", "start_ms": 10, "end_ms": 20},
+               "final_recut": {"output_path": str(media.resolve()),
+                               "output_sha256": hashlib.sha256(media.read_bytes()).hexdigest(),
+                               "absolute_source_start_ms": 10, "absolute_source_end_ms": 20}}
+    proof.write_text(json.dumps(payload), encoding="utf-8")
+    handle = prepare.prepare_talk_delivery(**fixture["kwargs"])
+    entry = next(row for row in _read_document(handle)["artifacts"] if row["role"] == "source_provenance")
+    assert Path(entry["target_path"]).name.endswith(".provenance.json")
+    assert Path(entry["source_path"]) == proof
+    assert entry["source_sha256"] == "sha256:" + hashlib.sha256(proof.read_bytes()).hexdigest()
+
+    payload["final_recut"]["output_sha256"] = "0" * 64
+    proof.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ProducerDeliveryTransactionError, match="recut provenance binding is invalid"):
+        prepare.prepare_talk_delivery(**fixture["kwargs"])
+
+
 def test_talk_prepare_rejects_invalid_explicit_runtime_root(tmp_path: Path):
     from src.autoslice import producer_delivery_prepare as prepare
 
@@ -214,7 +386,7 @@ def test_talk_prepare_rejects_invalid_explicit_runtime_root(tmp_path: Path):
     invalid_root = tmp_path / "foreign-runtime"
     invalid_root.mkdir()
     fixture["kwargs"]["spec"]["runtime_root"] = str(invalid_root)
-    with pytest.raises(ProducerDeliveryTransactionError, match="private directory unavailable"):
+    with pytest.raises(ProducerDeliveryTransactionError, match="output root escapes runtime root"):
         prepare.prepare_talk_delivery(**fixture["kwargs"])
 
     sealed_root = tmp_path / "sealed-runtime"

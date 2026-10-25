@@ -14,6 +14,7 @@ a current v4 final-pixel witness and run the canonical package successor/audit.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import copy
 import dataclasses
 import datetime as dt
@@ -74,11 +75,8 @@ def _sha_bytes(payload: bytes) -> str:
 
 
 def _sha(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return "sha256:" + digest
 
 
 def _json_bytes(value: Mapping[str, object]) -> bytes:

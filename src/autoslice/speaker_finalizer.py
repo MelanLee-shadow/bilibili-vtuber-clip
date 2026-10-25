@@ -321,7 +321,7 @@ def _assert_runtime_assets_stable(
     model_tree_sha256: str,
     references: Sequence[Mapping[str, object]],
 ) -> None:
-    if _sha256_directory(model_dir) != model_tree_sha256:
+    if _sha256_directory(model_dir, fresh=True) != model_tree_sha256:
         raise SpeakerFinalizationError("CAM++ model tree drifted during speaker analysis")
     for reference in references:
         path = Path(str(reference["path"]))
@@ -1172,7 +1172,7 @@ def _write_ready_speaker_delivery(
     """
 
     write_srt(final_cues, output_srt_path)
-    write_ass(final_cues, output_ass_path, show_speaker_labels=False)
+    write_ass(final_cues, output_ass_path)
     manifest: dict[str, object] = {
         "schema_version": SPEAKER_FINALIZATION_SCHEMA,
         "status": speaker_guess.SPEAKER_GUESS_STATUS if guess else "READY",
@@ -1478,7 +1478,7 @@ def finalize_fast_solo_subtitles(
     output_srt_path.unlink(missing_ok=True)
     output_ass_path.unlink(missing_ok=True)
     write_srt(final_cues, output_srt_path)
-    write_ass(final_cues, output_ass_path, show_speaker_labels=False)
+    write_ass(final_cues, output_ass_path)
     if (
         sha256_file(routing_claim_path) != verified_route.claim_sha256
         or sha256_file(media_path) != source_media_sha256

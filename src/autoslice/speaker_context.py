@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from src.autoslice.cpa_model_ladder import TOP_CPA_MODEL, cpa_call_timeout_seconds
+from src.autoslice.structured_output import call_json
+
 import math
 import os
 import re
@@ -15,6 +18,7 @@ from typing import Callable, Mapping, Sequence
 
 from scripts.apply_subtitle_text_overrides import TextCue
 from src.autoslice.llm_client import extract_json_object
+from src.autoslice.nonsemantic_sound import hesitation_spelling, nonlexical_pattern
 from src.autoslice.speaker_common import (
     CHANNEL_PROFILE,
     GUEST_SPEAKER,
@@ -143,15 +147,20 @@ def _reviewed_context_votes(
 
 
 _SINGLETON_PUNCT_RX = re.compile(r"[\s，。！？!?、,.…~～—\-]+")
-_SINGLETON_LAUGHTER_RX = re.compile(r"(?:哈{2,}|嘿{2,}|呵{2,}|嘻{2,}|(?:ha){2,}|笑死|笑)", re.IGNORECASE)
-_SINGLETON_INTERJECTION_RX = re.compile(r"(?:啊|呀|哎|唉|诶|欸|嗯|呃|额|哦|噢|哼|嘛|呢|吧)+")
+# Definition + local speaker-context additions: 笑/笑死 are lexical reports of
+# laughing, useful for singleton dominance, never omission or audio authority.
+_SINGLETON_CONTEXT_ADDITIONS_RX = re.compile(r"(?:笑死|笑)")
 
 
 def _singleton_nonlexical_dominant(text: str) -> bool:
-    compact = _SINGLETON_PUNCT_RX.sub("", str(text)).lower()
-    without_laughter, laughter_count = _SINGLETON_LAUGHTER_RX.subn("", compact)
-    residual, interjection_count = _SINGLETON_INTERJECTION_RX.subn("", without_laughter)
-    return bool(laughter_count or interjection_count) and residual in SINGLETON_NONLEXICAL_RESIDUALS
+    compact = _SINGLETON_PUNCT_RX.sub("", hesitation_spelling(str(text))).lower()
+    without_reports, report_count = _SINGLETON_CONTEXT_ADDITIONS_RX.subn("", compact)
+    # Unbounded matching is specific to this dominance score; the residual
+    # whitelist, acoustic gates and whole-clip speaker judgment still apply.
+    # Discourse fillers are not subtracted here: e.g. 那个 is a permitted
+    # residual fragment, not proof that a speaker only made a vocal sound.
+    residual, sound_count = nonlexical_pattern(include_fillers=False).subn("", without_reports)
+    return bool(report_count or sound_count) and residual in SINGLETON_NONLEXICAL_RESIDUALS
 
 
 def _resolve_singleton_outlier(
@@ -361,7 +370,7 @@ def _whole_clip_context_votes(
             break
         attempts += 1
         try:
-            payload = extract_json_object(context_call(_context_prompt(cues, labels, pending)))
+            payload = extract_json_object(call_json(context_call, _context_prompt(cues, labels, pending)))
             rows = payload.get("labels", [])
             if not isinstance(rows, list):
                 raise ValueError("labels must be a list")
@@ -428,33 +437,11 @@ def _speaker_context_env() -> dict[str, str]:
 
 
 def _call_context_via_cpa(prompt: str, *, repo_root: Path, work_dir: Path) -> str:
-    work_dir.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", dir=work_dir, delete=False) as handle:
-        prompt_path = Path(handle.name)
-        handle.write(prompt)
-    output_path = prompt_path.with_suffix(".out")
-    try:
-        completed = subprocess.run(
-            [
-                "bash",
-                str(repo_root / "scripts" / "llm_via_cpa.sh"),
-                str(prompt_path),
-                str(output_path),
-                "gpt-6-sol",
-                "medium",
-            ],
-            cwd=str(repo_root),
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=600,
-            env=_speaker_context_env(),
-        )
-        if completed.returncode != 0 or not output_path.is_file():
-            raise SpeakerFinalizationError(
-                "speaker context judge failed: " + (completed.stderr or completed.stdout)[-800:]
-            )
-        return output_path.read_text(encoding="utf-8")
-    finally:
-        prompt_path.unlink(missing_ok=True)
-        output_path.unlink(missing_ok=True)
+    from .llm_client import LlmConfig, build_llm_call
+    call = build_llm_call(LlmConfig(transport='command',
+        command_template=f'bash {shlex.quote(str(repo_root / "scripts/llm_via_cpa.sh"))} '
+            '{prompt_file} {completion_file} ' + TOP_CPA_MODEL + ' medium',
+        command_child_env=_speaker_context_env(), timeout_seconds=cpa_call_timeout_seconds()))
+    if not (os.environ.get('AUTOSLICE_BASE') or os.environ.get('AUTOSLICE_FINAL_REVIEW_RUNTIME_ROOT')):
+        call.completed_review_root = work_dir.resolve() / '.completed-review-observations'
+    return call_json(call, prompt)

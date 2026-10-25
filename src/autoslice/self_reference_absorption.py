@@ -224,6 +224,7 @@ def absorb_host_self_references(
     srt_text: str,
     *,
     source_witness_srt: str | None = None,
+    protected_cue_indexes: tuple[int, ...] = (),
 ) -> tuple[str, dict[str, Any]]:
     cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
     source_cues = (
@@ -237,6 +238,8 @@ def absorb_host_self_references(
     local_resolution_history: list[dict[str, Any]] = []
     for cue_offset, (cue, text) in enumerate(zip(cues, texts)):
         cue_index = cue_offset + 1
+        if cue_index in protected_cue_indexes:
+            continue
         replacements: list[dict[str, Any]] = []
         witness_text = (
             _overlapping_witness_text(

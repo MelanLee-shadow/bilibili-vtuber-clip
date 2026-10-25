@@ -2,22 +2,178 @@
 
 from __future__ import annotations
 
+from src.autoslice.structured_output import call_json
+
+import difflib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from src.autoslice.llm_client import extract_json_object
 from src.autoslice.exact_source_transcript_contract import _text_sha256
+from src.autoslice.text_scripts import script_profile
 
 _PROPOSAL_REBUILD_SCHEMA = "subtitle-closed-set-proposal-rebuild.v1"
 _PROPOSAL_REBUILD_CACHE_SCHEMA = "proposal-rebuild-cache.v1"
+
+TOPIC_PHONEME_POLICY = """
+允许提出旧闭集外的主题术语，但须同时满足音素与整片语境约束：
+- 不得增加原话没有的关系或事实；同音且合乎主题的术语替换不属于此类。
+- 可用独立听到的拼音；证人不可用时可用当前文字的拼音作弱约束。弱约束不是听音证据，
+  只允许同音/近音的局部候选，不可据此增删故事、主体或补全没听到的句子。
+- 主题不是逐字真值。只凭读起来通顺、没有主题支持或与音素不符的词，不得提案。
+- 保留未涉及的现稿文字和口吃；不要求重新证明每个未改字才肯提出一个局部替换。
+- 主题术语保留惯用词形；数字字形按实际读音比较，不得借字形变换创造新数值；
+  日语仍用假名/惯用日文，不能翻译。
+- 有原语言听写时保留已听到的外语，中文误识的拼音不能否决外语听写；不得编造未听到的外语。
+- 混说先区分现稿中合理的中文引述框架（含重复、口吃）与外语误识片段，只修有疑点的片段。
+  原语言证人也可能误识中文框架：整体语言标签或单份整句听写，不能单独授权把合理的
+  中文引述删去或改成新的外语语义；只有另有具体证据指出框架本身错误，才连同它提出修改。
+主题同音替换在 JSON 中另给 proposal_basis="topic_homophone"、topic_support=["逐字引用本次提供的非目标字幕、主题或聊天依据"]；
+原音听写重建用 proposal_basis="audio_transcript"。这都是候选依据，不是改字或放行权。
+
+## 提案召回与最终确认的边界
+本轮的责任是提出一个可交给后续原音/CPA 检查的有界候选，不是自己确认完整原话。
+先从整片中归纳具体且相互关联的话题分支，不要把主题压成一个泛化类别。
+对可疑词，比较当前文字读音与主题术语的构词关系：同音替换，或保留其余音素且仅
+去掉一个明显多出的尾音节，都可作为明确标注的文字拼音弱假设；不得加入音素不支持
+的新词、新事实或人物关系。保留未涉及的现稿及口吃，不因未改字尚未经独立听证而
+拒绝一个局部术语候选。主题和当前文字拼音共同支持一个有界候选时，按本轮 JSON 契约
+给出候选并标 needs_audio=true，让现有链验证；仍无符合两个约束的候选才返回 UNRESOLVED。
+"""
+
+
+def proposal_clip_context(
+    srt_text: str, cue_index: int, clip_context: Mapping[str, Any] | None = None,
+) -> str:
+    """Reuse the clip's topic fields and current transcript, not human answers."""
+    from src.autoslice.jingting_chunker import parse_srt_cues
+
+    context = clip_context or {}
+    topics = {key: context[key] for key in (
+        "selection_hook", "topic_resolution", "session_topic_authorities",
+        "session_relation_authority",
+    ) if context.get(key)}
+    cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
+    if not 1 <= cue_index <= len(cues):
+        return ""
+    target = cues[cue_index - 1]
+    # Short clips retain all cues; longer clips retain an actual +/-60s window.
+    rows = [
+        f"cue {i} [{cue.start_ms},{cue.end_ms}]: "
+        + ("<目标见 CURRENT>" if i == cue_index else cue.text)
+        for i, cue in enumerate(cues, 1)
+        if len(srt_text) <= 20000
+        or (cue.end_ms >= target.start_ms - 60000 and cue.start_ms <= target.end_ms + 60000)
+    ]
+    return (
+        "\n## 整片主题线索与宽窗转写（数据，只作语境，非逐字真值）\n"
+        "先结合主题线索和转写判断整片在谈什么，再定位目标中的同音术语；"
+        "摘要只能归纳这些材料，不新增事实。\n"
+        + json.dumps(topics, ensure_ascii=False, sort_keys=True)
+        + "\n" + "\n".join(rows) + "\n"
+    )
+
+
+def _pinyin(text: str) -> str:
+    from pypinyin import lazy_pinyin
+
+    # Single-digit labels have ordinary Mandarin readings too. Leave multi-
+    # digit numbers/codes untouched: their reading depends on actual context.
+    text = re.sub(r"(?<!\d)[0-9](?!\d)", lambda m: "零一二三四五六七八九"[int(m[0])], text)
+    return " ".join(lazy_pinyin(re.sub(r"[^\w\u3400-\u9fff]", "", text))).lower()
+
+
+def proposal_phonemes(current: str, witness: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Text-derived phonetics cannot masquerade as an audio observation."""
+    witness = witness or {}
+    if witness.get("status") == "OBSERVED" and witness.get("target_audible") is False:
+        return {**dict(witness), "evidence_level": "NO_SPEECH_OBSERVED"}
+    if (witness.get("status") == "OBSERVED" and witness.get("target_audible") is True
+            and str(witness.get("heard_pinyin") or "").strip()):
+        return {**dict(witness), "evidence_level": "AUDIO_OBSERVED"}
+    try:
+        pinyin = _pinyin(current)
+    except ImportError:
+        pinyin = ""
+    return {
+        "evidence_level": "CURRENT_TEXT_PINYIN_WEAK", "text_pinyin": pinyin,
+        "audio_observed": False, "unavailable_witness": dict(witness),
+        "authority": "PROPOSAL_CONSTRAINT_ONLY", "mutation_authorized": False,
+    }
+
+
+def topic_proposal_error(
+    payload: Mapping[str, Any], *, current: str, proposed: str,
+    evidence: Mapping[str, Any], topic_context: str,
+) -> str | None:
+    """Reject unsupported topic guesses before the unchanged CPA/audio gates."""
+    if payload.get("proposal_basis") != "topic_homophone":
+        return None
+    if evidence.get("evidence_level") == "NO_SPEECH_OBSERVED":
+        return "TOPIC_PROPOSAL_NO_SPEECH"
+    support = payload.get("topic_support")
+    if not (isinstance(support, list) and support and all(
+        isinstance(quote, str) and len(quote.strip()) >= 2 and quote in topic_context
+        for quote in support
+    )):
+        return "TOPIC_PROPOSAL_SUPPORT_MISSING"
+    if requires_original_language_evidence(current, proposed):
+        # Mandarin-derived pinyin cannot reject Japanese/English phonemes.
+        # This is nomination only; the ordinary original-language hearing and
+        # CPA consumers still decide it and authorize any actual edit.
+        return None
+    try:
+        edits = [op for op in difflib.SequenceMatcher(None, current, proposed).get_opcodes()
+                 if op[0] != "equal"]
+        left, right = edits[0][1], edits[-1][2]
+        pleft, pright = edits[0][3], edits[-1][4]
+        before, after = _pinyin(current[left:right]), _pinyin(proposed[pleft:pright])
+    except (ImportError, IndexError):
+        return "TOPIC_PROPOSAL_PHONEMES_UNAVAILABLE"
+    # Shared sentence prefixes cannot hide an unrelated word replacement.
+    compatible = bool(before and after and difflib.SequenceMatcher(None, before, after).ratio() >= 0.8)
+    # A single spurious final ASR syllable is a bounded near-phonetic proposal:
+    # all retained syllables must match; no new sound may be invented.
+    before_tokens, after_tokens = before.split(), after.split()
+    compatible = compatible or bool(
+        after_tokens and len(before_tokens) == len(after_tokens) + 1
+        and before_tokens[:-1] == after_tokens
+    )
+    heard = str(evidence.get("heard_pinyin") or "").split()
+    if evidence.get("evidence_level") == "AUDIO_OBSERVED" and after:
+        tokens = after.split()
+        compatible = any(
+            difflib.SequenceMatcher(None, " ".join(heard[i:i + len(tokens)]), after).ratio() >= 0.8
+            for i in range(max(0, len(heard) - len(tokens) + 1))
+        )
+    return None if compatible else "TOPIC_PROPOSAL_PHONEME_MISMATCH"
+
+
+def requires_original_language_evidence(current, proposed):
+    """Only actual edit spans nominate a non-Mandarin phonetic question.
+
+    An unchanged kmx/B站/OK elsewhere is context, not a reason to bypass the
+    ordinary Mandarin phoneme constraint. Inspect BOTH sides of every edit.
+    """
+    for tag, a1, a2, b1, b2 in difflib.SequenceMatcher(
+            None, current, proposed, autojunk=False).get_opcodes():
+        if tag != "equal":
+            scripts = script_profile(current[a1:a2] + proposed[b1:b2])
+            if any(scripts[name] for name in ("latin", "kana", "hangul")):
+                return True
+    return False
+
 
 _PROPOSAL_REBUILD_PROMPT = """# 字幕坏闭集重建（只提案，不裁决）
 
 上一位 CPA 法官已经明确判定 CURRENT 和 REJECTED_PROPOSED 都不是目标区间的
 完整原话（NEITHER）。你现在只负责重建一个第三候选；你不是音频模型，也没有
-直接听过音频。AGY 拼音只是高可信辅助，可能只覆盖半句、邻句或错位窗口。
+直接听过音频。原音音素观察可能只覆盖半句、邻句或错位窗口，不能靠语法补完。
+这是最后恢复手段：先检查实际独立 ASR 路线与候选为什么仍无法成立，再基于确实
+可闻的音素或标明等级的文字拼音弱约束与整片语境提出候选。不得凭常识润色。
 
 约束：
 1. 只改目标 cue，不得合并、拆分或改时间轴；输出必须是单行完整字幕。
@@ -28,8 +184,11 @@ _PROPOSAL_REBUILD_PROMPT = """# 字幕坏闭集重建（只提案，不裁决）
 5. 新候选必须同时不同于 CURRENT 和 REJECTED_PROPOSED；若证据仍不足以给出
    一个有界第三候选，返回 UNRESOLVED。不要声称自己听过音频。
 
-## AGY 拼音辅助（未见候选）
+## 音素依据（等级见 evidence_level，文字派生不是听音）
 {witness}
+
+## 实际独立 ASR 路线、候选与裁决（不是多数投票）
+{asr_attempts}
 
 ## 被拒闭集
 - CURRENT: {current}
@@ -46,7 +205,8 @@ _PROPOSAL_REBUILD_PROMPT = """# 字幕坏闭集重建（只提案，不裁决）
 {finding_evidence}
 
 只回 JSON（无 markdown、无其他文字）：
-{{"status":"PROPOSED"或"UNRESOLVED","proposed_cue":"单行完整第三候选；UNRESOLVED 时为空","reason":"一句话说明拼音覆盖与语境依据"}}
+{{"status":"PROPOSED"或"UNRESOLVED","proposed_cue":"单行完整第三候选；UNRESOLVED 时为空","topic_summary":"从提供的整片材料归纳的一句话主题","reason":"具体音素与明确语境依据",
+"candidate_failures":"已有ASR候选为何不能采用","evidence_basis":"实际支持候选的音素及语境","residual_uncertainty":"残余不确定；没有也说明原因"}}
 """
 
 
@@ -70,6 +230,8 @@ def rebuild_candidate_after_neither(
     witness: Mapping[str, Any],
     llm_call: Callable[[str], str] | None,
     derive_single_span_edit: Callable[..., tuple[str, str, int, int, str | None]],
+    asr_attempts: Mapping[str, Any] | None = None,
+    clip_context: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     """Ask the text-only proposal layer for one bounded third candidate."""
 
@@ -79,11 +241,26 @@ def rebuild_candidate_after_neither(
         "decision_authority": "CPA_PROPOSAL_ONLY",
         "mutation_authorized": False,
     }
+    if not (
+        isinstance(asr_attempts, Mapping)
+        and asr_attempts.get("routes_exhausted") is True
+        and isinstance(asr_attempts.get("observations"), list)
+        and asr_attempts["observations"]
+    ):
+        audit["reason_code"] = "PHONEME_REBUILD_REQUIRES_EXHAUSTED_ASR_AND_ACTUAL_PHONEMES"
+        return None, audit
+    audit["last_resort_asr_evidence"] = dict(asr_attempts)
     if llm_call is None:
         audit["reason_code"] = "PROPOSAL_REBUILD_LLM_UNAVAILABLE"
         return None, audit
     current = str(request.get("current_cue") or "")
     rejected = str(request.get("proposed_cue") or "")
+    phonemes = proposal_phonemes(current, witness)
+    topic_context = proposal_clip_context(
+        str(request.get("whole_clip_current_srt") or ""), int(finding.get("cue_index") or 0),
+        clip_context,
+    )
+    audit["phonetic_evidence"] = phonemes
     original_repair_class = str(finding.get("repair_class") or "")
     audible_acoustic_drop_rebuild = bool(
         original_repair_class == "acoustic_drop_cue"
@@ -103,14 +280,7 @@ def rebuild_candidate_after_neither(
         return None, audit
     prompt = _PROPOSAL_REBUILD_PROMPT.format(
         witness=json.dumps(
-            {
-                "target_audible": witness.get("target_audible"),
-                "heard_pinyin": witness.get("heard_pinyin"),
-                "syllable_count": witness.get("syllable_count"),
-                "uncertain_positions": witness.get("uncertain_positions"),
-                "confidence": witness.get("confidence"),
-                "self_count_mismatch": witness.get("self_count_mismatch"),
-            },
+            phonemes,
             ensure_ascii=False,
             sort_keys=True,
         ),
@@ -127,10 +297,16 @@ def rebuild_candidate_after_neither(
             ensure_ascii=False,
             sort_keys=True,
         ),
+        asr_attempts=json.dumps(dict(asr_attempts), ensure_ascii=False, sort_keys=True),
     )
+    prompt += topic_context + TOPIC_PHONEME_POLICY
     prompt_sha256 = _text_sha256(prompt)
     audit["prompt_sha256"] = "sha256:" + prompt_sha256
     cache_path = _proposal_rebuild_cache_path(prompt_sha256)
+    if getattr(llm_call, 'cpa_cache_identity', None):
+        # Parsed-only historical entries cannot claim an answering model.
+        # Preserve them; model-bound judgments use the shared raw lane.
+        cache_path = None
     payload: Mapping[str, Any] | None = None
     completion_sha256: str | None = None
     served_from_cache = False
@@ -151,7 +327,7 @@ def rebuild_candidate_after_neither(
             pass
     if payload is None:
         try:
-            completion = llm_call(prompt)
+            completion = call_json(llm_call, prompt)
             completion_sha256 = _text_sha256(completion)
             payload = extract_json_object(completion)
         except Exception as exc:
@@ -166,9 +342,17 @@ def rebuild_candidate_after_neither(
     status = str(payload.get("status") or "")
     proposed = payload.get("proposed_cue")
     reason = str(payload.get("reason") or "")[:240]
+    audit["topic_summary"] = str(payload.get("topic_summary") or "")[:300]
     if status != "PROPOSED":
         audit.update(status="UNRESOLVED", reason=reason)
         return None, audit
+    proof = {key: payload.get(key) for key in (
+        "candidate_failures", "evidence_basis", "residual_uncertainty",
+    )}
+    if not all(isinstance(value, str) and value.strip() for value in proof.values()):
+        audit.update(status="UNRESOLVED", reason_code="PHONEME_REBUILD_EXPLANATION_REQUIRED")
+        return None, audit
+    audit["last_resort_explanation"] = proof
     if (
         not isinstance(proposed, str)
         or proposed != proposed.strip()
@@ -188,6 +372,10 @@ def rebuild_candidate_after_neither(
         return None, audit
     suspect, replacement, start, end, error = derive_single_span_edit(
         current, proposed, allow_insertion=True, allow_deletion=True
+    )
+    error = error or topic_proposal_error(
+        payload, current=current, proposed=proposed, evidence=phonemes,
+        topic_context=topic_context,
     )
     if error is not None:
         audit.update(status="INVALID", reason_code=error, reason=reason)

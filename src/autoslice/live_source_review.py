@@ -45,6 +45,11 @@ from .song_repair import (
     validate_audio_lrc_execution_metadata,
     validate_live_performance_observation,
 )
+from .song_alignment import (
+    performance_rows_on_asr_clock,
+    is_timing_model_report,
+    verify_timing_report,
+)
 from .source_context_executor import SourceContextExecutionResult
 from .source_context_planner import JingtingJobProvenance, plan_source_context_jingting_jobs
 from .source_integrity import (
@@ -653,15 +658,19 @@ def _verify_live_performance_observation(
     report_rows = report.get("alignment")
     if not isinstance(first_ms, int) or isinstance(first_ms, bool) or not isinstance(last_ms, int) or isinstance(last_ms, bool):
         return "live-performance lyric span is missing"
-    performance_error = validate_live_performance_observation(
-        report.get("live_performance"),
-        first_lyric_start_ms=first_ms,
-        last_lyric_end_ms=last_ms,
-        observations=report_rows,
-        require_ready=True,
-    )
-    if performance_error is not None:
-        return performance_error
+    timing_model = is_timing_model_report(report)
+    if "timing_model" in report and not timing_model:
+        return "live-performance timing model is unsupported"
+    if not timing_model:
+        performance_error = validate_live_performance_observation(
+            report.get("live_performance"),
+            first_lyric_start_ms=first_ms,
+            last_lyric_end_ms=last_ms,
+            observations=report_rows,
+            require_ready=True,
+        )
+        if performance_error is not None:
+            return performance_error
     report_provider = report.get("audio_alignment_provider")
     report_agy_rc = report.get("audio_alignment_agy_rc", 0 if report_provider == "agy" else None)
     report_fallback_used = report.get(
@@ -857,18 +866,46 @@ def _verify_live_performance_observation(
     if raw.get("live_arrangement") != report.get("live_arrangement_observation"):
         return "live-arrangement raw/report observation mismatch"
     try:
+        from src.autoslice.song_alignment import load_bound_asr_cues
+        from src.autoslice.song_omission_shape import stored_shape_uses_source_cues
+        # Re-derive in the producer's mode: a report whose holes were
+        # checked against the bound transcript must be re-checked with it.
+        transcript_report = stored_shape_uses_source_cues(report.get("arrangement_completeness"))
         arrangement_completeness = derive_live_arrangement_completeness(
             observations=raw_rows,
+            timing_alignment=report.get("alignment") if timing_model else None,
             live_arrangement=raw.get("live_arrangement"),
             post_song_talk_start_ms=raw.get("post_song_talk_start_ms"),
             source_duration_ms=int(artifacts.get("source_duration_ms")),
+            asr_anchor_cues=load_bound_asr_cues(report) if transcript_report else None,
+            live_performance=raw.get("live_performance"),
+            spot_checks=raw.get("spot_checks"),
         )
-    except (TypeError, ValueError) as exc:
+    except (OSError, TypeError, ValueError, KeyError, IndexError) as exc:
         return f"live-arrangement structure is invalid: {exc}"
     if report.get("arrangement_completeness") != arrangement_completeness:
         return "live-arrangement code-derived report mismatch"
     if lyrics_alignment.get("completion_basis") != arrangement_completeness.get("classification"):
         return "live-arrangement completion basis mismatch"
+    if timing_model:
+        # AGY proves who sings; the bound ASR file proves the lyric clock.
+        try:
+            timed_rows = performance_rows_on_asr_clock(report_rows, raw_rows)
+            performance_error = validate_live_performance_observation(
+                report.get("live_performance"), first_lyric_start_ms=0,
+                last_lyric_end_ms=int(artifacts["source_duration_ms"]),
+                observations=timed_rows, require_ready=True,
+                check_timing=False, check_lyric_timing=True,
+            )
+        except (KeyError, TypeError, ValueError):
+            performance_error = "ASR performance rows are invalid"
+        if performance_error is not None:
+            return performance_error
+        return verify_timing_report(
+            report=report,
+            raw_rows=raw_rows,
+            expected_raw_sha256=str(artifacts.get("raw_output_sha256") or "").lower().removeprefix("sha256:"),
+        )
     return _verify_raw_report_lyric_rows(
         report=report,
         raw_rows=raw_rows,
@@ -1862,13 +1899,12 @@ def _attempt_song_repair_stage(
     candidate_root = output_dir.parents[2] if len(output_dir.parents) >= 3 else None
     if candidate_root is not None:
         manifest_paths = sorted(
-            candidate_root.glob("song_selector*/attempt-*/**/agy_audio_lrc/**/run.manifest.json"),
+            {*candidate_root.glob("song_selector*/attempt-*/**/agy_audio_lrc/**/run.manifest.json"),
+             *(output_dir / 'song_repair' / 'agy_audio_lrc').glob('variant-*/*/run.manifest.json')},
             key=lambda path: path.stat().st_mtime,
             reverse=True,
         )[:16]
         for manifest_path in manifest_paths:
-            if output_dir in manifest_path.parents:
-                continue
             try:
                 prior_audio_lrc_runs.append(load_hash_bound_audio_lrc_run(manifest_path))
             except (OSError, ValueError, json.JSONDecodeError):

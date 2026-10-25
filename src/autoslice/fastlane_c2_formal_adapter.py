@@ -1,7 +1,7 @@
 """C2-only formal package adapter; never a generic recovery/publish lane."""
 from __future__ import annotations
 
-import hashlib
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import json
 import subprocess
 from pathlib import Path
@@ -16,11 +16,10 @@ NAMES = {"video": f"{CID}.recut.burned-final-speaker.mp4", "source_video": f"{CI
 
 
 def sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    # These are current package/receipt comparisons, not an immutable cold
+    # snapshot. Equal size/mtime/ctime cannot authorize a cached byte identity.
+    h = _evidence_file_sha256(path, fresh=True)
+    return h
 
 
 def _json(path: Path) -> dict[str, Any]:

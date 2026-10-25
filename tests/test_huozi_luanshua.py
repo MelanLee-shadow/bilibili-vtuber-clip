@@ -350,6 +350,205 @@ def test_planner_prefers_fuller_single_syllable_at_clause_end(tmp_path):
     assert nonterminal_plan["pieces"][0]["source_id"] == "short-high-confidence"
 
 
+def test_terminal_tail_evidence_extends_cut_without_changing_lexical_core(tmp_path):
+    tail_evidence = tmp_path / "terminal-tail.json"
+    tail_evidence.write_text(
+        json.dumps(
+            {
+                "schema_version": "huozi-terminal-tail-evidence.v1",
+                "observed_boundary_ms": [2_840, 3_150],
+                "next_speech_start_ms": 3_200,
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest = _source_manifest(
+        tmp_path,
+        [_utterance("妈妈", 2_600)],
+        terminal_tail_evidence=[
+            {
+                "text": "妈妈",
+                "core_range_ms": [2_600, 2_840],
+                "boundary_end_ms": 3_150,
+                "next_speech_start_ms": 3_200,
+                "status": "PENDING_LISTENING",
+                "provenance": {"kind": "operator_pcm_boundary_audit"},
+                "evidence": [
+                    {
+                        "authority": "operator_pcm_boundary_audit",
+                        "path": str(tail_evidence),
+                    }
+                ],
+            }
+        ],
+    )
+
+    corpus = build_corpus(manifest, manifest_dir=tmp_path)
+    piece = plan_text("妈妈", corpus)["pieces"][0]
+
+    assert piece["core_start_ms"] == 2_600
+    assert piece["core_end_ms"] == 2_840
+    assert piece["cut_end_ms"] == 3_150
+    assert piece["terminal_tail_evidence"]["status"] == "PENDING_LISTENING"
+    assert piece["terminal_tail_evidence"]["core_range_ms"] == [2_600, 2_840]
+
+
+def test_terminal_tail_does_not_cross_next_speech(tmp_path):
+    tail_evidence = tmp_path / "terminal-tail-crossing.json"
+    tail_evidence.write_text("{}\n", encoding="utf-8")
+    manifest = _source_manifest(
+        tmp_path,
+        [_utterance("妈妈", 2_600)],
+        terminal_tail_evidence=[
+            {
+                "text": "妈妈",
+                "core_range_ms": [2_600, 2_840],
+                "boundary_end_ms": 3_250,
+                "next_speech_start_ms": 3_250,
+                "status": "PENDING_LISTENING",
+                "provenance": {"kind": "operator_pcm_boundary_audit"},
+                "evidence": [
+                    {"authority": "operator_pcm_boundary_audit", "path": str(tail_evidence)}
+                ],
+            }
+        ],
+    )
+
+    with pytest.raises(CorpusValidationError, match="crosses next speech"):
+        build_corpus(manifest, manifest_dir=tmp_path)
+
+
+def test_terminal_tail_keeps_mixed_speaker_confirmation_core_scoped(tmp_path):
+    confirmation = tmp_path / "phrase-confirmation.json"
+    confirmation.write_text(
+        json.dumps({"applies_to": {"previous_source_fragment_ms": [2_600, 2_840]}}),
+        encoding="utf-8",
+    )
+    tail_evidence = tmp_path / "terminal-tail-mixed.json"
+    tail_evidence.write_text("{\"observed_boundary_ms\":[2840,3150]}\n", encoding="utf-8")
+    manifest = _source_manifest(
+        tmp_path,
+        [_utterance("妈妈", 2_600)],
+        speaker="mixed",
+        speaker_confidence=0.0,
+        speaker_authority="unreviewed_collab_session",
+        speaker_evidence=[{"authority": "reviewer_confirmation", "path": str(confirmation)}],
+        trusted_ranges_ms=[
+            {
+                "start_ms": 2_500,
+                "end_ms": 3_400,
+                "speaker_authority": "reviewer_confirmed_phrase",
+                "speaker_confidence": 1.0,
+            }
+        ],
+        terminal_tail_evidence=[
+            {
+                "text": "妈妈",
+                "core_range_ms": [2_600, 2_840],
+                "boundary_end_ms": 3_150,
+                "next_speech_start_ms": 3_200,
+                "speaker_confirmation_range_ms": [2_600, 2_840],
+                "status": "PENDING_LISTENING",
+                "provenance": {"kind": "operator_pcm_boundary_audit"},
+                "evidence": [
+                    {"authority": "operator_pcm_boundary_audit", "path": str(tail_evidence)}
+                ],
+            }
+        ],
+    )
+
+    corpus = build_corpus(manifest, manifest_dir=tmp_path)
+    piece = plan_text("妈妈", corpus)["pieces"][0]
+
+    assert piece["cut_end_ms"] == 3_150
+    assert piece["speaker_evidence"][0]["coverage_ranges_ms"] == [[2_600, 2_840]]
+    assert piece["terminal_tail_evidence"]["speaker_confirmation_range_ms"] == [2_600, 2_840]
+
+
+def test_render_gate_rechecks_terminal_tail_evidence_hash(tmp_path):
+    tail_evidence = tmp_path / "terminal-tail-render.json"
+    tail_evidence.write_text("{\"observed_boundary_ms\":[2840,3150]}\n", encoding="utf-8")
+    manifest = _source_manifest(
+        tmp_path,
+        [_utterance("妈妈", 2_600)],
+        terminal_tail_evidence=[
+            {
+                "text": "妈妈",
+                "core_range_ms": [2_600, 2_840],
+                "boundary_end_ms": 3_150,
+                "next_speech_start_ms": 3_200,
+                "status": "PENDING_LISTENING",
+                "provenance": {"kind": "operator_pcm_boundary_audit"},
+                "evidence": [
+                    {"authority": "operator_pcm_boundary_audit", "path": str(tail_evidence)}
+                ],
+            }
+        ],
+    )
+    plan = plan_text("妈妈", build_corpus(manifest, manifest_dir=tmp_path))
+    verified = apply_verification(plan, build_verification(plan, timing_tolerance_ms=200))
+    validate_renderable_plan(verified)
+
+    tail_evidence.write_text("drift\n", encoding="utf-8")
+    with pytest.raises(VerificationError, match="terminal tail evidence hash drift"):
+        validate_renderable_plan(verified)
+
+
+def test_acoustically_verified_terminal_tail_has_a_renderable_acceptance_route(tmp_path):
+    tail_evidence = tmp_path / "terminal-tail-accepted.json"
+    tail_evidence.write_text(
+        json.dumps(
+            {
+                "source_pcm_continuity": {"range_ms": [2_840, 3_150]},
+                "next_speech_start_ms": 3_200,
+                "fresh_bcut": "candidate-bcut.json",
+                "fresh_jianying": "candidate-jianying.json",
+                "full_decode": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest = _source_manifest(
+        tmp_path,
+        [_utterance("妈妈", 2_600)],
+        terminal_tail_evidence=[
+            {
+                "text": "妈妈",
+                "core_range_ms": [2_600, 2_840],
+                "boundary_end_ms": 3_150,
+                "next_speech_start_ms": 3_200,
+                "status": "ACOUSTICALLY_VERIFIED",
+                "provenance": {"kind": "operator_pcm_boundary_audit"},
+                "acceptance": {
+                    "method": "source_pcm_continuity_and_fresh_asr",
+                    "checks": {
+                        "source_pcm_continuity": True,
+                        "next_speech_boundary": True,
+                        "fresh_bcut": True,
+                        "fresh_jianying": True,
+                        "full_decode": True,
+                    },
+                    "human_exact_time_confirmation": False,
+                },
+                "evidence": [
+                    {
+                        "authority": "terminal_tail_acceptance",
+                        "path": str(tail_evidence),
+                    }
+                ],
+            }
+        ],
+    )
+
+    corpus = build_corpus(manifest, manifest_dir=tmp_path)
+    plan = plan_text("妈妈", corpus)
+    assert plan["acceptance_status"] == "ACOUSTICALLY_VERIFIED"
+    verified = apply_verification(plan, build_verification(plan, timing_tolerance_ms=200))
+
+    validate_renderable_plan(verified)
+    assert verified["acceptance_status"] == "ACOUSTICALLY_VERIFIED"
+
+
 def test_match_must_align_to_asr_token_boundaries(tmp_path):
     # A provider may occasionally return a multi-character token.  Cutting
     # "本来" out of that token would invent timings, so it must not match.

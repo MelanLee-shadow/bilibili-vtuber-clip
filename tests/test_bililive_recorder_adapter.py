@@ -943,15 +943,31 @@ def test_truncated_error_projection_binds_size_numbers_and_xml_parse_message(
 def test_truncated_disposition_source_webhook_and_integrity_tamper_fail_closed(
     tmp_path: Path,
 ) -> None:
-    args, source, _state, _row = _truncated_ignored_fixture(tmp_path / "source")
-    source.write_bytes(b"X" * source.stat().st_size)
-    state = json.loads(args.state_path.read_text(encoding="utf-8"))
-    with pytest.raises(adapter.AdapterError, match="source fingerprint drifted"):
-        adapter.revalidate_source_dispositions(
-            state,
-            record_root=args.record_root,
-            room_id=123456,
+    for restore_mtime in (False, True):
+        args, source, _state, _row = _truncated_ignored_fixture(
+            tmp_path / f"source-{restore_mtime}"
         )
+        before = source.stat()
+        # This gate compares stat fingerprints, without rereading the large FLV.
+        # Cross OCI3's write-clock tick so the fixture actually changes a fingerprint.
+        time.sleep(0.025)
+        source.write_bytes(b"X" * before.st_size)
+        if restore_mtime:
+            os.utime(source, ns=(before.st_atime_ns, before.st_mtime_ns))
+        after = source.stat()
+        assert (after.st_dev, after.st_ino, after.st_size) == (
+            before.st_dev, before.st_ino, before.st_size
+        )
+        assert after.st_ctime_ns != before.st_ctime_ns
+        if restore_mtime:
+            assert after.st_mtime_ns == before.st_mtime_ns
+        state = json.loads(args.state_path.read_text(encoding="utf-8"))
+        with pytest.raises(adapter.AdapterError, match="source fingerprint drifted"):
+            adapter.revalidate_source_dispositions(
+                state,
+                record_root=args.record_root,
+                room_id=123456,
+            )
 
     args, _source, _state, _row = _truncated_ignored_fixture(tmp_path / "webhook")
     state = json.loads(args.state_path.read_text(encoding="utf-8"))
@@ -2073,11 +2089,14 @@ def test_connection_stub_reused_portable_partial_rebind_is_hash_bound(
     assert len(receipts) == 2
 
 
-def test_connection_stub_reused_portable_partial_rebind_same_mount_epoch_stays_blocked(
+def test_connection_stub_partial_rebind_same_mount_epoch_is_placement_reattested(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    """Partial inode drift in one mount epoch remains a hard failure."""
+    """Partial inode drift in one mount epoch is placement, not identity.
+
+    Before the evidence-identity rule this was a permanent hard failure; now it
+    pends a hash-bound re-attestation (status stays non-clean until then)."""
 
     stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
     row = adapter.build_connection_stub_disposition(
@@ -2106,7 +2125,7 @@ def test_connection_stub_reused_portable_partial_rebind_same_mount_epoch_stays_b
         lambda _path: _fuse_mount_identity_with_id(77),
     )
 
-    with pytest.raises(adapter.AdapterError, match="identity drifted within one FUSE mount epoch"):
+    with pytest.raises(adapter.SourceDispositionIdentityRebindRequired) as required:
         adapter.validate_connection_stub_disposition(
             stub,
             row,
@@ -2115,6 +2134,9 @@ def test_connection_stub_reused_portable_partial_rebind_same_mount_epoch_stays_b
             finalized=finalized,
             identity_rebinds=receipts,
         )
+    assert required.value.validation["rebind_policy"] == (
+        adapter.SOURCE_DISPOSITION_PLACEMENT_REBIND_POLICY
+    )
     assert len(receipts) == 1
 
 @pytest.mark.parametrize("canary", ["hash", "stable_field", "partial_reindex", "same_mount"])
@@ -2159,7 +2181,29 @@ def test_connection_stub_reused_portable_mount_rebind_fails_closed(
         lambda _path: _fuse_mount_identity_with_id(77 if canary == "same_mount" else 88),
     )
 
-    expected = "full-byte hash drift" if canary == "hash" else "drift"
+    if canary == "same_mount":
+        # Evidence identity: inode drift within one mount epoch is placement,
+        # re-attested by full-byte hash, not an identity error
+        # (src/autoslice/evidence_identity.py; 10-source-recording.md).
+        adapter.validate_connection_stub_disposition(
+            stub,
+            row,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+            identity_rebinds=receipts,
+            identity_rebind_attestations=_identity_rebind_attestations(stub, successor),
+        )
+        assert len(receipts) == 2
+        assert receipts[-1]["policy"] == adapter.SOURCE_DISPOSITION_PLACEMENT_REBIND_POLICY
+        assert receipts[-1]["changed_fields"]
+        return
+    # partial_reindex: the attested fingerprints disagree with the observed
+    # partial view, so the hash-bound re-attestation itself fails closed.
+    expected = {
+        "hash": "full-byte hash drift",
+        "partial_reindex": "changed during FUSE identity rebind",
+    }.get(canary, "drift")
     with pytest.raises(adapter.AdapterError, match=expected):
         adapter.validate_connection_stub_disposition(
             stub,
@@ -3982,3 +4026,223 @@ def test_finalize_real_flv_is_atomic_idempotent_and_preserves_source(tmp_path: P
 
     assert second["status"] == "already_finalized"
     assert target.read_bytes() == first_bytes
+
+
+def _byte_identical_restore(path: Path, *, flip_first_byte: bool = False) -> None:
+    """Replace ``path`` by a copy: new inode/ctime, restorable size/mtime/mode kept."""
+
+    info = path.stat()
+    payload = bytearray(path.read_bytes())
+    if flip_first_byte:
+        payload[0] ^= 0x01
+    copy = path.with_name(path.name + ".restore")
+    copy.write_bytes(bytes(payload))
+    os.chmod(copy, stat.S_IMODE(info.st_mode))
+    os.utime(copy, ns=(info.st_atime_ns, info.st_mtime_ns))
+    os.replace(copy, path)
+
+
+def _restore_stub_evidence(stub: Path, successor: Path, *, flip_stub: bool = False) -> dict:
+    paths = [stub, stub.with_suffix(".xml"), successor, successor.with_suffix(".mp4")]
+    before = {path: path.stat() for path in paths}
+    for path in paths:
+        _byte_identical_restore(path, flip_first_byte=flip_stub and path == stub)
+    for path in paths:
+        after = path.stat()
+        assert after.st_ino != before[path].st_ino
+        assert (after.st_size, after.st_mtime_ns) == (before[path].st_size, before[path].st_mtime_ns)
+    return before
+
+
+def test_adapter_placement_fields_are_evidence_identity_placement() -> None:
+    from src.autoslice.evidence_identity import PLACEMENT_KEYS
+
+    assert adapter._PLACEMENT_FINGERPRINT_FIELDS <= PLACEMENT_KEYS
+    assert not set(adapter._FILE_IDENTITY_FINGERPRINT_KEYS) & PLACEMENT_KEYS
+    assert set(adapter._FILE_IDENTITY_FINGERPRINT_KEYS) | adapter._PLACEMENT_FINGERPRINT_FIELDS == set(
+        adapter._FILE_FINGERPRINT_KEYS
+    )
+
+
+def test_connection_stub_byte_identical_restore_is_the_same_evidence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """A copy with a new inode/ctime is the same disposed evidence once re-hashed."""
+
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub, record_root=tmp_path, webhook_files=webhook_files, finalized=finalized
+    )
+    assert row is not None
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", _fuse_mount_identity)
+    _restore_stub_evidence(stub, successor)
+    receipts: list[dict] = []
+    with pytest.raises(adapter.SourceDispositionIdentityRebindRequired) as required:
+        adapter.validate_connection_stub_disposition(
+            stub,
+            row,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+            identity_rebinds=receipts,
+        )
+    assert required.value.validation["rebind_policy"] == (
+        adapter.SOURCE_DISPOSITION_PLACEMENT_REBIND_POLICY
+    )
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+        identity_rebinds=receipts,
+        identity_rebind_attestations=_identity_rebind_attestations(stub, successor),
+    )
+    assert [receipt["policy"] for receipt in receipts] == [
+        adapter.SOURCE_DISPOSITION_PLACEMENT_REBIND_POLICY
+    ]
+    assert receipts[0]["legacy_promotion"] == adapter._placement_rebind_legacy_contract()
+    assert all(
+        set(fields) <= {"device", "inode", "ctime_ns"}
+        for fields in receipts[0]["changed_fields"].values()
+    )
+    # Steady state: the receipt's effective placement now matches exactly.
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+        identity_rebinds=receipts,
+    )
+    assert len(receipts) == 1
+
+
+def test_connection_stub_one_changed_byte_with_restored_mtime_is_different_evidence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub, record_root=tmp_path, webhook_files=webhook_files, finalized=finalized
+    )
+    assert row is not None
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", _fuse_mount_identity)
+    _restore_stub_evidence(stub, successor, flip_stub=True)
+    receipts: list[dict] = []
+    with pytest.raises(adapter.AdapterError, match="full-byte hash drifted"):
+        adapter.validate_connection_stub_disposition(
+            stub,
+            row,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+            identity_rebinds=receipts,
+            identity_rebind_attestations=_identity_rebind_attestations(stub, successor),
+        )
+    assert receipts == []
+
+
+def test_connection_stub_placement_receipt_tamper_fails_closed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    stub, successor, webhook_files, finalized = _connection_stub_fixture(tmp_path, monkeypatch)
+    row = adapter.build_connection_stub_disposition(
+        stub, record_root=tmp_path, webhook_files=webhook_files, finalized=finalized
+    )
+    assert row is not None
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", _fuse_mount_identity)
+    _restore_stub_evidence(stub, successor)
+    receipts: list[dict] = []
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=webhook_files,
+        finalized=finalized,
+        identity_rebinds=receipts,
+        identity_rebind_attestations=_identity_rebind_attestations(stub, successor),
+    )
+    tampered = json.loads(json.dumps(receipts))
+    tampered[0]["current_bindings"]["source"]["mtime_ns"] += 1
+    unsigned = {key: value for key, value in tampered[0].items() if key != "canonical_integrity"}
+    tampered[0]["canonical_integrity"]["canonical_json_sha256"] = adapter._canonical_json_sha256(
+        unsigned
+    )
+    with pytest.raises(adapter.AdapterError, match="placement rebind binding drifted"):
+        adapter.validate_connection_stub_disposition(
+            stub,
+            row,
+            record_root=tmp_path,
+            webhook_files=webhook_files,
+            finalized=finalized,
+            identity_rebinds=tampered,
+        )
+
+
+def test_fresh_ledger_for_a_new_recording_root_passes_the_health_audit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """New root + empty ledger dir + idle recorder, before any webhook event."""
+
+    from ops.recording import record_health_audit
+
+    args = _args(tmp_path)
+    args.room = 22966160
+    args.record_root.mkdir(parents=True)
+    args.state_path.parent.mkdir(parents=True)
+    assert not args.state_path.exists() and not args.webhook_journal.exists()
+    monkeypatch.setattr(
+        adapter,
+        "query_room_status",
+        lambda *_args, **_kwargs: {
+            "streaming": False,
+            "recording": False,
+            "danmakuConnected": False,
+            "ioStats": {},
+            "recordingStats": {},
+        },
+    )
+
+    assert adapter.run_once(args) == 0
+    state = json.loads(args.state_path.read_text(encoding="utf-8"))
+    assert state["webhook_files"] == {} and state["webhook_event_ids"] == {}
+    audit = record_health_audit.audit(
+        status_path=args.status_path,
+        state_path=args.state_path,
+        lookback_hours=96,
+    )
+    assert audit["status"] == "PASS", audit["unresolved"]
+    assert stat.S_IMODE(args.state_path.stat().st_mode) == 0o600
+
+
+def test_loaded_state_without_webhook_ledgers_gets_empty_ledgers(tmp_path: Path) -> None:
+    path = tmp_path / "state.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": adapter.STATE_SCHEMA_VERSION,
+                "managed_since_epoch": 0.0,
+                "finalized": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    state = adapter.load_or_initialize_state(path, now_epoch=1.0)
+    assert state["webhook_files"] == {} and state["webhook_event_ids"] == {}
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": adapter.STATE_SCHEMA_VERSION,
+                "managed_since_epoch": 0.0,
+                "finalized": {},
+                "webhook_files": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(adapter.AdapterError, match="webhook_files ledger is malformed"):
+        adapter.load_or_initialize_state(path, now_epoch=1.0)

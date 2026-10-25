@@ -20,6 +20,8 @@ enters the official-roster expected-value bypass and never rewrites subtitles.
 
 from __future__ import annotations
 
+from src.autoslice.structured_output import call_json
+
 from collections import Counter, defaultdict
 import datetime as dt
 import hashlib
@@ -1362,7 +1364,7 @@ def _judge_new_surfaces(
         try:
             proposals.extend(
                 _parse_proposals(
-                    llm_call(proposal_prompt(batch, detail_limit=12)),
+                    call_json(llm_call, proposal_prompt(batch, detail_limit=12)),
                     batch,
                     config=config,
                 )
@@ -1519,7 +1521,7 @@ def _judge_existing_relation_kinds(
     for start in range(0, len(cards), batch_size):
         batch = cards[start : start + batch_size]
         try:
-            parsed = _parse_relation_reviews(llm_call(relation_review_prompt(batch)), batch)
+            parsed = _parse_relation_reviews(call_json(llm_call, relation_review_prompt(batch)), batch)
             for card in batch:
                 key = str(card["mapping_key"])
                 reviews[key] = {

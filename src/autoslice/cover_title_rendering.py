@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import hashlib
 import json
 import math
@@ -64,11 +65,8 @@ def _image_resampling_filter(
 
 
 def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return "sha256:" + digest
 
 
 def render_spec_sha256(spec: Mapping[str, object]) -> str:
@@ -168,6 +166,11 @@ def render_title_layer(
 
     if spec.get("schema_version") != SCHEMA_VERSION:
         raise CoverTitleRenderError("COVER_TITLE_RENDER_SPEC_SCHEMA_INVALID")
+    if spec.get("style") == "lidousha-zhenyan-gradient.v1":
+        from .cover_style import replay_title_layer
+        return replay_title_layer(spec, font_path)
+    if spec.get("style") is not None:
+        raise CoverTitleRenderError("COVER_TITLE_RENDER_STYLE_INVALID")
     declared_layout_engine = spec.get("layout_engine")
     basic_layout_engine = _basic_layout_engine()
     if declared_layout_engine is None:

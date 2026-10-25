@@ -6,6 +6,7 @@ bytes and v2 evidence named by a deploy-sealed, candidate-specific authority.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256, sha256_ref
 import hashlib
 import json
 import stat
@@ -289,7 +290,7 @@ def materialized_marker(*, entry: Mapping[str, object], target_base: Path, date:
                     f"PUBLISHED_COVER_CARRY_ROLLBACK_FAILED:{target}"
                 ) from exc
         raise
-    return ({"schema_version": MARKER_SCHEMA, "status": "MATERIALIZED", "candidate_id": candidate_id, "recording_date": date, "cover_path": str(destinations["cover"]), "cover_sha256": artifacts["cover"]["sha256"], "generation_path": str(sidecar), "generation_sha256": _sha(sidecar.read_bytes()), "artifacts": {name: {"path": str(path), "sha256": artifacts[name]["sha256"], "bytes": artifacts[name]["bytes"]} for name, path in destinations.items()}}, created)
+    return ({"schema_version": MARKER_SCHEMA, "status": "MATERIALIZED", "candidate_id": candidate_id, "recording_date": date, "cover_path": str(destinations["cover"]), "cover_sha256": artifacts["cover"]["sha256"], "generation_path": str(sidecar), "generation_sha256": sha256_ref(_evidence_file_sha256(sidecar)), "artifacts": {name: {"path": str(path), "sha256": artifacts[name]["sha256"], "bytes": artifacts[name]["bytes"]} for name, path in destinations.items()}}, created)
 
 
 def validate_materialized_marker(marker: object, *, base: Path, date: str, candidate_id: str) -> bool:

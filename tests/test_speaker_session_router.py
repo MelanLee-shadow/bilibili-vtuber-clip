@@ -1,5 +1,6 @@
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -168,6 +169,38 @@ def _verify(
         expected_bcut_srt_path=Path(str(candidate["bcut_srt_path"])),
         expected_bcut_srt_sha256=str(candidate["bcut_srt_sha256"]),
     )
+
+
+def test_m47_speaker_claim_accepts_segment_relocation(tmp_path):
+    import shutil
+    request, candidate = _request_fixture(tmp_path)
+    provider = _provider_fixture(tmp_path, request, candidate)
+    claim_path = tmp_path / "claim.json"
+    claim = generate_speaker_routing(request_path=request, output_path=claim_path,
+                                     provider_evidence_path=provider)
+    moved = tmp_path / "moved.mp4"
+    shutil.copy2(candidate["segment_path"], moved)
+    current = dict(candidate, segment_path=str(moved), segment_stat_signature=segment_stat_signature(moved))
+    assert _verify(claim, claim_path, current).segment_path == str(moved.resolve())
+    moved.write_bytes(b"x" * moved.stat().st_size)
+    current["segment_stat_signature"] = segment_stat_signature(moved)
+    with pytest.raises(SpeakerRoutingError, match="candidate binding mismatch"):
+        _verify(claim, claim_path, current)
+
+
+def test_m48_speaker_claim_accepts_bcut_relocation(tmp_path):
+    request, candidate = _request_fixture(tmp_path)
+    provider = _provider_fixture(tmp_path, request, candidate)
+    claim_path = tmp_path / "claim.json"
+    claim = generate_speaker_routing(request_path=request, output_path=claim_path,
+                                     provider_evidence_path=provider)
+    moved = tmp_path / "moved.srt"
+    moved.write_bytes(Path(candidate["bcut_srt_path"]).read_bytes())
+    current = dict(candidate, bcut_srt_path=str(moved))
+    assert _verify(claim, claim_path, current).candidate_id == candidate["candidate_id"]
+    moved.write_bytes(moved.read_bytes() + b"\n")
+    with pytest.raises(SpeakerRoutingError, match="candidate binding mismatch"):
+        _verify(claim, claim_path, current)
 
 
 def test_missing_provider_falls_back_to_binary_without_model_work(tmp_path: Path) -> None:

@@ -13,6 +13,7 @@ invokes ffmpeg, a title provider, a cover provider, or the selection pipeline.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import copy
 import hashlib
 import json
@@ -52,6 +53,7 @@ from src.autoslice.package_relocation_contract import (
     CHAT_PATH_POINTERS,
     PUBLISH_PATH_POINTERS,
     RECORD_PATH_POINTERS,
+    pointer_applies,
     PackageRelocationError,
     get_value,
     project_uniform_host_locators,
@@ -61,6 +63,7 @@ from src.autoslice.repository_asset_authority import (
     RepositoryAssetAuthority,
     require_repository_asset_authority,
 )
+from src.autoslice.review_evidence_store import review_from_bytes
 
 
 SCHEMA = "qixi-corrected-package-finalization-authority.v1"
@@ -236,8 +239,8 @@ def validate_applied_receipt(
         record_path = _contained_regular(root, artifacts["record"]["target"], label="receipt record")
         publish_path = _contained_regular(root, artifacts["publish"]["target"], label="receipt publish")
         subtitle_path = _contained_regular(root, artifacts["subtitle"]["target"], label="receipt subtitle")
-        record = _load_object(record_path, label="receipt record")
-        publish = _load_object(publish_path, label="receipt publish")
+        record = _load_object(record_path, label="receipt record", review=True)
+        publish = _load_object(publish_path, label="receipt publish", review=True)
         story = record.get("story_contract")
         staging = record.get("publish_staging")
         review = story.get("source_fact_review") if isinstance(story, Mapping) else None
@@ -346,11 +349,8 @@ def validate_manifest_bound_applied_receipt(
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return "sha256:" + digest
 
 
 def _canonical_sha(value: object) -> str:
@@ -366,12 +366,19 @@ def _normal_sha(value: object, *, label: str) -> str:
     return "sha256:" + result
 
 
-def _load_object(path: Path, *, label: str) -> dict[str, Any]:
+def _load_object(
+    path: Path, *, label: str, review: bool = False
+) -> dict[str, Any]:
     if path.is_symlink() or not path.is_file():
         raise QixiCorrectedPackageError(f"{label} is not a regular file: {path}")
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raw = path.read_bytes()
+        value = (
+            review_from_bytes(raw, directory=path.parent)
+            if review
+            else json.loads(raw.decode("utf-8"))
+        )
+    except (OSError, TypeError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
         raise QixiCorrectedPackageError(f"{label} is unreadable JSON: {path}") from exc
     if not isinstance(value, dict):
         raise QixiCorrectedPackageError(f"{label} must be a JSON object")
@@ -958,7 +965,7 @@ def _assert_planned_locator_closure(
     ):
         for pointer in pointers:
             value = get_value(document, pointer)
-            if value is None:
+            if value is None or not pointer_applies(kind, pointer, document):
                 continue
             if not isinstance(value, str) or value not in planned:
                 raise QixiCorrectedPackageError(
@@ -1084,11 +1091,21 @@ def _project_documents(
     title = str(authority["title"])
     publication = authority["recovery_publication_authority"]
     assert isinstance(publication, dict)
-    record = _load_object(artifacts["record"][0], label="r2 fresh record")
-    publish = _load_object(artifacts["publish"][0], label="r2 fresh publish")
-    source_record = _load_object(artifacts["source_record"][0], label="Z2 source record")
-    source_publish = _load_object(artifacts["source_publish"][0], label="Z2 source publish")
-    chat = _load_object(artifacts["chat_authority"][0], label="fresh chat authority")
+    record = _load_object(
+        artifacts["record"][0], label="r2 fresh record", review=True
+    )
+    publish = _load_object(
+        artifacts["publish"][0], label="r2 fresh publish", review=True
+    )
+    source_record = _load_object(
+        artifacts["source_record"][0], label="Z2 source record", review=True
+    )
+    source_publish = _load_object(
+        artifacts["source_publish"][0], label="Z2 source publish", review=True
+    )
+    chat = _load_object(
+        artifacts["chat_authority"][0], label="fresh chat authority", review=True
+    )
     # The sealed r2 burn is Z1 and its frozen branding paths need not exist in
     # the current evidence workspace.  Its complete carrier is replaced below
     # by the sealed Z2 source subtree, but only after the exact r2 hash check.
@@ -1390,9 +1407,15 @@ def _project_current_terminal_documents(
     title = str(authority["title"])
     publication = authority["recovery_publication_authority"]
     assert isinstance(publication, Mapping)
-    record = _load_object(artifacts["record"][0], label="current record")
-    mirror = _load_object(artifacts["record_mirror"][0], label="current record mirror")
-    publish = _load_object(artifacts["publish"][0], label="stale current publish")
+    record = _load_object(
+        artifacts["record"][0], label="current record", review=True
+    )
+    mirror = _load_object(
+        artifacts["record_mirror"][0], label="current record mirror", review=True
+    )
+    publish = _load_object(
+        artifacts["publish"][0], label="stale current publish", review=True
+    )
     correction = _load_object(artifacts["correction"][0], label="current correction")
     drift = authority["source_drift"]
     # The deployed current-terminal record is a legacy delivery-record.v1
@@ -1442,9 +1465,13 @@ def _project_current_terminal_documents(
         record_sha256=artifacts["record"][1],
         subtitle_text=subtitle_text,
     )
-    source_chat = _load_object(artifacts["chat_authority"][0], label="source chat authority")
+    source_chat = _load_object(
+        artifacts["chat_authority"][0], label="source chat authority", review=True
+    )
     source_boundary = _load_object(artifacts["boundary_audit"][0], label="source boundary audit")
-    source_flags = _load_object(artifacts["review_flags"][0], label="source review flags")
+    source_flags = _load_object(
+        artifacts["review_flags"][0], label="source review flags", review=True
+    )
     try:
         replayed_chat, current_boundary, frozen_chat_allowlist = build_terminal_audit_closure(
             repo_root=repo_root,

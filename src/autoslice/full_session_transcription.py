@@ -13,6 +13,8 @@ import uuid
 
 from scripts.run_auto_review_shadow_pipeline import AgyExecutionResult
 from src.autoslice import agy_gemini_client
+
+from src.autoslice.cpa_model_ladder import TOP_CPA_MODEL, cpa_call_timeout_seconds
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.jingting_remote_runner import (
     build_ssh_agy_runner as _attested_build_ssh_agy_runner,
@@ -115,9 +117,9 @@ def _build_full_session_cpa_llm_call(
             command_template=(
                 f"bash {shlex.quote(str(ROOT / 'scripts' / 'llm_via_cpa.sh'))} "
                 "{prompt_file} {completion_file} "
-                f"'gpt-6-sol' {effort}"
+                f"'{TOP_CPA_MODEL}' {effort}"
             ),
-            timeout_seconds=600.0,
+            timeout_seconds=cpa_call_timeout_seconds(),
         )
     )
 
@@ -381,7 +383,7 @@ def _build_ssh_agy_transcribe_runner(
     from src.autoslice.danmaku_evidence import danmaku_in_window, format_danmaku_lines
     from src.autoslice.source_context_executor import AgyRunnerError
 
-    model = os.environ.get("AGY_TRANSCRIBE_MODEL", "Gemini 3.6 Flash (High)")
+    model = os.environ.get("AGY_TRANSCRIBE_MODEL", agy_gemini_client.DEFAULT_AGY_FLASH_HIGH)
     poll_deadline_seconds = 1500
     poll_interval_seconds = 20
     attempts = 2
@@ -650,7 +652,7 @@ def _cpa_correct_draft_cues(
         "已授权的词形规范也不等于声学证明。保留重复、否定、数字及不确定性，不能为语义顺畅编词。时间轴固定——"
         "你只负责改字,不要改动条数、顺序、时间。每行草稿前的 [时间] 用于和弹幕/画面文字按时间就近配对。\n"
         f"**严格逐条遵守下面《{CHANNEL_PROFILE.display_name}字幕校正原则》和术语表**——里面写了最小编辑、语境推测同音字、不臆造地名专名、外来词保留原文、"
-        "代词一致(动物→它/性别未知的人→TA/已知→他她)、SC=superchat('谢SC'非'修完')、幻听孤立碎片删除、口语保真不书面化等全部规则,"
+        "代词一致(动物→它/性别未知的人→TA/弹幕或观众→他/已知→他她)、SC=superchat('谢SC'非'修完')、幻听孤立碎片删除、口语保真不书面化等全部规则,"
         "不要只改专名而漏掉这些类。先确认实体再套术语表规范写法;结构化原文/音频/接话链高于静态词表。\n"
         f"\n{glossary_text}\n"
         f"{topic_entity_context}\n"
@@ -721,7 +723,7 @@ def _cpa_reconcile_draft_cues(
  "③ 普通措辞也可按清晰音频、语法和整段语境修正(如'我倒是一直在看'不是'到时');日中混说保留日语原文并使用假名/惯用日文（如ワクワク），不用罗马音。"
  "两个专名都合法时按发音+系列实体+时效区分,禁止静态词表盲选。\n"
  f"④ 定稿后再逐条套下面《{CHANNEL_PROFILE.display_name}字幕校正原则》和术语表:专名规范、SC=superchat('谢SC'非'修完')、"
- "外来词保留原文、代词一致(动物→它/性别未知的人→TA/已知→他她)、同音字按语境、口语保真。\n"
+ "外来词保留原文、代词一致(动物→它/性别未知的人→TA/弹幕或观众→他/已知→他她)、同音字按语境、口语保真。\n"
  "⑤ **幻听丢弃**:若某条 cue 是和上下文完全不搭的孤立碎片(通常是对背景音乐/杂音的幻听,例如一段哄睡对话里突然冒出"
  "'贡丸'、'虫儿飞~'这种歌名/词碎片),把它的 text 设为空字符串 \"\" 表示删除这条。\n"
  f"\n{glossary_text}\n"
@@ -745,110 +747,13 @@ def _cpa_reconcile_draft_cues(
     return "\n\n".join(blocks) + "\n" if blocks else bcut_srt
 
 
-def _cpa_pronoun_ta_pass(srt: str, *, cpa_llm_call, required: bool = False, context_text: str = ""):
-    """Resolve singular pronouns after every other text correction.
+def _cpa_pronoun_ta_pass(srt: str, *, cpa_llm_call, required: bool = False, context_text: str = "", resume=None):
+    from src.autoslice.pronoun_stage_trace import apply_pronoun_pass
 
-    This is deliberately the last text pass and works in both directions:
-    existing ``TA`` can become 她/他/它 when the whole clip establishes the
-    referent, while an unjustified 他/她 can become TA.  The model only returns
-    occurrence-level edits; code applies them to the original cue text so the
-    timeline and all non-pronoun wording remain structurally immutable.
-    """
-
-    import re
-
-    from src.autoslice.jingting_chunker import parse_srt_cues
-    from src.autoslice.llm_client import LlmCallError, extract_json_object
-
-    # Singular candidate tokens only.  Do not match 其他/他们/她们/它们.
-    pron = re.compile(r"(?<![A-Za-z0-9_])TA(?![A-Za-z0-9_们])|(?<!其)[他她它](?!们)")
-    cues = parse_srt_cues(srt)
-    if not cues:
-        return srt
-    occurrences: dict[int, list[re.Match[str]]] = {
-        i: list(pron.finditer(c.text)) for i, c in enumerate(cues, start=1)
-    }
-    occurrences = {i: matches for i, matches in occurrences.items() if matches}
-    if not occurrences:
-        return srt  # cheap gate: no personal pronoun to resolve
-
-    numbered = "\n".join(f"{i}. {c.text}" for i, c in enumerate(cues, start=1))
-    candidate_lines = []
-    for cue_no, matches in occurrences.items():
-        candidate_lines.append(
-            f"{cue_no}: " + ", ".join(
-                f"occurrence={position} token={match.group(0)}"
-                for position, match in enumerate(matches, start=1)
-            )
-        )
-    prompt = (
-        f"你在给{CHANNEL_PROFILE.display_name}(B站虚拟主播)切片字幕做最终定稿代词。通读整条切片，逐个判断候选代词的实际指代。\n"
-        f"硬规则：已知女性用‘她’（{CHANNEL_PROFILE.display_name}、礼墨Sumi、安晚Awa及其他已知女主播均如此）；已知男性用‘他’；动物/物体用‘它’；"
-        "只有人的性别确实无法从全文、姓名或常识判断时才用‘TA’。不能因为草稿已经写成TA就跳过。\n"
-        "每个候选按 cue 编号和 occurrence(该 cue 内从左到右第几个候选)定位。只列真正需要改变的项；from 必须照抄候选 token。"
-        "不要重写整句，也不要修改复数代词。\n"
-        f"\n候选:\n" + "\n".join(candidate_lines) + "\n"
-        f"\n字幕:\n{numbered}\n"
-        '\n只输出 JSON（to 只能是 TA/他/她/它）:'
-        '{"rewrites":[{"n":1,"occurrence":1,"from":"TA","to":"她"}]}'
+    return apply_pronoun_pass(
+        srt, cpa_llm_call=cpa_llm_call, display_name=CHANNEL_PROFILE.display_name,
+        required=required, context_text=context_text, resume=resume,
     )
-    if context_text:
-        prompt += "\n\n" + context_text + "\n"
-    # CPA intermittently returns an empty completion; retry before giving up.
-    rewrites = None
-    failure_code = "CPA_PRONOUN_INVALID_OUTPUT"
-    for _attempt in range(3):
-        try:
-            payload = extract_json_object(cpa_llm_call(prompt))
-            candidate = payload["rewrites"]
-            if not isinstance(candidate, list):
-                raise ValueError("rewrites must be a list")
-            rewrites = candidate
-            break
-        except Exception as exc:
-            failure_code = "CPA_PRONOUN_UNAVAILABLE" if isinstance(exc, LlmCallError) else "CPA_PRONOUN_INVALID_OUTPUT"
-            continue
-    if rewrites is None and required:
-        from src.autoslice.source_context_executor import AgyRunnerError
-        raise AgyRunnerError(failure_code, "CPA pronoun review did not complete")
-    if not rewrites:
-        return srt
-    allowed = {"TA", "他", "她", "它"}
-    by_cue: dict[int, list[tuple[int, int, str]]] = {}
-    seen: set[tuple[int, int]] = set()
-    for item in rewrites:
-        try:
-            if required and (
-                not isinstance(item, dict) or type(item.get("n")) is not int
-                or type(item.get("occurrence")) is not int or item["occurrence"] < 1
-            ):
-                raise ValueError("invalid occurrence")
-            cue_no = int(item["n"])
-            occurrence = int(item["occurrence"])
-            source = str(item["from"])
-            target = str(item["to"])
-            match = occurrences[cue_no][occurrence - 1]
-        except (KeyError, IndexError, TypeError, ValueError):
-            if required:
-                from src.autoslice.source_context_executor import AgyRunnerError
-                raise AgyRunnerError("CPA_PRONOUN_INVALID_OUTPUT", "CPA returned an invalid occurrence") from None
-            continue
-        key = (cue_no, occurrence)
-        if key in seen or source not in allowed or target not in allowed or match.group(0) != source:
-            if required:
-                from src.autoslice.source_context_executor import AgyRunnerError
-                raise AgyRunnerError("CPA_PRONOUN_INVALID_OUTPUT", "CPA returned a stale or conflicting occurrence")
-            continue
-        seen.add(key)
-        if source != target:
-            by_cue.setdefault(cue_no, []).append((match.start(), match.end(), target))
-    blocks = []
-    for index, cue in enumerate(cues, start=1):
-        text = cue.text
-        for start, end, target in sorted(by_cue.get(index, []), reverse=True):
-            text = text[:start] + target + text[end:]
-        blocks.append(f"{index}\n{_asr_ts(cue.start_ms)} --> {_asr_ts(cue.end_ms)}\n{text}")
-    return "\n\n".join(blocks) + "\n"
 
 
 def _agy_screen_text_lines(host: str, media_path: Path) -> list[str]:
@@ -972,6 +877,8 @@ def _build_aggregate_asr_transcriber(
     session_topic_authorities=(),
     term_boundary_surfaces=(),
     duration_ms: int | None = None,
+    producer_spec: dict | None = None,
+    bcut_draft_observation: dict | None = None,
 ):
     """Build aggregate ASR; CPA is mandatory on correction routes."""
 
@@ -988,6 +895,8 @@ def _build_aggregate_asr_transcriber(
 
     if correct not in ("bcut_agy_cpa", "moss_cpa", "cpa", "agy", "none"):
         raise ValueError(f"unsupported correction route: {correct}")
+    if bcut_draft_observation is not None and correct != "cpa":
+        raise ValueError("BCUT draft observation requires correct=cpa")
 
     danmaku_lines = []
     if danmaku_items:
@@ -1000,9 +909,6 @@ def _build_aggregate_asr_transcriber(
         host=host,
         effort=cpa_effort,
     )
-
-
-
 
 
 
@@ -1092,6 +998,21 @@ def _build_aggregate_asr_transcriber(
 
     def transcriber(media_path: Path, speech_spans_ms=None) -> str:
         media_path = Path(media_path)
+        observation = None
+        if bcut_draft_observation is not None:
+            if producer_spec is None:
+                raise ValueError("BCUT draft observation requires producer_spec")
+            from src.autoslice.bcut_draft_observation import load_bcut_draft_observation
+
+            # Load before audio extraction or the ordinary ASR callback.  An
+            # explicitly declared but stale observation is a hard input error;
+            # it must never silently fall through to a fresh provider call.
+            observation = load_bcut_draft_observation(
+                bcut_draft_observation,
+                padded=media_path,
+                producer_spec=producer_spec,
+                padded_duration_ms=duration_ms,
+            )
         sound = extract_audio_mp3(Path(media_path))
         # Only the ordinary route checkpoints successful observation stages.
         # Diagnostics remain fresh; every retry still reruns fidelity and review.
@@ -1109,6 +1030,22 @@ def _build_aggregate_asr_transcriber(
                 draft_srt = ""
                 route = "cpa"
                 source = {"requested_route": correct, "provider": "aggregate_asr", "fallback_reason": exc.reason_code}
+        if observation is not None:
+            draft_srt = observation.srt_text
+            reuse = observation.receipt
+            source.update(
+                {
+                    "provider": "bcut",
+                    "observation_reused": True,
+                    "observation_schema": reuse.get("schema_version"),
+                    "raw_result_path": reuse.get("raw_response_path"),
+                    "raw_result_sha256": reuse.get("raw_response_sha256"),
+                    "raw_utterance_count": reuse.get("observed_raw_utterance_count"),
+                    "boundary_origin": "provider_utterance_grid_not_semantic_sentence",
+                    "word_timings_present": reuse.get("word_timings_present", False),
+                    "bcut_draft_observation_receipt": reuse.get("receipt_path"),
+                }
+            )
         if not draft_srt:
             def observe_asr():
                 return transcribe(sound, provider="auto", log=lambda *_: None)
@@ -1233,7 +1170,7 @@ def _build_aggregate_asr_transcriber(
         from src.autoslice.pronoun_stage_trace import trace_pronoun_pass
         from src.autoslice.pronoun_context import render_pronoun_context
         return trace_pronoun_pass(
-            corrected, media_path=media_path, llm_call=pronoun_llm_call,
+            corrected, media_path=media_path, llm_call=pronoun_llm_call, resume=resume,
             run=_cpa_pronoun_ta_pass, required=route in ("bcut_agy_cpa", "cpa", "moss_cpa"),
             context_text=render_pronoun_context(topic_hint, topic_context_state["value"], danmaku_lines),
         )

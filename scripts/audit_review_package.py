@@ -19,6 +19,7 @@ from src.autoslice.cover_generation import (
 )
 from src.autoslice.cover_punch_semantics import (
     talk_cover_thumbnail_gate_violations,
+    cover_punch_shape_contract,
 )
 from src.autoslice.cover_route_evidence import (
     validate_cover_route_decision,
@@ -59,6 +60,7 @@ from src.autoslice.subtitle_validation import validate_srt_file
 from src.autoslice.published_recovery_package_contract import audit_published_recovery_manifest_binding
 from src.autoslice.review_package_ass_audit import (
     audit_review_package_ass,
+    audit_song_burn_ass,
 )
 from src.autoslice.review_package_boundary_contract import (
     audit_boundary_contract,
@@ -84,6 +86,11 @@ from src.autoslice.review_package_title_audit import (
 from src.autoslice.title_policy import (
     CHANNEL_PROFILE,
 )
+from src.autoslice.branding_intro import (
+    BrandingIntroError,
+    load_branding_intro_policy,
+    policy_intros,
+)
 from src.autoslice.review_package_policy_fingerprint import (
     build_policy_fingerprint,
 )
@@ -105,7 +112,12 @@ from src.autoslice.fastlane_c1_formal_adapter import (
     audit_fastlane_formal_package,
     is_fastlane_formal_manifest,
 )
+from src.autoslice.review_evidence_store import load_review
 from src.autoslice.fastlane_c9_successor import audit_c9_successor
+from src.autoslice.normal_first_publication_media_successor import (
+    NormalFirstPublicationMediaSuccessorError,
+    validate_reference as validate_normal_media_successor_reference,
+)
 DEFAULT_MAX_VISUAL_LINES = 2
 DEFAULT_MAX_VISUAL_LINE_CHARS = 18
 LONG_STATIC_CUE_SECONDS = 10.0
@@ -149,10 +161,10 @@ _PORTABLE_ARTIFACT_SUFFIXES = (
 
 def _load_json(path: Path) -> dict[str, Any]:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return load_review(path)
     except FileNotFoundError:
         return {}
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, ValueError):
         return {}
 
 
@@ -457,6 +469,7 @@ def _audit_story_bound_cover(
             rendered_lines=rendered_lines,
             cover_text=expected_text,
             story_hook=str(story_contract.get("selection_hook") or ""),
+            shape_contract=cover_punch_shape_contract(generation),
         ):
             _add_issue(
                 issues,
@@ -789,6 +802,13 @@ def _audit_finished_cover_evidence(
         # strings, not portable audit authority.
         final_path = current_final_path
 
+    if generation.get("method") == "skill.candidates":
+        from src.autoslice.title_cover_package import package_choice_problems
+        for problem in package_choice_problems(root, item, generation):
+            _add_issue(issues, "COVER_CHOICE_EVIDENCE_INVALID", stem=stem,
+                       path=record_path, detail=problem)
+        return
+
     if treatment in {"screenshot_direct", "screenshot_polish"}:
         method = str(generation.get("method") or "")
         degraded_polish = (
@@ -946,6 +966,218 @@ def _add_issue(
     issues.append(issue)
 
 
+def _branding_binding_projection(value: Mapping[str, object]) -> tuple[object, ...]:
+    """Return the delivery binding fields that must agree across surfaces."""
+
+    intro_sha = value.get("intro_media_sha256")
+    if isinstance(intro_sha, str):
+        intro_sha = intro_sha.removeprefix("sha256:")
+    return (
+        value.get("status"),
+        value.get("intro_id"),
+        intro_sha,
+        value.get("intro_offset_ms"),
+    )
+
+
+def _audit_talk_branding_intro(
+    *,
+    item: Mapping[str, object],
+    record: Mapping[str, object],
+    publish: Mapping[str, object],
+    issues: list[dict[str, Any]],
+    stem: str,
+    manifest_path: Path,
+    record_path: Path | None,
+    publish_path: Path | None,
+) -> None:
+    """Require a current, hash-bound intro for a strict talk package.
+
+    ``burned_preview.branding_intro`` is the media authority.  Optional copies
+    in the record, publish document, or review item are checked when present;
+    no surface may contradict the burned binding.  The current policy roster
+    supplies the allowed intro id/hash, so a stale or invented prior binding
+    cannot pass the audit.
+    """
+
+    policy_path = CHANNEL_PROFILE.asset_file("branding_intro_manifest")
+    try:
+        policy = load_branding_intro_policy(policy_path)
+    except BrandingIntroError as exc:
+        _add_issue(
+            issues,
+            "BRANDING_INTRO_POLICY_INVALID",
+            stem=stem,
+            path=policy_path,
+            detail=str(exc),
+        )
+        return
+    if policy is None:
+        return
+    lane_policy = policy.get("policy")
+    applies_to = lane_policy.get("applies_to") if isinstance(lane_policy, Mapping) else None
+    if not (
+        isinstance(lane_policy, Mapping)
+        and lane_policy.get("mandatory") is True
+        and isinstance(applies_to, list)
+        and "talk" in applies_to
+    ):
+        return
+
+    # Some subtitle/cover-only review fixtures intentionally have no final
+    # media artifact yet.  Intro validation begins once the package declares a
+    # video or carries a burn record; a declared final video with no binding
+    # remains a blocking delivery defect.
+    if "video" not in item and not isinstance(record.get("burned_preview"), Mapping):
+        return
+
+    burned_preview = record.get("burned_preview")
+    burned_binding = (
+        burned_preview.get("branding_intro")
+        if isinstance(burned_preview, Mapping)
+        else None
+    )
+    binding_path = record_path or manifest_path
+    if not isinstance(burned_binding, Mapping):
+        _add_issue(
+            issues,
+            "BRANDING_INTRO_BINDING_MISSING",
+            stem=stem,
+            path=binding_path,
+            detail="talk package has no burned_preview.branding_intro binding",
+        )
+        return
+
+    status = burned_binding.get("status")
+    intro_id = burned_binding.get("intro_id")
+    intro_sha = burned_binding.get("intro_media_sha256")
+    intro_offset = burned_binding.get("intro_offset_ms")
+    if status != "PREPENDED":
+        _add_issue(
+            issues,
+            "BRANDING_INTRO_BINDING_NOT_PREPENDED",
+            stem=stem,
+            path=binding_path,
+            detail=f"status={status!r}",
+        )
+    if not isinstance(intro_id, str) or not intro_id.strip():
+        _add_issue(
+            issues,
+            "BRANDING_INTRO_ID_MISSING",
+            stem=stem,
+            path=binding_path,
+        )
+    intro_sha_normalized = (
+        intro_sha.removeprefix("sha256:") if isinstance(intro_sha, str) else ""
+    )
+    if re.fullmatch(r"[0-9a-f]{64}", intro_sha_normalized) is None:
+        _add_issue(
+            issues,
+            "BRANDING_INTRO_MEDIA_HASH_INVALID",
+            stem=stem,
+            path=binding_path,
+            detail=f"intro_media_sha256={intro_sha!r}",
+        )
+    if (
+        isinstance(intro_offset, bool)
+        or not isinstance(intro_offset, int)
+        or intro_offset <= 0
+    ):
+        _add_issue(
+            issues,
+            "BRANDING_INTRO_OFFSET_INVALID",
+            stem=stem,
+            path=binding_path,
+            detail=f"intro_offset_ms={intro_offset!r}",
+        )
+
+    current_entries = {
+        str(entry.get("intro_id")): entry
+        for entry in policy_intros(policy)
+        if isinstance(entry, Mapping) and str(entry.get("intro_id") or "")
+    }
+    current_entry = current_entries.get(str(intro_id or ""))
+    if current_entry is None:
+        _add_issue(
+            issues,
+            "BRANDING_INTRO_MANIFEST_ENTRY_MISSING",
+            stem=stem,
+            path=policy_path,
+            detail=f"intro_id={intro_id!r}",
+        )
+    else:
+        video = current_entry.get("video")
+        current_sha = (
+            str(video.get("sha256") or "").removeprefix("sha256:")
+            if isinstance(video, Mapping)
+            else ""
+        )
+        if intro_sha_normalized != current_sha:
+            _add_issue(
+                issues,
+                "BRANDING_INTRO_MANIFEST_HASH_MISMATCH",
+                stem=stem,
+                path=policy_path,
+                detail=(
+                    f"intro_id={intro_id!r}; recorded={intro_sha_normalized!r}; "
+                    f"current={current_sha!r}"
+                ),
+            )
+
+    # The review manifest may carry an optional frozen copy.  If it does, a
+    # null or divergent copy is a package inconsistency, never a fallback.
+    if "branding_intro" in item:
+        item_binding = item.get("branding_intro")
+        if not isinstance(item_binding, Mapping):
+            _add_issue(
+                issues,
+                "BRANDING_INTRO_MANIFEST_BINDING_MISSING",
+                stem=stem,
+                path=manifest_path,
+                detail="review item branding_intro is absent or null",
+            )
+        elif _branding_binding_projection(item_binding) != _branding_binding_projection(burned_binding):
+            _add_issue(
+                issues,
+                "BRANDING_INTRO_MANIFEST_BINDING_DRIFT",
+                stem=stem,
+                path=manifest_path,
+                detail="review item branding_intro disagrees with burned binding",
+            )
+
+    # Some package writers duplicate the binding at the record/publish root.
+    # Check those copies when present without requiring a field that older
+    # valid writers never emitted.
+    for label, owner, path in (
+        ("record", record, record_path),
+        ("publish", publish, publish_path),
+        (
+            "publish_staging",
+            record.get("publish_staging") if isinstance(record.get("publish_staging"), Mapping) else {},
+            record_path,
+        ),
+    ):
+        if not isinstance(owner, Mapping) or "branding_intro" not in owner:
+            continue
+        owner_binding = owner.get("branding_intro")
+        if not isinstance(owner_binding, Mapping):
+            _add_issue(
+                issues,
+                "BRANDING_INTRO_SURFACE_BINDING_INVALID",
+                stem=stem,
+                path=path or manifest_path,
+                detail=f"{label}.branding_intro is not an object",
+            )
+        elif _branding_binding_projection(owner_binding) != _branding_binding_projection(burned_binding):
+            _add_issue(
+                issues,
+                "BRANDING_INTRO_SURFACE_BINDING_DRIFT",
+                stem=stem,
+                path=path or manifest_path,
+                detail=f"{label}.branding_intro disagrees with burned binding",
+            )
+
+
 def _audit_manual_corrected_same_bv_receipt(
     *,
     root: Path,
@@ -1005,6 +1237,108 @@ def _audit_item_recovery_publication_and_qixi_receipt(
         root=root, item=item, issues=issues, stem=stem,
         qixi_repo_root=qixi_repo_root,
     )
+
+
+def _audit_normal_first_publication_cover_successor(
+    *, root: Path, item: Mapping[str, Any], record: Mapping[str, Any],
+    issues: list[dict[str, Any]], stem: str, manifest_path: Path,
+) -> None:
+    # A verified title repair can accompany either successor lane.  Changed
+    # media is bound by the prepared full-media reference (including its title
+    # chain), not by the cover-only requirement to retain first-publication
+    # video/SRT bytes.  The separate media auditor still rejects an invalid or
+    # missing reference/map; presence here does not grant acceptance.
+    if "normal_first_publication_media_successor" in item:
+        if item.get("normal_first_publication_cover_successor"):
+            _add_issue(
+                issues, "NORMAL_COVER_SUCCESSOR_INVALID", stem=stem,
+                path=manifest_path,
+                detail="cover-only and full-media successor declarations conflict",
+            )
+        return
+    if not item.get("normal_first_publication_cover_successor") and (
+        "verified_title_repair" not in record
+    ):
+        return
+    from scripts.build_manual_review_manifest import (
+        DailyManifestError, _normal_first_publication_cover_successor,
+    )
+    try:
+        video = _resolve(root, item.get("video"))
+        subtitle = _resolve(root, item.get("subtitle_srt"))
+        if item.get("normal_first_publication_cover_successor") is not True or (
+            video is None or subtitle is None
+        ) or not _normal_first_publication_cover_successor(
+            authority=record.get("recovery_publication_authority"),
+            candidate_id=str(item.get("candidate_id") or ""),
+            title=str(item.get("title") or ""), burned=video, subtitle=subtitle,
+            title_repair_reference=record.get("verified_title_repair"),
+        ):
+            raise DailyManifestError("normal cover successor declaration is invalid")
+    except (DailyManifestError, OSError, ValueError, TypeError, KeyError) as exc:
+        _add_issue(
+            issues, "NORMAL_COVER_SUCCESSOR_INVALID", stem=stem,
+            path=manifest_path, detail=str(exc),
+        )
+
+
+def _audit_normal_first_publication_media_successor(
+    *,
+    root: Path,
+    manifest: Mapping[str, Any],
+    item: Mapping[str, Any],
+    issues: list[dict[str, Any]],
+    stem: str,
+    item_candidate_id: str,
+    item_title: str,
+    record: Mapping[str, Any],
+    manifest_path: Path,
+) -> None:
+    """Replay a prepared full-media successor reference from both surfaces."""
+
+    item_present = "normal_first_publication_media_successor" in item
+    raw_map = manifest.get("normal_first_publication_media_successor_by_candidate")
+    map_present = raw_map is not None
+    if not item_present and not map_present:
+        return
+    if not isinstance(raw_map, Mapping) or set(raw_map) != {item_candidate_id}:
+        _add_issue(
+            issues,
+            "NORMAL_MEDIA_SUCCESSOR_REFERENCE_MAP_INVALID",
+            stem=stem,
+            path=manifest_path,
+            detail=f"candidate_id={item_candidate_id!r}",
+        )
+        return
+    item_reference = item.get("normal_first_publication_media_successor")
+    map_reference = raw_map.get(item_candidate_id)
+    if not item_present or item_reference != map_reference:
+        _add_issue(
+            issues,
+            "NORMAL_MEDIA_SUCCESSOR_REFERENCE_SURFACE_DRIFT",
+            stem=stem,
+            path=manifest_path,
+            detail="review item and manifest candidate map must carry the same typed reference",
+        )
+        return
+    try:
+        validate_normal_media_successor_reference(
+            package_root=root,
+            stem=stem,
+            reference=item_reference,
+            candidate_id=item_candidate_id,
+            title=item_title,
+            authority=record.get("recovery_publication_authority"),
+            frozen_private_provenance=True,
+        )
+    except NormalFirstPublicationMediaSuccessorError as exc:
+        _add_issue(
+            issues,
+            "NORMAL_MEDIA_SUCCESSOR_REFERENCE_INVALID",
+            stem=stem,
+            path=manifest_path,
+            detail=str(exc),
+        )
 
 
 def _item_title_policy_codes(
@@ -1265,6 +1599,7 @@ def _audit_item_story_contract(
         story_contract=story_contract,
         required=story_contract_required, root=root, item=item,
     )
+    from src.autoslice.review_package_source_boundary import load_original_source_review
     audit_boundary_contract(
         issue_adder=_add_issue,
         issues=issues,
@@ -1276,6 +1611,7 @@ def _audit_item_story_contract(
         story_contract=story_contract,
         required=story_contract_required,
         is_song=is_song,
+        original_source_review=load_original_source_review(root, item),
     )
     scorecard = story_contract.get("selection_scorecard")
     if story_contract_required and not is_song and (not selection_scorecard_is_valid(scorecard)):
@@ -1739,6 +2075,46 @@ def audit_package(
             publish_path = _resolve(root, item.get("publish_json") or item.get("publish"))
             title_txt_path = _resolve(root, item.get("title_txt") or item.get("title_path"))
         evidence = _load_json(evidence_path) if evidence_path else {}
+        from src.autoslice.final_review_meaning_policy import POLICY_VERSION as MEANING_POLICY_VERSION
+        postburn_meaning = evidence.get("postburn_subtitle_audio_review")
+        if (isinstance(postburn_meaning, Mapping) and postburn_meaning.get("release_gate") == "PASS"
+                and postburn_meaning.get("meaning_policy") != MEANING_POLICY_VERSION):
+            _add_issue(issues, "POSTBURN_MEANING_POLICY_REVIEW_REQUIRED", stem=stem,
+                       path=evidence_path, detail="Historical CLEAN requires current contextual meaning review")
+        from src.autoslice.final_review_candidate_risk import unreviewed_postburn_candidate_cues
+        pending_risks = unreviewed_postburn_candidate_cues(
+            evidence, srt_sha256=("sha256:" + _sha256_file(subtitle_path)) if subtitle_path and subtitle_path.is_file() else None,
+        )
+        if pending_risks:
+            _add_issue(issues, "POSTBURN_CANDIDATE_CONTENT_RISK_REVIEW_REQUIRED", stem=stem,
+                       path=evidence_path, detail=json.dumps({"cue_indexes": pending_risks}))
+        from src.autoslice.unresolved_findings_gate import (
+            UNRESOLVED_FINDINGS_CODE, unresolved_disclosed_findings, unresolved_findings_detail,
+        )
+        # ``evidence_json`` and ``record`` are the same file in produced
+        # packages; check both so a split layout cannot hide open rows.
+        record_path = _resolve(root, item.get("record") or item.get("record_json"))
+        record_payload = _load_json(record_path) if record_path and record_path != evidence_path else {}
+        if open_findings := unresolved_disclosed_findings(evidence) or unresolved_disclosed_findings(record_payload):
+            _add_issue(issues, UNRESOLVED_FINDINGS_CODE, stem=stem, path=evidence_path or record_path,
+                       detail=unresolved_findings_detail(open_findings))
+        if (str(item.get('classification') or '').lower() == 'talk'
+                and not evidence.get('classification')
+                and isinstance(item.get('normal_first_publication_media_successor'), Mapping)):
+            try:
+                # This existing validator proves the actual prepared handle
+                # has lane=talk and rehashes every bound package role. Legacy
+                # producer records omitted classification; title words do not
+                # replace that current, immutable production evidence.
+                validate_normal_media_successor_reference(package_root=root, stem=stem,
+                    reference=item['normal_first_publication_media_successor'],
+                    candidate_id=str(item.get('candidate_id') or ''),
+                    title=str(item.get('title') or ''),
+                    authority=evidence.get('recovery_publication_authority'), frozen_private_provenance=True)
+            except NormalFirstPublicationMediaSuccessorError:
+                pass  # The ordinary reference audit below reports the failure.
+            else:
+                evidence = {**evidence, 'classification': 'talk'}
         is_song = _looks_song_like(item, evidence)
         if is_song:
             source_srt = str(item.get("source_srt") or "")
@@ -1758,6 +2134,15 @@ def audit_package(
                     detail="No first/last lyric anchor offset/tail report found",
                 )
         if subtitle_path and subtitle_path.exists():
+            song_display_verified = False
+            if is_song:
+                song_display_verified, song_ass_issues = audit_song_burn_ass(
+                    root=root, item=item, subtitle_path=subtitle_path,
+                    max_visual_lines=max_visual_lines,
+                    max_visual_line_chars=max_visual_line_chars,
+                )
+                for issue in song_ass_issues:
+                    _add_issue(issues, issue.code, stem=stem, path=issue.path, detail=issue.detail)
             if story_contract_required:
                 srt_release = validate_srt_file(subtitle_path)
                 for error in srt_release.get("errors") or []:
@@ -1773,7 +2158,7 @@ def audit_package(
             for cue in _parse_srt(subtitle_path):
                 duration = cue["end"] - cue["start"]
                 lines = [line.strip() for line in cue["lines"] if line.strip()]
-                if len(lines) > max_visual_lines:
+                if not song_display_verified and len(lines) > max_visual_lines:
                     _add_issue(
                         issues,
                         "SUBTITLE_CUE_TOO_MANY_LINES",
@@ -1783,7 +2168,7 @@ def audit_package(
                     )
                 for line in lines:
                     n = _text_len(line)
-                    if n > max_visual_line_chars:
+                    if not song_display_verified and n > max_visual_line_chars:
                         _add_issue(
                             issues,
                             "SUBTITLE_LINE_TOO_LONG",
@@ -1821,6 +2206,7 @@ def audit_package(
         )
         issues.extend(path_issues)
         record = _load_json(record_path) if record_path else {}
+        publish_document = _load_json(publish_path) if publish_path else {}
         chat_authority = _load_json(chat_authority_path) if chat_authority_path else {}
         item_candidate_id = str(item.get("candidate_id") or "")
         qixi_terminal_projection_authority = manifest_bound_terminal_projection_authority(
@@ -1872,10 +2258,27 @@ def audit_package(
             )
         publish_staging = _audit_record_title_match(record=record, item_title=item_title, issues=issues,
                                   stem=stem, manifest_path=manifest_path)
+        from src.autoslice.package_cover_network import validate_package_cover_network
+        try:
+            validate_package_cover_network(root, item, record, publish_document,
+                subtitle_path=subtitle_path, cover_path=_resolve(root, item.get("cover")))
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+            _add_issue(issues, "COVER_NETWORK_INPUT_CLOSURE_INVALID", stem=stem,
+                path=publish_path or manifest_path, detail=str(exc))
         append_original_release_issues(item=item, is_song=is_song, subtitle_path=subtitle_path,
                                        repo_root=ROOT, directory=CHANNEL_PROFILE.asset_directory("reviewed_subtitle_baselines"),
                                        stem=stem, issues=issues, issue_adder=_add_issue)
         if story_contract_required and not is_song:
+            _audit_talk_branding_intro(
+                item=item,
+                record=record,
+                publish=publish_document,
+                issues=issues,
+                stem=stem,
+                manifest_path=manifest_path,
+                record_path=record_path,
+                publish_path=publish_path,
+            )
             provenance_path = _resolve(root, f"{stem}.provenance.json")
             provenance = _load_json(provenance_path) if provenance_path else None
             audit_source_truth_owner_attestations(
@@ -1917,6 +2320,21 @@ def audit_package(
             recovery_publication_authorities=recovery_publication_authorities,
             publication_contract_required=publication_contract_required,
             qixi_repo_root=qixi_repo_root,
+        )
+        _audit_normal_first_publication_cover_successor(
+            root=root, item=item, record=record, issues=issues,
+            stem=stem, manifest_path=manifest_path,
+        )
+        _audit_normal_first_publication_media_successor(
+            root=root,
+            manifest=manifest,
+            item=item,
+            issues=issues,
+            stem=stem,
+            item_candidate_id=item_candidate_id,
+            item_title=item_title,
+            record=record,
+            manifest_path=manifest_path,
         )
         if item_candidate_id and story_candidate_id and item_candidate_id != story_candidate_id:
             _add_issue(
@@ -1979,7 +2397,16 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     args = parser.parse_args()
 
-    result = audit_package(args.package_root)
+    from src.autoslice.production_attempts import observed_package_stage, record_production_result, package_stage_binding
+    with observed_package_stage(args.package_root,'package_audit'):
+        input_binding = package_stage_binding(args.package_root)
+        result = audit_package(args.package_root)
+        current_binding = package_stage_binding(args.package_root)
+        blocking = [row for row in result.get('issues',[]) if row.get('severity','BLOCK') == 'BLOCK']
+        record_production_result({'runtime_stage_result':{
+            'status':'PACKAGE_AUDIT_PASS' if result['passed'] and input_binding==current_binding else 'BLOCKED',
+            'reason_code':'PACKAGE_INPUT_BINDING_DRIFT' if input_binding!=current_binding else blocking[0].get('code') if blocking else None,
+            **input_binding}})
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     else:

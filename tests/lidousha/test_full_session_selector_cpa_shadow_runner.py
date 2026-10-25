@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 def _write_ok_cpa_responder(tmp_path: Path, *, viewer_context_branch: bool = False) -> Path:
     """Fake CPA judge: always passes; with viewer_context_branch it flags the
@@ -210,14 +212,24 @@ def test_semantic_recall_lane_runs_first_and_marks_semantic_authority(tmp_path):
         "1\n00:00:01,000 --> 00:00:04,000\n我们来看看这张AI生成的图\n\n"
         "2\n00:00:05,000 --> 00:00:20,000\n好像阿朵\n\n"
         "3\n00:00:21,000 --> 00:00:38,000\n这真的不是融了阿朵吗\n\n"
-        "4\n00:00:39,000 --> 00:01:15,000\n一眼AI 好吧\n",
+        "4\n00:00:39,000 --> 00:01:10,000\n一眼AI 好吧\n",
         encoding="utf-8",
     )
     recall = tmp_path / "fake_recall.py"
     recall.write_text(
         "import json, sys\n"
         "completion = json.dumps({'candidates': [{'start_cue': 2, 'end_cue': 4, 'kind': 'talk',"
-        " 'hook': '一眼AI连环吐槽', 'context_trigger_cue': 1, 'context_inferable': False, 'confidence': 0.9}]},"
+        " 'hook': '一眼AI连环吐槽', 'context_trigger_cue': 1, 'context_inferable': False, 'confidence': 0.9,"
+        " 'selection_scorecard': {"
+        "'tier': 2, 'tier_basis': 'personal_stance',"
+        "'tier_reason': '片内连续反应形成完整吐槽链', 'tier_evidence_cues': [2, 3, 4],"
+        "'dimensions': {'lidousha_centrality': 4, 'stance_intensity': 3,"
+        "'audience_salience': 3, 'relationship_interaction': 2, 'persona_reversal': 3,"
+        "'comedic_payoff': 3, 'self_contained': 4}, 'uncertainty_penalty': 0,"
+        "'fatigue_penalty': 0, 'candidate_quality': {'watchability': 'STRONG',"
+        "'differentiation': 'DISTINCTIVE', 'production_disposition': 'PRODUCTION',"
+        "'reason': '片内完整的一眼AI连环吐槽', 'evidence_cues': [2, 3, 4]}"
+        "}}]},"
         " ensure_ascii=False)\n"
         "open(sys.argv[2], 'w', encoding='utf-8').write(completion)\n",
         encoding="utf-8",
@@ -255,10 +267,10 @@ def test_semantic_recall_lane_runs_first_and_marks_semantic_authority(tmp_path):
     assert summary["selector_stage"] == "semantic_recall"
     record = summary["records"][0]
     # The context trigger (cue 1, reading out the image) was pulled into the window.
-    assert record["candidate_id"] == "semantictalk_1000_75000"
+    assert record["candidate_id"] == "semantictalk_1000_70000"
     assert record["source_context_job"]["boundary_authority"] == "semantic"
     diagnostics = json.loads((output_dir / "semantic_recall.json").read_text(encoding="utf-8"))
-    assert diagnostics["hooks"]["semantictalk_1000_75000"] == "一眼AI连环吐槽"
+    assert diagnostics["hooks"]["semantictalk_1000_70000"] == "一眼AI连环吐槽"
 
 
 def test_viewer_context_incomplete_expands_window_and_rereviews(tmp_path):
@@ -311,6 +323,119 @@ def test_viewer_context_incomplete_expands_window_and_rereviews(tmp_path):
     assert Path(record["cpa_response_json"]).is_file()
     # Expanded windows carry semantic authority in the job manifest.
     assert record["source_context_job"]["boundary_authority"] == "semantic"
+
+
+def test_cpa_requests_use_complete_ordered_cues_for_initial_and_expanded_windows(tmp_path, monkeypatch):
+    """The CPA payload must include payoff text beyond the short preview.
+
+    This exercises the actual request writer on both the initial candidate and
+    its viewer-context expansion, rather than only checking the helper's
+    returned string.
+    """
+
+    from types import SimpleNamespace
+
+    import importlib
+
+    from src.autoslice.auto_review import DecisionAction
+    from src.autoslice.boundary_resolver import AnchorCandidate, BoundaryResolution
+    from src.autoslice.full_session_candidate_selector import FullSessionCandidate
+    from src.autoslice.review_evidence import SourceCue
+
+    shadow = importlib.import_module("scripts.run_full_session_selector_cpa_shadow")
+    source_video = tmp_path / "source.mp4"
+    source_video.write_bytes(b"fake video")
+    source_srt = tmp_path / "source.srt"
+    source_srt.write_text(
+        "1\n00:00:01,000 --> 00:00:04,000\n前置触发\n\n"
+        "2\n00:00:10,000 --> 00:00:12,000\n核心起点\n\n"
+        "3\n00:00:12,000 --> 00:00:15,000\n我在疯狂逼迫老头\n\n"
+        "4\n00:00:15,000 --> 00:00:19,000\n尾部反向酒桌吐槽\n",
+        encoding="utf-8",
+    )
+    responder = _write_ok_cpa_responder(tmp_path, viewer_context_branch=True)
+    output_dir = tmp_path / "out"
+
+    cues = (
+        SourceCue("u_1", 1_000, 4_000, "前置触发", language="zh"),
+        SourceCue("u_2", 10_000, 12_000, "核心起点", language="zh"),
+        SourceCue("u_3", 12_000, 15_000, "我在疯狂逼迫老头", language="zh"),
+        SourceCue("u_4", 15_000, 19_000, "尾部反向酒桌吐槽", language="zh"),
+    )
+    anchor = AnchorCandidate(
+        candidate_id="semantictalk_10000_19000",
+        anchor_start_ms=10_000,
+        anchor_end_ms=19_000,
+    )
+    boundary = BoundaryResolution(
+        candidate_id=anchor.candidate_id,
+        action=DecisionAction.AUTO_RECUT,
+        resolved_start_ms=10_000,
+        resolved_end_ms=19_000,
+        start_boundary_score=0.9,
+        end_boundary_score=0.9,
+        reason_codes=(),
+        next_start_ms=10_000,
+        next_end_ms=19_000,
+    )
+    candidate = FullSessionCandidate(
+        anchor=anchor,
+        boundary=boundary,
+        cues=cues[1:],
+        text_preview="截断预览",
+        content_type_hint="talk",
+    )
+    args = SimpleNamespace(
+        source_srt=source_srt,
+        source_video=source_video,
+        output_dir=output_dir,
+        max_candidates=1,
+        room_id="22966160",
+        cpa_command=f"{sys.executable} {responder} {{request_json}} {{response_json}}",
+        agy_ssh_host=None,
+        copy_draft_context=False,
+        agy_audio_lrc_align=False,
+        song_lrc_query=(),
+        canonical_lrc_file=None,
+        canonical_lrc_title=None,
+        canonical_lrc_artist=None,
+        canonical_lrc_source_ref=None,
+        lrc_provider="none",
+        no_ffmpeg=True,
+        song_hint_llm_command=None,
+        title_llm_command=None,
+        cover_art_direction_llm_command=None,
+        publish_staging=False,
+        burn_preview=False,
+    )
+    monkeypatch.setattr(
+        shadow,
+        "run_shadow_pipeline",
+        lambda **_kwargs: {"records": [{"decision_action": "AUTO_RECUT"}]},
+    )
+
+    records, _summary = shadow._review_selected_candidates(
+        args=args,
+        candidates=[candidate],
+        cues=cues,
+        source_duration_ms=19_000,
+        selector_stage="semantic_recall",
+        danmaku_items=[],
+        host_vocal_prover=None,
+        branding_intro=None,
+    )
+
+    assert records[0]["viewer_context_expansion"]["expanded_candidate_id"].endswith("_ctxexp")
+    request_paths = sorted((output_dir / candidate.anchor.candidate_id / "cpa").glob("*.cpa.request.json"))
+    assert len(request_paths) == 2
+    requests = {json.loads(path.read_text(encoding="utf-8"))["candidate_id"]: json.loads(path.read_text(encoding="utf-8")) for path in request_paths}
+    original_text = requests["semantictalk_10000_19000"]["candidate_text"]
+    expanded_text = requests["semantictalk_1000_19000_ctxexp"]["candidate_text"]
+    assert original_text.splitlines() == ["核心起点", "我在疯狂逼迫老头", "尾部反向酒桌吐槽"]
+    assert expanded_text.splitlines() == ["前置触发", "核心起点", "我在疯狂逼迫老头", "尾部反向酒桌吐槽"]
+    assert "尾部反向酒桌吐槽" in original_text
+    assert "尾部反向酒桌吐槽" in expanded_text
+    assert original_text != candidate.text_preview
 
 
 def test_cpa_pronoun_ta_pass_resolves_each_occurrence_bidirectionally():
@@ -387,3 +512,86 @@ def test_cpa_pronoun_ta_pass_fails_open_on_llm_error():
 
     # fail-open: returns the pre-pass text unchanged
     assert shadow._cpa_pronoun_ta_pass(srt, cpa_llm_call=boom) == srt
+
+
+def test_canonical_lrc_cli_freezes_file_and_records_provenance(tmp_path):
+    import importlib
+
+    shadow = importlib.import_module("scripts.run_full_session_selector_cpa_shadow")
+    lrc_path = tmp_path / "canonical.lrc"
+    lrc_path.write_text(
+        "[00:01.00]WORLD.execute(me);\n[00:03.50]EXECUTION L0-O\n",
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    args = shadow._build_parser().parse_args(
+        [
+            "--source-video",
+            str(tmp_path / "source.mp4"),
+            "--source-srt",
+            str(tmp_path / "source.srt"),
+            "--output-dir",
+            str(output_dir),
+            "--cpa-command",
+            "unused",
+            "--canonical-lrc-file",
+            str(lrc_path),
+            "--canonical-lrc-title",
+            "Canonical song",
+            "--canonical-lrc-artist",
+            "Artist",
+            "--canonical-lrc-source-ref",
+            "official://canonical-song",
+        ]
+    )
+
+    result, provenance_path = shadow._prepare_canonical_lrc_input(args)
+    assert result is not None
+    assert provenance_path is not None
+    assert result.song_title == "Canonical song"
+    assert result.artist == "Artist"
+    assert result.source_ref == "official://canonical-song"
+    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    assert provenance["file_sha256"] == provenance["copied_file_sha256"]
+    assert provenance["timed_line_count"] == 2
+    assert provenance["source_ref"] == "official://canonical-song"
+
+    # The provider uses the validated in-memory result, so changing the caller
+    # file after the preflight cannot silently change the candidate.
+    provider = shadow._build_lrc_provider(args, result)
+    lrc_path.write_text("[00:01.00]TAMPERED\n", encoding="utf-8")
+    found = provider("ignored query")
+    assert len(found) == 1
+    assert [line.text for line in found[0].lines] == ["WORLD.execute(me);", "EXECUTION L0-O"]
+
+
+def test_canonical_lrc_cli_rejects_blank_file_and_keeps_default_provider_lane(tmp_path):
+    import importlib
+
+    shadow = importlib.import_module("scripts.run_full_session_selector_cpa_shadow")
+    from src.autoslice.song_lrc_provider import load_canonical_lrc_result
+
+    blank = tmp_path / "blank.lrc"
+    blank.write_text("[00:00.00]作词 : unknown\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="no timed lyric lines"):
+        load_canonical_lrc_result(
+            lrc_path=blank,
+            song_title="Blank",
+            artist=None,
+            source_ref="official://blank",
+        )
+
+    args = shadow._build_parser().parse_args(
+        [
+            "--source-video",
+            str(tmp_path / "source.mp4"),
+            "--source-srt",
+            str(tmp_path / "source.srt"),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--cpa-command",
+            "unused",
+        ]
+    )
+    assert shadow._build_lrc_provider(args, None) is None

@@ -1,10 +1,10 @@
 """Profile-selected branding intro prepended to delivered autoslice videos.
 
-维护者  selected the 活字乱刷 candidate-2 render
-（李豆沙一直是零，不对，李豆沙一直是为爱做一）as the fixed opening for all future
-auto-slice deliverables.  The selected profile's committed
-``branding_intro_manifest`` asset is the single switch and binds the exact
-intro bytes by SHA-256; the media itself lives outside the repo tree
+The selected profile's committed ``branding_intro_manifest`` asset is the
+single switch and binds the exact verified intro bytes by SHA-256.  Its
+rotation may give a newly introduced member a bounded launch boost; each
+delivery context snapshots that decision once.  The media itself lives outside
+the repo tree
 (``<host>:/opt/bilive/autoslice/assets/intro/``) like the CAM++ model and
 enrollment WAVs.
 
@@ -17,12 +17,13 @@ problems never do.
 
 from __future__ import annotations
 
-import hashlib
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import json
 import os
 import re
 import shutil
 import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
 
@@ -55,11 +56,30 @@ class BrandingIntroError(RuntimeError):
 
 
 def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return digest
+
+
+def _utc_now() -> datetime:
+    """Return the one wall-clock observation used for a branding context."""
+
+    return datetime.now(timezone.utc)
+
+
+def _iso_utc(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _parse_utc_timestamp(value: object, *, label: str) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise BrandingIntroError(f"{label} must be an ISO timestamp with a timezone")
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise BrandingIntroError(f"{label} is not a valid ISO timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise BrandingIntroError(f"{label} must include a timezone")
+    return parsed.astimezone(timezone.utc)
 
 
 def _run(command: list[str], *, timeout: int = 1800) -> subprocess.CompletedProcess[str]:
@@ -97,8 +117,16 @@ def load_branding_intro_policy(manifest_path: Path) -> Mapping[str, object] | No
         return None
     if policy.get("enabled") is not True:
         raise BrandingIntroError(f"branding intro manifest needs an explicit enabled flag: {manifest_path}")
-    for entry in policy_intros(policy):
+    intros = policy_intros(policy)
+    _validate_rotation(policy, manifest_path)
+    for entry in intros:
         _validate_intro_entry(entry, manifest_path)
+    ids = [entry.get("intro_id") for entry in intros]
+    if any(not isinstance(intro_id, str) or not intro_id for intro_id in ids):
+        raise BrandingIntroError(f"branding intro manifest has an invalid intro_id: {manifest_path}")
+    string_ids = [intro_id for intro_id in ids if isinstance(intro_id, str)]
+    if len(set(string_ids)) != len(string_ids):
+        raise BrandingIntroError(f"branding intro manifest has duplicate intro_id values: {manifest_path}")
     return policy
 
 
@@ -122,13 +150,66 @@ def _validate_intro_entry(entry: Mapping[str, object], manifest_path: Path) -> N
     sha = str(video.get("sha256") or "").removeprefix("sha256:")
     if re.fullmatch(r"[0-9a-f]{64}", sha) is None:
         raise BrandingIntroError(f"branding intro manifest has no valid video sha256: {manifest_path}")
-    if int(video.get("duration_ms", 0)) <= 0:
+    duration = video.get("duration_ms", 0)
+    if isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0:
         raise BrandingIntroError(f"branding intro manifest has no positive duration: {manifest_path}")
     paths = entry.get("runtime_media_paths")
     if not isinstance(paths, list) or not paths:
         raise BrandingIntroError(f"branding intro manifest lists no runtime media paths: {manifest_path}")
-    if not str(entry.get("intro_id") or ""):
+    if not isinstance(entry.get("intro_id"), str) or not entry["intro_id"]:
         raise BrandingIntroError(f"branding intro manifest has no intro_id: {manifest_path}")
+    if "introduced_at" in entry:
+        _parse_utc_timestamp(
+            entry["introduced_at"],
+            label=f"branding intro {entry['intro_id']!r} introduced_at",
+        )
+
+
+def _validate_rotation(
+    policy: Mapping[str, object], manifest_path: Path
+) -> dict[str, object]:
+    raw_rotation = policy.get("rotation")
+    if raw_rotation is None:
+        return {}
+    if not isinstance(raw_rotation, Mapping):
+        raise BrandingIntroError(f"branding intro rotation must be an object: {manifest_path}")
+
+    mode = raw_rotation.get("mode", "main-sha256")
+    if not isinstance(mode, str) or not mode:
+        raise BrandingIntroError(f"branding intro rotation mode is invalid: {manifest_path}")
+
+    days_present = "launch_boost_days" in raw_rotation
+    weight_present = "launch_weight" in raw_rotation
+    if days_present != weight_present:
+        raise BrandingIntroError(
+            f"branding intro rotation must provide launch_boost_days and launch_weight together: {manifest_path}"
+        )
+    if not days_present:
+        return {"mode": mode}
+
+    launch_days = raw_rotation["launch_boost_days"]
+    launch_weight = raw_rotation["launch_weight"]
+    if (
+        isinstance(launch_days, bool)
+        or not isinstance(launch_days, int)
+        or launch_days < 0
+    ):
+        raise BrandingIntroError(
+            f"branding intro rotation launch_boost_days is invalid: {manifest_path}"
+        )
+    if (
+        isinstance(launch_weight, bool)
+        or not isinstance(launch_weight, int)
+        or launch_weight <= 0
+    ):
+        raise BrandingIntroError(
+            f"branding intro rotation launch_weight is invalid: {manifest_path}"
+        )
+    return {
+        "mode": mode,
+        "launch_boost_days": launch_days,
+        "launch_weight": launch_weight,
+    }
 
 
 def resolve_intro_media(policy: Mapping[str, object], repo_root: Path) -> Path:
@@ -158,6 +239,46 @@ def _resolve_intro_entry(entry: Mapping[str, object], repo_root: Path) -> Path:
     )
 
 
+def _rotation_snapshot(
+    policy: Mapping[str, object],
+    intros: list[Mapping[str, object]],
+    *,
+    selection_time: datetime,
+    manifest_path: Path,
+) -> dict[str, object]:
+    """Freeze weighted selection inputs for one resolved delivery context."""
+
+    rotation = _validate_rotation(policy, manifest_path)
+    if selection_time.tzinfo is None or selection_time.utcoffset() is None:
+        raise BrandingIntroError("branding intro selection snapshot time must include a timezone")
+    normalized_time = selection_time.astimezone(timezone.utc)
+    effective_weights: dict[str, int] = {}
+    active_expiry: dict[str, str] = {}
+    launch_days = rotation.get("launch_boost_days")
+    launch_weight = rotation.get("launch_weight")
+    boost_configured = launch_days is not None and launch_weight is not None
+
+    for entry in intros:
+        intro_id = str(entry["intro_id"])
+        weight = 1
+        if boost_configured and "introduced_at" in entry:
+            introduced_at = _parse_utc_timestamp(
+                entry["introduced_at"],
+                label=f"branding intro {intro_id!r} introduced_at",
+            )
+            expiry = introduced_at + timedelta(days=int(launch_days))
+            if introduced_at <= normalized_time < expiry:
+                weight = int(launch_weight)
+                active_expiry[intro_id] = _iso_utc(expiry)
+        effective_weights[intro_id] = weight
+
+    return {
+        "selection_time": _iso_utc(normalized_time),
+        "effective_weights": effective_weights,
+        "active_expiry": active_expiry,
+    }
+
+
 def require_branding_intro(
     repo_root: Path,
     *,
@@ -183,15 +304,22 @@ def require_branding_intro(
         return None
     # Resolve EVERY declared intro up front: a drifted/missing member of the
     # rotation roster blocks delivery instead of silently narrowing the pool.
+    intros = policy_intros(policy)
     candidates = [
         {
             "intro_id": str(entry["intro_id"]),
             "media_path": _resolve_intro_entry(entry, repo_root),
             "media_sha256": str(entry["video"]["sha256"]),  # type: ignore[index]
         }
-        for entry in policy_intros(policy)
+        for entry in intros
     ]
-    rotation = policy.get("rotation") if isinstance(policy.get("rotation"), Mapping) else {}
+    snapshot = _rotation_snapshot(
+        policy,
+        intros,
+        selection_time=_utc_now(),
+        manifest_path=resolved_manifest,
+    )
+    rotation = _validate_rotation(policy, resolved_manifest)
     return {
         "policy": policy,
         "intro_id": candidates[0]["intro_id"],
@@ -199,6 +327,9 @@ def require_branding_intro(
         "media_sha256": candidates[0]["media_sha256"],
         "candidates": candidates,
         "rotation_mode": str(rotation.get("mode") or ("main-sha256" if len(candidates) > 1 else "single")),
+        "rotation_selection_time": snapshot["selection_time"],
+        "rotation_effective_weights": snapshot["effective_weights"],
+        "rotation_active_expiry": snapshot["active_expiry"],
         "manifest_path": resolved_manifest,
         "manifest_sha256": _sha256_file(resolved_manifest),
     }
@@ -509,10 +640,12 @@ def _pick_intro(
 
     Single-intro contexts (v1 manifests, hand-built contexts) keep the legacy
     top-level fields and no rotation binding.  With several candidates the
-    choice is keyed on the main clip's content hash — deterministic, stateless,
-    and stable across re-burns of the same material — unless the operator
-    pins one explicitly via ``AUTOSLICE_BRANDING_INTRO_PICK`` (which must name
-    an intro_id from the roster; anything else fails closed).
+    choice is keyed on the main clip's content hash and the effective weights
+    captured when the context was resolved.  This keeps re-burns reproducible
+    within that context even if the wall clock crosses a launch expiry; a
+    recorded delivery is pinned separately by ``pin_existing_delivery_intro``.
+    An operator may pin one explicitly via ``AUTOSLICE_BRANDING_INTRO_PICK``
+    (which must name an intro_id from the roster; anything else fails closed).
     """
 
     raw = context.get("candidates")
@@ -531,6 +664,22 @@ def _pick_intro(
             raise BrandingIntroError("no verified intro candidate in branding context")
         return candidates[0], None
     ids = [str(c["intro_id"]) for c in candidates]
+    raw_weights = context.get("rotation_effective_weights")
+    if isinstance(raw_weights, Mapping):
+        weights = []
+        for intro_id in ids:
+            weight = raw_weights.get(intro_id, 1)
+            if isinstance(weight, bool) or not isinstance(weight, int) or weight <= 0:
+                raise BrandingIntroError(
+                    f"branding intro effective weight is invalid for {intro_id!r}"
+                )
+            weights.append(weight)
+    elif raw_weights is None:
+        # Hand-built legacy contexts did not carry a snapshot.  Their equal
+        # weights preserve the exact historical modulo selection.
+        weights = [1] * len(candidates)
+    else:
+        raise BrandingIntroError("branding intro effective weights are not an object")
     override = os.environ.get(BRANDING_INTRO_PICK_ENV, "").strip()
     if override:
         if override not in ids:
@@ -540,13 +689,32 @@ def _pick_intro(
         index = ids.index(override)
         reason = "env_override"
     else:
-        index = int(main_sha256[:16], 16) % len(candidates)
+        bucket = int(main_sha256[:16], 16) % sum(weights)
+        cumulative = 0
+        index = len(candidates) - 1
+        for candidate_index, weight in enumerate(weights):
+            cumulative += weight
+            if bucket < cumulative:
+                index = candidate_index
+                break
         reason = "main_sha256"
+    selection_time = context.get("rotation_selection_time")
+    active_expiry = context.get("rotation_active_expiry")
+    if selection_time is not None and not isinstance(selection_time, str):
+        raise BrandingIntroError("branding intro selection snapshot time is invalid")
+    if active_expiry is None:
+        active_expiry = {}
+    if not isinstance(active_expiry, Mapping):
+        raise BrandingIntroError("branding intro active expiry snapshot is invalid")
     return candidates[index], {
         "mode": str(context.get("rotation_mode") or "main-sha256"),
         "selector": reason,
         "candidate_intro_ids": ids,
         "picked_intro_id": ids[index],
+        "effective_weights": weights,
+        "effective_weight_by_intro_id": dict(zip(ids, weights)),
+        "selection_time": selection_time,
+        "active_expiry": dict(active_expiry),
     }
 
 

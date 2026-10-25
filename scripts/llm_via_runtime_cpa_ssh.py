@@ -18,6 +18,8 @@ from src.autoslice.llm_client import (
     PROVIDER_DIAGNOSTIC_MARKER,
     sanitize_provider_diagnostics,
 )
+from src.autoslice.cpa_model_ladder import cpa_call_timeout_seconds
+from src.autoslice.deployed_code_root import deployed_code_root_bootstrap
 
 DIAGNOSTIC_MARKER = PROVIDER_DIAGNOSTIC_MARKER
 SSH_PREFIX = [
@@ -33,7 +35,6 @@ SSH_PREFIX = [
 REMOTE_PROGRAM = r"""
 from __future__ import annotations
 import json
-import re
 import subprocess
 import sys
 import tempfile
@@ -42,9 +43,13 @@ from urllib.parse import urlsplit
 
 request = json.load(sys.stdin)
 runtime = Path(request["runtime_root"]).absolute()
-sys.path.insert(0, str(runtime / "repo"))
+# Ship the canonical stdlib resolver before importing any deployed code.
+""" + deployed_code_root_bootstrap(bind_repo=False) + r"""
+repo = deployed_code_root(runtime)
+sys.path.insert(0, str(repo))
 from src.autoslice.llm_client import runtime_cpa_command_environment
 from src.autoslice.provider_slots import runtime_provider_slot
+from src.autoslice.cpa_model_ladder import cpa_call_timeout_seconds
 
 
 def safe_failure(code, message, diagnostics):
@@ -81,11 +86,14 @@ diagnostics = {
     "provider_endpoint_path": endpoint.path or "/",
     "provider_credential_source": str(runtime / "cpa.env"),
 }
-wrapper = runtime / "repo" / "scripts" / "llm_via_cpa.sh"
+wrapper = repo / "scripts" / "llm_via_cpa.sh"
 with tempfile.TemporaryDirectory(prefix="runtime_cpa_review_") as tmp:
     prompt_file = Path(tmp) / "prompt.txt"
     completion_file = Path(tmp) / "completion.txt"
     prompt_file.write_text(request["prompt"], encoding="utf-8")
+    if 'response_format' in request:
+        Path(str(prompt_file) + '.response-format.json').write_text(
+            json.dumps(request['response_format']), encoding='utf-8')
     try:
         with runtime_provider_slot(
             runtime_root=runtime,
@@ -104,7 +112,7 @@ with tempfile.TemporaryDirectory(prefix="runtime_cpa_review_") as tmp:
                 check=False,
                 capture_output=True,
                 text=True,
-                timeout=660,
+                timeout=cpa_call_timeout_seconds(env),
                 env=env,
             )
     except subprocess.TimeoutExpired:
@@ -155,6 +163,9 @@ with tempfile.TemporaryDirectory(prefix="runtime_cpa_review_") as tmp:
             diagnostics,
         )
     diagnostics.setdefault("provider_http_status", 200)
+    provenance = Path(str(completion_file) + '.provenance.json')
+    if provenance.is_file():
+        diagnostics['provider_answering_model'] = json.loads(provenance.read_text())['answering_model']
     print(
         json.dumps(
             {
@@ -201,12 +212,14 @@ def run_bridge(
     effort: str,
     attempts: int,
 ) -> dict[str, object]:
+    from scripts.cpa_request_body import load_response_format
     request = {
         "prompt": prompt_file.read_text(encoding="utf-8"),
         "runtime_root": str(runtime_root),
         "model": model,
         "effort": effort,
         "attempts": attempts,
+        "response_format": load_response_format(prompt_file),
     }
     remote_command = "sudo -n /opt/bilive/autoslice/venv-main/bin/python -B -c " + shlex.quote(
         REMOTE_PROGRAM
@@ -216,7 +229,7 @@ def run_bridge(
         input=json.dumps(request, ensure_ascii=False),
         capture_output=True,
         text=True,
-        timeout=720,
+        timeout=cpa_call_timeout_seconds() + 1860,
         check=False,
     )
     try:
@@ -257,6 +270,9 @@ def run_bridge(
             provider_diagnostics=safe,
         )
     completion_file.write_text(completion, encoding="utf-8")
+    if safe.get('provider_answering_model'):
+        Path(str(completion_file) + '.provenance.json').write_text(json.dumps({
+            'answering_model': safe['provider_answering_model']}), encoding='utf-8')
     return safe
 
 

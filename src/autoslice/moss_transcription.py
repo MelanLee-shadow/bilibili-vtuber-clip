@@ -19,6 +19,11 @@ import urllib.error
 import urllib.request
 from typing import Any, Callable, Mapping
 
+from src.autoslice.native_audio_runtime import (
+    NativeAudioRuntimeError,
+    resolve_native_audio_environment,
+)
+
 MOSS_ENDPOINT = "https://api.mosi.cn/v1/audio/transcriptions"
 MOSS_MODEL = "moss-transcribe-diarize-pro"
 MOSS_TIMEOUT_SECONDS = 600
@@ -37,6 +42,21 @@ class MossTranscriptionError(RuntimeError):
 
 def _error(reason_code: str, message: str, metadata=None) -> MossTranscriptionError:
     return MossTranscriptionError(reason_code, message, metadata=metadata)
+
+
+def _runtime_environment(
+    environment: Mapping[str, str] | None = None,
+) -> Mapping[str, str]:
+    ambient = os.environ if environment is None else environment
+    try:
+        configured = resolve_native_audio_environment("moss", environ=ambient)
+    except NativeAudioRuntimeError as exc:
+        raise _error(
+            f"MOSS_{exc.reason_code}",
+            "MOSS native runtime configuration is unavailable",
+            metadata={"runtime_configured": True, "runtime_reason": exc.reason_code},
+        ) from None
+    return ambient if configured is None else configured
 
 
 def _read_api_key(environ: Mapping[str, str]) -> str:
@@ -321,10 +341,12 @@ def _fetch_payload(
     audio_input: AudioInput,
     *,
     before_request: Callable[[], None] | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, Any], Any]:
     audio = _read_audio(audio_input)
     input_audio_sha256 = hashlib.sha256(audio).hexdigest()
-    api_key = _read_api_key(os.environ)
+    provider_environment = _runtime_environment(environment)
+    api_key = _read_api_key(provider_environment)
     if before_request is not None:
         before_request()
     started = time.monotonic()

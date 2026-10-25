@@ -1,0 +1,1565 @@
+{
+ "name": "shimian_feixing_v01",
+ "provenance": {
+  "receipt": "smfx/song-selector/song_selector_full/attempt-5b4rx838/seededsong_120000_330700/song_repair/agy_audio_lrc/variant-01/seededsong_120000_330700-52k1semo/alignment.canonical.json",
+  "canonical_sha256": "ee9fa6ea08a24a4dae65ba1d765ac7255d008089a0e2d4215067c7c7f5309441",
+  "lrc_sha256": "b8641f0f79bce382c0684cedc01cb814dec86e6d746c487d781b973cc78fd42f",
+  "derivation": "real clocks/heard pattern/host speech; lyric text replaced by placeholders shared across this song's LRC variants; metadata rows verbatim",
+  "real_timeline": {
+   "offset_ms": 126478,
+   "anchor_count": 40,
+   "sections": [
+    [
+     0,
+     126478,
+     40,
+     1241
+    ]
+   ]
+  },
+  "derived_timeline": {
+   "offset_ms": 126478,
+   "anchor_count": 40,
+   "sections": [
+    [
+     0,
+     126478,
+     40,
+     1241
+    ]
+   ]
+  }
+ },
+ "source_duration_ms": 499600,
+ "observations": [
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 0,
+   "lrc_time_ms": 712,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "【hanser】"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 131100,
+   "live_start_ms": 128700,
+   "lrc_index": 1,
+   "lrc_time_ms": 1710,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "mawamipe ramuwuno"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 133400,
+   "live_start_ms": 131100,
+   "lrc_index": 2,
+   "lrc_time_ms": 4461,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "tumiguxo fukasiva"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 135800,
+   "live_start_ms": 133400,
+   "lrc_index": 3,
+   "lrc_time_ms": 6963,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "zuzepati wujojopo"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 138100,
+   "live_start_ms": 135800,
+   "lrc_index": 4,
+   "lrc_time_ms": 9461,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "nudojamo mebotoko"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 140500,
+   "live_start_ms": 138100,
+   "lrc_index": 5,
+   "lrc_time_ms": 12463,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "wequrone tovemuwe"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 142900,
+   "live_start_ms": 140500,
+   "lrc_index": 6,
+   "lrc_time_ms": 14961,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "xuduliti fidulajo"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 145200,
+   "live_start_ms": 142900,
+   "lrc_index": 7,
+   "lrc_time_ms": 16962,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "luhucice wiverobu"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 148000,
+   "live_start_ms": 145200,
+   "lrc_index": 8,
+   "lrc_time_ms": 19711,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "piwekaxo zugofifo"
+  },
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 9,
+   "lrc_time_ms": 22462,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "【KBShinya】"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 152000,
+   "live_start_ms": 149000,
+   "lrc_index": 10,
+   "lrc_time_ms": 22961,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "zasanahu qelasice"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 154500,
+   "live_start_ms": 152000,
+   "lrc_index": 11,
+   "lrc_time_ms": 25212,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "vipohowi xiniwipe"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 157000,
+   "live_start_ms": 154500,
+   "lrc_index": 12,
+   "lrc_time_ms": 27962,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "vevoloxu kulikoxa"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 159500,
+   "live_start_ms": 157000,
+   "lrc_index": 13,
+   "lrc_time_ms": 30461,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "hohiropo jijoqica"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 163000,
+   "live_start_ms": 159500,
+   "lrc_index": 14,
+   "lrc_time_ms": 33211,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "lofedumu dijezuji"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 168200,
+   "live_start_ms": 163000,
+   "lrc_index": 15,
+   "lrc_time_ms": 37961,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "fiwibude balomisa"
+  },
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 16,
+   "lrc_time_ms": 41961,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "【合 hanser主】"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 173300,
+   "live_start_ms": 168200,
+   "lrc_index": 17,
+   "lrc_time_ms": 42711,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "sorihiju zajaciva"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 178300,
+   "live_start_ms": 173300,
+   "lrc_index": 18,
+   "lrc_time_ms": 46962,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "kenigujo dakowama"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 183400,
+   "live_start_ms": 178300,
+   "lrc_index": 19,
+   "lrc_time_ms": 51960,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "hivivupu lahezage"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 188500,
+   "live_start_ms": 183400,
+   "lrc_index": 20,
+   "lrc_time_ms": 56961,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "rogupoza fuwugoxu"
+  },
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 21,
+   "lrc_time_ms": 62210,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "【hanser这里要录两遍主声】"
+  },
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 22,
+   "lrc_time_ms": 62712,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "lixidebe fiwezozu"
+  },
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 23,
+   "lrc_time_ms": 72711,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "lixidebe fiwezozu"
+  },
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 24,
+   "lrc_time_ms": 73960,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "翻唱：KBShinya / hanser"
+  },
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 25,
+   "lrc_time_ms": 76463,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "曲绘：御坂的蓝白"
+  },
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 26,
+   "lrc_time_ms": 82710,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "【hanser】"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 211200,
+   "live_start_ms": 208800,
+   "lrc_index": 27,
+   "lrc_time_ms": 82961,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "mawamipe ramuwuno"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 213500,
+   "live_start_ms": 211200,
+   "lrc_index": 28,
+   "lrc_time_ms": 85213,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "tumiguxo fukasiva"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 215900,
+   "live_start_ms": 213500,
+   "lrc_index": 29,
+   "lrc_time_ms": 87711,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "zuzepati wujojopo"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 218200,
+   "live_start_ms": 215900,
+   "lrc_index": 30,
+   "lrc_time_ms": 90211,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "nudojamo mebotoko"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 220600,
+   "live_start_ms": 218200,
+   "lrc_index": 31,
+   "lrc_time_ms": 93463,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "wequrone tovemuwe"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 222900,
+   "live_start_ms": 220600,
+   "lrc_index": 32,
+   "lrc_time_ms": 95710,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "xuduliti fidulajo"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 225300,
+   "live_start_ms": 222900,
+   "lrc_index": 33,
+   "lrc_time_ms": 97710,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "luhucice wiverobu"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 228100,
+   "live_start_ms": 225300,
+   "lrc_index": 34,
+   "lrc_time_ms": 100461,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "piwekaxo zugofifo"
+  },
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 35,
+   "lrc_time_ms": 102962,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "【KBShinya】"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 232100,
+   "live_start_ms": 229100,
+   "lrc_index": 36,
+   "lrc_time_ms": 103462,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "zasanahu qelasice"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 234600,
+   "live_start_ms": 232100,
+   "lrc_index": 37,
+   "lrc_time_ms": 106212,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "vipohowi xiniwipe"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 237100,
+   "live_start_ms": 234600,
+   "lrc_index": 38,
+   "lrc_time_ms": 108710,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "vevoloxu kulikoxa"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 239600,
+   "live_start_ms": 237100,
+   "lrc_index": 39,
+   "lrc_time_ms": 111461,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "hohiropo jijoqica"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 243100,
+   "live_start_ms": 239600,
+   "lrc_index": 40,
+   "lrc_time_ms": 113960,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "lofedumu dijezuji"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 248300,
+   "live_start_ms": 243100,
+   "lrc_index": 41,
+   "lrc_time_ms": 118960,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "fiwibude balomisa"
+  },
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 42,
+   "lrc_time_ms": 123211,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "【合 KBShinya主】"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 253400,
+   "live_start_ms": 248300,
+   "lrc_index": 43,
+   "lrc_time_ms": 123462,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "sorihiju zajaciva"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 258400,
+   "live_start_ms": 253400,
+   "lrc_index": 44,
+   "lrc_time_ms": 127710,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "kenigujo dakowama"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 263500,
+   "live_start_ms": 258400,
+   "lrc_index": 45,
+   "lrc_time_ms": 132963,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "hivivupu lahezage"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 268600,
+   "live_start_ms": 263500,
+   "lrc_index": 46,
+   "lrc_time_ms": 137961,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "rogupoza fuwugoxu"
+  },
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 47,
+   "lrc_time_ms": 143213,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "【hanser 这里要录两遍主声】"
+  },
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 48,
+   "lrc_time_ms": 143712,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "lixidebe fiwezozu"
+  },
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 49,
+   "lrc_time_ms": 153212,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "lixidebe fiwezozu"
+  },
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 50,
+   "lrc_time_ms": 163463,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "lixidebe fiwezozu"
+  },
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 51,
+   "lrc_time_ms": 164461,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "【KBShinya】"
+  },
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 52,
+   "lrc_time_ms": 164960,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "gezutizi gaqinexu"
+  },
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 53,
+   "lrc_time_ms": 167461,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "fipehena fubibace"
+  },
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 54,
+   "lrc_time_ms": 169961,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "bucesopi vonafoge"
+  },
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 55,
+   "lrc_time_ms": 173960,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "【合】"
+  },
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 56,
+   "lrc_time_ms": 174462,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "pikobico hokoqozu"
+  },
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 57,
+   "lrc_time_ms": 177712,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "xoziqede cetolica"
+  },
+  {
+   "confidence": 0.95,
+   "heard": false,
+   "lidousha_role": "SILENT_OR_NOT_AUDIBLE",
+   "live_end_ms": null,
+   "live_start_ms": null,
+   "lrc_index": 58,
+   "lrc_time_ms": 179963,
+   "lyric_vocal_subject": "NO_AUDIBLE_LYRIC_VOCAL",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": false,
+   "text": "netawavo jikedere"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 316800,
+   "live_start_ms": 312000,
+   "lrc_index": 59,
+   "lrc_time_ms": 183711,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "sorihiju zajaciva"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 321800,
+   "live_start_ms": 316800,
+   "lrc_index": 60,
+   "lrc_time_ms": 188462,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "kenigujo dakowama"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 326800,
+   "live_start_ms": 321800,
+   "lrc_index": 61,
+   "lrc_time_ms": 193462,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "hivivupu lahezage"
+  },
+  {
+   "confidence": 0.95,
+   "heard": true,
+   "lidousha_role": "SINGING_THIS_LYRIC",
+   "live_end_ms": 331500,
+   "live_start_ms": 326800,
+   "lrc_index": 62,
+   "lrc_time_ms": 198711,
+   "lyric_vocal_subject": "LIDOUSHA",
+   "other_singer_or_harmony_audible": false,
+   "recorded_or_playback_vocal_audible": false,
+   "same_live_vocal_source_as_lidousha": true,
+   "text": "rogupoza fuwugoxu"
+  }
+ ],
+ "spot_checks": [
+  {
+   "live_time_ms": 129000,
+   "name": "first_line",
+   "notes": "Li Dousha begins singing the first line of the song live over backing track.",
+   "result": "OK"
+  },
+  {
+   "live_time_ms": 170000,
+   "name": "chorus",
+   "notes": "Li Dousha performs the chorus line live with clear solo vocal.",
+   "result": "OK"
+  },
+  {
+   "live_time_ms": 210000,
+   "name": "repeated_section",
+   "notes": "Li Dousha sings the repeated verse section in the second half of the song.",
+   "result": "OK"
+  },
+  {
+   "live_time_ms": 280000,
+   "name": "longest_instrumental_gap",
+   "notes": "Instrumental beat interlude and vocal spoken chatter span between chorus sections.",
+   "result": "OK"
+  },
+  {
+   "live_time_ms": 328000,
+   "name": "tail",
+   "notes": "Inside the final sung lyric line before the instrumental outro resolves into streamer talk.",
+   "result": "OK"
+  }
+ ],
+ "live_performance": {
+  "background_recording_likelihood": 0.05,
+  "confidence": 0.95,
+  "continuous_live_song_performance": true,
+  "evidence": [
+   {
+    "observation": "Li Dousha sings the verse line live over the backing track in the first third.",
+    "time_ms": 150000
+   },
+   {
+    "observation": "Li Dousha sings the second verse section live in the middle third.",
+    "time_ms": 220000
+   },
+   {
+    "observation": "Li Dousha sings the final chorus section live in the last third.",
+    "time_ms": 320000
+   }
+  ],
+  "mode": "LIVE_STREAMER_SINGING",
+  "notes": "Li Dousha performs a continuous live singing rendition of 失眠飞行 over an instrumental backing track.",
+  "other_singer_or_harmony_present": false,
+  "recorded_or_playback_vocal_present": false,
+  "same_lidousha_live_performer_across_all_lyrics": true
+ },
+ "live_arrangement": {
+  "classification": "INCOMPLETE_OR_FRAGMENT",
+  "notes": "The live arrangement omitted the canonical studio bridge (lines 52-58) and minor tag lines.",
+  "observed_live_song_ending": true,
+  "observed_live_song_opening": true,
+  "post_song_transition_kind": "HOST_TALK",
+  "post_song_transition_ms": 334500
+ },
+ "post_song_talk_start_ms": 334500,
+ "row_anchor_cue_ids": {
+  "1": [
+   "asr_anchor_000047"
+  ],
+  "2": [
+   "asr_anchor_000048"
+  ],
+  "3": [
+   "asr_anchor_000049"
+  ],
+  "4": [
+   "asr_anchor_000050"
+  ],
+  "5": [
+   "asr_anchor_000051"
+  ],
+  "6": [
+   "asr_anchor_000052"
+  ],
+  "7": [
+   "asr_anchor_000053"
+  ],
+  "8": [
+   "asr_anchor_000054"
+  ],
+  "10": [
+   "asr_anchor_000055"
+  ],
+  "11": [
+   "asr_anchor_000056"
+  ],
+  "12": [
+   "asr_anchor_000057"
+  ],
+  "13": [
+   "asr_anchor_000058"
+  ],
+  "14": [
+   "asr_anchor_000059"
+  ],
+  "15": [
+   "asr_anchor_000060",
+   "asr_anchor_000061"
+  ],
+  "17": [
+   "asr_anchor_000062"
+  ],
+  "18": [
+   "asr_anchor_000063"
+  ],
+  "19": [
+   "asr_anchor_000064"
+  ],
+  "20": [
+   "asr_anchor_000065"
+  ],
+  "27": [
+   "asr_anchor_000068"
+  ],
+  "28": [
+   "asr_anchor_000069"
+  ],
+  "29": [
+   "asr_anchor_000070"
+  ],
+  "30": [
+   "asr_anchor_000071"
+  ],
+  "31": [
+   "asr_anchor_000072"
+  ],
+  "32": [
+   "asr_anchor_000073"
+  ],
+  "33": [
+   "asr_anchor_000074"
+  ],
+  "34": [
+   "asr_anchor_000075"
+  ],
+  "36": [
+   "asr_anchor_000076"
+  ],
+  "37": [
+   "asr_anchor_000077"
+  ],
+  "38": [
+   "asr_anchor_000078"
+  ],
+  "39": [
+   "asr_anchor_000079"
+  ],
+  "40": [
+   "asr_anchor_000080"
+  ],
+  "41": [
+   "asr_anchor_000081",
+   "asr_anchor_000082"
+  ],
+  "43": [
+   "asr_anchor_000083"
+  ],
+  "44": [
+   "asr_anchor_000084"
+  ],
+  "45": [
+   "asr_anchor_000085"
+  ],
+  "46": [
+   "asr_anchor_000086"
+  ],
+  "59": [
+   "asr_anchor_000096"
+  ],
+  "60": [
+   "asr_anchor_000097"
+  ],
+  "61": [
+   "asr_anchor_000098"
+  ],
+  "62": [
+   "asr_anchor_000099"
+  ]
+ },
+ "asr_cues": [
+  {
+   "cue_id": "asr_anchor_000047",
+   "source_start_ms": 128720,
+   "source_end_ms": 130640,
+   "text": "mawamipe ramuwuno",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000048",
+   "source_start_ms": 130800,
+   "source_end_ms": 133040,
+   "text": "tumiguxo fukasiva",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000049",
+   "source_start_ms": 133360,
+   "source_end_ms": 135600,
+   "text": "zuzepati wujojopo",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000050",
+   "source_start_ms": 135860,
+   "source_end_ms": 138100,
+   "text": "nudojamo mebotoko",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000051",
+   "source_start_ms": 138630,
+   "source_end_ms": 141190,
+   "text": "wequrone tovemuwe",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000052",
+   "source_start_ms": 141270,
+   "source_end_ms": 143570,
+   "text": "xuduliti fidulajo",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000053",
+   "source_start_ms": 143570,
+   "source_end_ms": 145750,
+   "text": "luhucice wiverobu",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000054",
+   "source_start_ms": 145990,
+   "source_end_ms": 148270,
+   "text": "piwekaxo zugofifo",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000055",
+   "source_start_ms": 149340,
+   "source_end_ms": 151880,
+   "text": "zasanahu qelasice",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000056",
+   "source_start_ms": 151880,
+   "source_end_ms": 154500,
+   "text": "vipohowi xiniwipe",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000057",
+   "source_start_ms": 154500,
+   "source_end_ms": 156990,
+   "text": "vevoloxu kulikoxa",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000058",
+   "source_start_ms": 156990,
+   "source_end_ms": 159580,
+   "text": "hohiropo jijoqica",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000059",
+   "source_start_ms": 159580,
+   "source_end_ms": 163440,
+   "text": "lofedumu dijezuji",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000060",
+   "source_start_ms": 164470,
+   "source_end_ms": 165630,
+   "text": "fiwibude mimedufe",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000061",
+   "source_start_ms": 165630,
+   "source_end_ms": 168390,
+   "text": "balomisa hobonaze",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000062",
+   "source_start_ms": 168390,
+   "source_end_ms": 173430,
+   "text": "sorihiju zajaciva",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000063",
+   "source_start_ms": 173450,
+   "source_end_ms": 178510,
+   "text": "kenigujo dakowama",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000064",
+   "source_start_ms": 178550,
+   "source_end_ms": 183570,
+   "text": "hivivupu lahezage",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000065",
+   "source_start_ms": 183570,
+   "source_end_ms": 188610,
+   "text": "rogupoza fuwugoxu",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000066",
+   "source_start_ms": 188610,
+   "source_end_ms": 190750,
+   "text": "lixidebe fiwezozu",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000067",
+   "source_start_ms": 198700,
+   "source_end_ms": 200940,
+   "text": "lixidebe fiwezozu",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000068",
+   "source_start_ms": 209100,
+   "source_end_ms": 211380,
+   "text": "mawamipe ramuwuno",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000069",
+   "source_start_ms": 211650,
+   "source_end_ms": 213850,
+   "text": "tumiguxo fukasiva",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000070",
+   "source_start_ms": 214210,
+   "source_end_ms": 216370,
+   "text": "zuzepati wujojopo",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000071",
+   "source_start_ms": 216770,
+   "source_end_ms": 218890,
+   "text": "nudojamo mebotoko",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000072",
+   "source_start_ms": 219280,
+   "source_end_ms": 222000,
+   "text": "wequrone tovemuwe",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000073",
+   "source_start_ms": 222120,
+   "source_end_ms": 224400,
+   "text": "xuduliti fidulajo",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000074",
+   "source_start_ms": 224400,
+   "source_end_ms": 226600,
+   "text": "luhucice wiverobu",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000075",
+   "source_start_ms": 226840,
+   "source_end_ms": 229000,
+   "text": "piwekaxo zugofifo",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000076",
+   "source_start_ms": 230120,
+   "source_end_ms": 232770,
+   "text": "zasanahu qelasice",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000077",
+   "source_start_ms": 232770,
+   "source_end_ms": 235340,
+   "text": "vipohowi xiniwipe",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000078",
+   "source_start_ms": 235340,
+   "source_end_ms": 237900,
+   "text": "vevoloxu kulikoxa",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000079",
+   "source_start_ms": 237900,
+   "source_end_ms": 240530,
+   "text": "hohiropo jijoqica",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000080",
+   "source_start_ms": 240530,
+   "source_end_ms": 244230,
+   "text": "lofedumu dijezuji",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000081",
+   "source_start_ms": 245280,
+   "source_end_ms": 246520,
+   "text": "fiwibude",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000082",
+   "source_start_ms": 246520,
+   "source_end_ms": 249200,
+   "text": "balomisa",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000083",
+   "source_start_ms": 249240,
+   "source_end_ms": 254320,
+   "text": "sorihiju zajaciva",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000084",
+   "source_start_ms": 254320,
+   "source_end_ms": 259380,
+   "text": "kenigujo dakowama",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000085",
+   "source_start_ms": 259380,
+   "source_end_ms": 264400,
+   "text": "hivivupu lahezage",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000086",
+   "source_start_ms": 264400,
+   "source_end_ms": 269470,
+   "text": "rogupoza fuwugoxu",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000087",
+   "source_start_ms": 269470,
+   "source_end_ms": 272090,
+   "text": "lixidebe fiwezozu",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000088",
+   "source_start_ms": 279580,
+   "source_end_ms": 282140,
+   "text": "lixidebe fiwezozu",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000089",
+   "source_start_ms": 292620,
+   "source_end_ms": 294100,
+   "text": "这段好像有词",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000090",
+   "source_start_ms": 294180,
+   "source_end_ms": 295740,
+   "text": "但是是什么词呢",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000091",
+   "source_start_ms": 298880,
+   "source_end_ms": 300840,
+   "text": "好像是我不会唱的词",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000092",
+   "source_start_ms": 302120,
+   "source_end_ms": 303440,
+   "text": "好像曾经会",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000093",
+   "source_start_ms": 303680,
+   "source_end_ms": 305380,
+   "text": "但是现在已经不会了",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000094",
+   "source_start_ms": 305380,
+   "source_end_ms": 306880,
+   "text": "为什么会这样呢",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000095",
+   "source_start_ms": 307120,
+   "source_end_ms": 310120,
+   "text": "下次再好好听听这首歌吧",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000096",
+   "source_start_ms": 311430,
+   "source_end_ms": 314910,
+   "text": "sorihiju zajaciva",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000097",
+   "source_start_ms": 314950,
+   "source_end_ms": 320040,
+   "text": "kenigujo dakowama",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000098",
+   "source_start_ms": 320120,
+   "source_end_ms": 325120,
+   "text": "hivivupu lahezage",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000099",
+   "source_start_ms": 325180,
+   "source_end_ms": 330700,
+   "text": "rogupoza fuwugoxu",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000100",
+   "source_start_ms": 335680,
+   "source_end_ms": 336940,
+   "text": "哈哈哈",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000101",
+   "source_start_ms": 336940,
+   "source_end_ms": 338500,
+   "text": "如果你感到迷茫",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000102",
+   "source_start_ms": 338500,
+   "source_end_ms": 340960,
+   "text": "不妨听听李东霞说的话",
+   "kind": "speech",
+   "speaker": null
+  },
+  {
+   "cue_id": "asr_anchor_000103",
+   "source_start_ms": 341520,
+   "source_end_ms": 344520,
+   "text": "这个伴奏意外的很合适啊",
+   "kind": "speech",
+   "speaker": null
+  }
+ ]
+}

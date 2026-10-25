@@ -9,6 +9,7 @@ to the ordinary binary finalizer.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import argparse
 import hashlib
 import json
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from scripts.apply_speaker_turn_overrides import atomic_write_text, sha256_file
+from src.autoslice.evidence_identity import placement_free
 from src.autoslice.channel_profile import load_channel_profile
 
 
@@ -165,13 +167,14 @@ def segment_binding_sha256(path: Path) -> str:
 
     resolved = path.resolve(strict=True)
     before = _stat_tuple(resolved)
-    digest = hashlib.sha256()
-    with resolved.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(4 * 1024 * 1024), b""):
-            digest.update(chunk)
+    from .evidence_identity import EvidenceFileChangedError
+    try:
+        digest = _evidence_file_sha256(resolved)
+    except EvidenceFileChangedError as exc:
+        raise SpeakerRoutingError("recording segment changed while hashing") from exc
     if before != _stat_tuple(resolved):
         raise SpeakerRoutingError("recording segment changed while hashing")
-    return digest.hexdigest()
+    return digest
 
 
 def _artifact_digest(path: Path) -> tuple[str, str]:
@@ -356,8 +359,10 @@ def _validate_candidate(raw: object, *, verify_segment_content: bool) -> dict[st
     if verify_segment_content and segment_binding_sha256(segment_path) != segment_binding:
         raise SpeakerRoutingError(f"{candidate_id} segment content drifted")
     stat_signature = raw.get("segment_stat_signature")
-    if not isinstance(stat_signature, Mapping) or dict(stat_signature) != segment_stat_signature(
-        segment_path
+    # Content is the segment's identity (segment_binding_sha256); a restored
+    # byte-identical segment keeps size/mtime but not dev/ino/ctime (41).
+    if not isinstance(stat_signature, Mapping) or placement_free(stat_signature) != placement_free(
+        segment_stat_signature(segment_path)
     ):
         raise SpeakerRoutingError(f"{candidate_id} segment stat binding drifted")
     bcut_srt_path = Path(str(raw.get("bcut_srt_path") or "")).resolve(strict=True)
@@ -765,11 +770,9 @@ def verify_speaker_routing_claim_for_candidate(
         match["segment_binding_sha256"] != expected_segment_binding_sha256
         or match["start_ms"] != expected_start_ms
         or match["end_ms"] != expected_end_ms
-        or match["segment_path"] != str(segment_path)
-        or match["segment_stat_signature"] != dict(expected_segment_stat_signature)
-        or match["segment_stat_signature"] != segment_stat_signature(segment_path)
+        or placement_free(match["segment_stat_signature"]) != placement_free(expected_segment_stat_signature)
+        or placement_free(match["segment_stat_signature"]) != placement_free(segment_stat_signature(segment_path))
         or segment_binding_sha256(segment_path) != expected_segment_binding_sha256
-        or match["bcut_srt_path"] != str(bcut_path)
         or match["bcut_srt_sha256"] != expected_bcut_srt_sha256
         or sha256_file(bcut_path) != expected_bcut_srt_sha256
     ):

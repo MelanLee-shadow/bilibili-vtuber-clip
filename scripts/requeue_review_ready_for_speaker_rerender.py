@@ -69,7 +69,7 @@ state 原子写（tmp + fsync + rename）；全程自持 ``runner.lock``（不�
 套 flock，会死锁）。默认 dry-run，只有 ``--apply`` 才写盘。
 
 用法：
- python3 scripts/requeue_review_ready_for_speaker_rerender.py --date --candidate-id auto_173005_934_1166 --package-root /opt/bilive/autoslice/lidousha/2026-08-11 --authority-quote "目前先把host改成单一host，全部只有李豆沙一人直播，默认这样。重新做一下这些切片。" --authority-timestamp T00:00:00Z [--apply]
+ python3 scripts/requeue_review_ready_for_speaker_rerender.py --date --candidate-id auto_173005_934_1166 --package-root /opt/bilive/autoslice/lidousha/2026-08-11 --authority-quote "合成样例：指定测试候选采用统一主讲人配置并重新渲染。" --authority-timestamp T00:00:00Z [--apply]
 """
 
 from __future__ import annotations

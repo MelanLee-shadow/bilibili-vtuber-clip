@@ -14,8 +14,26 @@ The offset is applied exactly once.  The checker finds long, unique textual
 anchors with standard-library normalization and :mod:`difflib`, then compares
 their observed witness starts with the transformed final starts.  It requires
 three distinct anchors covering the beginning, middle, and end of the clip.
+When single-cue anchors leave one of those regions uncovered, one exact anchor
+may span two adjacent cues on either side; this is a timing correspondence
+fallback, not a cue edit or a fuzzy semantic match.
 Proper-name or other wording errors remain outside this check: the text status
 is reported as ``UNASSESSED`` rather than becoming a repair request.
+
+Anchor uniqueness (``anchor_policy.anchor_uniqueness``).  A pair ``(f, w)`` is
+timing evidence only if the sentence it carries can be placed at one speech
+location on each side.  An *occurrence* of a sentence ``t`` is any single cue
+or adjacent cue pair whose normalized text reaches ``ANCHOR_MIN_SIMILARITY``
+against ``t`` (ASR variants included), or any contiguous cue span whose
+normalized text contains ``t`` exactly.  For both anchor texts, the number of
+mutually disjoint occurrences strictly before and strictly after the anchor's
+own cues must be equal on the final and witness sides: zero/zero is a unique
+anchor; otherwise the k-th occurrence is paired with the k-th occurrence
+(``ordered_repeat``).  Ordered repeats are kept only when at least one unique
+anchor exists and every ordered repeat keeps the start order of every unique
+anchor and of every other ordered repeat on both sides; otherwise all ordered
+repeats are dropped.  Receipts without the policy key were produced by the
+legacy whole-cue exact-count rule and are replayed under that rule.
 
 Provenance schema (``subtitle-audio-correspondence-provenance.v1``)::
 
@@ -45,9 +63,9 @@ used as evidence.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import argparse
 import difflib
-import hashlib
 import json
 import math
 import re
@@ -55,6 +73,7 @@ import statistics
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass
+from itertools import combinations
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -75,6 +94,20 @@ GLOBAL_SHIFT_THRESHOLD_MS = 1_500
 INCONSISTENT_SPREAD_THRESHOLD_MS = 3_000
 INCONSISTENT_MAD_THRESHOLD_MS = 1_000
 MIN_ANCHORS = 3
+
+# Current uniqueness rule, written into every new receipt's anchor_policy.
+ANCHOR_UNIQUENESS_POLICY = "sentence-occurrence-order.v1"
+# Replay-only identity of the rule used before the key existed (whole-cue
+# exact-text Counter); it is never written, so legacy receipts stay unchanged.
+LEGACY_ANCHOR_UNIQUENESS_POLICY = "legacy-exact-whole-cue-count"
+_ANCHOR_UNIQUENESS_POLICIES = frozenset({ANCHOR_UNIQUENESS_POLICY, LEGACY_ANCHOR_UNIQUENESS_POLICY})
+ANCHOR_OCCURRENCE_MATCH = (
+    "single_or_adjacent_pair_similarity_at_least_minimum_or_exact_containment_in_contiguous_span"
+)
+ANCHOR_REPEAT_RESOLUTION = (
+    "equal_disjoint_occurrences_before_and_after_on_both_sides_for_both_texts_"
+    "and_start_order_consistent_with_every_unique_anchor_else_drop_all_ordered_repeats"
+)
 
 _SRT_TIME_RE = re.compile(
     r"^(?P<hours>\d+):(?P<minutes>[0-5]\d):(?P<seconds>[0-5]\d)[,.](?P<millis>\d{1,3})$"
@@ -157,12 +190,61 @@ class TimedCue:
 
 @dataclass(frozen=True)
 class _Anchor:
-    final: TimedCue
-    witness: TimedCue
+    final_cues: tuple[TimedCue, ...]
+    witness_cues: tuple[TimedCue, ...]
     similarity: float
     final_start_aligned_ms: int
     start_delta_ms: int
     end_delta_ms: int
+    # ``None`` under the legacy rule (receipt shape unchanged); otherwise
+    # ``"unique"`` or ``"ordered_repeat"`` with the occurrence counts proving it.
+    occurrence_resolution: str | None = None
+    occurrences_before: int = 0
+    occurrences_after: int = 0
+
+    @property
+    def final_indices(self) -> tuple[str, ...]:
+        return tuple(cue.index for cue in self.final_cues)
+
+    @property
+    def witness_indices(self) -> tuple[str, ...]:
+        return tuple(cue.index for cue in self.witness_cues)
+
+    @property
+    def final_index(self) -> str:
+        return "+".join(self.final_indices)
+
+    @property
+    def witness_index(self) -> str:
+        return "+".join(self.witness_indices)
+
+    @property
+    def final_start_ms(self) -> int:
+        return self.final_cues[0].start_ms
+
+    @property
+    def final_end_ms(self) -> int:
+        return self.final_cues[-1].end_ms
+
+    @property
+    def witness_start_ms(self) -> int:
+        return self.witness_cues[0].start_ms
+
+    @property
+    def witness_end_ms(self) -> int:
+        return self.witness_cues[-1].end_ms
+
+    @property
+    def final_text(self) -> str:
+        return " ".join(cue.text for cue in self.final_cues)
+
+    @property
+    def witness_text(self) -> str:
+        return " ".join(cue.text for cue in self.witness_cues)
+
+    @property
+    def kind(self) -> str:
+        return "composite" if len(self.final_cues) == 2 or len(self.witness_cues) == 2 else "single"
 
 
 def _regular_file(path: str | Path, *, label: str) -> Path:
@@ -180,14 +262,11 @@ def sha256_file(path: str | Path) -> str:
     """Return a canonical ``sha256:<hex>`` digest for a regular file."""
 
     file_path = _regular_file(path, label="hash input")
-    digest = hashlib.sha256()
     try:
-        with file_path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
+        digest = _evidence_file_sha256(file_path)
     except OSError as exc:
         raise CorrespondenceInputError("INPUT_READ_FAILED", f"{file_path}: {exc}") from exc
-    return f"sha256:{digest.hexdigest()}"
+    return f"sha256:{digest}"
 
 
 def normalize_text(text: str) -> str:
@@ -390,7 +469,29 @@ def _validate_provenance(
     }
 
 
-def _is_eligible_anchor(cue: TimedCue, occurrences: Mapping[str, int]) -> bool:
+def anchor_uniqueness_policy_of(receipt: Mapping[str, Any]) -> str:
+    """Return the uniqueness rule a stored receipt was produced under.
+
+    Receipts written before ``anchor_policy.anchor_uniqueness`` existed are
+    replayed under the legacy rule; an unknown declared rule is refused rather
+    than replayed under a different one.
+    """
+
+    policy = receipt.get("anchor_policy") if isinstance(receipt, Mapping) else None
+    if not isinstance(policy, Mapping) or "anchor_uniqueness" not in policy:
+        return LEGACY_ANCHOR_UNIQUENESS_POLICY
+    declared = policy.get("anchor_uniqueness")
+    if declared != ANCHOR_UNIQUENESS_POLICY:
+        raise CorrespondenceInputError(
+            "ANCHOR_UNIQUENESS_POLICY_UNSUPPORTED",
+            f"receipt declares anchor_uniqueness={declared!r}",
+        )
+    return ANCHOR_UNIQUENESS_POLICY
+
+
+def _is_eligible_anchor(cue: TimedCue, occurrences: Mapping[str, int] | None) -> bool:
+    """Length/common-word eligibility; ``occurrences=None`` skips the legacy count."""
+
     normalized = cue.normalized_text
     if len(normalized) < ANCHOR_MIN_CHARS:
         return False
@@ -398,6 +499,8 @@ def _is_eligible_anchor(cue: TimedCue, occurrences: Mapping[str, int]) -> bool:
         return False
     if normalized in _COMMON_SHORT_TEXT:
         return False
+    if occurrences is None:
+        return True
     return occurrences.get(normalized, 0) == 1
 
 
@@ -429,18 +532,216 @@ def _has_shared_text_start(left: str, right: str) -> bool:
     return first_match is not None and first_match.a == 0 and first_match.b == 0
 
 
+def _group_normalized_text(cues: Sequence[TimedCue]) -> str:
+    return "".join(cue.normalized_text for cue in cues)
+
+
+def _pair_gap_is_eligible(cues: Sequence[TimedCue]) -> bool:
+    if len(cues) != 2:
+        return False
+    gap_ms = cues[1].start_ms - cues[0].end_ms
+    return 0 <= gap_ms <= 250
+
+
+def _composite_text_occurrences(cues: Sequence[TimedCue]) -> Counter[str]:
+    """Count every singleton and adjacent-pair normalized text occurrence."""
+
+    occurrences = Counter(cue.normalized_text for cue in cues)
+    occurrences.update(
+        _group_normalized_text(group)
+        for group in zip(cues, cues[1:])
+    )
+    return occurrences
+
+
+def _eligible_composite_groups(
+    cues: Sequence[TimedCue], *, require_unique_text: bool = True
+) -> list[tuple[TimedCue, TimedCue]]:
+    """Return exact two-cue groups without widening the time contract.
+
+    ``require_unique_text`` applies the legacy exact-count uniqueness; the
+    current rule decides uniqueness per candidate from sentence occurrences.
+    """
+
+    text_occurrences = _composite_text_occurrences(cues)
+    pairs: list[tuple[TimedCue, TimedCue]] = []
+    for first, second in zip(cues, cues[1:]):
+        group = (first, second)
+        normalized = _group_normalized_text(group)
+        if not _pair_gap_is_eligible(group):
+            continue
+        if (
+            len(normalized) < ANCHOR_MIN_CHARS
+            or len(set(normalized)) < ANCHOR_MIN_UNIQUE_CHARS
+            or normalized in _COMMON_SHORT_TEXT
+            or all(cue.normalized_text in _COMMON_SHORT_TEXT for cue in group)
+            or (require_unique_text and text_occurrences[normalized] != 1)
+        ):
+            continue
+        pairs.append(group)
+    return pairs
+
+
+def _disjoint_count(spans: Any) -> int:
+    """Maximum number of mutually disjoint cue spans (earliest-end greedy)."""
+
+    count = 0
+    last_end = -1
+    for start, end in sorted(spans, key=lambda span: (span[1], span[0])):
+        if start > last_end:
+            count += 1
+            last_end = end
+    return count
+
+
+class _OccurrenceIndex:
+    """Where a sentence is spoken on one side, over every cue (eligible or not).
+
+    An occurrence is a single cue or adjacent cue pair whose normalized text
+    reaches ``ANCHOR_MIN_SIMILARITY`` against the sentence (ASR variants), or
+    any contiguous span whose normalized text contains the sentence exactly.
+    A shorter cue merely contained in the sentence is a different, shorter
+    sentence unless it reaches the similarity floor on its own.
+    """
+
+    def __init__(self, cues: Sequence[TimedCue]):
+        self._texts = [cue.normalized_text for cue in cues]
+        self._pairs = [left + right for left, right in zip(self._texts, self._texts[1:])]
+        owners: list[int] = []
+        for position, text in enumerate(self._texts):
+            owners.extend([position] * len(text))
+        self._stream = "".join(self._texts)
+        self._owners = owners
+        self._cache: dict[str, tuple[tuple[int, int], ...]] = {}
+
+    def spans(self, text: str) -> tuple[tuple[int, int], ...]:
+        cached = self._cache.get(text)
+        if cached is not None:
+            return cached
+        found: set[tuple[int, int]] = set()
+        if text:
+            for position, cue_text in enumerate(self._texts):
+                if _similarity(text, cue_text) >= ANCHOR_MIN_SIMILARITY:
+                    found.add((position, position))
+            for position, pair_text in enumerate(self._pairs):
+                if _similarity(text, pair_text) >= ANCHOR_MIN_SIMILARITY:
+                    found.add((position, position + 1))
+            start = self._stream.find(text)
+            while start != -1:
+                found.add((self._owners[start], self._owners[start + len(text) - 1]))
+                start = self._stream.find(text, start + 1)
+        result = tuple(sorted(found))
+        self._cache[text] = result
+        return result
+
+    def beside(self, texts: Sequence[str], own: tuple[int, int]) -> tuple[int, int]:
+        """Disjoint occurrences of any spelling strictly before/after ``own``."""
+
+        spans = {span for text in texts for span in self.spans(text)}
+        before = _disjoint_count(span for span in spans if span[1] < own[0])
+        after = _disjoint_count(span for span in spans if span[0] > own[1])
+        return before, after
+
+
+def _occurrence_resolution(
+    texts: Sequence[str],
+    final_index: _OccurrenceIndex,
+    final_span: tuple[int, int],
+    witness_index: _OccurrenceIndex,
+    witness_span: tuple[int, int],
+) -> tuple[str, int, int] | None:
+    """Return ``(resolution, before, after)`` or ``None`` when unresolvable.
+
+    The sentence is either anchor spelling (final or witness text).  It must
+    have the same number of other disjoint occurrences before and after the
+    anchor on the final side as on the witness side.
+    """
+
+    spellings = tuple(dict.fromkeys(texts))
+    final_counts = final_index.beside(spellings, final_span)
+    if final_counts != witness_index.beside(spellings, witness_span):
+        return None
+    before, after = final_counts
+    return ("unique" if before == after == 0 else "ordered_repeat", before, after)
+
+
+def _start_order_agrees(left: _Anchor, right: _Anchor) -> bool:
+    final_order = (left.final_start_ms > right.final_start_ms) - (left.final_start_ms < right.final_start_ms)
+    witness_order = (left.witness_start_ms > right.witness_start_ms) - (
+        left.witness_start_ms < right.witness_start_ms
+    )
+    return final_order == witness_order
+
+
+def _ordered_repeats_consistent(anchors: Sequence[_Anchor]) -> bool:
+    unique = [anchor for anchor in anchors if anchor.occurrence_resolution == "unique"]
+    ordered = [anchor for anchor in anchors if anchor.occurrence_resolution == "ordered_repeat"]
+    if not ordered:
+        return True
+    if not unique:
+        return False
+    return all(_start_order_agrees(item, other) for item in ordered for other in unique) and all(
+        _start_order_agrees(item, other) for item, other in combinations(ordered, 2)
+    )
+
+
+def _without_inconsistent_ordered_repeats(anchors: Sequence[_Anchor]) -> list[_Anchor]:
+    if _ordered_repeats_consistent(anchors):
+        return list(anchors)
+    return [anchor for anchor in anchors if anchor.occurrence_resolution != "ordered_repeat"]
+
+
+def _make_anchor(
+    final_cues: Sequence[TimedCue],
+    witness_cues: Sequence[TimedCue],
+    *,
+    similarity: float,
+    intro_offset_ms: int,
+    resolution: tuple[str, int, int] | None = None,
+) -> _Anchor:
+    final_group = tuple(final_cues)
+    witness_group = tuple(witness_cues)
+    aligned_start_ms = final_group[0].start_ms + intro_offset_ms
+    return _Anchor(
+        final_cues=final_group,
+        witness_cues=witness_group,
+        similarity=similarity,
+        final_start_aligned_ms=aligned_start_ms,
+        start_delta_ms=witness_group[0].start_ms - aligned_start_ms,
+        end_delta_ms=witness_group[-1].end_ms - (final_group[-1].end_ms + intro_offset_ms),
+        occurrence_resolution=resolution[0] if resolution is not None else None,
+        occurrences_before=resolution[1] if resolution is not None else 0,
+        occurrences_after=resolution[2] if resolution is not None else 0,
+    )
+
+
+def _repeat_last(resolution: tuple[str, int, int] | None) -> bool:
+    """Sort key: unique (and legacy) anchors are selected before ordered repeats."""
+
+    return resolution is not None and resolution[0] != "unique"
+
+
 def _find_anchors(
     final_cues: Sequence[TimedCue],
     witness_cues: Sequence[TimedCue],
     *,
     intro_offset_ms: int,
+    anchor_uniqueness: str = ANCHOR_UNIQUENESS_POLICY,
 ) -> list[_Anchor]:
-    final_occurrences = Counter(cue.normalized_text for cue in final_cues)
-    witness_occurrences = Counter(cue.normalized_text for cue in witness_cues)
+    legacy = anchor_uniqueness == LEGACY_ANCHOR_UNIQUENESS_POLICY
+    final_occurrences = Counter(cue.normalized_text for cue in final_cues) if legacy else None
+    witness_occurrences = Counter(cue.normalized_text for cue in witness_cues) if legacy else None
     eligible_final = [cue for cue in final_cues if _is_eligible_anchor(cue, final_occurrences)]
     eligible_witness = [cue for cue in witness_cues if _is_eligible_anchor(cue, witness_occurrences)]
+    final_index = _OccurrenceIndex(final_cues)
+    witness_index = _OccurrenceIndex(witness_cues)
+    final_position = {cue.index: position for position, cue in enumerate(final_cues)}
+    witness_position = {cue.index: position for position, cue in enumerate(witness_cues)}
 
-    candidates: list[tuple[float, TimedCue, TimedCue]] = []
+    def group_span(group: Sequence[TimedCue], positions: Mapping[str, int]) -> tuple[int, int]:
+        return positions[group[0].index], positions[group[-1].index]
+
+    candidates: list[tuple[float, TimedCue, TimedCue, tuple[str, int, int] | None]] = []
     for final_cue in eligible_final:
         scored = sorted(
             [
@@ -459,39 +760,166 @@ def _find_anchors(
             if similarity == 1.0
             or _has_shared_text_start(final_cue.normalized_text, witness_cue.normalized_text)
         ]
-        if not scored or scored[0][0] < ANCHOR_MIN_SIMILARITY:
+        if legacy:
+            if not scored or scored[0][0] < ANCHOR_MIN_SIMILARITY:
+                continue
+            if (
+                len(scored) > 1
+                and scored[0][0] < 1.0
+                and scored[0][0] - scored[1][0] < ANCHOR_TIE_MARGIN
+            ):
+                continue
+            candidates.append((scored[0][0], final_cue, scored[0][1], None))
             continue
-        if (
-            len(scored) > 1
-            and scored[0][0] < 1.0
-            and scored[0][0] - scored[1][0] < ANCHOR_TIE_MARGIN
-        ):
+
+        # Every witness cue reaching the floor is an occurrence of this
+        # sentence; the partner is the one at the same occurrence rank on
+        # both sides.  More than one rank-consistent partner is ambiguous.
+        final_span = group_span((final_cue,), final_position)
+        resolvable = [
+            (similarity, witness_cue, resolution)
+            for similarity, witness_cue in scored
+            if similarity >= ANCHOR_MIN_SIMILARITY
+            for resolution in [
+                _occurrence_resolution(
+                    (final_cue.normalized_text, witness_cue.normalized_text),
+                    final_index,
+                    final_span,
+                    witness_index,
+                    group_span((witness_cue,), witness_position),
+                )
+            ]
+            if resolution is not None
+        ]
+        if len(resolvable) != 1:
             continue
-        candidates.append((scored[0][0], final_cue, scored[0][1]))
+        similarity, witness_cue, resolution = resolvable[0]
+        # Other occurrences are resolved by rank; a below-floor near miss
+        # still has to leave the existing tie margin.
+        near_misses = [score for score, _cue in scored if score < ANCHOR_MIN_SIMILARITY]
+        if similarity < 1.0 and near_misses and similarity - near_misses[0] < ANCHOR_TIE_MARGIN:
+            continue
+        candidates.append((similarity, final_cue, witness_cue, resolution))
 
     anchors: list[_Anchor] = []
     used_final: set[str] = set()
     used_witness: set[str] = set()
-    for similarity, final_cue, witness_cue in sorted(
+    for similarity, final_cue, witness_cue, resolution in sorted(
         candidates,
-        key=lambda item: (-item[0], item[1].start_ms, item[2].start_ms),
+        key=lambda item: (_repeat_last(item[3]), -item[0], item[1].start_ms, item[2].start_ms),
     ):
         if final_cue.index in used_final or witness_cue.index in used_witness:
             continue
-        aligned_start_ms = final_cue.start_ms + intro_offset_ms
         anchors.append(
-            _Anchor(
-                final=final_cue,
-                witness=witness_cue,
+            _make_anchor(
+                (final_cue,),
+                (witness_cue,),
                 similarity=similarity,
-                final_start_aligned_ms=aligned_start_ms,
-                start_delta_ms=witness_cue.start_ms - aligned_start_ms,
-                end_delta_ms=witness_cue.end_ms - (final_cue.end_ms + intro_offset_ms),
+                intro_offset_ms=intro_offset_ms,
+                resolution=resolution,
             )
         )
         used_final.add(final_cue.index)
         used_witness.add(witness_cue.index)
-    return sorted(anchors, key=lambda anchor: anchor.witness.start_ms)
+    if not legacy:
+        anchors = _without_inconsistent_ordered_repeats(anchors)
+    used_final = {index for anchor in anchors for index in anchor.final_indices}
+    used_witness = {index for anchor in anchors for index in anchor.witness_indices}
+
+    timeline_end_ms = max((cue.end_ms for cue in final_cues), default=0)
+    if _coverage(anchors, timeline_end_ms)["status"] == "PASS":
+        return sorted(anchors, key=lambda anchor: anchor.witness_start_ms)
+
+    final_pairs = [
+        group
+        for group in _eligible_composite_groups(final_cues, require_unique_text=legacy)
+        if not any(cue.index in used_final for cue in group)
+    ]
+    witness_pairs = [
+        group
+        for group in _eligible_composite_groups(witness_cues, require_unique_text=legacy)
+        if not any(cue.index in used_witness for cue in group)
+    ]
+    final_singles = [
+        (cue,)
+        for cue in eligible_final
+        if cue.index not in used_final
+    ]
+    witness_singles = [
+        (cue,)
+        for cue in eligible_witness
+        if cue.index not in used_witness
+    ]
+    final_groups = final_singles + final_pairs
+    witness_groups = witness_singles + witness_pairs
+    composite_candidates: list[_Anchor] = []
+    for final_group in final_groups:
+        final_normalized = _group_normalized_text(final_group)
+        for witness_group in witness_groups:
+            if len(final_group) == 1 and len(witness_group) == 1:
+                continue
+            if final_normalized != _group_normalized_text(witness_group):
+                continue
+            resolution = None
+            if not legacy:
+                resolution = _occurrence_resolution(
+                    (final_normalized,),
+                    final_index,
+                    group_span(final_group, final_position),
+                    witness_index,
+                    group_span(witness_group, witness_position),
+                )
+                if resolution is None:
+                    continue
+            composite_candidates.append(
+                _make_anchor(
+                    final_group,
+                    witness_group,
+                    similarity=1.0,
+                    intro_offset_ms=intro_offset_ms,
+                    resolution=resolution,
+                )
+            )
+
+    selected: list[_Anchor] = []
+    selected_final = set(used_final)
+    selected_witness = set(used_witness)
+    for candidate in sorted(
+        composite_candidates,
+        key=lambda anchor: (
+            anchor.occurrence_resolution == "ordered_repeat",
+            anchor.final_start_ms,
+            anchor.witness_start_ms,
+            anchor.final_index,
+            anchor.witness_index,
+        ),
+    ):
+        if any(index in selected_final for index in candidate.final_indices):
+            continue
+        if any(index in selected_witness for index in candidate.witness_indices):
+            continue
+        if candidate.occurrence_resolution == "ordered_repeat" and not _ordered_repeats_consistent(
+            anchors + selected + [candidate]
+        ):
+            continue
+        trial = anchors + selected + [candidate]
+        trial_coverage = _coverage(trial, timeline_end_ms)
+        bucket = "start" if candidate.final_start_ms < timeline_end_ms / 3 else (
+            "middle" if candidate.final_start_ms < timeline_end_ms * 2 / 3 else "end"
+        )
+        covered_before = _coverage(anchors + selected, timeline_end_ms)
+        if covered_before[bucket] and len(anchors) + len(selected) >= MIN_ANCHORS:
+            continue
+        selected.append(candidate)
+        selected_final.update(candidate.final_indices)
+        selected_witness.update(candidate.witness_indices)
+        if trial_coverage["status"] == "PASS":
+            break
+
+    result = anchors + selected
+    if not legacy:
+        result = _without_inconsistent_ordered_repeats(result)
+    return sorted(result, key=lambda anchor: anchor.witness_start_ms)
 
 
 def _coverage(anchors: Sequence[_Anchor], timeline_end_ms: int) -> dict[str, Any]:
@@ -500,15 +928,17 @@ def _coverage(anchors: Sequence[_Anchor], timeline_end_ms: int) -> dict[str, Any
     start_cut = timeline_end_ms / 3
     end_cut = timeline_end_ms * 2 / 3
     bins: dict[str, list[str]] = {"start": [], "middle": [], "end": []}
+    cue_ids: dict[str, list[list[str]]] = {"start": [], "middle": [], "end": []}
     for anchor in anchors:
         # Coverage belongs to the main clip, excluding branding. Including a
         # long intro could move every anchor out of a short clip's first third.
         # Witness positions are also unsuitable because drift moves the bins.
-        position = anchor.final.start_ms
+        position = anchor.final_start_ms
         bucket = "start" if position < start_cut else "middle" if position < end_cut else "end"
-        bins[bucket].append(anchor.final.index)
+        bins[bucket].append(anchor.final_index)
+        cue_ids[bucket].append(list(anchor.final_indices))
     status = "PASS" if len(anchors) >= MIN_ANCHORS and all(bins.values()) else "INSUFFICIENT"
-    return {"status": status, **bins, "required": ["start", "middle", "end"]}
+    return {"status": status, **bins, "cue_ids": cue_ids, "required": ["start", "middle", "end"]}
 
 
 def _validate_intro_offset(intro_offset_ms: int) -> None:
@@ -558,8 +988,20 @@ def check_subtitle_audio_correspondence(
     witness_srt: str | Path,
     provenance: str | Path,
     intro_offset_ms: int = 0,
+    assess_text: bool = False,
+    anchor_uniqueness: str = ANCHOR_UNIQUENESS_POLICY,
 ) -> dict[str, Any]:
     """Return an evidence receipt for subtitle/witness timing correspondence.
+
+    ``assess_text=True`` (new captures only) also records the deterministic
+    wording-disagreement nominations (``witness_disagreement``) and reports
+    ``text_correctness_status=ASSESSED``.  Frozen historical receipts and their
+    successors keep the default ``UNASSESSED`` shape byte for byte.
+
+    ``anchor_uniqueness`` defaults to the current rule.  Validators replaying
+    a stored receipt pass :func:`anchor_uniqueness_policy_of` of that receipt,
+    so a receipt without the policy key is recomputed under the legacy rule in
+    its original shape.
 
     Input integrity failures raise :class:`CorrespondenceInputError`; timing
     insufficiency or drift is represented in the returned receipt as
@@ -567,6 +1009,12 @@ def check_subtitle_audio_correspondence(
     """
 
     _validate_intro_offset(intro_offset_ms)
+    if anchor_uniqueness not in _ANCHOR_UNIQUENESS_POLICIES:
+        raise CorrespondenceInputError(
+            "ANCHOR_UNIQUENESS_POLICY_UNSUPPORTED",
+            f"anchor_uniqueness={anchor_uniqueness!r}",
+        )
+    legacy_uniqueness = anchor_uniqueness == LEGACY_ANCHOR_UNIQUENESS_POLICY
     final_path = _regular_file(final_srt, label="final SRT")
     media_path = _regular_file(actual_media, label="actual media")
     witness_path = _regular_file(witness_srt, label="witness SRT")
@@ -589,7 +1037,12 @@ def check_subtitle_audio_correspondence(
         intro_offset_ms=intro_offset_ms,
     )
 
-    anchors = _find_anchors(final_cues, witness_cues, intro_offset_ms=intro_offset_ms)
+    anchors = _find_anchors(
+        final_cues,
+        witness_cues,
+        intro_offset_ms=intro_offset_ms,
+        anchor_uniqueness=anchor_uniqueness,
+    )
     timeline_end_ms = max(
         max(cue.end_ms for cue in witness_cues),
         max(cue.end_ms for cue in final_cues) + intro_offset_ms,
@@ -643,25 +1096,58 @@ def check_subtitle_audio_correspondence(
         status = "BLOCK"
     anchor_rows = [
         {
-            "final_cue_index": anchor.final.index,
-            "witness_cue_index": anchor.witness.index,
-            "final_text": anchor.final.text,
-            "witness_text": anchor.witness.text,
+            "anchor_kind": anchor.kind,
+            "final_cue_index": anchor.final_index,
+            "witness_cue_index": anchor.witness_index,
+            "final_cue_indices": list(anchor.final_indices),
+            "witness_cue_indices": list(anchor.witness_indices),
+            "final_text": anchor.final_text,
+            "witness_text": anchor.witness_text,
             "similarity": round(anchor.similarity, 6),
-            "final_start_ms": anchor.final.start_ms,
+            "final_start_ms": anchor.final_start_ms,
             "final_start_aligned_ms": anchor.final_start_aligned_ms,
-            "witness_start_ms": anchor.witness.start_ms,
+            "witness_start_ms": anchor.witness_start_ms,
             "start_delta_ms": anchor.start_delta_ms,
             "end_delta_ms": anchor.end_delta_ms,
+            **(
+                {}
+                if legacy_uniqueness
+                else {
+                    "occurrence_resolution": anchor.occurrence_resolution,
+                    "occurrences_before": anchor.occurrences_before,
+                    "occurrences_after": anchor.occurrences_after,
+                }
+            ),
         }
         for anchor in anchors
     ]
+    text_block: dict[str, Any] = {
+        "text_correctness_status": "UNASSESSED",
+        "text_correctness_note": "This receipt aligns existing text only; it authorizes no wording or proper-name repair.",
+    }
+    if assess_text:
+        from src.autoslice.witness_disagreement import assess_correspondence_text
+
+        assessment = assess_correspondence_text(
+            final_text, witness_text, intro_offset_ms=intro_offset_ms
+        )
+        text_block = {
+            "text_correctness_status": "ASSESSED",
+            "text_correctness_verdict": (
+                "NOMINATIONS_PENDING_ADJUDICATION"
+                if assessment["nomination_count"] else "NO_DISAGREEMENT_NOMINATED"
+            ),
+            "text_correctness_note": (
+                "Wording disagreements with the independent witness are nominated, not decided; "
+                "the exact-final review must hear the audio and rule on each. This receipt repairs nothing."
+            ),
+            "witness_disagreement": assessment,
+        }
     return {
         "schema_version": SCHEMA_VERSION,
         "status": status,
         "timing_status": timing_status,
-        "text_correctness_status": "UNASSESSED",
-        "text_correctness_note": "This receipt aligns existing text only; it authorizes no wording or proper-name repair.",
+        **text_block,
         "reason_codes": reasons or ["TIMING_CORRESPONDENCE_PASS"],
         "inputs": {
             "final_srt": {"path": str(final_path), "sha256": final_sha256, "cue_count": len(final_cues)},
@@ -695,9 +1181,25 @@ def check_subtitle_audio_correspondence(
             "minimum_unique_chars": ANCHOR_MIN_UNIQUE_CHARS,
             "minimum_similarity": ANCHOR_MIN_SIMILARITY,
             "fuzzy_start_anchor_rule": FUZZY_START_ANCHOR_RULE,
+            "composite_enabled_when_single_coverage_insufficient": True,
+            "composite_max_cues_per_side": 2,
+            "composite_gap_min_ms": 0,
+            "composite_gap_max_ms": 250,
+            "composite_match": "exact_normalized_only",
+            "composite_counts_as_one_anchor": True,
+            "composite_requires_unique_text": True,
             "global_shift_threshold_ms": GLOBAL_SHIFT_THRESHOLD_MS,
             "inconsistent_spread_threshold_ms": INCONSISTENT_SPREAD_THRESHOLD_MS,
             "inconsistent_mad_threshold_ms": INCONSISTENT_MAD_THRESHOLD_MS,
+            **(
+                {}
+                if legacy_uniqueness
+                else {
+                    "anchor_uniqueness": ANCHOR_UNIQUENESS_POLICY,
+                    "anchor_occurrence_match": ANCHOR_OCCURRENCE_MATCH,
+                    "anchor_repeat_resolution": ANCHOR_REPEAT_RESOLUTION,
+                }
+            ),
         },
         "anchor_coverage": coverage,
         "anchors": anchor_rows,

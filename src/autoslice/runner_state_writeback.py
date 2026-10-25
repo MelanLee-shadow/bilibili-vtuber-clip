@@ -517,6 +517,8 @@ def write_state(
     if not isinstance(state, TrackedState) or state._writeback_path != path:
         state["updated_at"] = updated_at
         _atomic_write(path, state, runtime_root=runtime_root)
+        from src.autoslice.runtime_gc import request_terminal_gc
+        request_terminal_gc(runtime_root, state, log=log)
         return
 
     base = deepcopy(state._writeback_base)
@@ -532,6 +534,8 @@ def write_state(
             continue
         _atomic_write(path, merged, runtime_root=runtime_root)
         state.accept_writeback(merged)
+        from src.autoslice.runtime_gc import request_terminal_gc
+        request_terminal_gc(runtime_root, merged, before=base, log=log)
         for conflict in conflicts:
             log(
                 "RUNNER_STATE_WRITEBACK_CONFLICT "
@@ -565,6 +569,14 @@ def write_exact_state_under_lease(
         raise RunnerStateWritebackError("RUNNER_STATE_WRITEBACK_EXACT_PREIMAGE_DRIFT")
     payload = state_bytes(after)
     _atomic_write_bytes(path, payload, runtime_root=runtime_root)
+    from src.autoslice.runtime_gc import request_terminal_gc
+    try:
+        gc_before = json.loads(expected_before) if expected_before else None
+    except (ValueError, UnicodeError):
+        gc_before = None
+    request_terminal_gc(
+        runtime_root, dict(after), before=gc_before,
+    )
     if isinstance(after, TrackedState):
         # ``accept_writeback`` clears its receiver before copying the value;
         # snapshot a self-referential TrackedState first or the live tick would

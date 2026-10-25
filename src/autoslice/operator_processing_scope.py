@@ -5,7 +5,7 @@
 `session_autoslice.list_dates()` 只取录像根目录**最新三个**日期，另加两个
 例外：`status == "source_incomplete"`，以及 `historical_source_recovery_in_progress`
 （后者要求 `state["source_recoveries"]` 非空）。公开规则要求
-「**把 tier1 的 4 条做了**」并明确「**87 现在需要纳入处理范围**」，但
+「**将合成候选加入处理范围**」并明确「**测试日期进入处理范围**」，但
 早已滑出最新三天窗口，而且它的 `source_recoveries` 是空的——两个既有例外一个都
 不成立。仓里此前**没有任何**「运维显式指定某天进处理范围」的通道。
 
@@ -1060,7 +1060,7 @@ def hold_talk_outside_operator_scope(
 ) -> list[dict]:
     """把没被点名的话题候选压出本 tick 的准入池，返回被压下的行。
 
- 公开规则：**把 tier1 的 4 条做了**——只放这一天进窗口是不够的：
+ 公开规则：**将合成候选加入处理范围**——只放这一天进窗口是不够的：
  `prioritize()` 每个 tick 把整份 `talk_backlog` 收回 `pending_talk` 重排，名额
  有富余时 tier-2 会一起坐进席位，白烧几小时机时。
 

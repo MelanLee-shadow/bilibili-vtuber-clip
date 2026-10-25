@@ -686,8 +686,8 @@ def _alternatives(
             "identity-preserving cleanup"
         ),
         "cpa_redraw": (
-            "the available source frame is not a sufficiently strong or verified "
-            "cover composition"
+            "the selected story benefits from a directed redraw, or its source "
+            "frame is unsuitable for the required composition"
         ),
     }
     rejected_explanations = {
@@ -713,12 +713,12 @@ def _alternatives(
         },
         "cpa_redraw": {
             "screenshot_direct": (
-                "the source-frame evidence is not strong or verified enough to ship "
-                "without image generation"
+                "a face-safe or high-scoring frame alone does not establish a "
+                "story advantage for preserving the screenshot"
             ),
             "screenshot_polish": (
-                "bounded cleanup cannot repair the missing subject confidence, weak "
-                "composition, or inability to express the hook"
+                "bounded cleanup does not replace the selected story composition; "
+                "any source-frame limitations remain disclosed in its evidence"
             ),
         },
     }
@@ -947,7 +947,11 @@ def _valid_alternatives(route: Mapping[str, object]) -> bool:
 def validate_cover_route_decision(
     cover_generation: Mapping[str, object], *, allow_legacy_v1: bool = True
 ) -> bool:
-    """Validate v2 rigorously while retaining read compatibility for v1."""
+    """Validate the current skill route or historical v2/v1 receipts."""
+
+    if cover_generation.get("method") == "skill.candidates":
+        from .title_cover_candidates import validate_candidate_route
+        return validate_candidate_route(cover_generation)
 
     route = cover_generation.get("route_decision")
     if not isinstance(route, Mapping):

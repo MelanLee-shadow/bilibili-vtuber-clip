@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 import pytest
 
@@ -7,6 +8,39 @@ from src.autoslice.subtitle_fidelity import (
     audit_foreign_script_consistency,
     has_unapproved_mixed_cjk_latin_phrase,
 )
+
+
+def test_normal_foreign_witness_argv_selects_current_registered_family(tmp_path, monkeypatch):
+    from src.autoslice import agy_gemini_client as client
+    audio=tmp_path/'target.mp3';audio.write_bytes(b'exact-audio')
+    selected=[]
+    def media(command, **_):
+        if command[0]=='ffprobe':return subprocess.CompletedProcess(command,0,stdout='1.5',stderr='')
+        from pathlib import Path
+        Path(command[-1]).write_bytes(b'black-frame-exact-audio')
+        return subprocess.CompletedProcess(command,0,stdout='',stderr='')
+    def agy(command, **_):
+        model=command[command.index('--model')+1];selected.append(model)
+        assert model in {'Gemini 3.8 Flash (High)','Gemini 3.8 Flash (Low)'}
+        return client.AgyRun(subprocess.CompletedProcess(command,0,stdout=json.dumps({
+            'audible_language':'ja','exact_transcript':'そうだね','speaker_impression':'single_live_voice'}),stderr=''),None)
+    monkeypatch.setattr(fsw.subprocess,'run',media)
+    monkeypatch.setattr(client,'run_local_agy',agy)
+    result=fsw._observe_with_agy(audio_path=audio,prompt='Candidate-blind exact target only.')
+    assert result['exact_transcript']=='そうだね'
+    assert selected==[client.DEFAULT_AGY_FLASH_HIGH]
+
+
+def test_shared_default_keeps_effort_and_explicit_visual_override(monkeypatch):
+    from src.autoslice import agy_gemini_client as client, agy_frame_witness as frame
+    from src.autoslice import visual_song_discovery as visual
+    from scripts import gemini_slice_jingting as jingting
+    monkeypatch.delenv('AGY_VISION_MODEL',raising=False)
+    assert frame._agy_model()==visual.DEFAULT_MODEL==client.DEFAULT_AGY_FLASH_HIGH
+    assert jingting.AGY_MODEL==client.DEFAULT_AGY_FLASH_LOW
+    monkeypatch.setenv('AGY_VISION_MODEL','explicit-custom-model')
+    assert frame._agy_model()=='explicit-custom-model'
+    assert client.GEMINI_VISION_MODEL_DEFAULT=='gemini-3.6-flash'
 
 
 def _srt(*texts):
@@ -171,8 +205,10 @@ def test_partial_source_cue_cannot_become_a_whole_target_replacement():
 @pytest.mark.parametrize("candidate_id", [None, "INVENTED"])
 def test_ambiguous_or_unknown_candidate_id_cannot_apply(candidate_id):
     from src.autoslice.acoustic_witness_adjudication import adjudicate_with_witness
-    check = {"current_cue": "しゃべるの遅か", "proposed_cue": "食べ物屋さんが",
-             "proposed_candidates": [{"text": "谢谢美国老师", "source": "BCUT"}]}
+    from src.autoslice.independent_context_adjudication import bind_request
+    # Ordinary check requests carry their canonical digest (request schema).
+    check = bind_request({"current_cue": "しゃべるの遅か", "proposed_cue": "食べ物屋さんが",
+             "proposed_candidates": [{"text": "谢谢美国老师", "source": "BCUT"}]})
     witness = fsw._transcript_witness({"audible_language": "ja"}, transcript=check["proposed_cue"])
     applied, _, audit = adjudicate_with_witness(check_request=check, witness=witness,
         llm_call=lambda _: json.dumps({"choice": "PROPOSED", "candidate_id": candidate_id}))
@@ -216,6 +252,61 @@ def _agy_observation():
     }
 
 
+@pytest.mark.parametrize("start,end,markers", [
+    (15830, 16830, (400, 1400)),
+    (100, 1100, (100, 1100)),
+    (0, 1000, (0, 1000)),
+])
+def test_padded_foreign_witness_marks_only_target_inside_crop(
+    tmp_path, monkeypatch, start, end, markers,
+):
+    media = tmp_path / "source.mp4"
+    media.write_bytes(b"source")
+    monkeypatch.setattr(
+        fsw, "_extract_span_audio",
+        lambda media_path, start_ms, end_ms, output_path: output_path.write_bytes(b"audio"),
+    )
+
+    def observe(*, audio_path, prompt, observe):
+        assert f"begins at {markers[0]} ms and ends at {markers[1]} ms" in prompt
+        assert "never include its words in exact_transcript" in prompt
+        assert "or its voices in speaker_impression" in prompt
+        # A target observation does not include a preceding/following word.
+        return {"audible_language": "en", "exact_transcript": "Yeah",
+                "speaker_impression": "media_playback"}, "test", None, None
+
+    monkeypatch.setattr(fsw, "_observe_audio", observe)
+    rows = fsw._witness_rows(
+        media_path=media,
+        rows=[{"cue_index": 4, "start_ms": start, "end_ms": end, "text": "Yeah"}],
+        mode="mixed", out_root=tmp_path, cid="scope", observe=None,
+    )
+    assert rows[0]["exact_transcript"] == "Yeah"
+    assert rows[0]["transcript_scope"] == "TARGET_MARKERS_ONLY"
+    assert (rows[0]["target_audio_start_ms"], rows[0]["target_audio_end_ms"]) == markers
+
+
+def test_legacy_unmarked_foreign_observation_does_not_match_target_cache(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path))
+    audio = tmp_path / "span.mp3"
+    audio.write_bytes(b"same-audio")
+    old_prompt = "Transcribe EXACTLY what is audibly spoken in the whole span."
+    old_identity = fsw.witness_identity(
+        audio_path=audio, prompt=old_prompt, model=fsw._AGY_MODEL,
+        algorithm_id="agy-foreign-span-candidate-blind-v1",
+    )
+    fsw.store_successful_observation(
+        identity=old_identity, observation=_agy_observation(),
+        source_provenance={"kind": "live_accepted_agy_process", "process_returncode": 0},
+    )
+    calls = []
+    monkeypatch.setattr(fsw, "_observe_with_agy", lambda **kwargs: calls.append(kwargs) or _agy_observation())
+    result = fsw._observe_audio(audio_path=audio, prompt=fsw._span_prompt(15830, 16830), observe=None)
+    assert len(calls) == 1
+    assert result[3]["served_from_cache"] is False
+    assert fsw.load_successful_observation(identity=old_identity)[0] == _agy_observation()
+
+
 def test_production_agy_success_is_content_cached(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path))
     audio = tmp_path / "span.mp3"
@@ -243,12 +334,18 @@ def test_production_agy_success_is_content_cached(tmp_path, monkeypatch):
     ]
 
 
+@pytest.mark.parametrize("fixed_placement", [False, True])
 def test_production_agy_cache_misses_on_every_bound_identity_change(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, fixed_placement
 ):
     monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path))
     audio = tmp_path / "span.mp3"
     audio.write_bytes(b"audio-v1")
+    if fixed_placement:
+        from src.autoslice import evidence_identity
+
+        placement = evidence_identity._placement(audio.stat())
+        monkeypatch.setattr(evidence_identity, "_placement", lambda _info: placement)
     calls = []
 
     def fake_agy(*, audio_path, prompt):
@@ -303,8 +400,10 @@ def test_production_agy_quota_falls_back_to_hash_bound_gemini_audio(
     audio = tmp_path / "span.mp3"
     audio.write_bytes(b"exact-audio")
     gemini_calls = []
+    agy_calls = []
 
     def failed_agy(*, audio_path, prompt):
+        agy_calls.append((audio_path, prompt))
         raise RuntimeError("AGY quota exhausted")
 
     def restored_gemini(*, audio_path, prompt, key):
@@ -333,6 +432,9 @@ def test_production_agy_quota_falls_back_to_hash_bound_gemini_audio(
     assert second[1] == "gemini_api_success_cache"
     assert second[3]["served_from_cache"] is True
     assert len(gemini_calls) == 1
+    assert len(agy_calls) == 1
+    assert second[3]["completed_fallback_replayed_before_dispatch"] is True
+    assert "agy_failure_category" not in second[3]
 
 
 def test_corrupt_agy_success_cache_is_ignored_and_rebuilt(tmp_path, monkeypatch):
@@ -978,3 +1080,86 @@ def test_cluster_retranscription_provider_failure_keeps_block(
     assert audit_foreign_script_consistency(repaired)["status"] == (
         "BLOCKED_MIXED_FOREIGN_SCRIPT_CLUSTER"
     )
+
+
+def test_mixed_phrase_completed_cpa_reply_is_consumed_under_signed_requests(
+    tmp_path, witness_env
+):
+    """41:112 / SUB-18: a COMPLETED CPA reply is the judge's decision.
+
+    Regression for the 10-17 request schema: mixed CJK/Latin check requests
+    (initial and rebuilt) were built without ``request_sha256``, so the
+    executed-judgment recorder raised after the provider returned and the
+    answer was folded into JUDGE_CALL_FAILED.  The rule asserted here is the
+    ordinary request contract, not a planted verdict.
+    """
+    from src.autoslice.span_judgment_history import (
+        capture_context_judgments,
+        validate_history,
+    )
+    from src.autoslice.span_phoneme_resolution import digest
+
+    srt_text = _srt("前文", "don't know那么多，所有的", "后文")
+    audit = audit_foreign_script_consistency(srt_text)
+
+    def observe(*, audio_path, prompt, key):
+        return json.dumps(
+            {
+                "audible_language": "zh",
+                "exact_transcript": "都问那么多，所有的",
+                "speaker_impression": "single_live_voice",
+            },
+            ensure_ascii=False,
+        )
+
+    calls: list[str] = []
+
+    def cpa(prompt):
+        calls.append(prompt)
+        if "# 字幕外语坏闭集重建" in prompt:
+            return json.dumps(
+                {"status": "PROPOSED", "proposed_cue": "都问那么多，所有的呀",
+                 "reason": "句架保留"},
+                ensure_ascii=False,
+            )
+        judge_calls = [row for row in calls if "# 字幕选字裁决" in row]
+        return json.dumps(
+            {
+                "choice": "NEITHER" if len(judge_calls) == 1 else "PROPOSED",
+                "reason": "需要第三候选" if len(judge_calls) == 1 else "与语境一致",
+            },
+            ensure_ascii=False,
+        )
+
+    run = capture_context_judgments(
+        lambda: fsw.adjudicate_foreign_script_audit(
+            media_path=witness_env, srt_text=srt_text, audit=audit,
+            out_root=tmp_path, cid="auto_mixed_signed", llm_call=cpa,
+            observe=observe,
+        )
+    )
+    output, resolved = run()
+
+    row = resolved["cpa_adjudication_rows"][0]
+    assert row["resolved"] is True and row["choice"] == "PROPOSED"
+    assert row["rejected_proposed"] == "都问那么多，所有的"
+    assert "都问那么多，所有的呀" in output
+    judges = [row["adjudication"]["judge"]]
+    history = resolved["executed_span_judgments"]
+    validate_history(resolved)
+    assert len(history["expected_executions"]) == 2
+    signed = set()
+    for execution in history["expected_executions"]:
+        judge = history["outcomes"][execution["execution_id"]]
+        judges.append(judge)
+        request = judge["span_compilation"]["request"]
+        unsigned = {k: v for k, v in request.items() if k != "request_sha256"}
+        assert request["request_sha256"] == digest(unsigned)
+        assert judge["check_request_sha256"] == request["request_sha256"]
+        assert execution["request_sha256"] == request["request_sha256"]
+        signed.add(request["request_sha256"])
+    # The rebuilt request is re-signed, never carrying its parent's digest.
+    assert len(signed) == 2
+    for judge in judges:
+        assert judge["status"] == "JUDGED"
+        assert judge.get("reason_code") != "JUDGE_CALL_FAILED"

@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from src.autoslice import package_import as pi
+from src.autoslice.cover_host_identity_gate import HOST_ONLY_SCHEMA_VERSION
 from tests.test_import_external_package import (
     CANDIDATE,
     SRC_PACKAGE,
@@ -41,7 +42,7 @@ def _relocated(tmp_path: Path, *, flat: bool = True, canonical_flat: bool = Fals
         alias.write_bytes(old.read_bytes())
         generation["final_cover"] = f"{SRC_PACKAGE}/{name}"
         generation["final_host_identity_verification"] = {
-            "schema_version": "lidousha-cover-final-host-identity-verification.v4",
+            "schema_version": HOST_ONLY_SCHEMA_VERSION,
             "final_cover_path": f"{SRC_PACKAGE}/{name}",
             "final_cover_sha256": generation["final_cover_sha256"],
         }
@@ -63,7 +64,7 @@ def _relocated(tmp_path: Path, *, flat: bool = True, canonical_flat: bool = Fals
             (fx.staging_package / "covers/final-cover.png").read_bytes()
         )
         generation["final_host_identity_verification"] = {
-            "schema_version": "lidousha-cover-final-host-identity-verification.v4",
+            "schema_version": HOST_ONLY_SCHEMA_VERSION,
             "final_cover_path": name,
             "final_cover_sha256": generation["final_cover_sha256"],
         }

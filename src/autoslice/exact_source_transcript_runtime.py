@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .review_errors import ContractRejection
+
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import hashlib
 import json
 import os
@@ -12,8 +15,10 @@ from typing import Any, Mapping
 from scripts.gemini_slice_jingting import strip_markdown_fence
 from src.autoslice.exact_source_transcript_contract import (
     PROVIDER_REPORT_SCHEMA,
+    build_exact_source_transcript_request,
     seal_exact_source_transcript_observation,
     valid_exact_source_transcript_observation,
+    exact_transcript_response_contract,
 )
 from src.autoslice.exact_source_transcript_provider_policy import (
     rebind_cached_gemini_route,
@@ -28,17 +33,14 @@ def provider_manifest_path(job_dir: Path, *, provider: str, model: str) -> Path:
     """Provider/model-isolated cache path; never a shared routing shortcut."""
 
     if provider not in {"agy", "gemini_api"} or not model:
-        raise ValueError("EXACT_SOURCE_TRANSCRIPT_PROVIDER_IDENTITY_INVALID")
+        raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_PROVIDER_IDENTITY_INVALID")
     model_id = hashlib.sha256(model.encode("utf-8")).hexdigest()
     return job_dir / f"verdict.{provider}.{model_id}.manifest.json"
 
 
 def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return digest
 
 
 def _json_sha256(value: Mapping[str, Any]) -> str:
@@ -47,6 +49,9 @@ def _json_sha256(value: Mapping[str, Any]) -> str:
             dict(value), ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
     ).hexdigest()
+
+
+from src.autoslice.evidence_identity import recorded_source_stat_matches as _recorded_stat_matches
 
 
 def _source_stat_binding(path: Path) -> tuple[int, int, int, int, int, int, int]:
@@ -75,18 +80,7 @@ def seal_provider_observation(
 ) -> dict[str, Any] | None:
     """Validate the raw provider report and seal an evidence-only observation."""
 
-    report_keys = {
-        "schema_version", "status", "target_audible", "audible_language",
-        "exact_transcript", "reason",
-    }
-    if not (
-        set(observed) == report_keys
-        and observed.get("schema_version") == PROVIDER_REPORT_SCHEMA
-        and observed.get("status") == "OBSERVED"
-        and observed.get("target_audible") is True
-        and isinstance(observed.get("exact_transcript"), str)
-        and isinstance(observed.get("reason"), str)
-    ):
+    if not exact_transcript_response_contract().accepts_report(observed):
         return None
     try:
         verdict = seal_exact_source_transcript_observation(
@@ -173,7 +167,10 @@ def serve_manifest(
             and cached.get("request_sha256") == request.get("request_sha256")
             and cached.get("request_payload_sha256") == _json_sha256(request)
             and cached.get("source_media_sha256") == source_media_sha256
-            and cached.get("source_stat_binding") == list(source_stat_binding)
+            # Recorded identity: content sha plus restorable size/mtime; the
+            # recorded dev/ino/ctime are placement (evidence_identity).
+            and _recorded_stat_matches(cached.get("source_stat_binding"), source_stat_binding)
+            # In-process stability: current file vs the verifier's hashed stat.
             and _source_stat_binding(source_media) == tuple(source_stat_binding)
             and cached.get("audio_clip_sha256") == _file_sha256(audio_path)
             and Path(prompt_name).name == prompt_name and prompt_path.is_file()
@@ -225,4 +222,79 @@ def serve_manifest(
             rebuilt["observation_sha256"] = _json_sha256(rebuilt)
         return rebuilt
     except (OSError, TypeError, ValueError):
+        return None
+
+
+def serve_physical_manifest(
+    *, manifest_path: Path, request: Mapping[str, Any],
+    timeline_binding: Mapping[str, Any], source_media: Path,
+    source_media_sha256: str, source_stat_binding: tuple[int, ...],
+    expected_models: Mapping[str, str],
+    current_provider_failures: list[Mapping[str, Any]] | None = None,
+) -> Mapping[str, Any] | None:
+    """Replay unchanged provider input when only logical context has changed.
+
+    Validate the original request and raw artifacts first.  Never rewrite the
+    manifest: the current evidence receipt attributes the original observation.
+    The CPA's text/context request remains independently bound and uncached.
+    """
+    try:
+        cached = json.loads(manifest_path.read_text(encoding="utf-8"))
+        original = cached["observation"]
+        old_timeline = original["timeline_binding"]
+        if old_timeline["source_media"] != timeline_binding["source_media"]:
+            return None
+        delivery = old_timeline["delivery_local"]
+        old_request = build_exact_source_transcript_request({
+            "cue_indexes": request["cue_indexes"],
+            "matched_start_ms": delivery["target_start_ms"],
+            "matched_end_ms": delivery["target_end_ms"],
+            "context_start_ms": delivery["context_start_ms"],
+            "context_end_ms": delivery["context_end_ms"],
+            "source_media_timeline_offset_ms": old_timeline[
+                "source_media_timeline_offset_ms"
+            ],
+        })
+        if old_request["request_sha256"] == request["request_sha256"]:
+            return None
+        audio_path = manifest_path.parent / "input.mp4"
+        validated = serve_manifest(
+            manifest_path=manifest_path, audio_path=audio_path,
+            request=old_request, source_media=source_media,
+            source_media_sha256=source_media_sha256,
+            source_stat_binding=source_stat_binding,
+            expected_models=expected_models, served_from_cache=False,
+            current_provider_failures=current_provider_failures,
+        )
+        if validated is None:
+            return None
+        response_path = manifest_path.parent / cached["response_artifact"]
+        raw = extract_json_object(strip_markdown_fence(
+            response_path.read_text(encoding="utf-8")
+        ))
+        rebuilt = seal_provider_observation(
+            request=request, observed=raw,
+            source_media_sha256=source_media_sha256, audio_path=audio_path,
+            provider=validated["provider"], model=validated["model"],
+            prompt_path=manifest_path.parent / cached["prompt_artifact"],
+            response_path=response_path, timeline_binding=timeline_binding,
+            key_tier=validated.get("key_tier"),
+            provider_route=validated["provider_route"],
+        )
+        if rebuilt is None:
+            return None
+        rebuilt["served_from_cache"] = True
+        rebuilt["cache_replay"] = {
+            "basis": "IDENTICAL_PROVIDER_INPUT",
+            "original_request_sha256": old_request["request_sha256"],
+            "original_observation_sha256": original["observation_sha256"],
+            "original_manifest_sha256": _file_sha256(manifest_path),
+            "provider_dispatch_count": 0,
+        }
+        rebuilt.pop("observation_sha256", None)
+        rebuilt["observation_sha256"] = _json_sha256(rebuilt)
+        return rebuilt if valid_exact_source_transcript_observation(
+            rebuilt, request=request
+        ) else None
+    except (OSError, KeyError, TypeError, ValueError):
         return None

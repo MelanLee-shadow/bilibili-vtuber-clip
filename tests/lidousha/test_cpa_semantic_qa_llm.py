@@ -1,4 +1,6 @@
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -21,6 +23,19 @@ from src.autoslice.llm_client import (
     call_and_extract_json_with_parse_retry,
     extract_json_object,
 )
+
+
+def test_direct_script_help_bootstraps_without_pythonpath_from_unrelated_cwd(tmp_path):
+    script = Path(__file__).resolve().parents[2] / "scripts" / "cpa_semantic_qa_llm.py"
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith("GIT_") and key not in {"PYTHONPATH", "PYTHONHOME"}}
+    completed = subprocess.run(
+        [sys.executable, str(script), "--help"], cwd=tmp_path, env=env,
+        capture_output=True, text=True, check=False, timeout=30,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "--request" in completed.stdout
+    assert not list(tmp_path.iterdir())
 
 
 def _request(tmp_path: Path) -> CpaSemanticQaRequest:

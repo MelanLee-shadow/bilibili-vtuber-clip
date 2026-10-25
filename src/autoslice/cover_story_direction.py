@@ -1,6 +1,8 @@
 """Story composition and legacy fallback presets for cover art direction."""
 from __future__ import annotations
 
+from src.autoslice.structured_output import call_json
+
 from dataclasses import replace
 import json
 import re
@@ -48,7 +50,7 @@ def refresh_visual_brief(direction, *, original_punch, title, story_hook, llm_ca
         'Return JSON only: {"visual_brief":"..."}'
     )
     try:
-        payload = extract_json_object(llm_call(prompt))
+        payload = extract_json_object(call_json(llm_call, prompt, reuse=False))
         brief = payload.get("visual_brief")
         if isinstance(brief, str) and 40 <= len(brief.strip()) <= 1600:
             return replace(direction, visual_brief=brief.strip())
@@ -150,9 +152,24 @@ def story_composition_prompt(art_direction, title_zone) -> str:
         "face-marking, outfit or accessory description in this text that is not present in the image reference. "
         "Every temporal copy must keep the reference's SAME hair, ears, face details and COMPLETE outfit layers; "
         "a different persona means a different expression or gesture, never an unreferenced alternate skin. "
-        "No automatic sticker outline, giant floating head, halftone or speed lines. "
+        "Keep the head attached to a readable upper-body pose; do not add an unrelated sticker border. "
+        "The selected drawing style may use big-headed comic proportions, ink hatching, halftone or speed lines "
+        "when they clarify the supported reaction or action. "
         "If the same person appears in multiple panels, make the temporal/editorial comparison explicit; "
-        "do not imply a second real participant. Do not add an unsupported event or costume. "
+        "do not imply a second real participant. For a replay or commentary reaction-led story, treat an event in "
+        "the watched source as context and make the host's current visible reaction, stance, reinterpretation or "
+        "conclusion the editorial subject; one clear supported landing is enough, with no required source inset, "
+        "multiple panels or repeated escalation. Do not depict an old event as happening now or invent a current "
+        "action from it. A sourced, complete narrated story may instead use the narrated event itself as the subject "
+        "when its concrete landing is in the clip; preserve its actual subject, past time or hypothetical modality, "
+        "and do not require a current host reaction or present-day occurrence. Preserve the actual subject, time and modality: suggestions, hypotheticals and future "
+        "plans stay qualified; game/work/fictional-character plots, in-work relationships and CP hypotheticals "
+        "do not by themselves establish that the host or real people had the experience or a real romantic "
+        "relationship. Sourced host narration, in-stream VTuber interactions, virtual performances and 3D actions "
+        "may be shown in their actual context; game-character events, CP hypotheticals and virtual-body actions "
+        "must not be upgraded into the host's or real people's real-world experience, physical action or romantic "
+        "fact. "
+        "Do not add an unsupported event or costume. "
         f"TITLE RESERVATION: on the 1920x1080 canvas keep x={title_zone[0]}..{title_zone[2]}, "
         f"y={title_zone[1]}..{title_zone[3]} low-detail for the deterministic title. "
         "Keep complete heads, ears and story-critical details outside that rectangle. Size and position the "
@@ -161,22 +178,61 @@ def story_composition_prompt(art_direction, title_zone) -> str:
     )
 
 
-def image_identity_prompt(*, profile, identity_descriptor, identity_asset, art_direction) -> str:
+def image_identity_prompt(
+    *, profile, identity_descriptor, identity_asset, art_direction,
+    allow_secondary_participants=True,
+) -> str:
     introduction = (
         f"Create a 16:9 (1920x1080) editorial cover illustration for {profile.prompt_name}. "
         if not art_direction.is_song
         else f"Create a bold 16:9 (1920x1080) anime VTuber livestream cover thumbnail for {profile.prompt_name}. "
     )
+    if art_direction.is_song:
+        return (
+            introduction
+            + "SOURCE-VISIBLE IDENTITY: The source image is authoritative for her visible appearance. "
+            "Identify the referenced performer from the actual source; historical persona descriptions "
+            "must not replace this stream's visible outfit, head shape or accessories. "
+            "MULTI-PERSON REFERENCE RULE: use the source performer visibly "
+            f"labelled {profile.display_name}; never replace her with another participant. "
+            "Preserve the complete actual costume, including any mask, helmet, headpiece or non-human head. "
+            "If it conceals the face, KEEP IT WORN in precisely that role: do not remove it, turn it into a "
+            "handheld prop, or invent the hidden face, hair or eyes. Preserve a source-visible eyepatch "
+            "and never invent the eye beneath it. "
+            "SUBJECT READABILITY: make the actual visible head and upper body large, complete and clear, "
+            "with the source's real silhouette readable at thumbnail size. Choose a pose compatible with "
+            "this singer's performance and costume; a mouth or microphone is not required when absent "
+            "from the reference. Never add an unrelated person, invented accessory, or tongue. "
+            "FEED-SAFE FRAMING: keep the entire visible head and key identity features inside the central "
+            "4:3 feed crop. A clean song-title zone is intentional; avoid vast dead space or a meaningless "
+            "solid-color strip. "
+        )
     return (
         introduction +
-        "Use the supplied image ONLY as identity/style reference. "
+        "Use the supplied image ONLY as identity reference. Discard its background, UI, composition and rendering style; "
+        "the selected art direction controls the new drawing style and story action. "
         f"IDENTITY (keep her instantly recognizable): {identity_asset} "
         f"Persona identity descriptors (Chinese, authoritative): {identity_descriptor} "
         "MULTI-PERSON REFERENCE RULE: if the supplied image contains several people, the ONLY protagonist is "
         f"the source person visibly labelled {profile.display_name}, or the one matching the {profile.prompt_name} {profile.cover_identity.prompt_tag_en} identity when "
         "no label is visible. Never copy another participant's face, hair, outfit, horns or accessories into the "
-        f"protagonist, and never treat adding {profile.cover_identity.feature_en} to another participant as identity preservation. Other "
-        "participants may appear only as clearly secondary figures when the reference supports them. "
+        f"protagonist, and never treat adding {profile.cover_identity.feature_en} to another participant as identity preservation. "
+        + (
+            "Other participants may appear only as clearly secondary figures when the reference supports them. "
+            if allow_secondary_participants
+            else "SINGLE-HOST COMPOSITION: depict only the referenced host. No other face, mouth, hand, "
+            "body or avatar may appear in an inset, object, portrait or decorative scene. "
+            "HOST_ONLY limits participant identities, not the number of depictions of that same host. "
+            "An explicitly editorial before/after sequence may show her twice with the same source-visible "
+            "identity and outfit; it must never imply a second participant. "
+            "Non-character story objects may support the host's commentary; do not illustrate "
+            "the commented-on characters or cast the host as one of them. A character-free screen or "
+            "a clearly editorial symbol may represent the content she is discussing, without claiming "
+            "to reproduce a real game screenshot or event. Show the supported change through action "
+            "or object relationships, rather than leaving the entire story to the title overlay. Keep the source-visible "
+            "outfit layers and accessories readable rather than hiding them behind a new pose or prop. "
+        ) +
+
         "PRESERVE THE EXACT OUTFIT, skin tone, hairstyle and accessories shown in the reference frame — she wears "
         "DIFFERENT costumes on different streams, so do NOT invent or lock a fixed costume; copy what the reference shows. "
         f"EXPRESSION (must fit her in-character role for this clip): {art_direction.expression_en}. "

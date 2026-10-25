@@ -31,8 +31,7 @@ SRC_REPO = "/home/维护者/Project/repo-87"
 SRC_CANDIDATE = f"/home/维护者/Project/vtuber-reproduce/out/{DATE}/{CANDIDATE}"
 SRC_PACKAGE = f"{SRC_CANDIDATE}/replacement_recuts"
 TITLE = "【李豆沙】她说“熊猫头”那句，我笑了半天"
-RELEASE_QUOTE = "synthetic explicit release authorization"
-
+SYNTHETIC_RELEASE_TEXT = '合成样例：此测试包已完成指定修订，可进入发布准备流程；本段只用于构造测试授权，不代表真实发布许可。'
 OTHER_FAILED_CANDIDATE = "auto_other_failed"
 DEPLOYED_TEST_COMMIT = "a" * 40
 
@@ -301,7 +300,7 @@ def _failed_pick_closure(state: dict) -> dict:
 def _configure_authorized_failed_pick(
     fixture: Fixture,
     *,
-    quote: str = RELEASE_QUOTE,
+    quote: str = SYNTHETIC_RELEASE_TEXT,
 ) -> tuple[dict, dict, Path]:
     state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
     target = {
@@ -519,7 +518,7 @@ def _run_authorized_failed_pick(
     fixture: Fixture,
     *,
     apply: bool = True,
-    quote: str = RELEASE_QUOTE,
+    quote: str = SYNTHETIC_RELEASE_TEXT,
     **overrides,
 ):
     return _run(
@@ -899,7 +898,7 @@ def test_authorized_failed_pick_is_adopted_once_with_preimage_provenance(
     )
     assert adoption["status"] == "CONSUMED"
     assert adoption["released_by"] == "维护者"
-    assert adoption["release_quote"] == RELEASE_QUOTE
+    assert adoption["release_quote"] == SYNTHETIC_RELEASE_TEXT
     assert adoption["preimage_pick_row_canonical_sha256"] == (
         entry["failed_pick_import_authority"][
             "state_row_canonical_sha256"
@@ -954,16 +953,16 @@ def test_ordinary_reimport_preserves_failed_pick_consumption_idempotently(
     ("adopt_failed_pick", "release_quote", "allow_new_pick", "expected"),
     [
         (CANDIDATE, None, False, "FAILED_PICK_IMPORT_FLAGS_INCOMPLETE"),
-        (None, RELEASE_QUOTE, False, "FAILED_PICK_IMPORT_FLAGS_INCOMPLETE"),
+        (None, SYNTHETIC_RELEASE_TEXT, False, "FAILED_PICK_IMPORT_FLAGS_INCOMPLETE"),
         (
             "auto_wrong_candidate",
-            RELEASE_QUOTE,
+            SYNTHETIC_RELEASE_TEXT,
             False,
             "FAILED_PICK_IMPORT_CANDIDATE_MISMATCH",
         ),
         (
             CANDIDATE,
-            RELEASE_QUOTE,
+            SYNTHETIC_RELEASE_TEXT,
             True,
             "FAILED_PICK_IMPORT_MODE_CONFLICT",
         ),
@@ -998,7 +997,7 @@ def test_failed_pick_release_quote_must_match_registry_exactly(
     before = fixture.state_path.read_bytes()
 
     receipt, code = _run_authorized_failed_pick(
-        fixture, quote=RELEASE_QUOTE.removeprefix("synthetic ")
+        fixture, quote=SYNTHETIC_RELEASE_TEXT.removeprefix("合成样例：")
     )
 
     assert code == 2
@@ -1188,7 +1187,7 @@ def test_fixture_registry_failed_pick_release_is_exactly_bound(
         registry_path=registry_path,
         candidate_id=CANDIDATE,
         date=DATE,
-        release_quote=RELEASE_QUOTE,
+        release_quote=SYNTHETIC_RELEASE_TEXT,
     )
     assert authorization.released_by == "维护者"
     assert authorization.state_row_canonical_sha256 == (
@@ -1649,6 +1648,7 @@ def test_copy_capacity_counts_atomic_replacement_bytes_and_reserve(
     destination.write_bytes(b"old")
     plan = SimpleNamespace(copies=(pi.CopyItem(source, destination, "file", "package"),))
     monkeypatch.setenv("AUTOSLICE_MIN_FREE_BYTES", "5")
+    monkeypatch.setenv("AUTOSLICE_OPERATIONAL_RESERVE_BYTES", "5")
     monkeypatch.setattr(shutil, "disk_usage", lambda path: SimpleNamespace(free=free))
     if succeeds:
         result = pi.execute_copy(plan, apply=True)
@@ -1677,6 +1677,7 @@ def test_copy_capacity_aggregates_files_and_skips_identical_bytes(
         for i, dest in enumerate((same, a, b))
     ))
     monkeypatch.delenv("AUTOSLICE_MIN_FREE_BYTES", raising=False)
+    monkeypatch.setenv("AUTOSLICE_OPERATIONAL_RESERVE_BYTES", "0")
     monkeypatch.setattr(shutil, "disk_usage", lambda path: SimpleNamespace(free=13))
     with pytest.raises(pi.PackageImportError, match="INSUFFICIENT_DISK_SPACE"):
         pi.execute_copy(plan, apply=True)
@@ -1719,6 +1720,7 @@ def test_copy_source_change_after_capacity_probe_refuses_before_write(
     source, destination = tmp_path / "source", tmp_path / "new" / "file"
     source.write_bytes(b"original")
     plan = SimpleNamespace(copies=(pi.CopyItem(source, destination, "file", "package"),))
+    monkeypatch.setenv("AUTOSLICE_OPERATIONAL_RESERVE_BYTES", "0")
     def changed_source(path):
         source.write_bytes(b"larger unplanned payload")
         return SimpleNamespace(free=10**9)

@@ -10,6 +10,7 @@ never speaker authority.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import hashlib
 import json
 import os
@@ -67,14 +68,11 @@ def _regular_file(path: str | Path, *, code: str) -> Path:
 
 def _sha256(path: str | Path, *, code: str = "INPUT_FILE_INVALID") -> str:
     resolved = _regular_file(path, code=code)
-    digest = hashlib.sha256()
     try:
-        with resolved.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1 << 20), b""):
-                digest.update(chunk)
+        digest = _evidence_file_sha256(resolved)
     except OSError as exc:
         raise AttributionInputError(code) from exc
-    return "sha256:" + digest.hexdigest()
+    return "sha256:" + digest
 
 
 def _verified_file(
@@ -85,6 +83,47 @@ def _verified_file(
     if _sha256(resolved, code=unavailable) != expected:
         raise AttributionInputError(mismatch)
     return resolved
+
+
+def _target_cue_indexes(value: object, *, code: str) -> list[int | str]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)) or not value:
+        raise AttributionInputError(code)
+    indexes: list[int | str] = []
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, (int, str)):
+            raise AttributionInputError(code)
+        if isinstance(item, str) and (
+            not item.strip() or len(item) > 180 or "\n" in item or "\r" in item
+        ):
+            raise AttributionInputError(code)
+        if item in indexes:
+            raise AttributionInputError(code)
+        indexes.append(item)
+    return indexes
+
+
+def _target_scope(
+    value: Mapping[str, object], *, interval: list[int], code: str
+) -> tuple[list[int], list[int | str]] | None:
+    has_interval = "target_interval_ms" in value
+    has_indexes = "target_cue_indexes" in value
+    if not has_interval and not has_indexes:
+        return None
+    if has_interval != has_indexes:
+        raise AttributionInputError(code)
+    raw_interval = value.get("target_interval_ms")
+    if (
+        not isinstance(raw_interval, list)
+        or len(raw_interval) != 2
+        or any(isinstance(item, bool) or not isinstance(item, int) for item in raw_interval)
+        or raw_interval[0] < 0
+        or raw_interval[1] <= raw_interval[0]
+        or raw_interval[0] < interval[0]
+        or raw_interval[1] > interval[1]
+    ):
+        raise AttributionInputError(code)
+    indexes = _target_cue_indexes(value.get("target_cue_indexes"), code=code)
+    return [int(raw_interval[0]), int(raw_interval[1])], indexes
 
 
 def _cue_id(cue: TimedCue) -> int | str:
@@ -248,6 +287,21 @@ def _load_acoustic_receipts(
             and isinstance(input_bindings.get("caption_frame_sha256"), str)
         ):
             raise AttributionInputError("ACOUSTIC_RECEIPT_INVALID")
+        target_scope = _target_scope(
+            receipt, interval=interval, code="ACOUSTIC_TARGET_BINDING_INVALID"
+        )
+        if target_scope is not None:
+            target_interval, target_indexes = target_scope
+            if (
+                input_bindings.get("target_interval_ms") != target_interval
+                or input_bindings.get("target_cue_indexes") != target_indexes
+            ):
+                raise AttributionInputError("ACOUSTIC_TARGET_BINDING_INVALID")
+        elif (
+            "target_interval_ms" in input_bindings
+            or "target_cue_indexes" in input_bindings
+        ):
+            raise AttributionInputError("ACOUSTIC_TARGET_BINDING_INVALID")
         if observation_id in receipts:
             raise AttributionInputError("ACOUSTIC_RECEIPT_DUPLICATE")
         receipts[observation_id] = {
@@ -267,8 +321,10 @@ def _classify(acoustic: Mapping[str, object] | None) -> tuple[str, str, list[str
     overlap = acoustic.get("overlap_speech")
     if source == "PRESENT" and host == "ABSENT" and overlap == "ABSENT":
         return "source_media", "DROP_SOURCE_MEDIA", ["SOURCE_PRESENT_HOST_AND_OVERLAP_ABSENT"]
-    if source == "PRESENT" and (host == "PRESENT" or overlap == "PRESENT"):
-        return "overlap", "KEEP", ["SOURCE_AND_HOST_OR_OVERLAP_PRESENT"]
+    if source == "PRESENT" and overlap == "PRESENT":
+        return "overlap", "KEEP", ["SOURCE_AND_SIMULTANEOUS_OVERLAP_PRESENT"]
+    if source == "PRESENT" and host == "PRESENT" and overlap == "ABSENT":
+        return "unknown", "KEEP", ["SEQUENTIAL_MULTIPLE_VOICES_KEEP"]
     if source == "ABSENT" and host == "PRESENT" and overlap == "ABSENT":
         return "host", "KEEP", ["SOURCE_ABSENT_HOST_PRESENT_OVERLAP_ABSENT"]
     return "unknown", "KEEP", ["ACOUSTIC_EVIDENCE_INSUFFICIENT_OR_CONFLICTING"]
@@ -365,6 +421,7 @@ def build_caption_source_attribution(
             )
 
         acoustic_receipt = acoustic.get(str(observation["observation_id"]))
+        scope_reason: str | None = None
         if acoustic_receipt is not None:
             acoustic_bindings = acoustic_receipt["bindings"]
             assert isinstance(acoustic_bindings, Mapping)
@@ -374,7 +431,29 @@ def build_caption_source_attribution(
             assert isinstance(interval, list)
             if not interval[0] <= frame_ms < interval[1]:
                 raise AttributionInputError("ACOUSTIC_INTERVAL_MISMATCH")
-        label, action, reason_codes = _classify(acoustic_receipt)
+            matched_indexes = [_cue_id(cue) for cue in matched]
+            matched_interval = (
+                [matched[0].start_ms, matched[-1].end_ms] if matched else None
+            )
+            target_scope = _target_scope(
+                acoustic_receipt,
+                interval=[int(interval[0]), int(interval[1])],
+                code="ACOUSTIC_TARGET_BINDING_INVALID",
+            )
+            if target_scope is None:
+                if matched_interval != interval:
+                    scope_reason = "ACOUSTIC_CONTEXT_ONLY_KEEP"
+            else:
+                target_interval, target_indexes = target_scope
+                if (
+                    target_interval != matched_interval
+                    or target_indexes != matched_indexes
+                ):
+                    scope_reason = "ACOUSTIC_TARGET_BINDING_MISMATCH"
+        if scope_reason is None:
+            label, action, reason_codes = _classify(acoustic_receipt)
+        else:
+            label, action, reason_codes = "unknown", "KEEP", [scope_reason]
         if not observation["caption_present"] and acoustic_receipt is None:
             reason_codes = ["NO_CAPTION_IS_NOT_HOST_EVIDENCE"]
         if not matched:

@@ -337,6 +337,8 @@ def test_unexpected_producer_exception_preserves_existing_refresh_receipt_only(
     item: dict[str, object] = {
         "cid": "candidate-806",
         "segment_path": "/recordings/segment.mp4",
+        "start_ms": 0,
+        "end_ms": 1_000,
     }
     if with_receipt:
         item[ROW_RECEIPT_KEY] = _receipt()
@@ -381,6 +383,8 @@ def test_unexpected_talk_exception_preserves_provider_budget_ledger(
     item: dict[str, object] = {
         "cid": "candidate-1576",
         "segment_path": "/recordings/segment.mp4",
+        "start_ms": 0,
+        "end_ms": 1_000,
         "selected_repair": True,
         FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD: ledger,
     }
@@ -432,6 +436,8 @@ def test_unexpected_talk_exception_types_malformed_provider_budget_ledger(
     item = {
         "cid": "candidate-1576",
         "segment_path": "/recordings/segment.mp4",
+        "start_ms": 0,
+        "end_ms": 1_000,
         FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD: malformed_ledger,
     }
 
@@ -468,6 +474,8 @@ def test_unexpected_talk_exception_omits_valid_empty_provider_budget_ledger(
     item = {
         "cid": "candidate-1576",
         "segment_path": "/recordings/segment.mp4",
+        "start_ms": 0,
+        "end_ms": 1_000,
         FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_FIELD: {
             "schema_version": FINAL_REVIEW_PROVIDER_BUDGET_LEDGER_SCHEMA,
             "entries": [],

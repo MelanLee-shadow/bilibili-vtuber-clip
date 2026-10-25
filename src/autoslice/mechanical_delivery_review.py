@@ -19,7 +19,7 @@ from scripts.audit_review_package import (
     audit_package,
 )
 from src.autoslice import final_human_review as review
-from src.autoslice.package_audit_binding import audit_binding
+from src.autoslice.package_audit_binding import audit_binding, audit_content_binding
 from src.autoslice.final_media_review_bootstrap import (
     FinalMediaReviewBootstrapError,
     bootstrap_final_media_review_job,
@@ -39,6 +39,7 @@ from src.autoslice.final_media_review_raw_av import (
 )
 from src.autoslice.producer_media import _validated_burned_artifact, _validated_burned_ass_artifact
 from src.autoslice.review_package_portable_evidence import contained_package_artifact
+from src.autoslice import normal_first_publication_media_successor as normal_media_successor
 
 SCHEMA_VERSION = "lidousha-mechanical-delivery-review.v1"
 STATUS = "VERIFIED_MECHANICAL_DELIVERY"
@@ -58,6 +59,143 @@ def _binding(root: Path, relative: str) -> dict[str, object]:
     return {"path": relative, "sha256": review._sha256(path), "bytes": path.stat().st_size}
 
 
+def _normal_media_successor_reference(
+    manifest: Mapping[str, object],
+    raw_item: object,
+    *,
+    candidate_id: str,
+) -> Mapping[str, object] | None:
+    """Read the same typed reference surfaces that the canonical auditor replays."""
+
+    _need(isinstance(raw_item, Mapping), "review manifest item is invalid")
+    item_reference = raw_item.get("normal_first_publication_media_successor")
+    raw_map = manifest.get("normal_first_publication_media_successor_by_candidate")
+    if item_reference is None and raw_map is None:
+        return None
+    _need(
+        isinstance(raw_map, Mapping) and set(raw_map) == {candidate_id},
+        "normal media successor reference map is invalid",
+    )
+    _need(
+        isinstance(item_reference, Mapping)
+        and item_reference == raw_map.get(candidate_id),
+        "normal media successor reference surfaces drift",
+    )
+    return item_reference
+
+
+def _burn_media_paths(
+    root: Path,
+    *,
+    manifest: Mapping[str, object],
+    raw_item: object,
+    candidate_id: str,
+    closure: Mapping[str, object],
+    record: Mapping[str, object],
+) -> tuple[dict[str, object] | None, Path, Path, Path]:
+    """Resolve burn inputs, using the prepared role map only for its typed lane."""
+
+    reference = _normal_media_successor_reference(
+        manifest, raw_item, candidate_id=candidate_id
+    )
+    expected_subtitle = review._regular_package_file(
+        root, str(closure["artifacts"]["subtitle"])
+    )
+    if reference is None:
+        video = contained_package_artifact(
+            root,
+            record.get("burned_preview", {}).get("path")
+            if isinstance(record.get("burned_preview"), Mapping)
+            else None,
+            label="burned video",
+        )
+        ass = contained_package_artifact(
+            root,
+            record.get("burned_preview", {}).get("ass_path")
+            if isinstance(record.get("burned_preview"), Mapping)
+            else None,
+            label="burned ASS",
+        )
+        expected_video = review._regular_package_file(
+            root, str(closure["artifacts"]["video"])
+        )
+        _need(
+            video == expected_video,
+            "burned video differs from the manifest video",
+        )
+        return None, video, expected_subtitle, ass
+
+    record_path = str(closure["record_path"])
+    record_name = Path(record_path).name
+    _need(record_name.endswith(".record.json"), "record path is not a package record")
+    stem = record_name[: -len(".record.json")]
+    title = closure.get("title")
+    _need(isinstance(title, str) and title, "normal media successor title is missing")
+    try:
+        validated_reference = normal_media_successor.validate_reference(
+            package_root=root,
+            stem=stem,
+            reference=reference,
+            candidate_id=candidate_id,
+            title=title,
+            authority=record.get("recovery_publication_authority"),
+        )
+    except (
+        normal_media_successor.NormalFirstPublicationMediaSuccessorError,
+        OSError,
+        TypeError,
+        ValueError,
+        KeyError,
+    ) as exc:
+        raise ValueError(
+            "mechanical delivery review: normal media successor binding invalid"
+        ) from exc
+
+    role_suffixes = normal_media_successor.ROLE_SUFFIXES
+    video = review._regular_package_file(
+        root, f"{stem}{role_suffixes['video']}"
+    )
+    expected_video = review._regular_package_file(
+        root, str(closure["artifacts"]["video"])
+    )
+    _need(video == expected_video, "prepared media video differs from the manifest video")
+    subtitle = review._regular_package_file(
+        root, f"{stem}{role_suffixes['subtitle']}"
+    )
+    _need(
+        subtitle == expected_subtitle,
+        "prepared media subtitle differs from the manifest subtitle",
+    )
+
+    ass_candidates: list[Path] = []
+    for role in ("uniform_host_ass", "speaker_ass"):
+        relative = f"{stem}{role_suffixes[role]}"
+        candidate = root / relative
+        if candidate.exists() or candidate.is_symlink():
+            ass_candidates.append(review._regular_package_file(root, relative))
+    expected_ass_sha = (
+        record.get("artifact_hashes", {}).get("ass_sha256")
+        if isinstance(record.get("artifact_hashes"), Mapping)
+        else None
+    )
+    _need(
+        isinstance(expected_ass_sha, str) and expected_ass_sha,
+        "normal media successor ASS hash is missing",
+    )
+    # The record's burn hash selects the role; a basename or a stale producer
+    # pointer alone cannot choose the ASS that the current package burned.
+    matching_ass = [
+        candidate
+        for candidate in ass_candidates
+        if review._sha256(candidate) == expected_ass_sha
+    ]
+    _need(
+        len(matching_ass) == 1,
+        "normal media successor ASS role is missing or ambiguous",
+    )
+    return validated_reference, video, subtitle, matching_ass[0]
+
+
 def _bindings(package_root: Path, audit_path: Path) -> dict[str, object]:
     root = review._package_directory(package_root)
     audit_relative = str(audit_path.absolute().relative_to(root))
@@ -72,24 +210,41 @@ def _bindings(package_root: Path, audit_path: Path) -> dict[str, object]:
         and current.get("blocking_issue_count") == 0,
         "current canonical audit rejected the package",
     )
-    _need(audit_binding(saved) == audit_binding(current), "canonical audit is stale")
+    _need(
+        audit_content_binding(saved) == audit_content_binding(current),
+        "canonical audit is stale",
+    )
     manifest = review._json_object(manifest_path, source="review manifest")
     # Reuse the exact current candidate/title/target/cover/intro identity checks;
     # do not reuse or fabricate a human observer's eight textual observations.
     order, closures = review._manifest_items(manifest, package_root=root)
+    raw_manifest_items = manifest.get("items")
+    _need(isinstance(raw_manifest_items, list), "review manifest items are invalid")
+    raw_items_by_candidate = {
+        str(raw_item.get("candidate_id")): raw_item
+        for raw_item in raw_manifest_items
+        if isinstance(raw_item, Mapping)
+        and isinstance(raw_item.get("candidate_id"), str)
+    }
     items = []
     for candidate_id in order:
         closure = closures[candidate_id]
+        raw_item = raw_items_by_candidate.get(candidate_id)
+        _need(raw_item is not None, "review manifest item is missing")
         record_path = str(closure["record_path"])
         record = review._json_object(
             review._regular_package_file(root, record_path), source="record",
         )
         preview = record.get("burned_preview")
         _need(isinstance(preview, dict), "burn record is missing")
-        video = contained_package_artifact(root, preview.get("path"), label="burned video")
-        ass = contained_package_artifact(root, preview.get("ass_path"), label="burned ASS")
-        _need(video == review._regular_package_file(root, closure["artifacts"]["video"]),
-              "burned video differs from the manifest video")
+        successor_reference, video, _subtitle, ass = _burn_media_paths(
+            root,
+            manifest=manifest,
+            raw_item=raw_item,
+            candidate_id=candidate_id,
+            closure=closure,
+            record=record,
+        )
         # Portable paths are projected only in memory. Reuse the producer's own
         # status and dual video/ASS hash checks, rather than trust a PASS label.
         portable_record = {**record, "burned_preview": {
@@ -113,6 +268,8 @@ def _bindings(package_root: Path, audit_path: Path) -> dict[str, object]:
                 for kind, relative in closure["artifacts"].items()
             },
         }
+        if successor_reference is not None:
+            item["normal_first_publication_media_successor"] = successor_reference
         # A normal autonomous perceptual consumer may bind its durable state
         # into the package.  Mechanical review must not silently ignore a
         # present, content-required BLOCK/WAIT/FAILED state; doing so would turn
@@ -303,7 +460,10 @@ def _bindings(package_root: Path, audit_path: Path) -> dict[str, object]:
     return {
         "review_manifest": _binding(root, "review_manifest.json"),
         "package_audit": _binding(root, audit_relative),
-        "canonical_audit": audit_binding(current),
+        # Bind the immutable audit file, after the current auditor has passed
+        # the same bytes and verdict above. Auditor identity churn alone must
+        # not invalidate an already published package's mechanical receipt.
+        "canonical_audit": audit_binding(saved),
         "items": items,
     }
 
@@ -426,6 +586,7 @@ def _read_only_mechanical_item(
     root: Path,
     *,
     candidate_id: str,
+    manifest: Mapping[str, object],
     closure: Mapping[str, object],
     raw_item: object,
 ) -> dict[str, object]:
@@ -435,15 +596,13 @@ def _read_only_mechanical_item(
     record = review._json_object(record_file, source="record")
     preview = record.get("burned_preview")
     _need(isinstance(preview, dict), "burn record is missing")
-    video = contained_package_artifact(
-        root, preview.get("path"), label="burned video"
-    )
-    ass = contained_package_artifact(root, preview.get("ass_path"), label="burned ASS")
-    _need(
-        video == review._regular_package_file(
-            root, closure["artifacts"]["video"]
-        ),
-        "burned video differs from the manifest video",
+    successor_reference, video, _subtitle, ass = _burn_media_paths(
+        root,
+        manifest=manifest,
+        raw_item=raw_item,
+        candidate_id=candidate_id,
+        closure=closure,
+        record=record,
     )
     portable_record = {
         **record,
@@ -469,6 +628,8 @@ def _read_only_mechanical_item(
             for kind, relative in closure["artifacts"].items()
         },
     }
+    if successor_reference is not None:
+        expected["normal_first_publication_media_successor"] = successor_reference
     final_media = _read_only_final_media_bindings(
         root, candidate_id, video=video, item=raw_item
     )
@@ -541,6 +702,7 @@ def validate_saved_mechanical_receipt(
         _read_only_mechanical_item(
             root,
             candidate_id=candidate_id,
+            manifest=manifest,
             closure=closures[candidate_id],
             raw_item=raw_items[index],
         )

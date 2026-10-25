@@ -979,11 +979,27 @@ def apply_source_language_preservation_guard(
     # host-spoken code-switch.
     audit["unproven_foreign_introductions"] = introduced_kana_rows
     if not cue_count_matches:
+        # Reindexing, deleting or merging Chinese-only cues does not change
+        # source-language evidence. Prove that every foreign-bearing cue keeps
+        # its exact words and physical interval in both directions; a moved,
+        # removed, translated or newly introduced foreign surface still fails.
+        def foreign_intervals(cues):
+            return [
+                (cue.start_ms, cue.end_ms, cue.text)
+                for cue in cues
+                if re.search(r"[A-Za-z\u3040-\u30ff]", cue.text)
+            ]
+
+        unchanged_foreign = bool(draft_cues) and (
+            foreign_intervals(draft_cues) == foreign_intervals(final_cues)
+        )
         audit["status"] = (
             "BLOCKED_UNPROVEN_FOREIGN_SPEAKER"
             if introduced_kana_rows
-            else "SKIPPED_CUE_COUNT_MISMATCH"
+            else "CLEAN" if unchanged_foreign else "SKIPPED_CUE_COUNT_MISMATCH"
         )
+        if unchanged_foreign and not introduced_kana_rows:
+            audit["cue_binding"] = "UNCHANGED_FOREIGN_CUE_INTERVALS"
         audit["reverted_count"] = 0
         return final_srt, audit
 

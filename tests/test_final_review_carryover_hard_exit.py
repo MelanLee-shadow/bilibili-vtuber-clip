@@ -345,7 +345,9 @@ def test_exact_final_reviewer_checkpoints_before_it_returns():
     import ast
     import inspect
 
-    tree = ast.parse(inspect.getsource(producer_text_pipeline.run_text_pipeline))
+    tree = ast.parse(
+        inspect.getsource(producer_text_pipeline._build_exact_final_review_callback)
+    )
     reviewer = next(
         node
         for node in ast.walk(tree)

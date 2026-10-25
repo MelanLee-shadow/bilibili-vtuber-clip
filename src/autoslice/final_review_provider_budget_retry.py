@@ -110,13 +110,14 @@ def build_provider_budget_retry_evidence(
     boundary = audit.get("boundary_semantic_review")
     carryover_count = audit.get("carryover_persisted_count")
     validated_count = _plain_int(audit.get("validated_finding_count"), minimum=1)
+    from .finding_lifecycle import is_finding_failure, only_finding_failures
     if not (
         _CANDIDATE_RX.fullmatch(candidate_id)
-        and contract_reason_code == "FINAL_REVIEW_UNRESOLVED_FINDINGS"
+        and is_finding_failure(contract_reason_code)
         and audit.get("schema_version") == "final-review-audit.v2"
         and audit.get("status") == "FLAGGED"
         and audit.get("release_gate") == "BLOCK"
-        and audit.get("reason_codes") == ["FINAL_REVIEW_UNRESOLVED_FINDINGS"]
+        and only_finding_failures(audit.get("reason_codes"))
         and (
             carryover_count is None
             or _plain_int(carryover_count, minimum=0) == 0

@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from src.autoslice import package_import as pi
+from src.autoslice.cover_host_identity_gate import HOST_ONLY_SCHEMA_VERSION
 
 
 def _fixture(root: Path, *, absolute: bool):
@@ -22,7 +23,7 @@ def _fixture(root: Path, *, absolute: bool):
     source = "/unmounted-producer/out/candidate/replacement_recuts/covers/final.cover.png"
     digest = "sha256:" + hashlib.sha256(cover.read_bytes()).hexdigest()
     verification = {
-        "schema_version": "lidousha-cover-final-host-identity-verification.v4",
+        "schema_version": HOST_ONLY_SCHEMA_VERSION,
         "final_cover_path": source if absolute else "covers/final.cover.png",
         "final_cover_sha256": digest,
     }

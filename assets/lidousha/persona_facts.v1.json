@@ -1,0 +1,812 @@
+{
+  "schema_version": "lidousha-persona-facts.v1",
+  "profile_id": "lidousha",
+  "revisions": [
+    {
+      "fact_id": "legacy-line-001",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "LEGACY_TEXT",
+        "predicate": "STATES",
+        "object_text": "# 李豆沙特质（标题/封面/CPA 共用的 persona 资产）\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "1bafc92b49d13e6327b48e6f0571a691ba20174915019191c4a8ec78537d3638",
+      "statement_zh": "# 李豆沙特质（标题/封面/CPA 共用的 persona 资产）\n",
+      "render": {
+        "section_zh": "# 李豆沙特质（标题/封面/CPA 共用的 persona 资产）",
+        "order": 1
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 1,
+          "line_end": 1
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "legacy-line-002",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "LEGACY_TEXT",
+        "predicate": "STATES",
+        "object_text": "\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "bdc72905e5058ea801a1b245fb72c40e58fdc8d5b9975ea29303d9e0a9c50e23",
+      "statement_zh": "\n",
+      "render": {
+        "section_zh": "# 李豆沙特质（标题/封面/CPA 共用的 persona 资产）",
+        "order": 2
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 2,
+          "line_end": 2
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "legacy-line-003",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "LEGACY_TEXT",
+        "predicate": "STATES",
+        "object_text": "- 身份：B站虚拟主播（房间 22966160，虚拟Singer 区），温柔声线唱歌 + 高能杂谈双修。\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "4100fa9fbe9822c40055aed1a119a078aed7704a6a249e74639075570b5da83c",
+      "statement_zh": "- 身份：B站虚拟主播（房间 22966160，虚拟Singer 区），温柔声线唱歌 + 高能杂谈双修。\n",
+      "render": {
+        "section_zh": "# 李豆沙特质（标题/封面/CPA 共用的 persona 资产）",
+        "order": 3
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 3,
+          "line_end": 3
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "legacy-line-004",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "EDITORIAL_DIRECTIVE",
+        "predicate": "STATES",
+        "object_text": "- 形象：虚拟熊猫少女——白发+头顶自带小熊猫耳（长在头上的耳朵，**不是**熊猫头套/帽子；\"熊猫头\"只是粉丝外号）。衍生形象\"小李/吵闹小李\"，有新哭哭表情；封面必须保留她可辨认的身份锚点。游戏或观看场景可以由当场画面承担视觉主位，不能因此把她画成同台他人。\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "3908fa814f7a6be68f33b44ffe5dc73e1214df24e58ee313663eff219aeb5a38",
+      "statement_zh": "- 形象：虚拟熊猫少女——白发+头顶自带小熊猫耳（长在头上的耳朵，**不是**熊猫头套/帽子；\"熊猫头\"只是粉丝外号）。衍生形象\"小李/吵闹小李\"，有新哭哭表情；封面必须保留她可辨认的身份锚点。游戏或观看场景可以由当场画面承担视觉主位，不能因此把她画成同台他人。\n",
+      "render": {
+        "section_zh": "# 李豆沙特质（标题/封面/CPA 共用的 persona 资产）",
+        "order": 4
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 4,
+          "line_end": 4
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "legacy-line-005",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "EDITORIAL_DIRECTIVE",
+        "predicate": "STATES",
+        "object_text": "- 封面形象规则（现行场景口径见 `docs/pipeline/70-cover.md`）：**必须以李豆沙当场直播的实际人物形象为原型**，只允许改动作、表情或 Q 版萌化；**严禁添加帽子、头饰、额外服饰或装饰品**；联动/舞台/多人场景中人物身份必须锁定李豆沙本人，绝不能画成同台他人（如 142）。\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "65b8d54cb5f0da6e85c50a8b4764caaeee496867fc1d9709e00e7a9da7ddf539",
+      "statement_zh": "- 封面形象规则（现行场景口径见 `docs/pipeline/70-cover.md`）：**必须以李豆沙当场直播的实际人物形象为原型**，只允许改动作、表情或 Q 版萌化；**严禁添加帽子、头饰、额外服饰或装饰品**；联动/舞台/多人场景中人物身份必须锁定李豆沙本人，绝不能画成同台他人（如 142）。\n",
+      "render": {
+        "section_zh": "# 李豆沙特质（标题/封面/CPA 共用的 persona 资产）",
+        "order": 5
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 5,
+          "line_end": 5
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "legacy-line-006",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "LEGACY_TEXT",
+        "predicate": "STATES",
+        "object_text": "- 地域：湖南长沙，直播里会飙长沙话/湖南话。\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "b1d88761e72c8c8bb0c1cf4972142e81d2a427ef6e24bcd88354e80ca4922a6f",
+      "statement_zh": "- 地域：湖南长沙，直播里会飙长沙话/湖南话。\n",
+      "render": {
+        "section_zh": "# 李豆沙特质（标题/封面/CPA 共用的 persona 资产）",
+        "order": 6
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 6,
+          "line_end": 6
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "legacy-line-007",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "LEGACY_TEXT",
+        "predicate": "STATES",
+        "object_text": "- 粉丝文化：粉丝梗\"侄女/侄女卖姬\"（是梗，不是\"直女\"）；老观众 kmx 常被点名。\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "e0369d1c6374e3337f03c4ebd4405dcdb5a3c29899d085c5055b911d4620476e",
+      "statement_zh": "- 粉丝文化：粉丝梗\"侄女/侄女卖姬\"（是梗，不是\"直女\"）；老观众 kmx 常被点名。\n",
+      "render": {
+        "section_zh": "# 李豆沙特质（标题/封面/CPA 共用的 persona 资产）",
+        "order": 7
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 7,
+          "line_end": 7
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "legacy-line-008",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "LEGACY_TEXT",
+        "predicate": "STATES",
+        "object_text": "- 性格气质（标题最常用的抓手）：\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "eb39e4fc936a9696612c655fb63712509d47c01c9614a3f20815c29be1aade33",
+      "statement_zh": "- 性格气质（标题最常用的抓手）：\n",
+      "render": {
+        "section_zh": "# 李豆沙特质（标题/封面/CPA 共用的 persona 资产）",
+        "order": 8
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 8,
+          "line_end": 8
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "legacy-line-009",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "LEGACY_TEXT",
+        "predicate": "STATES",
+        "object_text": "  - 反应大：容易破防、当场看傻、被吓到连喊\"好可怕\"\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "0abe1bcd467659a0a2ab087497afba16ed11d38c0a6e0a3e41e7953a24fd8222",
+      "statement_zh": "  - 反应大：容易破防、当场看傻、被吓到连喊\"好可怕\"\n",
+      "render": {
+        "section_zh": "# 李豆沙特质（标题/封面/CPA 共用的 persona 资产）",
+        "order": 9
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 9,
+          "line_end": 9
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "legacy-line-010",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "LEGACY_TEXT",
+        "predicate": "STATES",
+        "object_text": "  - 一本正经地犯傻：认真讲歪理（\"跳闸不是把闸搬上去就行了吗\"）\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "c4d39f0062da9ce64e9e5acd028446888c7fbaf5e697c2f56eb5bd03b7308763",
+      "statement_zh": "  - 一本正经地犯傻：认真讲歪理（\"跳闸不是把闸搬上去就行了吗\"）\n",
+      "render": {
+        "section_zh": "# 李豆沙特质（标题/封面/CPA 共用的 persona 资产）",
+        "order": 10
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 10,
+          "line_end": 10
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "legacy-line-011",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "LEGACY_TEXT",
+        "predicate": "STATES",
+        "object_text": "  - 嘴快爱吐槽：看图/看弹幕连环快嘴点评（\"一眼AI 好吧\"）\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "a9caf548ef45fabe867bd7c0eb4dbbd56b45c1649bb7e93e3321d6e870925d3c",
+      "statement_zh": "  - 嘴快爱吐槽：看图/看弹幕连环快嘴点评（\"一眼AI 好吧\"）\n",
+      "render": {
+        "section_zh": "# 李豆沙特质（标题/封面/CPA 共用的 persona 资产）",
+        "order": 11
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 11,
+          "line_end": 11
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "legacy-line-012",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "LEGACY_TEXT",
+        "predicate": "STATES",
+        "object_text": "  - 爱玩谐音/绕口令并翻车（反沙/反杀/翻砂）\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "f10f909f8adc49ab2e981c3c99b0c6c00c0b87c1334582212d0b3f1b8db2c4f3",
+      "statement_zh": "  - 爱玩谐音/绕口令并翻车（反沙/反杀/翻砂）\n",
+      "render": {
+        "section_zh": "# 李豆沙特质（标题/封面/CPA 共用的 persona 资产）",
+        "order": 12
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 12,
+          "line_end": 12
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "legacy-line-013",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "LEGACY_TEXT",
+        "predicate": "STATES",
+        "object_text": "  - 唱歌认真但常翻车忘词，翻车后自嘲笑场\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "7a14431bf9eef6dc10f950435d8255647e91ff265514252ba4e806cfdfd75c65",
+      "statement_zh": "  - 唱歌认真但常翻车忘词，翻车后自嘲笑场\n",
+      "render": {
+        "section_zh": "# 李豆沙特质（标题/封面/CPA 共用的 persona 资产）",
+        "order": 13
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 13,
+          "line_end": 13
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "legacy-line-014",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "LEGACY_TEXT",
+        "predicate": "STATES",
+        "object_text": "  - 温柔面：哄睡、晚安名单、对观众细声细气\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "47475a1fb2fb85922106e3238a8b945855dd321ebe532f64250a6aab2c9948db",
+      "statement_zh": "  - 温柔面：哄睡、晚安名单、对观众细声细气\n",
+      "render": {
+        "section_zh": "# 李豆沙特质（标题/封面/CPA 共用的 persona 资产）",
+        "order": 14
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 14,
+          "line_end": 14
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "legacy-line-015",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "LEGACY_TEXT",
+        "predicate": "STATES",
+        "object_text": "- 常见切片场景：看AI图连环吐槽、弹幕接梗打闹、讲宿舍/日本生活故事、唱歌（完整歌走歌切流程）、绕口令/谐音翻车。\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "e0a62a7d4bc8d357fc481ce10c0f531e19bb0aa7c8c0c0121e19f94af2a1a320",
+      "statement_zh": "- 常见切片场景：看AI图连环吐槽、弹幕接梗打闹、讲宿舍/日本生活故事、唱歌（完整歌走歌切流程）、绕口令/谐音翻车。\n",
+      "render": {
+        "section_zh": "# 李豆沙特质（标题/封面/CPA 共用的 persona 资产）",
+        "order": 15
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 15,
+          "line_end": 15
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "legacy-line-016",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "LEGACY_TEXT",
+        "predicate": "STATES",
+        "object_text": "- 相关人物/专名：见 glossary.txt（小室、Ado、露蒂丝、shadowlee 等）。\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "d3b510aec5dd97e5e7ed0e4a0ef2e446e426e736279c6643ba78346fbc5effdc",
+      "statement_zh": "- 相关人物/专名：见 glossary.txt（小室、Ado、露蒂丝、shadowlee 等）。\n",
+      "render": {
+        "section_zh": "# 李豆沙特质（标题/封面/CPA 共用的 persona 资产）",
+        "order": 16
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 16,
+          "line_end": 16
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "legacy-line-017",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "LEGACY_TEXT",
+        "predicate": "STATES",
+        "object_text": "\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "bdc72905e5058ea801a1b245fb72c40e58fdc8d5b9975ea29303d9e0a9c50e23",
+      "statement_zh": "\n",
+      "render": {
+        "section_zh": "# 李豆沙特质（标题/封面/CPA 共用的 persona 资产）",
+        "order": 17
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 17,
+          "line_end": 17
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "legacy-line-018",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "LEGACY_TEXT",
+        "predicate": "STATES",
+        "object_text": "## 封面表情/角色映射（AI 封面 art-direction 用）\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "70adb2c99269cf886a3b05fa68dfe9682f3910f5dd233f34d65907209d1f5324",
+      "statement_zh": "## 封面表情/角色映射（AI 封面 art-direction 用）\n",
+      "render": {
+        "section_zh": "## 封面表情/角色映射（AI 封面 art-direction 用）",
+        "order": 18
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 18,
+          "line_end": 18
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "legacy-line-019",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "EDITORIAL_DIRECTIVE",
+        "predicate": "STATES",
+        "object_text": "- 默认表情：清纯邻家女同学 / 软萌，被欺负但会软软回嘴（shy-but-bites-back）；小闭嘴微笑，不咧嘴。\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "1a597738f128d5bbd980ae38d4fb9652be8dd475386353abcc2849d759b06786",
+      "statement_zh": "- 默认表情：清纯邻家女同学 / 软萌，被欺负但会软软回嘴（shy-but-bites-back）；小闭嘴微笑，不咧嘴。\n",
+      "render": {
+        "section_zh": "## 封面表情/角色映射（AI 封面 art-direction 用）",
+        "order": 19
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 19,
+          "line_end": 19
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "legacy-line-020",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "EDITORIAL_DIRECTIVE",
+        "predicate": "STATES",
+        "object_text": "- 次要表情（仅当切片角色需要）：机灵鬼怪 / 得意（clever-smug，闭嘴坏笑挑眉）——不是默认。\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "3d83dd5e184f63f2e51b1b10ec0366c7296ba0d8741862353651c9f654053971",
+      "statement_zh": "- 次要表情（仅当切片角色需要）：机灵鬼怪 / 得意（clever-smug，闭嘴坏笑挑眉）——不是默认。\n",
+      "render": {
+        "section_zh": "## 封面表情/角色映射（AI 封面 art-direction 用）",
+        "order": 20
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 20,
+          "line_end": 20
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "legacy-line-021",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "EDITORIAL_DIRECTIVE",
+        "predicate": "STATES",
+        "object_text": "- 角色→表情：破防/被吓=瞪眼张嘴倒吸气+手抬到脸边；看傻=呆滞圆眼小O嘴；吃醋=鼓腮嘟嘴；嘴硬=不服气鼓腮；一本正经犯傻=死板认真脸；哭=夸张可爱哭脸；温柔哄睡/清唱=眼神柔和轻声。\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "f3476c3e2ea1ceffcc28dec6dfd8e86f1501d2feedce01bd440263e1ffc84cd3",
+      "statement_zh": "- 角色→表情：破防/被吓=瞪眼张嘴倒吸气+手抬到脸边；看傻=呆滞圆眼小O嘴；吃醋=鼓腮嘟嘴；嘴硬=不服气鼓腮；一本正经犯傻=死板认真脸；哭=夸张可爱哭脸；温柔哄睡/清唱=眼神柔和轻声。\n",
+      "render": {
+        "section_zh": "## 封面表情/角色映射（AI 封面 art-direction 用）",
+        "order": 21
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 21,
+          "line_end": 21
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "legacy-line-022",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "EDITORIAL_DIRECTIVE",
+        "predicate": "STATES",
+        "object_text": "- 硬禁止：永不吐舌头（never tongue-out）、不油滑、不挑衅、不性感、不媚。\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "42dd55cbe1ac9253b87c595cf2c109281a5eee2421fbe72c7ed157861ae6b69c",
+      "statement_zh": "- 硬禁止：永不吐舌头（never tongue-out）、不油滑、不挑衅、不性感、不媚。\n",
+      "render": {
+        "section_zh": "## 封面表情/角色映射（AI 封面 art-direction 用）",
+        "order": 22
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 22,
+          "line_end": 22
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "legacy-line-023",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "EDITORIAL_DIRECTIVE",
+        "predicate": "STATES",
+        "object_text": "- 外观：肤色/服装/发型/配饰一律照该切片参考帧的真实样子，不锁定某一套服装（她每场不同）。\n",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "d11691b447b75bf89905588c49c1c248ea57f09a71168d3fab03f508b0862223",
+      "statement_zh": "- 外观：肤色/服装/发型/配饰一律照该切片参考帧的真实样子，不锁定某一套服装（她每场不同）。\n",
+      "render": {
+        "section_zh": "## 封面表情/角色映射（AI 封面 art-direction 用）",
+        "order": 23
+      },
+      "evidence": [
+        {
+          "persona_md_git_blob_sha": "d37ad5994fc4c6fabff673dd5f9b6141301992d3",
+          "line_start": 23,
+          "line_end": 23
+        }
+      ],
+      "evidence_class": "LEGACY_PERSONA_MD_GRANDFATHERED",
+      "supersedes": null,
+      "decided_by": null,
+      "rejection_scope": null,
+      "recorded_at": "2026-10-25T00:00:00Z"
+    }
+  ],
+  "suppressions": []
+}

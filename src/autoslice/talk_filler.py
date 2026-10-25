@@ -7,6 +7,9 @@ with an auditable join map or falls back to the original contiguous interval.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
+from src.autoslice.structured_output import call_json
+
 import hashlib
 import json
 import re
@@ -43,7 +46,7 @@ _THANKS_RX = re.compile(
     re.IGNORECASE,
 )
 _GIFT_OBJECT_RX = re.compile(
-    r"(?:粉丝灯牌|钢蹦|钢镚|告白花束|音乐盒|舰长|上舰|礼物)",
+    r"(?:(?:粉丝)?灯牌|奶喵爪印|钢蹦|钢镚|告白花束|音乐盒|舰长|上舰|礼物)",
     re.IGNORECASE,
 )
 _HOUSEKEEPING_RX = re.compile(
@@ -88,7 +91,7 @@ _SHA256_RX = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 def _sha256(path: Path) -> str:
-    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    return "sha256:" + _evidence_file_sha256(path)
 
 
 def _cue_text(cue: object) -> str:
@@ -285,10 +288,10 @@ def _proposal_interval(
         left_context = _cue_row(left, first_position)
         right_context = _cue_row(right, last_position)
     elif mode == "remove_cues":
-        if first_position <= 1 or last_position >= len(cues):
+        if first_position <= 1:
             return None, "removal_needs_retained_context_on_both_sides"
         previous = cues[first_position - 2]
-        following = cues[last_position]
+        following = cues[last_position] if last_position < len(cues) else None
         # Retain the surrounding pauses/reactions.  Permission to remove these
         # spoken cues does not authorize cutting all time between their neighbors.
         start_ms = int(getattr(cues[first_position - 1], "source_start_ms"))
@@ -301,12 +304,31 @@ def _proposal_interval(
             )
         ]
         left_context = _cue_row(previous, first_position - 1)
-        right_context = _cue_row(following, last_position + 1)
+        right_context = (
+            _cue_row(following, last_position + 1)
+            if (
+                following is not None
+                and int(getattr(following, "source_start_ms")) < clip_end_ms
+            )
+            else None
+        )
     else:
         return None, "mode_not_supported"
 
-    if not clip_start_ms < start_ms < end_ms < clip_end_ms:
+    terminal = (
+        mode == "remove_cues"
+        and right_context is None
+        and end_ms == clip_end_ms
+    )
+    if not (
+        clip_start_ms < start_ms < end_ms
+        and (end_ms < clip_end_ms or terminal)
+    ):
         return None, "removal_not_strictly_inside_candidate"
+    if right_context is None and not terminal:
+        # Do not absorb unobserved trailing time or manufacture a right-hand
+        # bridge.  This path removes complete final cues ending at the bound.
+        return None, "terminal_removal_must_end_at_candidate_bound"
     duration_ms = end_ms - start_ms
     if duration_ms > MAX_SINGLE_REMOVAL_MS:
         return None, "single_removal_too_long"
@@ -353,6 +375,7 @@ def _proposal_interval(
             "removed_cues": removed_cues,
             "left_retained_context": left_context,
             "right_retained_context": right_context,
+            "placement": "terminal" if terminal else "interior",
             "authority": "semantic_proposal_plus_deterministic_v1",
             "authorization_kind": "automatic",
         },
@@ -639,7 +662,10 @@ def _select_removals(
             continue
         if is_automatic and (
             int(removal["source_start_ms"]) - start_ms < AUTOMATIC_EDGE_GUARD_MS
-            or end_ms - int(removal["source_end_ms"]) < AUTOMATIC_EDGE_GUARD_MS
+            or (
+                removal.get("placement") != "terminal"
+                and end_ms - int(removal["source_end_ms"]) < AUTOMATIC_EDGE_GUARD_MS
+            )
         ):
             rejected.append(
                 {
@@ -691,7 +717,8 @@ def _retained_intervals(
         removal_end = int(removal["source_end_ms"])
         retained.append({"start_ms": cursor, "end_ms": removal_start})
         cursor = removal_end
-    retained.append({"start_ms": cursor, "end_ms": end_ms})
+    if cursor < end_ms:
+        retained.append({"start_ms": cursor, "end_ms": end_ms})
     return retained
 
 
@@ -1094,7 +1121,7 @@ def verify_automatic_filler_plan(
     from src.autoslice.llm_client import extract_json_object
 
     try:
-        payload = extract_json_object(llm_call(prompt))
+        payload = extract_json_object(call_json(llm_call, prompt))
     except Exception as exc:  # noqa: BLE001 - provider/parse failure is a veto
         return {
             "status": "FAIL",
@@ -1147,7 +1174,12 @@ def build_piece_specs(
         if index == 0:
             start_ms = max(0, start_ms - pre_ms)
         if index == len(retained) - 1:
-            end_ms = min(segment_duration_ms, end_ms + post_ms) if segment_duration_ms else end_ms + post_ms
+            terminal_removal = any(
+                isinstance(row, Mapping) and row.get("placement") == "terminal"
+                for row in plan.get("removals") or []
+            )
+            if not terminal_removal:
+                end_ms = min(segment_duration_ms, end_ms + post_ms) if segment_duration_ms else end_ms + post_ms
         pieces.append(
             {
                 "remote_media": str(item["segment_path"]),
@@ -1200,11 +1232,35 @@ def write_final_filler_audit(
     content_durations = content_only(pieces_raw, durations)
     content_provenance_rows = content_only(pieces_raw, piece_provenance_rows)
     removals = plan.get("removals")
+    terminal_count = (
+        sum(
+            isinstance(row, Mapping) and row.get("placement") == "terminal"
+            for row in removals
+        )
+        if isinstance(removals, list)
+        else 0
+    )
     if (
         not isinstance(removals, list)
-        or len(content_durations) != len(removals) + 1
+        or terminal_count > 1
+        or len(content_durations) != len(removals) + 1 - terminal_count
+        or len(content_provenance_rows) != len(content_durations)
     ):
         raise RuntimeError("TALK_FILLER_AUDIT_PIECE_MAPPING_INVALID")
+    if terminal_count:
+        terminal = removals[-1]
+        retained = plan.get("retained_intervals")
+        if (
+            not isinstance(terminal, Mapping)
+            or terminal.get("placement") != "terminal"
+            or terminal.get("source_end_ms") != plan.get("source_end_ms")
+            or not isinstance(retained, list)
+            or len(retained) != len(content_durations)
+            or not retained
+            or not isinstance(retained[-1], Mapping)
+            or retained[-1].get("end_ms") != terminal.get("source_start_ms")
+        ):
+            raise RuntimeError("TALK_FILLER_AUDIT_PIECE_MAPPING_INVALID")
 
     intro_offset_ms = 0
     if isinstance(branding_intro, Mapping):
@@ -1218,24 +1274,29 @@ def write_final_filler_audit(
         concat_elapsed_ms += int(content_durations[index])
         content_output_jump_ms = concat_elapsed_ms - final_start_ms
         row = dict(removal) if isinstance(removal, Mapping) else {}
+        is_terminal = row.get("placement") == "terminal"
+        survives = (
+            not is_terminal
+            and 0 < content_output_jump_ms < final_end_ms - final_start_ms
+        )
         row.update(
             {
                 "actual_concat_jump_ms": concat_elapsed_ms,
                 "final_content_output_jump_ms": content_output_jump_ms,
                 "delivered_output_jump_ms": (
                     intro_offset_ms + content_output_jump_ms
-                    if 0 < content_output_jump_ms < final_end_ms - final_start_ms
+                    if survives
                     else None
                 ),
-                "survives_final_boundary": (
-                    0 < content_output_jump_ms < final_end_ms - final_start_ms
-                ),
+                "survives_final_boundary": survives,
                 "left_piece_output_sha256": content_provenance_rows[index].get(
                     "output_sha256"
                 ),
-                "right_piece_output_sha256": content_provenance_rows[
-                    index + 1
-                ].get("output_sha256"),
+                "right_piece_output_sha256": (
+                    None
+                    if is_terminal
+                    else content_provenance_rows[index + 1].get("output_sha256")
+                ),
             }
         )
         finalized.append(row)

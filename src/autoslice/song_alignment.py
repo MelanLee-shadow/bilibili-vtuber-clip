@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from src.autoslice.structured_output import call_json
+
+from dataclasses import dataclass, replace
 from difflib import SequenceMatcher
 import hashlib
 import json
@@ -17,6 +19,8 @@ from src.autoslice.review_evidence import SourceCue
 from src.autoslice.song_script_family import group_is_cross_script_for_chinese_asr
 from src.autoslice.song_common import (
     MAX_AUDIO_LRC_VARIANT_ATTEMPTS,
+    LYRIC_VOCAL_ASSERTION_KEYS,
+    is_lrc_non_lyric_metadata,
     SHIFT_TOLERANCE_MS,
     LrcLine,
     LrcResult,
@@ -44,7 +48,7 @@ def validate_audio_lrc_canonical_projection(
     """
 
     try:
-        parsed_lines = parse_lrc_text(Path(lrc_path).read_text(encoding="utf-8"))
+        parsed_lines = parse_lrc_text(Path(lrc_path).read_text(encoding="utf-8"), exclude_metadata=False)
     except (OSError, UnicodeError) as exc:
         raise ValueError(f"bound canonical LRC cannot be read: {exc}") from exc
     if not parsed_lines:
@@ -181,7 +185,7 @@ def generate_llm_song_queries(window: Sequence[SourceCue], llm_call: LlmCall, *,
         '只输出一个 JSON 对象：{"guesses": [{"title": "歌名", "artist": "歌手或空字符串"}]}，'
         "最多给 4 个猜测，按置信度排序；完全无法判断就给空数组。"
     )
-    payload = extract_json_object(llm_call(prompt))
+    payload = extract_json_object(call_json(llm_call, prompt, reuse=False))
     guesses = payload.get("guesses")
     queries: list[str] = []
     if isinstance(guesses, list):
@@ -195,6 +199,21 @@ def generate_llm_song_queries(window: Sequence[SourceCue], llm_call: LlmCall, *,
             queries.append(f"{title} {artist}".strip())
             queries.append(title)
     return list(dict.fromkeys(queries))
+
+
+def lyric_cue_similarity(normalized_line: str, normalized_cue: str) -> float:
+    """Text similarity of one normalized LRC line to one normalized ASR cue."""
+
+    ratio = SequenceMatcher(None, normalized_line, normalized_cue).ratio()
+    if len(normalized_cue) > len(normalized_line) * 2:
+        # long ASR cues may merge several lyric lines; compare against
+        # the best local substring alignment, not whole-cue ratio only
+        match = SequenceMatcher(None, normalized_line, normalized_cue).find_longest_match(
+            0, len(normalized_line), 0, len(normalized_cue)
+        )
+        contained = match.size / len(normalized_line) if normalized_line else 0.0
+        ratio = max(ratio, contained)
+    return ratio
 
 
 def _align_lrc_to_cues(
@@ -233,15 +252,7 @@ def _align_lrc_to_cues(
         for j, (cue, normalized_cue) in enumerate(normalized_cues):
             if not normalized_cue:
                 continue
-            ratio = SequenceMatcher(None, normalized_line, normalized_cue).ratio()
-            if len(normalized_cue) > len(normalized_line) * 2:
-                # long ASR cues may merge several lyric lines; compare against
-                # the best local substring alignment, not whole-cue ratio only
-                match = SequenceMatcher(None, normalized_line, normalized_cue).find_longest_match(
-                    0, len(normalized_line), 0, len(normalized_cue)
-                )
-                contained = match.size / len(normalized_line) if normalized_line else 0.0
-                ratio = max(ratio, contained)
+            ratio = lyric_cue_similarity(normalized_line, normalized_cue)
             if ratio >= match_threshold:
                 if target_offset_ms is not None:
                     predicted_ms = line.time_ms + target_offset_ms
@@ -495,7 +506,8 @@ def _parse_asr_anchor_srt(path: Path) -> list[SourceCue]:
         match = _SRT_TIMESTAMP_RE.search(timing_line)
         if match is None:
             continue
-        text = "\n".join(line for line in lines if line is not timing_line and "-->" not in line).strip()
+        # The optional numeric SRT cue index precedes timing, never the text.
+        text = "\n".join(lines[lines.index(timing_line) + 1:]).strip()
         cues.append(
             SourceCue(
                 cue_id=f"asr_anchor_{index:06d}",
@@ -767,6 +779,12 @@ def _audio_lrc_infrastructure_reason(exc: Exception) -> str | None:
     """Keep provider outages recoverable instead of spending variant budget."""
 
     detail = f"{type(exc).__name__}: {exc}".casefold()
+    if any(marker in detail for marker in (
+        "lrc_timeline_echo", "audio_tool_", "audio_not_consumed",
+        "reference_timing_", "independent timing input", "agy_audio_input_too_large",
+        "gemini_api_audio_extraction_failed", "gemini_api_audio_duration_mismatch",
+    )):
+        return "AGY_SOURCE_CONTEXT_RUNNER_FAILED"
     if "agy_and_gemini_api_failed" in detail:
         return "AGY_AND_GEMINI_API_FAILED"
     if "agy_quota_exhausted" in detail or "quota" in detail or "429" in detail or "rate limit" in detail:
@@ -1196,3 +1214,491 @@ def _choose_audio_lrc_candidate(
                     lines=selected_lrc.lines,
                 )
     return selected_lrc
+
+
+# BCUT source-clock timeline; AGY remains the performance-identity witness.
+TIMING_MODEL = "asr_anchored_sectionwise_shift.v1"
+ANCHOR_MATCH_THRESHOLD = 0.6
+SECTION_SHIFT_TOLERANCE_MS = 1_500
+MIN_SECTION_ANCHORS = 3
+MIN_ANCHOR_COVERAGE = 0.60
+MIN_LINE_GAP_MS = 300
+DEFAULT_LINE_DURATION_MS = 3_000
+
+_REPEAT_PENALTY = 1.2
+_SKIP_PENALTY = 0.03
+_DRIFT_PENALTY = 0.3
+_DRIFT_ALLOWANCE_MS = 2_000
+_DRIFT_SPAN_MS = 8_000
+_SECTION_COST = 1.0
+_DROP_COST = 1000.0
+_TIE_BREAK = 1e-6
+
+
+class AsrTimelinePending(ValueError):
+    """The ASR clock could not prove a timeline: pending, never rejected."""
+
+
+@dataclass(frozen=True)
+class TimelineAnchor:
+    position: int
+    cue: SourceCue
+    ratio: float
+    residual_ms: int
+
+
+@dataclass(frozen=True)
+class TimelineSection:
+    index: int
+    segment: int
+    shift_ms: int
+    first_position: int
+    last_position: int
+    anchors: tuple[TimelineAnchor, ...]
+
+    @property
+    def max_residual_ms(self) -> int:
+        return max(abs(a.residual_ms - self.shift_ms) for a in self.anchors)
+
+
+@dataclass(frozen=True)
+class PlacedLine:
+    position: int
+    line: LrcLine
+    live_start_ms: int
+    live_end_ms: int
+    section_index: int
+    shift_ms: int
+    anchor: TimelineAnchor | None
+
+
+@dataclass(frozen=True)
+class AsrAnchoredTimeline:
+    lines: tuple[PlacedLine, ...]
+    sections: tuple[TimelineSection, ...]
+    anchor_count: int
+    dropped_anchor_count: int
+    coverage: float
+
+    @property
+    def offset_ms(self) -> int:
+        return self.sections[0].shift_ms
+
+
+def serialize_asr_cue(cue: SourceCue) -> list[object]:
+    row = [cue.cue_id, cue.source_start_ms, cue.source_end_ms, cue.text]
+    # Preserve the historical four-column hash when the defaults apply.
+    if cue.kind != "speech" or cue.speaker is not None:
+        row.extend([cue.kind, cue.speaker])
+    return row
+
+
+def load_bound_asr_cues(report: Mapping[str, object]) -> list[SourceCue]:
+    """The same persisted source transcript serves lyric and speech consumers."""
+    binding = report["asr_timing_input"]
+    data = Path(binding["path"]).read_bytes()
+    if hashlib.sha256(data).hexdigest() != binding["sha256"]:
+        raise ValueError("ASR cue file hash mismatch")
+    payload = json.loads(data)
+    if payload["source_sha256"] != report["audio_alignment_artifacts"]["source_sha256"]:
+        raise ValueError("ASR source hash mismatch")
+    cues = []
+    for row in payload["cues"]:
+        if not isinstance(row, list) or len(row) not in (4, 6):
+            raise ValueError("ASR cue schema mismatch")
+        cue = SourceCue(str(row[0]), row[1], row[2], row[3],
+                        kind=row[4] if len(row) == 6 else "speech",
+                        speaker=row[5] if len(row) == 6 else None)
+        if (not isinstance(cue.text, str) or not isinstance(cue.kind, str)
+                or any(not isinstance(t, int) or isinstance(t, bool)
+                       for t in (cue.source_start_ms, cue.source_end_ms))
+                or not 0 <= cue.source_start_ms < cue.source_end_ms):
+            raise ValueError("ASR cue values invalid")
+        cues.append(cue)
+    if asr_cues_sha256(cues) != report["asr_cues_sha256"] or len(cues) != report["asr_cue_count"]:
+        raise ValueError("ASR cue content mismatch")
+    return cues
+
+
+def asr_cues_sha256(cues: Sequence[SourceCue]) -> str:
+    """Content hash of the ASR transcript the anchors were taken from."""
+
+    rows = [
+        serialize_asr_cue(cue)
+        for cue in sorted(cues, key=lambda c: (c.source_start_ms, c.source_end_ms, c.cue_id))
+    ]
+    payload = json.dumps(rows, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def match_sung_lines_to_asr(
+    sung: Sequence[LrcLine], cues: Sequence[SourceCue], *,
+    match_threshold: float = ANCHOR_MATCH_THRESHOLD,
+) -> list[TimelineAnchor]:
+    """Sequence DP: skip cues/lines or revisit a lyric; consume each cue once.
+
+    BCUT may split a long lyric across adjacent cues. Such a match retains the
+    first cue's source onset and last cue's end, never reference-derived times.
+    """
+    ordered = sorted(cues, key=lambda c: (c.source_start_ms, c.source_end_ms))
+    states: list[tuple[int, int, int, float, SourceCue]] = []
+    for first, cue in enumerate(ordered):
+        for count in range(1, min(3, len(ordered) - first) + 1):
+            group = ordered[first:first + count]
+            if any(b.source_start_ms - a.source_end_ms > 600 for a, b in zip(group, group[1:])):
+                break
+            text = normalize_lyric_text("".join(c.text for c in group))
+            for position, line in enumerate(sung):
+                lyric = normalize_lyric_text(line.text)
+                if not lyric or is_lrc_non_lyric_metadata(line.text):
+                    continue
+                # A single long cue may contain a lyric, but a merged group
+                # must match as a whole: otherwise it consumes the next line.
+                ratio = (lyric_cue_similarity(lyric, text) if count == 1
+                         else SequenceMatcher(None, lyric, text).ratio())
+                if ratio >= match_threshold:
+                    combined = cue if count == 1 else SourceCue(
+                        "asr-joined:" + ",".join(c.cue_id for c in group),
+                        cue.source_start_ms, group[-1].source_end_ms,
+                        "".join(c.text for c in group), kind="speech",
+                    )
+                    states.append((first, first + count - 1, position, ratio, combined))
+    states.sort(key=lambda v: (v[1], v[0], v[2]))
+    best: list[float] = []
+    back: list[int | None] = []
+    for k, (first, end, position, ratio, cue) in enumerate(states):
+        reward = ratio - 0.04 * (end - first)
+        top, parent = reward - _SKIP_PENALTY * min(position, 8), None
+        residual = cue.source_start_ms - sung[position].time_ms
+        for p in range(k):
+            _, prev_end, prev_pos, _, prev_cue = states[p]
+            if prev_end >= first or prev_cue.source_start_ms >= cue.source_start_ms:
+                continue
+            step = position - prev_pos
+            if step > 0:
+                drift = abs(residual - (prev_cue.source_start_ms - sung[prev_pos].time_ms))
+                penalty = _SKIP_PENALTY * min(step - 1, 8)
+                penalty += _DRIFT_PENALTY * min(3.0, max(0, drift - _DRIFT_ALLOWANCE_MS) / _DRIFT_SPAN_MS)
+            else:
+                penalty = _REPEAT_PENALTY
+            candidate = best[p] + reward - penalty
+            if candidate > top:
+                top, parent = candidate, p
+        best.append(top)
+        back.append(parent)
+    if not states:
+        return []
+    k: int | None = max(range(len(states)), key=lambda i: best[i])
+    path: list[TimelineAnchor] = []
+    while k is not None:
+        _, _, position, ratio, cue = states[k]
+        path.append(TimelineAnchor(position, cue, round(ratio, 4), cue.source_start_ms - sung[position].time_ms))
+        k = back[k]
+    return list(reversed(path))
+
+
+def _shift_for(residuals: Sequence[int]) -> int | None:
+    """Prefer the median, then the nearest shift satisfying every anchor."""
+    if not residuals:
+        return None
+    ordered = sorted(residuals)
+    mid = len(ordered) // 2
+    median = (ordered[mid] + ordered[~mid]) // 2
+    lower = ordered[-1] - SECTION_SHIFT_TOLERANCE_MS
+    upper = ordered[0] + SECTION_SHIFT_TOLERANCE_MS
+    if lower > upper:
+        return None
+    # A skewed set can have a feasible common shift even when its median is
+    # outside that interval. Keep all those anchors before splitting/dropping.
+    return min(max(median, lower), upper)
+
+
+def _partition_segment(residuals: Sequence[int]) -> list[tuple[int, int, int]]:
+    """Cheapest cover of one forward run by valid sections (outliers dropped)."""
+
+    n = len(residuals)
+    shift = _shift_for(residuals) if n >= MIN_SECTION_ANCHORS else None
+    if shift is not None:
+        return [(0, n, shift)]
+    cost = [0.0] + [float("inf")] * n
+    choice: list[tuple[str, int, int] | None] = [None] * (n + 1)
+    for end in range(1, n + 1):
+        cost[end] = cost[end - 1] + _DROP_COST
+        choice[end] = ("drop", end - 1, 0)
+        for start in range(0, end - MIN_SECTION_ANCHORS + 1):
+            shift = _shift_for(residuals[start:end])
+            if shift is None:
+                continue
+            # the tiny deviation term only breaks ties between equal covers
+            spread = sum(abs(value - shift) for value in residuals[start:end]) * _TIE_BREAK
+            if cost[start] + _SECTION_COST + spread < cost[end]:
+                cost[end] = cost[start] + _SECTION_COST + spread
+                choice[end] = ("section", start, shift)
+    sections: list[tuple[int, int, int]] = []
+    end = n
+    while end > 0:
+        kind, start, shift = choice[end]  # type: ignore[misc]
+        if kind == "section":
+            sections.append((start, end, shift))
+        end = start
+    sections.reverse()
+    return sections
+
+
+def fit_sections(anchors: Sequence[TimelineAnchor]) -> tuple[list[TimelineSection], int]:
+    """Cut at repeat jumps, then fit constant-shift sections; returns dropped count."""
+
+    segments: list[list[TimelineAnchor]] = []
+    for anchor in anchors:
+        if segments and anchor.position > segments[-1][-1].position:
+            segments[-1].append(anchor)
+        else:
+            segments.append([anchor])
+    sections: list[TimelineSection] = []
+    kept = 0
+    for segment_index, segment in enumerate(segments):
+        for start, end, shift in _partition_segment([a.residual_ms for a in segment]):
+            members = tuple(segment[start:end])
+            kept += len(members)
+            sections.append(
+                TimelineSection(
+                    index=len(sections),
+                    segment=segment_index,
+                    shift_ms=shift,
+                    first_position=members[0].position,
+                    last_position=members[-1].position,
+                    anchors=members,
+                )
+            )
+    return sections, len(anchors) - kept
+
+
+def _ordered_section_shifts(
+    sung: Sequence[LrcLine], sections: Sequence[TimelineSection],
+) -> list[TimelineSection]:
+    """Keep preferred shifts where possible within anchor and live-order bounds."""
+    lower = [max(a.residual_ms for a in s.anchors) - SECTION_SHIFT_TOLERANCE_MS for s in sections]
+    upper = [min(a.residual_ms for a in s.anchors) + SECTION_SHIFT_TOLERANCE_MS for s in sections]
+    differences = [0]
+    for before, after in zip(sections, sections[1:]):
+        if before.segment == after.segment:
+            # Gap lines belong to the nearest section, with ties going to the
+            # earlier one. This is the adjacent pair where its shift changes.
+            left = (before.last_position + after.first_position) // 2
+            right = left + 1
+        else:
+            left, right = before.last_position, after.first_position
+        differences.append(sung[left].time_ms - sung[right].time_ms + MIN_LINE_GAP_MS)
+    # Reserve enough room for later sections before selecting the nearest
+    # preferred shift. Every adjustment stays inside every anchor's tolerance.
+    for index in range(len(sections) - 2, -1, -1):
+        upper[index] = min(upper[index], upper[index + 1] - differences[index + 1])
+    result: list[TimelineSection] = []
+    for index, section in enumerate(sections):
+        floor = max(lower[index], result[-1].shift_ms + differences[index]) if result else lower[index]
+        if floor > upper[index]:
+            raise AsrTimelinePending("alignment pending: no section shifts satisfy anchors and live order")
+        result.append(replace(section, shift_ms=min(max(section.shift_ms, floor), upper[index])))
+    return result
+
+
+_Moment = tuple[int, int, TimelineSection, "TimelineAnchor | None"]
+
+
+def _gap_moments(
+    sung: Sequence[LrcLine], before: TimelineSection, after: TimelineSection
+) -> list[_Moment]:
+    """Place intervening lyrics using the nearest section's constant shift."""
+    tail, head = before.anchors[-1], after.anchors[0]
+    floor = sung[tail.position].time_ms + before.shift_ms
+    ceiling = sung[head.position].time_ms + after.shift_ms
+    result: list[_Moment] = []
+    for position in range(before.last_position + 1, after.first_position):
+        section = before if position - tail.position <= head.position - position else after
+        moment = sung[position].time_ms + section.shift_ms
+        if not floor + MIN_LINE_GAP_MS <= moment <= ceiling - MIN_LINE_GAP_MS:
+            raise AsrTimelinePending("alignment pending: an unanchored lyric cannot be placed between sections")
+        result.append((position, moment, section, None))
+        floor = moment
+    return result
+
+
+def place_lines(
+    sung: Sequence[LrcLine],
+    sections: Sequence[TimelineSection],
+    *,
+    source_duration_ms: int,
+) -> list[PlacedLine]:
+    """Turn sections into the live-ordered line list (repeats included)."""
+
+    n = len(sung)
+    first, last = sections[0], sections[-1]
+    if first.first_position > 1:
+        raise AsrTimelinePending(
+            f"alignment pending: head is not anchored (first anchored line {first.first_position} of {n})"
+        )
+    if max(section.last_position for section in sections) < n - 2:
+        raise AsrTimelinePending("alignment pending: tail is not anchored by ASR")
+
+    moments: list[_Moment] = []
+    if first.first_position == 1:  # the head line directly before the first anchor
+        moments.append((0, sung[0].time_ms + first.shift_ms, first, None))
+    previous_section: TimelineSection | None = None
+    for section in sections:
+        if previous_section is not None and previous_section.segment == section.segment:
+            moments.extend(_gap_moments(sung, previous_section, section))
+        by_position = {anchor.position: anchor for anchor in section.anchors}
+        for position in range(section.first_position, section.last_position + 1):
+            moments.append(
+                (position, sung[position].time_ms + section.shift_ms, section, by_position.get(position))
+            )
+        previous_section = section
+    if last.last_position == n - 2 and not any(s.last_position == n - 1 for s in sections):
+        # Extrapolate only an unheard endpoint, never append a previously sung tail.
+        moments.append((n - 1, sung[n - 1].time_ms + last.shift_ms, last, None))
+    return _finish_placement(sung, moments, source_duration_ms)
+
+
+def _finish_placement(
+    sung: Sequence[LrcLine], moments: Sequence[_Moment], source_duration_ms: int
+) -> list[PlacedLine]:
+    """Enforce strict live order and bounds, then give every line an end."""
+
+    anchored = sorted(
+        m[3].cue.source_end_ms - m[3].cue.source_start_ms for m in moments if m[3] is not None
+    )
+    typical = anchored[len(anchored) // 2] if anchored else DEFAULT_LINE_DURATION_MS
+    ordered: list[_Moment] = []
+    previous: int | None = None
+    for position, moment, section, anchor in moments:
+        if previous is not None and moment < previous + MIN_LINE_GAP_MS:
+            raise AsrTimelinePending("alignment pending: section shifts place lines out of live order")
+        if not 0 <= moment < source_duration_ms:
+            raise AsrTimelinePending(f"alignment pending: line time {moment}ms is outside the source")
+        ordered.append((position, moment, section, anchor))
+        previous = moment
+    result: list[PlacedLine] = []
+    for index, (position, moment, section, anchor) in enumerate(ordered):
+        duration = (
+            min(max(anchor.cue.source_end_ms - anchor.cue.source_start_ms, 500), 8_000)
+            if anchor is not None
+            else typical
+        )
+        following = ordered[index + 1][1] if index + 1 < len(ordered) else source_duration_ms
+        end = min(moment + duration, following, source_duration_ms)
+        if end <= moment:
+            raise AsrTimelinePending("alignment pending: line has no room before the next line")
+        result.append(PlacedLine(position, sung[position], moment, end, section.index, section.shift_ms, anchor))
+    return result
+
+
+def build_timeline_from_anchors(
+    sung: Sequence[LrcLine],
+    anchors: Sequence[TimelineAnchor],
+    *,
+    source_duration_ms: int,
+) -> AsrAnchoredTimeline:
+    """Fit sections, place lines and enforce the coverage gate."""
+
+    if not sung:
+        raise AsrTimelinePending("alignment pending: no sung lyric lines")
+    sections, dropped = fit_sections(anchors)
+    if not sections:
+        raise AsrTimelinePending(
+            f"alignment pending: {len(anchors)} anchor(s) fit no constant-shift section"
+        )
+    sections = _ordered_section_shifts(sung, sections)
+    lines = place_lines(sung, sections, source_duration_ms=source_duration_ms)
+    anchor_count = sum(1 for line in lines if line.anchor is not None)
+    coverage = anchor_count / max(len(sung), len(lines))
+    if coverage < MIN_ANCHOR_COVERAGE:
+        raise AsrTimelinePending(
+            f"alignment pending: anchors cover {anchor_count}/{len(lines)} sung lines "
+            f"({coverage:.0%}), need {MIN_ANCHOR_COVERAGE:.0%}"
+        )
+    return AsrAnchoredTimeline(tuple(lines), tuple(sections), anchor_count, dropped, coverage)
+
+
+def build_asr_anchored_timeline(
+    sung: Sequence[LrcLine],
+    cues: Sequence[SourceCue],
+    *,
+    source_duration_ms: int,
+) -> AsrAnchoredTimeline:
+    anchors = match_sung_lines_to_asr(sung, cues)
+    return build_timeline_from_anchors(sung, anchors, source_duration_ms=source_duration_ms)
+
+
+# --- stored-report verification (used by song_completion / live_source_review) ---
+
+def _is_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def is_timing_model_report(report: Mapping[str, object]) -> bool:
+    return report.get("timing_model") == TIMING_MODEL
+
+
+def performance_rows_on_asr_clock(
+    alignment: Sequence[Mapping[str, object]], raw_rows: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    """Preserve AGY's vocalist assertions, replacing only its unreliable clock."""
+    by_index = {r["lrc_index"]: r for r in raw_rows}
+    return [dict(by_index[r["canonical_lrc_index"]],
+                 live_start_ms=r["live_time_ms"], live_end_ms=r["live_end_ms"])
+            for r in alignment]
+
+
+def verify_timing_report(
+    *, report: Mapping[str, object], raw_rows: object, expected_raw_sha256: str,
+) -> str | None:
+    """Recompute timing from the source-bound cue file, never a stored PASS."""
+    if not is_timing_model_report(report):
+        return "ASR timing model is unsupported"
+    try:
+        try:
+            cues = load_bound_asr_cues(report)
+        except ValueError as exc:
+            return str(exc)
+        sung = [r for r in raw_rows if r["heard"] is True and not is_lrc_non_lyric_metadata(r["text"])]
+        timeline = build_asr_anchored_timeline(
+            [LrcLine(r["lrc_time_ms"], r["text"]) for r in sung], cues,
+            source_duration_ms=report["audio_alignment_artifacts"]["source_duration_ms"],
+        )
+        sections = [{"index": v.index, "shift_ms": v.shift_ms, "anchor_count": len(v.anchors),
+                     "max_residual_ms": v.max_residual_ms} for v in timeline.sections]
+        if (report["offset_basis"] != "asr_anchor" or report["offset_ms"] != timeline.offset_ms
+                or report["asr_offset_ms"] != timeline.offset_ms
+                or report["timing_sections"] != sections
+                or report["anchor_line_count"] != timeline.anchor_count
+                or report["dropped_anchor_count"] != timeline.dropped_anchor_count):
+            return "ASR timing summary mismatch"
+        rows, lyrics = report["alignment"], report["lyric_lines"]
+        if len(rows) != len(timeline.lines) or len(lyrics) != len(rows):
+            return "ASR timing row count mismatch"
+        for row, lyric, placed in zip(rows, lyrics, timeline.lines):
+            raw = sung[placed.position]
+            anchor = placed.anchor
+            expected = {
+                "canonical_lrc_index": raw["lrc_index"], "lrc_time_ms": raw["lrc_time_ms"],
+                "lrc_text": raw["text"], "live_time_ms": placed.live_start_ms,
+                "live_end_ms": placed.live_end_ms, "section_index": placed.section_index,
+                "section_shift_ms": placed.shift_ms, "evidence_source": "agy_audio_lrc",
+                "timing_source": "asr_anchor" if anchor else "section_shift",
+                "matched_cue_id": anchor.cue.cue_id if anchor else None,
+                "cue_start_ms": anchor.cue.source_start_ms if anchor else placed.live_start_ms,
+                "cue_end_ms": anchor.cue.source_end_ms if anchor else placed.live_end_ms,
+                "match_ratio": anchor.ratio if anchor else 0.0,
+                **{key: raw[key] for key in LYRIC_VOCAL_ASSERTION_KEYS},
+            }
+            if any(row.get(key) != value for key, value in expected.items()):
+                return "ASR timing row differs from recomputed placement"
+            if lyric != {"lrc_index": raw["lrc_index"], "lrc_time_ms": raw["lrc_time_ms"],
+                         "text": raw["text"], "live_time_ms": placed.live_start_ms}:
+                return "lyric row differs from recomputed placement"
+        if (report["first_lyric_start_ms"] != min(min(r["cue_start_ms"], r["live_time_ms"]) for r in rows)
+                or report["last_lyric_end_ms"] != max(max(r["cue_end_ms"], r["live_end_ms"]) for r in rows)):
+            return "ASR lyric span mismatch"
+    except (OSError, ValueError, KeyError, TypeError, IndexError) as exc:
+        return f"ASR timing input invalid: {exc}"
+    return None

@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from scripts import authorized_upload
+from src.autoslice.publication_identity import publication_identity
 from src.autoslice.publication_registry import (
     _candidate_ids as _verified_publication_candidate_ids,
     load_publication_registry,
@@ -717,7 +718,11 @@ def _inspect_package(root: Path | None, candidate_id: str, date: str) -> tuple[s
         record = _load_json(record_path, root)
     except (OSError, ValueError, json.JSONDecodeError):
         return {"PACKAGE_RECORD_INVALID"}, dependencies, None
-    if record.get("candidate_id") not in (None, candidate_id) or record.get("recording_date") not in (None, date):
+    try:
+        identity = publication_identity(record)
+    except ValueError:
+        return {"PACKAGE_RECORD_IDENTITY_DRIFT"}, dependencies, record_path
+    if identity.record_candidate_id not in (None, candidate_id) or record.get("recording_date") not in (None, date):
         reasons.add("PACKAGE_RECORD_IDENTITY_DRIFT")
     hashes = record.get("artifact_hashes")
     if not isinstance(hashes, Mapping):
@@ -841,7 +846,7 @@ def _inspect_package(root: Path | None, candidate_id: str, date: str) -> tuple[s
     except (OSError, ValueError, json.JSONDecodeError):
         return reasons | {"PACKAGE_PUBLISH_INVALID"}, dependencies, record_path
     dependencies["publish"] = str(publish_path)
-    if publish.get("candidate_id") not in (None, candidate_id):
+    if not identity.matches_publish_candidate(publish.get("candidate_id"), candidate_id):
         reasons.add("PACKAGE_PUBLISH_IDENTITY_DRIFT")
     publish_hashes = publish.get("artifact_hashes")
     if not isinstance(publish_hashes, Mapping) or any(publish_hashes.get(key) != hashes.get(key) for key in ("video_sha256", "subtitle_sha256", "ass_sha256", "burned_video_sha256")):

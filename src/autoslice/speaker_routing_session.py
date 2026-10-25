@@ -12,6 +12,7 @@ implicitly; nothing here imports the runner back (no cycles).
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import hashlib
 import json
 import os
@@ -302,7 +303,7 @@ def _write_speaker_session_authority(path: Path, document: dict, *, ctx: RunnerC
         payload
     )
     ctx.atomic_write_json(resolved_path, payload)
-    return hashlib.sha256(resolved_path.read_bytes()).hexdigest()
+    return _evidence_file_sha256(resolved_path)
 
 
 def _load_speaker_session_authority(
@@ -311,7 +312,7 @@ def _load_speaker_session_authority(
     absolute = path.absolute()
     if absolute.is_symlink() or absolute.resolve(strict=True) != absolute:
         raise ValueError("speaker routing session authority path is not canonical")
-    actual_sha = hashlib.sha256(absolute.read_bytes()).hexdigest()
+    actual_sha = _evidence_file_sha256(absolute)
     if expected_sha256 is not None and actual_sha != expected_sha256:
         raise ValueError("speaker routing session authority file hash mismatch")
     document = json.loads(absolute.read_text(encoding="utf-8"))
@@ -390,7 +391,7 @@ def _build_speaker_routing_request(
                 strict=True
             )
         )
-        bcut_sha256 = hashlib.sha256(bcut_srt.read_bytes()).hexdigest()
+        bcut_sha256 = _evidence_file_sha256(bcut_srt)
         coverage_start = max(0, int(item["start_ms"]) - ctx.piece_pre_ms)
         coverage_end = (
             int(item["end_ms"])
@@ -453,7 +454,7 @@ def _finalize_speaker_routing_claim(
         output_path=claim_path,
         provider_evidence_path=provider_evidence,
     )
-    claim_sha256 = hashlib.sha256(claim_path.read_bytes()).hexdigest()
+    claim_sha256 = _evidence_file_sha256(claim_path)
     _attach_speaker_routing_claim(
         items=items,
         claim_path=claim_path,
@@ -510,7 +511,7 @@ def _reuse_sealed_speaker_claim(
     prior_sha = str(session_authority.get("claim_sha256") or "")
     try:
         prior_path = Path(str(prior_path_value)).resolve(strict=True)
-        if hashlib.sha256(prior_path.read_bytes()).hexdigest() != prior_sha:
+        if _evidence_file_sha256(prior_path) != prior_sha:
             raise ValueError("sealed claim hash mismatch")
         prior_claim = json.loads(prior_path.read_text(encoding="utf-8"))
         prior_request = json.loads(

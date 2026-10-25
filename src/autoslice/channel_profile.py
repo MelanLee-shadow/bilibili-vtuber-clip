@@ -22,6 +22,8 @@ CHANNEL_PROFILE_SCHEMA_VERSION = "vtuber-slice.channel-profile.v1"
 DEFAULT_CHANNEL_PROFILE_ID = "lidousha"
 PROFILE_ENV = "AUTOSLICE_PROFILE"
 PROFILE_MANIFEST_ENV = "AUTOSLICE_PROFILE_MANIFEST"
+PROFILE_BINDING_ENV = "AUTOSLICE_PROFILE_BINDING"
+PROFILE_BINDING_SCHEMA = "autoslice-profile-binding.v1"
 
 _SAFE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _ROOM_ID_RE = re.compile(r"^[0-9]{1,32}$")
@@ -86,6 +88,84 @@ class ChannelProfileError(ValueError):
     """A profile is missing, malformed, unsafe, or internally inconsistent."""
 
 
+def normalize_profile_binding(value: object) -> dict[str, str]:
+    """Validate a task selection without consulting ambient selectors."""
+    fields = {"schema_version", "profile_id", "manifest_path", "manifest_sha256"}
+    if not isinstance(value, Mapping) or set(value) != fields:
+        raise ChannelProfileError("profile_binding is missing or has invalid fields; explicit task binding required")
+    if value["schema_version"] != PROFILE_BINDING_SCHEMA:
+        raise ChannelProfileError("unsupported profile_binding schema")
+    profile_id = _safe_component(value["profile_id"], label="profile_binding.profile_id")
+    digest = value["manifest_sha256"]
+    if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+        raise ChannelProfileError("profile_binding.manifest_sha256 must be a raw sha256")
+    locator = value["manifest_path"]
+    if not isinstance(locator, str) or not locator or "\x00" in locator or "\\" in locator:
+        raise ChannelProfileError("profile_binding.manifest_path is invalid")
+    path = Path(locator)
+    if ".." in path.parts or path.as_posix() != locator:
+        raise ChannelProfileError("profile_binding.manifest_path must be canonical")
+    if not path.is_absolute():
+        _safe_relative_path(locator, label="profile_binding.manifest_path")
+    return {"schema_version": PROFILE_BINDING_SCHEMA, "profile_id": profile_id,
+            "manifest_path": locator, "manifest_sha256": digest}
+
+
+def profile_binding_from_environment(environ: Mapping[str, str] | None = None) -> dict[str, str] | None:
+    env = os.environ if environ is None else environ
+    if PROFILE_BINDING_ENV not in env:
+        return None
+    try:
+        return normalize_profile_binding(json.loads(env[PROFILE_BINDING_ENV]))
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ChannelProfileError("invalid AUTOSLICE_PROFILE_BINDING JSON") from exc
+
+
+def require_profile_binding(actual: object, expected: object) -> dict[str, str]:
+    binding = normalize_profile_binding(expected)
+    if normalize_profile_binding(actual) != binding:
+        raise ChannelProfileError("profile_binding differs from the selected task profile")
+    return binding
+
+
+def binding_for_profile(profile: ChannelProfile) -> dict[str, str]:
+    """Capture the loaded identity, rejecting a file changed since selection."""
+    from .evidence_identity import file_sha256
+    try:
+        current = file_sha256(profile.manifest_path)
+    except OSError as exc:
+        raise ChannelProfileError("selected profile manifest is unavailable") from exc
+    if current != profile.manifest_sha256:
+        raise ChannelProfileError("selected profile manifest bytes drifted since selection")
+    try:
+        locator = profile.manifest_path.relative_to(profile.repo_root).as_posix()
+    except ValueError:
+        locator = str(profile.manifest_path)
+    return normalize_profile_binding({"schema_version": PROFILE_BINDING_SCHEMA,
+        "profile_id": profile.profile_id, "manifest_path": locator,
+        "manifest_sha256": profile.manifest_sha256})
+
+
+def profile_environment(profile: ChannelProfile, environ: Mapping[str, str] | None = None) -> dict[str, str]:
+    binding = binding_for_profile(profile)
+    env = dict(os.environ if environ is None else environ)
+    env[PROFILE_BINDING_ENV] = json.dumps(binding, sort_keys=True, separators=(",", ":"))
+    env[PROFILE_ENV] = profile.profile_id
+    env[PROFILE_MANIFEST_ENV] = str(profile.manifest_path)
+    return env
+
+
+def bind_profile_result(result: dict, profile: ChannelProfile) -> dict:
+    """Project a verified caller selection without accepting conflicting provenance."""
+    binding = binding_for_profile(profile)
+    if "profile_binding" in result:
+        require_profile_binding(result["profile_binding"], binding)
+    summary = result.get("summary")
+    if isinstance(summary, Mapping) and "profile_binding" in summary:
+        require_profile_binding(summary["profile_binding"], binding)
+    return {**result, "profile_binding": binding}
+
+
 @dataclass(frozen=True)
 class CanonicalSurfaceRule:
     surface: str
@@ -113,6 +193,12 @@ class CoverIdentityProfile:
     feature_en: str
     scene_prop_meme_note_zh: str
     emote_companion_lore_zh: str
+
+
+# Syntax is independent of the configured host_speaker_label/guest_speaker_label.
+# Consumers must separately enforce their own allowed-speaker authority.
+# Groups: speaker identity (without an optional confidence score), body text.
+LABEL_RE = re.compile(r"^\[([^\]\r\n]+?)(?:\s+[+-]?\d+(?:\.\d+)?)?\]\s*(.*)\Z", re.S)
 
 
 @dataclass(frozen=True)
@@ -146,11 +232,14 @@ class ChannelProfile:
 
     @property
     def delivery_root(self) -> Path:
-        return self.repo_root / self.output_directory
+        return self.delivery_root_for(self.repo_root)
 
     def delivery_root_for(self, repo_root: Path) -> Path:
         """Rebase delivery under a test/eval repo while keeping profile policy."""
 
+        root = repo_root.resolve()
+        if root.name == 'repo' and root.parent.parent.name == 'versions' and (root / 'DEPLOYED_COMMIT').is_file():
+            return root.parent.parent.parent / self.output_directory
         return repo_root / self.output_directory
 
     def _rebase_repo_path(self, path: Path, repo_root: Path | None) -> Path:
@@ -382,9 +471,23 @@ def load_channel_profile(
     profile_id: str | None = None,
     manifest_path: Path | None = None,
     environ: Mapping[str, str] | None = None,
+    profile_binding: Mapping[str, object] | None = None,
 ) -> ChannelProfile:
     repo_root = repo_root.resolve()
     env = os.environ if environ is None else environ
+    expected = (normalize_profile_binding(profile_binding) if profile_binding is not None
+                else profile_binding_from_environment(env))
+    if expected is not None:
+        bound_path = Path(expected["manifest_path"])
+        if not bound_path.is_absolute():
+            bound_path = repo_root / bound_path
+        if profile_id is not None and profile_id != expected["profile_id"]:
+            raise ChannelProfileError("explicit profile id conflicts with task profile_binding")
+        if manifest_path is not None:
+            explicit = manifest_path if manifest_path.is_absolute() else repo_root / manifest_path
+            if explicit.resolve() != bound_path.resolve():
+                raise ChannelProfileError("explicit manifest conflicts with task profile_binding")
+        profile_id, manifest_path, env = expected["profile_id"], bound_path, {}
     resolved_manifest = resolve_channel_profile_manifest(
         repo_root,
         profile_id=profile_id,
@@ -395,6 +498,8 @@ def load_channel_profile(
         manifest_bytes = resolved_manifest.read_bytes()
     except OSError as exc:
         raise ChannelProfileError(f"cannot read channel profile {resolved_manifest}: {exc}") from exc
+    if expected is not None and hashlib.sha256(manifest_bytes).hexdigest() != expected["manifest_sha256"]:
+        raise ChannelProfileError("selected profile manifest bytes differ from task profile_binding")
     try:
         document = json.loads(manifest_bytes)
     except json.JSONDecodeError as exc:

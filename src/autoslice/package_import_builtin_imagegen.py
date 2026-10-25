@@ -9,8 +9,8 @@ manifest.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import copy
-import hashlib
 import json
 import re
 from pathlib import Path
@@ -32,7 +32,7 @@ from src.autoslice.review_package_portable_evidence import (
 
 
 def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return _evidence_file_sha256(path)
 
 
 def _review_manifest(

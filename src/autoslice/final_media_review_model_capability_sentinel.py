@@ -13,6 +13,7 @@ Only an explicit 429 response enters durable bounded backoff.
 """
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import fcntl
@@ -25,8 +26,10 @@ import secrets
 import stat
 import subprocess
 import tempfile
+import time
 from typing import Callable, Iterator, Mapping
 
+from src.autoslice.final_media_review_adapter_process import adapter_process_record
 from src.autoslice.final_media_review_inputs import RESULT_SCHEMA_VERSION
 from src.autoslice.final_media_review_model_capability import (
     KNOWN_UNSUPPORTED_DUAL_RAW_AV_MODELS,
@@ -146,11 +149,8 @@ def _json_bytes(value: Mapping[str, object]) -> bytes:
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return digest
 
 
 def _normalize_sha(value: object, *, label: str) -> str:
@@ -623,6 +623,8 @@ def load_sentinel_runtime(runtime_root: str | Path) -> dict[str, object] | None:
         "backoff",
         "result_schema_version",
     }
+    if "code_binding" in value:
+        expected_fields.add("code_binding")
     capability_id = value.get("capability_id")
     model = value.get("model")
     endpoint_family = value.get("endpoint_family")
@@ -700,6 +702,11 @@ def load_sentinel_runtime(runtime_root: str | Path) -> dict[str, object] | None:
         contained=False,
         executable=True,
     )
+    from src.autoslice.final_media_review_code_binding import validate_code_binding
+    try:
+        validate_code_binding(root, value.get("code_binding"), adapter=adapter, runner=runner)
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise _error("FINAL_MEDIA_REVIEW_CODE_BINDING_INVALID", str(exc)) from exc
     normalized = {
         **value,
         "runner": runner,
@@ -744,7 +751,7 @@ def load_sentinel_runtime(runtime_root: str | Path) -> dict[str, object] | None:
                 "ffprobe",
                 "backoff",
                 "result_schema_version",
-            )
+            ) + (("code_binding",) if "code_binding" in normalized else ())
         }
     )
     return normalized
@@ -1085,7 +1092,7 @@ def _expanded_argv(
 
 
 def _adapter_environment(
-    root: Path, run_id: str, environment: Mapping[str, str] | None
+    root: Path, run_id: str, environment: Mapping[str, str] | None, code_binding=None
 ) -> dict[str, str]:
     selected = dict(os.environ if environment is None else environment)
     for key in list(selected):
@@ -1094,7 +1101,8 @@ def _adapter_environment(
     selected["AUTOSLICE_BASE"] = str(root)
     selected["AUTOSLICE_FINAL_REVIEW_RUNTIME_ROOT"] = str(root)
     selected["AUTOSLICE_SENTINEL_RUN_ID"] = run_id
-    return selected
+    from src.autoslice.final_media_review_code_binding import child_environment
+    return child_environment(selected, root=root, code_binding=code_binding)
 
 
 def _response_binding(path: Path, *, run_root: Path) -> dict[str, object]:
@@ -1326,6 +1334,20 @@ def _transition_from_response(
     )
 
 
+def _record_adapter_process(
+    response_path: Path, *, run_root: Path, **fields: object
+) -> dict[str, object] | None:
+    """Persist the adapter process ending create-only before the transition."""
+
+    path = response_path.with_name(f"{response_path.stem}.adapter-process.json")
+    record = adapter_process_record(response_path, run_root=run_root, **fields)
+    try:
+        _write_create_only(path, _json_bytes(record))
+        return _response_binding(path, run_root=run_root)
+    except (OSError, FinalMediaReviewModelCapabilitySentinelError):
+        return None
+
+
 def _process_challenge(
     *,
     run_root: Path,
@@ -1401,6 +1423,7 @@ def _process_challenge(
                 "status": "DISPATCHING",
                 "attempt_count": attempt,
                 "current_response": response_path.relative_to(run_root).as_posix(),
+                "adapter_process": None,
                 "next_retry_at": None,
                 "reason_code": None,
                 "updated_at": _iso(now),
@@ -1418,6 +1441,10 @@ def _process_challenge(
             input_path=input_path,
             prompt_path=prompt_path,
         )
+        child_environment = _adapter_environment(
+            Path(str(runtime["runtime_root"])), run_id, environment, runtime.get("code_binding")
+        )
+        started = time.monotonic()
         try:
             completed = run(
                 argv,
@@ -1426,15 +1453,16 @@ def _process_challenge(
                 text=True,
                 stdin=subprocess.DEVNULL,
                 timeout=int(runtime["timeout_seconds"]),
-                env=_adapter_environment(
-                    Path(str(runtime["runtime_root"])), run_id, environment
-                ),
+                env=child_environment,
             )
-            if failpoint == f"after_adapter_response:{modality}":
-                raise RuntimeError(
-                    f"TEST_FAILPOINT_AFTER_ADAPTER_RESPONSE_{modality}"
-                )
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            timed_out = isinstance(exc, subprocess.TimeoutExpired)
+            process = _record_adapter_process(
+                response_path, run_root=run_root, attempt=attempt,
+                environment=child_environment, dispatched_at=_iso(now),
+                elapsed_seconds=time.monotonic() - started, timed_out=timed_out,
+                spawn_error=None if timed_out else exc,
+                stdout=getattr(exc, "stdout", None), stderr=getattr(exc, "stderr", None))
             return (
                 _write_state(
                     state_path,
@@ -1442,10 +1470,21 @@ def _process_challenge(
                         **dispatching,
                         "status": "DISPATCH_AMBIGUOUS",
                         "reason_code": "SENTINEL_DISPATCH_OUTCOME_UNKNOWN",
+                        "adapter_process": process,
                         "updated_at": _iso(now),
                     },
                 ),
                 True,
+            )
+        process = _record_adapter_process(
+            response_path, run_root=run_root, attempt=attempt,
+            environment=child_environment, dispatched_at=_iso(now),
+            elapsed_seconds=time.monotonic() - started, returncode=completed.returncode,
+            stdout=completed.stdout, stderr=completed.stderr)
+        dispatching = {**dispatching, "adapter_process": process}
+        if failpoint == f"after_adapter_response:{modality}":
+            raise RuntimeError(
+                f"TEST_FAILPOINT_AFTER_ADAPTER_RESPONSE_{modality}"
             )
         if not response_path.exists() or response_path.is_symlink():
             return (
@@ -1773,6 +1812,7 @@ def _project_runtime_capability(
         "timeout_seconds": runtime["timeout_seconds"],
         "result_schema_version": runtime["result_schema_version"],
         "model_capability_seal": dict(seal_binding),
+        **({"code_binding": runtime["code_binding"]} if "code_binding" in runtime else {}),
     }
     path = root / RUNTIME_CAPABILITY_FILENAME
     reused, archived = _install_runtime_capability(

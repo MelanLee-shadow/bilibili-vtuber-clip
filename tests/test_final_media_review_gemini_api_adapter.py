@@ -310,6 +310,65 @@ def test_sentinel_rejects_prose_instead_of_hidden_token(tmp_path: Path):
     assert len(fake.calls) == 1
 
 
+
+def _run_sentinel_reply(tmp_path: Path, reply: str):
+    _root, script, request, response, media, prompt, environment = (
+        _sentinel_fixture(tmp_path)
+    )
+    result = adapter.run_sentinel(
+        request_path=request,
+        response_path=response,
+        input_path=media,
+        prompt_path=prompt,
+        environment=environment,
+        file_runner=FakeFileRunner([reply]),
+        adapter_path=script,
+    )
+    return result, response
+
+
+@pytest.mark.parametrize("reply", ['"73194628"', "73194628", ' "73194628"\n'])
+def test_sentinel_json_string_encoding_is_only_a_representation(tmp_path: Path, reply):
+    """K18: the challenge asks for exactly eight digits; a JSON string of those
+    digits is the same answer, and the decoded digits are what is hashed."""
+    result, response = _run_sentinel_reply(tmp_path, reply)
+
+    assert result["observed_answer"] == "73194628"
+    assert result["observed_answer_sha256"] == hashlib.sha256(b"73194628").hexdigest()
+    assert json.loads(response.read_text()) == result
+
+
+@pytest.mark.parametrize("reply", [
+    '"7319462"', '"73194628x"', '["73194628"]', "73194628 extra",
+    '{"answer": "73194628"}', '"73194628" "73194628"', "73194628.0", '" 73194628"',
+    "```\n73194628\n```",
+])
+def test_sentinel_rejects_anything_but_eight_digits_after_decoding(tmp_path: Path, reply):
+    with pytest.raises(adapter.AdapterError, match="not exactly eight digits"):
+        _run_sentinel_reply(tmp_path, reply)
+    assert not (tmp_path / "response.json").exists()
+
+
+def test_final_review_fence_tag_case_is_representation(tmp_path: Path):
+    _root, script, request, response, _video, _audio, environment = _final_fixture(
+        tmp_path
+    )
+    fake = FakeFileRunner([
+        "```JSON\n" + _review("PASS", "video-whole") + "\n```",
+        "```Json\n" + _review("PASS", "audio-whole") + "\n```",
+    ])
+
+    envelope = adapter.run_final_review(
+        request_path=request,
+        response_path=response,
+        environment=environment,
+        file_runner=fake,
+        adapter_path=script,
+    )
+
+    assert envelope["result"]["status"] == "PASS"
+
+
 def test_final_review_intersects_exact_video_and_audio_passes(tmp_path: Path):
     root, script, request, response, video, audio, environment = _final_fixture(
         tmp_path

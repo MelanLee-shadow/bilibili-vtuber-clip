@@ -1,4 +1,6 @@
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -9,6 +11,16 @@ from scripts.harvest_human_review_truth import (
     parse_srt,
     parse_truth_segments,
 )
+
+
+def test_direct_cli_can_import_shared_label_syntax_outside_repo(tmp_path):
+    script = Path(__file__).resolve().parents[1] / "scripts/harvest_human_review_truth.py"
+    result = subprocess.run(
+        [sys.executable, "-I", "-B", str(script), "--help"], cwd=tmp_path,
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--pristine" in result.stdout
 
 
 def _cue(index: int, text: str, timing: str = "00:00:01,000 --> 00:00:02,000"):

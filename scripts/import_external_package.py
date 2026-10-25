@@ -50,6 +50,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.autoslice import package_import as pi
+from src.autoslice.deployed_code_root import deployed_code_root
 from src.autoslice.publication_reconciliation import (
     project_publication_closure,
 )
@@ -1234,7 +1235,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     base = args.base
-    repo_root = args.repo_root or base / "repo"
+    repo_root = args.repo_root or deployed_code_root(base)
     state_path = args.state or base / "state" / f"{args.date}.json"
     runner_lock = args.runner_lock or base / "runner.lock"
     deployed_commit_file = args.deployed_commit_file or repo_root / "DEPLOYED_COMMIT"

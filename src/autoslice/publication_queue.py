@@ -10,6 +10,8 @@ season and public-verification state machines stay authoritative.
 from __future__ import annotations
 
 import os
+import hashlib
+import json
 import stat
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -19,6 +21,7 @@ from src.autoslice.publication_manifest_prepare import (
     prepare_manifest_from_readiness,
 )
 from src.autoslice import publication_queue_backoff
+from src.autoslice.upload_ledger_scope import content_identity, guard_manifest
 from src.autoslice.publication_readiness import (
     READY_FOR_SERIAL_UPLOAD,
     READY_TO_PREPARE,
@@ -85,6 +88,34 @@ def _resolve_ledger_accessors(
         ledger_reader = ledger_reader or uploader.read_ledger
         ledger_guard = ledger_guard or uploader.ledger_guard
     return ledger_reader, ledger_guard
+
+
+def _followup_media_available(manifest: Path, runtime_root: Path) -> None:
+    """Do not let a retired v3 product monopolize the follow-up queue.
+
+    This is only a local availability check. The canonical uploader still
+    verifies hashes, package quality, ledger binding and the existing BV.
+    """
+    try:
+        if manifest.stat().st_size > 2 << 20:
+            raise ValueError("follow-up manifest is too large")
+        document = json.loads(manifest.read_text(encoding="utf-8"))
+        if not isinstance(document, Mapping):
+            raise ValueError("follow-up manifest is not an object")
+        if document.get("manifest_version") != 3:
+            return  # Legacy recovery retains the canonical uploader's contract.
+        for role in ("video", "cover"):
+            entry = document.get(role)
+            value = entry.get("path") if isinstance(entry, Mapping) else None
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"follow-up {role} path is missing")
+            path = Path(value)
+            if (not path.is_absolute() or path.is_symlink()
+                    or not path.resolve().is_relative_to(runtime_root)
+                    or not path.is_file()):
+                raise ValueError(f"follow-up {role} is unavailable or outside runtime")
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("follow-up manifest is unreadable") from exc
 
 
 def _canonical_action_ledger_commit(
@@ -213,6 +244,7 @@ def _ledger_dependencies(
         [Path, str], tuple[str | None, dict | None, list[str]]
     ],
     runtime_root: Path,
+    quarantined: list[dict[str, object]],
 ) -> dict[str, object] | None:
     entries, problems = ledger_reader(ledger)
     if problems:
@@ -224,6 +256,9 @@ def _ledger_dependencies(
     video_hashes: list[str] = []
     for entry in entries:
         value = entry.get("video_sha256") if isinstance(entry, Mapping) else None
+        if not isinstance(value, str) or not value:
+            return _result("BLOCKED_LEDGER", reason_codes=["UPLOAD_LEDGER_INVALID"],
+                           detail=["upload ledger row has no content identifier"])
         if isinstance(value, str) and value and value not in video_hashes:
             video_hashes.append(value)
     guarded: list[tuple[str, str | None, dict | None]] = []
@@ -240,11 +275,11 @@ def _ledger_dependencies(
         )
     for _video_sha256, status, row in guarded:
         if status == "unresolved":
-            return _result(
-                "BLOCKED_LEDGER",
-                reason_codes=["UPLOAD_ATTEMPT_OUTCOME_UNRESOLVED"],
-                attempt_id=(row or {}).get("attempt_id"),
-            )
+            quarantined.append({
+                "reason_code": "UPLOAD_ATTEMPT_OUTCOME_UNRESOLVED",
+                "video_sha256": _video_sha256,
+                "attempt_id": (row or {}).get("attempt_id"),
+            })
     for video_sha256, status, row in guarded:
         if status == "posted_unverified":
             if not isinstance(row, Mapping):
@@ -262,12 +297,15 @@ def _ledger_dependencies(
                 manifest = _contained_manifest(
                     row.get("manifest"), runtime_root=runtime_root
                 )
+                _followup_media_available(manifest, runtime_root)
             except ValueError as exc:
-                return _result(
-                    "BLOCKED_LEDGER",
-                    reason_codes=["POSTED_ARCHIVE_MANIFEST_INVALID"],
-                    detail=str(exc),
-                )
+                quarantined.append({
+                    "reason_code": "POSTED_ARCHIVE_MANIFEST_INVALID",
+                    "video_sha256": video_sha256,
+                    "attempt_id": row.get("attempt_id"),
+                    "detail": str(exc),
+                })
+                continue
             return {
                 "action": _ACTION_SEASON_ADD,
                 "manifest": str(manifest),
@@ -282,6 +320,7 @@ def _ready_upload_actions(
     graph: Mapping[str, object],
     *,
     runtime_root: Path,
+    quarantined: list[dict[str, object]],
 ) -> list[dict[str, object]] | dict[str, object]:
     """Return ready uploads in the authoritative ready-first order.
 
@@ -330,12 +369,9 @@ def _ready_upload_actions(
                 runtime_root=runtime_root,
             )
         except ValueError as exc:
-            return _result(
-                "BLOCKED_GRAPH",
-                reason_codes=["READY_UPLOAD_MANIFEST_INVALID"],
-                candidate_id=row.get("candidate_id"),
-                detail=str(exc),
-            )
+            quarantined.append({"reason_code": "READY_UPLOAD_MANIFEST_INVALID",
+                                "candidate_id": row.get("candidate_id"), "detail": str(exc)})
+            continue
         actions.append(
             {
                 "action": _ACTION_UPLOAD,
@@ -345,11 +381,15 @@ def _ready_upload_actions(
                 "lane": row.get("lane"),
             }
         )
+    if ready and not actions:
+        return _result("BLOCKED_GRAPH", reason_codes=["READY_UPLOAD_MANIFEST_INVALID"],
+                       quarantined_attempts=quarantined)
     return actions
 
 
 def _ready_prepare_action(
     graph: Mapping[str, object],
+    *, excluded: set[tuple[str, str]] | None = None,
 ) -> dict[str, object] | None:
     rows = graph.get("rows")
     if not isinstance(rows, list):
@@ -361,6 +401,7 @@ def _ready_prepare_action(
         (index, row)
         for index, row in enumerate(rows)
         if isinstance(row, Mapping) and row.get("category") == READY_TO_PREPARE
+        and (str(row.get("candidate_id") or ""), str(row.get("recording_date") or "")) not in (excluded or set())
     ]
     if not ready:
         return None
@@ -407,11 +448,13 @@ def plan_next_publication_action(
         ledger_reader,
         ledger_guard,
     )
+    quarantined: list[dict[str, object]] = []
     recovery = _ledger_dependencies(
         ledger,
         ledger_reader=ledger_reader,
         ledger_guard=ledger_guard,
         runtime_root=root,
+        quarantined=quarantined,
     )
     if recovery is not None:
         if "action" in recovery:
@@ -419,14 +462,62 @@ def plan_next_publication_action(
                 "ACTION_READY",
                 action=recovery,
                 ledger=str(ledger),
+                quarantined_attempts=quarantined,
             )
         return recovery
     graph = graph_builder(
         repository_root=Path(repository_root).expanduser().absolute(),
         runtime_root=root,
     )
-    upload_actions = _ready_upload_actions(graph, runtime_root=root)
+    upload_actions = _ready_upload_actions(graph, runtime_root=root, quarantined=quarantined)
+
+    def prepare_action():
+        # Check each ready product's own identity before creating a manifest.
+        # A hold on one product must not monopolize the preparation queue.
+        excluded: set[tuple[str, str]] = set()
+        entries, problems = ledger_reader(ledger)
+        if problems:
+            return _result("BLOCKED_LEDGER", reason_codes=["UPLOAD_LEDGER_INVALID"], detail=problems[:16])
+        while (action := _ready_prepare_action(graph, excluded=excluded)) is not None:
+            if "action" not in action or not entries:
+                return action
+            row = action["readiness_row"]
+            try:
+                dependencies = row.get("package_dependencies") or {}
+                if not isinstance(dependencies, Mapping):
+                    raise ValueError("preparation dependencies are not an object")
+                record_path = _contained_manifest(dependencies.get("record"), runtime_root=root)
+                if record_path.stat().st_size > 2 << 20:
+                    raise ValueError("preparation record is too large")
+                record_bytes = record_path.read_bytes()
+                # This is only an observational hold query. make-manifest still
+                # replays every ordinary quality and authorization gate.
+                query = {"video": {}, "package_attestation": {
+                    "package_root": str(record_path.parent),
+                    "record": {"path": str(record_path), "sha256": hashlib.sha256(record_bytes).hexdigest()},
+                }}
+                content_identity(query)  # Invalid product input is a local hold.
+                status, held_row, guard_problems = guard_manifest(ledger_guard, ledger, "", query)
+                if guard_problems:
+                    return _result("BLOCKED_LEDGER", reason_codes=["UPLOAD_LEDGER_INVALID"], detail=guard_problems[:16])
+                if status is None:
+                    return action
+                quarantined.append({"candidate_id": action.get("candidate_id"),
+                                    "reason_code": "UPLOAD_CONTENT_HELD", "ledger_status": status,
+                                    "attempt_id": (held_row or {}).get("attempt_id")})
+            except (OSError, ValueError, TypeError) as exc:
+                quarantined.append({"candidate_id": action.get("candidate_id"),
+                                    "reason_code": "PREPARATION_INPUT_INVALID", "detail": str(exc)})
+            excluded.add((str(action.get("candidate_id") or ""), str(action.get("recording_date") or "")))
+        return None
     if isinstance(upload_actions, dict):
+        if upload_actions.get("reason_codes") == ["READY_UPLOAD_MANIFEST_INVALID"]:
+            next_prepare = prepare_action()
+            if next_prepare is not None:
+                if "action" not in next_prepare:
+                    return next_prepare
+                return _result("ACTION_READY", action=next_prepare, ledger=str(ledger),
+                               quarantined_attempts=quarantined)
         return upload_actions
     if upload_actions:
         entries, backoff_ledger_problems = ledger_reader(ledger)
@@ -437,8 +528,27 @@ def plan_next_publication_action(
                 detail=backoff_ledger_problems[:16],
             )
         manifest_backoffs: list[dict[str, object]] = []
+        scoped_holds: list[dict[str, object]] = []
         global_backoff: dict[str, object] | None = None
         for action in upload_actions:
+            if entries:
+                try:
+                    manifest = json.loads(Path(action["manifest"]).read_text(encoding="utf-8"))
+                    if not isinstance(manifest, Mapping) or not isinstance(manifest.get("video"), Mapping):
+                        raise ValueError("upload manifest/video is not an object")
+                    content_identity(manifest)
+                    status, row, guard_problems = guard_manifest(
+                        ledger_guard, ledger, str((manifest.get("video") or {}).get("sha256") or ""), manifest,
+                    )
+                except (OSError, ValueError, TypeError) as exc:
+                    scoped_holds.append({"action": action, "reason_code": "READY_UPLOAD_MANIFEST_INVALID", "detail": str(exc)})
+                    continue
+                if guard_problems:
+                    return _result("BLOCKED_LEDGER", reason_codes=["UPLOAD_LEDGER_INVALID"], detail=guard_problems[:16])
+                if status in {"unresolved", "uploaded", "posted_unverified"}:
+                    scoped_holds.append({"action": action, "reason_code": "UPLOAD_CONTENT_HELD",
+                                         "attempt_id": (row or {}).get("attempt_id"), "ledger_status": status})
+                    continue
             backoff = backoff_evaluator(
                 runtime_root=root,
                 manifest_path=action["manifest"],
@@ -464,17 +574,23 @@ def plan_next_publication_action(
                 action=action,
                 ledger=str(ledger),
                 skipped_backoff=manifest_backoffs,
+                quarantined_attempts=quarantined,
+                skipped_content_holds=scoped_holds,
             )
-        prepare_action = _ready_prepare_action(graph)
+        next_prepare = prepare_action()
+        if isinstance(next_prepare, Mapping) and "action" not in next_prepare:
+            return dict(next_prepare)
         if (
-            isinstance(prepare_action, Mapping)
-            and "action" in prepare_action
+            isinstance(next_prepare, Mapping)
+            and "action" in next_prepare
         ):
             return _result(
                 "ACTION_READY",
-                action=prepare_action,
+                action=next_prepare,
                 ledger=str(ledger),
                 skipped_backoff=manifest_backoffs,
+                quarantined_attempts=quarantined,
+                skipped_content_holds=scoped_holds,
                 deferred_upload_backoff=(
                     global_backoff["backoff"]
                     if global_backoff is not None
@@ -489,6 +605,9 @@ def plan_next_publication_action(
                 backoff=global_backoff["backoff"],
                 backed_off_candidates=manifest_backoffs,
             )
+        if not manifest_backoffs:
+            return _result("BLOCKED_CONTENT", reason_codes=["UPLOAD_CONTENT_HELD"],
+                           skipped_content_holds=scoped_holds, quarantined_attempts=quarantined)
         selected = min(
             manifest_backoffs,
             key=lambda item: float(
@@ -503,15 +622,80 @@ def plan_next_publication_action(
             backoff=selected["backoff"],
             backed_off_candidates=manifest_backoffs,
         )
-    action = _ready_prepare_action(graph)
+    action = prepare_action()
     if action is None:
-        return _result("NO_READY_ACTION", ledger=str(ledger))
+        return _result("NO_READY_ACTION", ledger=str(ledger), quarantined_attempts=quarantined)
     if "action" not in action:
         return action
-    return _result("ACTION_READY", action=action, ledger=str(ledger))
+    return _result("ACTION_READY", action=action, ledger=str(ledger), quarantined_attempts=quarantined)
 
 
 def consume_ready_publication_queue(
+    *,
+    repository_root: str | Path,
+    runtime_root: str | Path,
+    enabled: bool,
+    graph_builder: Callable[..., dict[str, Any]] = build_readiness_graph,
+    upload_call: Callable[[list[str]], int] | None = None,
+    manifest_prepare_call: Callable[..., dict[str, object]] = (
+        prepare_manifest_from_readiness
+    ),
+    ledger_path: str | Path | None = None,
+    ledger_reader: Callable[[Path], tuple[list[dict], list[str]]] | None = None,
+    ledger_guard: Callable[
+        [Path, str], tuple[str | None, dict | None, list[str]]
+    ]
+    | None = None,
+    backoff_evaluator: Callable[..., dict[str, object]] = (
+        publication_queue_backoff.evaluate_upload_backoff
+    ),
+    backoff_recorder: Callable[..., dict[str, object]] = (
+        publication_queue_backoff.record_queue_result
+    ),
+    now_epoch: float | None = None,
+) -> dict[str, object]:
+    """Serialize a whole queue tick across the timer and ordinary runner."""
+
+    if enabled is not True:
+        return _result("DISABLED", side_effect_attempted=False)
+    try:
+        root = _safe_runtime_root(runtime_root)
+    except ValueError as exc:
+        return _result("BLOCKED_RUNTIME", reason_codes=["PUBLICATION_RUNTIME_INVALID"],
+                       detail=str(exc), side_effect_attempted=False)
+    from scripts.authorized_upload import UploadLockBusy, exclusive_upload_lock
+
+    # The uploader still owns upload.lock. This outer lock also covers manifest
+    # preparation, readiness selection and follow-up recovery, across all callers.
+    try:
+        with exclusive_upload_lock(root / "publication-queue.lock"):
+            return _consume_ready_publication_queue_locked(
+                repository_root=repository_root, runtime_root=root, enabled=True,
+                graph_builder=graph_builder, upload_call=upload_call,
+                manifest_prepare_call=manifest_prepare_call, ledger_path=ledger_path,
+                ledger_reader=ledger_reader, ledger_guard=ledger_guard,
+                backoff_evaluator=backoff_evaluator, backoff_recorder=backoff_recorder,
+                now_epoch=now_epoch,
+            )
+    except UploadLockBusy:
+        return _result("QUEUE_BUSY", reason_codes=["PUBLICATION_QUEUE_LOCK_BUSY"],
+                       side_effect_attempted=False)
+
+
+def _runtime_pause(root: Path) -> dict[str, object] | None:
+    for marker, reason_code in (
+        ("PUBLISH_PAUSED", "PUBLICATION_PAUSED"),
+        ("deploy.guard", "DEPLOYMENT_IN_PROGRESS"),
+        ("AUTO_UPLOAD", "LEGACY_AUTO_UPLOAD_MARKER_PRESENT"),
+    ):
+        path = root / marker
+        if path.exists() or path.is_symlink():
+            return _result("BLOCKED_RUNTIME", reason_codes=[reason_code],
+                           marker=str(path), side_effect_attempted=False)
+    return None
+
+
+def _consume_ready_publication_queue_locked(
     *,
     repository_root: str | Path,
     runtime_root: str | Path,
@@ -553,19 +737,9 @@ def consume_ready_publication_queue(
         ledger_guard,
     )
     canonical_upload_call = upload_call is None
-    for marker, reason_code in (
-        ("DISABLED", "PRODUCTION_DISABLED"),
-        ("deploy.guard", "DEPLOYMENT_IN_PROGRESS"),
-        ("AUTO_UPLOAD", "LEGACY_AUTO_UPLOAD_MARKER_PRESENT"),
-    ):
-        path = root / marker
-        if path.exists() or path.is_symlink():
-            return _result(
-                "BLOCKED_RUNTIME",
-                reason_codes=[reason_code],
-                marker=str(path),
-                side_effect_attempted=False,
-            )
+    pause = _runtime_pause(root)
+    if pause is not None:
+        return pause
     plan = plan_next_publication_action(
         repository_root=repository_root,
         runtime_root=root,
@@ -591,6 +765,10 @@ def consume_ready_publication_queue(
             reason_codes=["PUBLICATION_ACTION_INVALID"],
             side_effect_attempted=False,
         )
+    # Readiness may hash large media. Honor a pause arriving during that work.
+    pause = _runtime_pause(root)
+    if pause is not None:
+        return pause
     if action.get("action") == _ACTION_PREPARE_MANIFEST:
         readiness_row = action.get("readiness_row")
         if not isinstance(readiness_row, Mapping):
@@ -615,6 +793,8 @@ def consume_ready_publication_queue(
             deferred_upload_backoff=deferred_upload_backoff,
             side_effect_attempted=True,
             external_side_effect_attempted=False,
+            quarantined_attempts=plan.get("quarantined_attempts", []),
+            skipped_content_holds=plan.get("skipped_content_holds", []),
         )
     if upload_call is None:
         from scripts import authorized_upload as uploader
@@ -748,6 +928,8 @@ def consume_ready_publication_queue(
         backoff_state=backoff_state,
         ledger_commit=ledger_commit,
         skipped_backoff=skipped_backoff,
+        quarantined_attempts=plan.get("quarantined_attempts", []),
+        skipped_content_holds=plan.get("skipped_content_holds", []),
         side_effect_attempted=True,
         external_side_effect_attempted=True,
     )

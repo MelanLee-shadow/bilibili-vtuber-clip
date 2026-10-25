@@ -228,7 +228,12 @@ def _staged_owner(
 ) -> dict[str, Any]:
     request = adjudication.get("request") or {}
     witness_judge = adjudication.get("witness_judge") or {}
+    native_binding = {}
+    if request.get("argon_escalation_evidence") is not None:
+        from src.autoslice.exact_final_witness_authority import binding_from_adjudication
+        native_binding["acoustic_witness_binding"] = binding_from_adjudication(adjudication)
     return {
+        **native_binding,
         "mode": "final_review_context_adjudication",
         "action": (
             "DROP_CUE"

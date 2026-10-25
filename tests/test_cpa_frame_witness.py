@@ -4,19 +4,93 @@ from __future__ import annotations
 
 import base64
 import hashlib
-from email.message import Message
-import io
 import json
 import os
 from contextlib import nullcontext
 from pathlib import Path
-import urllib.error
 
 from src.autoslice import agy_frame_witness
 from src.autoslice import cpa_frame_witness
 from src.autoslice import screen_read_witness
 from src.autoslice import visual_witness
 from src.autoslice.cover_polish_gate import _verify_polish_face_integrity
+
+
+def test_image_probe_sends_final_then_style_pixels_and_binds_both(monkeypatch, tmp_path):
+    from PIL import Image
+
+    cover = tmp_path / "cover.png"
+    style = tmp_path / "style.png"
+    Image.new("RGB", (32, 24), (20, 70, 120)).save(cover)
+    Image.new("RGB", (32, 24), (120, 70, 20)).save(style)
+    calls = []
+
+    class Response:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return False
+        def read(self):
+            return b'{"output_text":"actual mock transport response"}'
+
+    def urlopen(request, **_kwargs):
+        calls.append(json.loads(request.data))
+        return Response()
+
+    monkeypatch.setattr(cpa_frame_witness.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(cpa_frame_witness, "runtime_provider_slot", lambda **_kw: nullcontext())
+    trace = tmp_path / "usage.jsonl"
+    monkeypatch.setenv("AUTOSLICE_CPA_USAGE_FILE", str(trace))
+    first = cpa_frame_witness.image_vision_probe(
+        cover, "compare drawing style", reference_image_path=style,
+        api_base="https://example.invalid/v1", api_key="secret",
+    )
+    assert first["status"] == "OBSERVED"
+    assert first["image_sha256"] == hashlib.sha256(cover.read_bytes()).hexdigest()
+    assert first["reference_image"]["image_sha256"] == hashlib.sha256(style.read_bytes()).hexdigest()
+    images = calls[0]["input"][0]["content"][1:]
+    decoded = [base64.b64decode(row["image_url"].split(",", 1)[1]) for row in images]
+    assert len(decoded) == 2
+    assert hashlib.sha256(decoded[0]).hexdigest() == first["frame_sha256"]
+    assert hashlib.sha256(decoded[1]).hexdigest() == first["reference_image"]["frame_sha256"]
+    Image.new("RGB", (32, 24), (30, 90, 50)).save(style)
+    second = cpa_frame_witness.image_vision_probe(
+        cover, "compare drawing style", reference_image_path=style,
+        api_base="https://example.invalid/v1", api_key="secret",
+    )
+    assert second["prompt_sha256"] != first["prompt_sha256"]
+    missing = cpa_frame_witness.image_vision_probe(
+        cover, "compare drawing style", reference_image_path=tmp_path / "missing.png",
+        api_base="https://example.invalid/v1", api_key="secret",
+    )
+    assert missing["status"] == "UNAVAILABLE"
+    assert len(calls) == 2
+    usage = [json.loads(line) for line in trace.read_text().splitlines()]
+    assert sum(row['event_type']=='http_attempt' for row in usage) == 2
+    assert sum(row['event_type']=='model_request' for row in usage) == 2
+    assert all(row["kind"] == "vision" for row in usage)
+    assert "secret" not in trace.read_text()
+
+
+def test_cpa_batch_http_error_is_a_typed_failed_attempt(tmp_path, monkeypatch):
+    import urllib.error
+    image = tmp_path / 'frame.jpg'
+    image.write_bytes(b'exact jpeg fixture')
+    trace = tmp_path / 'usage.jsonl'
+    monkeypatch.setenv('AUTOSLICE_CPA_USAGE_FILE', str(trace))
+    monkeypatch.setattr(cpa_frame_witness, 'runtime_provider_slot', lambda **k: nullcontext())
+    def fail(*a, **k):
+        raise urllib.error.HTTPError('https://cpa.example/v1/responses', 507, 'Insufficient Storage', {}, None)
+    monkeypatch.setattr(cpa_frame_witness.urllib.request, 'urlopen', fail)
+    receipt = cpa_frame_witness.batch_jpeg_vision_probe([image], 'pixels only',
+        api_base='https://cpa.example/v1', api_key='secret')
+    assert receipt['status'] == 'UNAVAILABLE'
+    assert receipt['provider_status_code'] == 507
+    assert receipt['dispatch_outcome'] == 'HTTP_ERROR_RESPONSE'
+    assert receipt['error'] == 'HTTPError: HTTP Error 507: Insufficient Storage'
+    usage = [json.loads(line) for line in trace.read_text().splitlines()]
+    assert next(row for row in usage if row['event_type']=='http_attempt')['status'] == 507
+    assert next(row for row in usage if row['event_type']=='model_request')['status'] == 'ERROR'
 
 
 def test_cpa_batch_jpeg_probe_binds_ordered_exact_images_and_one_slot(
@@ -63,8 +137,13 @@ def test_cpa_batch_jpeg_probe_binds_ordered_exact_images_and_one_slot(
         api_key="secret",
         timeout_seconds=17,
         max_tokens=4096,
+        raw_response_path=tmp_path / "private" / "provider-response.json",
     )
 
+    raw_response = tmp_path / "private" / "provider-response.json"
+    assert raw_response.read_bytes() == response_bytes
+    assert receipt["raw_response_path"] == str(raw_response)
+    assert b"secret" not in raw_response.read_bytes()
     assert receipt["status"] == "OBSERVED"
     assert receipt["answer"] == "批量结果"
     assert receipt["images"] == [
@@ -94,7 +173,7 @@ def test_cpa_batch_jpeg_probe_binds_ordered_exact_images_and_one_slot(
     prompt_identity = {
         "question": "比较这两张图",
         "image_sha256s": [item["image_sha256"] for item in receipt["images"]],
-        "model": "gpt-6-sol",
+        "model": "gpt-6.1-sol",
     }
     assert receipt["prompt_sha256"] == hashlib.sha256(
         json.dumps(prompt_identity, sort_keys=True).encode()
@@ -187,94 +266,6 @@ def test_cpa_observed_receipt_binds_frame_prompt_response(
     assert content[1]["image_url"].startswith("data:image/jpeg;base64,")
     for key in ("frame_sha256", "prompt_sha256", "response_sha256"):
         assert len(str(receipt[key])) == 64
-
-
-def _http_error(code: int, *, retry_after: str | None = None):
-    headers = Message()
-    if retry_after is not None:
-        headers["Retry-After"] = retry_after
-    return urllib.error.HTTPError(
-        "https://cpa.example/v1/responses",
-        code,
-        "Too Many Requests" if code == 429 else "Internal Server Error",
-        headers,
-        io.BytesIO(b"provider response body must not enter the receipt"),
-    )
-
-
-def test_cpa_http_429_is_capacity_without_persisting_provider_body(
-    monkeypatch,
-    tmp_path,
-):
-    monkeypatch.setattr(
-        cpa_frame_witness,
-        "_extract_frame_jpeg",
-        lambda *args, **kwargs: b"jpegbytes",
-    )
-    monkeypatch.setattr(
-        cpa_frame_witness,
-        "runtime_provider_slot",
-        lambda **_kwargs: nullcontext(),
-    )
-    error = _http_error(429, retry_after="120")
-    monkeypatch.setattr(
-        cpa_frame_witness.urllib.request,
-        "urlopen",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
-    )
-
-    receipt = cpa_frame_witness.frame_vision_probe(
-        tmp_path / "x.mp4",
-        0,
-        "q",
-        api_base="https://cpa.example/v1",
-        api_key="secret-not-for-receipts",
-    )
-
-    assert receipt["status"] == "UNAVAILABLE"
-    assert receipt["reason_code"] == "VISION_PROVIDER_CAPACITY"
-    assert receipt["http_status"] == 429
-    assert receipt["retry_after"] == "120"
-    serialized = json.dumps(receipt, ensure_ascii=False)
-    assert "provider response body" not in serialized
-    assert "secret-not-for-receipts" not in serialized
-    assert "response_sha256" not in receipt
-    assert error.closed is True
-
-
-def test_cpa_non_capacity_http_error_keeps_call_failed_contract(
-    monkeypatch,
-    tmp_path,
-):
-    monkeypatch.setattr(
-        cpa_frame_witness,
-        "_extract_frame_jpeg",
-        lambda *args, **kwargs: b"jpegbytes",
-    )
-    monkeypatch.setattr(
-        cpa_frame_witness,
-        "runtime_provider_slot",
-        lambda **_kwargs: nullcontext(),
-    )
-    monkeypatch.setattr(
-        cpa_frame_witness.urllib.request,
-        "urlopen",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(_http_error(500)),
-    )
-
-    receipt = cpa_frame_witness.frame_vision_probe(
-        tmp_path / "x.mp4",
-        0,
-        "q",
-        api_base="https://cpa.example/v1",
-        api_key="secret-not-for-receipts",
-    )
-
-    assert receipt["status"] == "UNAVAILABLE"
-    assert receipt["reason_code"] == "VISION_CALL_FAILED"
-    assert receipt["http_status"] == 500
-    assert "retry_after" not in receipt
-    assert "provider response body" not in json.dumps(receipt, ensure_ascii=False)
 
 
 def test_cpa_missing_credentials_fails_closed_without_extract(
@@ -459,6 +450,7 @@ def test_env_screen_probe_uses_cpa_without_agy(monkeypatch, tmp_path):
         "media_path": media,
         "api_base": "https://cpa.example/v1",
         "api_key": "secret",
+        "prior_receipts": [],
     }
 
 
@@ -494,6 +486,7 @@ def test_env_screen_probe_reads_private_runtime_cpa_without_ambient(monkeypatch,
         "media_path": media,
         "api_base": "https://runtime.example/v1",
         "api_key": "runtime-secret",
+        "prior_receipts": [],
     }
 
 

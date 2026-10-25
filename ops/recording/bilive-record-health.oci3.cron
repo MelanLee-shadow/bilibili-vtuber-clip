@@ -1,0 +1,2 @@
+# OCI3 audit is local-only. A CD2 outage must never gate recording health.
+2-52/10 * * * * root /usr/bin/python3 -B /opt/bilive/ops/record_health_audit.py --lookback-hours 96 --local-first >> /opt/bilive/autoslice/logs/record-health-cron.log 2>&1

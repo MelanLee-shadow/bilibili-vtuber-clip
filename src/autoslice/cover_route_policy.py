@@ -45,8 +45,10 @@ def decide_cover_treatment(
 ) -> tuple[str, str]:
     """每条切片选封面路线（维护者：哪些适合全图 CPA 重做、哪些适合截图）。
 
-    判据=表现力选帧最高分（"这条片有没有值得原样示人的真名场面"）：
-    - 竖屏缺少可忠实裁切的主体见证 → cpa_redraw；已验证可用截图优先
+    普通单人 talk 的 auto 路线优先按故事重绘。选帧分数和可裁切人脸只提供
+    身份参考，不证明截图比故事构图更有表达优势。明确截图、游戏与真实多人
+    路线保留各自的原有判据：
+    - 竖屏缺少可忠实裁切的主体见证 → cpa_redraw
     - 歌切 / 选帧失败 → cpa_redraw（唱歌净美学 / 无帧可用）
     - 强名场面（≥4.5，或 ≥3.2 且命中情绪字幕段）→ screenshot_direct：真表情就是
       封面，重绘反而丢梗
@@ -168,6 +170,12 @@ def decide_cover_treatment(
         return "screenshot_direct", "mode=screenshot (forced)"
     if cover_mode == "polish":
         return "screenshot_polish", "mode=polish (forced)"
+    if cover_mode == "auto" and scene_kind != GAME_SCENE:
+        return (
+            "cpa_redraw",
+            "ordinary talk: express the story with a redraw; frame score and "
+            "face-safe crop supply identity reference, not a screenshot story advantage",
+        )
     if (source_composition_supports_subject(source_composition_verification)
             and (best >= _COVER_TREATMENT_SCORE_LO
                  or frame_selection.get("status") == "OPERATOR_OVERRIDE")):

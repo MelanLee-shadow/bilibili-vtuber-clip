@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from src.autoslice.channel_profile import binding_for_profile, load_channel_profile
+
 from src.autoslice import producer_request
 from src.autoslice import producer_text_pipeline as pipeline
 
@@ -17,6 +19,7 @@ def _args(spec_path: Path) -> argparse.Namespace:
         subtitle_regression=None,
         speaker_overrides=None,
         ssh_host="localhost",
+        speaker_mode="uniform_host",
     )
 
 
@@ -57,8 +60,9 @@ def test_request_preflight_rejects_invalid_native_provider_before_branding(
         with pytest.raises(ValueError, match="foreign_script_witness_provider"):
             producer_request.load_producer_request(
                 _args(path),
-                repo_root=tmp_path,
+                repo_root=Path(__file__).resolve().parents[1],
                 profile_asset_file=lambda _name: tmp_path / "unused.json",
+                trusted_parent_profile_binding=binding_for_profile(load_channel_profile(Path(__file__).resolve().parents[1], environ={})),
             )
 
     assert branding_called is False
@@ -76,8 +80,9 @@ def test_request_preflight_accepts_explicit_native_provider_values(
 
     request = producer_request.load_producer_request(
         _args(path),
-        repo_root=tmp_path,
+        repo_root=Path(__file__).resolve().parents[1],
         profile_asset_file=lambda _name: tmp_path / "unused.json",
+        trusted_parent_profile_binding=binding_for_profile(load_channel_profile(Path(__file__).resolve().parents[1], environ={})),
     )
 
     assert request.spec.get("foreign_script_witness_provider") == provider
@@ -94,6 +99,15 @@ def _srt(*texts: str) -> str:
             f"{text}"
         )
     return "\n\n".join(rows) + "\n"
+
+
+def _stub_language_discovery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.autoslice import audio_language_discovery
+
+    (tmp_path / "media.mp4").write_bytes(b"native-route-regression-media")
+    monkeypatch.setattr(audio_language_discovery, "scan_audio_languages", lambda **_kwargs: {
+        "status": "OBSERVED", "foreign_spans": [], "semantic_anomalies": [], "speech_turns": [],
+    })
 
 
 def test_full_text_finalization_routes_native_witness_and_registers_late_owner(
@@ -132,6 +146,7 @@ def test_full_text_finalization_routes_native_witness_and_registers_late_owner(
         return observe
 
     monkeypatch.setattr(native, "build_native_foreign_witness", factory)
+    _stub_language_discovery(tmp_path, monkeypatch)
     monkeypatch.setattr(
         pipeline,
         "_build_final_review_llm_call",
@@ -193,12 +208,103 @@ def test_full_text_finalization_routes_native_witness_and_registers_late_owner(
     assert registration["status"] == "REGISTERED"
 
 
+def _finalize_with_stub_adjudication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    current: str,
+    *,
+    append_after_adjudication: str = "",
+):
+    """Finalize with an audio-witnessed mixed phrase; optionally add a late cue."""
+    _stub_language_discovery(tmp_path, monkeypatch)
+    witness_status = "WITNESSED_MIXED_PHRASE_AUDIO"
+
+    def adjudicate(_padded, srt_text, audit, *_args, **kwargs):
+        if kwargs["source_language"]:
+            return srt_text, audit
+        assert audit["status"] == "BLOCKED_MIXED_CJK_LATIN_PHRASE"
+        audit["status"] = witness_status
+        audit["audio_witness_rows"] = [
+            {"cue_index": row["cue_index"], "witnessed": True}
+            for row in audit["mixed_cjk_latin_cues"]
+        ]
+        return srt_text + append_after_adjudication, audit
+
+    monkeypatch.setattr(pipeline, "_adjudicate_final_language", adjudicate)
+    chat_authority = {
+        "status": "PASS",
+        "source_truth_preview_receipts": {
+            stage: {
+                "schema_version": "source-truth-deterministic-preview.v1",
+                "ledger_sha256": None,
+            }
+            for stage in ("pre_entity_arbitration", "pre_correction_review")
+        },
+    }
+    kwargs = dict(
+        spec={"pieces": []},
+        durations=[],
+        srt_text=current,
+        chat_authority_audit=chat_authority,
+        transcript_entity_audit={"status": "PASS"},
+        referent_groups=[],
+        final_review_audit={},
+        song_name_candidates=[],
+        known_songs_path=tmp_path / "known-songs.json",
+        session_topic_authorities=(),
+        source_language_witness_srt=current,
+        text_override_path=None,
+        source_truth_ledger_path=None,
+        out_root=tmp_path,
+        cid="fixture",
+        padded=tmp_path / "media.mp4",
+    )
+    return chat_authority, lambda: pipeline._finalize_text_evidence(**kwargs)
+
+
+def test_finalization_keeps_witnessed_mixed_phrase_and_binds_raw_guard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = _srt("这是正常中文。", "今天我们 play the game 吧", "这里结束了。")
+    chat_authority, run = _finalize_with_stub_adjudication(tmp_path, monkeypatch, current)
+
+    result = run()  # raw guard is BLOCKED but fully covered by the witnessed row
+
+    audit = chat_authority["foreign_script_consistency_audit"]
+    assert result.srt_text == current
+    assert audit["status"] == "WITNESSED_MIXED_PHRASE_AUDIO"
+    assert audit["audio_witness_rows"] == [{"cue_index": 2, "witnessed": True}]
+    assert audit["raw_guard"]["status"] == "BLOCKED_MIXED_CJK_LATIN_PHRASE"
+    assert audit["raw_guard_srt_sha256"] == chat_authority["final_output_srt_sha256"]
+    assert not pipeline._foreign_guard_blocks(audit)
+
+
+def test_finalization_blocks_new_mixed_phrase_added_after_adjudication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = _srt("这是正常中文。", "今天我们 play the game 吧", "这里结束了。")
+    late = "4\n00:00:06,000 --> 00:00:07,000\n然后 you know what 我说\n"
+    chat_authority, run = _finalize_with_stub_adjudication(
+        tmp_path, monkeypatch, current, append_after_adjudication="\n" + late,
+    )
+
+    with pytest.raises(SystemExit, match="FOREIGN_SOURCE_TRANSCRIPTION_REQUIRED"):
+        run()
+
+    audit = chat_authority["foreign_script_consistency_audit"]
+    assert audit["status"] == "WITNESSED_MIXED_PHRASE_AUDIO"
+    assert len(audit["raw_guard"]["mixed_cjk_latin_cues"]) == 2
+
+
 @pytest.mark.parametrize("provider", [None, "agy"])
 def test_legacy_finalization_does_not_pass_native_provider_keyword(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     provider: str | None,
 ) -> None:
+    _stub_language_discovery(tmp_path, monkeypatch)
     current = _srt("这是第一句。", "这是第二句。", "这是第三句。")
     calls: list[dict[str, object]] = []
 
@@ -305,6 +411,17 @@ def test_native_context_option_passes_explicit_local_budget(tmp_path, monkeypatc
         return lambda request: {'route': kwargs['provider'], 'request': request}
 
     monkeypatch.setattr(native_context_witness, 'build_native_context_verifier', build_native)
+    independent_captured = {}
+
+    def build_independent(**kwargs):
+        independent_captured.update(kwargs)
+        return kwargs['fallback']
+
+    monkeypatch.setattr(
+        native_context_witness,
+        'build_independent_context_witnesses',
+        build_independent,
+    )
     spec = {
         'date': '2026-08-23',
         'local_audio_witness_provider': 'moss',
@@ -321,6 +438,10 @@ def test_native_context_option_passes_explicit_local_budget(tmp_path, monkeypatc
     assert captured['provider'] == 'moss'
     assert captured['max_windows'] == 24
     assert captured['max_audio_ms'] == 180_000
+    assert captured['budget_receipt_path'] == tmp_path / 'native-audio-budget.json'
+    assert captured['native_observation_cache_root'] == tmp_path
+    assert independent_captured['native_observation_cache_root'] == tmp_path
+    assert independent_captured['output_dir'] == tmp_path / 'independent-context'
 
 
 def test_explicit_budget_registers_before_local_audio_gate(
@@ -367,3 +488,43 @@ def test_explicit_budget_registers_before_local_audio_gate(
     assert budget is not None
     assert budget.max_windows == 24
     assert budget.max_audio_ms == 180_000
+
+
+@pytest.mark.parametrize('before,after', [('我找小室说话', '我找小诗说话'), ('露医生来了', '陆医生来了'), ('kmx叫妈妈', 'KMX叫妈妈')])
+def test_p1_normal_finalizer_restores_entity_reviewed_name_slot(tmp_path, before, after):
+    current, reference = _srt("先说一句", after, "最后说完"), _srt("先说一句", before, "最后说完")
+    audit = {'status': 'PASS', 'source_truth_preview_receipts': {
+        stage: {'schema_version': 'source-truth-deterministic-preview.v1', 'ledger_sha256': None}
+        for stage in ('pre_entity_arbitration', 'pre_correction_review')}}
+    result = pipeline._finalize_text_evidence(
+        spec={'pieces': []}, durations=[], srt_text=current, protected_name_source_srt=reference,
+        chat_authority_audit=audit, transcript_entity_audit={'status': 'PASS'}, referent_groups=[],
+        final_review_audit={}, song_name_candidates=[], known_songs_path=tmp_path/'songs.json',
+        session_topic_authorities=(), source_language_witness_srt=current,
+        text_override_path=None, source_truth_ledger_path=None, out_root=tmp_path, cid='fixture',
+    )
+    assert result.srt_text == reference
+    assert audit['protected_name_slot_repairs'][0]['protected_name'] in before
+
+
+def test_p1_name_protection_preserves_common_words_and_nickname():
+    from src.autoslice.surface_canon import protect_reviewed_name_slots
+    for text in ('两个小时以后', '陆医生今天值班', '露医生来了'):
+        assert protect_reviewed_name_slots(_srt(text), _srt(text)) == (_srt(text), [])
+    assert protect_reviewed_name_slots(_srt('谢谢礼物'), _srt('小室')) == (_srt('谢谢礼物'), [])
+
+
+@pytest.mark.parametrize('surface', ['kimo熊', 'kimo 熊', 'Kimo熊', 'kimoxiong', '基默熊'])
+def test_p1_normal_finalizer_compresses_explicit_kmx_equivalences(tmp_path, surface):
+    current = _srt('先说一句', surface + '叫妈妈', '最后说完')
+    audit = {'status': 'PASS', 'source_truth_preview_receipts': {
+        stage: {'schema_version': 'source-truth-deterministic-preview.v1', 'ledger_sha256': None}
+        for stage in ('pre_entity_arbitration', 'pre_correction_review')}}
+    result = pipeline._finalize_text_evidence(
+        spec={'pieces': []}, durations=[], srt_text=current,
+        chat_authority_audit=audit, transcript_entity_audit={'status': 'PASS'}, referent_groups=[],
+        final_review_audit={}, song_name_candidates=[], known_songs_path=tmp_path/'songs.json',
+        session_topic_authorities=(), source_language_witness_srt=current,
+        text_override_path=None, source_truth_ledger_path=None, out_root=tmp_path, cid='fixture',
+    )
+    assert result.srt_text == _srt('先说一句', 'kmx叫妈妈', '最后说完')

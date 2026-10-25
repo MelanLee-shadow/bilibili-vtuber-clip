@@ -6,6 +6,7 @@ import base64
 import binascii
 import json
 import re
+from pathlib import Path
 from typing import Mapping, Sequence
 import urllib.parse
 import urllib.request
@@ -18,6 +19,69 @@ from src.autoslice.song_common import (
     is_lrc_non_lyric_metadata,
     normalize_lyric_text,
 )
+
+
+def load_canonical_lrc_result(
+    *,
+    lrc_path: Path,
+    song_title: str,
+    artist: str | None,
+    source_ref: str,
+    raw_bytes: bytes | None = None,
+) -> LrcResult:
+    """Load one caller-supplied timed LRC without consulting a network provider.
+
+    The caller-supplied identity and source reference are deliberately kept as
+    metadata on the normal ``LrcResult``.  This freezes the lyric candidate for
+    a run; downstream audio-LRC alignment, live-vocal, boundary, and release
+    gates still have to validate the actual performance.
+    """
+
+    path = Path(lrc_path)
+    if not path.is_file():
+        raise ValueError(f"canonical LRC file must be a regular file: {path}")
+    title = str(song_title or "").strip()
+    if not title:
+        raise ValueError("canonical LRC title is required")
+    reference = str(source_ref or "").strip()
+    if not reference:
+        raise ValueError("canonical LRC source reference is required")
+    raw = path.read_bytes() if raw_bytes is None else raw_bytes
+    if not isinstance(raw, bytes):
+        raise TypeError("canonical LRC raw_bytes must be bytes")
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"canonical LRC file is not valid UTF-8: {path}") from exc
+    lines = parse_lrc_text(text)
+    if not lines:
+        raise ValueError(f"canonical LRC file has no timed lyric lines: {path}")
+    normalized_artist = (str(artist).strip() or None) if artist is not None else None
+    return LrcResult(
+        provider="canonical_file",
+        song_title=title,
+        artist=normalized_artist,
+        source_ref=reference,
+        lines=tuple(lines),
+    )
+
+
+def build_static_lrc_provider(result: LrcResult) -> LrcProvider:
+    """Return a bounded provider that always returns one already-loaded LRC.
+
+    Keeping the result in the closure avoids rereading a caller's file after
+    its hash/provenance has been recorded.  No query is sent anywhere, and the
+    result itself remains subject to the ordinary song repair gates.
+    """
+
+    if not isinstance(result, LrcResult):
+        raise TypeError("static LRC provider requires an LrcResult")
+
+    def provider(_query: str) -> tuple[LrcResult, ...]:
+        return (result,)
+
+    return provider
+
 
 def build_netease_lrc_provider(*, timeout_seconds: float = 8.0, max_results: int = 3) -> LrcProvider:
     """Real API repair path: NetEase Cloud Music public search + lyric endpoints.
@@ -346,18 +410,19 @@ def fetch_netease_lrc(song_ref: str, *, timeout_seconds: float = 8.0) -> LrcResu
     )
 
 
-def parse_lrc_text(lrc_text: str) -> list[LrcLine]:
+def parse_lrc_text(lrc_text: str, *, exclude_metadata: bool = True) -> list[LrcLine]:
     lines: list[LrcLine] = []
     for raw_line in lrc_text.splitlines():
         matches = re.findall(r"\[(\d+):(\d+)(?:\.(\d+))?\]", raw_line)
-        text = re.sub(r"\[[^\]]*\]", "", raw_line).strip()
+        # Strip timing tags only; labels/bracketed lyrics go to the shared classifier.
+        text = re.sub(r"\[\d+:\d+(?:\.\d+)?\]", "", raw_line).strip()
         if not matches or not text:
             continue
         # Metadata/credit lines are not sung lyrics or proof checkpoints.  The
         # structural bilingual classifier covers both the historical Chinese
         # outro credits and English/bilingual rows such as
         # ``录音师 Recording Engineer：...`` without deleting ordinary lyrics.
-        if is_lrc_non_lyric_metadata(text):
+        if exclude_metadata and is_lrc_non_lyric_metadata(text):
             continue
         for minute, second, fraction in matches:
             fraction_ms = int((fraction or "0").ljust(3, "0")[:3])

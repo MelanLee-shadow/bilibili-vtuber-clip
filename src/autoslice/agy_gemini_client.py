@@ -32,13 +32,16 @@ varies: AGY subscription -> free keys 1..3 -> policy-gated paid backup.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import base64
+import hashlib
 import json
+import math
+import numbers
 import os
 import re
 import shutil
 import subprocess
-import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -46,7 +49,18 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from src.autoslice import gemini_backup_policy
+from src.autoslice.structured_output import (
+    agy_structured_args, current_contract, gemini_format, format_retry_call,
+    contract_receipt,
+    FormatRetryExhausted,
+)
 from src.autoslice.provider_slots import ProviderSlotTimeout, provider_wait_for_call, runtime_provider_slot
+
+# AGY CLI display names are a separate namespace from Gemini REST model IDs.
+# Keep caller effort and explicit overrides; one default family serves every
+# ordinary AGY lane instead of independent stale per-caller version strings.
+DEFAULT_AGY_FLASH_HIGH = "Gemini 3.8 Flash (High)"
+DEFAULT_AGY_FLASH_LOW = "Gemini 3.8 Flash (Low)"
 
 # --------------------------------------------------------------------------
 # 1. Binary resolution
@@ -209,6 +223,7 @@ class AgyRun:
     failure_category: str | None
     launch_error_type: str | None = None
     launch_error: BaseException | None = None
+    format_rejected: bool = False
 
     @property
     def launched(self) -> bool:
@@ -243,10 +258,13 @@ def agy_argv(
     model: str,
     prompt: str,
     print_timeout: str,
+    response_schema: Mapping[str, Any] | None = None,
+    json_mode: bool = False,
+    schema_path: str | os.PathLike[str] | None = None,
 ) -> list[str]:
     """The one sandboxed agy command line every local caller uses."""
 
-    return [
+    argv = [
         str(binary),
         "--sandbox",
         "--dangerously-skip-permissions",
@@ -259,6 +277,15 @@ def agy_argv(
         "--print-timeout",
         print_timeout,
     ]
+    if json_mode or response_schema is not None or schema_path is not None:
+        if schema_path is None:
+            schema = current_contract(response_schema)['schema'] or {'type': 'object'}
+            schema_text = json.dumps(schema, ensure_ascii=False, sort_keys=True)
+            schema_path = Path(job_dir) / ('response-schema-' + hashlib.sha256(schema_text.encode()).hexdigest()[:16] + '.json')
+            Path(job_dir).mkdir(parents=True, exist_ok=True)
+            Path(schema_path).write_text(schema_text, encoding='utf-8')
+        argv.extend(agy_structured_args(schema_path))
+    return argv
 
 
 def run_local_agy(
@@ -268,6 +295,7 @@ def run_local_agy(
     timeout: float,
     env: Mapping[str, str] | None = None,
     command_runner: Callable[..., subprocess.CompletedProcess] | None = None,
+    response_validator: Callable[[subprocess.CompletedProcess], object] | None = None,
 ) -> AgyRun:
     """Run agy locally, never raising for absence/timeout/spawn failure.
 
@@ -277,6 +305,7 @@ def run_local_agy(
     """
 
     runner = command_runner or subprocess.run
+    format_rejected = False
     kwargs: dict[str, Any] = {
         "cwd": str(cwd),
         "check": False,
@@ -288,7 +317,32 @@ def run_local_agy(
         kwargs["env"] = dict(env)
     try:
         with runtime_provider_slot(timeout_seconds=provider_wait_for_call(timeout)):
-            completed = runner(list(argv), **kwargs)
+            if response_validator is None:
+                completed = runner(list(argv), **kwargs)
+            else:
+                attempts = []
+                original_prompt = list(argv)[list(argv).index('-p') + 1]
+                def send(actual_prompt):
+                    nonlocal completed
+                    command = list(argv)
+                    command[command.index('-p') + 1] = actual_prompt
+                    completed = runner(command, **kwargs)
+                    return completed.stdout or ''
+                def validate(_raw):
+                    if completed.returncode == 0:
+                        response_validator(completed)
+                try:
+                    format_retry_call(original_prompt, send, validate=validate,
+                        record=attempts.append, return_invalid=True)
+                    format_rejected = attempts[-1]['status'] == 'FORMAT_REJECTED'
+                finally:
+                    Path(cwd, 'agy.format-attempts.json').write_text(
+                        json.dumps({'attempts': attempts, 'physical_calls': len(attempts),
+                            'observation_count': 1,
+                            'original_prompt_sha256': hashlib.sha256(original_prompt.encode()).hexdigest(),
+                            'model': list(argv)[list(argv).index('--model') + 1],
+                            'schema_sha256': _evidence_file_sha256(Path(list(argv)[list(argv).index('--json-schema') + 1]))
+                                if '--json-schema' in argv else None}, indent=2), encoding='utf-8')
     except (OSError, ProviderSlotTimeout, subprocess.TimeoutExpired) as exc:
         return AgyRun(
             completed=None,
@@ -296,7 +350,7 @@ def run_local_agy(
             launch_error_type=type(exc).__name__,
             launch_error=exc,
         )
-    return AgyRun(completed=completed, failure_category=None)
+    return AgyRun(completed=completed, failure_category=None, format_rejected=format_rejected)
 
 
 def _as_text(value: object) -> str:
@@ -333,6 +387,8 @@ def free_api_keys() -> list[str]:
 def classify_gemini_failure(exc: BaseException) -> str:
     """Bounded structural category for one failed Gemini attempt."""
 
+    if isinstance(exc, GeminiRequestConfigError):
+        return "GEMINI_API_REQUEST_CONFIG_ERROR"
     status = getattr(exc, "code", None)
     if status == 429:
         return "GEMINI_API_QUOTA_EXHAUSTED"
@@ -398,6 +454,30 @@ class LadderOutcome:
         return self.accepted_key_tier is not None
 
 
+def quota_fastpath_paid_gate(
+    item_key: str, quota_flags: object, *, key_configured: bool | None = None,
+) -> tuple[bool, str] | None:
+    """Same-round paid admission after a fully quota-class free chain.
+
+ 公开规则：先调用AGY订阅，然后用免费key，最后用付费key「付费key不能加
+ 冷却期」; a free chain that came back entirely HTTP 429 is
+ deterministic quota exhaustion, so the paid key steps in within the same
+ round (the >= 3 strikes rule only applies to non-quota failures).
+ Returns ``None`` when the chain was not purely quota-class; otherwise the
+ ``gemini_backup_policy`` gate decision. The caller ledgers every paid call
+ with ``record_paid_use`` before dispatch.
+ """
+
+    flags = list(quota_flags or [])
+    if not flags or not all(flags):
+        return None
+    allowed, reason = gemini_backup_policy.paid_attempt_allowed(
+        item_key, prior_strikes=gemini_backup_policy.MIN_FREE_CHAIN_STRIKES,
+        key_configured=key_configured,
+    )
+    return allowed, f"QUOTA_FASTPATH:{reason}"
+
+
 def run_gemini_key_ladder(
     *,
     item_key: str,
@@ -446,11 +526,14 @@ def run_gemini_key_ladder(
     #     same-round paid fastpath .
     categories: list[str] = []
     quota_flags: list[bool] = []
+    format_exhausted = False
 
     def attempt(key: str, *, key_tier: str, key_ordinal: int, attempt_round: int) -> bool:
+        nonlocal format_exhausted
         try:
             observed = observe(key)
         except Exception as exc:  # each key is an independent failover lane
+            format_exhausted = isinstance(exc, FormatRetryExhausted)
             category = classify(exc)
             categories.append(category)
             quota_flags.append(quota_predicate(exc))
@@ -481,6 +564,8 @@ def run_gemini_key_ladder(
                 attempt_round=attempt_round,
             ):
                 return outcome
+            if format_exhausted:
+                return outcome
         if not item_key or (not free_keys and not strike_on_empty_chain):
             break
         strikes = gemini_backup_policy.record_free_chain_failure(item_key)
@@ -493,25 +578,27 @@ def run_gemini_key_ladder(
         return outcome
 
     paid_ordinal = len(free_keys) + 1
-    if quota_fastpath and quota_flags and all(quota_flags):
-        allowed, gate_reason = gemini_backup_policy.paid_attempt_allowed(
-            item_key, prior_strikes=gemini_backup_policy.MIN_FREE_CHAIN_STRIKES
-        )
-        gate_reason = f"QUOTA_FASTPATH:{gate_reason}"
+    fastpath = quota_fastpath_paid_gate(item_key, quota_flags) if quota_fastpath else None
+    if fastpath is not None:
+        allowed, gate_reason = fastpath
     else:
         allowed, gate_reason = gemini_backup_policy.paid_attempt_allowed(item_key)
     outcome.paid_gate_reason = gate_reason
-    if allowed and attempt(
-        str(gemini_backup_policy.paid_backup_key()),
-        key_tier=gemini_backup_policy.PAID_KEY_TIER,
-        key_ordinal=paid_ordinal,
-        attempt_round=outcome.last_attempt_round,
-    ):
-        # Every paid call is ledgered; the stamp is the artifact-side proof.
-        outcome.paid_policy_stamp = gemini_backup_policy.record_paid_use(
-            item_key, purpose=purpose
+    if allowed:
+        # Ledger every paid call, including failed requests or validation.
+        # Persist before dispatch so a ledger error cannot leave an untracked call.
+        paid_policy_stamp = gemini_backup_policy.record_paid_use(
+            item_key, purpose=purpose,
+            admission=gate_reason if fastpath is not None else None,
         )
-    elif not allowed and record_paid_skipped is not None:
+        if attempt(
+            str(gemini_backup_policy.paid_backup_key()),
+            key_tier=gemini_backup_policy.PAID_KEY_TIER,
+            key_ordinal=paid_ordinal,
+            attempt_round=outcome.last_attempt_round,
+        ):
+            outcome.paid_policy_stamp = paid_policy_stamp
+    elif record_paid_skipped is not None:
         unconfigured = gate_reason.endswith("PAID_KEY_NOT_CONFIGURED")
         if not (silent_when_paid_unconfigured and unconfigured):
             record_paid_skipped(paid_ordinal, outcome.last_attempt_round, gate_reason)
@@ -528,6 +615,158 @@ GEMINI_API_URL = (
 GEMINI_REQUEST_MAX_BYTES = 20_000_000
 GEMINI_VISION_MODEL_ENV = "AGY_GEMINI_VISION_MODEL"
 GEMINI_VISION_MODEL_DEFAULT = "gemini-3.6-flash"
+
+# These are exact REST model IDs.  Keep this table small and explicit: an
+# unknown model may be a future provider addition with different generation
+# controls, so optional knobs must fail closed instead of being guessed from a
+# prefix such as ``gemini-3``.
+GEMINI_THINKING_LEVELS: dict[str, frozenset[str]] = {
+    "gemini-3-flash-preview": frozenset({"MINIMAL", "LOW", "MEDIUM", "HIGH"}),
+    "gemini-3.5-flash": frozenset({"MINIMAL", "LOW", "MEDIUM", "HIGH"}),
+    "gemini-3.6-flash": frozenset({"MINIMAL", "LOW", "MEDIUM", "HIGH"}),
+    "gemini-3.7-flash": frozenset({"LOW", "MEDIUM", "HIGH"}),
+    "gemini-3.8-flash": frozenset({"LOW", "MEDIUM", "HIGH"}),
+    "gemini-3-pro-preview": frozenset({"LOW", "HIGH"}),
+    "gemini-3.1-pro-preview": frozenset({"LOW", "MEDIUM", "HIGH"}),
+}
+GEMINI_LEGACY_THINKING_BUDGET_MODELS = frozenset(
+    {"gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"}
+)
+_GENERATION_CONFIG_KEYS = frozenset({"thinkingBudget", "thinkingLevel"})
+
+
+class GeminiRequestConfigError(ValueError):
+    """A request parameter combination rejected before contacting Gemini."""
+
+
+def model_supports_thinking_level(model: str) -> bool:
+    """Return whether *model* has an explicitly supported thinking-level enum."""
+
+    return isinstance(model, str) and model.strip() in GEMINI_THINKING_LEVELS
+
+
+def model_supports_thinking_budget(model: str) -> bool:
+    """Return whether *model* uses the legacy integer thinking budget field."""
+
+    return isinstance(model, str) and model.strip() in GEMINI_LEGACY_THINKING_BUDGET_MODELS
+
+
+def _validate_temperature(model: str, temperature: float | None) -> float | None:
+    if temperature is None:
+        return None
+    if isinstance(temperature, bool) or not isinstance(temperature, numbers.Real):
+        raise GeminiRequestConfigError(
+            "temperature must be a finite number when explicitly configured"
+        )
+    value = float(temperature)
+    if not math.isfinite(value):
+        raise GeminiRequestConfigError(
+            "temperature must be a finite number when explicitly configured"
+        )
+    model_name = model.strip() if isinstance(model, str) else model
+    if model_name not in GEMINI_LEGACY_THINKING_BUDGET_MODELS:
+        raise GeminiRequestConfigError(
+            f"temperature is not permitted by the project Gemini generation "
+            f"compatibility policy for model {model!r}; omit custom sampling for "
+            "known Gemini 3 models and unknown models"
+        )
+    return value
+
+
+def _build_thinking_config(
+    model: str, thinking: Mapping[str, Any] | None
+) -> dict[str, Any] | None:
+    if thinking is None:
+        return None
+    if not isinstance(thinking, Mapping):
+        raise GeminiRequestConfigError("thinking must be a mapping of REST camelCase fields")
+    if not thinking:
+        return None
+
+    keys = set(thinking)
+    unknown = keys - _GENERATION_CONFIG_KEYS
+    if unknown:
+        rendered = ", ".join(sorted(map(str, unknown)))
+        raise GeminiRequestConfigError(
+            "unsupported thinking field(s): "
+            f"{rendered}; use REST camelCase thinkingBudget/thinkingLevel"
+        )
+    if keys == _GENERATION_CONFIG_KEYS:
+        raise GeminiRequestConfigError(
+            "thinkingBudget and thinkingLevel are mutually exclusive"
+        )
+
+    model_name = model.strip() if isinstance(model, str) else model
+    if "thinkingBudget" in keys:
+        if model_name not in GEMINI_LEGACY_THINKING_BUDGET_MODELS:
+            if model_name in GEMINI_THINKING_LEVELS:
+                raise GeminiRequestConfigError(
+                    f"thinkingBudget is not permitted by the project Gemini "
+                    f"generation compatibility policy for level model {model!r}; "
+                    "use SONG_GEMINI_API_THINKING_LEVEL or thinkingLevel"
+                )
+            raise GeminiRequestConfigError(
+                f"thinkingBudget is unsupported for unknown model {model!r}"
+            )
+        value = thinking["thinkingBudget"]
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise GeminiRequestConfigError("thinkingBudget must be an integer, not bool")
+        if value < -1:
+            raise GeminiRequestConfigError("thinkingBudget must be -1 or a non-negative integer")
+        return {"thinkingBudget": value}
+
+    if model_name not in GEMINI_THINKING_LEVELS:
+        if model_name in GEMINI_LEGACY_THINKING_BUDGET_MODELS:
+            raise GeminiRequestConfigError(
+                f"thinkingLevel is unsupported for legacy budget model {model!r}"
+            )
+        raise GeminiRequestConfigError(
+            f"thinkingLevel is unsupported for unknown model {model!r}"
+        )
+    value = thinking["thinkingLevel"]
+    if not isinstance(value, str):
+        raise GeminiRequestConfigError("thinkingLevel must be a string enum value")
+    canonical = value.strip().upper()
+    if canonical not in GEMINI_THINKING_LEVELS[model_name]:
+        allowed = ", ".join(sorted(GEMINI_THINKING_LEVELS[model_name]))
+        raise GeminiRequestConfigError(
+            f"thinkingLevel {value!r} is unsupported for model {model!r}; "
+            f"allowed values: {allowed}"
+        )
+    return {"thinkingLevel": canonical}
+
+
+def build_generation_config(
+    *,
+    model: str,
+    temperature: float | None = None,
+    max_output_tokens: int = 65_536,
+    response_mime_type: str | None = "application/json",
+    thinking: Mapping[str, Any] | None = None,
+    response_schema: Mapping[str, Any] | None = None,
+    json_mode: bool | None = None,
+) -> dict[str, Any]:
+    """Build a REST ``generationConfig`` with model-aware optional fields.
+
+    The shared client deliberately accepts the existing ``thinking`` mapping
+    seam, but validates its REST camelCase keys and emits no sampling field by
+    default.  Validation runs before request construction/network I/O.
+    """
+
+    if not isinstance(model, str) or not model.strip():
+        raise GeminiRequestConfigError("model must be a non-empty string")
+    temperature_value = _validate_temperature(model, temperature)
+    thinking_config = _build_thinking_config(model, thinking)
+    generation_config: dict[str, Any] = {"maxOutputTokens": max_output_tokens}
+    if temperature_value is not None:
+        generation_config["temperature"] = temperature_value
+    if response_mime_type:
+        generation_config["responseMimeType"] = response_mime_type
+    generation_config.update(gemini_format(response_schema,
+        json_mode=response_mime_type == 'application/json' if json_mode is None else json_mode))
+    if thinking_config is not None:
+        generation_config["thinkingConfig"] = thinking_config
+    return generation_config
 
 
 def gemini_vision_model() -> str:
@@ -555,20 +794,23 @@ def generate_content(
     mime_type: str = "image/jpeg",
     inline_parts: Sequence[tuple[bytes, str]] | None = None,
     response_mime_type: str | None = "application/json",
-    temperature: float = 0.1,
+    temperature: float | None = None,
     max_output_tokens: int = 65_536,
     thinking: Mapping[str, Any] | None = None,
     timeout_seconds: int = 180,
     max_request_bytes: int = GEMINI_REQUEST_MAX_BYTES,
     degrade_on_400: bool = False,
+    response_schema: Mapping[str, Any] | None = None,
+    json_mode: bool | None = None,
+    response_validator: Callable[[str], object] | None = None,
 ) -> str:
     """One inline-payload Gemini request; the key lives only in the header.
 
     Handles audio (``audio/mpeg``) and vision (``image/jpeg``) identically —
-    the only difference is the declared mime type.  ``degrade_on_400`` opts
-    into the entity lane's proven retry-once-without-``thinkingConfig``
-    behaviour; lanes that never had it keep raising so their recorded failure
-    category does not silently change.
+    the only difference is the declared mime type.  ``degrade_on_400`` remains
+    as a compatibility argument for callers, but HTTP 400 is always propagated
+    after the single unchanged request; silently dropping thinking controls can
+    change the evidence produced by a lane.
     """
 
     payloads: list[tuple[bytes, str]] = list(inline_parts or [])
@@ -584,20 +826,28 @@ def generate_content(
         }
         for part_bytes, part_mime in payloads
     )
-    generation_config: dict[str, Any] = {
-        "temperature": temperature,
-        "maxOutputTokens": max_output_tokens,
-    }
-    if response_mime_type:
-        generation_config["responseMimeType"] = response_mime_type
-    if thinking:
-        generation_config["thinkingConfig"] = dict(thinking)
+    generation_config = build_generation_config(
+        model=model,
+        temperature=temperature,
+        max_output_tokens=max_output_tokens,
+        response_mime_type=response_mime_type,
+        thinking=thinking,
+        response_schema=response_schema,
+        json_mode=json_mode,
+    )
     body: dict[str, Any] = {
         "contents": [{"parts": parts}],
         "generationConfig": generation_config,
     }
+    observation_input_sha256 = hashlib.sha256(json.dumps({
+        'model': model, 'prompt': prompt,
+        'parts': [(hashlib.sha256(data).hexdigest(), mime) for data, mime in payloads]},
+        sort_keys=True).encode()).hexdigest()
+    physical_attempt = 0
 
     def post(request_body: Mapping[str, Any]) -> object:
+        nonlocal physical_attempt
+        physical_attempt += 1
         request_bytes = json.dumps(request_body, ensure_ascii=False).encode("utf-8")
         if len(request_bytes) > max_request_bytes:
             raise RuntimeError("GEMINI_API_REQUEST_TOO_LARGE")
@@ -610,15 +860,34 @@ def generate_content(
         with runtime_provider_slot(
             timeout_seconds=provider_wait_for_call(transport_timeout)
         ):
-            with urllib.request.urlopen(request, timeout=transport_timeout) as response:
-                return json.load(response)
+            import time
+            started, status = time.monotonic(), 'TRANSPORT_ERROR'
+            try:
+                with urllib.request.urlopen(request, timeout=transport_timeout) as response:
+                    status = getattr(response,'status',200)
+                    return json.load(response)
+            except Exception as exc:
+                status = getattr(exc,'code',status)
+                raise
+            finally:
+                if any(part_mime.startswith('audio/') for _,part_mime in payloads):
+                    from src.autoslice.cpa_runtime import record_cpa_event
+                    fields = {'provider':'gemini_api','model':model,'status':status,
+                              'observation_input_sha256': observation_input_sha256,
+                              'format_attempt': physical_attempt,
+                              'elapsed_seconds':round(time.monotonic()-started,3)}
+                    record_cpa_event('audio_model_request',fields)
+                    record_cpa_event('audio_http_attempt',fields)
 
-    try:
-        payload = post(body)
-    except urllib.error.HTTPError as exc:
-        if not degrade_on_400 or exc.code != 400 or not thinking:
-            raise
-        degraded = json.loads(json.dumps(body))
-        degraded["generationConfig"].pop("thinkingConfig", None)
-        payload = post(degraded)
-    return _response_text(payload)
+    def send(actual_prompt):
+        request_body = {**body, 'contents': [{'parts': [{'text': actual_prompt}, *parts[1:]]}]}
+        return _response_text(post(request_body))
+    from src.autoslice.cpa_runtime import record_cpa_event
+    receipt = contract_receipt(current_contract(response_schema,
+        json_mode=response_mime_type == 'application/json' if json_mode is None else json_mode))
+    return format_retry_call(prompt, send, validate=response_validator,
+        exhausted_error=True,
+        record=lambda attempt_receipt: record_cpa_event('audio_format_attempt' if any(
+            part_mime.startswith('audio/') for _, part_mime in payloads) else 'vision_format_attempt',
+            {'provider': 'gemini_api', 'model': model, 'observation_input_sha256': observation_input_sha256,
+             **attempt_receipt, **receipt}))

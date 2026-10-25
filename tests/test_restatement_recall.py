@@ -53,9 +53,42 @@ def test_connector_prefix_does_not_fake_an_anchor() -> None:
     assert find_restatement_pairs(cues) == []
 
 
+def test_shared_laughter_prefix_does_not_pair_unrelated_spoken_content() -> None:
+    cues = [
+        _cue(22, 71.74, "哈哈哈哈哈呵魔女之夜"),
+        _cue(26, 102.94, "哈哈哈哈哈妈妈我好害怕"),
+    ]
+    assert find_restatement_pairs(cues) == []
+    assert strip_leading_connectors(cues[0].text) == "魔女之夜"
+    assert [cue.text for cue in cues] == [
+        "哈哈哈哈哈呵魔女之夜", "哈哈哈哈哈妈妈我好害怕",
+    ]
+
+
+def test_laughter_prefix_keeps_a_real_semantic_restatement_recall() -> None:
+    cues = [
+        _cue(17, 36.3, "哈哈哈哈这是我的小孩就是了", label="连线"),
+        _cue(29, 58.8, "嘿嘿嘿这是我今天的宣言"),
+    ]
+    pairs = find_restatement_pairs(cues)
+    assert [(pair.early_index, pair.late_index) for pair in pairs] == [(17, 29)]
+    assert pairs[0].prefix_run >= 3
+
+
 def test_identical_repeat_is_not_a_repair_pair() -> None:
     cues = [_cue(1, 0.0, "再也不相信真善美了"), _cue(4, 30.0, "再也不相信真善美了")]
     assert find_restatement_pairs(cues) == []
+
+
+def test_vocal_filler_repetitions_are_not_lexical_restatement() -> None:
+    for filler in ("哼", "哈", "呵", "嘿", "噢喔"):
+        cues = [_cue(1, 0.0, filler * 12), _cue(4, 30.0, filler * 9)]
+        assert find_restatement_pairs(cues) == []
+    # A vocal prefix does not remove an actual semantic repetition.
+    assert find_restatement_pairs([
+        _cue(1, 0.0, "哼这是我的小孩就是了"),
+        _cue(4, 20.0, "哼这是我今天的宣言"),
+    ])
 
 
 def test_guest_late_cue_cannot_be_the_restatement_side() -> None:

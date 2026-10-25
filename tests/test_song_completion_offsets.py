@@ -1,3 +1,5 @@
+import pytest
+
 from src.autoslice.song_completion import _validate_audio_observation_rows
 
 
@@ -15,9 +17,7 @@ def _audio_observation_fixture(*, agy_offset_ms: int = 18_800):
     lyric_lines = []
     raw_rows = []
     report_alignment = []
-    for index, (lrc_time_ms, residual_ms) in enumerate(
-        zip(lrc_times, residuals)
-    ):
+    for index, (lrc_time_ms, residual_ms) in enumerate(zip(lrc_times, residuals)):
         cue_start_ms = lrc_time_ms + residual_ms
         cue_end_ms = cue_start_ms + 1_500
         text = f"第{index + 1}句"
@@ -65,15 +65,14 @@ def _audio_observation_fixture(*, agy_offset_ms: int = 18_800):
 
 
 def _validate_fixture(*, agy_offset_ms: int = 18_800) -> list[str]:
-    report, lyric_lines, raw_rows, report_alignment, raw_sha = (
-        _audio_observation_fixture(agy_offset_ms=agy_offset_ms)
+    report, lyric_lines, raw_rows, report_alignment, raw_sha = _audio_observation_fixture(
+        agy_offset_ms=agy_offset_ms
     )
     failures: list[str] = []
     _validate_audio_observation_rows(
         report=report,
         failures=failures,
-        is_int=lambda value: isinstance(value, int)
-        and not isinstance(value, bool),
+        is_int=lambda value: isinstance(value, int) and not isinstance(value, bool),
         offset_ms=report["offset_ms"],
         lyric_lines=lyric_lines,
         line_count=len(lyric_lines),
@@ -93,6 +92,95 @@ def test_asr_anchor_offset_validates_raw_rows_against_original_agy_median():
 
 
 def test_asr_anchor_offset_rejects_drifted_agy_median_provenance():
-    assert "SONG_AUDIO_LRC_OBSERVATION_INVALID" in _validate_fixture(
-        agy_offset_ms=18_801
+    assert "SONG_AUDIO_LRC_OBSERVATION_INVALID" in _validate_fixture(agy_offset_ms=18_801)
+
+
+@pytest.mark.parametrize("location", ["interior", "first", "before", "end", "missing"])
+def test_completion_repeated_spot_uses_bound_later_interval(location):
+    report, lyrics, raw, alignment, raw_sha = _audio_observation_fixture()
+    lyrics[-1]["text"] = raw[-1]["text"] = alignment[-1]["lrc_text"] = lyrics[0]["text"]
+    start = alignment[-1]["cue_start_ms"]
+    alignment[-1]["cue_end_ms"] = raw[-1]["live_end_ms"] = start + 7100
+    report["last_lyric_end_ms"] = start + 7100
+    time_ms = {
+        "interior": start + 3300,
+        "first": alignment[0]["cue_start_ms"],
+        "before": start - 1,
+        "end": start + 7100,
+        "missing": None,
+    }[location]
+    report["spot_checks"] = [{"name": "repeated_section", "live_time_ms": time_ms, "result": "OK"}]
+    failures = []
+    _validate_audio_observation_rows(
+        report=report,
+        failures=failures,
+        is_int=lambda value: type(value) is int,
+        offset_ms=report["offset_ms"],
+        lyric_lines=lyrics,
+        line_count=len(lyrics),
+        matched_count=len(lyrics),
+        report_alignment=alignment,
+        audio_artifacts={"raw_output_sha256": raw_sha},
+        raw_rows=raw,
     )
+    assert ("SONG_AUDIO_LRC_SPOT_CHECK_INVALID" in failures) is (location != "interior")
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [None, "proof", "offset", "median_label", "row", "raw_row", "bad_proof_type", "proof_float"],
+)
+@pytest.mark.parametrize("asr_anchor", [False, True])
+def test_completion_recomputes_feasible_interval_proof_from_bound_raw_rows(damage, asr_anchor):
+    from src.autoslice.song_global_shift import solve_global_shift
+
+    report, lyrics, raw, alignment, raw_sha = _audio_observation_fixture()
+    residuals = [10000, 10010, 12990]
+    for row, entry, line, residual in zip(raw, alignment, lyrics, residuals):
+        start = line["lrc_time_ms"] + residual
+        row.update(live_start_ms=start, live_end_ms=start + 1500)
+        entry.update(cue_start_ms=start, cue_end_ms=start + 1500)
+    proof = solve_global_shift(residuals)
+    report.update(
+        offset_basis="audio_global_shift",
+        offset_ms=proof["offset_ms"],
+        agy_offset_ms=proof["offset_ms"],
+        asr_offset_ms=None,
+        audio_global_shift_proof=proof,
+        first_lyric_start_ms=alignment[0]["cue_start_ms"],
+        last_lyric_end_ms=alignment[-1]["cue_end_ms"],
+    )
+    if asr_anchor:
+        report.update(
+            offset_basis="asr_anchor",
+            offset_ms=proof["offset_ms"] - 1000,
+            asr_offset_ms=proof["offset_ms"] - 1000,
+        )
+    if damage == "proof":
+        proof["feasible_minimum_ms"] += 1
+    elif damage == "offset":
+        report["offset_ms"] += 1
+    elif damage == "median_label":
+        report["offset_basis"] = "agy_median"
+    elif damage == "row":
+        alignment[0]["cue_start_ms"] += 1
+    elif damage == "raw_row":
+        raw[0]["live_start_ms"] += 1
+    elif damage == "bad_proof_type":
+        report["audio_global_shift_proof"] = "invalid"
+    elif damage == "proof_float":
+        proof["offset_ms"] = float(proof["offset_ms"])
+    failures = []
+    _validate_audio_observation_rows(
+        report=report,
+        failures=failures,
+        is_int=lambda v: type(v) is int,
+        offset_ms=report["offset_ms"],
+        lyric_lines=lyrics,
+        line_count=3,
+        matched_count=3,
+        report_alignment=alignment,
+        audio_artifacts={"raw_output_sha256": raw_sha},
+        raw_rows=raw,
+    )
+    assert ("SONG_AUDIO_LRC_OBSERVATION_INVALID" in failures) is (damage is not None)

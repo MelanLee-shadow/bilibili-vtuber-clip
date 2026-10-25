@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import hashlib
 import json
 from pathlib import Path
@@ -19,7 +20,7 @@ class QixiCue21DiagnosticEvidenceError(ValueError):
 
 
 def _sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return _evidence_file_sha256(path)
 
 
 def _contained(root: Path, relative: object, *, label: str) -> Path:

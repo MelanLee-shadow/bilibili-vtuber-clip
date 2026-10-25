@@ -121,8 +121,9 @@ def test_unknown_native_provider_fails_before_audio(tmp_path):
         )
 
 
+@pytest.mark.parametrize("end_ms", [2000, 32_270])
 def test_target_clip_assembler_refuses_partial_source_and_keeps_no_candidate_input(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, end_ms
 ):
     from src.autoslice import native_foreign_witness as native
 
@@ -149,8 +150,8 @@ def test_target_clip_assembler_refuses_partial_source_and_keeps_no_candidate_inp
     observe = native.build_native_foreign_witness(
         source_media=source, output_dir=tmp_path / "out", provider="mai"
     )
-    result = observe(start_ms=1000, end_ms=2000)
-    assert result["target_start_ms"] == 1000 and result["target_end_ms"] == 2000
+    result = observe(start_ms=1000, end_ms=end_ms)
+    assert result["target_start_ms"] == 1000 and result["target_end_ms"] == end_ms
     assert result["candidate_exposure"] == "none"
     assert result["mutation_authorized"] is False
     assert not any(
@@ -158,7 +159,7 @@ def test_target_clip_assembler_refuses_partial_source_and_keeps_no_candidate_inp
     )
     source.write_bytes(b"changed-source")
     with pytest.raises(ValueError, match="source"):
-        observe(start_ms=1000, end_ms=2000)
+        observe(start_ms=1000, end_ms=end_ms)
     assert len(requests) == 1
 
 

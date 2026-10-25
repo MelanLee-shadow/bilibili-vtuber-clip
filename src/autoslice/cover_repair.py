@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 
 from src.autoslice.runner_proxy import RunnerProxy
+from src.autoslice.shadow_review import _sha256
 from src.autoslice import cover_repair_route_lineage as _route_lineage
 from src.autoslice.cover_package_media_lineage import validate_manual_cover_media_lineage
 from src.autoslice.cover_route_evidence import (
@@ -70,7 +71,7 @@ def _validate_repaired_cover_generation(
     if document.get("candidate_id") != candidate_id or document.get("title") != title:
         raise ValueError("cover generation candidate/title binding mismatch")
     model = str(document.get("model") or "")
-    if model not in {"gpt-image-2", "gpt-image-1.5"}:
+    if model not in {"gpt-image-2.5", "gpt-image-2", "gpt-image-1.5"}:
         raise ValueError(f"unapproved cover image model: {model!r}")
     attempted = [str(item) for item in document.get("attempted_models") or []]
     fallback_used = bool(document.get("model_fallback_used"))
@@ -78,7 +79,11 @@ def _validate_repaired_cover_generation(
         raise ValueError("attempted_models must be a unique ordered chain ending in the selected model")
     if fallback_used != (len(attempted) > 1):
         raise ValueError("cover model fallback flag does not match attempted_models")
-    if fallback_used and attempted != ["gpt-image-2", "gpt-image-1.5"]:
+    # Preserve valid historical receipts without reinterpreting their model chain.
+    if fallback_used and attempted not in (
+        ["gpt-image-2.5", "gpt-image-2"],
+        ["gpt-image-2", "gpt-image-1.5"],
+    ):
         raise ValueError("unapproved cover model fallback chain")
     try:
         if Path(str(document.get("final_cover") or "")).resolve(strict=True) != cover.resolve(strict=True):
@@ -125,6 +130,20 @@ def _enrich_repaired_cover_generation(
             prior_generation=prior_generation,
         )
     story_contract = _route_lineage.active_story_contract(documents)
+    if isinstance(generation.get("story_contract"), dict) and (
+        story_contract is None
+        or not _route_lineage.cover_story_contract_binding_matches(
+            story_contract, generation["story_contract"]
+        )
+    ):
+        raise ValueError("COVER_REPAIR_STORY_CONTRACT_CHANGED_SINCE_GENERATION")
+    from src.autoslice.builtin_imagegen_cover import METHOD as BUILTIN_METHOD
+    if generation.get("method") == BUILTIN_METHOD:
+        if story_contract is None or not isinstance(generation.get("story_contract"), dict):
+            raise ValueError("BUILTIN_COVER_STORY_AUTHORITY_REQUIRED")
+        # The normal dispatcher already replayed the actual builtin calls and
+        # route. Preserve that route rather than relabeling it as CPA images.edit.
+        return generation, generation_path
     if story_contract is None:
         if cover_generation_is_song(generation):
             enriched = copy.deepcopy(generation)
@@ -497,6 +516,10 @@ def _updated_cover_document(
         )
         if generation_cover_text is not None:
             surface["cover_text"] = generation_cover_text
+        if isinstance(surface.get("current_binding"), dict):
+            # Input identity is unchanged by this cover-only transaction. Old
+            # JQC remains bound to its old pixels; this is not a PASS renewal.
+            surface["current_binding"]["cover_sha256"] = cover_sha256
     return updated
 
 
@@ -2045,8 +2068,10 @@ def _refresh_cover_repair_budget(rec: dict, fingerprint: str) -> bool:
             }
         )
     rec["cover_repair_generation"] = fingerprint
-    rec["cover_repair_attempts"] = 0
-    rec["cover_repair_lifetime_attempts"] = max(0, int(lifetime))
+    # Deployment provenance is not a new attempt allowance. Preserve actual
+    # consumption even when this annotation advances after an unrelated build.
+    rec["cover_repair_attempts"] = old_attempts
+    rec["cover_repair_lifetime_attempts"] = max(old_attempts, int(lifetime))
     return True
 
 
@@ -2093,7 +2118,72 @@ def _cover_repair_eligible(rec: dict) -> bool:
     )
 
 
-def _cover_authority_preflight(date: str, rec: dict, mp4: Path) -> None:
+def snapshot_cover_repair_inputs(paths: list[Path]) -> dict[str, str | None]:
+    """Freeze existing source files before provider work; absent cover is valid."""
+    snapshot: dict[str, str | None] = {}
+    for path in paths:
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ValueError(f"cover repair input is unsafe: {path}")
+        snapshot[str(path.absolute())] = "sha256:" + _sha256(path) if path.is_file() else None
+    return snapshot
+
+
+def validate_cover_repair_inputs(snapshot: dict[str, str | None]) -> None:
+    if snapshot_cover_repair_inputs([Path(value) for value in snapshot]) != snapshot:
+        raise ValueError("COVER_REPAIR_CURRENT_INPUT_DRIFT")
+
+
+def _current_cover_editorial_inputs(documents: list[tuple[Path, dict]]) -> dict:
+    subtitles: list[Path] = []
+    research = []
+    for path, document in documents:
+        view = document if document.get("schema_version") == "shadow-publish-draft.v1" else document.get("publish_staging")
+        if isinstance(view, dict) and view.get("editorial_research") is not None:
+            research.append(view["editorial_research"])
+        raw = document.get("subtitle_path")
+        if raw:
+            # Delivered same-stem bytes are current; producer paths may have
+            # been relocated or cleaned after the ordinary delivery commit.
+            sibling = Path(str(path).removesuffix(".record.json").removesuffix(".publish.json") + ".srt")
+            declared = Path(str(raw))
+            declared = declared if declared.is_absolute() else path.parent / declared
+            subtitle = sibling if sibling.is_file() else declared
+            if subtitle.is_symlink() or not subtitle.is_file():
+                raise ValueError("COVER_REPAIR_CURRENT_SUBTITLE_MISSING")
+            expected = document.get("subtitle_sha256") or (document.get("artifact_hashes") or {}).get("subtitle_sha256")
+            if expected is not None and not _matches_sha256(subtitle, str(expected)):
+                raise ValueError("COVER_REPAIR_CURRENT_SUBTITLE_DRIFT")
+            subtitles.append(subtitle)
+    if subtitles and len({_sha256(path) for path in subtitles}) != 1:
+        raise ValueError("COVER_REPAIR_CURRENT_SUBTITLE_MIRROR_DRIFT")
+    if research and any(value != research[0] for value in research[1:]):
+        raise ValueError("COVER_REPAIR_CURRENT_RESEARCH_MIRROR_DRIFT")
+    story = _route_lineage.active_story_contract(documents)
+    current = {"subtitle_path": subtitles[0] if subtitles else None, "story_contract": story,
+               "editorial_research": research[0] if research else (story or {}).get("editorial_research")}
+    from src.autoslice.publish_staging_paths import editorial_input_binding
+    for _path, document in documents:
+        view = document if document.get("schema_version") == "shadow-publish-draft.v1" else document.get("publish_staging")
+        if isinstance(view, dict) and view.get("current_binding") is not None:
+            actual = editorial_input_binding(
+                current, candidate_id=str(view.get("candidate_id") or document.get("candidate_id") or ""),
+                title=str(view.get("title") or ""), selection_hook=str((story or {}).get("selection_hook") or ""),
+                editorial_research=current["editorial_research"],
+            )
+            if actual != {key: value for key, value in view["current_binding"].items() if key != "cover_sha256"}:
+                raise ValueError("COVER_REPAIR_CURRENT_EDITORIAL_INPUT_DRIFT")
+    return current
+
+
+def current_cover_editorial_inputs(date: str, rec: dict, mp4: Path) -> dict:
+    documents = _active_cover_documents(
+        date=date, candidate_id=str(rec.get("candidate_id") or ""), title=str(rec.get("title") or ""),
+        mp4=mp4, media_sha256="sha256:" + _sha256(mp4),
+    )
+    return _current_cover_editorial_inputs(documents)
+
+
+def _cover_authority_preflight(date: str, rec: dict, mp4: Path) -> dict[str, str | None]:
     """Verify every mutable authority document before a paid image request.
 
     Binding used to discover missing legacy song records only after generation,
@@ -2158,3 +2248,10 @@ def _cover_authority_preflight(date: str, rec: dict, mp4: Path) -> None:
     # talk records intentionally do not set this field.
     if rec.get("delivered") and manifest is None:
         raise ValueError("legacy delivered song has no verified active-record manifest")
+    paths = [mp4, *[path for path, _document in documents]]
+    if manifest is not None:
+        paths.append(manifest[0])
+    current = _current_cover_editorial_inputs(documents)
+    if current["subtitle_path"] is not None:
+        paths.append(current["subtitle_path"])
+    return snapshot_cover_repair_inputs(paths)

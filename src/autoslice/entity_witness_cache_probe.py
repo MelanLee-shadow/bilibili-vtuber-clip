@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .review_errors import ContractRejection
+
 import hashlib
 import json
 from pathlib import Path
@@ -135,7 +137,12 @@ def probe_cached_local_audio_witness(
         "agy": (verifier.model, prompt("agy")),
         "gemini_api": (audio._entity_api_model(), prompt("gemini_api")),
     }
-    for manifest_path, cached in _load_manifests(verifier.output_dir):
+    roots = dict.fromkeys((verifier.output_dir, *verifier.witness_cache_roots))
+    manifests = [item for root in roots for item in _load_manifests(root)]
+    # Preserve provider preference across roots without widening the search to
+    # parents, siblings, or arbitrary retained output directories.
+    manifests.sort(key=lambda item: 0 if item[1].get("provider") == "agy" else 1)
+    for manifest_path, cached in manifests:
         provider = str(cached.get("provider") or "")
         contract = contracts.get(provider)
         if contract is None:
@@ -226,6 +233,9 @@ def probe_cached_local_audio_witness(
             continue
         return {
             **rebound,
+            "relisten_artifacts": relisten_artifact_binding(
+                verifier=verifier, audio_path=clip, prompt_path=prompt_path,
+                response_path=response_path),
             "served_from_cache": True,
             "witness_cache_replay": {
                 "schema_version": "witness-metadata-cache-replay.v1",
@@ -240,6 +250,94 @@ def probe_cached_local_audio_witness(
                 "source_media_geometry": dict(geometry),
                 "replayed_manifest_request_sha256": str(cached.get("request_sha256") or ""),
                 "current_witness_request_sha256": request_sha,
+                "replayed_manifest_path": str(manifest_path),
             },
         }
     return None
+
+
+def relisten_artifact_binding(*, verifier, audio_path, prompt_path, response_path):
+    """Precise original files for read-only validation by the relisten consumer."""
+    from src.autoslice import entity_audio_verifier as audio
+    return {
+        "schema_version": "candidate-blind-audio-artifacts.v1",
+        "source_media": str(verifier.source_media),
+        "source_media_sha256": verifier.source_sha256,
+        "source_stat_binding": list(verifier.source_stat_binding),
+        "source_duration_ms": verifier.source_duration_ms,
+        "recording_date": verifier.recording_date,
+        "audio_path": str(audio_path), "audio_sha256": audio._sha256(audio_path),
+        "prompt_path": str(prompt_path), "prompt_sha256": audio._sha256(prompt_path),
+        "response_path": str(response_path), "response_sha256": audio._sha256(response_path),
+    }
+
+
+def validate_relisten_witness_artifacts(*, request, witness):
+    """Reopen one exact narrow blind acquisition; no scan, crop, write or I/O call.
+
+    Legacy hash-only witnesses remain available to their existing consumers.
+    They cannot establish a new relisten opportunity or an assisted prerequisite
+    until the normal cache-only adapter has found and checked their originals.
+    """
+    from src.autoslice import entity_audio_verifier as audio
+    binding = witness.get("relisten_artifacts")
+    if not isinstance(binding, Mapping) or binding.get("schema_version") != "candidate-blind-audio-artifacts.v1":
+        raise ContractRejection("RELISTEN_NARROW_ORIGINAL_ARTIFACTS_REQUIRED")
+    payload = dict(request)
+    request_sha = payload.pop("request_sha256", None)
+    if (request.get("schema_version") != audio.WITNESS_REQUEST_SCHEMA
+            or request.get("witness_protocol") != BLIND_PINYIN_PROTOCOL
+            or audio._json_sha256(payload) != request_sha
+            or witness.get("request_sha256") != request_sha):
+        raise ContractRejection("RELISTEN_NARROW_REQUEST_DRIFT")
+    source = Path(binding["source_media"])
+    # Evidence identity is content: a restored or copied padded file keeps
+    # its bytes but not its inode/ctime (src/autoslice/evidence_identity.py).
+    from src.autoslice.evidence_identity import same_evidence_file
+    recorded = binding.get("source_stat_binding")
+    recorded = recorded if isinstance(recorded, list) and len(recorded) == 7 else [None] * 7
+    if (binding.get("source_media_sha256") != witness.get("source_media_sha256")
+            or not same_evidence_file(source, binding.get("source_media_sha256"),
+                                      recorded_size=recorded[4], recorded_mtime_ns=recorded[5])):
+        raise ContractRejection("RELISTEN_NARROW_SOURCE_DRIFT")
+    paths = {}
+    for field, witness_field in (("audio", "audio_clip_sha256"),
+                                 ("prompt", "prompt_sha256"), ("response", "response_sha256")):
+        path = Path(binding[field + "_path"])
+        if (not path.is_file() or path.is_symlink()
+                or audio._sha256(path) != binding.get(field + "_sha256")
+                or binding.get(field + "_sha256") != witness.get(witness_field)):
+            raise ContractRejection("RELISTEN_NARROW_" + field.upper() + "_DRIFT")
+        paths[field] = path
+    span = audio._prepare_audio_span(
+        request=request, context_mode=True,
+        source_media_timeline_offset_ms=request["source_media_timeline_offset_ms"],
+        source_duration_ms=binding["source_duration_ms"], witness_mode=True)
+    if span is None or span.timeline_binding != witness.get("timeline_binding"):
+        raise ContractRejection("RELISTEN_NARROW_CLOCK_DRIFT")
+    provider = witness.get("provider")
+    if provider not in {"agy", "gemini_api"}:
+        raise ContractRejection("RELISTEN_NARROW_PROVIDER_INVALID")
+    expected_prompt = audio._witness_prompt(
+        recording_date=binding["recording_date"], delivery_mode=provider,
+        syllable_count_hint=span.observed_request.get("syllable_count_hint"),
+        target_audio_start_ms=span.observed_request.get("target_audio_start_ms"),
+        target_audio_end_ms=span.observed_request.get("target_audio_end_ms"))
+    if paths["prompt"].read_text(encoding="utf-8") != expected_prompt:
+        raise ContractRejection("RELISTEN_NARROW_BLIND_PROMPT_DRIFT")
+    raw = extract_json_object(strip_markdown_fence(paths["response"].read_text(encoding="utf-8")))
+    outcome = audio._EntityProviderOutcome(
+        observed=raw, provider=provider, model=witness["model"],
+        prompt_path=paths["prompt"], response_path=paths["response"],
+        accepted_key_tier=witness.get("key_tier"),
+        paid_policy_stamp=witness.get("paid_backup_policy"),
+        provider_failures=[], served_from_cache=True)
+    rebound = audio._subtitle_acoustic_witness_verdict(
+        request=request, request_sha=request_sha, observed=raw, outcome=outcome,
+        source_sha256=binding["source_media_sha256"], audio_path=paths["audio"],
+        start_ms=span.crop_start_ms, end_ms=span.crop_end_ms,
+        timeline_binding=span.timeline_binding)
+    if (rebound.get("status") != "OBSERVED"
+            or any(witness.get(k) != v for k, v in rebound.items())):
+        raise ContractRejection("RELISTEN_NARROW_RAW_VERDICT_DRIFT")
+    return dict(binding)

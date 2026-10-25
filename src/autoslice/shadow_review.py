@@ -6,7 +6,7 @@ side-effect free apart from the explicitly requested local evidence writes.
 
 from __future__ import annotations
 
-import hashlib
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import json
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -566,11 +566,10 @@ def _read_upload_enabled(root: Path, stem: str) -> bool | None:
     return value if isinstance(value, bool) else None
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    # This shared reader checks current artifacts/provenance, not immutable
+    # cold snapshots. Re-read bytes even when a rewrite shares the stat key.
+    digest = _evidence_file_sha256(path, fresh=True)
+    return digest
 
 def _stat_fingerprint(path: Path | None) -> dict[str, object]:
     if path is None:

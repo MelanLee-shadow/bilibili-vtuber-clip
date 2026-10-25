@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Mapping
 
@@ -36,11 +35,16 @@ from src.autoslice.acoustic_witness_availability import (
     unavailable_acoustic_witness,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.nonsemantic_sound import sound_only
+from src.autoslice.text_scripts import script_profile
 
 SCHEMA_VERSION = "microcue-candidate-blind-acoustic-discovery.v1"
 MAX_DURATION_MS = 1_300
 FUNCTIONAL_MAX_DURATION_MS = 3_000
-MIN_CJK_COUNT = 2
+# An isolated content character can be a misplaced or hallucinated cue too.
+# Give it the same candidate-blind target-window check as other short cues;
+# matching speech still creates no finding, and deletion still needs CPA.
+MIN_CJK_COUNT = 1
 MAX_TEXT_CODEPOINTS = 12
 MAX_CUES = 12
 MIN_WITNESS_CONFIDENCE = 0.72
@@ -58,11 +62,6 @@ MAX_SYLLABLE_COUNT_DELTA = 1
 # sessions.  Keep this a plain module constant, matching the
 # ``produce_dispatch.py`` ThreadPoolExecutor convention — no new env knob.
 MICROCUE_WITNESS_CONCURRENCY = 4
-
-_CJK_RX = re.compile(r"[\u3400-\u9fff]")
-_KANA_RX = re.compile(r"[\u3040-\u30ff]")
-_LATIN_RX = re.compile(r"[A-Za-z]")
-_FILLER_ONLY_RX = re.compile(r"[嗯呃啊哦诶欸哎唉嘿哈呵哼呀嘛呢吧啦]+")
 
 # These are deliberately finite, generic discourse prefixes.  They only
 # qualify a longer all-Hanzi cue for the bounded duration extension; they are
@@ -97,13 +96,16 @@ def _functional_prefix(text: str) -> str | None:
 
 def _eligibility_scope(text: str, duration_ms: int) -> str | None:
     compact = "".join(text.split())
+    scripts = script_profile(compact)
     common_ok = bool(
         0 < duration_ms
         and len(compact) <= MAX_TEXT_CODEPOINTS
-        and len(_CJK_RX.findall(compact)) >= MIN_CJK_COUNT
-        and not _KANA_RX.search(compact)
-        and not _LATIN_RX.search(compact)
-        and not _FILLER_ONLY_RX.fullmatch(compact)
+        and scripts["han"] >= MIN_CJK_COUNT
+        and not scripts["kana"]
+        and not scripts["latin"]
+        # Filler skipping is narrower than the full speaker-context sound
+        # inventory: e.g. a coughing cue must still reach the blind witness.
+        and not sound_only(text, vocalization_role="microcue_filler_exclusion")
     )
     if not common_ok:
         return None
@@ -112,7 +114,7 @@ def _eligibility_scope(text: str, duration_ms: int) -> str | None:
     if (
         duration_ms <= FUNCTIONAL_MAX_DURATION_MS
         and _functional_prefix(compact) is not None
-        and len(_CJK_RX.findall(compact)) == len(compact)
+        and scripts["han"] == len(compact)
     ):
         return "functional_prefix_extended"
     return None
@@ -131,7 +133,7 @@ def _functional_tail_details(
 
     compact = "".join(text.split())
     prefix = _functional_prefix(compact)
-    if prefix is not None and len(_CJK_RX.findall(compact)) != len(compact):
+    if prefix is not None and script_profile(compact)["han"] != len(compact):
         prefix = None
     details: dict[str, Any] = {
         "functional_prefix": prefix,
@@ -209,7 +211,24 @@ def _witness_one_microcue(
     }
     witness_request = build_witness_request(check_request)
     try:
-        raw_witness = entity_verifier(witness_request)
+        # The existing verifier probe validates source bytes, physical window,
+        # audio, prompt and provider identity without recropping or dispatch.
+        # A carried-forward witness is evidence, not a wording decision.
+        probe = getattr(entity_verifier, "probe_witness_cache", None)
+        try:
+            cached = probe(witness_request) if callable(probe) else None
+        except Exception:
+            cached = None
+        raw_witness = (
+            cached
+            if isinstance(cached, Mapping)
+            and cached.get("served_from_cache") is True
+            and cached.get("status") == "OBSERVED"
+            and valid_witness_evidence(
+                cached, request_sha256=str(witness_request["request_sha256"])
+            )
+            else entity_verifier(witness_request)
+        )
         # F21：``dict(None)`` 会抛 TypeError 并被下面记成
         # MICROCUE_AUDIO_VERIFIER_ERROR，把「根本没有证人」伪装成
         # 「证人炸了」。非 Mapping（含 None）一律走 typed 不可用尾巴。
@@ -279,6 +298,7 @@ def _witness_one_microcue(
         "witness_request_sha256": "sha256:"
         + str(witness_request["request_sha256"]).removeprefix("sha256:"),
         "witness": witness,
+        "witness_request": witness_request,
         "current_pinyin": " ".join(current_tokens),
         "heard_pinyin": " ".join(heard_tokens),
         "pinyin_similarity": round(similarity, 4),
@@ -332,21 +352,31 @@ def _witness_one_microcue(
         }
         row["status"] = "INAUDIBLE_DROP_PROPOSED_TO_CPA"
         row["finding_sha256"] = "sha256:" + _sha256_json(finding)
-    elif not observed or not syllable_count_plausible:
+    elif not observed:
         pass
     else:
         tail_similarity = functional_tail["tail_pinyin_similarity"]
         uses_tail_comparison = (
-            functional_tail["comparison_scope"] == "functional_prefix_tail"
+            syllable_count_plausible
+            and functional_tail["comparison_scope"] == "functional_prefix_tail"
         )
         mismatch = (
             tail_similarity < MAX_PINYIN_SIMILARITY_FOR_FINDING
             if uses_tail_comparison
             else similarity < MAX_PINYIN_SIMILARITY_FOR_FINDING
         )
-        if not mismatch:
+        if syllable_count_plausible and not mismatch:
             return row, finding
-        if uses_tail_comparison:
+        if not syllable_count_plausible:
+            why = (
+                "候选盲短句声学巡检在目标时窗听得拼音 "
+                f"{' '.join(heard_tokens)}（{len(heard_tokens)} 个音节），"
+                f"现稿拼音 {' '.join(current_tokens)}（{len(current_tokens)} 个音节）；"
+                "音节数显著不一致，只能作为目标时窗或漏听疑点交给 CPA，"
+                "不能直接重建文字、判定无声或授权删除。CPA 须结合当前完整语境"
+                "及已有原音证据判断；需要补听时走正常取证，不强迫生成替换文本"
+            )
+        elif uses_tail_comparison:
             why = (
                 "候选盲短句声学巡检听得拼音 "
                 f"{' '.join(heard_tokens)}，与现稿拼音 "
@@ -381,12 +411,22 @@ def _witness_one_microcue(
             "evidence_cue_ids": [],
             "suspect": suspect,
             "why": why,
-            "comparison_scope": functional_tail["comparison_scope"],
-            "functional_prefix": functional_tail["functional_prefix"],
+            "comparison_scope": (
+                functional_tail["comparison_scope"]
+                if syllable_count_plausible else "whole_cue_syllable_count"
+            ),
+            "functional_prefix": (
+                functional_tail["functional_prefix"]
+                if syllable_count_plausible else None
+            ),
             "whole_cue_pinyin_similarity": round(similarity, 4),
             "tail_pinyin_similarity": tail_similarity,
+            "witness_consistency_role": "QUESTION_ONLY_NOT_A_VETO",
         }
-        row["status"] = "MISMATCH_PROPOSED_TO_CPA"
+        row["status"] = (
+            "MISMATCH_PROPOSED_TO_CPA"
+            if syllable_count_plausible else "SYLLABLE_COUNT_OUTLIER_PROPOSED_TO_CPA"
+        )
         row["finding_sha256"] = "sha256:" + _sha256_json(finding)
     return row, finding
 
@@ -478,12 +518,14 @@ def discover_microcue_findings(
         pool.shutdown(wait=True)
 
     for row, finding in results:
+        if row["status"] in {
+            "SYLLABLE_COUNT_OUTLIER", "SYLLABLE_COUNT_OUTLIER_PROPOSED_TO_CPA"
+        }:
+            syllable_outlier_count += 1
         if finding is not None:
             findings.append(finding)
         elif row["status"] == "UNCERTAIN":
             uncertain_count += 1
-        elif row["status"] == "SYLLABLE_COUNT_OUTLIER":
-            syllable_outlier_count += 1
         receipt["eligible"].append(row)
 
     receipt["findings"] = [

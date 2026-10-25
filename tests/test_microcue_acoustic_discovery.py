@@ -65,16 +65,150 @@ def test_matching_microcue_does_not_create_finding():
     assert audit["eligible"][0]["status"] == "OBSERVED"
 
 
-def test_implausible_syllable_count_is_not_promoted_to_cpa():
+def test_punctuated_matching_speech_does_not_invent_extra_syllables():
+    srt = "1\n00:00:00,000 --> 00:00:00,820\n要啊，不要。\n"
+    findings, audit = discover_microcue_findings(
+        srt, timeline_offset_ms=0, entity_verifier=_witness("yao a bu yao"),
+    )
+    assert findings == []
+    assert audit["eligible"][0]["current_pinyin"] == "yao a bu yao"
+    assert audit["eligible"][0]["pinyin_similarity"] == 1.0
+    assert audit["eligible"][0]["status"] == "OBSERVED"
+
+
+def test_punctuation_normalization_retains_real_speech_mismatch():
+    srt = "1\n00:00:00,000 --> 00:00:00,820\n要啊，不要。\n"
+    findings, audit = discover_microcue_findings(
+        srt, timeline_offset_ms=0,
+        entity_verifier=_witness("yao a bu yao zai shuo yi bian"),
+    )
+    assert len(findings) == 1
+    assert findings[0]["proposed_full_cue"] is None
+    assert audit["eligible"][0]["status"] == "SYLLABLE_COUNT_OUTLIER_PROPOSED_TO_CPA"
+
+
+def test_bound_microcue_cache_is_used_without_redispatch():
+    class Verifier:
+        def probe_witness_cache(self, request):
+            return {**_witness("hao shuang o")(request), "served_from_cache": True}
+
+        def __call__(self, request):
+            raise AssertionError("same evidence must not be dispatched again")
+
+    findings, audit = discover_microcue_findings(
+        SRT, timeline_offset_ms=0, entity_verifier=Verifier(),
+    )
+    assert findings == []
+    assert audit["eligible"][0]["witness"]["served_from_cache"] is True
+
+
+def test_wrong_request_cache_cannot_replace_current_observation():
+    dispatched = []
+
+    class Verifier:
+        def probe_witness_cache(self, request):
+            return {
+                **_witness("hen nan shou")(request),
+                "served_from_cache": True, "request_sha256": "0" * 64,
+            }
+
+        def __call__(self, request):
+            dispatched.append(request)
+            return _witness("hao shuang o")(request)
+
+    findings, audit = discover_microcue_findings(
+        SRT, timeline_offset_ms=0, entity_verifier=Verifier(),
+    )
+    assert len(dispatched) == 1
+    assert findings == []
+    assert audit["eligible"][0]["heard_pinyin"] == "hao shuang o"
+
+
+def test_single_content_character_is_checked_without_deletion_authority():
+    source = "1\n00:00:15,830 --> 00:00:16,830\n字\n"
+    requests = []
+
+    def verify(request):
+        requests.append(request)
+        assert "current_cue" not in request
+        assert "proposed_cue" not in request
+        return {
+            "schema_version": "subtitle-span-acoustic-witness.v1",
+            "request_sha256": request["request_sha256"],
+            "status": "OBSERVED",
+            "target_audible": False,
+            "heard_pinyin": "",
+            "syllable_count": 0,
+            "uncertain_positions": [],
+            "confidence": 1.0,
+        }
+
+    findings, audit = discover_microcue_findings(
+        source, timeline_offset_ms=0, entity_verifier=verify,
+    )
+
+    assert len(requests) == 1
+    assert requests[0]["matched_start_ms"] == 15_830
+    assert requests[0]["matched_end_ms"] == 16_830
+    assert audit["mutation_authorized"] is False
+    assert findings[0]["suspect"] == "字"
+    assert findings[0]["repair_class"] == "acoustic_drop_cue"
+    assert findings[0]["proposed_full_cue"] == ""
+    assert source.endswith("字\n")
+
+
+def test_audible_single_character_and_filler_keep_existing_policy():
+    source = "1\n00:00:00,000 --> 00:00:01,000\n行\n\n2\n00:00:02,000 --> 00:00:03,000\n嗯\n"
+    requests = []
+    witness = _witness("xing")
+
+    def verify(request):
+        requests.append(request)
+        return witness(request)
+
+    findings, audit = discover_microcue_findings(
+        source, timeline_offset_ms=0, entity_verifier=verify,
+    )
+
+    assert len(requests) == 1
+    assert findings == []
+    assert audit["eligible"][0]["cue_index"] == 1
+    assert audit["eligible"][0]["status"] == "OBSERVED"
+    # Acoustic discovery does not waive the separate structural release gate.
+    from src.autoslice.subtitle_validation import validate_srt_text
+    assert "SRT_SINGLE_CJK_CHARACTER" in {
+        row["code"] for row in validate_srt_text(source)["errors"]
+    }
+
+
+def test_implausible_syllable_count_is_proposal_less_cpa_suspicion():
     findings, audit = discover_microcue_findings(
         SRT,
         timeline_offset_ms=10_000,
         entity_verifier=_witness("en"),
     )
 
-    assert findings == []
-    assert audit["finding_count"] == 0
-    assert audit["eligible"][0]["status"] == "SYLLABLE_COUNT_OUTLIER"
+    assert audit["finding_count"] == 1
+    assert audit["syllable_outlier_count"] == 1
+    assert audit["mutation_authorized"] is False
+    assert audit["eligible"][0]["status"] == "SYLLABLE_COUNT_OUTLIER_PROPOSED_TO_CPA"
+    assert findings[0]["proposed_full_cue"] is None
+    assert findings[0]["repair_class"] == "phonetic"
+    assert "replacement" not in findings[0]
+    assert findings[0]["comparison_scope"] == "whole_cue_syllable_count"
+
+
+def test_single_character_outlier_is_disclosed_without_inventing_text():
+    source = "1\n00:00:15,830 --> 00:00:16,830\n字\n"
+    findings, audit = discover_microcue_findings(
+        source, timeline_offset_ms=0, entity_verifier=_witness("ye ye a la"),
+    )
+
+    assert audit["syllable_outlier_count"] == 1
+    assert findings[0]["suspect"] == "字"
+    assert findings[0]["proposed_full_cue"] is None
+    assert findings[0]["repair_class"] != "acoustic_drop_cue"
+    assert source.endswith("字\n")
 
 
 def test_uncertain_microcue_is_disclosed_without_blocking():
@@ -407,7 +541,7 @@ def test_microcue_parallel_output_matches_serial_output_byte_for_byte():
     # Sanity: the fixture actually exercises multiple distinct branches
     # (findings + syllable outlier + uncertain), so equality above is not
     # vacuous.
-    assert audit_parallel["finding_count"] == 4
+    assert audit_parallel["finding_count"] == 6
     assert audit_parallel["uncertain_count"] == 2
     assert audit_parallel["syllable_outlier_count"] == 2
     assert [row["cue_index"] for row in audit_parallel["eligible"]] == list(

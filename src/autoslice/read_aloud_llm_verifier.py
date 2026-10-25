@@ -33,6 +33,8 @@ but can never transfer final authority to audio.
 
 from __future__ import annotations
 
+from src.autoslice.structured_output import call_json
+
 import hashlib
 import json
 import math
@@ -53,7 +55,6 @@ from src.autoslice.acoustic_witness_availability import (
 )
 from src.autoslice.acoustic_witness_protocol import (
     BLIND_PINYIN_PROTOCOL,
-    CANDIDATE_BLIND_TRANSCRIPT_PROTOCOL,
     bind_blind_witness_protocol,
     witness_protocol,
 )
@@ -87,83 +88,44 @@ _ENTITY_REQUEST_SCHEMAS = frozenset(
 _WITNESS_VERDICT_SCHEMA = "subtitle-span-acoustic-witness.v1"
 _SECONDARY_EVIDENCE_SCHEMA = "secondary-audio-witness-evidence.v1"
 _ACOUSTIC_CONFLICT_SCHEMA = "candidate-blind-acoustic-provider-conflict.v1"
-_AUDIO_DISPATCH_DECISION_SCHEMA = "audio-witness-dispatch-decision.v1"
-_NATIVE_AUDIO_PROVIDERS = frozenset({"mai", "moss"})
 
 
-def _native_audio_routing_receipt(witness: Mapping[str, Any]) -> dict[str, Any] | None:
-    """Keep the minimum native evidence needed by the ordinary routing audit.
 
-    The CPA verdict remains text authority.  This nested receipt only preserves
-    the provider/model, exact geometry, hashes and authority limits of an
-    already validated candidate-blind witness; it deliberately omits the
-    transcript text and cannot authorize a mutation.
+def _completed_response(stage: str, prompt: str, llm_call: Callable[[str], str]):
+    """Reuse original response bytes; every caller reruns its current decoder.
+
+    The shared ``CompletedReviewCheckpoint`` binds stage, exact prompt bytes,
+    model, effort and material. Transport/parser snapshots remain telemetry;
+    a checkpoint error cannot fall through into another question.
     """
+    from src.autoslice.completed_review_checkpoint import CompletedReviewCheckpoint
 
-    provider = witness.get("provider")
-    if provider not in _NATIVE_AUDIO_PROVIDERS or witness.get("status") != "OBSERVED":
-        return None
-    native = witness.get("native_observation")
-    native = native if isinstance(native, Mapping) else {}
-    audio_start_ms = witness.get("audio_start_ms")
-    if type(audio_start_ms) is not int:
-        audio_start_ms = native.get("target_start_ms")
-    audio_end_ms = witness.get("audio_end_ms")
-    if type(audio_end_ms) is not int:
-        audio_end_ms = native.get("target_end_ms")
-    return {
-        "schema_version": "producer-native-audio-witness-receipt.v1",
-        "request_sha256": witness.get("request_sha256"),
-        "status": witness.get("status"),
-        "witness_protocol": witness_protocol(witness),
-        "target_audible": witness.get("target_audible"),
-        "candidate_exposure": witness.get("candidate_exposure"),
-        "authority": witness.get("authority"),
-        "mutation_authorized": witness.get("mutation_authorized"),
-        "provider": provider,
-        "model": witness.get("model") or native.get("model"),
-        "source_media_sha256": witness.get("source_media_sha256")
-        or native.get("source_media_sha256"),
-        "input_audio_sha256": witness.get("audio_clip_sha256")
-        or native.get("input_audio_sha256"),
-        "provider_response_sha256": witness.get("response_sha256")
-        or native.get("response_sha256"),
-        "audio_start_ms": audio_start_ms,
-        "audio_end_ms": audio_end_ms,
-        "served_from_cache": (
-            witness.get("served_from_cache")
-            if isinstance(witness.get("served_from_cache"), bool)
-            else native.get("served_from_cache")
-        ),
-        "native_receipt_sha256": native.get("receipt_sha256"),
-    }
+    try:
+        checkpoint = CompletedReviewCheckpoint.for_call(
+            stage=stage, prompt=prompt, llm_call=llm_call,
+            inputs={"consumer": "read_aloud_llm_verifier"}, parser_path=Path(__file__),
+        )
+    except TypeError:
+        # A transport snapshot that cannot be serialized may still have the
+        # ordinary model-bound raw lane. Never catch load/save corruption here.
+        checkpoint = None
+    if checkpoint is None:
+        checkpoint = CompletedReviewCheckpoint.for_ruling(
+            stage=stage, prompt=prompt, llm_call=llm_call,
+            inputs={"consumer": "read_aloud_llm_verifier"}, parser_path=Path(__file__))
+    if checkpoint is None:
+        return call_json(llm_call, prompt), None
+    return checkpoint.response(lambda prompt: call_json(llm_call, prompt), preserve_raw=True), checkpoint
 
 
-def _context_dispatch_decision(
-    *,
-    request: Mapping[str, Any],
-    prompt: str,
-    completion: str,
-    classifier: Mapping[str, Any],
-    confidence: float,
-    min_confidence: float,
-) -> dict[str, Any]:
-    """Bind a weak-but-valid CPA read-aloud classification to one audio request."""
-
-    return {
-        "schema_version": _AUDIO_DISPATCH_DECISION_SCHEMA,
-        "status": "NEEDS_AUDIO",
-        "decision_authority": "CPA_CONTEXT_POLICY",
-        "needs_audio": True,
-        "request_sha256": request.get("request_sha256"),
-        "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-        "completion_sha256": hashlib.sha256(completion.encode("utf-8")).hexdigest(),
-        "reason_code": "CPA_READ_ALOUD_CONTEXT_UNRESOLVED",
-        "classifier_is_read_aloud": classifier.get("is_read_aloud"),
-        "classifier_confidence": confidence,
-        "minimum_confidence": min_confidence,
-    }
-
+def _install_completed(checkpoint) -> None:
+    """Idempotent legacy hook; response() already preserved the original bytes."""
+    if checkpoint is None:
+        return
+    try:
+        checkpoint.save()
+    except Exception:  # the accepted verdict stands; only future reuse is lost
+        pass
 
 def _secondary_target_text(
     evidence: object,
@@ -384,37 +346,6 @@ def _witness_check_request(
     }
 
 
-_CLOSED_CHOICE_TRANSCRIPT_PROMPT = """# 字幕闭集裁决
-
-你是最终文字/语义法官。音频证人从未见过候选，只对精确目标窗做了一次局部转写；
-它可能误听、漏字或错判语言，是辅助证据而不是文字权威。请结合局部转写、前后
-语境和平台结构化文字，从闭集中选出最可能是主播实际说出的一个候选。
-
-铁律：
-1. 只能选择闭集中的 canonical；不能生成第三种文本。
-2. 所有已注册专名平等；词表只提供先验。
-3. 局部转写未见候选，但仍可能有普通 ASR 错误；不能因它来自 native provider 就
-   自动覆盖当前文本，也不能把 provider/model/哈希当作内容正确性的证明。
-4. 平台弹幕/SC 是高价值文字证据，但不自动证明主播逐字念了它。
-5. 必须给全部候选排序并选概率最高者；不得因为不确定而默认 CURRENT。
-6. 候选里的弹幕/SC 原文可能是梗写、刻意错写或表情符号；若判定主播确实在念，
-   应选择平台原文本身，不做规范化改写。
-
-## 候选盲局部转写证人
-{witness}
-
-## 闭集候选
-{candidates}
-
-## 语境与结构化证据
-{context}
-
-只输出一个 JSON 对象：
-{{"ranking":[{{"canonical":"闭集中的原文","p":0.0到1.0}}, ...覆盖全部候选],
-"choice":"概率最高的 canonical 原文","reason":"一句证据理由"}}
-"""
-
-
 _CLOSED_CHOICE_PROMPT = """# 字幕闭集裁决
 
 你是最终文字/语义法官。音频证人从未见过候选，只按目标时窗听写拼音；
@@ -491,7 +422,6 @@ def _closed_choice_with_witness(
     llm_call: LlmCall,
     next_verifier: Verifier | None,
     context_unresolved: bool = False,
-    audio_dispatch_decision: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     target_slot = request.get("target_slot")
     raw_slot_choices = request.get("slot_choices")
@@ -557,14 +487,12 @@ def _closed_choice_with_witness(
         return None
     witness_request = build_witness_request(check_request)
     def judge(witness):
-        protocol = witness_protocol(witness)
         witness_valid = bool(
             valid_witness_evidence(
                 witness,
                 request_sha256=witness_request["request_sha256"],
             )
-            and protocol
-            in {BLIND_PINYIN_PROTOCOL, CANDIDATE_BLIND_TRANSCRIPT_PROTOCOL}
+            and witness_protocol(witness) == BLIND_PINYIN_PROTOCOL
         )
         if not witness_valid:
             witness = {
@@ -591,12 +519,7 @@ def _closed_choice_with_witness(
             if isinstance(request.get("whole_clip_context"), Mapping)
             else None,
         }
-        template = (
-            _SLOT_CHOICE_PROMPT if slot_mode else
-            _CLOSED_CHOICE_TRANSCRIPT_PROMPT
-            if protocol == CANDIDATE_BLIND_TRANSCRIPT_PROTOCOL
-            else _CLOSED_CHOICE_PROMPT
-        )
+        template = _SLOT_CHOICE_PROMPT if slot_mode else _CLOSED_CHOICE_PROMPT
         text_first = witness.get("reason_code") == TEXT_FIRST_REASON
         if text_first and not slot_mode:
             intro_end = template.index("铁律：")
@@ -619,7 +542,7 @@ def _closed_choice_with_witness(
         if text_first:
             prompt += TEXT_FIRST_INSTRUCTIONS
         try:
-            completion = llm_call(prompt)
+            completion, completed = _completed_response("read-aloud-closed-choice", prompt, llm_call)
             payload = extract_json_object(completion)
         except Exception:
             return None
@@ -689,20 +612,17 @@ def _closed_choice_with_witness(
             choice = str(payload.get("choice") or "")
             if choice != top["canonical"]:
                 choice = str(top["canonical"])
+        _install_completed(completed)
         heard_pinyin = str(witness.get("heard_pinyin") or "")
         uncertain_positions = list(witness.get("uncertain_positions") or [])
-        compatibility = (
-            {
-                canonical: pinyin_compatibility(
-                    canonical,
-                    heard_pinyin=heard_pinyin,
-                    uncertain_positions=uncertain_positions,
-                )
-                for canonical in canonicals
-            }
-            if protocol == BLIND_PINYIN_PROTOCOL
-            else {canonical: None for canonical in canonicals}
-        )
+        compatibility = {
+            canonical: pinyin_compatibility(
+                canonical,
+                heard_pinyin=heard_pinyin,
+                uncertain_positions=uncertain_positions,
+            )
+            for canonical in canonicals
+        }
         context_only = witness.get("status") != "OBSERVED"
         verdict = {
             "schema_version": VERDICT_SCHEMA,
@@ -766,9 +686,6 @@ def _closed_choice_with_witness(
             )
             if selected.get("action") == "CANONICAL":
                 verdict["canonical_entity"] = selected.get("canonical_entity")
-        native_receipt = _native_audio_routing_receipt(witness)
-        if native_receipt is not None:
-            verdict["acoustic_witness"] = native_receipt
         return verdict
 
     text_decision = None
@@ -812,17 +729,10 @@ def _closed_choice_with_witness(
         if conflict is not None:
             if text_decision is not None:
                 conflict["text_first_judge"] = text_decision
-            elif audio_dispatch_decision is not None:
-                conflict["audio_dispatch_decision"] = dict(audio_dispatch_decision)
-            native_receipt = _native_audio_routing_receipt(witness)
-            if native_receipt is not None:
-                conflict["acoustic_witness"] = native_receipt
             return conflict
     verdict = judge(witness)
     if verdict is not None and text_decision is not None:
         verdict["text_first_judge"] = text_decision
-    elif verdict is not None and audio_dispatch_decision is not None:
-        verdict["audio_dispatch_decision"] = dict(audio_dispatch_decision)
     return verdict
 
 
@@ -887,8 +797,9 @@ used by the CPA judge.
                 str(request.get("context_before") or ""),
                 str(request.get("context_after") or ""),
             )
-            completion = llm_call(prompt)
+            completion, completed = _completed_response("read-aloud-detect", prompt, llm_call)
             data = extract_json_object(completion)
+            _install_completed(completed)
         except Exception:  # transport/parser failure is never correction authority
             # A provider failure may retry through the closed witness+judge
             # route, but AGY still never receives candidates or final authority.
@@ -949,14 +860,6 @@ used by the CPA judge.
             llm_call=llm_call,
             next_verifier=next_verifier,
             context_unresolved=True,
-            audio_dispatch_decision=_context_dispatch_decision(
-                request=request,
-                prompt=prompt,
-                completion=completion,
-                classifier=data,
-                confidence=confidence,
-                min_confidence=min_confidence,
-            ),
         )
 
     # Preserve exact-final's object-method provider/cache seams through CPA.
@@ -964,8 +867,17 @@ used by the CPA judge.
         "probe_witness_cache",
         "exact_source_transcript",
         "probe_exact_source_transcript_cache",
+        "observe_independent_witnesses",
+        "observe_cached_independent_witnesses",
+        "observe_range_context",
+        "observe_secondary_audio_evidence",
+        "observe_secondary_witnesses",
     ):
         callback = getattr(next_verifier, seam, None)
         if callable(callback):
             setattr(verify, seam, callback)
+    for name in ("span_termination_source_identity", "span_termination_ordinary_routes",
+                 "span_termination_upgrade_enabled", "span_termination_upgrade_status"):
+        if hasattr(next_verifier, name):
+            setattr(verify, name, getattr(next_verifier, name))
     return verify

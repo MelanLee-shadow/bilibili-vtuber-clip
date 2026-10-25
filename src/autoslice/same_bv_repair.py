@@ -7,6 +7,7 @@ collection-title sync runs only after CID and public metadata converge.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import hashlib
 import json
 import os
@@ -48,6 +49,7 @@ JOURNAL_STATES = {
     "APPEND_INTENT",
     "APPEND_AMBIGUOUS",
     "TWO_P_READY",
+    "EXISTING_P_READY",
     "SWAP_RETRYABLE",
     "CREATOR_SINGLE_NEW",
     "PUBLIC_PENDING",
@@ -60,7 +62,8 @@ TERMINAL_STATES = {"VERIFIED", "BLOCKED_DRIFT"}
 RETRYABLE_EDIT_CODE = 21540
 _BVID_RE = re.compile(r"^BV[0-9A-Za-z]{10}$")
 _TRANSITIONS = {
-    "PLANNED": {"APPEND_INTENT", "BLOCKED_DRIFT"},
+    "PLANNED": {"APPEND_INTENT", "EXISTING_P_READY", "BLOCKED_DRIFT"},
+    "EXISTING_P_READY": {"SWAP_RETRYABLE", "CREATOR_SINGLE_NEW", "BLOCKED_DRIFT"},
     "APPEND_INTENT": {
         "APPEND_AMBIGUOUS",
         "TWO_P_READY",
@@ -165,11 +168,8 @@ class RepairAdapter(Protocol):
 
 
 def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return digest
 
 
 def _canonical_json(value: object) -> bytes:
@@ -452,8 +452,13 @@ def package_recovery_publication_authority(
     review_item: Mapping[str, Any] | None,
     *,
     expected_final_title: str,
+    verified_song_candidate_id: str | None = None,
 ) -> tuple[dict[str, Any] | None, list[str]]:
-    """Validate an optional authority only when both package surfaces agree."""
+    """Validate an optional authority only when both package surfaces agree.
+
+    The uploader supplies Song identity only after its strict verified-Song
+    gate succeeds. A Song label or a bare delivery_candidate_id grants nothing.
+    """
 
     record_authority = record.get("recovery_publication_authority")
     review_authority = (
@@ -471,6 +476,12 @@ def package_recovery_publication_authority(
     candidate_id = (
         str(story.get("candidate_id") or "").strip() if isinstance(story, Mapping) else ""
     )
+    if verified_song_candidate_id is not None:
+        if (record.get("delivery_candidate_id") != verified_song_candidate_id
+                or (review_item or {}).get("candidate_id") != verified_song_candidate_id
+                or (candidate_id and candidate_id != verified_song_candidate_id)):
+            return None, ["verified Song candidate_id differs from record/review identity"]
+        candidate_id = verified_song_candidate_id
     if not candidate_id:
         return None, ["recovery_publication_authority has no record story candidate_id"]
     item_candidate_id = str((review_item or {}).get("candidate_id") or "").strip()
@@ -493,11 +504,14 @@ def recovery_publication_package_problems(
     manifest: Mapping[str, Any],
     record: Mapping[str, Any],
     review_item: Mapping[str, Any] | None,
+    *,
+    verified_song_candidate_id: str | None = None,
 ) -> list[str]:
     authority, problems = package_recovery_publication_authority(
         record,
         review_item,
         expected_final_title=str(manifest.get("title") or ""),
+        verified_song_candidate_id=verified_song_candidate_id,
     )
     if manifest.get("recovery_publication_authority") != authority:
         problems.append(
@@ -512,6 +526,8 @@ def attach_package_recovery_publication_authority(
     record: Mapping[str, Any],
     review_manifest_path: Path,
     video_path: Path,
+    *,
+    verified_song_candidate_id: str | None = None,
 ) -> list[str]:
     """Attach the optional two-surface authority while constructing a manifest."""
 
@@ -541,6 +557,7 @@ def attach_package_recovery_publication_authority(
         record,
         review_item,
         expected_final_title=str(manifest.get("title") or ""),
+        verified_song_candidate_id=verified_song_candidate_id,
     )
     if authority is not None:
         manifest["recovery_publication_authority"] = authority
@@ -1079,6 +1096,10 @@ def create_plan(
         )
     except tag_preservation.TagPreservationError as exc:
         raise PlanInvalid(str(exc)) from exc
+    from .publish_policy import preserved_policy_problems
+    policy_errors = preserved_policy_problems(target_metadata, snapshot)
+    if policy_errors:
+        raise PlanInvalid("; ".join(policy_errors))
     manifest_sha = sha256_file(manifest_path)
     video = manifest.get("video") or {}
     cover = manifest.get("cover") or {}
@@ -1131,6 +1152,10 @@ def validate_plan(
     manifest: Mapping[str, Any] | None = None,
     plan_path: Path | None = None,
 ) -> None:
+    if plan.get("schema_version") == "same-bv-stage-plan.v1":
+        from .same_bv_stage_repair import validate_plan as validate_stage_plan
+        validate_stage_plan(plan, manifest=manifest, plan_path=plan_path)
+        return
     problems: list[str] = []
     if plan.get("schema_version") != PLAN_SCHEMA:
         problems.append("repair plan schema mismatch")
@@ -1202,6 +1227,8 @@ def validate_plan(
     ):
         problems.append("repair season binding invalid")
     before = plan.get("before") or {}
+    from .publish_policy import preserved_policy_problems
+    problems.extend(preserved_policy_problems(plan.get("target_metadata") or {}, before))
     creator = before.get("creator") or {}
     videos = creator.get("videos") or []
     if len(videos) != 1 or not isinstance(videos[0].get("cid"), int):
@@ -1530,7 +1557,7 @@ def initialise_journal(journal: Path, plan_path: Path, plan: Mapping[str, Any]) 
     selected = plan_entries(journal, plan_path, plan)
     if selected:
         return selected[-1]
-    predecessor = plan.get("predecessor_completion") or {}
+    predecessor = plan.get("predecessor_completion") or plan.get("stage_predecessor") or {}
     predecessor_plan = predecessor.get("plan") or {}
     predecessor_row = predecessor.get("verified_journal_row") or {}
     assert_bvid_unowned(
@@ -1620,6 +1647,18 @@ def _two_p_new_video(
     if expected_new is not None and new_video != expected_new:
         return None
     return dict(new_video)
+
+
+def _pre_edit_video(snapshot, plan, *, expected_new):
+    """Normal repairs require two P; a scoped metadata stage retains one P."""
+    if plan.get("schema_version") == "same-bv-stage-plan.v1" and plan.get("operation") == "title_cover_only":
+        current = _snapshot_with_current_cover_identity(snapshot).get("creator") or {}
+        before = _snapshot_with_current_cover_identity(plan.get("before") or {}).get("creator") or {}
+        if (current.get("available") is True and current.get("videos") == before.get("videos") == [expected_new]
+                and all(current.get(k) == before.get(k) for k in ("bvid", "aid", "metadata"))):
+            return dict(expected_new)
+        return None
+    return _two_p_new_video(snapshot, plan, expected_new=expected_new)
 
 
 def _target_creator_exact(
@@ -1770,6 +1809,7 @@ def repair_status(*, plan_path: Path, journal: Path, manifest: Mapping[str, Any]
         "APPEND_INTENT": "POLL_ONLY_NEVER_REAPPEND",
         "APPEND_AMBIGUOUS": "POLL_ONLY_NEVER_REAPPEND",
         "TWO_P_READY": "SWAP_KEEP_NEW_CID",
+        "EXISTING_P_READY": "SWAP_KEEP_EXISTING_UPLOADED_CID_ZERO_APPEND",
         "SWAP_RETRYABLE": "POLL_THEN_RETRY_SAME_SWAP",
         "CREATOR_SINGLE_NEW": "VERIFY_PUBLIC_AND_SECTION",
         "PUBLIC_PENDING": "POLL_PUBLIC_AND_SECTION",
@@ -1778,6 +1818,8 @@ def repair_status(*, plan_path: Path, journal: Path, manifest: Mapping[str, Any]
         "VERIFIED": "NONE",
         "BLOCKED_DRIFT": "HUMAN_RECONCILIATION_REQUIRED",
     }[last["state"]]
+    if last["state"] == "PLANNED" and plan.get("existing_new_video"):
+        next_action = "ADOPT_EXISTING_UPLOADED_CID_ZERO_APPEND"
     return RepairResult(
         state=last["state"],
         changed=False,
@@ -1911,6 +1953,9 @@ def _prepare_swap_cover(
 ) -> tuple[str | None, RepairResult | None]:
     if cover_url is not None:
         return cover_url, None
+    preserved_url = (plan.get("replacement", {}).get("cover") or {}).get("preserve_url")
+    if plan.get("schema_version") == "same-bv-stage-plan.v1" and preserved_url:
+        return preserved_url, None
     try:
         prepared = adapter.prepare_cover(Path(plan["replacement"]["cover"]["path"]))
     except Exception as exc:
@@ -1968,7 +2013,7 @@ def _swap_outcome(
             },
         )
         return _row_result(row, "Creator single-new verified")
-    two_p = _two_p_new_video(after, plan, expected_new=new_video) if after is not None else None
+    two_p = _pre_edit_video(after, plan, expected_new=new_video) if after is not None else None
     if after is not None and two_p is None:
         return _row_result(
             _block(
@@ -2062,7 +2107,7 @@ def _swap_stage(
             },
         )
         return _row_result(row, "Creator is already single-new")
-    if _two_p_new_video(snapshot, plan, expected_new=new_video) is None:
+    if _pre_edit_video(snapshot, plan, expected_new=new_video) is None:
         return _row_result(
             _block(
                 journal,
@@ -2319,6 +2364,9 @@ def repair_step(
         snapshot = adapter.observe(bvid, section_id)
     except ObservationUnavailable as exc:
         return RepairResult(state, False, str(exc), {"observation_unavailable": True})
+    if state == "PLANNED" and plan.get("schema_version") == "same-bv-stage-plan.v1" and plan.get("existing_new_video"):
+        from .same_bv_stage_repair import import_existing_step
+        return import_existing_step(snapshot=snapshot, plan=plan, plan_path=plan_path, journal=journal)
     if state in {"PLANNED", "APPEND_INTENT", "APPEND_AMBIGUOUS"}:
         return _append_stage(
             state=state,
@@ -2337,7 +2385,7 @@ def repair_step(
         not isinstance(cover_url, str) or not cover_url.startswith(("http://", "https://", "//"))
     ):
         raise JournalCorrupt("journal cover_url detail is invalid")
-    if state in {"TWO_P_READY", "SWAP_RETRYABLE"}:
+    if state in {"TWO_P_READY", "EXISTING_P_READY", "SWAP_RETRYABLE"}:
         return _swap_stage(
             state=state,
             snapshot=snapshot,

@@ -8,6 +8,8 @@ from typing import Any
 
 from src.autoslice.boundary_semantic_review import (
     PIN_CROSSING_TOLERANCE_MS,
+    story_ending_proof_is_valid,
+    story_ending_verdict_blocks,
 )
 from src.autoslice.redelivery_boundary_projection import (
     stored_projection_endpoint_is_valid,
@@ -112,10 +114,17 @@ def semantic_boundary_review_is_valid(
         review.get("human_explicit_endpoint_override"),
         review=review,
     )
+    # BND-03: the second typed ending proof, re-validated from its bound
+    # comparison record (and, for final delivery, its story-kind witness).
+    story_ending_valid = bool(
+        review.get("review_scope") == expected_scope
+        and story_ending_proof_is_valid(review)
+    )
     return bool(
         review.get("schema_version") == "talk-boundary-semantic-review.v1"
         and review.get("status") == "PASS"
         and review.get("review_scope") == expected_scope
+        and not story_ending_verdict_blocks(review)
         and all(
             review.get(field) is True
             for field in (
@@ -124,7 +133,7 @@ def semantic_boundary_review_is_valid(
                 "content_anchor_covered",
             )
         )
-        and (transition_witness_valid or human_endpoint_valid)
+        and (transition_witness_valid or human_endpoint_valid or story_ending_valid)
         and is_boundary_int(review.get("recommended_end_ms"))
         and is_boundary_int(review.get("recommended_end_cue_index"))
         and isinstance(evidence, list)

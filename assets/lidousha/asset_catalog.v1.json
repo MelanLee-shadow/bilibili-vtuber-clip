@@ -1,0 +1,654 @@
+{
+  "schema_version": "vtuber-slice.lidousha-asset-catalog.v1",
+  "catalog_as_of": "2026-10-03",
+  "profile_id": "lidousha",
+  "asset_root": "assets/lidousha",
+  "profile_manifest": "profiles/lidousha/profile.json",
+  "authority_boundary": {
+    "execution_rules": [
+      "docs/pipeline/20-selection.md",
+      "docs/pipeline/40-subtitle-text.md",
+      "docs/pipeline/41-semantic-repair.md",
+      "docs/pipeline/60-title.md",
+      "docs/pipeline/70-cover.md"
+    ],
+    "asset_role": "频道事实、词义、名单与编辑风格参考；不复制分步执行规则。",
+    "historical_role": "候选、恢复和发布记录不随这个公开目录导出。"
+  },
+  "categories": {
+    "active_channel_data": {
+      "label": "Active channel data",
+      "definition": "当前频道词面、名单、关系、选题标定和按日期授权的数据；供现行消费者读取。",
+      "paths": [
+        "assets/lidousha/bilibili_gift_names.v1.json",
+        "assets/lidousha/clip_opening_address.json",
+        "assets/lidousha/community_name_sources.v1.json",
+        "assets/lidousha/community_names.v1.json",
+        "assets/lidousha/entity_confusables.json",
+        "assets/lidousha/game_glossary.v1.json",
+        "assets/lidousha/glossary.txt",
+        "assets/lidousha/known_songs.json",
+        "assets/lidousha/psplive_roster.v1.md",
+        "assets/lidousha/psplive_roster_sources.v1.json",
+        "assets/lidousha/related_entity_seeds.json",
+        "assets/lidousha/selection_score_calibration.v1.json",
+        "assets/lidousha/session_relation_ledger.v1.json",
+        "assets/lidousha/speech_memory_ledger.v1.json",
+        "assets/lidousha/streamer_registry.v1.json",
+        "assets/lidousha/streamer_registry_sources.v1.json",
+        "assets/lidousha/subtitle_truth_ledger.v1.json",
+        "assets/lidousha/timely_term_seeds.json",
+        "assets/lidousha/timely_term_sources.json",
+        "assets/lidousha/timely_terms.json",
+        "assets/lidousha/topic_entity_graph.json"
+      ]
+    },
+    "active_style_reference": {
+      "label": "Active style/reference",
+      "definition": "当前频道身份、字幕风格、标题和封面参考；不取代分步规则。",
+      "paths": [
+        "assets/lidousha/cover_art_direction.md",
+        "assets/lidousha/cover_identity_prompt.txt",
+        "assets/lidousha/cover_reference_overrides.v1.json",
+        "assets/lidousha/emote",
+        "assets/lidousha/emote_library.v1.json",
+        "assets/lidousha/final_media_review_contracts.v1.json",
+        "assets/lidousha/fonts",
+        "assets/lidousha/intro",
+        "assets/lidousha/intro/branding_intro.v1.json",
+        "assets/lidousha/manual_title_overrides.v1.json",
+        "assets/lidousha/persona.md",
+        "assets/lidousha/slice_selection_metric.md",
+        "assets/lidousha/subtitle_correction_principles.md",
+        "assets/lidousha/title_policy.json",
+        "assets/lidousha/title_style.md",
+        "assets/lidousha/upload_tag_policy.json"
+      ]
+    }
+  },
+  "coverage": {
+    "cataloged_active_entries": 37,
+    "cataloged_entries": 37,
+    "cataloged_registered_paths": 35
+  },
+  "entries": [
+    {
+      "path": "assets/lidousha/bilibili_gift_names.v1.json",
+      "kind": "file",
+      "category": "active_channel_data",
+      "profile_registered_as": "gift_names",
+      "owner_role": "channel-data-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.gift_names",
+        "live_authority": [
+          "docs/pipeline/40-subtitle-text.md",
+          "docs/pipeline/41-semantic-repair.md"
+        ],
+        "asset": "assets/lidousha/bilibili_gift_names.v1.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/clip_opening_address.json",
+      "kind": "file",
+      "category": "active_channel_data",
+      "profile_registered_as": "clip_opening_address",
+      "owner_role": "channel-data-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.clip_opening_address",
+        "live_authority": [
+          "docs/pipeline/41-semantic-repair.md"
+        ],
+        "asset": "assets/lidousha/clip_opening_address.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/community_name_sources.v1.json",
+      "kind": "file",
+      "category": "active_channel_data",
+      "profile_registered_as": "community_name_sources",
+      "owner_role": "channel-data-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.community_name_sources",
+        "live_authority": [
+          "docs/pipeline/41-semantic-repair.md"
+        ],
+        "asset": "assets/lidousha/community_name_sources.v1.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/community_names.v1.json",
+      "kind": "file",
+      "category": "active_channel_data",
+      "profile_registered_as": "community_names",
+      "owner_role": "channel-data-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.community_names",
+        "live_authority": [
+          "docs/pipeline/41-semantic-repair.md"
+        ],
+        "asset": "assets/lidousha/community_names.v1.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/cover_art_direction.md",
+      "kind": "file",
+      "category": "active_style_reference",
+      "profile_registered_as": "cover_art_direction",
+      "owner_role": "editorial-style-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.cover_art_direction",
+        "live_authority": [
+          "docs/pipeline/70-cover.md"
+        ],
+        "asset": "assets/lidousha/cover_art_direction.md"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/cover_identity_prompt.txt",
+      "kind": "file",
+      "category": "active_style_reference",
+      "profile_registered_as": "cover_identity_prompt",
+      "owner_role": "editorial-style-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.cover_identity_prompt",
+        "live_authority": [
+          "docs/pipeline/70-cover.md"
+        ],
+        "asset": "assets/lidousha/cover_identity_prompt.txt"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/cover_reference_overrides.v1.json",
+      "kind": "file",
+      "category": "active_style_reference",
+      "profile_registered_as": "cover_reference_overrides",
+      "owner_role": "editorial-style-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.cover_reference_overrides",
+        "live_authority": [
+          "docs/pipeline/70-cover.md"
+        ],
+        "asset": "assets/lidousha/cover_reference_overrides.v1.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/emote",
+      "kind": "directory",
+      "category": "active_style_reference",
+      "profile_registered_as": null,
+      "owner_role": "editorial-style-maintainer",
+      "current_source": {
+        "registration": "top-level asset inventory",
+        "live_authority": [
+          "docs/pipeline/README.md"
+        ],
+        "asset": "assets/lidousha/emote"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/emote_library.v1.json",
+      "kind": "file",
+      "category": "active_style_reference",
+      "profile_registered_as": "emote_library",
+      "owner_role": "editorial-style-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.emote_library",
+        "live_authority": [
+          "docs/pipeline/70-cover.md"
+        ],
+        "asset": "assets/lidousha/emote_library.v1.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/entity_confusables.json",
+      "kind": "file",
+      "category": "active_channel_data",
+      "profile_registered_as": "entity_confusables",
+      "owner_role": "channel-data-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.entity_confusables",
+        "live_authority": [
+          "docs/pipeline/41-semantic-repair.md",
+          "src/autoslice/term_authority.py"
+        ],
+        "asset": "assets/lidousha/entity_confusables.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/final_media_review_contracts.v1.json",
+      "kind": "file",
+      "category": "active_style_reference",
+      "profile_registered_as": "final_media_review_contracts",
+      "owner_role": "editorial-style-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.final_media_review_contracts",
+        "live_authority": [
+          "docs/pipeline/README.md"
+        ],
+        "asset": "assets/lidousha/final_media_review_contracts.v1.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/fonts",
+      "kind": "directory",
+      "category": "active_style_reference",
+      "profile_registered_as": "fonts",
+      "owner_role": "editorial-style-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.fonts",
+        "live_authority": [
+          "docs/pipeline/README.md"
+        ],
+        "asset": "assets/lidousha/fonts"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/game_glossary.v1.json",
+      "kind": "file",
+      "category": "active_channel_data",
+      "profile_registered_as": "game_glossary",
+      "owner_role": "channel-data-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.game_glossary",
+        "live_authority": [
+          "docs/pipeline/20-selection.md",
+          "src/autoslice/game_context.py"
+        ],
+        "asset": "assets/lidousha/game_glossary.v1.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/glossary.txt",
+      "kind": "file",
+      "category": "active_channel_data",
+      "profile_registered_as": "glossary",
+      "owner_role": "channel-data-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.glossary",
+        "live_authority": [
+          "docs/pipeline/41-semantic-repair.md",
+          "src/autoslice/term_authority.py"
+        ],
+        "asset": "assets/lidousha/glossary.txt"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/intro",
+      "kind": "directory",
+      "category": "active_style_reference",
+      "profile_registered_as": null,
+      "owner_role": "editorial-style-maintainer",
+      "current_source": {
+        "registration": "top-level asset inventory",
+        "live_authority": [
+          "docs/pipeline/README.md"
+        ],
+        "asset": "assets/lidousha/intro"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/intro/branding_intro.v1.json",
+      "kind": "file",
+      "category": "active_style_reference",
+      "profile_registered_as": "branding_intro_manifest",
+      "owner_role": "editorial-style-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.branding_intro_manifest",
+        "live_authority": [
+          "docs/pipeline/README.md"
+        ],
+        "asset": "assets/lidousha/intro/branding_intro.v1.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/known_songs.json",
+      "kind": "file",
+      "category": "active_channel_data",
+      "profile_registered_as": "known_songs",
+      "owner_role": "channel-data-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.known_songs",
+        "live_authority": [
+          "docs/pipeline/40-subtitle-text.md",
+          "docs/pipeline/41-semantic-repair.md"
+        ],
+        "asset": "assets/lidousha/known_songs.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/manual_title_overrides.v1.json",
+      "kind": "file",
+      "category": "active_style_reference",
+      "profile_registered_as": "manual_title_overrides",
+      "owner_role": "editorial-style-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.manual_title_overrides",
+        "live_authority": [
+          "docs/pipeline/60-title.md",
+          "src/autoslice/title_policy.py",
+          "src/autoslice/upload_tag_policy.py"
+        ],
+        "asset": "assets/lidousha/manual_title_overrides.v1.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/persona.md",
+      "kind": "file",
+      "category": "active_style_reference",
+      "profile_registered_as": "persona",
+      "owner_role": "editorial-style-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.persona",
+        "live_authority": [
+          "docs/pipeline/70-cover.md"
+        ],
+        "asset": "assets/lidousha/persona.md"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/psplive_roster.v1.md",
+      "kind": "file",
+      "category": "active_channel_data",
+      "profile_registered_as": "psplive_roster",
+      "owner_role": "channel-data-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.psplive_roster",
+        "live_authority": [
+          "docs/pipeline/41-semantic-repair.md"
+        ],
+        "asset": "assets/lidousha/psplive_roster.v1.md"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/psplive_roster_sources.v1.json",
+      "kind": "file",
+      "category": "active_channel_data",
+      "profile_registered_as": "psplive_roster_sources",
+      "owner_role": "channel-data-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.psplive_roster_sources",
+        "live_authority": [
+          "docs/pipeline/41-semantic-repair.md"
+        ],
+        "asset": "assets/lidousha/psplive_roster_sources.v1.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/related_entity_seeds.json",
+      "kind": "file",
+      "category": "active_channel_data",
+      "profile_registered_as": "related_entity_seeds",
+      "owner_role": "channel-data-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.related_entity_seeds",
+        "live_authority": [
+          "docs/pipeline/41-semantic-repair.md"
+        ],
+        "asset": "assets/lidousha/related_entity_seeds.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/selection_score_calibration.v1.json",
+      "kind": "file",
+      "category": "active_channel_data",
+      "profile_registered_as": "selection_score_calibration",
+      "owner_role": "channel-data-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.selection_score_calibration",
+        "live_authority": [
+          "docs/pipeline/20-selection.md",
+          "src/autoslice/selection_scorecard.py"
+        ],
+        "asset": "assets/lidousha/selection_score_calibration.v1.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/session_relation_ledger.v1.json",
+      "kind": "file",
+      "category": "active_channel_data",
+      "profile_registered_as": "session_relation_ledger",
+      "owner_role": "channel-data-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.session_relation_ledger",
+        "live_authority": [
+          "docs/pipeline/20-selection.md",
+          "docs/pipeline/41-semantic-repair.md"
+        ],
+        "asset": "assets/lidousha/session_relation_ledger.v1.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/slice_selection_metric.md",
+      "kind": "file",
+      "category": "active_style_reference",
+      "profile_registered_as": "slice_selection_metric",
+      "owner_role": "editorial-style-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.slice_selection_metric",
+        "live_authority": [
+          "docs/pipeline/20-selection.md",
+          "src/autoslice/selection_scorecard.py"
+        ],
+        "asset": "assets/lidousha/slice_selection_metric.md"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/speech_memory_ledger.v1.json",
+      "kind": "file",
+      "category": "active_channel_data",
+      "profile_registered_as": "speech_memory_ledger",
+      "owner_role": "channel-data-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.speech_memory_ledger",
+        "live_authority": [
+          "docs/pipeline/20-selection.md",
+          "docs/pipeline/41-semantic-repair.md"
+        ],
+        "asset": "assets/lidousha/speech_memory_ledger.v1.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/streamer_registry.v1.json",
+      "kind": "file",
+      "category": "active_channel_data",
+      "profile_registered_as": "streamer_registry",
+      "owner_role": "channel-data-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.streamer_registry",
+        "live_authority": [
+          "docs/pipeline/41-semantic-repair.md"
+        ],
+        "asset": "assets/lidousha/streamer_registry.v1.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/streamer_registry_sources.v1.json",
+      "kind": "file",
+      "category": "active_channel_data",
+      "profile_registered_as": "streamer_registry_sources",
+      "owner_role": "channel-data-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.streamer_registry_sources",
+        "live_authority": [
+          "docs/pipeline/41-semantic-repair.md"
+        ],
+        "asset": "assets/lidousha/streamer_registry_sources.v1.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/subtitle_correction_principles.md",
+      "kind": "file",
+      "category": "active_style_reference",
+      "profile_registered_as": "subtitle_correction_principles",
+      "owner_role": "editorial-style-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.subtitle_correction_principles",
+        "live_authority": [
+          "docs/pipeline/40-subtitle-text.md",
+          "docs/pipeline/41-semantic-repair.md"
+        ],
+        "asset": "assets/lidousha/subtitle_correction_principles.md"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/subtitle_truth_ledger.v1.json",
+      "kind": "file",
+      "category": "active_channel_data",
+      "profile_registered_as": "subtitle_truth_ledger",
+      "owner_role": "channel-data-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.subtitle_truth_ledger",
+        "live_authority": [
+          "docs/pipeline/40-subtitle-text.md",
+          "docs/pipeline/41-semantic-repair.md"
+        ],
+        "asset": "assets/lidousha/subtitle_truth_ledger.v1.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/timely_term_seeds.json",
+      "kind": "file",
+      "category": "active_channel_data",
+      "profile_registered_as": "timely_term_seeds",
+      "owner_role": "channel-data-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.timely_term_seeds",
+        "live_authority": [
+          "docs/pipeline/40-subtitle-text.md",
+          "docs/pipeline/41-semantic-repair.md"
+        ],
+        "asset": "assets/lidousha/timely_term_seeds.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/timely_term_sources.json",
+      "kind": "file",
+      "category": "active_channel_data",
+      "profile_registered_as": "timely_term_sources",
+      "owner_role": "channel-data-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.timely_term_sources",
+        "live_authority": [
+          "docs/pipeline/40-subtitle-text.md",
+          "docs/pipeline/41-semantic-repair.md"
+        ],
+        "asset": "assets/lidousha/timely_term_sources.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/timely_terms.json",
+      "kind": "file",
+      "category": "active_channel_data",
+      "profile_registered_as": "timely_terms",
+      "owner_role": "channel-data-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.timely_terms",
+        "live_authority": [
+          "docs/pipeline/40-subtitle-text.md",
+          "docs/pipeline/41-semantic-repair.md"
+        ],
+        "asset": "assets/lidousha/timely_terms.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/title_policy.json",
+      "kind": "file",
+      "category": "active_style_reference",
+      "profile_registered_as": "title_policy",
+      "owner_role": "editorial-style-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.title_policy",
+        "live_authority": [
+          "docs/pipeline/60-title.md",
+          "src/autoslice/title_policy.py",
+          "src/autoslice/upload_tag_policy.py"
+        ],
+        "asset": "assets/lidousha/title_policy.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/title_style.md",
+      "kind": "file",
+      "category": "active_style_reference",
+      "profile_registered_as": "title_style",
+      "owner_role": "editorial-style-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.title_style",
+        "live_authority": [
+          "docs/pipeline/60-title.md",
+          "src/autoslice/title_policy.py",
+          "src/autoslice/upload_tag_policy.py"
+        ],
+        "asset": "assets/lidousha/title_style.md"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/topic_entity_graph.json",
+      "kind": "file",
+      "category": "active_channel_data",
+      "profile_registered_as": "topic_entity_graph",
+      "owner_role": "channel-data-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.topic_entity_graph",
+        "live_authority": [
+          "docs/pipeline/20-selection.md",
+          "docs/pipeline/41-semantic-repair.md"
+        ],
+        "asset": "assets/lidousha/topic_entity_graph.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    },
+    {
+      "path": "assets/lidousha/upload_tag_policy.json",
+      "kind": "file",
+      "category": "active_style_reference",
+      "profile_registered_as": "upload_tag_policy",
+      "owner_role": "editorial-style-maintainer",
+      "current_source": {
+        "registration": "profiles/lidousha/profile.json assets.files.upload_tag_policy",
+        "live_authority": [
+          "docs/pipeline/60-title.md",
+          "src/autoslice/title_policy.py",
+          "src/autoslice/upload_tag_policy.py"
+        ],
+        "asset": "assets/lidousha/upload_tag_policy.json"
+      },
+      "public_export_disposition": "public_with_path_filter"
+    }
+  ]
+}

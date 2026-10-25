@@ -130,14 +130,9 @@ def _revive_songs(
             row["status"] = "blocked"
             row.pop("song_terminal_disposition", None)
             row.pop("decision", None)
-            # 必须清空 reason_codes，否则复活当场作废：
-            # requeue_recoverable_songs（delivery_recovery.py:1180-1192）在检查
-            # status 之前先调用 project_terminal_song_disposition，后者只看
-            # status ∈ {blocked,failed} + rc==0 + reason_codes 里还有
-            # SONG_DETERMINISTIC_PROOF_REJECTION_CODES，就会立刻把这行重新铸成
-            # candidate_rejected —— 实测复活后第一次 tick 就被打回。
-            # 旧判据不是被抹掉，是被"撤回"：完整原文保存在 song_revivals 审计块
-            # 的 previous_reason_codes 里，等这次新的尝试自己重新给出判据。
+            # Withdraw old reasons into the audit below. A still-active typed
+            # performer veto would otherwise terminalize this explicitly
+            # revived candidate again before its fresh evidence is consumed.
             row["reason_codes"] = []
             row["song_pipeline_fingerprint"] = (
                 SONG_REVIVAL_FINGERPRINT_PREFIX + fix_commit

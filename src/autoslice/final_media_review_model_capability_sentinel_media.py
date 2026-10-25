@@ -11,7 +11,7 @@ sentinel runner; this module never discovers or downloads binaries.
 """
 from __future__ import annotations
 
-import hashlib
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import json
 import math
 from pathlib import Path
@@ -64,11 +64,8 @@ class FinalMediaReviewSentinelMediaError(ValueError):
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return digest
 
 
 def _file_binding(path: Path) -> dict[str, object]:

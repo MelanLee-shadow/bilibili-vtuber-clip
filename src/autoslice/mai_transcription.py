@@ -19,6 +19,11 @@ import urllib.parse
 import urllib.request
 from typing import Any, Callable, Mapping
 
+from src.autoslice.native_audio_runtime import (
+    NativeAudioRuntimeError,
+    resolve_native_audio_environment,
+)
+
 
 MAI_MODEL = "MAI-Transcribe-2"
 MAI_API_VERSION = "2025-10-15"
@@ -68,6 +73,21 @@ def _error(
     metadata: Mapping[str, Any] | None = None,
 ) -> MaiTranscriptionError:
     return MaiTranscriptionError(reason_code, message, metadata=metadata)
+
+
+def _runtime_environment(
+    environment: Mapping[str, str] | None = None,
+) -> Mapping[str, str]:
+    ambient = os.environ if environment is None else environment
+    try:
+        configured = resolve_native_audio_environment("mai", environ=ambient)
+    except NativeAudioRuntimeError as exc:
+        raise _error(
+            f"MAI_{exc.reason_code}",
+            "MAI native runtime configuration is unavailable",
+            metadata={"runtime_configured": True, "runtime_reason": exc.reason_code},
+        ) from None
+    return ambient if configured is None else configured
 
 
 def _read_api_key(environ: Mapping[str, str]) -> str:
@@ -661,11 +681,13 @@ def _fetch_payload(
     audio_path: AudioInput,
     *,
     before_request: Callable[[], None] | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, Any], Any]:
     audio, filename, mime = _read_audio(audio_path)
     input_audio_sha256 = hashlib.sha256(audio).hexdigest()
-    endpoint = _endpoint_url(os.environ)
-    api_key = _read_api_key(os.environ)
+    provider_environment = _runtime_environment(environment)
+    endpoint = _endpoint_url(provider_environment)
+    api_key = _read_api_key(provider_environment)
     if before_request is not None:
         before_request()
     started = time.monotonic()

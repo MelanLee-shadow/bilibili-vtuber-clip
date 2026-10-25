@@ -1,0 +1,22 @@
+{
+ "schema": "argon-frozen-provider-refusal.v1",
+ "warning": "Real retained provider bytes from OCI3 (read-only copy, no credentials). Inference stubs in tests stay synthetic.",
+ "observed_utc": "2026-10-21T01:49:31Z",
+ "source": "/opt/bilive/autoslice/cache/argon-consumer/9e3016f84d1b5ef786915007b23b1406e14d82e2a85a1bf2f8e942d7e640e4de/batch/attempt-1/engine/54bf1964b26705620f516c403e06fb752d3db0707e03c88507c33c85d71953f3/blobs/47b64e5fa6fa3d963f6a2034dcadab8958b60afa6126cb594e7927904c6a515d.bin",
+ "request": {
+  "method": "POST",
+  "path": "models/gemini-4-argon:batchGenerateContent",
+  "route": {
+   "accepted_key_ordinal": 1,
+   "accepted_key_tier": "free",
+   "configured_key_count": 3,
+   "paid_backup_policy": null
+  }
+ },
+ "outcome": {
+  "http_status": 400,
+  "response_complete": true
+ },
+ "body": "{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Precondition check failed.\",\n    \"status\": \"FAILED_PRECONDITION\"\n  }\n}\n",
+ "raw_sha256": "47b64e5fa6fa3d963f6a2034dcadab8958b60afa6126cb594e7927904c6a515d"
+}

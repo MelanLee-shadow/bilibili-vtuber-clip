@@ -18,10 +18,13 @@ scp -q "$ROOT/scripts/silero_vad_spans.py" "$HOST:/opt/bilive/vad/silero_vad_spa
 # 否则 runner 用旧资产跑（亲历漂移）。以 profile 清单为边界
 # 同步完整 manifest + asset tree，避免每加一个独立资产都漏改这份脚本。
 # tar 只覆盖 repo 内的 tracked/staged tree，不会删除或触碰 repo 外的片头媒体。
-if ssh "$HOST" "test -d /opt/bilive/autoslice/repo/assets/lidousha"; then
+BOOTSTRAP="$(python3 "$ROOT/src/autoslice/deployed_code_root.py" --bootstrap)"
+REMOTE_REPO="$(ssh "$HOST" python3 -c "$(printf '%q' "$BOOTSTRAP
+print(repo)")")"
+if ssh "$HOST" "test -d $(printf '%q' "$REMOTE_REPO/assets/lidousha")"; then
   python3 "$ROOT/scripts/validate_channel_profile.py" --profile lidousha >/dev/null
   tar -C "$ROOT" -cf - assets/lidousha profiles/lidousha \
-    | ssh "$HOST" "tar -C /opt/bilive/autoslice/repo -xf -"
+    | ssh "$HOST" "tar -C $(printf '%q' "$REMOTE_REPO") -xf -"
   echo "runner profile manifest + complete asset tree synced"
 fi
 echo "synced glossary + subtitle principles + slice metric + vad script to $HOST"

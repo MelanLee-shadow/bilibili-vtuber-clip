@@ -2483,3 +2483,26 @@ def test_terminal_backfill_does_not_wake_local_only_review_contract(
     )
 
     poststage.backfill_terminal_review_packages(runner)
+
+
+def test_tick_consumes_ready_queue_before_slow_production_and_only_once(tmp_path, monkeypatch):
+    _setup_runtime(tmp_path, monkeypatch, {'status': 'processing', 'picks': []})
+    monkeypatch.setenv('AUTOSLICE_AUTHORIZED_UPLOAD_QUEUE_ENABLED', '1')
+    monkeypatch.setattr(runner, 'cjk_font_present', lambda: True)
+    monkeypatch.setattr(runner, 'source_health_error', lambda: None)
+    monkeypatch.setattr(runner, 'recorder_live_status', lambda: False)
+    monkeypatch.setattr(runner, 'live_determination_basis', lambda _live: {})
+    monkeypatch.setattr(runner, 'live_hold_recheck', lambda: False)
+    monkeypatch.setattr(runner, 'list_dates', lambda: [DATE])
+    monkeypatch.setattr(runner.review_package_poststage, 'backfill_terminal_review_packages', lambda _runner: None)
+    monkeypatch.setattr(runner.review_package_poststage, 'materialize_production_review_packages', lambda *_a: None)
+    calls = []
+    monkeypatch.setattr(runner.publication_queue, 'consume_ready_publication_queue',
+                        lambda **_kwargs: calls.append('publication') or {'status': 'NO_READY_ACTION'})
+    monkeypatch.setattr(runner, 'process_date', lambda date: calls.append(date))
+    assert runner.tick() == 0
+    assert calls == ['publication', DATE]
+    # Repair protection must stop both consumers on the normal entry.
+    (runner.BASE / 'DISABLED').write_text('repair protection')
+    assert runner.tick() == 0
+    assert calls == ['publication', DATE]

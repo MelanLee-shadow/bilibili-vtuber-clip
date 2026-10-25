@@ -37,7 +37,7 @@ def _aggregate(tmp_path, monkeypatch, *, hook="", rows=(), topics=(), reply=KEEP
             return '{"cues":[{"n":1,"text":"为什么TA先到"}]}' if stage == 0 else reply
 
         call.cpa_cache_identity = {
-            "transport": "cpa_command", "models": ["gpt-6-sol"], "effort": "low",
+            "transport": "cpa_command", "models": ["gpt-6.1-sol"], "effort": "low",
         }
         return call
 
@@ -67,7 +67,7 @@ def test_real_aggregate_forwards_existing_hook_chat_and_topic_to_pronouns(tmp_pa
     assert "不是逐字真值" in prompt
     assert "不能照抄弹幕中的他/她" in prompt
     assert len(calls) == 2
-    assert all("gpt-6-sol" in c.command_template for c in configs)
+    assert all("gpt-6.1-sol" in c.command_template for c in configs)
     assert all(c.command_template.endswith("low") for c in configs)
     assert output == SRT.replace("TA", "她")
     records = [json.loads(p.read_text()) for p in media.with_suffix(".pronoun-trace").glob("*.json")]
@@ -105,14 +105,13 @@ def test_context_does_not_make_stale_occurrence_valid(tmp_path, monkeypatch):
     assert exc.value.reason_code == "CPA_PRONOUN_INVALID_OUTPUT"
 
 
-def test_warm_main_cache_does_not_skip_contextual_pronoun_calls(tmp_path, monkeypatch):
+def test_warm_pronoun_cache_binds_complete_context(tmp_path, monkeypatch):
     run, media, calls, _ = _aggregate(tmp_path, monkeypatch, hook="两位女主播的对话。")
     assert run(media) == run(media) == SRT
-    assert [stage for stage, _ in calls] == [0, 1, 1]
-    assert calls[1][1] == calls[2][1]
+    assert [stage for stage, _ in calls] == [0, 1]
     assert "两位女主播的对话" in calls[1][1]
     receipt = json.loads(media.with_suffix(".transcription-reuse.json").read_text())
-    assert receipt["bcut"]["status"] == receipt["cpa"]["status"] == "HIT"
+    assert receipt["bcut"]["status"] == receipt["cpa"]["status"] == receipt["pronoun"]["status"] == "HIT"
 
 
 def test_context_is_lossless_data_and_does_not_silently_truncate():

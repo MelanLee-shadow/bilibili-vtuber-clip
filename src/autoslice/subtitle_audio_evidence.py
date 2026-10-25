@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import nullcontext
 import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.audio_cache_io import atomic_write
+from .review_errors import (PROGRAM_ERROR, ContractRejection, ProviderFailure, provider_boundary,
+                            program_error_boundary, records_program_errors, contract_boundary)
 
 
 CONTRACT = "candidate-free-native-secondary-v1"
@@ -61,7 +63,7 @@ def additive_base(
         result = transcribe(audio, provider="bcut", log=lambda *_: None)
         if result.get("provider") != "bcut":
             raise ValueError("BCUT base provider mismatch")
-        bcut_path.write_text(
+        atomic_write(bcut_path, (
             json.dumps(
                 {
                     "audio_sha256": audio_sha,
@@ -72,9 +74,8 @@ def additive_base(
                 ensure_ascii=False,
                 indent=2,
             )
-            + "\n",
-            encoding="utf-8",
-        )
+            + "\n"
+        ).encode("utf-8"))
         return result, False
 
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -118,13 +119,16 @@ def observe_secondary(
     crop_end_ms=None,
     exact_cue: bool = False,
     persist_before_dispatch: Callable[[], None] | None = None,
+    budget_transaction: Callable | None = None,
+    publish_evidence: Callable[[], None] | None = None,
+    last_native_admission: bool = False,
 ):
     from src.autoslice.supplement_audio_budget import get_budget
 
     budget = get_budget(supplement_source) if supplement_source is not None else None
     if persist_before_dispatch is not None and budget is None:
         raise ValueError("durable dispatch requires an active source budget")
-    with budget.lock if budget is not None else nullcontext():
+    try:
         return _observe_secondary(
             audio,
             media_path=media_path,
@@ -135,7 +139,14 @@ def observe_secondary(
             crop_end_ms=crop_end_ms,
             exact_cue=exact_cue,
             persist_before_dispatch=persist_before_dispatch,
+            budget_transaction=budget_transaction,
+            publish_evidence=publish_evidence,
+            last_native_admission=last_native_admission,
         )
+    finally:
+        if budget is not None and budget.enforce_limits and last_native_admission:
+            from src.autoslice.exact_review_parallel import finish_native_admission
+            finish_native_admission()
 
 
 def _safe_http_status(exc: BaseException) -> int | None:
@@ -151,15 +162,14 @@ def _finish_attempt(
     status: str,
     reason_code: str | None = None,
     http_status: int | None = None,
+    budget_transaction: Callable | None = None,
 ) -> None:
     if budget is None or attempt_id is None:
         return
-    budget.finish_attempt(
-        attempt_id,
-        status=status,
-        reason_code=reason_code,
-        http_status=http_status,
-    )
+    with budget_transaction() if budget_transaction else budget.lock:
+        budget.finish_attempt(
+            attempt_id, status=status, reason_code=reason_code, http_status=http_status,
+        )
 
 
 def _cached_secondary(
@@ -223,6 +233,7 @@ def _moss_unlocated_evidence(
     }
 
 
+@records_program_errors
 def _observe_secondary(
     audio: bytes,
     *,
@@ -234,6 +245,9 @@ def _observe_secondary(
     crop_end_ms,
     exact_cue=False,
     persist_before_dispatch: Callable[[], None] | None = None,
+    budget_transaction: Callable | None = None,
+    publish_evidence: Callable[[], None] | None = None,
+    last_native_admission: bool = False,
 ):
     """Reuse only this provider's successful, identically configured call."""
 
@@ -260,12 +274,10 @@ def _observe_secondary(
     cached = _cached_secondary(path=path, binding=binding, exact_cue=exact_cue)
     if cached is not None:
         if budget is not None:
-            budget.record_cache_hit(
-                provider=provider,
-                model=model,
-                start_ms=crop_start_ms,
-                end_ms=crop_end_ms,
-            )
+            with budget_transaction() if budget_transaction else budget.lock:
+                budget.record_cache_hit(
+                    provider=provider, model=model, start_ms=crop_start_ms, end_ms=crop_end_ms,
+                )
         return {**cached, "served_from_cache": True}
 
     attempt_id: int | None = None
@@ -278,55 +290,45 @@ def _observe_secondary(
         nonlocal attempt_id, reserved_attempt_id
         if reserved_attempt_id is not None:
             raise RuntimeError("secondary before_request invoked more than once")
-        reserved_attempt_id = budget.consume(
-            provider=provider,
-            model=model,
-            start_ms=crop_start_ms,
-            end_ms=crop_end_ms,
-            # A canonical recovery gets at most three total dispatches for this
-            # provider/window; cache recovery above remains free even at the cap.
-            max_attempts_per_window=3 if persist_before_dispatch is not None else None,
-        )
-        # Commit the pending reservation before the provider may send HTTP.
-        # A persistence error leaves it pending, not a fabricated provider FAIL.
-        if persist_before_dispatch is not None:
-            persist_before_dispatch()
+        # Only reservation/counters and their durable commit share a transaction.
+        # The provider resumes after this scope has released every local lock.
+        with budget_transaction() if budget_transaction else budget.lock:
+            reserved_attempt_id = budget.consume(
+                provider=provider, model=model, start_ms=crop_start_ms, end_ms=crop_end_ms,
+                max_attempts_per_window=3 if persist_before_dispatch is not None else None,
+                last_native_admission=last_native_admission,
+            )
+            if persist_before_dispatch is not None:
+                persist_before_dispatch()
+        # Failed durable publication stays pending, never a fabricated FAIL.
         attempt_id = reserved_attempt_id
 
     kwargs = {"before_request": charge_request} if budget is not None else {}
-    try:
-        evidence = transcribe_evidence(
-            audio,
-            provider=provider,
-            duration_ms=duration_ms,
-            **kwargs,
-        )
-    except DiarizedTranscriptionError as exc:
-        evidence = _moss_unlocated_evidence(
-            exc,
-            exact_cue=exact_cue,
-            provider=provider,
-        )
-        if evidence is None:
-            _finish_attempt(
-                budget,
-                attempt_id,
-                status="FAILED",
-                reason_code=exc.reason_code,
-                http_status=_safe_http_status(exc),
-            )
+    def finish_program_error(_record):
+        _finish_attempt(budget, attempt_id, status="FAILED", reason_code=PROGRAM_ERROR,
+                        budget_transaction=budget_transaction)
+
+    with program_error_boundary("secondary.provider", on_error=finish_program_error):
+        try:
+            with provider_boundary(provider):
+                evidence = transcribe_evidence(
+                    audio, provider=provider, duration_ms=duration_ms, **kwargs,
+                )
+        except ProviderFailure as exc:
+            evidence = _moss_unlocated_evidence(exc, exact_cue=exact_cue, provider=provider)
+            if evidence is None:
+                _finish_attempt(
+                    budget, attempt_id, status="FAILED", reason_code=exc.reason_code,
+                    http_status=_safe_http_status(exc), budget_transaction=budget_transaction,
+                )
+                raise
+            terminal_status = "TEXT_UNLOCATED"
+            terminal_reason = exc.reason_code
+            terminal_http_status = _safe_http_status(exc)
+        except ContractRejection as exc:
+            _finish_attempt(budget, attempt_id, status="FAILED", reason_code=exc.reason_code,
+                            budget_transaction=budget_transaction)
             raise
-        terminal_status = "TEXT_UNLOCATED"
-        terminal_reason = exc.reason_code
-        terminal_http_status = _safe_http_status(exc)
-    except Exception:
-        _finish_attempt(
-            budget,
-            attempt_id,
-            status="FAILED",
-            reason_code="SECONDARY_PROVIDER_CALL_FAILED",
-        )
-        raise
 
     if (
         evidence.get("provider") != provider
@@ -338,36 +340,44 @@ def _observe_secondary(
             attempt_id,
             status="RESPONSE_REJECTED",
             reason_code="SECONDARY_RESPONSE_SOURCE_BINDING_MISMATCH",
+            budget_transaction=budget_transaction,
         )
-        raise ValueError("secondary response source binding mismatch")
+        raise ContractRejection("SECONDARY_RESPONSE_SOURCE_BINDING_MISMATCH",
+                                "secondary response source binding mismatch")
 
     evidence = {
         **evidence,
         "candidate_exposure": "none",
         "contract": CONTRACT,
     }
-    try:
-        path.write_text(
-            json.dumps(
-                {
-                    "binding": binding,
-                    "evidence": evidence,
-                    "evidence_sha256": _digest(evidence),
-                },
-                ensure_ascii=False,
-                indent=2,
+    with program_error_boundary("secondary.persistence", on_error=finish_program_error):
+        try:
+            with contract_boundary():
+                atomic_write(path, (
+                    json.dumps(
+                        {
+                            "binding": binding,
+                            "evidence": evidence,
+                            "evidence_sha256": _digest(evidence),
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                    + "\n"
+                ).encode("utf-8"))
+                # Preserve the complete raw cache even if terminal budget persistence
+                # fails next. Recovery must not buy the returned provider answer again.
+                if publish_evidence is not None:
+                    publish_evidence()
+        except (ContractRejection, ProviderFailure):
+            _finish_attempt(
+                budget,
+                attempt_id,
+                status="FAILED",
+                reason_code="SECONDARY_EVIDENCE_PERSIST_FAILED",
+                budget_transaction=budget_transaction,
             )
-            + "\n",
-            encoding="utf-8",
-        )
-    except OSError:
-        _finish_attempt(
-            budget,
-            attempt_id,
-            status="FAILED",
-            reason_code="SECONDARY_EVIDENCE_PERSIST_FAILED",
-        )
-        raise
+            raise
 
     _finish_attempt(
         budget,
@@ -375,6 +385,7 @@ def _observe_secondary(
         status=terminal_status,
         reason_code=terminal_reason,
         http_status=terminal_http_status,
+        budget_transaction=budget_transaction,
     )
     return {**evidence, "served_from_cache": False}
 
@@ -440,6 +451,28 @@ def evidence_table(bcut_srt: str, evidence: dict) -> dict:
                 "interval_only" if len(overlaps) != 1 else "single_cue_overlap"
             ),
         }
+        # Full containment is deliberately required for cue_spans. Keep the
+        # remaining native words visible too, without assigning a boundary
+        # crossing word to either cue or inventing timing for interval text.
+        if segment.get("words_available"):
+            unassigned = []
+            for word in segment.get("words") or []:
+                word_start, word_end = word["start_ms"], word["end_ms"]
+                if not any(
+                    cue.start_ms <= word_start < word_end <= cue.end_ms
+                    for cue in cues
+                ):
+                    unassigned.append({
+                        "text": word["text"],
+                        "start_ms": word_start,
+                        "end_ms": word_end,
+                        "overlapping_cues": [
+                            number for number, cue in enumerate(cues, 1)
+                            if max(word_start, cue.start_ms) < min(word_end, cue.end_ms)
+                        ],
+                    })
+            if unassigned:
+                row["unassigned_words"] = unassigned
         rows.append(row)
         if not overlaps:
             gaps.append(

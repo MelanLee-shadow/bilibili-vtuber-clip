@@ -20,6 +20,7 @@ search from O(windows x references) forward passes to O(windows).
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import argparse
 import hashlib
 import json
@@ -93,19 +94,17 @@ class HostVocalProofError(ValueError):
 
 
 def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return digest
 
 
-def _sha256_directory(path: Path) -> str:
+def _sha256_directory(path: Path, *, fresh: bool = False) -> str:
     """Hash a model tree by relative path and file content.
 
     The tree digest is independent of absolute deployment location.  Symlinked
     files are hashed by their resolved content; broken links and empty model
-    directories are rejected.
+    directories are rejected. Live runtime revalidation requests ``fresh`` so
+    mutable model bytes cannot reuse an immutable cold-read digest.
     """
 
     root = path.resolve(strict=True)
@@ -119,7 +118,7 @@ def _sha256_directory(path: Path) -> str:
         relative = item.relative_to(root).as_posix().encode("utf-8")
         digest.update(len(relative).to_bytes(8, "big"))
         digest.update(relative)
-        file_digest = bytes.fromhex(_sha256_file(item))
+        file_digest = bytes.fromhex(_evidence_file_sha256(item, fresh=fresh))
         digest.update(len(file_digest).to_bytes(8, "big"))
         digest.update(file_digest)
     return digest.hexdigest()
@@ -264,8 +263,36 @@ def _checkpoint_position(first_ms: int, last_ms: int, fraction: float) -> tuple[
     return center_ms, start_ms, start_ms + CHECKPOINT_WINDOW_MS
 
 
+def _contiguous_singing_blocks(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Join short sung rows only where their verified intervals touch exactly."""
+
+    blocks: list[dict[str, object]] = []
+    pending: list[dict[str, object]] = []
+    for row in rows:
+        if pending and (
+            int(row["alignment_index"]) != int(pending[-1]["alignment_index"]) + 1
+            or row["cue_start_ms"] != pending[-1]["cue_end_ms"]
+        ):
+            pending = []
+        pending.append(row)
+        if int(row["cue_end_ms"]) - int(pending[0]["cue_start_ms"]) < MIN_LYRIC_CUE_MS:
+            continue
+        block = dict(pending[0])
+        if len(pending) > 1:
+            block.update(
+                cue_end_ms=row["cue_end_ms"],
+                lrc_text="\n".join(str(member["lrc_text"]) for member in pending),
+                # Keep every original observation, rather than relabeling a
+                # multi-line interval as one long canonical lyric.
+                lyric_members=[dict(member) for member in pending],
+            )
+        blocks.append(block)
+        pending = []
+    return blocks
+
+
 def _selected_lyric_rows(alignment: Mapping[str, object]) -> list[dict[str, object]]:
-    """Select seven distinct, actually aligned lyric rows across the song.
+    """Select seven distinct, actually aligned singing intervals across the song.
 
     Sampling arbitrary wall-clock fractions can land on an instrumental gap or
     on unrelated speech over a playing record.  The checkpoints must instead
@@ -282,7 +309,7 @@ def _selected_lyric_rows(alignment: Mapping[str, object]) -> list[dict[str, obje
     lyrics = raw_lyrics if isinstance(raw_lyrics, list) else []
     first_lyric_ms = _require_int(alignment, "first_lyric_start_ms", label="lyrics_alignment_report")
     last_lyric_ms = _require_int(alignment, "last_lyric_end_ms", label="lyrics_alignment_report")
-    matched: list[dict[str, object]] = []
+    singing: list[dict[str, object]] = []
     previous_start = -1
     seen_cue_ids: set[str] = set()
     for alignment_index, raw_row in enumerate(raw_alignment):
@@ -321,9 +348,7 @@ def _selected_lyric_rows(alignment: Mapping[str, object]) -> list[dict[str, obje
             raise HostVocalProofError(
                 f"alignment[{alignment_index}] is not a structurally READY host lyric row"
             )
-        if end_ms - start_ms < MIN_LYRIC_CUE_MS:
-            continue
-        matched.append(
+        singing.append(
             {
                 "alignment_index": alignment_index,
                 "matched_cue_id": cue_id,
@@ -334,9 +359,19 @@ def _selected_lyric_rows(alignment: Mapping[str, object]) -> list[dict[str, obje
                 **assertions,
             }
         )
+    matched = [
+        row for row in singing
+        if int(row["cue_end_ms"]) - int(row["cue_start_ms"]) >= MIN_LYRIC_CUE_MS
+    ]
+    if len(matched) < len(CHECKPOINT_FRACTIONS):
+        # Preserve existing long-line selection when available. Short English
+        # or program lyrics can instead supply continuous verified singing;
+        # spoken/unmatched rows and any gap break a block, without lowering
+        # the duration, identity thresholds, or seven-point distribution gate.
+        matched = _contiguous_singing_blocks(singing)
     if len(matched) < len(CHECKPOINT_FRACTIONS):
         raise HostVocalProofError(
-            f"lyrics alignment report needs at least {len(CHECKPOINT_FRACTIONS)} matched lyric rows for host-vocal proof"
+            f"lyrics alignment report needs at least {len(CHECKPOINT_FRACTIONS)} matched singing intervals for host-vocal proof"
         )
     selected = [matched[min(len(matched) - 1, int(fraction * len(matched)))] for fraction in CHECKPOINT_FRACTIONS]
     if len({int(row["alignment_index"]) for row in selected}) != len(CHECKPOINT_FRACTIONS):
@@ -838,6 +873,7 @@ def generate_host_vocal_proof(
                 "lrc_text": lyric_row["lrc_text"],
                 "lyric_cue_start_ms": lyric_row["cue_start_ms"],
                 "lyric_cue_end_ms": lyric_row["cue_end_ms"],
+                **({"lyric_members": lyric_row["lyric_members"]} if "lyric_members" in lyric_row else {}),
                 "lyric_vocal_subject": lyric_row["lyric_vocal_subject"],
                 "lidousha_role": lyric_row["lidousha_role"],
                 "same_live_vocal_source_as_lidousha": lyric_row[
@@ -987,9 +1023,6 @@ def _verify_host_vocal_proof_claim(
         binding = proof.get(field)
         if not isinstance(binding, Mapping):
             raise HostVocalProofError(f"host vocal proof {field} binding is missing")
-        bound_path = Path(_require_string(binding, "path", label=field)).resolve(strict=True)
-        if bound_path != expected_path:
-            raise HostVocalProofError(f"host vocal proof {field} path mismatch")
         declared_sha = _normalize_sha256(binding.get(sha_field), label=f"host vocal proof {field}")
         if _sha256_file(expected_path) != declared_sha:
             raise HostVocalProofError(f"host vocal proof {field} sha256 mismatch")
@@ -1129,6 +1162,7 @@ def _verify_host_vocal_proof_claim(
             or raw_checkpoint.get("lrc_text") != lyric_row["lrc_text"]
             or raw_checkpoint.get("lyric_cue_start_ms") != lyric_row["cue_start_ms"]
             or raw_checkpoint.get("lyric_cue_end_ms") != lyric_row["cue_end_ms"]
+            or raw_checkpoint.get("lyric_members") != lyric_row.get("lyric_members")
             or raw_checkpoint.get("lyric_vocal_subject") != lyric_row["lyric_vocal_subject"]
             or raw_checkpoint.get("lidousha_role") != lyric_row["lidousha_role"]
             or raw_checkpoint.get("same_live_vocal_source_as_lidousha")

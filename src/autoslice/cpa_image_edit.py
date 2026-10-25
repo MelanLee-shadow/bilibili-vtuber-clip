@@ -14,6 +14,7 @@ import time
 import urllib.error
 import urllib.request
 from typing import Callable, Mapping, Sequence
+from src.autoslice.cpa_runtime import observed_cpa_request
 
 
 _TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
@@ -86,7 +87,9 @@ def service_observation(
         "schema_version": "image-edit-service-observation.v1",
         "requested_model": requested_model,
         "requested_parameters": {"model": requested_model, "size": requested_size},
-        "reported_model": _safe_token(payload.get("model")),
+        # Preserve an explicit empty report rather than conflating it with omission.
+        "reported_model": "" if payload.get("model") == "" else _safe_token(payload.get("model")),
+        "reported_model_present": "model" in payload,
         "upstream_identity_verified": False,
         "request_id": request_id,
         "reported_quality": quality
@@ -155,6 +158,7 @@ def perform_image_edit(
     base_url: str,
     api_key: str,
     reference_path: Path,
+    style_reference_paths: Sequence[Path] = (),
     output_path: Path,
     prompt: str,
     request_path: Path,
@@ -183,24 +187,99 @@ def perform_image_edit(
         }
     request_attempts: list[dict[str, object]] = []
     response_attempts: list[dict[str, object]] = []
-    reference_sha256 = "sha256:" + file_sha256(reference_path)
     reference_bytes = reference_path.read_bytes()
+    reference_digest = hashlib.sha256(reference_bytes).hexdigest()
+    reference_sha256 = "sha256:" + reference_digest
+
+    # Snapshot each input once.  De-duplicate both repeated paths and repeated
+    # bytes so a style sample cannot be sent twice under different locators.
+    snapshots: dict[Path, tuple[bytes, str]] = {
+        reference_path: (reference_bytes, reference_digest)
+    }
+    seen_hash_sources: dict[str, dict[str, str]] = {
+        reference_digest: {"path": str(reference_path), "role": "identity"}
+    }
+    style_inputs = tuple(style_reference_paths or ())
+    style_snapshots: list[tuple[Path, bytes, str]] = []
+    style_evidence: list[dict[str, object]] = []
+    missing_style_paths: list[Path] = []
+    seen_missing_paths: set[Path] = set()
+    for raw_style_path in style_inputs:
+        style_path = Path(raw_style_path)
+        if style_path in snapshots:
+            style_bytes, style_digest = snapshots[style_path]
+        else:
+            try:
+                style_bytes = style_path.read_bytes()
+            except OSError:
+                if style_path not in seen_missing_paths:
+                    missing_style_paths.append(style_path)
+                    seen_missing_paths.add(style_path)
+                continue
+            style_digest = hashlib.sha256(style_bytes).hexdigest()
+            snapshots[style_path] = (style_bytes, style_digest)
+        duplicate_of = seen_hash_sources.get(style_digest)
+        if duplicate_of is not None:
+            style_evidence.append(
+                {
+                    "path": str(style_path),
+                    "sha256": "sha256:" + style_digest,
+                    "role": "STYLE_ONLY",
+                    "status": "NOT_SENT_DEDUPLICATED",
+                    "sent": False,
+                    "deduplicated": True,
+                    "deduplicated_against": duplicate_of,
+                }
+            )
+            continue
+        seen_hash_sources[style_digest] = {
+            "path": str(style_path),
+            "role": "STYLE_ONLY",
+        }
+        style_snapshots.append((style_path, style_bytes, style_digest))
+        style_evidence.append(
+            {
+                "path": str(style_path),
+                "sha256": "sha256:" + style_digest,
+                "role": "STYLE_ONLY",
+            }
+        )
+    for style_path in missing_style_paths:
+        style_evidence.append(
+            {
+                "path": str(style_path),
+                "sha256": None,
+                "role": "STYLE_ONLY",
+                "status": "MISSING",
+            }
+        )
     request_path.parent.mkdir(parents=True, exist_ok=True)
     response_path.parent.mkdir(parents=True, exist_ok=True)
 
     def persist_evidence() -> None:
+        request_evidence: dict[str, object] = {
+            "endpoint": endpoint,
+            "method": "images.edit",
+            "image_gen_model": "cpa",
+            "prompt": prompt,
+            "reference_image": str(reference_path),
+            "reference_sha256": reference_sha256,
+            "api_key": "<redacted>",
+            "attempts": request_attempts,
+        }
+        if style_evidence:
+            request_evidence["style_references"] = style_evidence
+            request_evidence["image_inputs"] = [
+                {
+                    "path": str(reference_path),
+                    "sha256": reference_sha256,
+                    "role": "identity",
+                },
+                *style_evidence,
+            ]
         request_path.write_text(
             json.dumps(
-                {
-                    "endpoint": endpoint,
-                    "method": "images.edit",
-                    "image_gen_model": "cpa",
-                    "prompt": prompt,
-                    "reference_image": str(reference_path),
-                    "reference_sha256": reference_sha256,
-                    "api_key": "<redacted>",
-                    "attempts": request_attempts,
-                },
+                request_evidence,
                 ensure_ascii=False,
                 indent=2,
                 sort_keys=True,
@@ -219,6 +298,28 @@ def perform_image_edit(
             encoding="utf-8",
         )
 
+    if missing_style_paths:
+        persist_evidence()
+        missing = ", ".join(str(path) for path in missing_style_paths)
+        return {
+            "status": "FAILED",
+            "reason_code": "CPA_IMAGE_EDIT_STYLE_REFERENCE_MISSING",
+            "detail": f"style reference path is missing: {missing}",
+            "attempted_models": [],
+            "model_fallback_used": False,
+            "provider_calls": 0,
+        }
+    if style_inputs and not style_snapshots:
+        persist_evidence()
+        return {
+            "status": "FAILED",
+            "reason_code": "CPA_IMAGE_EDIT_STYLE_REFERENCE_NOT_DISTINCT",
+            "detail": "style reference bytes duplicate the identity reference; no independent style image was sent",
+            "attempted_models": [],
+            "model_fallback_used": False,
+            "provider_calls": 0,
+        }
+
     attempted_models: list[str] = []
     for attempt_index, model in enumerate(candidates):
         attempted_models.append(model)
@@ -229,9 +330,20 @@ def perform_image_edit(
         attempt_started = time.monotonic()
         response_headers = None
         try:
+            if style_snapshots:
+                files = [
+                    ("image[]", (reference_path.name, reference_bytes, "image/png")),
+                    *(
+                        ("image[]", (path.name, content, "image/png"))
+                        for path, content, _digest in style_snapshots
+                    ),
+                ]
+            else:
+                # Preserve the legacy single-image Mapping and field name.
+                files = {"image": (reference_path.name, reference_bytes, "image/png")}
             body, content_type = make_body(
                 fields={"model": model, "prompt": prompt, "size": request_size},
-                files={"image": (reference_path.name, reference_bytes, "image/png")},
+                files=files,
             )
             request = urllib.request.Request(
                 endpoint,
@@ -245,7 +357,7 @@ def perform_image_edit(
                 },
                 method="POST",
             )
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            with observed_cpa_request(request, timeout=timeout_seconds, model=model, kind="image_edit") as response:
                 status_code = response.status
                 response_headers = getattr(response, "headers", None)
                 raw_bytes = response.read()
@@ -380,12 +492,15 @@ def perform_image_edit(
         redacted_response["output_sha256"] = "sha256:" + file_sha256(output_path)
         response_attempts.append(redacted_response)
         persist_evidence()
-        return {
+        result: dict[str, object] = {
             "status": "AI_BACKGROUND_READY",
             "output_path": str(output_path),
             "selected_model": model,
             "attempted_models": attempted_models,
             "model_fallback_used": len(attempted_models) > 1,
         }
+        if style_evidence:
+            result["style_reference_images"] = style_evidence
+        return result
 
     raise AssertionError("CPA image model loop exhausted without a result")

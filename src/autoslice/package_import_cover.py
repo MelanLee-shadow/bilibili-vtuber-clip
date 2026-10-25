@@ -17,6 +17,17 @@ def project_preserved_cover_locators(
     before-images, while the existing relocation only rewrites approved locators.
     """
     generation = publish.get("cover_generation")
+    if isinstance(generation, dict) and generation.get("method") == "skill.candidates":
+        from .package_import_candidate_cover import project_candidate_cover_locators
+        from .package_import import PackageImportError
+        try:
+            return project_candidate_cover_locators(
+                record, publish, package_root=package_root, candidate_id=candidate_id,
+            )
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise PackageImportError(
+                "SOURCE_ROOT_INCONSISTENT", "candidate cover portability refused: " + str(exc),
+            ) from exc
     verification = (
         generation.get("final_host_identity_verification")
         if isinstance(generation, dict)

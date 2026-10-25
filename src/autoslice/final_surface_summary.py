@@ -19,6 +19,7 @@ def record_final_authority_summary(
     projected_by_parallel_subtitle: int,
     superseded_by_parallel_subtitle: int,
     superseded_by_correction_pass: int = 0,
+    superseded_by_caption_display: int = 0,
 ) -> bool:
     """Record final counters and return whether every required owner survived."""
 
@@ -40,6 +41,9 @@ def record_final_authority_summary(
     audit["final_superseded_by_exact_final_cpa_count"] = (
         superseded_by_exact_final_cpa
     )
+    audit["final_superseded_by_caption_display_count"] = (
+        superseded_by_caption_display
+    )
     audit["final_superseded_by_expected_value_canon_count"] = (
         superseded_by_expected_value_canon
     )
@@ -56,6 +60,7 @@ def record_final_authority_summary(
         - superseded_by_truth
         - superseded_by_redelivery
         - superseded_by_exact_final_cpa
+        - superseded_by_caption_display
         - superseded_by_correction_pass
         - superseded_by_expected_value_canon
         - superseded_by_parallel_subtitle

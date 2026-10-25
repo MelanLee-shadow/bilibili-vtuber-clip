@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import inspect
+import json
+import re
+from copy import deepcopy
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -188,7 +191,11 @@ def make_talk_result_checkpoint(
         else:
             persist_state()
         checkpoint_state.checkpoint_before = runner_state_writeback.state_bytes(state)
-        return not (title_retry or checkpoint_state.recoverable_failure)
+        # A candidate's retry holds its own selection slot, not the rest of
+        # the already admitted lane.  Only a failed durable checkpoint raises
+        # above and stops dispatch; provider/content outcomes must let the
+        # independent pending tail advance without spending a backfill slot.
+        return True
 
     return checkpoint_result, checkpoint_state
 
@@ -290,22 +297,27 @@ def finish_producer_date(
     *, runtime_root: Path, date: str, state: dict, mutate_songs: bool, repair_covers, automatic_maintenance: bool,
     candidate_ids, project_terminal, persist_state, write_reports, log, capture_candidates,
     routing_claim, queue_collab,
+    repair_covers_uses_short_leases: bool = False,
 ) -> None:
-    """Finish projection with legacy cover repair serialized under runner lease.
+    """Finish projection after cover maintenance's own short transactions.
 
     ``cover_maintenance.repair_covers`` still has a multi-file target bind
     whose provider-backed implementation predates private producer prepare.
-    It is intentionally a documented serialized exception: the normal
-    Talk/Song packages above this helper prepare outside the lock, while this
-    legacy cover-only transaction keeps its provider work and target/state bind
-    under one canonical lease until it receives its own staged transaction.
+    The explicit capability flag is set by the ordinary caller only with the
+    cover owner's charge/bind integration. Legacy callers keep the old lease
+    until their multi-file transaction is adapted; provider work cannot be
+    moved out by merely changing this wrapper.
     """
 
-    with exclusive_runner_commit(runtime_root):
+    if repair_covers_uses_short_leases:
         repair_covers(date, state, automatic_maintenance=automatic_maintenance, candidate_ids=candidate_ids)
+    with exclusive_runner_commit(runtime_root):
+        if not repair_covers_uses_short_leases:
+            repair_covers(date, state, automatic_maintenance=automatic_maintenance, candidate_ids=candidate_ids)
         terminal = project_terminal(state, mutate_songs=mutate_songs)
         persist_state()
     write_reports(date, state)
+
     log(
         f"{date} batch finished [{state['status']}]: talk {len(terminal['delivered_talk'])}/{len(terminal['picks'])} delivered"
         f" ({len(terminal['repaired'])} boundary-self-repaired), song {len(terminal['delivered_songs'])} delivered"
@@ -318,6 +330,58 @@ def finish_producer_date(
     # it emits reports or local evidence.
     persist_state()
     write_reports(date, state)
+
+    from src.autoslice.runtime_gc import request_terminal_gc
+    request_terminal_gc(runtime_root, state, log=log)
+
+
+def cover_state_transition(
+    *, runtime_root: Path, date: str, state: dict, candidate_id: str,
+    expected_record: Mapping[str, object], transition: Callable[[dict], None],
+    persist_state: Callable[[], None],
+) -> dict:
+    """Run one provider-free cover charge/bind against the fresh candidate.
+
+    Cover maintenance calls this twice, around its external generation. The
+    existing cover journal remains the artifact transaction; this helper owns
+    only its short runner lease and candidate/state authority. Callers must
+    persist earlier work before entering, and must not call a provider inside
+    ``transition``.
+    """
+
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) is None or re.fullmatch(r"[A-Za-z0-9_-]{1,96}", candidate_id) is None:
+        raise runner_state_writeback.RunnerStateWritebackError("COVER_STATE_TRANSITION_IDENTITY_INVALID")
+    with exclusive_runner_commit(runtime_root):
+        path = runtime_root / "state" / f"{date}.json"
+        before = runner_state_writeback.read_exact_state_preimage(path, runtime_root=runtime_root)
+        try:
+            current = json.loads(before.decode("utf-8")) if before is not None else None
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise runner_state_writeback.RunnerStateWritebackError("COVER_STATE_TRANSITION_STATE_INVALID") from exc
+        if not isinstance(current, dict):
+            raise runner_state_writeback.RunnerStateWritebackError("COVER_STATE_TRANSITION_STATE_INVALID")
+        rows = []
+        for collection in ("picks", "songs"):
+            values = current.get(collection, [])
+            if not isinstance(values, list) or any(not isinstance(row, dict) for row in values):
+                raise runner_state_writeback.RunnerStateWritebackError("COVER_STATE_TRANSITION_STATE_INVALID")
+            rows.extend(row for row in values if row.get("candidate_id") == candidate_id)
+        if len(rows) != 1 or rows[0] != dict(expected_record):
+            raise runner_state_writeback.RunnerStateWritebackError("COVER_STATE_TRANSITION_CANDIDATE_DRIFT")
+        if isinstance(state, runner_state_writeback.TrackedState):
+            state.accept_writeback(current)
+        else:
+            state.clear()
+            state.update(deepcopy(current))
+        live = next(
+            row for field in ("picks", "songs") for row in state.get(field, [])
+            if row.get("candidate_id") == candidate_id
+        )
+        transition(live)
+        if runner_state_writeback.read_exact_state_preimage(path, runtime_root=runtime_root) != before:
+            raise runner_state_writeback.RunnerStateWritebackError("COVER_STATE_TRANSITION_PREIMAGE_DRIFT")
+        persist_state()
+        return deepcopy(live)
 
 
 def pre_dispatch_block_message(state: Mapping[str, object], *, date: str) -> tuple[str, str, str] | None:

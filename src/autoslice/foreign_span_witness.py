@@ -13,6 +13,7 @@ CPA, while an unparseable observation or provider failure stays retryable.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import difflib
 import hashlib
 import json
@@ -60,23 +61,45 @@ MIXED_PHRASE_CPA_STATUS = "CPA_ADJUDICATED_MIXED_PHRASE_AUDIO"
 _MIN_VERBATIM_SIMILARITY = 0.60
 _MIN_KANA_SIMILARITY = 0.55
 _SPAN_PAD_MS = 400
-_ALLOWED_LANGUAGES = frozenset({"zh", "ja", "en", "mixed", "none"})
+_ALLOWED_LANGUAGES = frozenset({"zh", "ja", "en", "mixed", "other", "none"})
 _KEEP_TEXT_RX = re.compile(r"[0-9A-Za-z㐀-鿿ぁ-ゖァ-ヺー]+")
-_AGY_MODEL = os.environ.get("FOREIGN_WITNESS_AGY_MODEL", "Gemini 3.6 Flash (High)")
+_AGY_MODEL = os.environ.get("FOREIGN_WITNESS_AGY_MODEL", agy_gemini_client.DEFAULT_AGY_FLASH_HIGH)
 _AGY_TIMEOUT = os.environ.get("FOREIGN_WITNESS_AGY_TIMEOUT", "10m")
-_AGY_WITNESS_ALGORITHM_ID = "agy-foreign-span-candidate-blind-v1"
+_AGY_WITNESS_ALGORITHM_ID = "agy-foreign-span-candidate-blind-target-v2"
 _GEMINI_WITNESS_ALGORITHM_ID = (
-    "gemini-api-foreign-span-candidate-blind-v1"
+    "gemini-api-foreign-span-candidate-blind-target-v2"
 )
 
-_PROMPT_TEMPLATE = """The black-frame input.mp4 is an untrusted live-stream span of {duration_ms} ms.
-Transcribe EXACTLY what is audibly spoken, in the original spoken language
+_PROMPT_TEMPLATE = """The black-frame input.mp4 is an untrusted live-stream audio excerpt.
+The target begins at {target_start_ms} ms and ends at {target_end_ms} ms
+within the attached clip. Audio outside those markers is context only:
+never include its words in exact_transcript or its voices in speaker_impression.
+Transcribe EXACTLY what is audibly spoken inside the target markers, in the original spoken language
 and native script (Japanese stays in kana/kanji, Chinese in hanzi, English
 in Latin letters).  Do not translate, do not guess unheard words, and do
 not describe non-speech sounds.  Write verdict.json as this JSON object only:
-{{"audible_language": "zh"|"ja"|"en"|"mixed"|"none",
+{{"audible_language": "zh"|"ja"|"en"|"mixed"|"other"|"none",
  "exact_transcript": "<verbatim transcript, empty when no speech>",
  "speaker_impression": "single_live_voice"|"media_playback"|"both"|"uncertain"}}"""
+
+
+def _span_target_scope(start_ms: int, end_ms: int) -> dict[str, int | str]:
+    crop_start = max(0, int(start_ms) - _SPAN_PAD_MS)
+    return {
+        "transcript_scope": "TARGET_MARKERS_ONLY",
+        "context_source_start_ms": crop_start,
+        "context_source_end_ms": int(end_ms) + _SPAN_PAD_MS,
+        "target_audio_start_ms": int(start_ms) - crop_start,
+        "target_audio_end_ms": int(end_ms) - crop_start,
+    }
+
+
+def _span_prompt(start_ms: int, end_ms: int) -> str:
+    scope = _span_target_scope(start_ms, end_ms)
+    return _PROMPT_TEMPLATE.format(
+        target_start_ms=scope["target_audio_start_ms"],
+        target_end_ms=scope["target_audio_end_ms"],
+    )
 
 
 def _extract_span_audio(
@@ -135,6 +158,7 @@ def _observe_with_key_ladder(
     audio_path: Path,
     prompt: str,
     observe: Callable[..., str],
+    parse_observation: Callable[[str], dict] = _parse_observation,
 ) -> tuple[dict[str, str], str]:
     """Free keys in order, then the policy-gated paid key. Returns (obs, tier).
 
@@ -144,11 +168,11 @@ def _observe_with_key_ladder(
     knob on the shared ladder; the entity/LRC lanes keep the round-based form.
     """
 
-    audio_sha = hashlib.sha256(audio_path.read_bytes()).hexdigest()
+    audio_sha = _evidence_file_sha256(audio_path)
     failures: list[str] = []
 
     def observe_and_parse(key: str) -> dict[str, str]:
-        return _parse_observation(observe(audio_path=audio_path, prompt=prompt, key=key))
+        return parse_observation(observe(audio_path=audio_path, prompt=prompt, key=key))
 
     outcome = agy_gemini_client.run_gemini_key_ladder(
         item_key=audio_sha,
@@ -174,6 +198,8 @@ def _observe_with_agy(
     *,
     audio_path: Path,
     prompt: str,
+    parse_observation: Callable[[str], dict] = _parse_observation,
+    model: str | None = None,
 ) -> dict[str, str]:
     """Run the only production audio-capable witness without candidate text."""
 
@@ -232,7 +258,7 @@ def _observe_with_agy(
         agy_gemini_client.agy_argv(
             agy_gemini_client.resolve_local_agy_executable(),
             job_dir=job_dir,
-            model=_AGY_MODEL,
+            model=model or _AGY_MODEL,
             prompt=(
                 "Open prompt.md with view_file and follow it exactly. Use only "
                 "prompt.md and input.mp4. Write verdict.json in this directory. "
@@ -267,7 +293,7 @@ def _observe_with_agy(
             + completed.stderr[-160:]
         )
     try:
-        return _parse_observation(strip_markdown_fence(raw))
+        return parse_observation(strip_markdown_fence(raw))
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise RuntimeError(
             f"AGY_FOREIGN_WITNESS_INVALID_OUTPUT:{type(exc).__name__}"
@@ -279,6 +305,10 @@ def _observe_audio(
     audio_path: Path,
     prompt: str,
     observe: Callable[..., str] | None,
+    parse_observation: Callable[[str], dict] = _parse_observation,
+    algorithm_id: str | None = None,
+    model: str | None = None,
+    fallback_observe: Callable[..., str] | None = None,
 ) -> tuple[dict[str, str], str, str | None, dict[str, Any] | None]:
     """Prefer AGY, then use a hash-bound Gemini API audio witness."""
 
@@ -287,59 +317,54 @@ def _observe_audio(
             audio_path=audio_path,
             prompt=prompt,
             observe=observe,
+            **({"parse_observation": parse_observation} if algorithm_id else {}),
         )
         return observation, "injected_test_observer", key_tier, None
     identity = witness_identity(
         audio_path=audio_path,
         prompt=prompt,
-        model=_AGY_MODEL,
-        algorithm_id=_AGY_WITNESS_ALGORITHM_ID,
+        model=model or _AGY_MODEL,
+        algorithm_id=algorithm_id or _AGY_WITNESS_ALGORITHM_ID,
     )
     cached, cache_evidence = load_successful_observation(identity=identity)
     if cached is not None:
         try:
-            observation = _parse_observation(json.dumps(cached, ensure_ascii=False))
+            observation = parse_observation(json.dumps(cached, ensure_ascii=False))
         except (TypeError, ValueError, json.JSONDecodeError):
             observation = None
         if observation is not None:
             return observation, "agy_success_cache", None, cache_evidence
+    # A completed fallback is an observation of this exact request, even if
+    # AGY has recovered since it was made. Replay it before any new dispatch;
+    # retain Gemini's actual identity rather than claiming a fresh AGY failure.
+    fallback_identity = witness_identity(
+        audio_path=audio_path,
+        prompt=prompt,
+        model=GEMINI_API_AUDIO_LRC_MODEL,
+        algorithm_id=algorithm_id or _GEMINI_WITNESS_ALGORITHM_ID,
+    )
+    cached, fallback_cache_evidence = load_successful_observation(identity=fallback_identity)
+    if cached is not None:
+        try:
+            fallback_observation = parse_observation(json.dumps(cached, ensure_ascii=False))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            fallback_observation = None
+        if fallback_observation is not None:
+            return (fallback_observation, "gemini_api_success_cache", None, {
+                **fallback_cache_evidence, "provider_fallback_used": True,
+                "requested_provider": "agy", "completed_fallback_replayed_before_dispatch": True,
+            })
     try:
-        observation = _observe_with_agy(audio_path=audio_path, prompt=prompt)
+        observation = _observe_with_agy(audio_path=audio_path, prompt=prompt,
+            **({"parse_observation": parse_observation, "model": model} if algorithm_id else {}))
     except Exception as agy_exc:
         if not _gemini_keys():
             raise
-        fallback_identity = witness_identity(
-            audio_path=audio_path,
-            prompt=prompt,
-            model=GEMINI_API_AUDIO_LRC_MODEL,
-            algorithm_id=_GEMINI_WITNESS_ALGORITHM_ID,
-        )
-        cached, fallback_cache_evidence = load_successful_observation(
-            identity=fallback_identity
-        )
-        if cached is not None:
-            try:
-                fallback_observation = _parse_observation(
-                    json.dumps(cached, ensure_ascii=False)
-                )
-            except (TypeError, ValueError, json.JSONDecodeError):
-                fallback_observation = None
-            if fallback_observation is not None:
-                return (
-                    fallback_observation,
-                    "gemini_api_success_cache",
-                    None,
-                    {
-                        **fallback_cache_evidence,
-                        "provider_fallback_used": True,
-                        "requested_provider": "agy",
-                        "agy_failure_category": _agy_failure_category(agy_exc),
-                    },
-                )
         fallback_observation, key_tier = _observe_with_key_ladder(
             audio_path=audio_path,
             prompt=prompt,
-            observe=_gemini_api_observe,
+            observe=fallback_observe or _gemini_api_observe,
+            **({"parse_observation": parse_observation} if algorithm_id else {}),
         )
         fallback_cache_evidence = store_successful_observation(
             identity=fallback_identity,
@@ -451,10 +476,9 @@ def _witness_rows(
         audio_path = audio_dir / f"span_{start_ms}_{end_ms}.mp3"
         try:
             _extract_span_audio(media_path, start_ms, end_ms, audio_path)
-            duration_ms = end_ms - start_ms + 2 * _SPAN_PAD_MS
             observation, provider, key_tier, cache_evidence = _observe_audio(
                 audio_path=audio_path,
-                prompt=_PROMPT_TEMPLATE.format(duration_ms=duration_ms),
+                prompt=_span_prompt(start_ms, end_ms),
                 observe=observe,
             )
         except Exception as exc:
@@ -464,12 +488,13 @@ def _witness_rows(
         result["audible_language"] = observation["audible_language"]
         result["exact_transcript"] = transcript[:500]
         result["speaker_impression"] = observation["speaker_impression"]
+        result.update(_span_target_scope(start_ms, end_ms))
         result["provider"] = provider
         if cache_evidence is not None:
             result.update(cache_evidence)
         if key_tier is not None:
             result["key_tier"] = key_tier
-        result["audio_sha256"] = hashlib.sha256(audio_path.read_bytes()).hexdigest()
+        result["audio_sha256"] = _evidence_file_sha256(audio_path)
         if mode == "kana":
             similarity = _similarity(_kana_only(transcript), _kana_only(claim_text))
             result["kana_similarity"] = round(similarity, 4)
@@ -656,6 +681,9 @@ def adjudicate_language_preservation_audit(
     cpa_hearing_count = 0
 
     from src.autoslice.acoustic_witness_adjudication import adjudicate_with_witness
+    # Every closed-set check request carries its canonical self digest, the
+    # same shared signer as the other ordinary judge requests (41:112).
+    from src.autoslice.independent_context_adjudication import bind_request
 
     for result in results:
         cue_index = result.get("cue_index")
@@ -704,7 +732,7 @@ def adjudicate_language_preservation_audit(
         )
         witness = _transcript_witness(result, transcript=transcript)
         source_candidates = _target_source_candidates(result, rows, source_srt=source_srt)
-        check_request = {
+        check_request = bind_request({
             "current_cue": cue.text,
             "proposed_cue": transcript,
             "proposed_candidates": source_candidates,
@@ -728,7 +756,7 @@ def adjudicate_language_preservation_audit(
             ),
             "context_before": before,
             "context_after": after,
-        }
+        })
         cpa_hearing_count += 1
         repaired, policy_branch, adjudication = adjudicate_with_witness(
             check_request=check_request,
@@ -751,7 +779,8 @@ def adjudicate_language_preservation_audit(
             receipt["proposal_rebuild"] = rebuild_audit
             if rebuilt is not None:
                 proposed_text = rebuilt
-                rebuilt_request = {
+                # bind_request drops the parent digest before re-signing.
+                rebuilt_request = bind_request({
                     **check_request,
                     "proposed_cue": rebuilt,
                     "candidate_provenance": {
@@ -760,7 +789,7 @@ def adjudicate_language_preservation_audit(
                         "prompt_sha256": rebuild_audit.get("prompt_sha256"),
                         "audio_sha256": result.get("audio_sha256"),
                     },
-                }
+                })
                 cpa_hearing_count += 1
                 repaired, policy_branch, adjudication = adjudicate_with_witness(
                     check_request=rebuilt_request,
@@ -882,10 +911,9 @@ def retranscribe_foreign_script_cluster(
         audio_path = audio_dir / f"cluster_{cue.start_ms}_{cue.end_ms}.mp3"
         try:
             _extract_span_audio(media_path, cue.start_ms, cue.end_ms, audio_path)
-            duration_ms = cue.end_ms - cue.start_ms + 2 * _SPAN_PAD_MS
             observation, provider, key_tier, cache_evidence = _observe_audio(
                 audio_path=audio_path,
-                prompt=_PROMPT_TEMPLATE.format(duration_ms=duration_ms),
+                prompt=_span_prompt(cue.start_ms, cue.end_ms),
                 observe=observe,
             )
         except Exception as exc:
@@ -894,12 +922,13 @@ def retranscribe_foreign_script_cluster(
         transcript = " ".join(observation["exact_transcript"].split())
         row["audible_language"] = observation["audible_language"]
         row["speaker_impression"] = observation["speaker_impression"]
+        row.update(_span_target_scope(cue.start_ms, cue.end_ms))
         row["provider"] = provider
         if cache_evidence is not None:
             row.update(cache_evidence)
         if key_tier is not None:
             row["key_tier"] = key_tier
-        row["audio_sha256"] = hashlib.sha256(audio_path.read_bytes()).hexdigest()
+        row["audio_sha256"] = _evidence_file_sha256(audio_path)
         row["transcript"] = transcript
         japanese_shaped = bool(_kana_only(transcript)) or (
             observation["audible_language"] == "ja"
@@ -980,6 +1009,7 @@ def adjudicate_foreign_script_audit(
     observe: Callable[..., str] | None = None,
     source_srt: str = "",
     native_provider: str | None = None,
+    audio_witness_rows: list[dict[str, Any]] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Let the audio lane propose and CPA finally judge mixed-script cues.
 
@@ -1005,7 +1035,7 @@ def adjudicate_foreign_script_audit(
     if not rows:
         return srt_text, audit
     try:
-        results = _witness_rows(
+        results = audio_witness_rows if audio_witness_rows is not None else _witness_rows(
             media_path=media_path,
             rows=rows,
             mode="verbatim",
@@ -1028,6 +1058,9 @@ def adjudicate_foreign_script_audit(
     cpa_hearing_count = 0
 
     from src.autoslice.acoustic_witness_adjudication import adjudicate_with_witness
+    # Every closed-set check request carries its canonical self digest, the
+    # same shared signer as the other ordinary judge requests (41:112).
+    from src.autoslice.independent_context_adjudication import bind_request
 
     for result in results:
         cue_index = result.get("cue_index")
@@ -1076,7 +1109,7 @@ def adjudicate_foreign_script_audit(
         )
         witness = _transcript_witness(result, transcript=transcript)
         source_candidates = _target_source_candidates(result, rows, source_srt=source_srt)
-        check_request = {
+        check_request = bind_request({
             "current_cue": cue.text,
             "whole_clip_current_srt": srt_text,
             "proposed_cue": transcript,
@@ -1101,7 +1134,7 @@ def adjudicate_foreign_script_audit(
             ),
             "context_before": before,
             "context_after": after,
-        }
+        })
         cpa_hearing_count += 1
         repaired, policy_branch, adjudication = adjudicate_with_witness(
             check_request=check_request,
@@ -1124,7 +1157,8 @@ def adjudicate_foreign_script_audit(
             receipt["proposal_rebuild"] = rebuild_audit
             if rebuilt is not None:
                 proposed_text = rebuilt
-                rebuilt_request = {
+                # bind_request drops the parent digest before re-signing.
+                rebuilt_request = bind_request({
                     **check_request,
                     "proposed_cue": rebuilt,
                     "candidate_provenance": {
@@ -1133,7 +1167,7 @@ def adjudicate_foreign_script_audit(
                         "prompt_sha256": rebuild_audit.get("prompt_sha256"),
                         "audio_sha256": result.get("audio_sha256"),
                     },
-                }
+                })
                 cpa_hearing_count += 1
                 repaired, policy_branch, adjudication = adjudicate_with_witness(
                     check_request=rebuilt_request,

@@ -24,7 +24,7 @@ import hashlib
 import json
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +38,7 @@ from scripts.build_daily_review_manifest import (
     _package_regular_file,
     _rebuild_package_speaker_evidence,
     _sha256,
+    _sync_cover_network_evidence,
     _sync_record_bound_candidate_artifacts,
 )
 from src.autoslice.host_only_v4_package_binding import (
@@ -51,6 +52,7 @@ from src.autoslice.package_import_builtin_imagegen import (
 from src.autoslice.review_package_ass_audit import (
     uniform_host_fallback_declared,
 )
+from src.autoslice.review_evidence_store import load_review
 from src.autoslice.published_recovery_package_contract import (
     validate_published_recovery_package_receipt,
 )
@@ -67,6 +69,12 @@ from src.autoslice.qixi_cover_successor_finalization import (
     RECEIPT as QIXI_SUCCESSOR_RECEIPT,
     validate_applied_receipt as validate_qixi_successor_receipt,
 )
+from src.autoslice.normal_first_publication_media_successor import (
+    FRESH_SCHEMA_VERSION,
+    NormalFirstPublicationMediaSuccessorError,
+    build_reference as build_normal_media_successor_reference,
+)
+from src.autoslice.cover_route_evidence import validate_cover_route_decision
 
 
 def _need(package_root: Path, name: str) -> Path:
@@ -112,6 +120,9 @@ class _PreparedQixiGate:
     clip_name: str
     successor_receipt: bool = False
     published_recovery_receipt: bool = False
+    normal_first_publication_cover_successor: bool = False
+    normal_first_publication_media_successor: bool = False
+    normal_first_publication_media_reference: dict | None = None
 
 
 def _prepare_qixi_gate(
@@ -309,6 +320,103 @@ def _verified_cover_artifact(
     return flat_name
 
 
+def _normal_first_publication_cover_successor(
+    *,
+    authority: object,
+    candidate_id: str,
+    title: str,
+    burned: Path,
+    subtitle: Path,
+    title_repair_reference: object = None,
+) -> bool:
+    """Prove a normal new-BV authority is a cover-only successor.
+
+    The new-BV authority replays the original first-publication closure.  A
+    manual package may use this narrow terminal route only when the current
+    burned video and SRT remain byte/exact equal.  A changed title requires
+    replay of the completed normal title-only transaction.
+    This does not authorize upload and does not cover subtitle or media
+    successors.
+    """
+
+    if not isinstance(authority, dict) or authority.get("schema_version") != (
+        "new-bv-same-bv-publication-authority.v1"
+    ):
+        return False
+    from src.autoslice.new_bv_repair_authority import (
+        NewBvRepairAuthorityError,
+        replay_first_publication_manifest,
+        validate_new_bv_repair_authority,
+    )
+
+    try:
+        validated = validate_new_bv_repair_authority(
+            authority,
+            candidate_id=candidate_id,
+            expected_final_title=title,
+        )
+        original_manifest = replay_first_publication_manifest(validated)
+    except (NewBvRepairAuthorityError, OSError, ValueError, TypeError, KeyError) as exc:
+        raise DailyManifestError(
+            f"normal first-publication cover successor authority is invalid: {exc}"
+        ) from exc
+
+    observed_title = validated.get("observed_public_title")
+    if title != observed_title and title_repair_reference is None:
+        raise DailyManifestError(
+            "normal first-publication cover successor requires the observed original title"
+        )
+    if title_repair_reference is not None:
+        from src.autoslice.authorized_upload_title_repair import (
+            TitleRepairError, validate_title_repair_successor,
+        )
+        try:
+            validate_title_repair_successor(
+                title_repair_reference, authority=validated,
+                candidate_id=candidate_id, title=title,
+            )
+        except (TitleRepairError, NewBvRepairAuthorityError) as exc:
+            raise DailyManifestError(
+                f"normal first-publication cover successor title repair is invalid: {exc}"
+            ) from exc
+
+    video = original_manifest.get("video")
+    attestation = original_manifest.get("package_attestation")
+    subtitle_entry = (
+        attestation.get("subtitle")
+        if isinstance(attestation, dict)
+        else None
+    )
+    if not isinstance(subtitle_entry, dict):
+        subtitle_entry = original_manifest.get("subtitle")
+    if not isinstance(video, dict) or not isinstance(subtitle_entry, dict):
+        raise DailyManifestError(
+            "normal first-publication cover successor lacks original video/SRT bindings"
+        )
+
+    def _matches(entry: dict, current: Path, label: str) -> None:
+        expected = str(entry.get("sha256") or "").removeprefix("sha256:")
+        if len(expected) != 64 or any(char not in "0123456789abcdef" for char in expected):
+            raise DailyManifestError(
+                f"normal first-publication cover successor {label} binding is invalid"
+            )
+        if _sha256(current) != expected:
+            raise DailyManifestError(
+                f"normal first-publication cover successor {label} bytes changed"
+            )
+        declared_bytes = entry.get("bytes")
+        if declared_bytes is not None and (
+            type(declared_bytes) is not int or declared_bytes != current.stat().st_size
+        ):
+            raise DailyManifestError(
+                f"normal first-publication cover successor {label} byte count changed"
+            )
+
+    _matches(video, burned, "video")
+    _matches(subtitle_entry, subtitle, "subtitle")
+    return True
+
+
 def _manual_manifest_item_and_terminal_projection(
     *,
     candidate_id: str,
@@ -331,6 +439,7 @@ def _manual_manifest_item_and_terminal_projection(
     corrected_receipt_path: Path | None,
     qixi_gate: _PreparedQixiGate,
     packaged_speaker_manifest: Path | None,
+    normal_media_reference: dict | None,
 ) -> tuple[dict, str, dict]:
     """Build the sole manual item and the sealed Qixi terminal projection."""
 
@@ -387,6 +496,16 @@ def _manual_manifest_item_and_terminal_projection(
             else {}
         ),
         **(
+            {"normal_first_publication_cover_successor": True}
+            if qixi_gate.normal_first_publication_cover_successor
+            else {}
+        ),
+        **(
+            {"normal_first_publication_media_successor": normal_media_reference}
+            if normal_media_reference is not None
+            else {}
+        ),
+        **(
             {
                 "speaker_finalization_manifest": packaged_speaker_manifest.name,
                 "speaker_finalization_manifest_sha256": "sha256:"
@@ -410,6 +529,8 @@ def _manual_manifest_item_and_terminal_projection(
         finalized_qixi_same_bv
         or qixi_gate.successor_receipt
         or qixi_gate.published_recovery_receipt
+        or qixi_gate.normal_first_publication_cover_successor
+        or qixi_gate.normal_first_publication_media_successor
     )
     projection = (
         {
@@ -435,6 +556,7 @@ def build_manual(
     operator: str,
     note: str,
     qixi_repo_root: Path | None = None,
+    prepared_delivery_path: Path | None = None,
 ) -> dict:
     package_root = package_root.resolve()
     if not package_root.is_dir():
@@ -461,10 +583,15 @@ def build_manual(
     title = str(publish_doc.get("title") or "")
     if not candidate_id or not title:
         raise DailyManifestError("package publish draft lacks candidate/title binding")
-    if str(publish_doc.get("cover_status") or "") != "AI_COVER_READY":
+    cover_status = str(publish_doc.get("cover_status") or "")
+    if cover_status not in {"AI_COVER_READY", "REUSED_COVER"}:
         raise DailyManifestError(
             "package cover is not AI_COVER_READY — repair the cover first "
             "(regenerate_channel_cover --bind-package writes it back)"
+        )
+    if cover_status == "REUSED_COVER" and prepared_delivery_path is None:
+        raise DailyManifestError(
+            "package cover is REUSED_COVER; prepared full-media successor is required"
         )
     cover_generation = (
         publish_doc.get("cover_generation")
@@ -476,7 +603,7 @@ def build_manual(
 
     burned = _need(package_root, f"{stem}.mp4")
     record = _need(package_root, f"{stem}.record.json")
-    record_doc = json.loads(record.read_text(encoding="utf-8"))
+    record_doc = load_review(record)
     subtitle = _need(package_root, f"{stem}.srt")
     qixi_gate = _prepare_qixi_gate(
         package_root=package_root,
@@ -489,8 +616,8 @@ def build_manual(
     )
     chat_authority = _need(package_root, qixi_gate.chat_name)
     try:
-        chat_authority_doc = json.loads(chat_authority.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        chat_authority_doc = load_review(chat_authority)
+    except (OSError, UnicodeError, ValueError) as exc:
         raise DailyManifestError("package chat authority is unreadable or invalid") from exc
     uniform_fallback = uniform_host_fallback_declared(record_doc, chat_authority_doc)
     if uniform_fallback:
@@ -507,9 +634,71 @@ def build_manual(
     if not recording_date:
         raise DailyManifestError("package clip context lacks recording_date")
     cover = _need(package_root, f"{stem}.cover.png")
+    # An authority-free prepared package is the explicitly private lane.  It
+    # is built before the legacy REUSED_COVER check so the latter remains
+    # strict for historical/public carry records.
+    publication_authority = qixi_gate.publication_authority
+    normal_media_reference: dict | None = None
+    if prepared_delivery_path is not None and publication_authority is None:
+        if (
+            qixi_gate.receipt_present
+            or qixi_gate.successor_receipt
+            or qixi_gate.published_recovery_receipt
+            or qixi_gate.normal_first_publication_cover_successor
+        ):
+            raise DailyManifestError(
+                "prepared media successor cannot combine with another same-BV receipt"
+            )
+        try:
+            normal_media_reference = build_normal_media_successor_reference(
+                package_root=package_root,
+                stem=stem,
+                prepared_delivery_path=prepared_delivery_path,
+                candidate_id=candidate_id,
+                title=title,
+                authority=None,
+            )
+        except NormalFirstPublicationMediaSuccessorError as exc:
+            raise DailyManifestError(str(exc)) from exc
+        qixi_gate = replace(
+            qixi_gate,
+            normal_first_publication_media_successor=True,
+            normal_first_publication_media_reference=normal_media_reference,
+        )
+    if cover_status == "REUSED_COVER":
+        # A normal producer subtitle-only rerun may carry a published cover,
+        # but this manual full-media successor is the only consumer allowed
+        # to admit that status.  Require the carried bundle and its complete
+        # route proof on both producer surfaces before the prepared handle
+        # can make it terminal.
+        publish_generation = publish_doc.get("cover_generation")
+        staging = record_doc.get("publish_staging")
+        staging_generation = (
+            staging.get("cover_generation") if isinstance(staging, dict) else None
+        )
+        fresh_private_reference = (
+            isinstance(normal_media_reference, dict)
+            and normal_media_reference.get("schema_version") == FRESH_SCHEMA_VERSION
+        )
+        if fresh_private_reference:
+            cover_generation = publish_generation
+        elif (
+            not isinstance(publish_generation, dict)
+            or publish_generation.get("carried_forward_from_published_record") is not True
+            or not validate_cover_route_decision(publish_generation, allow_legacy_v1=False)
+            or not isinstance(staging, dict)
+            or staging.get("cover_status") != "REUSED_COVER"
+            or staging_generation != publish_generation
+        ):
+            raise DailyManifestError(
+                "REUSED_COVER lacks carried published cover route evidence"
+            )
+        cover_generation = publish_generation
     declared_cover_sha = str(cover_generation.get("final_cover_sha256") or "").removeprefix(
         "sha256:"
     )
+    if cover_status == "REUSED_COVER" and not declared_cover_sha:
+        raise DailyManifestError("REUSED_COVER lacks final_cover_sha256")
     if declared_cover_sha and _sha256(cover) != declared_cover_sha:
         raise DailyManifestError("package cover bytes do not match generation final_cover_sha256")
 
@@ -517,7 +706,36 @@ def build_manual(
     # BV.  Do not silently discard that identity: when introduced, the
     # authority is a five-surface exact contract (record/staging/publish/item
     # and manifest map) and is replayed before this builder writes anything.
-    publication_authority = qixi_gate.publication_authority
+    if prepared_delivery_path is not None and normal_media_reference is None:
+        if (
+            qixi_gate.receipt_present
+            or qixi_gate.successor_receipt
+            or qixi_gate.published_recovery_receipt
+            or qixi_gate.normal_first_publication_cover_successor
+        ):
+            raise DailyManifestError(
+                "prepared media successor cannot combine with another same-BV receipt"
+            )
+        if not isinstance(publication_authority, dict):
+            raise DailyManifestError(
+                "prepared media successor requires recovery publication authority"
+            )
+        try:
+            normal_media_reference = build_normal_media_successor_reference(
+                package_root=package_root,
+                stem=stem,
+                prepared_delivery_path=prepared_delivery_path,
+                candidate_id=candidate_id,
+                title=title,
+                authority=publication_authority,
+            )
+        except NormalFirstPublicationMediaSuccessorError as exc:
+            raise DailyManifestError(str(exc)) from exc
+        qixi_gate = replace(
+            qixi_gate,
+            normal_first_publication_media_successor=True,
+            normal_first_publication_media_reference=normal_media_reference,
+        )
     corrected_receipt = None
     corrected_receipt_path: Path | None = None
     receipt_candidate = package_root / qixi_gate.receipt_name
@@ -543,7 +761,32 @@ def build_manual(
             != _sha256(cover)
         ):
             raise DailyManifestError("manual corrected same-BV receipt drifts from package")
-    if publication_authority is not None and corrected_receipt is None and not qixi_gate.successor_receipt and not qixi_gate.published_recovery_receipt:
+    if (
+        normal_media_reference is None
+        and publication_authority is not None
+        and corrected_receipt is None
+        and not qixi_gate.successor_receipt
+        and not qixi_gate.published_recovery_receipt
+    ) and _normal_first_publication_cover_successor(
+        authority=publication_authority,
+        candidate_id=candidate_id,
+        title=title,
+        burned=burned,
+        subtitle=subtitle,
+        title_repair_reference=record_doc.get("verified_title_repair"),
+    ):
+        qixi_gate = replace(
+            qixi_gate,
+            normal_first_publication_cover_successor=True,
+        )
+    if (
+        publication_authority is not None
+        and corrected_receipt is None
+        and not qixi_gate.successor_receipt
+        and not qixi_gate.published_recovery_receipt
+        and not qixi_gate.normal_first_publication_cover_successor
+        and not qixi_gate.normal_first_publication_media_successor
+    ):
         raise DailyManifestError("manual same-BV package lacks corrected receipt")
     if corrected_receipt is not None and publication_authority is None:
         raise DailyManifestError("corrected receipt lacks recovery publication authority")
@@ -637,13 +880,26 @@ def build_manual(
         corrected_receipt_path=corrected_receipt_path,
         qixi_gate=qixi_gate,
         packaged_speaker_manifest=packaged_speaker_manifest,
+        normal_media_reference=normal_media_reference,
     )
+    from src.autoslice.review_package_source_boundary import materialize_original_source_review
+    try:
+        materialize_original_source_review(package_root, item, record_doc)
+    except ValueError as exc:
+        raise DailyManifestError(str(exc)) from exc
     try:
         item.update(
             builtin_imagegen_manifest_fields(cover_generation, package_root=package_root)
         )
     except ValueError as exc:
         raise DailyManifestError(f"Builtin image_gen package binding failed: {exc}") from exc
+    network_fields = _sync_cover_network_evidence(
+        package_root=package_root, generation=cover_generation, upload_stem=stem,
+    )
+    item.update(network_fields)
+    item["sha256"].update({
+        role: _sha256(package_root / relative) for role, relative in network_fields.items()
+    })
     try:
         host_only_binding = materialize_package_binding(
             root=package_root,
@@ -669,10 +925,9 @@ def build_manual(
         "schema_version": "lidousha-manual-review-manifest.v1",
         "generated_by": "build_manual_review_manifest.v1",
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        # A legacy/manual package remains an operator review artifact.  The
-        # only exception is a Qixi package whose sealed finalizer receipt was
-        # replayed above and is embedded in its sole item: that exact closure
-        # may enter the still-no-upload final perceptual-review lane.
+        # A legacy/manual package remains an operator review artifact.  A
+        # sealed typed finalizer or a validated normal first-publication
+        # cover-only successor may enter the still-no-upload review lane.
         "status": status,
         "candidate_id": candidate_id,
         "date": recording_date,
@@ -698,6 +953,10 @@ def build_manual(
         manifest["recovery_publication_authorities_by_candidate"] = {
             candidate_id: publication_authority
         }
+    if normal_media_reference is not None:
+        manifest["normal_first_publication_media_successor_by_candidate"] = {
+            candidate_id: normal_media_reference
+        }
     manifest.update(terminal_projection)
     return manifest
 
@@ -707,29 +966,44 @@ def main() -> int:
     parser.add_argument("package_root", type=Path)
     parser.add_argument("--operator", required=True, help="裁定人（写进 manifest）")
     parser.add_argument("--note", required=True, help="一句话：为什么这个手动包可以进入评审")
+    parser.add_argument(
+        "--prepared-delivery",
+        type=Path,
+        default=None,
+        help="explicit producer .prepared-deliveries/talk/.../prepared.json handle",
+    )
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
-    try:
-        manifest = build_manual(args.package_root, operator=args.operator, note=args.note)
-    except DailyManifestError as exc:
-        print(f"REFUSED: {exc}", file=sys.stderr)
-        return 1
-    out = args.out or (args.package_root / "review_manifest.json")
-    out.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    print(
-        json.dumps(
-            {
-                "manifest": str(out),
-                "candidate_id": manifest["candidate_id"],
-                "status": manifest["status"],
-            },
-            ensure_ascii=False,
+    from src.autoslice.production_attempts import observed_package_stage, record_production_result, package_stage_binding
+    with observed_package_stage(args.package_root,'package_build',prepared_delivery=args.prepared_delivery):
+        try:
+            manifest = build_manual(
+                args.package_root,
+                operator=args.operator,
+                note=args.note,
+                prepared_delivery_path=args.prepared_delivery,
+            )
+        except DailyManifestError as exc:
+            record_production_result({"runtime_stage_result":{"status":"BLOCKED","reason_code":type(exc).__name__}})
+            print(f"REFUSED: {exc}", file=sys.stderr)
+            return 1
+        out = args.out or (args.package_root / "review_manifest.json")
+        out.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
         )
-    )
-    return 0
+        record_production_result({'runtime_stage_result':{'status':'PACKAGE_BUILT',**package_stage_binding(args.package_root)}})
+        print(
+            json.dumps(
+                {
+                    "manifest": str(out),
+                    "candidate_id": manifest["candidate_id"],
+                    "status": manifest["status"],
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0
 
 
 if __name__ == "__main__":

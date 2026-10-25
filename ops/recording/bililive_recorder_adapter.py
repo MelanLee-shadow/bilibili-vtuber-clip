@@ -100,6 +100,17 @@ SOURCE_DISPOSITION_TIMESTAMP_REBIND_SCHEMA_VERSION = (
     "recording-source-fuse-timestamp-rebind.v1"
 )
 SOURCE_DISPOSITION_TIMESTAMP_REBIND_POLICY = "FUSE_SUCCESSOR_MTIME_CTIME_REATTESTATION"
+# Evidence identity (src/autoslice/evidence_identity.py, mirrored here because
+# the adapter runs standalone in its container): a disposed file is "the same
+# piece of evidence" by content sha256 plus its restorable size/mtime (and
+# mode); device, inode and ctime are placement.  A CloudFS remount/restore can
+# renumber placement in any role subset, so placement-only drift is never an
+# identity error: it earns one hash-bound re-attestation receipt (same idle,
+# deadline, PID-token child as every other rebind) and nothing else changes.
+SOURCE_DISPOSITION_PLACEMENT_REBIND_SCHEMA_VERSION = (
+    "recording-source-evidence-identity-placement-rebind.v1"
+)
+SOURCE_DISPOSITION_PLACEMENT_REBIND_POLICY = "EVIDENCE_IDENTITY_PLACEMENT_ONLY_REATTESTATION"
 SOURCE_DISPOSITION_REBIND_TASK_SCHEMA_VERSION = "recording-source-fuse-identity-rebind-task.v1"
 SOURCE_DISPOSITION_REBIND_HASH_RESULT_SCHEMA_VERSION = (
     "recording-source-fuse-identity-rebind-hash-result.v1"
@@ -251,7 +262,12 @@ _FILE_FINGERPRINT_KEYS = (
     "inode",
     "mode",
 )
-_FILE_STABLE_FINGERPRINT_KEYS = ("size_bytes", "mtime_ns", "ctime_ns", "mode")
+# Restorable identity attributes vs placement (evidence_identity.PLACEMENT_KEYS).
+# Inode/device stay in the fingerprint for the legitimate in-process uses: a
+# stable read while hashing, create-only/no-clobber publication and the
+# reservation/alias checks; they are just not identity across a remount.
+_FILE_IDENTITY_FINGERPRINT_KEYS = ("size_bytes", "mtime_ns", "mode")
+_PLACEMENT_FINGERPRINT_FIELDS = frozenset({"device", "inode", "ctime_ns"})
 _DISPOSITION_FILE_ROLES = ("source", "xml", "successor_source", "successor_mp4")
 _TIMESTAMP_REBIND_ROLES = ("successor_source", "successor_mp4")
 _TIMESTAMP_REBIND_FIELDS = ("mtime_ns", "ctime_ns")
@@ -529,6 +545,30 @@ def _identity_rebind_legacy_contract() -> dict[str, Any]:
     }
 
 
+def _placement_rebind_legacy_contract() -> dict[str, Any]:
+    return {
+        "successor_source": {
+            "verification_basis": _LEGACY_SUCCESSOR_SOURCE_BASIS,
+            "historical_sha256_available": False,
+            "strict_bindings": [
+                "path",
+                "size_bytes",
+                "mtime_ns",
+                "mode",
+                "webhook_file_size",
+                "finalized_ledger_source_size",
+                "successor_mp4_historical_sha256",
+            ],
+        }
+    }
+
+
+def _placement_only_changes(changes: dict[str, list[str]]) -> bool:
+    return bool(changes) and all(
+        fields and set(fields) <= _PLACEMENT_FINGERPRINT_FIELDS for fields in changes.values()
+    )
+
+
 def _timestamp_rebind_legacy_contract(
     row: dict[str, Any],
     previous: dict[str, dict[str, Any]],
@@ -625,12 +665,17 @@ def _validate_disposition_rebind_chain(
             receipt.get("schema_version") == _MIXED_REBIND_SCHEMA_VERSION
             and receipt.get("policy") == _MIXED_REBIND_POLICY
         )
+        is_placement_rebind = (
+            receipt.get("schema_version") == SOURCE_DISPOSITION_PLACEMENT_REBIND_SCHEMA_VERSION
+            and receipt.get("policy") == SOURCE_DISPOSITION_PLACEMENT_REBIND_POLICY
+        )
         expected_fields = base_receipt_fields | (
             {"changed_fields"}
             if is_timestamp_rebind
             or is_reused_portable_timestamp_rebind
             or is_first_timestamp_rebind
             or is_mixed_rebind
+            or is_placement_rebind
             else set()
         )
         if (
@@ -640,6 +685,7 @@ def _validate_disposition_rebind_chain(
             and not is_first_timestamp_rebind
             and not is_timestamp_rebind
             and not is_mixed_rebind
+            and not is_placement_rebind
         ) or set(receipt) != expected_fields:
             raise AdapterError("source disposition identity rebind receipt is malformed")
         integrity = receipt.get("canonical_integrity")
@@ -678,7 +724,14 @@ def _validate_disposition_rebind_chain(
             ):
                 raise AdapterError("source disposition identity rebind binding drifted")
         changes = _changed_fingerprint_fields(previous, current)
-        if is_identity_rebind:
+        if is_placement_rebind:
+            if (
+                receipt.get("legacy_promotion") != _placement_rebind_legacy_contract()
+                or receipt.get("changed_fields") != changes
+                or not _placement_only_changes(changes)
+            ):
+                raise AdapterError("source disposition placement rebind binding drifted")
+        elif is_identity_rebind:
             if (
                 receipt.get("legacy_promotion") != _identity_rebind_legacy_contract()
                 or not changes
@@ -886,23 +939,45 @@ def _prepare_disposition_identity_validation(
     if any(
         effective[role].get(key) != current[role][key]
         for role in _DISPOSITION_FILE_ROLES
-        for key in _FILE_STABLE_FINGERPRINT_KEYS
+        for key in _FILE_IDENTITY_FINGERPRINT_KEYS
     ):
         raise AdapterError("source disposition non-identity fingerprint drifted")
+    # Only placement (device/inode/ctime) differs from here on.
     current_mount = current_mount or _shared_fuse_mount_identity(paths.values())
     if current_mount is None:
+        # The recording-root contract is one CloudFS FUSE view (watchdog gate);
+        # a non-FUSE view is an environment fault, not an identity question.
         raise AdapterError("source disposition device/inode drifted outside one shared FUSE mount")
+    if not isinstance(identity_rebinds, list):
+        raise AdapterError("source disposition FUSE rebind lacks a durable receipt ledger")
     same_portable_mount_replaced = bool(
         has_receipts
         and _same_portable_mount_replaced(current_mount, previous_mount)
         and _all_roles_reindexed_within_replaced_mount(changes)
     )
-    if has_receipts and _portable_mount_identity(current_mount) == _portable_mount_identity(
-        previous_mount
-    ) and not same_portable_mount_replaced:
-        raise AdapterError("source disposition identity drifted within one FUSE mount epoch")
-    if not isinstance(identity_rebinds, list):
-        raise AdapterError("source disposition FUSE rebind lacks a durable receipt ledger")
+    legacy_shape = not any("ctime_ns" in fields for fields in changes.values()) and not (
+        has_receipts
+        and _portable_mount_identity(current_mount) == _portable_mount_identity(previous_mount)
+        and not same_portable_mount_replaced
+    )
+    if not legacy_shape:
+        # Evidence identity: placement drift in any role subset or mount epoch
+        # (previously a permanent "identity drifted" error) is re-attested by
+        # the same hash-bound child; only a content/size/mtime/mode mismatch
+        # stays an identity failure.
+        if not _placement_only_changes(changes):  # pragma: no cover - identity keys checked above
+            raise AdapterError("source disposition non-identity fingerprint drifted")
+        return {
+            "current": current,
+            "effective": effective,
+            "previous_receipt_sha256": previous_receipt_sha256,
+            "previous_mount": previous_mount,
+            "current_mount": current_mount,
+            "changed_fields": changes,
+            "rebind_schema_version": SOURCE_DISPOSITION_PLACEMENT_REBIND_SCHEMA_VERSION,
+            "rebind_policy": SOURCE_DISPOSITION_PLACEMENT_REBIND_POLICY,
+            "pending_rebind": True,
+        }
     return {
         "current": current,
         "effective": effective,
@@ -984,6 +1059,7 @@ def _finish_disposition_identity_rebind(
         SOURCE_DISPOSITION_FIRST_TIMESTAMP_REBIND_POLICY,
         _MIXED_REBIND_POLICY,
     }
+    placement_rebind = validation.get("rebind_policy") == SOURCE_DISPOSITION_PLACEMENT_REBIND_POLICY
     receipt: dict[str, Any] = {
         "schema_version": validation["rebind_schema_version"],
         "policy": validation["rebind_policy"],
@@ -996,10 +1072,12 @@ def _finish_disposition_identity_rebind(
         "legacy_promotion": (
             _timestamp_rebind_legacy_contract(row, validation["effective"])
             if metadata_rebind
+            else _placement_rebind_legacy_contract()
+            if placement_rebind
             else _identity_rebind_legacy_contract()
         ),
     }
-    if metadata_rebind:
+    if metadata_rebind or placement_rebind:
         receipt["changed_fields"] = validation["changed_fields"]
     receipt["canonical_integrity"] = {
         "algorithm": "sha256",
@@ -3971,17 +4049,30 @@ def finalize_recording(
     ffmpeg_bin: str = "ffmpeg",
     ffprobe_bin: str = "ffprobe",
     existing_ledger: dict[str, Any] | None = None,
+    output_dir: Path | None = None,
 ) -> dict[str, Any]:
     xml_path = source_flv.with_suffix(".xml")
     if not xml_path.is_file():
         raise AdapterError(f"closed recording lacks XML sidecar: {source_flv.name}")
     jsonl_bytes, record_info, event_count = xml_to_jsonl(xml_path)
-    target_mp4 = source_flv.with_suffix(".mp4")
+    if output_dir is None:
+        target_mp4 = source_flv.with_suffix(".mp4")
+        jsonl_path = source_flv.with_suffix(".jsonl")
+        meta_path = source_flv.with_suffix(".meta.json")
+    else:
+        output_dir = Path(output_dir)
+        if output_dir.is_symlink() or (output_dir.exists() and not output_dir.is_dir()):
+            raise AdapterError(f"finalizer output directory is not a real directory: {output_dir}")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        target_mp4 = output_dir / source_flv.with_suffix(".mp4").name
+        jsonl_path = output_dir / source_flv.with_suffix(".jsonl").name
+        meta_path = output_dir / source_flv.with_suffix(".meta.json").name
+        for output_path in (target_mp4, jsonl_path, meta_path):
+            if output_path.is_symlink():
+                raise AdapterError(f"finalizer output must not be a symlink: {output_path.name}")
     staging_dir = target_mp4.parent / ".brec-adapter-staging"
     staging_dir.mkdir(mode=0o700, exist_ok=True)
     tmp_mp4 = staging_dir / f"{uuid.uuid4().hex}.mp4"
-    jsonl_path = source_flv.with_suffix(".jsonl")
-    meta_path = source_flv.with_suffix(".meta.json")
 
     if target_mp4.exists():
         source_stat = source_flv.stat()
@@ -4872,12 +4963,18 @@ def load_or_initialize_state(
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
+        # A fresh ledger is complete from its first byte: the webhook ledgers
+        # exist (empty) before any recorder event, so the read-only health
+        # audit can PASS an idle, never-recorded root instead of reporting
+        # "ledgers are missing" until the first live session.
         payload = {
             "schema_version": STATE_SCHEMA_VERSION,
             "managed_since_epoch": float(
                 managed_since_epoch if managed_since_epoch is not None else now_epoch
             ),
             "finalized": {},
+            "webhook_event_ids": {},
+            "webhook_files": {},
             "source_dispositions": {},
             "source_disposition_identity_rebinds": {},
             "source_disposition_identity_rebind_tasks": {},
@@ -4890,6 +4987,9 @@ def load_or_initialize_state(
         raise AdapterError("adapter state schema mismatch; refusing reset")
     if not isinstance(payload.get("finalized"), dict):
         raise AdapterError("adapter state finalized ledger is malformed")
+    for ledger in ("webhook_event_ids", "webhook_files"):
+        if not isinstance(payload.setdefault(ledger, {}), dict):
+            raise AdapterError(f"adapter state {ledger} ledger is malformed")
     dispositions = payload.setdefault("source_dispositions", {})
     if not isinstance(dispositions, dict):
         raise AdapterError("adapter state source dispositions ledger is malformed")
@@ -5111,6 +5211,22 @@ def build_status(
     }
 
 
+def archived_recordings(state: dict[str, Any], archive_path: Path | None) -> set[str]:
+    """Consume the mover's local durable receipt; never probe CD2 here."""
+    if archive_path is None or not archive_path.exists():
+        return set()
+    try:
+        try:
+            from ops.recording import recording_archive as archive_identity
+        except ModuleNotFoundError:
+            import recording_archive as archive_identity
+        archive = archive_identity.read_json(archive_path)
+        return {relative for relative in state["finalized"]
+                if archive_identity.verified_segment(state, archive, relative)}
+    except (ValueError, OSError) as exc:
+        raise AdapterError("local archive receipt is unreadable") from exc
+
+
 def run_once(args: argparse.Namespace) -> int:
     now_epoch = time.time()
     state = load_or_initialize_state(
@@ -5258,6 +5374,7 @@ def run_once(args: argparse.Namespace) -> int:
         return 0
 
     closed_files = state.get("webhook_files") or {}
+    archived = archived_recordings(state, getattr(args, "archive_state_path", None))
     candidates = discover_managed_flvs(
         args.record_root,
         room_id=args.room,
@@ -5270,6 +5387,8 @@ def run_once(args: argparse.Namespace) -> int:
     eligible: list[Path] = []
     for source in candidates:
         relative = str(source.relative_to(args.record_root))
+        if relative in archived:
+            continue
         existing_disposition = source_dispositions.get(relative)
         # A valid explicit disposition is the only suppression authority. It
         # must run before the ordinary CLOSED/size gates so an explicitly
@@ -5339,7 +5458,7 @@ def run_once(args: argparse.Namespace) -> int:
                         "error": "FileOpening has no matching FileClosed event",
                     }
                 )
-            elif evidence.get("status") == "CLOSED" and not source.is_file():
+            elif evidence.get("status") == "CLOSED" and relative not in archived and not source.is_file():
                 finalize_errors.append(
                     {
                         "source": str(source),
@@ -5532,6 +5651,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="PATH",
         help="apply one explicit truncated-source recovery manifest offline",
     )
+    parser.add_argument("--local-first", action="store_true", help="derive OCI3 defaults from recording topology")
     parser.add_argument("--room", type=int, default=22966160)
     parser.add_argument(
         "--endpoint",
@@ -5552,6 +5672,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--state-path",
         type=Path,
         default=Path("/opt/bilive/recording/adapter-state.json"),
+    )
+    parser.add_argument(
+        "--archive-state-path",
+        type=Path,
+        help="OCI3 local-first mover receipt (local JSON only, never a cloud probe)",
     )
     parser.add_argument(
         "--webhook-journal",
@@ -5603,6 +5728,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--bootstrap-installed-adapter-path", type=Path)
     parser.add_argument("--bootstrap-status-path", type=Path)
     args = parser.parse_args(argv)
+    if args.local_first:
+        try:
+            from ops.recording.recording_topology import load_topology
+        except ModuleNotFoundError:
+            from recording_topology import load_topology
+        topology = load_topology()
+        supplied = argv if argv is not None else sys.argv[1:]
+        for flag, attr, default in (
+            ("--room", "room", int(topology.room)),
+            ("--record-root", "record_root", topology.spool_room),
+            ("--status-path", "status_path", topology.state_dir / "status.json"),
+            ("--state-path", "state_path", topology.state_dir / "adapter-state.json"),
+            ("--webhook-journal", "webhook_journal", topology.state_dir / "webhook-events.jsonl"),
+            ("--archive-state-path", "archive_state_path", topology.archive_state),
+        ):
+            if not any(a == flag or a.startswith(flag + "=") for a in supplied):
+                setattr(args, attr, default)
     if args.max_finalize < 1:
         parser.error("--max-finalize must be positive")
     if args.inactive_grace_seconds < 0:

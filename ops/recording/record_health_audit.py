@@ -14,11 +14,20 @@ import sys
 import time
 from typing import Any
 
+try:
+    from ops.recording.recording_topology import load_topology
+except ModuleNotFoundError:
+    try:
+        from recording_topology import load_topology
+    except ModuleNotFoundError:
+        # Old standalone Free installations do not install OCI3 topology.
+        load_topology = None
+
 
 STATUS_SCHEMA = "recorder-neutral-status.v1"
 STATE_SCHEMA = "bililive-recorder-adapter-state.v1"
 AUDIT_SCHEMA = "record-health-audit.v1"
-ROOM_ID = "22966160"
+ROOM_ID = load_topology().room if load_topology is not None else "22966160"
 STATUS_MAX_AGE_SECONDS = 180
 RELATIVE_PATH_RX = re.compile(
     rf"^20\d{{2}}-\d{{2}}-\d{{2}}/{re.escape(ROOM_ID)}_20\d{{6}}-\d{{2}}-\d{{2}}-\d{{2}}\.flv$"
@@ -267,6 +276,8 @@ def audit(
     lookback_hours: float,
     now_epoch: float | None = None,
     status_max_age_seconds: int = STATUS_MAX_AGE_SECONDS,
+    spool_root: Path | None = None,
+    archive_state_path: Path | None = None,
 ) -> dict[str, Any]:
     now = time.time() if now_epoch is None else float(now_epoch)
     issues: list[str] = []
@@ -326,6 +337,55 @@ def audit(
         }
         finalize_errors = []
 
+    spool_health: dict[str, Any] | None = None
+    if spool_root is not None:
+        try:
+            try:
+                from ops.recording import recording_archive as identity
+            except ModuleNotFoundError:
+                import recording_archive as identity
+            if spool_root.is_symlink() or not spool_root.is_dir():
+                raise AuditError("local recording spool is missing or unsafe")
+            info = os.statvfs(spool_root)
+            archive_path = archive_state_path or identity.ARCHIVE_STATE
+            archive = identity.read_json(archive_path) if archive_path.exists() else {}
+            pending = []
+            pending_bytes = 0
+            missing = []
+            for relative, evidence in state.get("webhook_files", {}).items():
+                if isinstance(evidence, dict) and evidence.get("status") == "OPEN":
+                    local = spool_root / identity.relative_flv(relative)
+                    if local.is_symlink() or not local.is_file():
+                        missing.append(relative)
+            for relative, row in state.get("finalized", {}).items():
+                if not identity.verified_segment(state, archive, relative):
+                    pending.append(relative)
+                    pending_bytes += int(row.get("source_size", 0))
+                for name in identity.artifact_paths(relative):
+                    local = spool_root / name
+                    if not local.is_file() and not identity.verified_segment(state, archive, relative):
+                        missing.append(name)
+            if missing:
+                issues.append("local artifacts missing without verified archive: " + ", ".join(missing))
+            spool_health = {"available_bytes": info.f_bavail * info.f_frsize,
+                            "minimum_available_bytes": 16 * 1024**3,
+                            "low_space": info.f_bavail * info.f_frsize < 16 * 1024**3,
+                            "archive_pending_segments": pending,
+                            "archive_pending_source_bytes": pending_bytes,
+                            "mover_last_tick_epoch": archive.get("generated_at_epoch"),
+                            "mover_errors": {key: row.get("reason", row.get("error"))
+                                             for key, row in archive.get("segments", {}).items()
+                                             if row.get("error")}}
+            # Backlog/low-space warnings are separate from capture health:
+            # CD2 being offline must not make the recorder unhealthy or stop it.
+            spool_health["warnings"] = (["RECORDING_SPOOL_LOW_SPACE"] if spool_health["low_space"] else [])
+            if pending:
+                spool_health["warnings"].append("RECORDING_ARCHIVE_BACKLOG")
+            if archive.get("generated_at_epoch") is None or now - float(archive["generated_at_epoch"]) > 300:
+                spool_health["warnings"].append("RECORDING_MOVER_STALE")
+        except (ValueError, OSError, AuditError, TypeError, KeyError) as exc:
+            issues.append(f"local spool audit failed: {type(exc).__name__}: {exc}")
+
     issues = sorted(set(issues))
     return {
         "schema_version": AUDIT_SCHEMA,
@@ -341,6 +401,7 @@ def audit(
         "inventory": inventory,
         "unresolved": issues,
         "lookback_hours": lookback_hours,
+        **({"spool": spool_health} if spool_root is not None else {}),
     }
 
 
@@ -358,7 +419,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=Path(os.environ.get("AUTOSLICE_RECORD_HEALTH_STATE_PATH", "/opt/bilive/recording/adapter-state.json")),
     )
     parser.add_argument("--now-epoch", type=float, help=argparse.SUPPRESS)
+    parser.add_argument("--local-first", action="store_true", help="use the OCI3 recording topology")
+    parser.add_argument("--spool-root", type=Path)
+    parser.add_argument("--archive-state", type=Path)
     args = parser.parse_args(argv)
+    if args.local_first:
+        if load_topology is None:
+            parser.error("--local-first requires the installed recording topology")
+        topology = load_topology()
+        # Explicit CLI paths still support read-only fixtures and diagnostics.
+        supplied = argv if argv is not None else sys.argv[1:]
+        for flag, attr, default in (
+            ("--status-path", "status_path", topology.state_dir / "status.json"),
+            ("--state-path", "state_path", topology.state_dir / "adapter-state.json"),
+            ("--spool-root", "spool_root", topology.spool_room),
+            ("--archive-state", "archive_state", topology.archive_state),
+        ):
+            if not any(a == flag or a.startswith(flag + "=") for a in supplied):
+                setattr(args, attr, default)
     if not math.isfinite(args.lookback_hours) or args.lookback_hours <= 0:
         parser.error("--lookback-hours must be a positive finite number")
     return args
@@ -371,6 +449,8 @@ def main(argv: list[str] | None = None) -> int:
         state_path=args.state_path,
         lookback_hours=args.lookback_hours,
         now_epoch=args.now_epoch,
+        spool_root=args.spool_root,
+        archive_state_path=args.archive_state,
     )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
     return 0 if result["healthy"] else 1

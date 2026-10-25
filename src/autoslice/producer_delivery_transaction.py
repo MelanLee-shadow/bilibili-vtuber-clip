@@ -22,7 +22,9 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from src.autoslice.qixi_transaction_core import (
+    QixiTransactionCoreError,
     RunnerCommitLease,
+    recovery_reference_write_window,
     require_runner_commit_lease,
 )
 from src.autoslice.repository_asset_authority import (
@@ -393,11 +395,38 @@ def _materialize_target_parent(root: Path, path: Path) -> Path:
     return current
 
 
+def _deployment_repository(runtime_root: Path) -> Path:
+    root = _runtime_root(runtime_root)
+    repo = root/'repo'
+    from src.autoslice.runtime_code_lease import VERSION_ENV, immutable_version
+    pinned=os.environ.get(VERSION_ENV)
+    own=Path(__file__).resolve().parents[2]
+    if pinned:
+        repo=Path(pinned)
+        if own.parent.parent==root/'versions' and repo!=own:
+            raise ProducerDeliveryTransactionError('deployed authority version differs from running code')
+    elif own.parent.parent==root/'versions':
+        repo=own
+    elif (root/'current/repo').is_dir():
+        repo=(root/'current/repo').resolve()
+    elif repo.is_symlink():
+        repo=repo.resolve()
+    if repo!=root/'repo':
+        repo=_safe_directory(repo)
+        if repo.parent.parent!=root/'versions':
+            raise ProducerDeliveryTransactionError('deployed authority version is outside runtime')
+        try:
+            valid_version=immutable_version(repo)
+        except RuntimeError as exc:
+            raise ProducerDeliveryTransactionError('deployed authority version is incomplete') from exc
+        if not valid_version:
+            raise ProducerDeliveryTransactionError('deployed authority version is incomplete')
+    return _safe_directory(repo)
+
+
 def deployment_authority_binding(runtime_root: Path) -> dict[str, str]:
     """Capture the deployed repository seal used by a prepared candidate."""
-
-    root = _runtime_root(runtime_root)
-    repo = _safe_directory(root / "repo")
+    repo = _deployment_repository(runtime_root)
     commit = _read_regular_bytes(repo / "DEPLOYED_COMMIT")
     manifest = _read_regular_bytes(repo / "DEPLOYED_AUTHORITY_MANIFEST.json")
     try:
@@ -451,6 +480,26 @@ def prepare_delivery(
     candidate_id: str,
     artifacts: Iterable[DeliveryArtifact],
     deployed_authority: dict[str, str] | None = None,
+) -> PreparedDelivery:
+    """Publish private artifacts while excluded from recovery-input cleanup.
+
+    Private filesystem copies may run concurrently. Provider and media build
+    stages have already completed before this operation takes its shared lock.
+    """
+    root = _runtime_root(runtime_root)
+    try:
+        with recovery_reference_write_window(root):
+            return _prepare_delivery_under_reference_window(
+                runtime_root=root, lane=lane, candidate_id=candidate_id,
+                artifacts=artifacts, deployed_authority=deployed_authority,
+            )
+    except QixiTransactionCoreError as exc:
+        raise ProducerDeliveryTransactionError(f"RUNTIME_PREREQUISITE: {exc}") from exc
+
+
+def _prepare_delivery_under_reference_window(
+    *, runtime_root: Path, lane: str, candidate_id: str,
+    artifacts: Iterable[DeliveryArtifact], deployed_authority: dict[str, str] | None,
 ) -> PreparedDelivery:
     """Copy verified candidate artifacts into a private, create-only manifest.
 

@@ -149,12 +149,10 @@ def canonicalize_story_scorecard(
     return normalized
 
 
-def cover_relation_prompt(story_contract: object) -> str:
+def cover_relation_prompt(story_contract: object, *, scene_kind: str | None = None) -> str:
     """Disclose a relation without hallucinating an unreferenced counterpart."""
 
-    if not isinstance(story_contract, Mapping) or story_contract.get(
-        "relation_state"
-    ) != "CONFIRMED":
+    if not isinstance(story_contract, Mapping):
         return ""
     participants = [
         str(row.get("display_name") or row.get("canonical_id") or "")
@@ -169,6 +167,33 @@ def cover_relation_prompt(story_contract: object) -> str:
         if event
         else ""
     )
+    # HOST_ONLY_GENERIC also governs ordinary clips with no confirmed live
+    # collaboration. The final-pixel gate already enforces this; generation
+    # must receive the same participant scope before copying a source panel.
+    if str(scene_kind or "talk").lower() != "game" and story_contract.get("cover_fallback_mode") in {
+        "HOST_ONLY_GENERIC", "HOST_ONLY_RELATION_EXPLICIT",
+    }:
+        relation_line = (
+            " This is a confirmed live collaboration"
+            + (f" between {names}." if names else ".")
+            if story_contract.get("relation_state") == "CONFIRMED"
+            else ""
+        )
+        return (
+            " STORY CONTRACT: HOST-ONLY composition. Depict ONLY the source-bound "
+            "host; omit every other recognisable person or avatar from the source, "
+            "including game characters, background figures, portraits, panels and "
+            "small decorative copies; do NOT invent another person either. "
+            "Source-visible secondary figures are not "
+            "authorised participants in this composition. Convey the supported "
+            "event through the host's reaction and non-character props or graphics; "
+            "a discussion of a game remains game commentary, not the host's own "
+            "personal experience."
+            + relation_line
+            + event_line
+        )
+    if story_contract.get("relation_state") != "CONFIRMED":
+        return ""
     if story_contract.get("cover_counterpart_reference_available") is True:
         return (
             " STORY CONTRACT: this clip belongs to a confirmed live collaboration"

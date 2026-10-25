@@ -318,3 +318,21 @@ def test_cover_route_projection_reports_degraded_and_ai_actual_routes() -> None:
     assert redraw["evidence_status"] == "VALID_V2"
     assert redraw["label"] == "AI 重绘（AI已调用并用于最终图）"
     assert redraw["actual"] == "cpa_redraw"
+
+
+def test_daily_report_distinguishes_missing_counts_from_observed_zero(tmp_path, monkeypatch):
+    monkeypatch.setattr(reporting, "_runner", _Runner(tmp_path))
+    text = reporting.daily_runtime_report("2026-10-11", {
+        "picks": [
+            {"candidate_id": "made", "status": "review_ready", "cpa_http_attempts": 3,
+             "production_elapsed_seconds": 12.5},
+            {"candidate_id": "old", "status": "failed", "failure_kind": "infra"},
+            {"candidate_id": "early", "status": "candidate_rejected", "cpa_http_attempts": 0,
+             "production_elapsed_seconds": 0.1},
+        ], "songs": [],
+    })
+    assert "产出 1｜发布核验 0｜拦截 2｜尝试 3" in text
+    assert "| made | review_ready | 3 | 12.5s |" in text
+    assert "| old | failed | 未记录 | 未记录 |" in text
+    assert "| early | candidate_rejected | 0 | 0.1s |" in text
+    assert "infra ×1" in text

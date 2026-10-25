@@ -8,6 +8,7 @@ separate, human-reviewed authority promotes them.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import argparse
 import fcntl
 import hashlib
@@ -187,11 +188,8 @@ def _strict_regular_path(value: object, *, field: str) -> Path:
 
 
 def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return digest
 
 
 def ffprobe_duration_ms(path: Path) -> int:
