@@ -57,6 +57,7 @@ def _hermetic_gemini(monkeypatch):
         "GEMINI_API_KEY_3",
         "GEMINI_KEY_BACKUP",
         "GEMINI_PAID_BACKUP_DEV_EXCEPTION",
+        "GEMINI_PAID_BACKUP_DAILY_CAP",
         "ENTITY_AUDIO_DISABLE_AGY",
     ):
         monkeypatch.delenv(name, raising=False)

@@ -62,15 +62,12 @@ def _fake_argon_inrun_retrieval_clock(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _restore_process_scoped_evaluator_env():
-    names = ("AUTOSLICE_FINAL_REVIEW_RUNTIME_ROOT",
-             "AUTOSLICE_CPA_ARCHIVE_TEXT_EXCHANGES", "AUTOSLICE_CPA_USAGE_FILE")
-    saved = {name: os.environ.get(name) for name in names}
+    # CLI entry points intentionally mutate their process environment. Tests
+    # invoking them in-process must not lend settings to a later test.
+    saved = dict(os.environ)
     yield
-    for name, value in saved.items():
-        if value is None:
-            os.environ.pop(name, None)
-        else:
-            os.environ[name] = value
+    os.environ.clear()
+    os.environ.update(saved)
 
 
 @pytest.fixture(autouse=True)

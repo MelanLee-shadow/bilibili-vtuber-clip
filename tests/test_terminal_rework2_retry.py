@@ -433,6 +433,10 @@ def _recorder_fixture(tmp_path, monkeypatch, call):
         clip_context={"source_media_sha256": "a" * 64},
         offset_ms=0,
     )
+    assert not recorder._entries(), {
+        "directory": str(recorder.directory), "audit": recorder.audit(),
+        "reason": "Each retry fixture starts in its own empty runtime",
+    }
     call.cpa_cache_identity = {"models": ["fixture"]}
     return recorder, recorder.wrap(call)
 
@@ -457,7 +461,10 @@ def test_recorder_wrap_retries_plain_callable_as_one_logical_attempt(
         assert wrapped("question") == "answer"
 
     rows = recorder._entries()
-    assert len(calls) == state["attempts"] == 2
+    assert len(calls) == state["attempts"] == 2, {
+        "calls": len(calls), "attempts": state["attempts"],
+        "directory": str(recorder.directory), "audit": recorder.audit(),
+    }
     assert len(rows) == 1
     assert rows[0]["status"] == "COMPLETED"
     assert state["retries"] == 1
